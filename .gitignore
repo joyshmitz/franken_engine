@@ -1,0 +1,22 @@
+# Build outputs
+/target
+
+# Local reference corpora (kept outside tracked source for this repo)
+/legacy_quickjs
+/legacy_v8
+
+# Local generated media
+/franken_engine_illustration.png
+
+# Editor/system noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs and local scratch
+*.log
+*.tmp
+*.bak
