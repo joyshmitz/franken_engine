@@ -993,18 +993,28 @@ These eight additions are intentionally selected as non-trivial upgrades that de
 - [ ] Implement expected-loss action selector.
 - [ ] Implement containment actions (`sandbox`, `suspend`, `terminate`, `quarantine`).
 - [ ] Implement forensic replay tooling for incident traces.
+- [ ] Apply full extension-host security policy path to delegate cells (same capability checks, decision contracts, and evidence obligations as untrusted extensions).
+- [ ] Implement runtime flow-label propagation at dynamic hostcall boundaries and enforce sink-clearance checks.
+- [ ] Route all declassification requests through decision contracts with mandatory signed receipt + evidence linkage.
 
 ### 10.6 Performance Program
-- [ ] Create baseline benchmark suite and golden outputs.
+- [ ] Define and publish Extension-Heavy Benchmark Suite v1.0 (workload matrix, profiles, datasets, golden outputs).
+- [ ] Implement benchmark denominator calculator (`weighted geometric mean`) and publication gate for Node/Bun comparisons.
 - [ ] Add flamegraph pipeline and artifact storage.
 - [ ] Add opportunity matrix scoring to optimization workflow.
 - [ ] Enforce one-lever-per-change performance policy.
+- [ ] Add constrained-vs-ambient benchmark lanes quantifying specialization uplift from PLAS/IFC proof tightening under equivalent behavior.
 
 ### 10.7 Conformance + Verification
 - [ ] Integrate transplanted extension conformance assets into runnable suites.
+- [ ] Integrate `test262` ES2020 normative profile as a release blocker with explicit waiver file and zero silent failures policy.
 - [ ] Add probabilistic security conformance tests (benign vs malicious corpora).
 - [ ] Add metamorphic tests for parser/IR/execution invariants.
 - [ ] Add stress tests for high-concurrency extension workloads.
+- [ ] Add differential lockstep suite against Node/Bun for benchmark and semantic parity cases with deterministic failure classification.
+- [ ] Add native-vs-delegate differential gate per execution slot with minimized repro artifacts and deterministic divergence taxonomy.
+- [ ] Add IFC conformance corpus: dual-capability benign workloads, exfil-attempt workloads, and declassification-exception workloads with deterministic expected outcomes.
+- [ ] Add specialization-conformance suite ensuring proof-specialized and unspecialized execution remain semantically equivalent across policy/proof epoch transitions.
 
 ### 10.8 Operational Readiness
 - [ ] Add runtime diagnostics and evidence export CLI.
@@ -1017,6 +1027,10 @@ These eight additions are intentionally selected as non-trivial upgrades that de
 - [ ] Release gate: autonomous quarantine mesh is implemented and validated under fault injection (implementation ownership: `10.12`).
 - [ ] Release gate: proof-carrying optimization pipeline is enabled with replayable validation artifacts (implementation ownership: `10.12`).
 - [ ] Release gate: continuous adversarial campaign runner demonstrates measurable compromise-rate suppression versus baseline engines (implementation ownership: `10.12`).
+- [ ] Release gate: PLAS is active for prioritized extension cohorts with signed `capability_witness` artifacts and escrow-path replay evidence (implementation ownership: `10.15`).
+- [ ] Release gate: GA default lanes are fully native (`0` mandatory delegate cells), with complete signed replacement lineage for all formerly delegated core slots (implementation ownership: `10.15` + `10.2` + `10.7`).
+- [ ] Release gate: deterministic IFC protections block unauthorized sensitive-source exfiltration across the published exfil corpus, with receipt-backed declassification audit for approved exceptions (implementation ownership: `10.15` + `10.5` + `10.7`).
+- [ ] Release gate: proof-specialized lanes demonstrate positive performance delta versus ambient-authority lanes with 100% specialization-receipt coverage and deterministic fallback correctness (implementation ownership: `10.12` + `10.15` + `10.6` + `10.7`).
 - [ ] Publish first category-shift report demonstrating beyond-parity capabilities with evidence bundles.
 
 ### 10.10 FCP-Inspired Hardening + Interop Track
@@ -1051,6 +1065,11 @@ These eight additions are intentionally selected as non-trivial upgrades that de
 - [ ] Add migration contract for explicit cutover boundaries on security-critical formats and policies.
 
 ### 10.11 FrankenSQLite-Inspired Runtime Systems Track
+Ownership boundary:
+- `10.11` owns reusable runtime-generic primitives (cancellation protocol mechanics, obligation plumbing, scheduler/bulkhead mechanics, deterministic test harness, anti-entropy primitives).
+- `10.13` owns asupersync constitutional adoption and extension-host integration wiring.
+- If a concern appears in both tracks, `10.11` implements primitive semantics once; `10.13` integrates, validates, and release-gates that behavior in control-plane paths.
+
 - [ ] Define canonical runtime capability profiles (`FullCaps`, `EngineCoreCaps`, `PolicyCaps`, `RemoteCaps`, `ComputeOnlyCaps`) and enforce them at API boundaries.
 - [ ] Add compile-time ambient-authority audit gate for forbidden direct calls in engine security-critical modules.
 - [ ] Add explicit checkpoint-placement contract for long-running loops (dispatch, scanning, policy iteration, replay, decode/verify paths).
@@ -1088,6 +1107,8 @@ These eight additions are intentionally selected as non-trivial upgrades that de
 ### 10.12 Frontier Programs Execution Track (9H Canonical Owners)
 - [ ] Define proof schema and signer model for optimizer activation witnesses (`opt_receipt`, `rollback_token`, `invariance_digest`).
 - [ ] Implement translation-validation gate on adaptive optimization paths with fail-closed rollback.
+- [ ] Implement security-proof ingestion path for optimizer hypotheses (PLAS witnesses, IFC flow proofs, replay sequence motifs).
+- [ ] Implement epoch-bound specialization invalidation and deterministic fallback to baseline paths on proof/policy churn.
 - [ ] Define fleet immune-system message protocol for signed evidence, local confidence, and containment intent propagation.
 - [ ] Implement deterministic convergence + degraded partition policy for fleet containment actions.
 - [ ] Build deterministic causal replay engine with counterfactual branching over policy/action parameters.
@@ -1105,16 +1126,21 @@ These eight additions are intentionally selected as non-trivial upgrades that de
 - [ ] Build operator safety copilot surfaces with recommended actions, confidence bands, and deterministic rollback commands.
 - [ ] Define and publish category benchmark specification with reproducible harness and transparent scoring methodology.
 - [ ] Implement third-party verifier toolkit that can independently validate benchmark, replay, and containment claims.
-- [ ] Add quarterly frontier demo gates: at least one externally auditable breakthrough artifact per quarter.
+- [ ] Add frontier demo gates requiring externally auditable breakthrough artifacts before frontier-track promotion.
 
 ### 10.13 Asupersync Constitutional Integration Track
+Ownership boundary:
+- `10.13` does not re-implement generic primitives owned by `10.11`; it binds those primitives into asupersync-derived control-plane contracts and verifies constitutional behavior at extension-host boundaries.
+- Acceptance responsibility for `10.13`: canonical type adoption, integration conformance, replay compatibility, and release-gate enforcement.
+
 - [ ] Define a formal control-plane adoption ADR naming `/dp/asupersync` crates as canonical sources for `Cx`, decision contracts, and evidence schema.
+- [ ] Add naming guidance to the ADR: Cargo package names (`franken-kernel`, `franken-decision`, `franken-evidence`) and Rust crate paths (`franken_kernel`, `franken_decision`, `franken_evidence`) are both normative references.
 - [ ] Add dependency policy: no local forks of `TraceId`, `DecisionId`, `PolicyId`, `SchemaVersion`, `Budget`, or `Cx`.
-- [ ] Introduce a narrow control-plane adapter layer in `franken_engine` that imports `franken-kernel`, `franken-decision`, and `franken-evidence` without pulling broad runtime internals into VM hot paths.
+- [ ] Introduce a narrow control-plane adapter layer in `franken_engine` that imports `franken-kernel`/`franken_kernel`, `franken-decision`/`franken_decision`, and `franken-evidence`/`franken_evidence` without pulling broad runtime internals into VM hot paths.
 - [ ] Thread `Cx` through all effectful extension-host APIs (hostcall gateways, policy checks, lifecycle transitions, telemetry emitters).
-- [ ] Enforce region-per-extension/session execution cells with quiescent close guarantees.
-- [ ] Implement cancellation lifecycle compliance checks (`request -> drain -> finalize`) for unload, quarantine, suspend, terminate, and revocation events.
-- [ ] Add obligation-tracking for two-phase safety-critical operations and fail lab runs on unresolved obligations.
+- [ ] Integrate region-per-extension/session execution cells with quiescent close guarantees using primitives owned by `10.11`.
+- [ ] Integrate and verify cancellation lifecycle compliance (`request -> drain -> finalize`) for unload, quarantine, suspend, terminate, and revocation events using `10.11` primitives.
+- [ ] Integrate obligation-tracking for two-phase safety-critical operations on extension-host paths and fail lab runs on unresolved obligations.
 - [ ] Route all high-impact safety actions through `franken-decision` decision contracts with explicit loss matrices and fallback policies.
 - [ ] Emit canonical evidence entries via `franken-evidence` for all high-impact actions, linked to `trace_id`, `decision_id`, `policy_id`, and artifact hashes.
 - [ ] Add deterministic evidence replay checks ensuring decision/evidence linkage replays identically across machines.
@@ -1149,7 +1175,7 @@ These eight additions are intentionally selected as non-trivial upgrades that de
 - [ ] Extend receipt schema to include attestation bindings (`quote_digest`, `measurement_id`, `attested_signer_key_id`, `nonce`, `validity_window`).
 - [ ] Build verifier pipeline that validates signature chain, transparency log proofs, and attestation chain in one deterministic command.
 - [ ] Add deterministic fallback policy: when attestation validation fails or expires, high-impact autonomous actions degrade to conservative safe mode.
-- [ ] Define privacy-learning contract for fleet calibration (`feature schema`, update cadence, clipping strategy, DP budget semantics, secure-aggregation requirements).
+- [ ] Define privacy-learning contract for fleet calibration (`feature schema`, update policy, clipping strategy, DP budget semantics, secure-aggregation requirements).
 - [ ] Implement budget accountant for differential privacy with epoch-scoped burn tracking and hard fail-closed budget exhaustion behavior.
 - [ ] Emit randomness transcript commitments and seed-hash evidence for stochastic learning phases so downstream replay remains audit-deterministic at snapshot boundaries.
 - [ ] Add shadow-evaluation gate that blocks global model/policy promotion unless privacy-preserving updates improve safety metrics without exceeding privacy budgets.
@@ -1161,7 +1187,39 @@ These eight additions are intentionally selected as non-trivial upgrades that de
 - [ ] Add version-matrix CI lane (N/N-1/N+1 where applicable) for contract compatibility checks across supported repo/version combinations.
 - [ ] Add minimized repro artifact format for conformance failures with deterministic replay and machine-readable delta classification.
 - [ ] Make matrix+fault conformance lab pass a release blocker for shared-boundary changes, complementing the baseline compatibility gates in `10.14`.
-- [ ] Publish quarterly scorecard reporting: attested-receipt coverage, privacy-budget health, moonshot-governor decisions, and cross-repo conformance stability.
+- [ ] Publish governance scorecards covering attested-receipt coverage, privacy-budget health, moonshot-governor decisions, and cross-repo conformance stability.
+- [ ] Define PLAS artifact schema (`capability_witness`) with canonical fields for minimal envelope, proof obligations, confidence bounds, and replay/rollback linkage.
+- [ ] Implement static upper-bound authority analyzer from capability-typed IR + manifest intents.
+- [ ] Implement deterministic shadow ablation engine that tests capability subtraction candidates against correctness and risk invariants.
+- [ ] Add synthesis search-budget contract (time/compute/depth caps) with fail-closed conservative fallback behavior on budget exhaustion.
+- [ ] Integrate policy theorem checks so witness promotion requires merge legality, attenuation legality, and non-interference constraints.
+- [ ] Implement signed witness publication pipeline with transparency-log inclusion and consistency proofs.
+- [ ] Implement runtime capability escrow pathway for out-of-envelope requests (`challenge`/`sandbox` default), including explicit emergency-grant artifact format and expiry semantics.
+- [ ] Add mandatory receipt + replay linkage for every escrow, deny, or emergency grant decision.
+- [ ] Add frankentui operator surfaces for capability-delta reviews (`current`, `proposed minimal`, `escrow events`, `override rationale`) with deterministic drill playback.
+- [ ] Add frankensqlite-backed witness/index stores and conformance tests for deterministic witness retrieval and replay joins.
+- [ ] Add lockstep integration checks proving synthesized minimal policies preserve intended runtime behavior across FrankenEngine/Node/Bun comparison harnesses.
+- [ ] Add adversarial tests for capability-escalation attempts that try to exploit synthesis uncertainty or emergency-grant pathways.
+- [ ] Add burn-in gate: no auto-enforcement promotion without shadow success rate, false-deny envelope, and rollback proof artifacts meeting threshold.
+- [ ] Publish PLAS benchmark bundle reporting over-privilege ratio, policy authoring-time reduction, false-deny rates, and escrow-event rates across representative extension cohorts.
+- [ ] Define IFC artifacts (`flow_policy`, `flow_proof`, `declassification_receipt`, `confinement_claim`) with deterministic encoding and signature requirements.
+- [ ] Implement IR2 flow-label inference + runtime label propagation with static-first optimization (runtime checks only on dynamic/ambiguous edges).
+- [ ] Implement declassification decision pipeline (`request -> policy/loss evaluation -> allow/deny -> signed receipt`) with deterministic replay.
+- [ ] Extend PLAS synthesis to emit minimal flow envelopes in addition to capability envelopes.
+- [ ] Define specialization receipt schema (`proof_specialization_receipt`) linking security-proof inputs to activated optimization classes and rollback lineage.
+- [ ] Add compiler policy that only proof-grounded specializations may bypass capability/flow dynamic checks in marked regions.
+- [ ] Add frankentui operator surfaces for proof-specialization lineage (`proof ids`, `activated specializations`, `invalidations`, `fallback events`).
+- [ ] Add frankensqlite-backed specialization index enabling deterministic audit queries from security proof -> optimization receipt -> benchmark outcome.
+- [ ] Add frankentui operator surfaces for flow decisions (`label map`, `blocked flows`, `declassification history`, `confinement proofs`).
+- [ ] Add frankensqlite-backed provenance index supporting deterministic source-to-sink lineage queries and replay joins.
+- [ ] Define verified self-replacement schema (`slot_registry`, `delegate_cell_manifest`, `replacement_receipt`, `promotion_decision`) with deterministic encoding and signature requirements.
+- [ ] Implement delegate-cell runtime harness for not-yet-native slots with explicit capability envelopes, sandbox controls, and replay hooks.
+- [ ] Add slot-level promotion gate runner (equivalence, capability-preservation, performance threshold, adversarial survival) with deterministic pass/fail artifact bundles.
+- [ ] Implement signed replacement-lineage log with transparency-verifiable append semantics and independent verifier CLI integration.
+- [ ] Add automatic demotion/rollback mechanism when post-promotion divergence or risk-threshold breaches are detected.
+- [ ] Add frankentui operator dashboard for replacement progress (`slot status`, `native coverage`, `blocked promotions`, `rollback events`, `next-best-EV replacements`).
+- [ ] Add frankensqlite-backed lineage/evidence index for replacement receipts and deterministic replay joins.
+- [ ] Add policy guard forbidding GA releases when any core slot depends on delegate cells.
 
 ## 11. Evidence And Decision Contracts (Mandatory)
 Every major subsystem proposal must include:
@@ -1185,6 +1243,12 @@ No contract, no merge.
   - Countermeasure: profile-driven optimization and tail-latency budgets.
 - Operational complexity:
   - Countermeasure: evidence-ledger tooling and deterministic fallback mode.
+- Delegate-path entrenchment (temporary bridge becomes permanent):
+  - Countermeasure: hard GA `0`-delegate gate for core slots, signed replacement-lineage requirements, and explicit closure obligations with ownership.
+- IFC policy over-constraint causing false denies on benign integrations:
+  - Countermeasure: static-first analysis, shadow-mode rollout, explicit declassification workflows, and profile-guided label-granularity tuning.
+- Stale/invalid security proofs causing unsound specialization:
+  - Countermeasure: epoch-bound proof validity, mandatory specialization invalidation on proof churn, and fail-closed fallback to unspecialized paths.
 
 ## 13. Program Success Criteria
 FrankenEngine is considered successful when:
@@ -1193,7 +1257,8 @@ FrankenEngine is considered successful when:
 - untrusted extension code is actively monitored and auto-contained under attack scenarios
 - security and performance claims are artifact-backed and reproducible
 - compatibility and reliability meet release gates
-- extension-heavy benchmark suites show `>= 3x` throughput versus baseline Node/Bun at equivalent behavior
+- ES2020 runtime conformance is demonstrably complete per the declared `test262` normative gate and waiver policy
+- extension-heavy benchmark suites show `>= 3x` weighted-geometric-mean throughput versus Node baseline and `>= 3x` versus Bun baseline under Section `14` denominator and equivalence rules
 - red-team programs show `>= 10x` reduction in successful host compromise versus baseline Node/Bun default posture
 - high-risk detections reach containment in `<= 250ms` median time under defined load envelopes
 - deterministic replay coverage is `100%` for high-severity decisions and incidents, with deterministic re-execution defined over fixed artifacts (`code`, `policy`, `model snapshot`, `randomness transcript`)
@@ -1214,6 +1279,18 @@ FrankenEngine is considered successful when:
 - privacy-preserving fleet learning operates continuously with zero budget-overrun incidents and measurable calibration/drift-improvement over local-only baselines
 - moonshot portfolio governor enforces documented promote/hold/kill gates with 100% governance decision artifact completeness
 - cross-repo conformance lab pass rate is a hard release gate for shared-boundary changes, with deterministic repro artifacts for every failure class
+- PLAS produces signed `capability_witness` artifacts for >= 90% of targeted extension cohorts in production lanes
+- synthesized capability envelopes achieve <= 1.10 over-privilege ratio versus empirically required capability sets on benchmark cohorts
+- manual policy-authoring time for onboarded extensions is reduced by >= 70% while maintaining security gate compliance
+- post-burn-in false-deny rate for PLAS-enforced policies remains <= 0.5% on defined benign extension corpora
+- 100% of capability escrow/emergency-grant decisions emit receipt-linked replay artifacts with explicit expiry and operator rationale
+- unauthorized sensitive-source -> external-sink flows are deterministically blocked unless explicit declassification is approved by policy
+- >= 99% of declassification decisions emit signed receipt-linked replay artifacts with source/sink label provenance
+- data-confinement claims are machine-verifiable from evidence/provenance artifacts for published incident and benchmark corpora
+- proof-specialized execution lanes show measurable throughput or tail-latency improvement versus ambient-authority lanes at equivalent semantics
+- 100% of activated proof-specializations carry signed receipts linking security-proof inputs to transformation and rollback artifacts
+- every promoted `delegate -> native` core slot has a signed replacement receipt with reproducible differential/security/performance artifacts
+- GA default lanes run with zero mandatory delegate cells for core runtime slots
 
 ## 14. Public Benchmark + Standardization Strategy
 FrankenEngine will define and own the reference benchmark standard for secure extension runtimes.
@@ -1223,7 +1300,39 @@ Program commitments:
 - Include both performance and security co-metrics (not speed-only benchmarks).
 - Require reproducibility artifacts for every published result.
 - Maintain a neutral verifier mode so third parties can run and validate claims.
-- Update standards on a fixed cadence with explicit versioning and migration notes.
+- Update standards with explicit versioning and migration notes.
+
+### 14.1 Extension-Heavy Benchmark Suite v1.0 (Normative)
+Suite structure:
+- Benchmark families (each required): `boot-storm`, `capability-churn`, `mixed-cpu-io-agent-mesh`, `reload-revoke-churn`, `adversarial-noise-under-load`.
+- Scale profiles per family (each required): `S`, `M`, `L` with fixed extension counts, event rates, dependency graph sizes, and policy complexity tiers.
+- Each case must publish: throughput, `p50/p95/p99` latency, allocation/peak memory, correctness digest, and security-event envelope.
+
+Behavior-equivalence requirements:
+- Equivalent external outputs (canonical digest).
+- Equivalent side-effect trace class (filesystem/network/process/policy actions normalized by contract schema).
+- Equivalent error-class semantics for negative/exceptional cases.
+- No work dropping, relaxed durability, or disabled policy checks to inflate throughput.
+
+### 14.2 `>= 3x` Claim Denominator (Normative)
+For each baseline runtime `B in {Node, Bun}`:
+- Compute per-case speedup `r_i = throughput_franken_engine_i / throughput_B_i`.
+- Compute suite score `S_B = exp(sum_i w_i * ln(r_i))`, with non-zero weights summing to `1` and equal weighting across family/profile cells by default.
+- A public `>= 3x` claim is valid only if:
+  - `S_Node >= 3.0`
+  - `S_Bun >= 3.0`
+  - all cases used in both scores pass behavior-equivalence gates.
+
+Guardrails:
+- Any failed-equivalence case invalidates claim publication until fixed or explicitly excluded via versioned benchmark-spec revision.
+- Throughput claims must be accompanied by latency/error envelopes so speedups cannot hide tail-collapse or correctness loss.
+
+### 14.3 Reproducibility + Neutral Verification
+- Publish full run manifest: hardware, kernel, runtime versions, flags, dataset checksums, seed transcripts, and harness commit IDs.
+- Store benchmark artifacts and result ledgers via `/dp/frankensqlite` contracts; provide operator triage and replay dashboards through `/dp/frankentui`.
+- Provide one-command neutral verifier mode that replays official runs and validates scoring + equivalence checks independently.
+- Require at least two independent third-party reruns before category-level claims are treated as externally validated.
+- Publish native-coverage progression and per-slot replacement lineage IDs alongside benchmark releases so performance claims are tied to concrete replacement state.
 
 Required metric families:
 - Throughput/latency (`p50`, `p95`, `p99`) under extension-heavy workloads.
@@ -1231,6 +1340,8 @@ Required metric families:
 - Replay correctness (determinism pass rate, artifact completeness).
 - Revocation/quarantine propagation (freshness lag distribution, convergence SLO attainment).
 - Adversarial resilience (campaign success-rate suppression vs baseline engines).
+- Information-flow security (unauthorized source->sink block rate, declassification false-allow/false-deny envelopes, confinement-proof completeness).
+- Security-proof specialization uplift (performance delta between proof-specialized and ambient-authority modes, invalidation/fallback correctness rate).
 
 ## 15. Ecosystem Capture Strategy
 FrankenEngine should not only outperform incumbents; it should become the default platform for high-trust extension ecosystems.
@@ -1243,7 +1354,7 @@ Execution pillars:
 - Partner program for early lighthouse adopters who validate category-shift outcomes in production.
 
 Adoption targets:
-- Time-to-first-safe-extension in under 30 minutes for greenfield teams.
+- Greenfield onboarding uses a minimal-friction deterministic safe-extension setup workflow.
 - Migration of representative Node/Bun extension packs with deterministic behavior validation artifacts.
 - Public case studies showing materially improved security and operational outcomes.
 
@@ -1257,7 +1368,7 @@ Required contributions:
 - External red-team and academic-style evaluations with published methodology.
 - Public technical reports that document failures, fixes, and measured frontier movement.
 
-Annual output contract:
+Output contract:
 - At least 4 publishable technical reports with reproducible artifact bundles.
 - At least 2 externally replicated high-impact claims.
 - At least 1 open benchmark or verification tool release adopted outside the project.
