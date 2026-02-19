@@ -828,16 +828,20 @@ This section is a canonical lens over already-adopted scope, not an additional p
 5. **Policy Theorem Engine** -> canonical owner: `9F.8`, execution: `10.12`.
 6. **Autonomous Red/Blue Co-Evolution System** -> canonical owner: `9F.7`, execution: `10.12`.
 7. **Global Trust Economics Layer** -> canonical owner: `9F.15` + trust-economics tasks in `10.12`.
-8. **Secure Extension Reputation Graph** -> canonical owner: frontier feature track in `10.12` + success criteria in `13`.
+8. **Secure Extension Reputation Graph** -> canonical owner: `10.12` reputation-graph schema/update tasks (`Define secure extension reputation graph schema...`, `Implement low-latency reputation updates...`) + success criterion `13` (“secure extension reputation graph drives measurable reduction in first-time compromise windows”).
 9. **Operator Copilot For Safety Control** -> canonical owner: `9F.15` + operator copilot tasks in `10.12`.
 10. **Public Category Benchmark + Verification Standard** -> canonical owner: `9F.13`, `14`, execution: `10.12`.
+11. **Proof-Carrying Least-Authority Synthesizer (PLAS)** -> canonical owner: `9I.5`, execution: `10.15` with supporting policy/replay validation in `10.12` and `10.13`.
+12. **Verified Self-Replacement Architecture** -> canonical owner: `9I.6`, execution: `10.15` with core/runtime hooks in `10.2`, `10.5`, and `10.7`.
+13. **Deterministic IFC + Data Confinement Proofs** -> canonical owner: `9I.7`, execution: `10.15` with IR/security/conformance hooks in `10.2`, `10.5`, and `10.7`.
+14. **Security-Proof-Guided Specialization Flywheel** -> canonical owner: `9I.8`, execution: `10.12` + `10.15` with benchmark/verification hooks in `10.6` and `10.7`.
 
 Canonicalization rule for this plan:
 - New frontier scope must be added once (single owner section), then referenced from mapping views.
 - Mapping views may reframe intent but must not create duplicate implementation obligations.
 
 ## 9I. Delta Moonshots (New Additions, Fully Adopted)
-These four additions are intentionally selected as non-trivial upgrades that deepen existing 9F/9H scope with new constitutional constraints and verification surfaces. Where conceptual overlap exists, it is a deliberate refinement profile (stronger guarantees, stricter gates), not additional duplicated scope.
+These eight additions are intentionally selected as non-trivial upgrades that deepen existing 9F/9H scope with new constitutional constraints and verification surfaces. Where conceptual overlap exists, it is a deliberate refinement profile (stronger guarantees, stricter gates), not additional duplicated scope.
 
 1. **TEE-Bound Cryptographic Decision Receipts**
    **What it entails:** Extend decision receipts so they are not only signed by software keys but also bound to confidential-compute attestation evidence (measured runtime identity + code hash + policy hash + evidence hash).
@@ -884,31 +888,92 @@ These four additions are intentionally selected as non-trivial upgrades that dee
    **Why it is useful/compelling:** Cross-repo systems usually fail at boundaries, not internals. A first-class conformance lab turns integration trust from tribal knowledge into continuously validated, machine-checkable reality.
    **Rationale/justification:** FrankenEngine’s strategic advantage depends on coordinated sibling-repo leverage and strict split contracts. Without formal cross-repo conformance infrastructure, the architecture will drift, regress, and eventually self-sabotage under rapid iteration pressure.
 
+5. **Proof-Carrying Least-Authority Synthesizer (PLAS)**
+   **What it entails:** Add a policy-synthesis system that automatically derives, proves, and enforces minimal capability envelopes for each extension from capability-typed IR plus observed behavior evidence, replacing manual over-broad policy authoring as the default path.
+   **How it works:**
+   - Input contract combines static and dynamic evidence: capability-typed IR effect graph, declared manifest intent, shadow-run traces, lockstep divergence diagnostics, and incident/replay history.
+   - Static pass computes a conservative authority upper bound using capability lattice reachability and effect-flow analysis.
+   - Dynamic ablation pass runs staged capability subtraction experiments in deterministic shadow environments; each subtraction is evaluated against behavioral correctness, policy invariants, and risk budgets.
+   - Synthesizer emits a signed `capability_witness` artifact containing: `extension_id`, `policy_id`, required capability set, denied capability set, minimality proof obligations, confidence interval, replay seed/transcript hash, rollback token, and witness signature bundle.
+   - Policy theorem checks validate monotonic safety constraints and merge legality before witness promotion.
+   - Runtime enforcement uses capability escrow: out-of-envelope requests never get ambient grants; they trigger deterministic `challenge`/`sandbox` pathways with receipt + replay linkage. Time-bounded emergency grants, when allowed by policy, are explicit signed artifacts with mandatory post-incident review.
+   - Continuous refinement loop updates synthesis candidates from production evidence, but live decisions consume only signed promoted snapshots to preserve replay determinism.
+   **Why it is useful/compelling:** Least privilege stops being a manual governance tax and becomes a compounding runtime property. Security posture improves while developer/operator burden drops, because the system explains exactly why each retained capability is necessary and proves the provenance of each denied surface.
+   **Rationale/justification:** Manual permission design is the largest practical source of over-privilege and policy drift in extension ecosystems. A proof-carrying synthesizer closes that gap by making minimum-necessary authority machine-derived, auditable, and enforceable under deterministic replay and cryptographic accountability.
+
+6. **Verified Self-Replacement Architecture (Execution Cells + Signed Promotion Chain)**
+   **What it entails:** Build the runtime as typed execution slots that can run either native Rust cells or explicitly untrusted delegate cells, then continuously replace delegates with native cells via cryptographically signed promotion gates until GA lanes are fully native.
+   **How it works:**
+   - Define a canonical `slot_registry` for replaceable runtime components with explicit semantics contracts and authority envelopes.
+   - Run delegate cells (including QuickJS-backed delegates where useful) inside constrained execution cells treated exactly like untrusted extensions: capability-bounded, sentinel-monitored, evidence-emitting, replay-audited.
+   - For each candidate native replacement, run promotion gauntlet: differential equivalence (`test262` + lockstep corpus), capability-preservation proof, performance-threshold check, and adversarial survival suite.
+   - On pass, emit signed `replacement_receipt` linking old/new cell digests, validation artifacts, rollback token, and promotion rationale; append to a transparency/verifier-friendly lineage chain.
+   - Keep differential execution active during burn-in so divergence detection is continuous; failures auto-demote to prior promoted cell using deterministic rollback artifacts.
+   - Track native coverage and per-slot expected-value uplift so optimization and implementation sequencing is portfolio-rational rather than intuition-driven.
+   **Why it is useful/compelling:** It collapses the waterfall between "engine completion" and "security differentiation." Security/control-plane value can ship immediately while the engine self-replaces component-by-component with measurable trust and performance progress.
+   **Rationale/justification:** The hardest path in this program is full ES2020-native execution. A verified self-replacement architecture converts that risk into an incremental, evidence-backed convergence process and creates a category-defining trust claim: cryptographic lineage for how each runtime component was validated and promoted.
+
+7. **Runtime Information Flow Control (IFC) + Deterministic Exfiltration Prevention**
+   **What it entails:** Add a first-class flow-control layer that constrains how data may move between sensitive sources and external sinks, so credential exfiltration is blocked by construction rather than only detected probabilistically.
+   **How it works:**
+   - Extend `IR2 CapabilityIR` with flow labels and sink clearances, alongside capability/effect metadata.
+   - Label-producing sources include credential/config secrets, key material, privileged environment state, and policy-protected host artifacts.
+   - Clearance-governed sinks include network egress, subprocess/IPC boundaries, and explicit export/persistence channels.
+   - Static compiler checks prove allowed flows where possible; runtime checks cover dynamic/late-bound paths with deterministic enforcement.
+   - Cross-label flows require explicit declassification routed through decision contracts, producing signed declassification receipts with policy/loss rationale and replay linkage.
+   - Sentinel consumes declassification and attempted-cross-label events as high-signal evidence atoms; evidence ledger stores provenance chain for forensic confinement proofs.
+   - PLAS is extended to synthesize flow envelopes in addition to capability envelopes (`what can be called` plus `what data can flow where`).
+   **Why it is useful/compelling:** Extensions that legitimately need both `fs.read` and `net.connect` can still be prevented from exfiltrating sensitive data unless an explicitly audited declassification path exists.
+   **Rationale/justification:** Capability gating alone cannot express source-to-sink data constraints. IFC closes this structural gap and enables a stronger category claim: deterministic exfiltration resistance with machine-verifiable provenance.
+
+8. **Security-Proof-Guided Specialization (Constraints-As-Optimization-Fuel)**
+   **What it entails:** Make security proofs first-class optimizer inputs so tighter verified constraints yield faster executable paths instead of being treated as overhead.
+   **How it works:**
+   - PLAS capability witnesses define unreachable authority branches; optimizer specializes hostcall dispatch and removes provably unreachable paths.
+   - IFC flow proofs identify regions where label propagation/checks are unnecessary; optimizer elides those checks in proven-safe regions.
+   - Replay/sentinel evidence provides stable policy-legal sequence motifs; optimizer proposes fused superinstructions with proof-linked activation.
+   - Every specialization emits a signed optimization receipt linking proof inputs, transformation witness, equivalence evidence, and rollback token.
+   - Specializations are invalidated deterministically on policy/proof epoch changes, with automatic fallback to unspecialized baseline paths.
+   - Autopilot performance scientist includes “tighten envelope” as an explicit optimization lever in VOI scoring.
+   **Why it is useful/compelling:** Security investment compounds into performance improvement rather than competing with it, creating a structural flywheel unavailable to generic runtimes without proof-bearing security planes.
+   **Rationale/justification:** Competing runtimes optimize for generic dynamic behavior. FrankenEngine can optimize against verified constraints they cannot represent, making the most secure configuration potentially the fastest by construction.
+
 ## 10. Ultra-Detailed TODO (Program Level)
-### 10.0 Top 10 Initiative Tracking
-- [ ] Implement TS-first authoring pipeline with native capability-typed IR target.
-- [ ] Implement Probabilistic Guardplane runtime subsystem.
-- [ ] Implement deterministic evidence graph + replay tooling.
-- [ ] Implement alien-performance profile discipline and hotpath program gates.
-- [ ] Implement supply-chain trust fabric integrated with containment policy.
-- [ ] Implement shadow-run + differential executor onboarding mode.
-- [ ] Implement capability lattice + typed policy DSL.
-- [ ] Implement deterministic per-extension resource budget subsystem.
-- [ ] Implement adversarial security corpus + continuous fuzzing harness.
-- [ ] Implement provenance + revocation fabric and recall workflow.
+### 10.0 Top 10 Initiative Tracking (Canonical Implementation Index)
+- [ ] Top-10 #1: TS-first capability-typed IR execution (strategy: `9A.1`; deep semantics: `9F.4`; execution owners: `10.2`, `10.5`, `10.12`).
+- [ ] Top-10 #2: Probabilistic Guardplane runtime subsystem (strategy: `9A.2`; deep semantics: `9F.15`; execution owners: `10.5`, `10.11`, `10.12`).
+- [ ] Top-10 #3: Deterministic evidence graph + replay tooling (strategy: `9A.3`; deep semantics: `9F.3`; execution owners: `10.5`, `10.11`, `10.12`, `10.13`).
+- [ ] Top-10 #4: Alien-performance profile discipline and hotpath program gates (strategy: `9A.4`; deep semantics: `9F.1`, `9F.12`, `9F.14`; execution owners: `10.6`, `10.12`).
+- [ ] Top-10 #5: Supply-chain trust fabric integrated with containment policy (strategy: `9A.5`; deep semantics: `9F.11`, `9F.9`; execution owners: `10.10`, `10.12`, `10.13`).
+- [ ] Top-10 #6: Shadow-run + differential executor onboarding mode (strategy: `9A.6`; deep semantics: `9F.6`; execution owners: `10.7`, `10.12`).
+- [ ] Top-10 #7: Capability lattice + typed policy DSL (strategy: `9A.7`; deep semantics: `9F.8`; execution owners: `10.5`, `10.10`, `10.12`, `10.13`).
+- [ ] Top-10 #8: Deterministic per-extension resource budget subsystem (strategy: `9A.8`; deep semantics: `9F.10`; execution owners: `10.11`, `10.12`, `10.13`).
+- [ ] Top-10 #9: Adversarial security corpus + continuous fuzzing harness (strategy: `9A.9`; deep semantics: `9F.7`; execution owners: `10.7`, `10.12`).
+- [ ] Top-10 #10: Provenance + revocation fabric and recall workflow (strategy: `9A.10`; deep semantics: `9F.9`; execution owners: `10.10`, `10.11`, `10.12`, `10.13`).
 
 ### 10.1 Charter + Governance
 - [ ] Add runtime charter document that codifies native-only engine policy.
 - [ ] Add claim language policy so marketing claims require evidence artifacts.
 - [ ] Add reproducibility contract (`env.json`, `manifest.json`, `repro.lock`) template.
+- [ ] Add donor-extraction scope document with explicit exclusions for V8/QuickJS semantic harvesting.
+- [ ] Add semantic donor spec document (observable behavior, edge cases, compatibility-critical semantics) as implementation source of truth.
+- [ ] Add FrankenEngine-native architecture synthesis document derived from donor spec (no donor-architecture mirroring).
+- [ ] Add feature-parity tracker wired to `test262`, lockstep corpora, and waiver governance.
 
 ### 10.2 VM Core
-- [ ] Define parser trait + canonical AST invariants.
-- [ ] Define IR trait + verification rules.
+- [ ] Define parser trait + canonical AST invariants for ES2020 script/module goals.
+- [ ] Define multi-level IR contract (`IR0`/`IR1`/`IR2`/`IR3`/`IR4`) including canonical serialization/hash invariants.
+- [ ] Implement lowering pipelines with per-pass verification and witness emission.
+- [ ] Define IFC flow-lattice semantics (`label classes`, `clearance classes`, `declassification obligations`) in `IR2`.
+- [ ] Implement static flow-check pass proving source/sink legality and emitting flow-proof witness artifacts.
+- [ ] Define proof-to-specialization linkage in IR contracts (`proof_input_ids`, `optimization_class`, `validity_epoch`, `rollback_token`) for IR3/IR4 artifacts.
+- [ ] Define typed execution-slot registry and ABI contract for slot replacement (`slot_id`, semantic boundary, authority envelope, promotion status).
 - [ ] Implement baseline interpreter skeleton for both lanes.
 - [ ] Implement deterministic error and exception semantics.
-- [ ] Implement prototype/object model conformance subset.
+- [ ] Implement complete ES2020 object/prototype semantics (no permanent subset scope).
 - [ ] Implement closure and lexical scope model.
+- [ ] Implement deterministic Promise jobs/microtask ordering and async semantics.
+- [ ] Implement TS-front-end normalization contract proving TS authoring lowers to ES2020-equivalent behavior before runtime.
 
 ### 10.3 Memory + GC
 - [ ] Define allocation domains and lifetime classes.
