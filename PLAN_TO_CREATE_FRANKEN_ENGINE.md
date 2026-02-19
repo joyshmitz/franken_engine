@@ -54,7 +54,7 @@ This project’s explicit objective is to make FrankenEngine + franken_node the 
 This will be achieved through creative, radically innovative application of `$extreme-software-optimization`, `$alien-artifact-coding`, and `$alien-graveyard`.
 
 Category-defining disruptive floor (non-optional):
-- `>= 3x` throughput on extension-heavy benchmark suites versus baseline Node/Bun configurations at equivalent behavior.
+- `>= 3x` weighted-geometric-mean throughput on Extension-Heavy Benchmark Suite v1.0 (Section `14` denominator contract) versus both baseline Node and Bun configurations at equivalent behavior.
 - `>= 10x` reduction in successful red-team host compromise rate versus baseline Node/Bun default posture.
 - `<= 250ms` median time from high-risk signal crossing to containment action.
 - `100%` deterministic replay coverage for security-critical allow/deny/escalation decisions.
@@ -90,15 +90,36 @@ The program MUST deliver and productionize capabilities that are not available b
 8. Revocation-first execution gates with explicit degraded-mode policy proofs.
 9. Distributed anti-entropy trust reconciliation with machine-verifiable repair artifacts.
 10. Continuous autonomous red/blue co-evolution harness driving defense upgrades.
+11. Cryptographic self-replacement lineage for engine components (`delegate -> native` promotion receipts with replay-verifiable evidence).
+12. Deterministic information-flow confinement with signed declassification receipts and replay-verifiable data-provenance artifacts.
+13. Security-proof-guided specialization where tighter verified constraints produce faster executable paths with replay-verifiable optimization receipts.
 
 ## 4. Non-Negotiable Constraints
 - Build native engines from scratch in Rust.
 - Do not use runtime wrappers/bindings around upstream engines (`rusty_v8`, `rquickjs`, or equivalents) for core execution.
+- If any upstream engine is used during development, it is allowed only as an explicitly untrusted delegate cell under section `8.8` (never as core execution, never as hidden compatibility shim, and never as a GA dependency).
 - Use `/dp/franken_engine/legacy_quickjs/` and `/dp/franken_engine/legacy_v8/` as reference corpora for ideas and test vectors only.
 - Every adaptive subsystem must include deterministic safe-mode fallback.
 - Every major performance or safety claim must ship with artifacts proving it.
-- No parity trap: compatibility milestones are valid only when paired with a net-new capability advantage.
+- No parity trap: compatibility gates are valid only when paired with a net-new capability advantage.
 - No hidden compatibility shims for unsafe behavior; compatibility must be explicit, typed, and policy-visible.
+
+## 4.1 Execution Strategy Decision: Spec-First Hybrid Bootstrap (Adopted)
+FrankenEngine will not begin by cloning V8 architecture in Rust. It will begin with a native ground-up runtime architecture and use V8/QuickJS only as semantic donor corpora.
+
+Decision contract:
+- Use donor engines to extract behavior specifications and conformance vectors, not architectural blueprints.
+- Implement from extracted specifications in native Rust crates; never line-by-line translate donor code.
+- Keep donor consultation in extraction/research phases; implementation phases consume only approved spec artifacts.
+- Treat this as a hybrid jumpstart: fast semantic baseline confidence plus immediate compounding on FrankenEngine-unique security/performance primitives.
+
+Initial deliverables (order-only, no calendar assumptions):
+1. Produce a donor-extraction scope document with explicit exclusions (what is intentionally not ported or mirrored).
+2. Produce a complete semantic donor spec document covering observable behavior, edge cases, and compatibility-critical semantics.
+3. Produce a FrankenEngine-native proposed architecture document that maps extracted semantics into `franken-engine` and `franken-extension-host` responsibilities.
+4. Produce and maintain a feature-parity/conformance tracker tied to `test262`, lockstep corpora, and explicit waiver policy.
+5. Stand up deterministic lockstep fixture generation against donor semantics and wire it into conformance/replay gates.
+6. Implement an initial native execution slice from the spec (not donor code) and gate promotion on equivalence, security contract checks, and artifact-backed performance evidence.
 
 ## 5. Method Stack (Required)
 This program is intentionally driven by three complementary methodologies:
@@ -137,7 +158,7 @@ No novelty-for-novelty engineering.
 Untrusted JS/TS extensions are a supply-chain risk surface. The runtime must assume hostile capability abuse is possible even when extension packages appear legitimate.
 
 ### 6.2 Design Goal
-Detect and contain malicious behavior before host compromise using probabilistic inference and online decisioning.
+Detect and contain malicious behavior before host compromise using probabilistic inference and online decisioning, and deterministically prevent unauthorized sensitive-data exfiltration by construction.
 
 ### 6.3 Threat Model
 Adversary classes:
@@ -156,6 +177,7 @@ Observed evidence stream `X_t` includes:
 - permission-mismatch attempts
 - anomaly scores from temporal behavior
 - cross-session signature reoccurrence
+- declassification requests/approvals/denials and attempted cross-label data flows
 
 Posterior update shape:
 - `P(Z_t | X_{1:t})` via online Bayesian filtering
@@ -190,6 +212,15 @@ FrankenEngine will target measurable and publishable guarantees:
 - automatic containment and host protection
 - post-incident replay and forensic trace export
 
+### 6.9 Deterministic Information Flow Control (IFC) For Exfiltration Resistance
+- Capability checks are necessary but not sufficient for exfiltration resistance; IFC adds source-to-sink flow constraints.
+- Sensitive sources (credential files, env vars, key material, privileged tokens, policy secrets) are label-producing origins.
+- External sinks (network egress, subprocess invocation, IPC, persistence export channels) are clearance-governed sinks.
+- Flow rule: value label must be dominated by sink clearance in the flow lattice; otherwise flow is blocked.
+- Any cross-label flow requires explicit declassification through decision contracts, with signed receipt, policy linkage, and replay artifacts.
+- Compile-time checks in `IR2` discharge provable-safe flows; runtime checks apply only on dynamic/ambiguous edges.
+- Declassification failures or missing label provenance fail closed to deterministic safe mode.
+
 ## 7. Performance Doctrine: Alien-Artifact Throughput + Tail Control
 Performance is treated as a proof-bearing systems property.
 
@@ -206,6 +237,7 @@ Performance is treated as a proof-bearing systems property.
 - arena/region allocation for short-lived IR artifacts
 - adaptive tiering with strict rollback guards
 - amortized parsing and module cache invalidation strategies
+- security-proof-guided dispatch specialization (capability-pruned hostcall tables, IFC-check elision on proven-safe regions, stable-trace fusion)
 
 ### 7.3 Measurement Artifacts (Required Per Change)
 - baseline benchmark report
@@ -213,6 +245,23 @@ Performance is treated as a proof-bearing systems property.
 - golden output checksums
 - isomorphism note
 - before/after latency and allocation tables
+
+### 7.4 Benchmark Denominator Contract For `>= 3x` Claim (Binding)
+- The `>= 3x` claim is not case-by-case or lane-by-lane; it is a suite-level claim over Extension-Heavy Benchmark Suite v1.0 (defined in section `14`).
+- Primary score is weighted geometric mean speedup across all benchmark cases that pass equivalence gates:
+  `score(engine, baseline) = exp(sum_i w_i * ln(throughput_engine_i / throughput_baseline_i))`, with `sum_i w_i = 1`.
+- Claim acceptance requires both:
+  - `score(franken_engine, node_baseline) >= 3.0`
+  - `score(franken_engine, bun_baseline) >= 3.0`
+- Throughput is measured as completed extension transactions per second under behavior-equivalence constraints (no dropped work, no semantics weakening, no policy bypass).
+- Any benchmark case failing correctness/equivalence is scored as non-passing and blocks claim publication.
+
+### 7.5 Fairness + Reproducibility Rules (Binding)
+- Baselines are pinned to declared versions (`Node LTS`, `Bun stable`) with full CLI/env manifests committed with the results.
+- All runs use identical hardware/OS envelopes, warmed-cache and cold-cache protocols, and fixed dataset seeds.
+- Report median and dispersion over repeated runs; publish raw per-run artifacts, not only aggregates.
+- Result ledgers and run manifests for benchmark claims are persisted through `/dp/frankensqlite`; interactive operator benchmark consoles are delivered through `/dp/frankentui`.
+- Every published claim must include verifier scripts and deterministic repro commands for third-party reruns.
 
 ## 8. Architecture Blueprint
 ### 8.1 Core Packages
@@ -243,6 +292,11 @@ Adopt and treat the following as canonical building blocks:
 - `franken-decision`: decision-contract runtime for allow/deny/escalation and loss-matrix actioning.
 - `franken-evidence`: canonical evidence-ledger schema and exporters for decision forensics.
 - `frankenlab`: deterministic scenario runner, replay, and schedule/fault exploration harness.
+
+Naming guidance (mandatory):
+- Cargo package names are hyphenated (`franken-kernel`, `franken-decision`, `franken-evidence`).
+- Rust crate/import paths are underscore variants (`franken_kernel`, `franken_decision`, `franken_evidence`).
+- ADRs and implementation docs must reference both forms at least once to avoid integration drift.
 
 #### 8.4.2 Data-Plane vs Control-Plane Partition
 - Data plane remains fully native to FrankenEngine: parser, IR, interpreter/tiering, GC, object model, module execution, and hot dispatch loops.
@@ -301,17 +355,95 @@ To preserve hard replay guarantees while allowing advanced adaptive/learning sys
 - If randomness transcript integrity/freshness is unavailable for high-impact decisions, the system must degrade to deterministic conservative safe mode.
 - Conformance and release gates must validate both layers: deterministic replay for decision execution and budget/correctness safety for stochastic learning.
 
+### 8.7 Multi-Level IR Design Contract (Adopted, Binding)
+FrankenEngine will use a formal multi-level IR stack with explicit entry/exit invariants, canonical serialization, and proof-carrying transforms.
+
+IR levels:
+- `IR0 SyntaxIR`: lossless parse representation (token/span fidelity, source-map canonicality, parse-goal markers for script/module).
+- `IR1 SpecIR`: ECMAScript-semantics IR aligned to ES2020 abstract-operation behavior (completion records, lexical environments, property semantics, iterator/promise semantics).
+- `IR2 CapabilityIR`: SpecIR plus capability/effect graph (`fs`, `net`, `proc`, `policy`, etc.), authority provenance, effect-boundary constraints, and flow labels/declassification points.
+- `IR3 ExecIR`: deterministic execution IR for runtime lanes (explicit control/data flow, layout/planning metadata, dispatch-ready lowering).
+- `IR4 WitnessIR`: machine-checkable proof/evidence artifacts linking transform correctness, capability preservation, and replay identity.
+
+Lowering and verification obligations:
+- `IR0 -> IR1`: preserve observable ES2020 semantics; preserve source provenance for diagnostics and replay.
+- `IR1 -> IR2`: no ambient-effect introduction; all effectful operations must be represented in capability/effect space, and source-to-sink flows must satisfy flow-lattice constraints or carry explicit declassification obligations.
+- `IR2 -> IR3`: no authority broadening; optimization/legalization steps must preserve capability envelopes and observable behavior.
+- `IR2 -> IR3`: optimization/legalization must preserve flow-label semantics and cannot bypass required declassification boundaries.
+- Each transform pass emits witness artifacts (in `IR4`) with deterministic hashes, invariant checks, and rollback tokens.
+- Failed verification on any pass triggers deterministic fallback to prior valid representation.
+
+TypeScript contract:
+- Authoring accepts JS/TS, but runtime semantic contract is strict ES2020 behavior.
+- TS-only syntax must lower deterministically into ES2020-equivalent semantics before `IR1`; type metadata may inform diagnostics/inference but cannot alter JS observable semantics.
+
+### 8.8 Verified Self-Replacement Architecture (Adopted, Binding)
+FrankenEngine will use typed execution cells so security/control-plane value ships early while engine internals converge to full native execution.
+
+Cell model:
+- `native_cell`: Rust-native implementation for a runtime slot (parser/lowering/execution helper/module primitive).
+- `delegate_cell`: capability-constrained reference delegate (including QuickJS-backed delegates where useful) running as an explicitly untrusted cell.
+- `slot_registry`: canonical list of replaceable runtime slots, each with owner, semantics contract, and promotion status.
+
+Constitutional rules:
+1. Delegate cells are never the architectural definition of core execution semantics and never the mandatory long-term path.
+2. Delegate cells must be governed exactly like untrusted extensions: `Cx` capability threading, Guardplane monitoring, decision contracts, evidence-ledger receipts, deterministic replay coverage.
+3. Delegate cells may cross runtime boundaries only through canonical hostcall ABI and typed effect schema; no ambient authority and no side channels.
+4. Every `delegate -> native` promotion requires a signed `replacement_receipt` linked to differential, security, and performance artifacts.
+5. Release policy: delegate cells may exist in development/canary lanes under explicit flags, but GA default lanes require zero delegate cells for core runtime slots.
+
+Promotion gate for each replacement:
+- differential equivalence on `test262` ES2020 profile plus lockstep corpus for the target slot scope
+- capability preservation proof: native cell authority envelope is `<=` delegate declared envelope
+- performance evidence meets threshold or expected-value waiver with signed rationale
+- adversarial survival: red-team/sentinel suite passes for that slot boundary
+- replay verification: replacement decision is reproducible from committed artifacts
+
+### 8.9 Security-Proof-Guided Specialization Contract (Adopted, Binding)
+FrankenEngine will treat verified security constraints as optimization inputs rather than independent overhead.
+
+Proof sources:
+- PLAS capability witnesses (`capability_witness`) defining reachable authority envelopes.
+- IFC flow proofs and declassification obligations defining source/sink legality boundaries.
+- Stable behavioral evidence traces from sentinel/replay corpora for sequence-level specialization candidates.
+
+Allowed specialization classes:
+- capability-pruned hostcall dispatch (remove unreachable capability branches).
+- IFC-check elimination in regions statically proven free of sensitive-flow obligations.
+- trace/superinstruction fusion for frequently repeated, policy-legal hostcall motifs.
+- layout and cache specialization for reduced capability/flow state spaces.
+
+Safety obligations:
+1. Every specialization must cite explicit proof inputs (witness ids, flow-proof ids, replay corpus ids).
+2. Translation validation and semantic equivalence checks are mandatory before activation.
+3. Specialization validity is epoch-bound: policy/proof updates invalidate dependent specializations deterministically.
+4. On proof invalidation or divergence, runtime must fail closed to baseline unspecialized paths with signed rollback receipts.
+5. Published performance claims must distinguish proof-specialized versus ambient-authority execution modes.
+
 ## 9. Multi-Phase Build Program
+### Cross-Phase Acceleration Program: Verified Self-Replacement
+- Start security/control-plane, replay, and policy infrastructure immediately using delegate cells for not-yet-native runtime slots.
+- Treat delegate-cell boundaries as first-class adversarial boundaries to continuously exercise Guardplane, evidence, and containment paths.
+- Replace slots incrementally with native cells using signed promotion gates rather than waiting for all-native completion before system validation.
+- Track native-coverage percentage and weighted throughput/security deltas continuously to prioritize next replacements by expected value.
+
+Exit gate:
+- all promoted slots have signed `replacement_receipt` artifacts with replay-verifiable provenance
+- promotion failures produce deterministic minimized repro artifacts and rollback receipts
+- convergence plan to zero delegate cells in GA lanes is explicit, versioned, and release-gated
+
 ### Phase A: Native VM Substrate
-- parser + AST + lowering
-- IR + verifier
+- ES2020-complete language/runtime semantic target (no scoped subset): scripts + modules, required built-ins, and normative observable behavior
+- parser + AST + lowering (JS/TS authoring front-end with TS-to-ES2020 semantic normalization)
+- multi-level IR stack (`IR0`/`IR1`/`IR2`/`IR3`/`IR4`) + verifier contracts
 - interpreter + callframes + exception model
-- object/prototype/closure semantics
+- object/prototype/closure semantics + Promise/microtask/async semantics
 - initial native GC
 
 Exit gate:
-- deterministic evaluator green on conformance seed corpus
-- proof-carrying compilation artifacts emitted for core lowering and verifier passes
+- ES2020 conformance gate: applicable `test262` ES2020 normative profile passes with explicit zero-surprise waiver policy (waivers allowed only for documented non-normative harness/host gaps, never silent semantic failures)
+- deterministic evaluator green on canonical conformance corpus and differential lockstep corpus
+- proof-carrying compilation artifacts emitted for core lowering, capability preservation, and verifier passes
 
 ### Phase B: Security-First Extension Runtime
 - hostcall ABI finalized
@@ -319,21 +451,29 @@ Exit gate:
 - Bayesian sentinel v1 integrated
 - automated containment actions wired
 - asupersync-constitutional control plane integrated at extension lifecycle boundaries (`Cx`, region close, cancel protocol, decision/evidence contracts)
+- guardplane/decision/evidence enforcement applied uniformly to extension cells and delegate cells
+- IFC label propagation and source/sink enforcement integrated at hostcall and runtime-boundary surfaces
 
 Exit gate:
 - attack simulation harness demonstrates containment without host compromise
 - red-team campaign demonstrates `>= 10x` compromise-rate reduction versus baseline Node/Bun default posture
 - median detection-to-containment time meets `<= 250ms`
 - deterministic `frankenlab` scenario suite passes for unload/quarantine/revocation/cancel-drain-finalize paths
+- delegate-cell adversarial harness demonstrates containment and replay parity with extension-cell paths
+- credential-exfiltration corpus demonstrates deterministic block of unauthorized sensitive source -> external sink flows, with receipt-backed declassification for authorized exceptions
 
 ### Phase C: Performance Uplift
 - hotspot-guided optimizations only
 - dispatch/queue/memory improvements
 - optional tiered execution strategy
+- native-slot replacement order is prioritized by measured expected throughput/tail-latency gain
+- security-proof-guided specialization loop active (`proof -> candidate -> validate -> staged activation -> monitor -> rollback if needed`)
 
 Exit gate:
 - measured p95/p99 improvements over baseline with behavior parity
-- one primary benchmark lane demonstrates `>= 3x` throughput versus baseline Node/Bun at equivalent behavior
+- weighted-geometric-mean suite score demonstrates `>= 3x` throughput versus Node baseline and `>= 3x` versus Bun baseline under Section `14` denominator + equivalence contract
+- native coverage reaches release target for the lane with no mandatory delegate cells in GA defaults
+- constrained-mode benchmark lane demonstrates measurable speedup versus ambient-authority mode on the same workloads with identical outputs and policy outcomes
 
 ### Phase D: Node/Bun Surface Superset (franken_node)
 - module interop modes
@@ -400,6 +540,13 @@ Recommended staged order:
 8. Supply-chain trust fabric integrated with containment.
 9. Provenance + revocation fabric.
 10. Alien-performance deep optimization rounds (continuous across all phases).
+
+Canonical anti-drift contract:
+- `9A` is the strategic Top-10 index (program intent and ordering).
+- `9F` and `9I` hold deep capability semantics and moonshot-level rationale.
+- `10.x` sections are the executable ownership surface for implementation.
+- If wording differs across layers, precedence is: `10.x` execution contracts -> `9F/9I` capability semantics -> `9A` strategic framing.
+- Any new capability must be added once as canonical owner, then referenced by mappings; do not create parallel implementation obligations.
 
 ## 9B. Alien-Graveyard Enhancement Map (Per Top 10)
 The following upgrades apply graveyard primitives directly to each initiative so implementation is higher-leverage, safer, and easier to verify.
