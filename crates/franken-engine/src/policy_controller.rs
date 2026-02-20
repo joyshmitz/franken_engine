@@ -8,6 +8,8 @@
 //! Plan references: Section 10.11 item 13, 9G.5 (policy controller
 //! with expected-loss actions), Top-10 #2 (guardplane), #8 (budgets).
 
+pub mod service_endpoint_template;
+
 use std::collections::BTreeMap;
 use std::fmt;
 

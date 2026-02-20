@@ -727,6 +727,13 @@ impl<B: FrankensqliteBackend> StorageAdapter for FrankensqliteStorageAdapter<B> 
                 reason: "downgrade is not supported".to_string(),
             });
         }
+        if target_version > self.schema_version.saturating_add(1) {
+            return Err(StorageError::MigrationFailed {
+                from: self.schema_version,
+                to: target_version,
+                reason: "only single-step migrations are allowed".to_string(),
+            });
+        }
 
         let from_version = self.schema_version;
         let state_hash_before = digest_hex(format!("schema:{from_version}").as_bytes());
