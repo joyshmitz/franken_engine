@@ -4,6 +4,7 @@ use std::error::Error;
 use std::fmt;
 use std::fs;
 use std::io;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -328,6 +329,223 @@ impl ConformanceWaiverSet {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConformanceReproMetadata {
+    pub version_combination: BTreeMap<String, String>,
+    pub first_seen_commit: String,
+    pub regression_commit: Option<String>,
+    pub ci_run_id: Option<String>,
+    pub issue_tracker_project: String,
+    pub issue_tracking_bead: Option<String>,
+}
+
+impl Default for ConformanceReproMetadata {
+    fn default() -> Self {
+        let mut version_combination = BTreeMap::new();
+        version_combination.insert(
+            "franken_engine".to_string(),
+            env!("CARGO_PKG_VERSION").to_string(),
+        );
+        Self {
+            version_combination,
+            first_seen_commit: "unknown".to_string(),
+            regression_commit: None,
+            ci_run_id: None,
+            issue_tracker_project: "beads".to_string(),
+            issue_tracking_bead: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConformanceFailureClass {
+    Breaking,
+    Behavioral,
+    Observability,
+    Performance,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConformanceFailureSeverity {
+    Info,
+    Warning,
+    Error,
+    Critical,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConformanceDeltaKind {
+    SchemaFieldAdded,
+    SchemaFieldRemoved,
+    SchemaFieldModified,
+    BehavioralSemanticShift,
+    TimingChange,
+    ErrorFormatChange,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConformanceDeltaClassification {
+    pub kind: ConformanceDeltaKind,
+    pub field: Option<String>,
+    pub expected: Option<String>,
+    pub actual: Option<String>,
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConformanceMinimizationSummary {
+    pub strategy: String,
+    pub original_source_lines: usize,
+    pub minimized_source_lines: usize,
+    pub original_expected_lines: usize,
+    pub minimized_expected_lines: usize,
+    pub original_actual_lines: usize,
+    pub minimized_actual_lines: usize,
+    pub preserved_failure_class: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConformanceReproEnvironment {
+    pub locale: String,
+    pub timezone: String,
+    pub gc_schedule: String,
+    pub rust_toolchain: String,
+    pub os: String,
+    pub arch: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConformanceReplayContract {
+    pub deterministic_seed: u64,
+    pub replay_command: String,
+    pub verification_command: String,
+    pub verification_digest: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConformanceIssueLink {
+    pub tracker: String,
+    pub issue_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConformanceRunLinkage {
+    pub run_id: String,
+    pub trace_id: String,
+    pub decision_id: String,
+    pub ci_run_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConformanceMinimizedFailingVector {
+    pub asset_id: String,
+    pub source_donor: String,
+    pub semantic_domain: String,
+    pub normative_reference: String,
+    pub fixture: DonorFixture,
+    pub expected_output: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConformanceMinimizedReproArtifact {
+    pub schema_version: String,
+    pub artifact_id: String,
+    pub failure_id: String,
+    pub boundary_surface: String,
+    pub failure_class: ConformanceFailureClass,
+    pub severity: ConformanceFailureSeverity,
+    pub version_combination: BTreeMap<String, String>,
+    pub first_seen_commit: String,
+    pub regression_commit: Option<String>,
+    pub environment: ConformanceReproEnvironment,
+    pub replay: ConformanceReplayContract,
+    pub expected_output: String,
+    pub actual_output: String,
+    pub delta_classification: Vec<ConformanceDeltaClassification>,
+    pub minimization: ConformanceMinimizationSummary,
+    pub failing_vector: ConformanceMinimizedFailingVector,
+    pub evidence_ledger_id: String,
+    pub linked_run: ConformanceRunLinkage,
+    pub issue_tracker: ConformanceIssueLink,
+}
+
+impl ConformanceMinimizedReproArtifact {
+    pub const CURRENT_SCHEMA: &'static str = "franken-engine.conformance-min-repro.v1";
+
+    pub fn verify_replay(&self) -> Result<(), ConformanceReplayVerificationError> {
+        let expected = canonicalize_conformance_output(&self.failing_vector.expected_output);
+        let actual = canonicalize_conformance_output(&self.failing_vector.fixture.observed_output);
+        if expected == actual {
+            return Err(ConformanceReplayVerificationError::FailureNotReproduced);
+        }
+
+        let observed_delta = classify_conformance_delta(&expected, &actual);
+        let observed_class = classify_failure_class(&observed_delta);
+        if observed_class != self.failure_class {
+            return Err(ConformanceReplayVerificationError::FailureClassMismatch {
+                expected: self.failure_class,
+                actual: observed_class,
+            });
+        }
+        if observed_delta != self.delta_classification {
+            return Err(ConformanceReplayVerificationError::DeltaClassificationDrift);
+        }
+
+        let digest = repro_verification_digest(self.replay.deterministic_seed, &expected, &actual);
+        if digest != self.replay.verification_digest {
+            return Err(ConformanceReplayVerificationError::DigestMismatch {
+                expected: self.replay.verification_digest.clone(),
+                actual: digest,
+            });
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConformanceReplayVerificationError {
+    FailureNotReproduced,
+    FailureClassMismatch {
+        expected: ConformanceFailureClass,
+        actual: ConformanceFailureClass,
+    },
+    DeltaClassificationDrift,
+    DigestMismatch {
+        expected: String,
+        actual: String,
+    },
+}
+
+impl fmt::Display for ConformanceReplayVerificationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::FailureNotReproduced => write!(
+                f,
+                "replay verification failed: expected mismatch but outputs are equal"
+            ),
+            Self::FailureClassMismatch { expected, actual } => write!(
+                f,
+                "replay verification failure class mismatch: expected {:?}, got {:?}",
+                expected, actual
+            ),
+            Self::DeltaClassificationDrift => write!(
+                f,
+                "replay verification delta classification drifted from recorded artifact"
+            ),
+            Self::DigestMismatch { expected, actual } => write!(
+                f,
+                "replay verification digest mismatch: expected `{expected}`, got `{actual}`"
+            ),
+        }
+    }
+}
+
+impl Error for ConformanceReplayVerificationError {}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConformanceRunnerConfig {
     pub trace_prefix: String,
     pub policy_id: String,
@@ -336,6 +554,7 @@ pub struct ConformanceRunnerConfig {
     pub timezone: String,
     pub gc_schedule: String,
     pub run_date: String,
+    pub repro_metadata: ConformanceReproMetadata,
 }
 
 impl Default for ConformanceRunnerConfig {
@@ -348,6 +567,7 @@ impl Default for ConformanceRunnerConfig {
             timezone: "UTC".to_string(),
             gc_schedule: "deterministic".to_string(),
             run_date: "1970-01-01".to_string(),
+            repro_metadata: ConformanceReproMetadata::default(),
         }
     }
 }
@@ -382,6 +602,16 @@ impl ConformanceRunnerConfig {
         if self.run_date.trim().is_empty() {
             return Err(ConformanceRunError::InvalidConfig(
                 "run_date is required".to_string(),
+            ));
+        }
+        if self.repro_metadata.first_seen_commit.trim().is_empty() {
+            return Err(ConformanceRunError::InvalidConfig(
+                "repro_metadata.first_seen_commit is required".to_string(),
+            ));
+        }
+        if self.repro_metadata.issue_tracker_project.trim().is_empty() {
+            return Err(ConformanceRunError::InvalidConfig(
+                "repro_metadata.issue_tracker_project is required".to_string(),
             ));
         }
         Ok(())
@@ -421,6 +651,7 @@ pub struct ConformanceRunResult {
     pub asset_manifest_hash: String,
     pub logs: Vec<ConformanceLogEvent>,
     pub summary: ConformanceRunSummary,
+    pub minimized_repros: Vec<ConformanceMinimizedReproArtifact>,
 }
 
 impl ConformanceRunResult {
@@ -472,6 +703,10 @@ pub enum ConformanceRunError {
         path: PathBuf,
         source: io::Error,
     },
+    ReproInvariant {
+        asset_id: String,
+        detail: String,
+    },
     Io(io::Error),
 }
 
@@ -501,6 +736,9 @@ impl fmt::Display for ConformanceRunError {
                 "failed to read expected output for `{asset_id}` at {}: {source}",
                 path.display()
             ),
+            Self::ReproInvariant { asset_id, detail } => {
+                write!(f, "repro invariant violated for `{asset_id}`: {detail}")
+            }
             Self::Io(err) => write!(f, "{err}"),
         }
     }
@@ -514,7 +752,7 @@ impl Error for ConformanceRunError {
             Self::InvalidFixture { source, .. } => Some(source),
             Self::ExpectedOutputIo { source, .. } => Some(source),
             Self::Io(err) => Some(err),
-            Self::InvalidConfig(_) => None,
+            Self::InvalidConfig(_) | Self::ReproInvariant { .. } => None,
         }
     }
 }
@@ -551,6 +789,7 @@ impl ConformanceRunner {
 
         let mut rng = DeterministicRng::seeded(self.config.seed);
         let mut logs = Vec::with_capacity(resolved.len());
+        let mut minimized_repros = Vec::new();
         let mut passed = 0usize;
         let mut failed = 0usize;
         let mut waived = 0usize;
@@ -603,10 +842,22 @@ impl ConformanceRunner {
                 )
             } else {
                 failed += 1;
+                let repro =
+                    self.build_minimized_repro_artifact(&run_id, &trace_id, &decision_id, asset, &fixture, &expected);
+                repro
+                    .verify_replay()
+                    .map_err(|err| ConformanceRunError::ReproInvariant {
+                        asset_id: asset.record.asset_id.clone(),
+                        detail: err.to_string(),
+                    })?;
+                let failure_id = repro.failure_id.clone();
+                minimized_repros.push(repro);
                 (
                     "fail".to_string(),
                     Some("FE-CONFORMANCE-MISMATCH".to_string()),
-                    Some("canonicalized output mismatch".to_string()),
+                    Some(format!(
+                        "canonicalized output mismatch; minimized repro `{failure_id}` generated"
+                    )),
                 )
             };
 
@@ -641,7 +892,126 @@ impl ConformanceRunner {
             asset_manifest_hash,
             logs,
             summary,
+            minimized_repros,
         })
+    }
+
+    fn build_minimized_repro_artifact(
+        &self,
+        run_id: &str,
+        trace_id: &str,
+        decision_id: &str,
+        asset: &ResolvedConformanceAsset,
+        fixture: &DonorFixture,
+        expected: &str,
+    ) -> ConformanceMinimizedReproArtifact {
+        let actual = canonicalize_conformance_output(&fixture.observed_output);
+        let original_delta = classify_conformance_delta(expected, &actual);
+        let original_failure_class = classify_failure_class(&original_delta);
+
+        let minimized = minimize_conformance_case(
+            &fixture.source,
+            expected,
+            &actual,
+            original_failure_class,
+        );
+        let minimized_delta =
+            classify_conformance_delta(&minimized.minimized_expected_output, &minimized.minimized_actual_output);
+        let minimized_failure_class = classify_failure_class(&minimized_delta);
+        let severity = severity_for_failure_class(minimized_failure_class);
+        let failure_id = build_failure_id(
+            asset.record.asset_id.as_str(),
+            self.config.seed,
+            &minimized.minimized_expected_output,
+            &minimized.minimized_actual_output,
+        );
+
+        let replay_relative_path = format!("minimized_repros/{failure_id}.json");
+        let replay_command = format!("franken-conformance replay {replay_relative_path}");
+        let verification_command = format!("{replay_command} --verify");
+        let verification_digest = repro_verification_digest(
+            self.config.seed,
+            &minimized.minimized_expected_output,
+            &minimized.minimized_actual_output,
+        );
+
+        let mut version_combination = self.config.repro_metadata.version_combination.clone();
+        version_combination
+            .entry("source_donor".to_string())
+            .or_insert_with(|| asset.record.source_donor.clone());
+        version_combination
+            .entry("manifest_schema".to_string())
+            .or_insert_with(|| ConformanceAssetManifest::CURRENT_SCHEMA.to_string());
+        version_combination
+            .entry("policy_id".to_string())
+            .or_insert_with(|| self.config.policy_id.clone());
+
+        let issue_id = self
+            .config
+            .repro_metadata
+            .issue_tracking_bead
+            .clone()
+            .unwrap_or_else(|| format!("auto/{}/{}", asset.record.asset_id, failure_id));
+
+        ConformanceMinimizedReproArtifact {
+            schema_version: ConformanceMinimizedReproArtifact::CURRENT_SCHEMA.to_string(),
+            artifact_id: format!("repro-{failure_id}"),
+            failure_id: failure_id.clone(),
+            boundary_surface: format!(
+                "{}/{}",
+                asset.record.source_donor, asset.record.semantic_domain
+            ),
+            failure_class: minimized_failure_class,
+            severity,
+            version_combination,
+            first_seen_commit: self.config.repro_metadata.first_seen_commit.clone(),
+            regression_commit: self.config.repro_metadata.regression_commit.clone(),
+            environment: ConformanceReproEnvironment {
+                locale: self.config.locale.clone(),
+                timezone: self.config.timezone.clone(),
+                gc_schedule: self.config.gc_schedule.clone(),
+                rust_toolchain: std::env::var("RUSTUP_TOOLCHAIN")
+                    .unwrap_or_else(|_| "unknown".to_string()),
+                os: std::env::consts::OS.to_string(),
+                arch: std::env::consts::ARCH.to_string(),
+            },
+            replay: ConformanceReplayContract {
+                deterministic_seed: self.config.seed,
+                replay_command,
+                verification_command,
+                verification_digest,
+            },
+            expected_output: minimized.minimized_expected_output.clone(),
+            actual_output: minimized.minimized_actual_output.clone(),
+            delta_classification: minimized_delta,
+            minimization: ConformanceMinimizationSummary {
+                preserved_failure_class: minimized_failure_class == original_failure_class,
+                ..minimized.summary
+            },
+            failing_vector: ConformanceMinimizedFailingVector {
+                asset_id: asset.record.asset_id.clone(),
+                source_donor: asset.record.source_donor.clone(),
+                semantic_domain: asset.record.semantic_domain.clone(),
+                normative_reference: asset.record.normative_reference.clone(),
+                fixture: DonorFixture {
+                    donor_harness: fixture.donor_harness.clone(),
+                    source: minimized.minimized_source,
+                    observed_output: minimized.minimized_actual_output,
+                },
+                expected_output: minimized.minimized_expected_output,
+            },
+            evidence_ledger_id: format!("conformance-ledger/{failure_id}"),
+            linked_run: ConformanceRunLinkage {
+                run_id: run_id.to_string(),
+                trace_id: trace_id.to_string(),
+                decision_id: decision_id.to_string(),
+                ci_run_id: self.config.repro_metadata.ci_run_id.clone(),
+            },
+            issue_tracker: ConformanceIssueLink {
+                tracker: self.config.repro_metadata.issue_tracker_project.clone(),
+                issue_id,
+            },
+        }
     }
 
     fn env_fingerprint(&self) -> String {

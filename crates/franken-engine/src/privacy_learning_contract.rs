@@ -35,6 +35,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::deterministic_serde::{self, CanonicalValue, SchemaHash};
 use crate::engine_object_id::{self, EngineObjectId, ObjectDomain, SchemaId};
+use crate::hash_tiers::ContentHash;
 use crate::security_epoch::SecurityEpoch;
 use crate::signature_preimage::{
     SIGNATURE_SENTINEL, Signature, SignaturePreimage, SigningKey, VerificationKey, sign_preimage,
@@ -546,6 +547,739 @@ impl DataRetentionPolicy {
 }
 
 // ---------------------------------------------------------------------------
+// Randomness transcript commitments
+// ---------------------------------------------------------------------------
+
+const RANDOMNESS_COMMITMENT_SCHEMA_DEF: &[u8] = b"FrankenEngine.RandomnessCommitment.v1";
+const RANDOMNESS_SNAPSHOT_SCHEMA_DEF: &[u8] = b"FrankenEngine.RandomnessSnapshotSummary.v1";
+const RANDOMNESS_MERKLE_DOMAIN: &[u8] = b"FrankenEngine.RandomnessMerkle.v1";
+const RANDOMNESS_PRNG_DOMAIN: &[u8] = b"FrankenEngine.RandomnessPrng.v1";
+const RANDOMNESS_ESCROW_XOR_MASK: [u8; 32] = [
+    0x42, 0x6F, 0x1A, 0xC9, 0x54, 0xD2, 0x31, 0x8E, 0x90, 0x17, 0xAB, 0xF0, 0x2D, 0x73, 0x4C, 0xE5,
+    0x19, 0xBE, 0x67, 0xA1, 0x08, 0xDA, 0x3F, 0x95, 0xEE, 0x21, 0x58, 0xC4, 0x7B, 0x0D, 0xB2, 0x6A,
+];
+
+fn hash_bytes(data: &[u8]) -> [u8; 32] {
+    *ContentHash::compute(data).as_bytes()
+}
+
+fn hash_optional(bytes: Option<[u8; 32]>) -> CanonicalValue {
+    match bytes {
+        Some(v) => CanonicalValue::Bytes(v.to_vec()),
+        None => CanonicalValue::Null,
+    }
+}
+
+fn xor_escrow(seed: &[u8]) -> Vec<u8> {
+    seed.iter()
+        .enumerate()
+        .map(|(idx, byte)| {
+            *byte ^ RANDOMNESS_ESCROW_XOR_MASK[idx % RANDOMNESS_ESCROW_XOR_MASK.len()]
+        })
+        .collect()
+}
+
+fn commitment_schema() -> SchemaHash {
+    SchemaHash::from_definition(RANDOMNESS_COMMITMENT_SCHEMA_DEF)
+}
+
+fn snapshot_schema() -> SchemaHash {
+    SchemaHash::from_definition(RANDOMNESS_SNAPSHOT_SCHEMA_DEF)
+}
+
+fn compute_merkle_root(hashes: &[[u8; 32]]) -> [u8; 32] {
+    if hashes.is_empty() {
+        return [0u8; 32];
+    }
+
+    let mut level: Vec<[u8; 32]> = hashes.to_vec();
+    while level.len() > 1 {
+        let mut next_level = Vec::with_capacity(level.len().div_ceil(2));
+        let mut idx = 0usize;
+        while idx < level.len() {
+            let left = level[idx];
+            let right = if idx + 1 < level.len() {
+                level[idx + 1]
+            } else {
+                level[idx]
+            };
+
+            let mut preimage = Vec::with_capacity(RANDOMNESS_MERKLE_DOMAIN.len() + 64);
+            preimage.extend_from_slice(RANDOMNESS_MERKLE_DOMAIN);
+            preimage.extend_from_slice(&left);
+            preimage.extend_from_slice(&right);
+            next_level.push(hash_bytes(&preimage));
+            idx += 2;
+        }
+        level = next_level;
+    }
+
+    level[0]
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum PrngAlgorithm {
+    /// Hash-counter PRNG with deterministic state transitions.
+    ChaCha20LikeCounter,
+}
+
+impl fmt::Display for PrngAlgorithm {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ChaCha20LikeCounter => write!(f, "chacha20_like_counter"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeterministicPrng {
+    phase_id: String,
+    algorithm: PrngAlgorithm,
+    seed: Vec<u8>,
+    draw_counter: u64,
+}
+
+impl DeterministicPrng {
+    pub fn new(
+        phase_id: &str,
+        algorithm: PrngAlgorithm,
+        seed: &[u8],
+    ) -> Result<Self, ContractError> {
+        if phase_id.trim().is_empty() {
+            return Err(ContractError::InvalidRandomnessTranscript {
+                detail: "phase_id must not be empty".to_string(),
+            });
+        }
+        if seed.is_empty() {
+            return Err(ContractError::InvalidRandomnessTranscript {
+                detail: "seed must not be empty".to_string(),
+            });
+        }
+        Ok(Self {
+            phase_id: phase_id.to_string(),
+            algorithm,
+            seed: seed.to_vec(),
+            draw_counter: 0,
+        })
+    }
+
+    pub fn draw_counter(&self) -> u64 {
+        self.draw_counter
+    }
+
+    pub fn next_u64(&mut self) -> u64 {
+        self.draw_counter += 1;
+        let mut preimage = Vec::with_capacity(
+            RANDOMNESS_PRNG_DOMAIN.len() + self.phase_id.len() + self.seed.len() + 16,
+        );
+        preimage.extend_from_slice(RANDOMNESS_PRNG_DOMAIN);
+        preimage.extend_from_slice(self.phase_id.as_bytes());
+        preimage.extend_from_slice(&(self.phase_id.len() as u32).to_be_bytes());
+        preimage.extend_from_slice(&self.draw_counter.to_be_bytes());
+        preimage.extend_from_slice(match self.algorithm {
+            PrngAlgorithm::ChaCha20LikeCounter => b"chacha20-like-counter",
+        });
+        preimage.extend_from_slice(&self.seed);
+
+        let block = hash_bytes(&preimage);
+        let mut out = [0u8; 8];
+        out.copy_from_slice(&block[..8]);
+        u64::from_be_bytes(out)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RandomnessCommitment {
+    pub phase_id: String,
+    pub seed_hash: [u8; 32],
+    pub prng_algorithm: PrngAlgorithm,
+    pub sequence_counter: u64,
+    pub epoch_id: SecurityEpoch,
+    pub previous_commitment_hash: Option<[u8; 32]>,
+    pub evidence_object_id: EngineObjectId,
+    pub commitment_hash: [u8; 32],
+    pub signature: Signature,
+}
+
+impl RandomnessCommitment {
+    fn canonical_view(
+        phase_id: &str,
+        seed_hash: [u8; 32],
+        prng_algorithm: PrngAlgorithm,
+        sequence_counter: u64,
+        epoch_id: SecurityEpoch,
+        previous_commitment_hash: Option<[u8; 32]>,
+        evidence_object_id: &EngineObjectId,
+    ) -> CanonicalValue {
+        let mut map = BTreeMap::new();
+        map.insert(
+            "epoch_id".to_string(),
+            CanonicalValue::U64(epoch_id.as_u64()),
+        );
+        map.insert(
+            "evidence_object_id".to_string(),
+            CanonicalValue::Bytes(evidence_object_id.as_bytes().to_vec()),
+        );
+        map.insert(
+            "phase_id".to_string(),
+            CanonicalValue::String(phase_id.to_string()),
+        );
+        map.insert(
+            "prng_algorithm".to_string(),
+            CanonicalValue::String(prng_algorithm.to_string()),
+        );
+        map.insert(
+            "previous_commitment_hash".to_string(),
+            hash_optional(previous_commitment_hash),
+        );
+        map.insert(
+            "seed_hash".to_string(),
+            CanonicalValue::Bytes(seed_hash.to_vec()),
+        );
+        map.insert(
+            "sequence_counter".to_string(),
+            CanonicalValue::U64(sequence_counter),
+        );
+        CanonicalValue::Map(map)
+    }
+
+    fn compute_hash_from_fields(
+        phase_id: &str,
+        seed_hash: [u8; 32],
+        prng_algorithm: PrngAlgorithm,
+        sequence_counter: u64,
+        epoch_id: SecurityEpoch,
+        previous_commitment_hash: Option<[u8; 32]>,
+        evidence_object_id: &EngineObjectId,
+    ) -> [u8; 32] {
+        let domain = ObjectDomain::EvidenceRecord.tag();
+        let schema = commitment_schema();
+        let value = Self::canonical_view(
+            phase_id,
+            seed_hash,
+            prng_algorithm,
+            sequence_counter,
+            epoch_id,
+            previous_commitment_hash,
+            evidence_object_id,
+        );
+        let encoded = deterministic_serde::encode_value(&value);
+        let mut preimage = Vec::with_capacity(domain.len() + 32 + encoded.len());
+        preimage.extend_from_slice(domain);
+        preimage.extend_from_slice(schema.as_bytes());
+        preimage.extend_from_slice(&encoded);
+        hash_bytes(&preimage)
+    }
+
+    fn recompute_hash(&self) -> [u8; 32] {
+        Self::compute_hash_from_fields(
+            &self.phase_id,
+            self.seed_hash,
+            self.prng_algorithm,
+            self.sequence_counter,
+            self.epoch_id,
+            self.previous_commitment_hash,
+            &self.evidence_object_id,
+        )
+    }
+
+    pub fn verify_integrity(
+        &self,
+        expected_sequence: u64,
+        expected_previous_hash: Option<[u8; 32]>,
+        verification_key: &VerificationKey,
+    ) -> Result<(), ContractError> {
+        if self.sequence_counter != expected_sequence {
+            return Err(ContractError::InvalidRandomnessTranscript {
+                detail: format!(
+                    "sequence mismatch: expected {}, got {}",
+                    expected_sequence, self.sequence_counter
+                ),
+            });
+        }
+        if self.previous_commitment_hash != expected_previous_hash {
+            return Err(ContractError::InvalidRandomnessTranscript {
+                detail: "previous commitment hash mismatch".to_string(),
+            });
+        }
+
+        let recomputed = self.recompute_hash();
+        if recomputed != self.commitment_hash {
+            return Err(ContractError::InvalidRandomnessTranscript {
+                detail: "commitment hash mismatch".to_string(),
+            });
+        }
+
+        verify_signature(verification_key, &self.commitment_hash, &self.signature).map_err(
+            |e| ContractError::SignatureInvalid {
+                detail: format!("randomness commitment signature invalid: {e}"),
+            },
+        )?;
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RandomnessSnapshotSummary {
+    pub epoch_id: SecurityEpoch,
+    pub start_sequence_counter: u64,
+    pub end_sequence_counter: u64,
+    pub commitment_count: u64,
+    pub model_snapshot_id: String,
+    pub policy_snapshot_id: String,
+    pub previous_snapshot_root: Option<[u8; 32]>,
+    pub merkle_root: [u8; 32],
+    pub summary_hash: [u8; 32],
+    pub signature: Signature,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RandomnessSnapshotHashInput {
+    epoch_id: SecurityEpoch,
+    start_sequence_counter: u64,
+    end_sequence_counter: u64,
+    commitment_count: u64,
+    model_snapshot_id: String,
+    policy_snapshot_id: String,
+    previous_snapshot_root: Option<[u8; 32]>,
+    merkle_root: [u8; 32],
+}
+
+impl RandomnessSnapshotHashInput {
+    fn from_summary(summary: &RandomnessSnapshotSummary) -> Self {
+        Self {
+            epoch_id: summary.epoch_id,
+            start_sequence_counter: summary.start_sequence_counter,
+            end_sequence_counter: summary.end_sequence_counter,
+            commitment_count: summary.commitment_count,
+            model_snapshot_id: summary.model_snapshot_id.clone(),
+            policy_snapshot_id: summary.policy_snapshot_id.clone(),
+            previous_snapshot_root: summary.previous_snapshot_root,
+            merkle_root: summary.merkle_root,
+        }
+    }
+}
+
+impl RandomnessSnapshotSummary {
+    fn canonical_view(input: &RandomnessSnapshotHashInput) -> CanonicalValue {
+        let mut map = BTreeMap::new();
+        map.insert(
+            "commitment_count".to_string(),
+            CanonicalValue::U64(input.commitment_count),
+        );
+        map.insert(
+            "end_sequence_counter".to_string(),
+            CanonicalValue::U64(input.end_sequence_counter),
+        );
+        map.insert(
+            "epoch_id".to_string(),
+            CanonicalValue::U64(input.epoch_id.as_u64()),
+        );
+        map.insert(
+            "merkle_root".to_string(),
+            CanonicalValue::Bytes(input.merkle_root.to_vec()),
+        );
+        map.insert(
+            "model_snapshot_id".to_string(),
+            CanonicalValue::String(input.model_snapshot_id.clone()),
+        );
+        map.insert(
+            "policy_snapshot_id".to_string(),
+            CanonicalValue::String(input.policy_snapshot_id.clone()),
+        );
+        map.insert(
+            "previous_snapshot_root".to_string(),
+            hash_optional(input.previous_snapshot_root),
+        );
+        map.insert(
+            "start_sequence_counter".to_string(),
+            CanonicalValue::U64(input.start_sequence_counter),
+        );
+        CanonicalValue::Map(map)
+    }
+
+    fn compute_hash_from_fields(input: &RandomnessSnapshotHashInput) -> [u8; 32] {
+        let domain = ObjectDomain::EvidenceRecord.tag();
+        let schema = snapshot_schema();
+        let value = Self::canonical_view(input);
+        let encoded = deterministic_serde::encode_value(&value);
+        let mut preimage = Vec::with_capacity(domain.len() + 32 + encoded.len());
+        preimage.extend_from_slice(domain);
+        preimage.extend_from_slice(schema.as_bytes());
+        preimage.extend_from_slice(&encoded);
+        hash_bytes(&preimage)
+    }
+
+    fn recompute_hash(&self) -> [u8; 32] {
+        let input = RandomnessSnapshotHashInput::from_summary(self);
+        Self::compute_hash_from_fields(&input)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SeedEscrowAccessEvent {
+    pub principal: String,
+    pub reason: String,
+    pub approved: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SeedEscrowRecord {
+    pub phase_id: String,
+    pub epoch_id: SecurityEpoch,
+    pub seed_hash: [u8; 32],
+    pub encrypted_seed: Vec<u8>,
+    pub authorized_auditors: BTreeSet<String>,
+    pub access_log: Vec<SeedEscrowAccessEvent>,
+}
+
+impl SeedEscrowRecord {
+    pub fn create(
+        phase_id: &str,
+        epoch_id: SecurityEpoch,
+        seed: &[u8],
+        authorized_auditors: BTreeSet<String>,
+    ) -> Result<Self, ContractError> {
+        if phase_id.trim().is_empty() {
+            return Err(ContractError::InvalidRandomnessTranscript {
+                detail: "seed escrow phase_id must not be empty".to_string(),
+            });
+        }
+        if seed.is_empty() {
+            return Err(ContractError::InvalidRandomnessTranscript {
+                detail: "seed escrow seed must not be empty".to_string(),
+            });
+        }
+
+        Ok(Self {
+            phase_id: phase_id.to_string(),
+            epoch_id,
+            seed_hash: hash_bytes(seed),
+            encrypted_seed: xor_escrow(seed),
+            authorized_auditors,
+            access_log: Vec::new(),
+        })
+    }
+
+    pub fn open_for_audit(
+        &mut self,
+        principal: &str,
+        reason: &str,
+    ) -> Result<Vec<u8>, ContractError> {
+        let allowed = self.authorized_auditors.contains(principal);
+        self.access_log.push(SeedEscrowAccessEvent {
+            principal: principal.to_string(),
+            reason: reason.to_string(),
+            approved: allowed,
+        });
+
+        if !allowed {
+            return Err(ContractError::SeedEscrowAccessDenied {
+                principal: principal.to_string(),
+                phase_id: self.phase_id.clone(),
+            });
+        }
+
+        let seed = xor_escrow(&self.encrypted_seed);
+        let recomputed = hash_bytes(&seed);
+        if recomputed != self.seed_hash {
+            return Err(ContractError::InvalidRandomnessTranscript {
+                detail: format!("escrow seed hash mismatch for phase {}", self.phase_id),
+            });
+        }
+
+        Ok(seed)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReplayOutput {
+    pub phase_id: String,
+    pub sequence_counter: u64,
+    pub outputs: Vec<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RandomnessTranscript {
+    pub commitments: Vec<RandomnessCommitment>,
+    pub snapshot_summaries: Vec<RandomnessSnapshotSummary>,
+}
+
+impl RandomnessTranscript {
+    pub fn new() -> Self {
+        Self {
+            commitments: Vec::new(),
+            snapshot_summaries: Vec::new(),
+        }
+    }
+
+    pub fn commit_seed(
+        &mut self,
+        signing_key: &SigningKey,
+        phase_id: &str,
+        seed: &[u8],
+        prng_algorithm: PrngAlgorithm,
+        epoch_id: SecurityEpoch,
+        evidence_object_id: EngineObjectId,
+    ) -> Result<&RandomnessCommitment, ContractError> {
+        if phase_id.trim().is_empty() {
+            return Err(ContractError::InvalidRandomnessTranscript {
+                detail: "phase_id must not be empty".to_string(),
+            });
+        }
+        if seed.is_empty() {
+            return Err(ContractError::InvalidRandomnessTranscript {
+                detail: "seed must not be empty".to_string(),
+            });
+        }
+
+        let seed_hash = hash_bytes(seed);
+        let sequence_counter = self.commitments.len() as u64 + 1;
+        let previous_commitment_hash = self.commitments.last().map(|entry| entry.commitment_hash);
+        let commitment_hash = RandomnessCommitment::compute_hash_from_fields(
+            phase_id,
+            seed_hash,
+            prng_algorithm,
+            sequence_counter,
+            epoch_id,
+            previous_commitment_hash,
+            &evidence_object_id,
+        );
+
+        let signature = sign_preimage(signing_key, &commitment_hash).map_err(|e| {
+            ContractError::SignatureFailed {
+                detail: format!("failed to sign randomness commitment: {e}"),
+            }
+        })?;
+
+        self.commitments.push(RandomnessCommitment {
+            phase_id: phase_id.to_string(),
+            seed_hash,
+            prng_algorithm,
+            sequence_counter,
+            epoch_id,
+            previous_commitment_hash,
+            evidence_object_id,
+            commitment_hash,
+            signature,
+        });
+
+        Ok(self
+            .commitments
+            .last()
+            .expect("commitment was just pushed and must exist"))
+    }
+
+    pub fn verify_chain(&self, verification_key: &VerificationKey) -> Result<(), ContractError> {
+        let mut expected_sequence = 1u64;
+        let mut previous_hash: Option<[u8; 32]> = None;
+        for commitment in &self.commitments {
+            commitment.verify_integrity(expected_sequence, previous_hash, verification_key)?;
+            previous_hash = Some(commitment.commitment_hash);
+            expected_sequence += 1;
+        }
+        Ok(())
+    }
+
+    pub fn emit_snapshot_summary(
+        &mut self,
+        signing_key: &SigningKey,
+        model_snapshot_id: &str,
+        policy_snapshot_id: &str,
+    ) -> Result<&RandomnessSnapshotSummary, ContractError> {
+        if model_snapshot_id.trim().is_empty() || policy_snapshot_id.trim().is_empty() {
+            return Err(ContractError::InvalidRandomnessTranscript {
+                detail: "snapshot identifiers must not be empty".to_string(),
+            });
+        }
+        if self.commitments.is_empty() {
+            return Err(ContractError::InvalidRandomnessTranscript {
+                detail: "cannot emit snapshot summary for empty transcript".to_string(),
+            });
+        }
+
+        let start_sequence_counter = match self.snapshot_summaries.last() {
+            Some(last) => last.end_sequence_counter + 1,
+            None => 1,
+        };
+        let end_sequence_counter = self
+            .commitments
+            .last()
+            .map(|c| c.sequence_counter)
+            .unwrap_or(0);
+        if end_sequence_counter < start_sequence_counter {
+            return Err(ContractError::InvalidRandomnessTranscript {
+                detail: "no new commitments since the previous snapshot".to_string(),
+            });
+        }
+
+        let start_idx = (start_sequence_counter - 1) as usize;
+        let end_idx = end_sequence_counter as usize;
+        let slice = &self.commitments[start_idx..end_idx];
+        let leaves: Vec<[u8; 32]> = slice.iter().map(|c| c.commitment_hash).collect();
+        let merkle_root = compute_merkle_root(&leaves);
+        let commitment_count = leaves.len() as u64;
+        let previous_snapshot_root = self.snapshot_summaries.last().map(|s| s.merkle_root);
+        let epoch_id = slice[0].epoch_id;
+
+        let hash_input = RandomnessSnapshotHashInput {
+            epoch_id,
+            start_sequence_counter,
+            end_sequence_counter,
+            commitment_count,
+            model_snapshot_id: model_snapshot_id.to_string(),
+            policy_snapshot_id: policy_snapshot_id.to_string(),
+            previous_snapshot_root,
+            merkle_root,
+        };
+        let summary_hash = RandomnessSnapshotSummary::compute_hash_from_fields(&hash_input);
+        let signature = sign_preimage(signing_key, &summary_hash).map_err(|e| {
+            ContractError::SignatureFailed {
+                detail: format!("failed to sign randomness snapshot summary: {e}"),
+            }
+        })?;
+
+        self.snapshot_summaries.push(RandomnessSnapshotSummary {
+            epoch_id,
+            start_sequence_counter,
+            end_sequence_counter,
+            commitment_count,
+            model_snapshot_id: model_snapshot_id.to_string(),
+            policy_snapshot_id: policy_snapshot_id.to_string(),
+            previous_snapshot_root,
+            merkle_root,
+            summary_hash,
+            signature,
+        });
+
+        Ok(self
+            .snapshot_summaries
+            .last()
+            .expect("snapshot summary was just pushed and must exist"))
+    }
+
+    pub fn verify_snapshot_summaries(
+        &self,
+        verification_key: &VerificationKey,
+    ) -> Result<(), ContractError> {
+        let mut expected_start = 1u64;
+        let mut previous_root: Option<[u8; 32]> = None;
+        for summary in &self.snapshot_summaries {
+            if summary.start_sequence_counter != expected_start {
+                return Err(ContractError::InvalidRandomnessTranscript {
+                    detail: format!(
+                        "snapshot start sequence mismatch: expected {}, got {}",
+                        expected_start, summary.start_sequence_counter
+                    ),
+                });
+            }
+            if summary.end_sequence_counter < summary.start_sequence_counter {
+                return Err(ContractError::InvalidRandomnessTranscript {
+                    detail: "snapshot end sequence is before start sequence".to_string(),
+                });
+            }
+            if summary.previous_snapshot_root != previous_root {
+                return Err(ContractError::InvalidRandomnessTranscript {
+                    detail: "snapshot previous root mismatch".to_string(),
+                });
+            }
+            let recomputed = summary.recompute_hash();
+            if recomputed != summary.summary_hash {
+                return Err(ContractError::InvalidRandomnessTranscript {
+                    detail: "snapshot summary hash mismatch".to_string(),
+                });
+            }
+            verify_signature(verification_key, &summary.summary_hash, &summary.signature).map_err(
+                |e| ContractError::SignatureInvalid {
+                    detail: format!("randomness snapshot summary signature invalid: {e}"),
+                },
+            )?;
+
+            let start_idx = (summary.start_sequence_counter - 1) as usize;
+            let end_idx = summary.end_sequence_counter as usize;
+            if end_idx > self.commitments.len() {
+                return Err(ContractError::InvalidRandomnessTranscript {
+                    detail: "snapshot references commitments beyond transcript length".to_string(),
+                });
+            }
+            let slice = &self.commitments[start_idx..end_idx];
+            if slice.is_empty() {
+                return Err(ContractError::InvalidRandomnessTranscript {
+                    detail: "snapshot must contain at least one commitment".to_string(),
+                });
+            }
+            let leaves: Vec<[u8; 32]> = slice.iter().map(|c| c.commitment_hash).collect();
+            let recomputed_root = compute_merkle_root(&leaves);
+            if recomputed_root != summary.merkle_root {
+                return Err(ContractError::InvalidRandomnessTranscript {
+                    detail: "snapshot Merkle root mismatch".to_string(),
+                });
+            }
+            if summary.commitment_count != leaves.len() as u64 {
+                return Err(ContractError::InvalidRandomnessTranscript {
+                    detail: "snapshot commitment count mismatch".to_string(),
+                });
+            }
+
+            expected_start = summary.end_sequence_counter + 1;
+            previous_root = Some(summary.merkle_root);
+        }
+
+        Ok(())
+    }
+
+    pub fn replay_with_escrowed_seeds(
+        &self,
+        verification_key: &VerificationKey,
+        escrow_records: &mut [SeedEscrowRecord],
+        auditor: &str,
+        draws_per_phase: usize,
+    ) -> Result<Vec<ReplayOutput>, ContractError> {
+        self.verify_chain(verification_key)?;
+        self.verify_snapshot_summaries(verification_key)?;
+
+        let mut outputs = Vec::with_capacity(self.commitments.len());
+        for commitment in &self.commitments {
+            let escrow = escrow_records
+                .iter_mut()
+                .find(|record| {
+                    record.phase_id == commitment.phase_id && record.epoch_id == commitment.epoch_id
+                })
+                .ok_or_else(|| ContractError::MissingSeedEscrow {
+                    phase_id: commitment.phase_id.clone(),
+                    epoch_id: commitment.epoch_id,
+                })?;
+
+            let seed = escrow.open_for_audit(auditor, "deterministic-replay")?;
+            let seed_hash = hash_bytes(&seed);
+            if seed_hash != commitment.seed_hash {
+                return Err(ContractError::SeedHashMismatch {
+                    phase_id: commitment.phase_id.clone(),
+                });
+            }
+
+            let mut prng =
+                DeterministicPrng::new(&commitment.phase_id, commitment.prng_algorithm, &seed)?;
+            let phase_outputs = (0..draws_per_phase).map(|_| prng.next_u64()).collect();
+            outputs.push(ReplayOutput {
+                phase_id: commitment.phase_id.clone(),
+                sequence_counter: commitment.sequence_counter,
+                outputs: phase_outputs,
+            });
+        }
+
+        Ok(outputs)
+    }
+}
+
+impl Default for RandomnessTranscript {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ---------------------------------------------------------------------------
 // The contract itself
 // ---------------------------------------------------------------------------
 
@@ -946,6 +1680,20 @@ pub enum ContractError {
     InvalidRetention {
         detail: String,
     },
+    InvalidRandomnessTranscript {
+        detail: String,
+    },
+    MissingSeedEscrow {
+        phase_id: String,
+        epoch_id: SecurityEpoch,
+    },
+    SeedEscrowAccessDenied {
+        principal: String,
+        phase_id: String,
+    },
+    SeedHashMismatch {
+        phase_id: String,
+    },
     NoAuthorizedParticipants,
     IdDerivationFailed {
         detail: String,
@@ -991,6 +1739,23 @@ impl fmt::Display for ContractError {
                 write!(f, "invalid aggregation: {detail}")
             }
             Self::InvalidRetention { detail } => write!(f, "invalid retention: {detail}"),
+            Self::InvalidRandomnessTranscript { detail } => {
+                write!(f, "invalid randomness transcript: {detail}")
+            }
+            Self::MissingSeedEscrow { phase_id, epoch_id } => write!(
+                f,
+                "missing seed escrow record for phase {phase_id} in epoch {epoch_id}"
+            ),
+            Self::SeedEscrowAccessDenied {
+                principal,
+                phase_id,
+            } => write!(
+                f,
+                "seed escrow access denied for principal {principal} on phase {phase_id}"
+            ),
+            Self::SeedHashMismatch { phase_id } => {
+                write!(f, "seed hash mismatch for phase {phase_id}")
+            }
             Self::NoAuthorizedParticipants => write!(f, "no authorized participants"),
             Self::IdDerivationFailed { detail } => write!(f, "id derivation failed: {detail}"),
             Self::SignatureFailed { detail } => write!(f, "signature failed: {detail}"),
@@ -1163,6 +1928,10 @@ mod tests {
     fn create_test_contract() -> PrivacyLearningContract {
         PrivacyLearningContract::create_signed(&governance_signing_key(), test_contract_input())
             .expect("create test contract")
+    }
+
+    fn evidence_id(byte: u8) -> EngineObjectId {
+        EngineObjectId([byte; 32])
     }
 
     // -------------------------------------------------------------------
@@ -1655,6 +2424,240 @@ mod tests {
         assert!(matches!(
             ret.validate(),
             Err(ContractError::InvalidRetention { .. })
+        ));
+    }
+
+    // -------------------------------------------------------------------
+    // Randomness transcript commitment tests
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn randomness_commitment_chain_and_sequence_verified() {
+        let mut transcript = RandomnessTranscript::new();
+        let sk = governance_signing_key();
+        let vk = governance_vk();
+        let epoch = SecurityEpoch::from_raw(7);
+
+        let c1 = transcript
+            .commit_seed(
+                &sk,
+                "noise-addition",
+                b"seed-noise-01",
+                PrngAlgorithm::ChaCha20LikeCounter,
+                epoch,
+                evidence_id(0x11),
+            )
+            .expect("first commitment")
+            .clone();
+        let c2 = transcript
+            .commit_seed(
+                &sk,
+                "dropout-selection",
+                b"seed-dropout-02",
+                PrngAlgorithm::ChaCha20LikeCounter,
+                epoch,
+                evidence_id(0x12),
+            )
+            .expect("second commitment")
+            .clone();
+
+        assert_eq!(c1.sequence_counter, 1);
+        assert_eq!(c2.sequence_counter, 2);
+        assert_eq!(c2.previous_commitment_hash, Some(c1.commitment_hash));
+
+        transcript.verify_chain(&vk).expect("valid chain");
+    }
+
+    #[test]
+    fn randomness_commitment_tamper_detected() {
+        let mut transcript = RandomnessTranscript::new();
+        let sk = governance_signing_key();
+        let vk = governance_vk();
+        let epoch = SecurityEpoch::from_raw(9);
+
+        transcript
+            .commit_seed(
+                &sk,
+                "random-sampling",
+                b"sampling-seed",
+                PrngAlgorithm::ChaCha20LikeCounter,
+                epoch,
+                evidence_id(0x21),
+            )
+            .expect("commitment");
+        transcript
+            .commit_seed(
+                &sk,
+                "noise-addition",
+                b"noise-seed",
+                PrngAlgorithm::ChaCha20LikeCounter,
+                epoch,
+                evidence_id(0x22),
+            )
+            .expect("commitment");
+
+        // Tamper with linkage: this must fail deterministic chain verification.
+        transcript.commitments[1].previous_commitment_hash = None;
+        assert!(matches!(
+            transcript.verify_chain(&vk),
+            Err(ContractError::InvalidRandomnessTranscript { .. })
+        ));
+    }
+
+    #[test]
+    fn randomness_snapshot_merkle_root_and_signature_verified() {
+        let mut transcript = RandomnessTranscript::new();
+        let sk = governance_signing_key();
+        let vk = governance_vk();
+        let epoch = SecurityEpoch::from_raw(11);
+
+        transcript
+            .commit_seed(
+                &sk,
+                "phase-a",
+                b"phase-a-seed",
+                PrngAlgorithm::ChaCha20LikeCounter,
+                epoch,
+                evidence_id(0x31),
+            )
+            .expect("commitment");
+        transcript
+            .commit_seed(
+                &sk,
+                "phase-b",
+                b"phase-b-seed",
+                PrngAlgorithm::ChaCha20LikeCounter,
+                epoch,
+                evidence_id(0x32),
+            )
+            .expect("commitment");
+
+        transcript
+            .emit_snapshot_summary(&sk, "model-snap-001", "policy-snap-001")
+            .expect("summary");
+        transcript
+            .verify_snapshot_summaries(&vk)
+            .expect("summary verifies");
+
+        // Tamper with a committed hash and ensure snapshot verification fails.
+        transcript.commitments[0].commitment_hash = [0xFF; 32];
+        assert!(matches!(
+            transcript.verify_snapshot_summaries(&vk),
+            Err(ContractError::InvalidRandomnessTranscript { .. })
+        ));
+    }
+
+    #[test]
+    fn deterministic_prng_is_reproducible() {
+        let mut p1 = DeterministicPrng::new(
+            "phase-prng",
+            PrngAlgorithm::ChaCha20LikeCounter,
+            b"deterministic-seed",
+        )
+        .expect("prng");
+        let mut p2 = DeterministicPrng::new(
+            "phase-prng",
+            PrngAlgorithm::ChaCha20LikeCounter,
+            b"deterministic-seed",
+        )
+        .expect("prng");
+
+        let seq1: Vec<u64> = (0..8).map(|_| p1.next_u64()).collect();
+        let seq2: Vec<u64> = (0..8).map(|_| p2.next_u64()).collect();
+        assert_eq!(seq1, seq2);
+    }
+
+    #[test]
+    fn randomness_replay_with_escrow_is_deterministic() {
+        let mut transcript = RandomnessTranscript::new();
+        let sk = governance_signing_key();
+        let vk = governance_vk();
+        let epoch = SecurityEpoch::from_raw(13);
+
+        transcript
+            .commit_seed(
+                &sk,
+                "noise-phase",
+                b"noise-phase-seed",
+                PrngAlgorithm::ChaCha20LikeCounter,
+                epoch,
+                evidence_id(0x41),
+            )
+            .expect("commitment");
+        transcript
+            .emit_snapshot_summary(&sk, "model-snap-002", "policy-snap-002")
+            .expect("summary");
+
+        let mut auditors = BTreeSet::new();
+        auditors.insert("audit-bot".to_string());
+        let escrow1 =
+            SeedEscrowRecord::create("noise-phase", epoch, b"noise-phase-seed", auditors.clone())
+                .expect("escrow");
+        let escrow2 = SeedEscrowRecord::create("noise-phase", epoch, b"noise-phase-seed", auditors)
+            .expect("escrow");
+
+        let mut records_a = vec![escrow1];
+        let mut records_b = vec![escrow2];
+        let out_a = transcript
+            .replay_with_escrowed_seeds(&vk, &mut records_a, "audit-bot", 5)
+            .expect("replay A");
+        let out_b = transcript
+            .replay_with_escrowed_seeds(&vk, &mut records_b, "audit-bot", 5)
+            .expect("replay B");
+
+        assert_eq!(out_a, out_b);
+        assert_eq!(out_a.len(), 1);
+        assert_eq!(out_a[0].outputs.len(), 5);
+    }
+
+    #[test]
+    fn randomness_replay_rejects_seed_hash_mismatch() {
+        let mut transcript = RandomnessTranscript::new();
+        let sk = governance_signing_key();
+        let vk = governance_vk();
+        let epoch = SecurityEpoch::from_raw(15);
+
+        transcript
+            .commit_seed(
+                &sk,
+                "sampling-phase",
+                b"sampling-phase-seed",
+                PrngAlgorithm::ChaCha20LikeCounter,
+                epoch,
+                evidence_id(0x51),
+            )
+            .expect("commitment");
+        transcript
+            .emit_snapshot_summary(&sk, "model-snap-003", "policy-snap-003")
+            .expect("summary");
+
+        let mut auditors = BTreeSet::new();
+        auditors.insert("audit-bot".to_string());
+        let mismatch = SeedEscrowRecord::create("sampling-phase", epoch, b"wrong-seed", auditors)
+            .expect("escrow");
+        let mut records = vec![mismatch];
+
+        assert!(matches!(
+            transcript.replay_with_escrowed_seeds(&vk, &mut records, "audit-bot", 3),
+            Err(ContractError::SeedHashMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn seed_escrow_denies_unauthorized_principal() {
+        let mut auditors = BTreeSet::new();
+        auditors.insert("allowed-auditor".to_string());
+        let mut escrow = SeedEscrowRecord::create(
+            "dropout-phase",
+            SecurityEpoch::from_raw(17),
+            b"dropout-seed",
+            auditors,
+        )
+        .expect("escrow");
+
+        assert!(matches!(
+            escrow.open_for_audit("untrusted-user", "investigation"),
+            Err(ContractError::SeedEscrowAccessDenied { .. })
         ));
     }
 

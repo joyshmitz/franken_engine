@@ -10,6 +10,60 @@ fn context() -> EventContext {
     EventContext::new("trace-it", "decision-it", "policy-it").expect("context")
 }
 
+fn all_store_kinds() -> [StoreKind; 8] {
+    [
+        StoreKind::ReplayIndex,
+        StoreKind::EvidenceIndex,
+        StoreKind::BenchmarkLedger,
+        StoreKind::PolicyCache,
+        StoreKind::PlasWitness,
+        StoreKind::ReplacementLineage,
+        StoreKind::IfcProvenance,
+        StoreKind::SpecializationIndex,
+    ]
+}
+
+fn seed_store<A: StorageAdapter>(adapter: &mut A, store: StoreKind, context: &EventContext) {
+    let mut metadata = BTreeMap::new();
+    metadata.insert("zone".to_string(), "prod".to_string());
+    metadata.insert("store".to_string(), store.as_str().to_string());
+
+    adapter
+        .put(
+            store,
+            format!("{}/z", store.as_str()),
+            vec![2, 2],
+            metadata.clone(),
+            context,
+        )
+        .expect("seed z");
+    adapter
+        .put(
+            store,
+            format!("{}/a", store.as_str()),
+            vec![1, 1],
+            metadata,
+            context,
+        )
+        .expect("seed a");
+}
+
+fn snapshot_all<A: StorageAdapter>(
+    adapter: &mut A,
+    context: &EventContext,
+) -> Vec<(StoreKind, Vec<StoreRecord>)> {
+    all_store_kinds()
+        .iter()
+        .copied()
+        .map(|store| {
+            let rows = adapter
+                .query(store, &StoreQuery::default(), context)
+                .expect("snapshot query");
+            (store, rows)
+        })
+        .collect()
+}
+
 #[test]
 fn in_memory_adapter_supports_crud_batch_and_deterministic_queries() {
     let mut adapter = InMemoryStorageAdapter::new();
@@ -142,6 +196,7 @@ struct MockFrankensqlite {
     stores: BTreeMap<StoreKind, BTreeMap<String, StoreRecord>>,
     fail_wal_profile: bool,
     fail_put: bool,
+    reverse_query_order: bool,
 }
 
 impl FrankensqliteBackend for MockFrankensqlite {
@@ -219,6 +274,9 @@ impl FrankensqliteBackend for MockFrankensqlite {
                 }
                 out.push(record.clone());
             }
+        }
+        if self.reverse_query_order {
+            out.reverse();
         }
         if let Some(limit) = query.limit {
             out.truncate(limit);
@@ -331,4 +389,140 @@ fn frankensqlite_adapter_rejects_multi_step_migration() {
         .expect_err("multi-step migration must fail");
 
     assert_eq!(err.code(), "FE-STOR-0006");
+}
+
+#[test]
+fn frankensqlite_query_results_are_canonicalized_before_limit() {
+    let backend = MockFrankensqlite {
+        reverse_query_order: true,
+        ..MockFrankensqlite::default()
+    };
+    let mut adapter = FrankensqliteStorageAdapter::new(backend).expect("adapter init");
+    let context = context();
+
+    adapter
+        .put(
+            StoreKind::ReplayIndex,
+            "trace/3".to_string(),
+            vec![3],
+            BTreeMap::new(),
+            &context,
+        )
+        .expect("put trace/3");
+    adapter
+        .put(
+            StoreKind::ReplayIndex,
+            "trace/1".to_string(),
+            vec![1],
+            BTreeMap::new(),
+            &context,
+        )
+        .expect("put trace/1");
+    adapter
+        .put(
+            StoreKind::ReplayIndex,
+            "trace/2".to_string(),
+            vec![2],
+            BTreeMap::new(),
+            &context,
+        )
+        .expect("put trace/2");
+
+    let rows = adapter
+        .query(
+            StoreKind::ReplayIndex,
+            &StoreQuery {
+                key_prefix: Some("trace/".to_string()),
+                metadata_filters: BTreeMap::new(),
+                limit: Some(2),
+            },
+            &context,
+        )
+        .expect("query");
+
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].key, "trace/1");
+    assert_eq!(rows[1].key, "trace/2");
+}
+
+#[test]
+fn frankensqlite_replay_state_is_deterministic_across_backend_orderings() {
+    let mut canonical_adapter = FrankensqliteStorageAdapter::new(MockFrankensqlite::default())
+        .expect("canonical adapter init");
+    let mut reverse_adapter = FrankensqliteStorageAdapter::new(MockFrankensqlite {
+        reverse_query_order: true,
+        ..MockFrankensqlite::default()
+    })
+    .expect("reverse adapter init");
+    let context = context();
+
+    for store in all_store_kinds() {
+        seed_store(&mut canonical_adapter, store, &context);
+        seed_store(&mut reverse_adapter, store, &context);
+    }
+
+    let canonical_snapshot = snapshot_all(&mut canonical_adapter, &context);
+    let reverse_snapshot = snapshot_all(&mut reverse_adapter, &context);
+    assert_eq!(canonical_snapshot, reverse_snapshot);
+}
+
+#[test]
+fn frankensqlite_migration_replay_receipts_match_from_identical_start_state() {
+    let mut canonical_adapter = FrankensqliteStorageAdapter::new(MockFrankensqlite::default())
+        .expect("canonical adapter init");
+    let mut reverse_adapter = FrankensqliteStorageAdapter::new(MockFrankensqlite {
+        reverse_query_order: true,
+        ..MockFrankensqlite::default()
+    })
+    .expect("reverse adapter init");
+    let context = context();
+
+    for store in all_store_kinds() {
+        seed_store(&mut canonical_adapter, store, &context);
+        seed_store(&mut reverse_adapter, store, &context);
+    }
+
+    let canonical_receipt = canonical_adapter
+        .migrate_to(STORAGE_SCHEMA_VERSION + 1)
+        .expect("canonical migrate");
+    let reverse_receipt = reverse_adapter
+        .migrate_to(STORAGE_SCHEMA_VERSION + 1)
+        .expect("reverse migrate");
+    assert_eq!(canonical_receipt, reverse_receipt);
+
+    let canonical_snapshot = snapshot_all(&mut canonical_adapter, &context);
+    let reverse_snapshot = snapshot_all(&mut reverse_adapter, &context);
+    assert_eq!(canonical_snapshot, reverse_snapshot);
+}
+
+#[test]
+fn wal_order_variants_preserve_deterministic_query_results() {
+    let mut wal_normal =
+        FrankensqliteStorageAdapter::new(MockFrankensqlite::default()).expect("normal init");
+    let mut wal_checkpoint_variant = FrankensqliteStorageAdapter::new(MockFrankensqlite {
+        reverse_query_order: true,
+        ..MockFrankensqlite::default()
+    })
+    .expect("checkpoint init");
+    let context = context();
+
+    seed_store(&mut wal_normal, StoreKind::EvidenceIndex, &context);
+    seed_store(
+        &mut wal_checkpoint_variant,
+        StoreKind::EvidenceIndex,
+        &context,
+    );
+
+    let query = StoreQuery {
+        key_prefix: Some("evidence_index/".to_string()),
+        metadata_filters: BTreeMap::new(),
+        limit: Some(2),
+    };
+    let normal = wal_normal
+        .query(StoreKind::EvidenceIndex, &query, &context)
+        .expect("normal query");
+    let checkpoint = wal_checkpoint_variant
+        .query(StoreKind::EvidenceIndex, &query, &context)
+        .expect("checkpoint query");
+    assert_eq!(normal, checkpoint);
 }
