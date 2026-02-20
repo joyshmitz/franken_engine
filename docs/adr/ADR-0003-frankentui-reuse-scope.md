@@ -61,9 +61,13 @@ When `/dp/frankentui` cannot reasonably satisfy a required surface:
 
 1. Open a tracking bead with explicit mismatch and alternatives.
 2. Reference this ADR and describe exact surface scope.
-3. Document divergence impact and migration path back to canonical substrate.
-4. Obtain maintainer approval before merge.
-5. Keep exception time-bounded and reviewed in the next integration cycle.
+3. Add an exception artifact at `docs/adr/exceptions/ADR-EXCEPTION-TUI-<id>.md`.
+4. Exception artifact must include:
+   - `Status: Approved`
+   - one or more `Scope:` lines (`dependency:<crate>` and/or `module:<path-or-prefix*>`)
+   - tracking bead, expiry date, and migration path back to canonical substrate.
+5. Obtain maintainer approval before merge.
+6. Keep exception time-bounded and reviewed in the next integration cycle.
 
 ## Consequences
 

@@ -107,3 +107,20 @@ When `/dp/frankensqlite` cannot reasonably satisfy a required persistence path:
 - New direct `rusqlite`/SQLite dependency additions trigger ADR/exception review.
 - Storage adapter work (`bd-89l2`) and persistence inventory (`bd-1ps3`) align to this boundary.
 - Every new store documents `raw frankensqlite` vs `sqlmodel_rust` choice with rationale (`bd-2d21`).
+
+## Operator Verification (Storage Adapter Contract)
+
+For `bd-89l2` storage-adapter verification, use:
+
+```bash
+scripts/run_storage_adapter_suite.sh ci
+```
+
+This runner is `rch`-backed and emits reproducibility artifacts under
+`artifacts/storage_adapter/<timestamp>/`:
+
+- `run_manifest.json`: toolchain/seed/commands/commit metadata
+- `commands.txt`: exact command list executed
+
+If replay validation is required, rerun with the same `STORAGE_ADAPTER_SEED`
+value and compare the emitted manifest and command log.
