@@ -473,23 +473,23 @@ impl CheckpointBuilder {
             }
         } else {
             // Non-genesis must have strictly increasing sequence.
-            if let Some(prev_seq) = self.prev_seq {
-                if self.checkpoint_seq <= prev_seq {
-                    return Err(CheckpointError::NonMonotonicSequence {
-                        prev_seq,
-                        current_seq: self.checkpoint_seq,
-                    });
-                }
+            if let Some(prev_seq) = self.prev_seq
+                && self.checkpoint_seq <= prev_seq
+            {
+                return Err(CheckpointError::NonMonotonicSequence {
+                    prev_seq,
+                    current_seq: self.checkpoint_seq,
+                });
             }
 
             // Epoch must not regress.
-            if let Some(prev_epoch) = self.prev_epoch {
-                if self.epoch_id < prev_epoch {
-                    return Err(CheckpointError::EpochRegression {
-                        prev_epoch,
-                        current_epoch: self.epoch_id,
-                    });
-                }
+            if let Some(prev_epoch) = self.prev_epoch
+                && self.epoch_id < prev_epoch
+            {
+                return Err(CheckpointError::EpochRegression {
+                    prev_epoch,
+                    current_epoch: self.epoch_id,
+                });
             }
         }
 
@@ -679,7 +679,7 @@ mod tests {
     #[test]
     fn genesis_id_is_deterministic() {
         let sk = make_sk(1);
-        let cp1 = build_genesis(&[sk.clone()]);
+        let cp1 = build_genesis(std::slice::from_ref(&sk));
         let cp2 = build_genesis(&[sk]);
         assert_eq!(cp1.checkpoint_id, cp2.checkpoint_id);
     }
@@ -698,7 +698,7 @@ mod tests {
     #[test]
     fn chain_checkpoint_created() {
         let sk = make_sk(1);
-        let genesis = build_genesis(&[sk.clone()]);
+        let genesis = build_genesis(std::slice::from_ref(&sk));
 
         let cp1 = CheckpointBuilder::after(
             &genesis,
@@ -719,7 +719,7 @@ mod tests {
     #[test]
     fn three_link_chain() {
         let sk = make_sk(1);
-        let genesis = build_genesis(&[sk.clone()]);
+        let genesis = build_genesis(std::slice::from_ref(&sk));
 
         let cp1 = CheckpointBuilder::after(
             &genesis,
@@ -729,7 +729,7 @@ mod tests {
             "test-zone",
         )
         .add_policy_head(make_policy_head(PolicyType::RuntimeExecution, 2))
-        .build(&[sk.clone()])
+        .build(std::slice::from_ref(&sk))
         .unwrap();
 
         let cp2 = CheckpointBuilder::after(
@@ -752,7 +752,7 @@ mod tests {
     #[test]
     fn non_monotonic_sequence_rejected() {
         let sk = make_sk(1);
-        let genesis = build_genesis(&[sk.clone()]);
+        let genesis = build_genesis(std::slice::from_ref(&sk));
 
         let err = CheckpointBuilder::after(
             &genesis,
@@ -827,7 +827,7 @@ mod tests {
     #[test]
     fn epoch_transition_allowed() {
         let sk = make_sk(1);
-        let genesis = build_genesis(&[sk.clone()]);
+        let genesis = build_genesis(std::slice::from_ref(&sk));
 
         let cp1 = CheckpointBuilder::after(
             &genesis,
@@ -853,7 +853,7 @@ mod tests {
             "test-zone",
         )
         .add_policy_head(make_policy_head(PolicyType::RuntimeExecution, 1))
-        .build(&[sk.clone()])
+        .build(std::slice::from_ref(&sk))
         .unwrap();
 
         let err = CheckpointBuilder::after(
@@ -875,7 +875,7 @@ mod tests {
     #[test]
     fn chain_linkage_verified() {
         let sk = make_sk(1);
-        let genesis = build_genesis(&[sk.clone()]);
+        let genesis = build_genesis(std::slice::from_ref(&sk));
         let cp1 = CheckpointBuilder::after(
             &genesis,
             1,
@@ -893,7 +893,7 @@ mod tests {
     #[test]
     fn chain_linkage_broken_detected() {
         let sk = make_sk(1);
-        let genesis = build_genesis(&[sk.clone()]);
+        let genesis = build_genesis(std::slice::from_ref(&sk));
 
         // Build two independent chains from genesis.
         let cp1 = CheckpointBuilder::after(
@@ -904,7 +904,7 @@ mod tests {
             "test-zone",
         )
         .add_policy_head(make_policy_head(PolicyType::RuntimeExecution, 2))
-        .build(&[sk.clone()])
+        .build(std::slice::from_ref(&sk))
         .unwrap();
 
         let cp2 = CheckpointBuilder::after(
@@ -994,7 +994,7 @@ mod tests {
     #[test]
     fn same_inputs_same_preimage() {
         let sk = make_sk(1);
-        let cp1 = build_genesis(&[sk.clone()]);
+        let cp1 = build_genesis(std::slice::from_ref(&sk));
         let cp2 = build_genesis(&[sk]);
         assert_eq!(cp1.preimage_bytes(), cp2.preimage_bytes());
     }

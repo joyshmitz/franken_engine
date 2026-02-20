@@ -1,0 +1,1156 @@
+use std::fmt;
+
+use serde::{Deserialize, Serialize};
+
+use crate::alloc_domain::AllocDomainError;
+use crate::anti_entropy::ReconcileError;
+use crate::bulkhead::BulkheadError;
+use crate::cancel_mask::MaskError;
+use crate::canonical_encoding::NonCanonicalError;
+use crate::capability::CapabilityDenied;
+use crate::capability_token::TokenError;
+use crate::checkpoint_frontier::FrontierError;
+use crate::deterministic_serde::SerdeError;
+use crate::engine_object_id::IdError;
+use crate::epoch_barrier::BarrierError;
+use crate::eprocess_guardrail::GuardrailError;
+use crate::evidence_contract::ContractValidationError;
+use crate::evidence_ledger::LedgerError;
+use crate::evidence_ordering::OrderingViolation;
+use crate::fork_detection::ForkError;
+use crate::gc::GcError;
+use crate::idempotency_key::IdempotencyError;
+use crate::key_derivation::KeyDerivationError;
+use crate::lease_tracker::LeaseError;
+use crate::marker_stream::ChainIntegrityError;
+use crate::mmr_proof::ProofError;
+use crate::monitor_scheduler::SchedulerError;
+use crate::obligation_channel::ObligationError;
+use crate::policy_checkpoint::CheckpointError;
+use crate::policy_controller::PolicyControllerError;
+use crate::proof_schema::ProofSchemaError;
+use crate::recovery_artifact::VerificationError;
+use crate::regime_detector::DetectorError;
+use crate::region_lifecycle::PhaseOrderViolation;
+use crate::remote_capability_gate::{RemoteCapabilityDenied, RemoteTransportError};
+use crate::remote_computation_registry::RegistryError;
+use crate::saga_orchestrator::SagaError;
+use crate::scheduler_lane::LaneError;
+use crate::security_epoch::{EpochValidationError, MonotonicityViolation};
+use crate::signature_preimage::SignatureError;
+use crate::slot_registry::SlotRegistryError;
+use crate::sorted_multisig::MultiSigError;
+use crate::{EvalError, EvalErrorCode};
+
+pub const ERROR_CODE_REGISTRY_VERSION: u32 = 1;
+pub const ERROR_CODE_COMPATIBILITY_POLICY: &str =
+    "append-only: assigned codes are permanent, never reused, and may only be marked deprecated";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ErrorSeverity {
+    Critical,
+    Error,
+    Warning,
+    Info,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ErrorSubsystem {
+    SerializationEncoding,
+    IdentityAuthentication,
+    CapabilityAuthorization,
+    CheckpointPolicy,
+    Revocation,
+    SessionChannel,
+    ZoneScope,
+    AuditObservability,
+    LifecycleMigration,
+    Reserved,
+}
+
+impl ErrorSubsystem {
+    pub const fn includes(self, numeric: u16) -> bool {
+        let (start, end) = self.range();
+        numeric >= start && numeric <= end
+    }
+
+    pub const fn range(self) -> (u16, u16) {
+        match self {
+            Self::SerializationEncoding => (1, 999),
+            Self::IdentityAuthentication => (1000, 1999),
+            Self::CapabilityAuthorization => (2000, 2999),
+            Self::CheckpointPolicy => (3000, 3999),
+            Self::Revocation => (4000, 4999),
+            Self::SessionChannel => (5000, 5999),
+            Self::ZoneScope => (6000, 6999),
+            Self::AuditObservability => (7000, 7999),
+            Self::LifecycleMigration => (8000, 8999),
+            Self::Reserved => (9000, 9999),
+        }
+    }
+}
+
+#[repr(u16)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum FrankenErrorCode {
+    NonCanonicalEncodingError = 1,
+    DeterministicSerdeError = 2,
+
+    EngineObjectIdError = 1000,
+    SignatureVerificationError = 1001,
+    MultiSigVerificationError = 1002,
+    KeyDerivationFailure = 1003,
+
+    CapabilityDeniedError = 2000,
+    CapabilityTokenValidationError = 2001,
+    RemoteCapabilityDeniedError = 2002,
+    RemoteTransportExecutionError = 2003,
+    ComputationRegistryError = 2004,
+    CancelMaskPolicyError = 2005,
+
+    PolicyCheckpointValidationError = 3000,
+    CheckpointFrontierEnforcementError = 3001,
+    ForkDetectionError = 3002,
+    EpochWindowValidationError = 3003,
+    EpochBarrierTransitionError = 3004,
+    PolicyControllerDecisionError = 3005,
+    AntiEntropyReconciliationError = 3006,
+
+    RevocationChainIntegrityError = 4000,
+
+    LeaseLifecycleError = 5000,
+    ObligationChannelError = 5001,
+    IdempotencyWorkflowError = 5002,
+    SchedulerLaneAdmissionError = 5003,
+    SagaExecutionError = 5004,
+    BulkheadIsolationError = 5005,
+    MonitorSchedulerError = 5006,
+
+    AllocationDomainBudgetError = 6000,
+    RegionPhaseOrderError = 6001,
+    SlotRegistryAuthorityError = 6002,
+    GarbageCollectionError = 6003,
+
+    EvidenceContractError = 7000,
+    EvidenceLedgerError = 7001,
+    EvidenceOrderingError = 7002,
+    MarkerStreamIntegrityError = 7003,
+    MerkleProofVerificationError = 7004,
+    RecoveryArtifactVerificationError = 7005,
+    ProofSchemaValidationError = 7006,
+    EprocessGuardrailError = 7007,
+    RegimeDetectionError = 7008,
+    EvalRuntimeError = 7009,
+
+    EpochMonotonicityViolation = 8000,
+}
+
+pub const ALL_ERROR_CODES: &[FrankenErrorCode] = &[
+    FrankenErrorCode::NonCanonicalEncodingError,
+    FrankenErrorCode::DeterministicSerdeError,
+    FrankenErrorCode::EngineObjectIdError,
+    FrankenErrorCode::SignatureVerificationError,
+    FrankenErrorCode::MultiSigVerificationError,
+    FrankenErrorCode::KeyDerivationFailure,
+    FrankenErrorCode::CapabilityDeniedError,
+    FrankenErrorCode::CapabilityTokenValidationError,
+    FrankenErrorCode::RemoteCapabilityDeniedError,
+    FrankenErrorCode::RemoteTransportExecutionError,
+    FrankenErrorCode::ComputationRegistryError,
+    FrankenErrorCode::CancelMaskPolicyError,
+    FrankenErrorCode::PolicyCheckpointValidationError,
+    FrankenErrorCode::CheckpointFrontierEnforcementError,
+    FrankenErrorCode::ForkDetectionError,
+    FrankenErrorCode::EpochWindowValidationError,
+    FrankenErrorCode::EpochBarrierTransitionError,
+    FrankenErrorCode::PolicyControllerDecisionError,
+    FrankenErrorCode::AntiEntropyReconciliationError,
+    FrankenErrorCode::RevocationChainIntegrityError,
+    FrankenErrorCode::LeaseLifecycleError,
+    FrankenErrorCode::ObligationChannelError,
+    FrankenErrorCode::IdempotencyWorkflowError,
+    FrankenErrorCode::SchedulerLaneAdmissionError,
+    FrankenErrorCode::SagaExecutionError,
+    FrankenErrorCode::BulkheadIsolationError,
+    FrankenErrorCode::MonitorSchedulerError,
+    FrankenErrorCode::AllocationDomainBudgetError,
+    FrankenErrorCode::RegionPhaseOrderError,
+    FrankenErrorCode::SlotRegistryAuthorityError,
+    FrankenErrorCode::GarbageCollectionError,
+    FrankenErrorCode::EvidenceContractError,
+    FrankenErrorCode::EvidenceLedgerError,
+    FrankenErrorCode::EvidenceOrderingError,
+    FrankenErrorCode::MarkerStreamIntegrityError,
+    FrankenErrorCode::MerkleProofVerificationError,
+    FrankenErrorCode::RecoveryArtifactVerificationError,
+    FrankenErrorCode::ProofSchemaValidationError,
+    FrankenErrorCode::EprocessGuardrailError,
+    FrankenErrorCode::RegimeDetectionError,
+    FrankenErrorCode::EvalRuntimeError,
+    FrankenErrorCode::EpochMonotonicityViolation,
+];
+
+impl FrankenErrorCode {
+    pub const fn numeric(self) -> u16 {
+        self as u16
+    }
+
+    pub fn stable_code(self) -> String {
+        format!("FE-{:04}", self.numeric())
+    }
+
+    pub const fn subsystem(self) -> ErrorSubsystem {
+        match self.numeric() {
+            1..=999 => ErrorSubsystem::SerializationEncoding,
+            1000..=1999 => ErrorSubsystem::IdentityAuthentication,
+            2000..=2999 => ErrorSubsystem::CapabilityAuthorization,
+            3000..=3999 => ErrorSubsystem::CheckpointPolicy,
+            4000..=4999 => ErrorSubsystem::Revocation,
+            5000..=5999 => ErrorSubsystem::SessionChannel,
+            6000..=6999 => ErrorSubsystem::ZoneScope,
+            7000..=7999 => ErrorSubsystem::AuditObservability,
+            8000..=8999 => ErrorSubsystem::LifecycleMigration,
+            _ => ErrorSubsystem::Reserved,
+        }
+    }
+
+    pub const fn severity(self) -> ErrorSeverity {
+        match self {
+            Self::PolicyCheckpointValidationError
+            | Self::CheckpointFrontierEnforcementError
+            | Self::ForkDetectionError
+            | Self::RevocationChainIntegrityError
+            | Self::EpochMonotonicityViolation => ErrorSeverity::Critical,
+            _ => ErrorSeverity::Error,
+        }
+    }
+
+    pub const fn description(self) -> &'static str {
+        match self {
+            Self::NonCanonicalEncodingError => {
+                "Canonical encoding guard rejected non-canonical input."
+            }
+            Self::DeterministicSerdeError => {
+                "Deterministic serializer/deserializer rejected invalid or unstable payload."
+            }
+            Self::EngineObjectIdError => {
+                "Engine object identity derivation or verification failed."
+            }
+            Self::SignatureVerificationError => {
+                "Signature preimage generation or verification failed."
+            }
+            Self::MultiSigVerificationError => {
+                "Multi-signature validation failed due to ordering, quorum, or signature errors."
+            }
+            Self::KeyDerivationFailure => "Key derivation request failed validation or execution.",
+            Self::CapabilityDeniedError => {
+                "Capability check denied operation due to insufficient privileges."
+            }
+            Self::CapabilityTokenValidationError => {
+                "Capability token validation failed for signature, audience, temporal, or binding checks."
+            }
+            Self::RemoteCapabilityDeniedError => {
+                "Remote operation denied by capability gate policy."
+            }
+            Self::RemoteTransportExecutionError => {
+                "Remote transport execution failed due to connectivity, timeout, or remote failure."
+            }
+            Self::ComputationRegistryError => {
+                "Remote computation registry rejected registration, lookup, or version/capability checks."
+            }
+            Self::CancelMaskPolicyError => {
+                "Cancellation mask policy rejected operation or lifecycle transition."
+            }
+            Self::PolicyCheckpointValidationError => {
+                "Policy checkpoint validation failed for chain, quorum, sequence, or epoch invariants."
+            }
+            Self::CheckpointFrontierEnforcementError => {
+                "Checkpoint frontier enforcement rejected rollback, linkage, quorum, or persistence operation."
+            }
+            Self::ForkDetectionError => {
+                "Fork detection pipeline identified divergence or safe-mode policy violation."
+            }
+            Self::EpochWindowValidationError => "Security epoch validity window check failed.",
+            Self::EpochBarrierTransitionError => {
+                "Epoch barrier transition failed due to monotonicity, guard drain, or transition state."
+            }
+            Self::PolicyControllerDecisionError => {
+                "Policy controller could not produce or emit a valid decision artifact."
+            }
+            Self::AntiEntropyReconciliationError => {
+                "Anti-entropy reconciliation failed verification, peel, or epoch consistency checks."
+            }
+            Self::RevocationChainIntegrityError => {
+                "Revocation chain integrity or sequencing verification failed."
+            }
+            Self::LeaseLifecycleError => {
+                "Lease lifecycle operation failed due to state, epoch, or input constraints."
+            }
+            Self::ObligationChannelError => {
+                "Obligation channel operation failed due to lookup, state, or backpressure constraints."
+            }
+            Self::IdempotencyWorkflowError => {
+                "Idempotency workflow rejected key lifecycle transition or retry policy."
+            }
+            Self::SchedulerLaneAdmissionError => {
+                "Scheduler lane admission or lookup failed due to lane policy or queue state."
+            }
+            Self::SagaExecutionError => {
+                "Saga orchestration rejected transition, compensation, or lifecycle request."
+            }
+            Self::BulkheadIsolationError => {
+                "Bulkhead isolation system rejected permit, queue, or configuration request."
+            }
+            Self::MonitorSchedulerError => {
+                "Monitor scheduler rejected probe registration or retrieval request."
+            }
+            Self::AllocationDomainBudgetError => {
+                "Allocation domain budget accounting rejected request or detected overflow."
+            }
+            Self::RegionPhaseOrderError => {
+                "Region lifecycle phase transition violated strict ordering contract."
+            }
+            Self::SlotRegistryAuthorityError => {
+                "Slot registry authority or transition invariants were violated."
+            }
+            Self::GarbageCollectionError => {
+                "GC subsystem rejected heap/object operation or propagated allocation-domain error."
+            }
+            Self::EvidenceContractError => {
+                "Evidence contract failed semantic validation requirements."
+            }
+            Self::EvidenceLedgerError => {
+                "Evidence ledger rejected entry due to schema, version, or identity constraints."
+            }
+            Self::EvidenceOrderingError => {
+                "Evidence ordering validation failed canonical ordering or bounded-size invariants."
+            }
+            Self::MarkerStreamIntegrityError => {
+                "Marker stream integrity verification failed linkage or monotonicity checks."
+            }
+            Self::MerkleProofVerificationError => {
+                "Merkle proof verification failed root, structure, or consistency checks."
+            }
+            Self::RecoveryArtifactVerificationError => {
+                "Recovery artifact verification failed content identity, signature, or proof requirements."
+            }
+            Self::ProofSchemaValidationError => {
+                "Proof schema artifact failed version, signature, authorization, or epoch checks."
+            }
+            Self::EprocessGuardrailError => {
+                "E-process guardrail rejected update/reset due to state or authorization constraints."
+            }
+            Self::RegimeDetectionError => {
+                "Regime detector rejected observation or metric-stream configuration."
+            }
+            Self::EvalRuntimeError => "Runtime eval lane rejected request due to invalid input.",
+            Self::EpochMonotonicityViolation => {
+                "Security epoch monotonicity violation detected (attempted regression)."
+            }
+        }
+    }
+
+    pub const fn operator_action(self) -> &'static str {
+        match self {
+            Self::NonCanonicalEncodingError => {
+                "Reject payload, log trace_id, and re-emit canonical bytes from trusted source."
+            }
+            Self::DeterministicSerdeError => {
+                "Inspect schema hash and payload source; replay with deterministic fixtures."
+            }
+            Self::EngineObjectIdError => {
+                "Recompute canonical preimage and verify schema/domain bindings before retry."
+            }
+            Self::SignatureVerificationError => {
+                "Rotate/verify keys and re-check canonical unsigned view before accepting input."
+            }
+            Self::MultiSigVerificationError => {
+                "Audit signer ordering/quorum policy and re-run signature verification pipeline."
+            }
+            Self::KeyDerivationFailure => {
+                "Validate key material, epoch binding, and requested output parameters."
+            }
+            Self::CapabilityDeniedError => {
+                "Review caller profile and grant only minimal required capabilities."
+            }
+            Self::CapabilityTokenValidationError => {
+                "Reissue token with correct audience/time/checkpoint bindings and verify signer trust."
+            }
+            Self::RemoteCapabilityDeniedError => {
+                "Review remote operation policy and elevate capability only via approved process."
+            }
+            Self::RemoteTransportExecutionError => {
+                "Inspect endpoint health, timeout budgets, and remote service error telemetry."
+            }
+            Self::ComputationRegistryError => {
+                "Re-validate computation metadata, schema versions, and registration policy inputs."
+            }
+            Self::CancelMaskPolicyError => {
+                "Correct operation allowlist configuration and ensure mask lifecycle is valid."
+            }
+            Self::PolicyCheckpointValidationError => {
+                "Enter safe mode, halt advancement, and investigate quorum/chain/epoch evidence."
+            }
+            Self::CheckpointFrontierEnforcementError => {
+                "Reject offered checkpoint, retain frontier, and audit linkage/quorum proofs."
+            }
+            Self::ForkDetectionError => {
+                "Keep safe mode active until incident is acknowledged and resolved with signed evidence."
+            }
+            Self::EpochWindowValidationError => {
+                "Verify epoch clocks and artifact validity bounds; reject future/expired artifacts."
+            }
+            Self::EpochBarrierTransitionError => {
+                "Drain outstanding guards and retry transition with strictly increasing epoch."
+            }
+            Self::PolicyControllerDecisionError => {
+                "Restore valid action/loss configuration and confirm evidence emission path health."
+            }
+            Self::AntiEntropyReconciliationError => {
+                "Re-run reconciliation with matched IBLT sizes and validated remote snapshot epoch."
+            }
+            Self::RevocationChainIntegrityError => {
+                "Treat as security incident; freeze writes and rebuild head from trusted chain evidence."
+            }
+            Self::LeaseLifecycleError => {
+                "Inspect lease state machine, epoch, and TTL input before retrying operation."
+            }
+            Self::ObligationChannelError => {
+                "Resolve or drain pending obligations and verify caller lifecycle sequencing."
+            }
+            Self::IdempotencyWorkflowError => {
+                "Check key epoch/retry policy and ensure idempotency record lifecycle is consistent."
+            }
+            Self::SchedulerLaneAdmissionError => {
+                "Fix lane declaration/trace metadata and relieve queue pressure before resubmission."
+            }
+            Self::SagaExecutionError => {
+                "Inspect saga state transitions and compensation logs; resume from deterministic checkpoint."
+            }
+            Self::BulkheadIsolationError => {
+                "Tune bulkhead capacity/queue configuration and inspect permit lifecycle traces."
+            }
+            Self::MonitorSchedulerError => {
+                "Repair probe registration catalog and verify deterministic probe identifiers."
+            }
+            Self::AllocationDomainBudgetError => {
+                "Audit domain budget allocation and adjust limits without violating ceilings."
+            }
+            Self::RegionPhaseOrderError => {
+                "Enforce correct region phase ordering and retry transition from valid state."
+            }
+            Self::SlotRegistryAuthorityError => {
+                "Review slot authority graph and deny broadening transitions without proof."
+            }
+            Self::GarbageCollectionError => {
+                "Verify heap registration/object ownership and resolve allocation-domain root cause."
+            }
+            Self::EvidenceContractError => {
+                "Correct evidence contract fields/tiering and rerun validation before publication."
+            }
+            Self::EvidenceLedgerError => {
+                "Repair ledger entry schema/version mismatch and deduplicate conflicting entry IDs."
+            }
+            Self::EvidenceOrderingError => {
+                "Canonicalize and bound evidence lists before signing or persisting artifacts."
+            }
+            Self::MarkerStreamIntegrityError => {
+                "Stop chain consumption and rebuild marker stream from last trusted checkpoint."
+            }
+            Self::MerkleProofVerificationError => {
+                "Regenerate proof against trusted root and verify stream consistency history."
+            }
+            Self::RecoveryArtifactVerificationError => {
+                "Reject artifact and collect full proof bundle/signature set for forensic replay."
+            }
+            Self::ProofSchemaValidationError => {
+                "Correct schema version/signer role/epoch data and regenerate proof artifact."
+            }
+            Self::EprocessGuardrailError => {
+                "Investigate guardrail state and require authorized reset evidence before change."
+            }
+            Self::RegimeDetectionError => {
+                "Validate observation bounds and metric-stream configuration before ingestion."
+            }
+            Self::EvalRuntimeError => {
+                "Reject invalid source input and require non-empty canonical source text."
+            }
+            Self::EpochMonotonicityViolation => {
+                "Escalate incident, block regressive epoch writes, and recover from trusted snapshot."
+            }
+        }
+    }
+
+    pub const fn deprecated(self) -> bool {
+        false
+    }
+
+    pub fn from_numeric(numeric: u16) -> Option<Self> {
+        ALL_ERROR_CODES
+            .iter()
+            .copied()
+            .find(|candidate| candidate.numeric() == numeric)
+    }
+
+    pub fn to_registry_entry(self) -> ErrorCodeEntry {
+        ErrorCodeEntry {
+            code: self.stable_code(),
+            numeric: self.numeric(),
+            subsystem: self.subsystem(),
+            severity: self.severity(),
+            description: self.description().to_string(),
+            operator_action: self.operator_action().to_string(),
+            deprecated: self.deprecated(),
+        }
+    }
+}
+
+impl fmt::Display for FrankenErrorCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.stable_code())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ErrorCodeEntry {
+    pub code: String,
+    pub numeric: u16,
+    pub subsystem: ErrorSubsystem,
+    pub severity: ErrorSeverity,
+    pub description: String,
+    pub operator_action: String,
+    pub deprecated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ErrorCodeRegistry {
+    pub version: u32,
+    pub compatibility_policy: String,
+    pub entries: Vec<ErrorCodeEntry>,
+}
+
+pub fn error_code_registry() -> ErrorCodeRegistry {
+    ErrorCodeRegistry {
+        version: ERROR_CODE_REGISTRY_VERSION,
+        compatibility_policy: ERROR_CODE_COMPATIBILITY_POLICY.to_string(),
+        entries: ALL_ERROR_CODES
+            .iter()
+            .copied()
+            .map(FrankenErrorCode::to_registry_entry)
+            .collect(),
+    }
+}
+
+pub trait HasErrorCode {
+    fn error_code(&self) -> FrankenErrorCode;
+}
+
+impl HasErrorCode for NonCanonicalError {
+    fn error_code(&self) -> FrankenErrorCode {
+        FrankenErrorCode::NonCanonicalEncodingError
+    }
+}
+
+impl HasErrorCode for SerdeError {
+    fn error_code(&self) -> FrankenErrorCode {
+        match self {
+            SerdeError::SchemaMismatch { .. }
+            | SerdeError::UnknownSchema { .. }
+            | SerdeError::BufferTooShort { .. }
+            | SerdeError::InvalidTag { .. }
+            | SerdeError::InvalidUtf8 { .. }
+            | SerdeError::DuplicateKey { .. }
+            | SerdeError::NonLexicographicKeys { .. }
+            | SerdeError::TrailingBytes { .. } => FrankenErrorCode::DeterministicSerdeError,
+        }
+    }
+}
+
+impl HasErrorCode for IdError {
+    fn error_code(&self) -> FrankenErrorCode {
+        match self {
+            IdError::EmptyCanonicalBytes
+            | IdError::IdMismatch { .. }
+            | IdError::NonCanonicalInput { .. }
+            | IdError::InvalidHexLength { .. }
+            | IdError::InvalidHexChar { .. } => FrankenErrorCode::EngineObjectIdError,
+        }
+    }
+}
+
+impl HasErrorCode for SignatureError {
+    fn error_code(&self) -> FrankenErrorCode {
+        match self {
+            SignatureError::VerificationFailed { .. }
+            | SignatureError::NonCanonicalObject { .. }
+            | SignatureError::PreimageError { .. }
+            | SignatureError::InvalidSigningKey
+            | SignatureError::InvalidVerificationKey => {
+                FrankenErrorCode::SignatureVerificationError
+            }
+        }
+    }
+}
+
+impl HasErrorCode for MultiSigError {
+    fn error_code(&self) -> FrankenErrorCode {
+        match self {
+            MultiSigError::UnsortedSignatureArray { .. }
+            | MultiSigError::DuplicateSignerKey { .. }
+            | MultiSigError::QuorumNotMet { .. }
+            | MultiSigError::EmptyArray
+            | MultiSigError::ZeroQuorumThreshold
+            | MultiSigError::ThresholdExceedsSignerCount { .. }
+            | MultiSigError::SignatureError { .. } => FrankenErrorCode::MultiSigVerificationError,
+        }
+    }
+}
+
+impl HasErrorCode for KeyDerivationError {
+    fn error_code(&self) -> FrankenErrorCode {
+        match self {
+            KeyDerivationError::EmptyMasterKey
+            | KeyDerivationError::ZeroOutputLength
+            | KeyDerivationError::OutputTooLong { .. }
+            | KeyDerivationError::EpochMismatch { .. }
+            | KeyDerivationError::DerivationFailed { .. } => FrankenErrorCode::KeyDerivationFailure,
+        }
+    }
+}
+
+impl HasErrorCode for CapabilityDenied {
+    fn error_code(&self) -> FrankenErrorCode {
+        FrankenErrorCode::CapabilityDeniedError
+    }
+}
+
+impl HasErrorCode for TokenError {
+    fn error_code(&self) -> FrankenErrorCode {
+        match self {
+            TokenError::SignatureInvalid { .. }
+            | TokenError::NonCanonical { .. }
+            | TokenError::AudienceRejected { .. }
+            | TokenError::NotYetValid { .. }
+            | TokenError::Expired { .. }
+            | TokenError::CheckpointBindingFailed { .. }
+            | TokenError::RevocationFreshnessStale { .. }
+            | TokenError::UnsupportedVersion { .. }
+            | TokenError::IdDerivationFailed { .. }
+            | TokenError::InvertedTemporalWindow { .. }
+            | TokenError::EmptyCapabilities => FrankenErrorCode::CapabilityTokenValidationError,
+        }
+    }
+}
+
+impl HasErrorCode for RemoteCapabilityDenied {
+    fn error_code(&self) -> FrankenErrorCode {
+        FrankenErrorCode::RemoteCapabilityDeniedError
+    }
+}
+
+impl HasErrorCode for RemoteTransportError {
+    fn error_code(&self) -> FrankenErrorCode {
+        match self {
+            RemoteTransportError::ConnectionFailed { .. }
+            | RemoteTransportError::RemoteError { .. }
+            | RemoteTransportError::Timeout { .. }
+            | RemoteTransportError::CapabilityDenied(_) => {
+                FrankenErrorCode::RemoteTransportExecutionError
+            }
+        }
+    }
+}
+
+impl HasErrorCode for RegistryError {
+    fn error_code(&self) -> FrankenErrorCode {
+        match self {
+            RegistryError::InvalidComputationName { .. }
+            | RegistryError::DuplicateRegistration { .. }
+            | RegistryError::ComputationNotFound { .. }
+            | RegistryError::SchemaValidationFailed { .. }
+            | RegistryError::CapabilityDenied { .. }
+            | RegistryError::VersionIncompatible { .. }
+            | RegistryError::ClosureRejected { .. }
+            | RegistryError::HotRegistrationDenied { .. } => {
+                FrankenErrorCode::ComputationRegistryError
+            }
+        }
+    }
+}
+
+impl HasErrorCode for MaskError {
+    fn error_code(&self) -> FrankenErrorCode {
+        match self {
+            MaskError::NestingDenied
+            | MaskError::OperationNotAllowed { .. }
+            | MaskError::AlreadyReleased => FrankenErrorCode::CancelMaskPolicyError,
+        }
+    }
+}
+
+impl HasErrorCode for CheckpointError {
+    fn error_code(&self) -> FrankenErrorCode {
+        match self {
+            CheckpointError::GenesisMustHaveNoPredecessor
+            | CheckpointError::MissingPredecessor
+            | CheckpointError::NonMonotonicSequence { .. }
+            | CheckpointError::GenesisSequenceNotZero { .. }
+            | CheckpointError::ChainLinkageBroken { .. }
+            | CheckpointError::EmptyPolicyHeads
+            | CheckpointError::QuorumNotMet { .. }
+            | CheckpointError::DuplicatePolicyType { .. }
+            | CheckpointError::IdDerivationFailed { .. }
+            | CheckpointError::EpochRegression { .. } => {
+                FrankenErrorCode::PolicyCheckpointValidationError
+            }
+        }
+    }
+}
+
+impl HasErrorCode for FrontierError {
+    fn error_code(&self) -> FrankenErrorCode {
+        match self {
+            FrontierError::RollbackRejected { .. }
+            | FrontierError::DuplicateCheckpoint { .. }
+            | FrontierError::ChainLinkageFailure { .. }
+            | FrontierError::QuorumFailure { .. }
+            | FrontierError::UnknownZone { .. }
+            | FrontierError::EpochRegression { .. }
+            | FrontierError::PersistenceFailed { .. } => {
+                FrankenErrorCode::CheckpointFrontierEnforcementError
+            }
+        }
+    }
+}
+
+impl HasErrorCode for ForkError {
+    fn error_code(&self) -> FrankenErrorCode {
+        match self {
+            ForkError::ForkDetected { .. }
+            | ForkError::SafeModeActive { .. }
+            | ForkError::AcknowledgmentRequired { .. }
+            | ForkError::InvalidResolution { .. }
+            | ForkError::PersistenceFailed { .. } => FrankenErrorCode::ForkDetectionError,
+        }
+    }
+}
+
+impl HasErrorCode for EpochValidationError {
+    fn error_code(&self) -> FrankenErrorCode {
+        match self {
+            EpochValidationError::NotYetValid { .. }
+            | EpochValidationError::Expired { .. }
+            | EpochValidationError::FutureArtifact { .. }
+            | EpochValidationError::InvertedWindow { .. } => {
+                FrankenErrorCode::EpochWindowValidationError
+            }
+        }
+    }
+}
+
+impl HasErrorCode for BarrierError {
+    fn error_code(&self) -> FrankenErrorCode {
+        match self {
+            BarrierError::EpochTransitioning { .. }
+            | BarrierError::TransitionAlreadyInProgress { .. }
+            | BarrierError::DrainTimeout { .. }
+            | BarrierError::NoTransitionInProgress
+            | BarrierError::NonMonotonicTransition { .. } => {
+                FrankenErrorCode::EpochBarrierTransitionError
+            }
+        }
+    }
+}
+
+impl HasErrorCode for PolicyControllerError {
+    fn error_code(&self) -> FrankenErrorCode {
+        match self {
+            PolicyControllerError::EmptyActionSet
+            | PolicyControllerError::NoLossEntries
+            | PolicyControllerError::SafeDefaultNotInActionSet { .. }
+            | PolicyControllerError::EvidenceEmissionFailed { .. } => {
+                FrankenErrorCode::PolicyControllerDecisionError
+            }
+        }
+    }
+}
+
+impl HasErrorCode for ReconcileError {
+    fn error_code(&self) -> FrankenErrorCode {
+        match self {
+            ReconcileError::IbltSizeMismatch { .. }
+            | ReconcileError::PeelFailed { .. }
+            | ReconcileError::EpochMismatch { .. }
+            | ReconcileError::VerificationFailed { .. }
+            | ReconcileError::EmptyObjectSet => FrankenErrorCode::AntiEntropyReconciliationError,
+        }
+    }
+}
+
+impl HasErrorCode for LeaseError {
+    fn error_code(&self) -> FrankenErrorCode {
+        match self {
+            LeaseError::LeaseNotFound { .. }
+            | LeaseError::LeaseExpired { .. }
+            | LeaseError::LeaseReleased { .. }
+            | LeaseError::EpochMismatch { .. }
+            | LeaseError::ZeroTtl
+            | LeaseError::EmptyHolder => FrankenErrorCode::LeaseLifecycleError,
+        }
+    }
+}
+
+impl HasErrorCode for ObligationError {
+    fn error_code(&self) -> FrankenErrorCode {
+        match self {
+            ObligationError::NotFound { .. }
+            | ObligationError::AlreadyResolved { .. }
+            | ObligationError::Backpressure { .. }
+            | ObligationError::Leaked { .. } => FrankenErrorCode::ObligationChannelError,
+        }
+    }
+}
+
+impl HasErrorCode for IdempotencyError {
+    fn error_code(&self) -> FrankenErrorCode {
+        match self {
+            IdempotencyError::EpochMismatch { .. }
+            | IdempotencyError::MaxRetriesExceeded { .. }
+            | IdempotencyError::DuplicateInProgress { .. }
+            | IdempotencyError::EntryNotFound { .. } => FrankenErrorCode::IdempotencyWorkflowError,
+        }
+    }
+}
+
+impl HasErrorCode for LaneError {
+    fn error_code(&self) -> FrankenErrorCode {
+        match self {
+            LaneError::LaneMismatch { .. }
+            | LaneError::LaneFull { .. }
+            | LaneError::TaskNotFound { .. }
+            | LaneError::EmptyTraceId => FrankenErrorCode::SchedulerLaneAdmissionError,
+        }
+    }
+}
+
+impl HasErrorCode for SagaError {
+    fn error_code(&self) -> FrankenErrorCode {
+        match self {
+            SagaError::SagaNotFound { .. }
+            | SagaError::SagaAlreadyTerminal { .. }
+            | SagaError::StepIndexOutOfBounds { .. }
+            | SagaError::EpochMismatch { .. }
+            | SagaError::EmptySteps
+            | SagaError::InvalidSagaId { .. }
+            | SagaError::CompensationFailed { .. } => FrankenErrorCode::SagaExecutionError,
+        }
+    }
+}
+
+impl HasErrorCode for BulkheadError {
+    fn error_code(&self) -> FrankenErrorCode {
+        match self {
+            BulkheadError::BulkheadFull { .. }
+            | BulkheadError::PermitNotFound { .. }
+            | BulkheadError::BulkheadNotFound { .. }
+            | BulkheadError::InvalidConfig { .. } => FrankenErrorCode::BulkheadIsolationError,
+        }
+    }
+}
+
+impl HasErrorCode for SchedulerError {
+    fn error_code(&self) -> FrankenErrorCode {
+        match self {
+            SchedulerError::DuplicateProbe { .. } | SchedulerError::ProbeNotFound { .. } => {
+                FrankenErrorCode::MonitorSchedulerError
+            }
+        }
+    }
+}
+
+impl HasErrorCode for AllocDomainError {
+    fn error_code(&self) -> FrankenErrorCode {
+        match self {
+            AllocDomainError::BudgetExceeded { .. }
+            | AllocDomainError::BudgetOverflow
+            | AllocDomainError::DomainNotFound { .. }
+            | AllocDomainError::DuplicateDomain { .. } => {
+                FrankenErrorCode::AllocationDomainBudgetError
+            }
+        }
+    }
+}
+
+impl HasErrorCode for PhaseOrderViolation {
+    fn error_code(&self) -> FrankenErrorCode {
+        FrankenErrorCode::RegionPhaseOrderError
+    }
+}
+
+impl HasErrorCode for SlotRegistryError {
+    fn error_code(&self) -> FrankenErrorCode {
+        match self {
+            SlotRegistryError::InvalidSlotId { .. }
+            | SlotRegistryError::DuplicateSlotId { .. }
+            | SlotRegistryError::SlotNotFound { .. }
+            | SlotRegistryError::InconsistentAuthority { .. }
+            | SlotRegistryError::InvalidTransition { .. }
+            | SlotRegistryError::AuthorityBroadening { .. } => {
+                FrankenErrorCode::SlotRegistryAuthorityError
+            }
+        }
+    }
+}
+
+impl HasErrorCode for GcError {
+    fn error_code(&self) -> FrankenErrorCode {
+        match self {
+            GcError::HeapNotFound { .. }
+            | GcError::DuplicateHeap { .. }
+            | GcError::ObjectNotFound { .. }
+            | GcError::DomainError(_) => FrankenErrorCode::GarbageCollectionError,
+        }
+    }
+}
+
+impl HasErrorCode for ContractValidationError {
+    fn error_code(&self) -> FrankenErrorCode {
+        match self {
+            ContractValidationError::MissingField { .. }
+            | ContractValidationError::EvBelowThreshold { .. }
+            | ContractValidationError::EvTierMismatch { .. }
+            | ContractValidationError::EmptyRolloutStages
+            | ContractValidationError::InvalidRolloutOrder { .. }
+            | ContractValidationError::IncompatibleVersion { .. }
+            | ContractValidationError::InvalidEvScore => FrankenErrorCode::EvidenceContractError,
+        }
+    }
+}
+
+impl HasErrorCode for LedgerError {
+    fn error_code(&self) -> FrankenErrorCode {
+        match self {
+            LedgerError::MissingChosenAction
+            | LedgerError::SchemaValidationFailed { .. }
+            | LedgerError::IncompatibleSchema { .. }
+            | LedgerError::DuplicateEntryId { .. } => FrankenErrorCode::EvidenceLedgerError,
+        }
+    }
+}
+
+impl HasErrorCode for OrderingViolation {
+    fn error_code(&self) -> FrankenErrorCode {
+        match self {
+            OrderingViolation::CandidatesNotSorted { .. }
+            | OrderingViolation::WitnessesNotSorted { .. }
+            | OrderingViolation::ConstraintsNotSorted { .. }
+            | OrderingViolation::DuplicateWitnessId { .. }
+            | OrderingViolation::CandidatesExceedBound { .. }
+            | OrderingViolation::WitnessesExceedBound { .. }
+            | OrderingViolation::ConstraintsExceedBound { .. } => {
+                FrankenErrorCode::EvidenceOrderingError
+            }
+        }
+    }
+}
+
+impl HasErrorCode for ChainIntegrityError {
+    fn error_code(&self) -> FrankenErrorCode {
+        match self {
+            ChainIntegrityError::MarkerHashMismatch { .. }
+            | ChainIntegrityError::ChainLinkBroken { .. }
+            | ChainIntegrityError::EmptyStream
+            | ChainIntegrityError::NonMonotonicId { .. }
+            | ChainIntegrityError::HeadMismatch => FrankenErrorCode::MarkerStreamIntegrityError,
+        }
+    }
+}
+
+impl HasErrorCode for ProofError {
+    fn error_code(&self) -> FrankenErrorCode {
+        match self {
+            ProofError::IndexOutOfRange { .. }
+            | ProofError::RootMismatch { .. }
+            | ProofError::InvalidProof { .. }
+            | ProofError::EmptyStream
+            | ProofError::ConsistencyFailure { .. } => {
+                FrankenErrorCode::MerkleProofVerificationError
+            }
+        }
+    }
+}
+
+impl HasErrorCode for VerificationError {
+    fn error_code(&self) -> FrankenErrorCode {
+        match self {
+            VerificationError::ArtifactIdMismatch { .. }
+            | VerificationError::SignatureInvalid { .. }
+            | VerificationError::EmptyProofBundle
+            | VerificationError::MissingProofElement { .. } => {
+                FrankenErrorCode::RecoveryArtifactVerificationError
+            }
+        }
+    }
+}
+
+impl HasErrorCode for ProofSchemaError {
+    fn error_code(&self) -> FrankenErrorCode {
+        match self {
+            ProofSchemaError::InvalidSignature { .. }
+            | ProofSchemaError::IncompatibleVersion { .. }
+            | ProofSchemaError::TokenExpired { .. }
+            | ProofSchemaError::MissingField { .. }
+            | ProofSchemaError::NonEquivalent { .. }
+            | ProofSchemaError::UnauthorizedSigner { .. }
+            | ProofSchemaError::EpochMismatch { .. } => {
+                FrankenErrorCode::ProofSchemaValidationError
+            }
+        }
+    }
+}
+
+impl HasErrorCode for GuardrailError {
+    fn error_code(&self) -> FrankenErrorCode {
+        match self {
+            GuardrailError::Suspended { .. }
+            | GuardrailError::AlreadyTriggered { .. }
+            | GuardrailError::InvalidObservation { .. }
+            | GuardrailError::ResetUnauthorized { .. }
+            | GuardrailError::NotTriggered { .. }
+            | GuardrailError::EValueOverflow { .. } => FrankenErrorCode::EprocessGuardrailError,
+        }
+    }
+}
+
+impl HasErrorCode for DetectorError {
+    fn error_code(&self) -> FrankenErrorCode {
+        match self {
+            DetectorError::InvalidObservation { .. }
+            | DetectorError::UnknownMetricStream { .. } => FrankenErrorCode::RegimeDetectionError,
+        }
+    }
+}
+
+impl HasErrorCode for EvalError {
+    fn error_code(&self) -> FrankenErrorCode {
+        match self.code {
+            EvalErrorCode::EmptySource => FrankenErrorCode::EvalRuntimeError,
+        }
+    }
+}
+
+impl HasErrorCode for MonotonicityViolation {
+    fn error_code(&self) -> FrankenErrorCode {
+        FrankenErrorCode::EpochMonotonicityViolation
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    fn assert_has_error_code<T: HasErrorCode>() {}
+
+    #[test]
+    fn all_registered_codes_follow_fe_xxxx_format_and_are_unique() {
+        let mut seen_numeric = BTreeSet::new();
+        let mut seen_codes = BTreeSet::new();
+
+        for code in ALL_ERROR_CODES {
+            let stable = code.stable_code();
+            assert!(stable.starts_with("FE-"));
+            assert_eq!(stable.len(), 7);
+            assert!(stable.chars().skip(3).all(|ch| ch.is_ascii_digit()));
+            assert!(seen_numeric.insert(code.numeric()));
+            assert!(seen_codes.insert(stable));
+        }
+    }
+
+    #[test]
+    fn registry_entries_respect_subsystem_numeric_ranges() {
+        let registry = error_code_registry();
+        for entry in &registry.entries {
+            assert!(entry.subsystem.includes(entry.numeric));
+        }
+    }
+
+    #[test]
+    fn registry_serializes_and_roundtrips_as_machine_readable_json() {
+        let registry = error_code_registry();
+        let encoded = serde_json::to_string_pretty(&registry).expect("encode registry json");
+        let decoded: ErrorCodeRegistry = serde_json::from_str(&encoded).expect("decode registry");
+        assert_eq!(decoded, registry);
+    }
+
+    #[test]
+    fn all_error_types_implement_has_error_code() {
+        assert_has_error_code::<AllocDomainError>();
+        assert_has_error_code::<BarrierError>();
+        assert_has_error_code::<BulkheadError>();
+        assert_has_error_code::<CapabilityDenied>();
+        assert_has_error_code::<ChainIntegrityError>();
+        assert_has_error_code::<CheckpointError>();
+        assert_has_error_code::<ContractValidationError>();
+        assert_has_error_code::<DetectorError>();
+        assert_has_error_code::<EpochValidationError>();
+        assert_has_error_code::<EvalError>();
+        assert_has_error_code::<ForkError>();
+        assert_has_error_code::<FrontierError>();
+        assert_has_error_code::<GcError>();
+        assert_has_error_code::<GuardrailError>();
+        assert_has_error_code::<IdError>();
+        assert_has_error_code::<IdempotencyError>();
+        assert_has_error_code::<KeyDerivationError>();
+        assert_has_error_code::<LaneError>();
+        assert_has_error_code::<LeaseError>();
+        assert_has_error_code::<LedgerError>();
+        assert_has_error_code::<MaskError>();
+        assert_has_error_code::<MonotonicityViolation>();
+        assert_has_error_code::<MultiSigError>();
+        assert_has_error_code::<NonCanonicalError>();
+        assert_has_error_code::<ObligationError>();
+        assert_has_error_code::<OrderingViolation>();
+        assert_has_error_code::<PhaseOrderViolation>();
+        assert_has_error_code::<PolicyControllerError>();
+        assert_has_error_code::<ProofError>();
+        assert_has_error_code::<ProofSchemaError>();
+        assert_has_error_code::<ReconcileError>();
+        assert_has_error_code::<RecoveryErrorAlias>();
+        assert_has_error_code::<RegistryError>();
+        assert_has_error_code::<RemoteCapabilityDenied>();
+        assert_has_error_code::<RemoteTransportError>();
+        assert_has_error_code::<SagaError>();
+        assert_has_error_code::<SchedulerError>();
+        assert_has_error_code::<SerdeError>();
+        assert_has_error_code::<SignatureError>();
+        assert_has_error_code::<SlotRegistryError>();
+        assert_has_error_code::<TokenError>();
+        assert_has_error_code::<VerificationError>();
+    }
+
+    type RecoveryErrorAlias = VerificationError;
+
+    #[test]
+    fn representative_error_instances_map_to_expected_codes() {
+        let token_error = TokenError::EmptyCapabilities;
+        assert_eq!(
+            token_error.error_code(),
+            FrankenErrorCode::CapabilityTokenValidationError
+        );
+
+        let eval_error = EvalError {
+            code: EvalErrorCode::EmptySource,
+            message: "source is empty".to_string(),
+        };
+        assert_eq!(eval_error.error_code(), FrankenErrorCode::EvalRuntimeError);
+
+        assert_eq!(
+            FrankenErrorCode::from_numeric(3000),
+            Some(FrankenErrorCode::PolicyCheckpointValidationError)
+        );
+        assert_eq!(FrankenErrorCode::from_numeric(9999), None);
+    }
+}

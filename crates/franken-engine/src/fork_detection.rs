@@ -145,7 +145,7 @@ pub struct CheckpointHistoryEntry {
 ///
 /// Sticky across restarts. Can only be cleared by explicit operator
 /// acknowledgment of all fork incidents.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SafeModeState {
     /// Whether safe mode is currently active.
     pub active: bool,
@@ -153,16 +153,6 @@ pub struct SafeModeState {
     pub trigger_seq: Option<u64>,
     /// Number of unacknowledged incidents.
     pub unacknowledged_count: usize,
-}
-
-impl Default for SafeModeState {
-    fn default() -> Self {
-        Self {
-            active: false,
-            trigger_seq: None,
-            unacknowledged_count: 0,
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -271,6 +261,24 @@ impl ZoneState {
     }
 }
 
+/// Input parameters for [`ForkDetector::record_checkpoint`].
+pub struct RecordCheckpointInput<'a> {
+    /// The trust zone to record the checkpoint in.
+    pub zone: &'a str,
+    /// The checkpoint to record.
+    pub checkpoint: &'a PolicyCheckpoint,
+    /// Whether this checkpoint was accepted into the frontier.
+    pub accepted: bool,
+    /// The current frontier sequence number.
+    pub frontier_seq: u64,
+    /// The current frontier epoch.
+    pub frontier_epoch: SecurityEpoch,
+    /// Deterministic tick at which this checkpoint was observed.
+    pub tick: u64,
+    /// Trace ID for correlation.
+    pub trace_id: &'a str,
+}
+
 /// Fork detection and safe-mode management across trust zones.
 ///
 /// Maintains a persistent index of `(checkpoint_seq -> checkpoint_id)`
@@ -302,21 +310,20 @@ impl ForkDetector {
 
     /// Record a checkpoint in the history and check for forks.
     ///
-    /// Returns `Ok(())` if no fork is detected, or a `ForkIncidentReport`
-    /// if a divergent checkpoint is found.
-    ///
-    /// The `accepted` parameter indicates whether this checkpoint was
-    /// accepted into the frontier (vs. received via gossip/replication).
+    /// Returns `Ok(())` if no fork is detected, or a boxed
+    /// `ForkIncidentReport` if a divergent checkpoint is found.
     pub fn record_checkpoint(
         &mut self,
-        zone: &str,
-        checkpoint: &PolicyCheckpoint,
-        accepted: bool,
-        frontier_seq: u64,
-        frontier_epoch: SecurityEpoch,
-        tick: u64,
-        trace_id: &str,
-    ) -> Result<(), ForkIncidentReport> {
+        input: &RecordCheckpointInput<'_>,
+    ) -> Result<(), Box<ForkIncidentReport>> {
+        let zone = input.zone;
+        let checkpoint = input.checkpoint;
+        let accepted = input.accepted;
+        let frontier_seq = input.frontier_seq;
+        let frontier_epoch = input.frontier_epoch;
+        let tick = input.tick;
+        let trace_id = input.trace_id;
+
         let zone_state = self
             .zones
             .entry(zone.to_string())
@@ -372,7 +379,7 @@ impl ForkDetector {
                     trace_id: trace_id.to_string(),
                 });
 
-                return Err(report);
+                return Err(Box::new(report));
             }
             // Same checkpoint at same seq — not a fork, just a duplicate.
             return Ok(());
@@ -431,20 +438,20 @@ impl ForkDetector {
         operation: &str,
         trace_id: &str,
     ) -> Result<(), ForkError> {
-        if let Some(zone_state) = self.zones.get(zone) {
-            if zone_state.safe_mode.active {
-                self.events.push(ForkEvent {
-                    event_type: ForkEventType::OperationDenied {
-                        zone: zone.to_string(),
-                        operation: operation.to_string(),
-                    },
-                    trace_id: trace_id.to_string(),
-                });
-                return Err(ForkError::SafeModeActive {
-                    incident_seq: zone_state.safe_mode.trigger_seq.unwrap_or(0),
-                    reason: format!("operation '{operation}' denied during safe mode"),
-                });
-            }
+        if let Some(zone_state) = self.zones.get(zone)
+            && zone_state.safe_mode.active
+        {
+            self.events.push(ForkEvent {
+                event_type: ForkEventType::OperationDenied {
+                    zone: zone.to_string(),
+                    operation: operation.to_string(),
+                },
+                trace_id: trace_id.to_string(),
+            });
+            return Err(ForkError::SafeModeActive {
+                incident_seq: zone_state.safe_mode.trigger_seq.unwrap_or(0),
+                reason: format!("operation '{operation}' denied during safe mode"),
+            });
         }
         Ok(())
     }
@@ -655,15 +662,15 @@ mod tests {
 
         let mut detector = ForkDetector::with_defaults();
         detector
-            .record_checkpoint(
-                "zone-a",
-                &genesis,
-                true,
-                0,
-                SecurityEpoch::GENESIS,
-                100,
-                "t-0",
-            )
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-a",
+                checkpoint: &genesis,
+                accepted: true,
+                frontier_seq: 0,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 100,
+                trace_id: "t-0",
+            })
             .unwrap();
 
         assert_eq!(detector.history_size("zone-a"), 1);
@@ -677,27 +684,27 @@ mod tests {
 
         let mut detector = ForkDetector::with_defaults();
         detector
-            .record_checkpoint(
-                "zone-a",
-                &genesis,
-                true,
-                0,
-                SecurityEpoch::GENESIS,
-                100,
-                "t-0",
-            )
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-a",
+                checkpoint: &genesis,
+                accepted: true,
+                frontier_seq: 0,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 100,
+                trace_id: "t-0",
+            })
             .unwrap();
         // Record same checkpoint again (e.g., via gossip).
         detector
-            .record_checkpoint(
-                "zone-a",
-                &genesis,
-                false,
-                0,
-                SecurityEpoch::GENESIS,
-                200,
-                "t-1",
-            )
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-a",
+                checkpoint: &genesis,
+                accepted: false,
+                frontier_seq: 0,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 200,
+                trace_id: "t-1",
+            })
             .unwrap();
 
         assert_eq!(detector.history_size("zone-a"), 1);
@@ -709,14 +716,14 @@ mod tests {
     #[test]
     fn fork_detected_on_divergent_checkpoint() {
         let sk = make_sk(1);
-        let genesis = build_genesis(&[sk.clone()], "zone-a");
+        let genesis = build_genesis(std::slice::from_ref(&sk), "zone-a");
 
         let cp1_a = build_after(
             &genesis,
             1,
             SecurityEpoch::GENESIS,
             200,
-            &[sk.clone()],
+            std::slice::from_ref(&sk),
             "zone-a",
         );
         let cp1_b = build_divergent_at_seq(
@@ -737,41 +744,41 @@ mod tests {
 
         // Record genesis.
         detector
-            .record_checkpoint(
-                "zone-a",
-                &genesis,
-                true,
-                0,
-                SecurityEpoch::GENESIS,
-                100,
-                "t-0",
-            )
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-a",
+                checkpoint: &genesis,
+                accepted: true,
+                frontier_seq: 0,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 100,
+                trace_id: "t-0",
+            })
             .unwrap();
 
         // Record first seq=1 checkpoint.
         detector
-            .record_checkpoint(
-                "zone-a",
-                &cp1_a,
-                true,
-                1,
-                SecurityEpoch::GENESIS,
-                200,
-                "t-1a",
-            )
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-a",
+                checkpoint: &cp1_a,
+                accepted: true,
+                frontier_seq: 1,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 200,
+                trace_id: "t-1a",
+            })
             .unwrap();
 
         // Record divergent seq=1 checkpoint — should trigger fork.
         let report = detector
-            .record_checkpoint(
-                "zone-a",
-                &cp1_b,
-                false,
-                1,
-                SecurityEpoch::GENESIS,
-                250,
-                "t-1b",
-            )
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-a",
+                checkpoint: &cp1_b,
+                accepted: false,
+                frontier_seq: 1,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 250,
+                trace_id: "t-1b",
+            })
             .unwrap_err();
 
         assert_eq!(report.fork_seq, 1);
@@ -784,14 +791,14 @@ mod tests {
     #[test]
     fn fork_triggers_safe_mode() {
         let sk = make_sk(1);
-        let genesis = build_genesis(&[sk.clone()], "zone-a");
+        let genesis = build_genesis(std::slice::from_ref(&sk), "zone-a");
 
         let cp1_a = build_after(
             &genesis,
             1,
             SecurityEpoch::GENESIS,
             200,
-            &[sk.clone()],
+            std::slice::from_ref(&sk),
             "zone-a",
         );
         let cp1_b = build_divergent_at_seq(
@@ -806,36 +813,36 @@ mod tests {
 
         let mut detector = ForkDetector::with_defaults();
         detector
-            .record_checkpoint(
-                "zone-a",
-                &genesis,
-                true,
-                0,
-                SecurityEpoch::GENESIS,
-                100,
-                "t-0",
-            )
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-a",
+                checkpoint: &genesis,
+                accepted: true,
+                frontier_seq: 0,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 100,
+                trace_id: "t-0",
+            })
             .unwrap();
         detector
-            .record_checkpoint(
-                "zone-a",
-                &cp1_a,
-                true,
-                1,
-                SecurityEpoch::GENESIS,
-                200,
-                "t-1a",
-            )
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-a",
+                checkpoint: &cp1_a,
+                accepted: true,
+                frontier_seq: 1,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 200,
+                trace_id: "t-1a",
+            })
             .unwrap();
-        let _ = detector.record_checkpoint(
-            "zone-a",
-            &cp1_b,
-            false,
-            1,
-            SecurityEpoch::GENESIS,
-            250,
-            "t-1b",
-        );
+        let _ = detector.record_checkpoint(&RecordCheckpointInput {
+            zone: "zone-a",
+            checkpoint: &cp1_b,
+            accepted: false,
+            frontier_seq: 1,
+            frontier_epoch: SecurityEpoch::GENESIS,
+            tick: 250,
+            trace_id: "t-1b",
+        });
 
         assert!(detector.is_safe_mode("zone-a"));
         let sm = detector.safe_mode_state("zone-a").unwrap();
@@ -849,14 +856,14 @@ mod tests {
     #[test]
     fn safe_mode_denies_operations() {
         let sk = make_sk(1);
-        let genesis = build_genesis(&[sk.clone()], "zone-a");
+        let genesis = build_genesis(std::slice::from_ref(&sk), "zone-a");
 
         let cp1_a = build_after(
             &genesis,
             1,
             SecurityEpoch::GENESIS,
             200,
-            &[sk.clone()],
+            std::slice::from_ref(&sk),
             "zone-a",
         );
         let cp1_b = build_divergent_at_seq(
@@ -871,36 +878,36 @@ mod tests {
 
         let mut detector = ForkDetector::with_defaults();
         detector
-            .record_checkpoint(
-                "zone-a",
-                &genesis,
-                true,
-                0,
-                SecurityEpoch::GENESIS,
-                100,
-                "t-0",
-            )
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-a",
+                checkpoint: &genesis,
+                accepted: true,
+                frontier_seq: 0,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 100,
+                trace_id: "t-0",
+            })
             .unwrap();
         detector
-            .record_checkpoint(
-                "zone-a",
-                &cp1_a,
-                true,
-                1,
-                SecurityEpoch::GENESIS,
-                200,
-                "t-1a",
-            )
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-a",
+                checkpoint: &cp1_a,
+                accepted: true,
+                frontier_seq: 1,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 200,
+                trace_id: "t-1a",
+            })
             .unwrap();
-        let _ = detector.record_checkpoint(
-            "zone-a",
-            &cp1_b,
-            false,
-            1,
-            SecurityEpoch::GENESIS,
-            250,
-            "t-1b",
-        );
+        let _ = detector.record_checkpoint(&RecordCheckpointInput {
+            zone: "zone-a",
+            checkpoint: &cp1_b,
+            accepted: false,
+            frontier_seq: 1,
+            frontier_epoch: SecurityEpoch::GENESIS,
+            tick: 250,
+            trace_id: "t-1b",
+        });
 
         // Operations should be denied.
         let err = detector
@@ -923,14 +930,14 @@ mod tests {
     #[test]
     fn acknowledge_and_exit_safe_mode() {
         let sk = make_sk(1);
-        let genesis = build_genesis(&[sk.clone()], "zone-a");
+        let genesis = build_genesis(std::slice::from_ref(&sk), "zone-a");
 
         let cp1_a = build_after(
             &genesis,
             1,
             SecurityEpoch::GENESIS,
             200,
-            &[sk.clone()],
+            std::slice::from_ref(&sk),
             "zone-a",
         );
         let cp1_b = build_divergent_at_seq(
@@ -945,37 +952,37 @@ mod tests {
 
         let mut detector = ForkDetector::with_defaults();
         detector
-            .record_checkpoint(
-                "zone-a",
-                &genesis,
-                true,
-                0,
-                SecurityEpoch::GENESIS,
-                100,
-                "t-0",
-            )
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-a",
+                checkpoint: &genesis,
+                accepted: true,
+                frontier_seq: 0,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 100,
+                trace_id: "t-0",
+            })
             .unwrap();
         detector
-            .record_checkpoint(
-                "zone-a",
-                &cp1_a,
-                true,
-                1,
-                SecurityEpoch::GENESIS,
-                200,
-                "t-1a",
-            )
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-a",
+                checkpoint: &cp1_a,
+                accepted: true,
+                frontier_seq: 1,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 200,
+                trace_id: "t-1a",
+            })
             .unwrap();
         let report = detector
-            .record_checkpoint(
-                "zone-a",
-                &cp1_b,
-                false,
-                1,
-                SecurityEpoch::GENESIS,
-                250,
-                "t-1b",
-            )
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-a",
+                checkpoint: &cp1_b,
+                accepted: false,
+                frontier_seq: 1,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 250,
+                trace_id: "t-1b",
+            })
             .unwrap_err();
 
         // Cannot exit without acknowledgment.
@@ -997,14 +1004,14 @@ mod tests {
     #[test]
     fn cannot_exit_with_unacknowledged_incidents() {
         let sk = make_sk(1);
-        let genesis = build_genesis(&[sk.clone()], "zone-a");
+        let genesis = build_genesis(std::slice::from_ref(&sk), "zone-a");
 
         let cp1_a = build_after(
             &genesis,
             1,
             SecurityEpoch::GENESIS,
             200,
-            &[sk.clone()],
+            std::slice::from_ref(&sk),
             "zone-a",
         );
         let cp1_b = build_divergent_at_seq(
@@ -1019,36 +1026,36 @@ mod tests {
 
         let mut detector = ForkDetector::with_defaults();
         detector
-            .record_checkpoint(
-                "zone-a",
-                &genesis,
-                true,
-                0,
-                SecurityEpoch::GENESIS,
-                100,
-                "t-0",
-            )
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-a",
+                checkpoint: &genesis,
+                accepted: true,
+                frontier_seq: 0,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 100,
+                trace_id: "t-0",
+            })
             .unwrap();
         detector
-            .record_checkpoint(
-                "zone-a",
-                &cp1_a,
-                true,
-                1,
-                SecurityEpoch::GENESIS,
-                200,
-                "t-1a",
-            )
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-a",
+                checkpoint: &cp1_a,
+                accepted: true,
+                frontier_seq: 1,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 200,
+                trace_id: "t-1a",
+            })
             .unwrap();
-        let _ = detector.record_checkpoint(
-            "zone-a",
-            &cp1_b,
-            false,
-            1,
-            SecurityEpoch::GENESIS,
-            250,
-            "t-1b",
-        );
+        let _ = detector.record_checkpoint(&RecordCheckpointInput {
+            zone: "zone-a",
+            checkpoint: &cp1_b,
+            accepted: false,
+            frontier_seq: 1,
+            frontier_epoch: SecurityEpoch::GENESIS,
+            tick: 250,
+            trace_id: "t-1b",
+        });
 
         let err = detector.exit_safe_mode("zone-a", "t-exit").unwrap_err();
         assert!(matches!(
@@ -1063,15 +1070,15 @@ mod tests {
     #[test]
     fn fork_in_one_zone_does_not_affect_another() {
         let sk = make_sk(1);
-        let genesis_a = build_genesis(&[sk.clone()], "zone-a");
-        let genesis_b = build_genesis(&[sk.clone()], "zone-b");
+        let genesis_a = build_genesis(std::slice::from_ref(&sk), "zone-a");
+        let genesis_b = build_genesis(std::slice::from_ref(&sk), "zone-b");
 
         let cp1_a = build_after(
             &genesis_a,
             1,
             SecurityEpoch::GENESIS,
             200,
-            &[sk.clone()],
+            std::slice::from_ref(&sk),
             "zone-a",
         );
         let cp1_a_fork = build_divergent_at_seq(
@@ -1079,7 +1086,7 @@ mod tests {
             1,
             SecurityEpoch::GENESIS,
             250,
-            &[sk.clone()],
+            std::slice::from_ref(&sk),
             "zone-a",
             100,
         );
@@ -1088,48 +1095,48 @@ mod tests {
 
         // Record zone-a genesis + checkpoint + fork.
         detector
-            .record_checkpoint(
-                "zone-a",
-                &genesis_a,
-                true,
-                0,
-                SecurityEpoch::GENESIS,
-                100,
-                "t-a0",
-            )
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-a",
+                checkpoint: &genesis_a,
+                accepted: true,
+                frontier_seq: 0,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 100,
+                trace_id: "t-a0",
+            })
             .unwrap();
         detector
-            .record_checkpoint(
-                "zone-a",
-                &cp1_a,
-                true,
-                1,
-                SecurityEpoch::GENESIS,
-                200,
-                "t-a1",
-            )
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-a",
+                checkpoint: &cp1_a,
+                accepted: true,
+                frontier_seq: 1,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 200,
+                trace_id: "t-a1",
+            })
             .unwrap();
-        let _ = detector.record_checkpoint(
-            "zone-a",
-            &cp1_a_fork,
-            false,
-            1,
-            SecurityEpoch::GENESIS,
-            250,
-            "t-a1-fork",
-        );
+        let _ = detector.record_checkpoint(&RecordCheckpointInput {
+            zone: "zone-a",
+            checkpoint: &cp1_a_fork,
+            accepted: false,
+            frontier_seq: 1,
+            frontier_epoch: SecurityEpoch::GENESIS,
+            tick: 250,
+            trace_id: "t-a1-fork",
+        });
 
         // Record zone-b genesis.
         detector
-            .record_checkpoint(
-                "zone-b",
-                &genesis_b,
-                true,
-                0,
-                SecurityEpoch::GENESIS,
-                100,
-                "t-b0",
-            )
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-b",
+                checkpoint: &genesis_b,
+                accepted: true,
+                frontier_seq: 0,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 100,
+                trace_id: "t-b0",
+            })
             .unwrap();
 
         // Zone-a in safe mode, zone-b is not.
@@ -1147,14 +1154,14 @@ mod tests {
     #[test]
     fn retroactive_fork_detection() {
         let sk = make_sk(1);
-        let genesis = build_genesis(&[sk.clone()], "zone-a");
+        let genesis = build_genesis(std::slice::from_ref(&sk), "zone-a");
 
         let cp1_a = build_after(
             &genesis,
             1,
             SecurityEpoch::GENESIS,
             200,
-            &[sk.clone()],
+            std::slice::from_ref(&sk),
             "zone-a",
         );
 
@@ -1162,26 +1169,26 @@ mod tests {
 
         // Accept genesis and cp1_a into frontier.
         detector
-            .record_checkpoint(
-                "zone-a",
-                &genesis,
-                true,
-                0,
-                SecurityEpoch::GENESIS,
-                100,
-                "t-0",
-            )
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-a",
+                checkpoint: &genesis,
+                accepted: true,
+                frontier_seq: 0,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 100,
+                trace_id: "t-0",
+            })
             .unwrap();
         detector
-            .record_checkpoint(
-                "zone-a",
-                &cp1_a,
-                true,
-                1,
-                SecurityEpoch::GENESIS,
-                200,
-                "t-1",
-            )
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-a",
+                checkpoint: &cp1_a,
+                accepted: true,
+                frontier_seq: 1,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 200,
+                trace_id: "t-1",
+            })
             .unwrap();
 
         // Later, receive a divergent checkpoint via gossip (not accepted).
@@ -1195,15 +1202,15 @@ mod tests {
             100,
         );
         let report = detector
-            .record_checkpoint(
-                "zone-a",
-                &cp1_b,
-                false,
-                1,
-                SecurityEpoch::GENESIS,
-                300,
-                "t-gossip",
-            )
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-a",
+                checkpoint: &cp1_b,
+                accepted: false,
+                frontier_seq: 1,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 300,
+                trace_id: "t-gossip",
+            })
             .unwrap_err();
 
         assert!(report.existing_was_accepted);
@@ -1215,21 +1222,21 @@ mod tests {
     #[test]
     fn history_bounded_by_max() {
         let sk = make_sk(1);
-        let genesis = build_genesis(&[sk.clone()], "zone-a");
+        let genesis = build_genesis(std::slice::from_ref(&sk), "zone-a");
 
         // Use a small history window.
         let mut detector = ForkDetector::new(5);
 
         detector
-            .record_checkpoint(
-                "zone-a",
-                &genesis,
-                true,
-                0,
-                SecurityEpoch::GENESIS,
-                100,
-                "t-0",
-            )
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-a",
+                checkpoint: &genesis,
+                accepted: true,
+                frontier_seq: 0,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 100,
+                trace_id: "t-0",
+            })
             .unwrap();
 
         let mut prev = genesis;
@@ -1239,19 +1246,20 @@ mod tests {
                 i,
                 SecurityEpoch::GENESIS,
                 100 + i * 100,
-                &[sk.clone()],
+                std::slice::from_ref(&sk),
                 "zone-a",
             );
+            let trace = format!("t-{i}");
             detector
-                .record_checkpoint(
-                    "zone-a",
-                    &cp,
-                    true,
-                    i,
-                    SecurityEpoch::GENESIS,
-                    100 + i * 100,
-                    &format!("t-{i}"),
-                )
+                .record_checkpoint(&RecordCheckpointInput {
+                    zone: "zone-a",
+                    checkpoint: &cp,
+                    accepted: true,
+                    frontier_seq: i,
+                    frontier_epoch: SecurityEpoch::GENESIS,
+                    tick: 100 + i * 100,
+                    trace_id: &trace,
+                })
                 .unwrap();
             prev = cp;
         }
@@ -1265,14 +1273,14 @@ mod tests {
     #[test]
     fn incidents_listed_correctly() {
         let sk = make_sk(1);
-        let genesis = build_genesis(&[sk.clone()], "zone-a");
+        let genesis = build_genesis(std::slice::from_ref(&sk), "zone-a");
 
         let cp1_a = build_after(
             &genesis,
             1,
             SecurityEpoch::GENESIS,
             200,
-            &[sk.clone()],
+            std::slice::from_ref(&sk),
             "zone-a",
         );
         let cp1_b = build_divergent_at_seq(
@@ -1287,36 +1295,36 @@ mod tests {
 
         let mut detector = ForkDetector::with_defaults();
         detector
-            .record_checkpoint(
-                "zone-a",
-                &genesis,
-                true,
-                0,
-                SecurityEpoch::GENESIS,
-                100,
-                "t-0",
-            )
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-a",
+                checkpoint: &genesis,
+                accepted: true,
+                frontier_seq: 0,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 100,
+                trace_id: "t-0",
+            })
             .unwrap();
         detector
-            .record_checkpoint(
-                "zone-a",
-                &cp1_a,
-                true,
-                1,
-                SecurityEpoch::GENESIS,
-                200,
-                "t-1",
-            )
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-a",
+                checkpoint: &cp1_a,
+                accepted: true,
+                frontier_seq: 1,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 200,
+                trace_id: "t-1",
+            })
             .unwrap();
-        let _ = detector.record_checkpoint(
-            "zone-a",
-            &cp1_b,
-            false,
-            1,
-            SecurityEpoch::GENESIS,
-            250,
-            "t-fork",
-        );
+        let _ = detector.record_checkpoint(&RecordCheckpointInput {
+            zone: "zone-a",
+            checkpoint: &cp1_b,
+            accepted: false,
+            frontier_seq: 1,
+            frontier_epoch: SecurityEpoch::GENESIS,
+            tick: 250,
+            trace_id: "t-fork",
+        });
 
         assert_eq!(detector.incidents("zone-a").len(), 1);
         assert_eq!(detector.unacknowledged_incidents("zone-a").len(), 1);
@@ -1327,14 +1335,14 @@ mod tests {
     #[test]
     fn event_counts_accurate() {
         let sk = make_sk(1);
-        let genesis = build_genesis(&[sk.clone()], "zone-a");
+        let genesis = build_genesis(std::slice::from_ref(&sk), "zone-a");
 
         let cp1_a = build_after(
             &genesis,
             1,
             SecurityEpoch::GENESIS,
             200,
-            &[sk.clone()],
+            std::slice::from_ref(&sk),
             "zone-a",
         );
         let cp1_b = build_divergent_at_seq(
@@ -1349,36 +1357,36 @@ mod tests {
 
         let mut detector = ForkDetector::with_defaults();
         detector
-            .record_checkpoint(
-                "zone-a",
-                &genesis,
-                true,
-                0,
-                SecurityEpoch::GENESIS,
-                100,
-                "t-0",
-            )
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-a",
+                checkpoint: &genesis,
+                accepted: true,
+                frontier_seq: 0,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 100,
+                trace_id: "t-0",
+            })
             .unwrap();
         detector
-            .record_checkpoint(
-                "zone-a",
-                &cp1_a,
-                true,
-                1,
-                SecurityEpoch::GENESIS,
-                200,
-                "t-1",
-            )
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-a",
+                checkpoint: &cp1_a,
+                accepted: true,
+                frontier_seq: 1,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 200,
+                trace_id: "t-1",
+            })
             .unwrap();
-        let _ = detector.record_checkpoint(
-            "zone-a",
-            &cp1_b,
-            false,
-            1,
-            SecurityEpoch::GENESIS,
-            250,
-            "t-fork",
-        );
+        let _ = detector.record_checkpoint(&RecordCheckpointInput {
+            zone: "zone-a",
+            checkpoint: &cp1_b,
+            accepted: false,
+            frontier_seq: 1,
+            frontier_epoch: SecurityEpoch::GENESIS,
+            tick: 250,
+            trace_id: "t-fork",
+        });
 
         // Deny an operation.
         let _ = detector.enforce_safe_mode("zone-a", "grant", "t-deny");
@@ -1493,19 +1501,19 @@ mod tests {
     #[test]
     fn state_export_and_import() {
         let sk = make_sk(1);
-        let genesis = build_genesis(&[sk.clone()], "zone-a");
+        let genesis = build_genesis(std::slice::from_ref(&sk), "zone-a");
 
         let mut detector = ForkDetector::with_defaults();
         detector
-            .record_checkpoint(
-                "zone-a",
-                &genesis,
-                true,
-                0,
-                SecurityEpoch::GENESIS,
-                100,
-                "t-0",
-            )
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-a",
+                checkpoint: &genesis,
+                accepted: true,
+                frontier_seq: 0,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 100,
+                trace_id: "t-0",
+            })
             .unwrap();
 
         let exported = detector.export_state().clone();
@@ -1519,14 +1527,14 @@ mod tests {
     #[test]
     fn safe_mode_persists_across_import() {
         let sk = make_sk(1);
-        let genesis = build_genesis(&[sk.clone()], "zone-a");
+        let genesis = build_genesis(std::slice::from_ref(&sk), "zone-a");
 
         let cp1_a = build_after(
             &genesis,
             1,
             SecurityEpoch::GENESIS,
             200,
-            &[sk.clone()],
+            std::slice::from_ref(&sk),
             "zone-a",
         );
         let cp1_b = build_divergent_at_seq(
@@ -1541,36 +1549,36 @@ mod tests {
 
         let mut detector = ForkDetector::with_defaults();
         detector
-            .record_checkpoint(
-                "zone-a",
-                &genesis,
-                true,
-                0,
-                SecurityEpoch::GENESIS,
-                100,
-                "t-0",
-            )
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-a",
+                checkpoint: &genesis,
+                accepted: true,
+                frontier_seq: 0,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 100,
+                trace_id: "t-0",
+            })
             .unwrap();
         detector
-            .record_checkpoint(
-                "zone-a",
-                &cp1_a,
-                true,
-                1,
-                SecurityEpoch::GENESIS,
-                200,
-                "t-1",
-            )
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-a",
+                checkpoint: &cp1_a,
+                accepted: true,
+                frontier_seq: 1,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 200,
+                trace_id: "t-1",
+            })
             .unwrap();
-        let _ = detector.record_checkpoint(
-            "zone-a",
-            &cp1_b,
-            false,
-            1,
-            SecurityEpoch::GENESIS,
-            250,
-            "t-fork",
-        );
+        let _ = detector.record_checkpoint(&RecordCheckpointInput {
+            zone: "zone-a",
+            checkpoint: &cp1_b,
+            accepted: false,
+            frontier_seq: 1,
+            frontier_epoch: SecurityEpoch::GENESIS,
+            tick: 250,
+            trace_id: "t-fork",
+        });
 
         assert!(detector.is_safe_mode("zone-a"));
 
@@ -1589,31 +1597,31 @@ mod tests {
     #[test]
     fn zones_listing() {
         let sk = make_sk(1);
-        let genesis_a = build_genesis(&[sk.clone()], "zone-a");
+        let genesis_a = build_genesis(std::slice::from_ref(&sk), "zone-a");
         let genesis_b = build_genesis(&[sk], "zone-b");
 
         let mut detector = ForkDetector::with_defaults();
         detector
-            .record_checkpoint(
-                "zone-a",
-                &genesis_a,
-                true,
-                0,
-                SecurityEpoch::GENESIS,
-                100,
-                "t-a",
-            )
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-a",
+                checkpoint: &genesis_a,
+                accepted: true,
+                frontier_seq: 0,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 100,
+                trace_id: "t-a",
+            })
             .unwrap();
         detector
-            .record_checkpoint(
-                "zone-b",
-                &genesis_b,
-                true,
-                0,
-                SecurityEpoch::GENESIS,
-                100,
-                "t-b",
-            )
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-b",
+                checkpoint: &genesis_b,
+                accepted: true,
+                frontier_seq: 0,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 100,
+                trace_id: "t-b",
+            })
             .unwrap();
 
         let zones = detector.zones();

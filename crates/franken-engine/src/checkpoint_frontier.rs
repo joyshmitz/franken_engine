@@ -701,10 +701,10 @@ mod tests {
     fn sequential_checkpoints_accepted() {
         let sk = make_sk(1);
         let vk = sk.verification_key();
-        let genesis = build_genesis(&[sk.clone()], "zone-a");
+        let genesis = build_genesis(std::slice::from_ref(&sk), "zone-a");
 
         let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
-        mgr.accept_checkpoint("zone-a", &genesis, 1, &[vk.clone()], "t-0")
+        mgr.accept_checkpoint("zone-a", &genesis, 1, std::slice::from_ref(&vk), "t-0")
             .unwrap();
 
         let cp1 = build_after(
@@ -712,10 +712,10 @@ mod tests {
             1,
             SecurityEpoch::GENESIS,
             200,
-            &[sk.clone()],
+            std::slice::from_ref(&sk),
             "zone-a",
         );
-        mgr.accept_checkpoint("zone-a", &cp1, 1, &[vk.clone()], "t-1")
+        mgr.accept_checkpoint("zone-a", &cp1, 1, std::slice::from_ref(&vk), "t-1")
             .unwrap();
 
         let cp2 = build_after(&cp1, 2, SecurityEpoch::GENESIS, 300, &[sk], "zone-a");
@@ -734,10 +734,10 @@ mod tests {
     fn rollback_rejected_unconditionally() {
         let sk = make_sk(1);
         let vk = sk.verification_key();
-        let genesis = build_genesis(&[sk.clone()], "zone-a");
+        let genesis = build_genesis(std::slice::from_ref(&sk), "zone-a");
 
         let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
-        mgr.accept_checkpoint("zone-a", &genesis, 1, &[vk.clone()], "t-0")
+        mgr.accept_checkpoint("zone-a", &genesis, 1, std::slice::from_ref(&vk), "t-0")
             .unwrap();
 
         let cp1 = build_after(
@@ -745,10 +745,10 @@ mod tests {
             1,
             SecurityEpoch::GENESIS,
             200,
-            &[sk.clone()],
+            std::slice::from_ref(&sk),
             "zone-a",
         );
-        mgr.accept_checkpoint("zone-a", &cp1, 1, &[vk.clone()], "t-1")
+        mgr.accept_checkpoint("zone-a", &cp1, 1, std::slice::from_ref(&vk), "t-1")
             .unwrap();
 
         // Build a validly-signed checkpoint at seq=0 (rollback to genesis level).
@@ -772,10 +772,10 @@ mod tests {
     fn rollback_emits_rejection_event() {
         let sk = make_sk(1);
         let vk = sk.verification_key();
-        let genesis = build_genesis(&[sk.clone()], "zone-a");
+        let genesis = build_genesis(std::slice::from_ref(&sk), "zone-a");
 
         let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
-        mgr.accept_checkpoint("zone-a", &genesis, 1, &[vk.clone()], "t-0")
+        mgr.accept_checkpoint("zone-a", &genesis, 1, std::slice::from_ref(&vk), "t-0")
             .unwrap();
 
         let cp1 = build_after(
@@ -783,10 +783,10 @@ mod tests {
             1,
             SecurityEpoch::GENESIS,
             200,
-            &[sk.clone()],
+            std::slice::from_ref(&sk),
             "zone-a",
         );
-        mgr.accept_checkpoint("zone-a", &cp1, 1, &[vk.clone()], "t-1")
+        mgr.accept_checkpoint("zone-a", &cp1, 1, std::slice::from_ref(&vk), "t-1")
             .unwrap();
 
         // Drain previous events.
@@ -809,10 +809,10 @@ mod tests {
     fn duplicate_checkpoint_rejected() {
         let sk = make_sk(1);
         let vk = sk.verification_key();
-        let genesis = build_genesis(&[sk.clone()], "zone-a");
+        let genesis = build_genesis(std::slice::from_ref(&sk), "zone-a");
 
         let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
-        mgr.accept_checkpoint("zone-a", &genesis, 1, &[vk.clone()], "t-0")
+        mgr.accept_checkpoint("zone-a", &genesis, 1, std::slice::from_ref(&vk), "t-0")
             .unwrap();
 
         let cp1 = build_after(
@@ -820,10 +820,10 @@ mod tests {
             1,
             SecurityEpoch::GENESIS,
             200,
-            &[sk.clone()],
+            std::slice::from_ref(&sk),
             "zone-a",
         );
-        mgr.accept_checkpoint("zone-a", &cp1, 1, &[vk.clone()], "t-1")
+        mgr.accept_checkpoint("zone-a", &cp1, 1, std::slice::from_ref(&vk), "t-1")
             .unwrap();
 
         // Try to accept cp1 again (same seq=1).
@@ -855,11 +855,11 @@ mod tests {
             "zone-a",
         )
         .add_policy_head(make_policy_head(PolicyType::RuntimeExecution, 1))
-        .build(&[sk.clone()])
+        .build(std::slice::from_ref(&sk))
         .unwrap();
 
         let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
-        mgr.accept_checkpoint("zone-a", &genesis_e5, 1, &[vk.clone()], "t-0")
+        mgr.accept_checkpoint("zone-a", &genesis_e5, 1, std::slice::from_ref(&vk), "t-0")
             .unwrap();
 
         // Advance to seq=1, still at epoch 5.
@@ -868,10 +868,10 @@ mod tests {
             1,
             SecurityEpoch::from_raw(5),
             200,
-            &[sk.clone()],
+            std::slice::from_ref(&sk),
             "zone-a",
         );
-        mgr.accept_checkpoint("zone-a", &cp1, 1, &[vk.clone()], "t-1")
+        mgr.accept_checkpoint("zone-a", &cp1, 1, std::slice::from_ref(&vk), "t-1")
             .unwrap();
 
         // Build a seq=2 checkpoint at epoch 3 (regression). The builder
@@ -886,7 +886,7 @@ mod tests {
             "zone-a",
         )
         .add_policy_head(make_policy_head(PolicyType::RuntimeExecution, 1))
-        .build(&[sk.clone()])
+        .build(std::slice::from_ref(&sk))
         .unwrap();
 
         // Build seq=2 from the epoch-3 chain.
@@ -914,13 +914,13 @@ mod tests {
     fn zones_are_independent() {
         let sk = make_sk(1);
         let vk = sk.verification_key();
-        let genesis_a = build_genesis(&[sk.clone()], "zone-a");
-        let genesis_b = build_genesis(&[sk.clone()], "zone-b");
+        let genesis_a = build_genesis(std::slice::from_ref(&sk), "zone-a");
+        let genesis_b = build_genesis(std::slice::from_ref(&sk), "zone-b");
 
         let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
-        mgr.accept_checkpoint("zone-a", &genesis_a, 1, &[vk.clone()], "t-a0")
+        mgr.accept_checkpoint("zone-a", &genesis_a, 1, std::slice::from_ref(&vk), "t-a0")
             .unwrap();
-        mgr.accept_checkpoint("zone-b", &genesis_b, 1, &[vk.clone()], "t-b0")
+        mgr.accept_checkpoint("zone-b", &genesis_b, 1, std::slice::from_ref(&vk), "t-b0")
             .unwrap();
 
         // Advance zone-a to seq=3.
@@ -929,10 +929,10 @@ mod tests {
             1,
             SecurityEpoch::GENESIS,
             200,
-            &[sk.clone()],
+            std::slice::from_ref(&sk),
             "zone-a",
         );
-        mgr.accept_checkpoint("zone-a", &cp_a1, 1, &[vk.clone()], "t-a1")
+        mgr.accept_checkpoint("zone-a", &cp_a1, 1, std::slice::from_ref(&vk), "t-a1")
             .unwrap();
 
         let cp_a2 = build_after(
@@ -940,10 +940,10 @@ mod tests {
             2,
             SecurityEpoch::GENESIS,
             300,
-            &[sk.clone()],
+            std::slice::from_ref(&sk),
             "zone-a",
         );
-        mgr.accept_checkpoint("zone-a", &cp_a2, 1, &[vk.clone()], "t-a2")
+        mgr.accept_checkpoint("zone-a", &cp_a2, 1, std::slice::from_ref(&vk), "t-a2")
             .unwrap();
 
         let cp_a3 = build_after(
@@ -951,10 +951,10 @@ mod tests {
             3,
             SecurityEpoch::GENESIS,
             400,
-            &[sk.clone()],
+            std::slice::from_ref(&sk),
             "zone-a",
         );
-        mgr.accept_checkpoint("zone-a", &cp_a3, 1, &[vk.clone()], "t-a3")
+        mgr.accept_checkpoint("zone-a", &cp_a3, 1, std::slice::from_ref(&vk), "t-a3")
             .unwrap();
 
         // Zone-b should still be at seq=0.
@@ -1015,10 +1015,10 @@ mod tests {
     fn persistence_failure_prevents_acceptance() {
         let sk = make_sk(1);
         let vk = sk.verification_key();
-        let genesis = build_genesis(&[sk.clone()], "zone-a");
+        let genesis = build_genesis(std::slice::from_ref(&sk), "zone-a");
 
         let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
-        mgr.accept_checkpoint("zone-a", &genesis, 1, &[vk.clone()], "t-0")
+        mgr.accept_checkpoint("zone-a", &genesis, 1, std::slice::from_ref(&vk), "t-0")
             .unwrap();
 
         // Enable failure.
@@ -1042,7 +1042,7 @@ mod tests {
     fn recovery_loads_persisted_frontier() {
         let sk = make_sk(1);
         let vk = sk.verification_key();
-        let genesis = build_genesis(&[sk.clone()], "zone-a");
+        let genesis = build_genesis(std::slice::from_ref(&sk), "zone-a");
 
         let mut backend = InMemoryBackend::new();
 
@@ -1053,7 +1053,7 @@ mod tests {
             1,
             SecurityEpoch::GENESIS,
             200,
-            &[sk.clone()],
+            std::slice::from_ref(&sk),
             "zone-a",
         );
         let cp2 = build_after(
@@ -1061,7 +1061,7 @@ mod tests {
             2,
             SecurityEpoch::GENESIS,
             300,
-            &[sk.clone()],
+            std::slice::from_ref(&sk),
             "zone-a",
         );
 
@@ -1085,11 +1085,17 @@ mod tests {
             1,
             SecurityEpoch::GENESIS,
             250,
-            &[sk.clone()],
+            std::slice::from_ref(&sk),
             "zone-a",
         );
         let err = mgr
-            .accept_checkpoint("zone-a", &rollback, 1, &[vk.clone()], "t-post-recover")
+            .accept_checkpoint(
+                "zone-a",
+                &rollback,
+                1,
+                std::slice::from_ref(&vk),
+                "t-post-recover",
+            )
             .unwrap_err();
         assert!(matches!(err, FrontierError::RollbackRejected { .. }));
 
@@ -1099,7 +1105,7 @@ mod tests {
             3,
             SecurityEpoch::GENESIS,
             400,
-            &[sk.clone()],
+            std::slice::from_ref(&sk),
             "zone-a",
         );
         mgr.accept_checkpoint("zone-a", &cp3, 1, &[vk], "t-3")
@@ -1115,10 +1121,10 @@ mod tests {
     fn recent_ids_tracked() {
         let sk = make_sk(1);
         let vk = sk.verification_key();
-        let genesis = build_genesis(&[sk.clone()], "zone-a");
+        let genesis = build_genesis(std::slice::from_ref(&sk), "zone-a");
 
         let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
-        mgr.accept_checkpoint("zone-a", &genesis, 1, &[vk.clone()], "t-0")
+        mgr.accept_checkpoint("zone-a", &genesis, 1, std::slice::from_ref(&vk), "t-0")
             .unwrap();
 
         let cp1 = build_after(
@@ -1126,10 +1132,10 @@ mod tests {
             1,
             SecurityEpoch::GENESIS,
             200,
-            &[sk.clone()],
+            std::slice::from_ref(&sk),
             "zone-a",
         );
-        mgr.accept_checkpoint("zone-a", &cp1, 1, &[vk.clone()], "t-1")
+        mgr.accept_checkpoint("zone-a", &cp1, 1, std::slice::from_ref(&vk), "t-1")
             .unwrap();
 
         let cp2 = build_after(&cp1, 2, SecurityEpoch::GENESIS, 300, &[sk], "zone-a");
@@ -1147,10 +1153,10 @@ mod tests {
     fn recent_ids_bounded() {
         let sk = make_sk(1);
         let vk = sk.verification_key();
-        let genesis = build_genesis(&[sk.clone()], "zone-a");
+        let genesis = build_genesis(std::slice::from_ref(&sk), "zone-a");
 
         let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
-        mgr.accept_checkpoint("zone-a", &genesis, 1, &[vk.clone()], "t-0")
+        mgr.accept_checkpoint("zone-a", &genesis, 1, std::slice::from_ref(&vk), "t-0")
             .unwrap();
 
         // Accept 40 more checkpoints (exceeds MAX_RECENT_ENTRIES=32).
@@ -1161,11 +1167,17 @@ mod tests {
                 i,
                 SecurityEpoch::GENESIS,
                 100 + i * 100,
-                &[sk.clone()],
+                std::slice::from_ref(&sk),
                 "zone-a",
             );
-            mgr.accept_checkpoint("zone-a", &cp, 1, &[vk.clone()], &format!("t-{i}"))
-                .unwrap();
+            mgr.accept_checkpoint(
+                "zone-a",
+                &cp,
+                1,
+                std::slice::from_ref(&vk),
+                &format!("t-{i}"),
+            )
+            .unwrap();
             prev = cp;
         }
 
@@ -1215,10 +1227,10 @@ mod tests {
     fn epoch_transition_accepted() {
         let sk = make_sk(1);
         let vk = sk.verification_key();
-        let genesis = build_genesis(&[sk.clone()], "zone-a");
+        let genesis = build_genesis(std::slice::from_ref(&sk), "zone-a");
 
         let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
-        mgr.accept_checkpoint("zone-a", &genesis, 1, &[vk.clone()], "t-0")
+        mgr.accept_checkpoint("zone-a", &genesis, 1, std::slice::from_ref(&vk), "t-0")
             .unwrap();
 
         // Epoch transition from 0 to 5.
@@ -1247,8 +1259,8 @@ mod tests {
         let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
         assert!(mgr.zones().is_empty());
 
-        let genesis_a = build_genesis(&[sk.clone()], "zone-a");
-        mgr.accept_checkpoint("zone-a", &genesis_a, 1, &[vk.clone()], "t-a")
+        let genesis_a = build_genesis(std::slice::from_ref(&sk), "zone-a");
+        mgr.accept_checkpoint("zone-a", &genesis_a, 1, std::slice::from_ref(&vk), "t-a")
             .unwrap();
 
         let genesis_b = build_genesis(&[sk], "zone-b");
@@ -1267,10 +1279,10 @@ mod tests {
     fn event_counts_accurate() {
         let sk = make_sk(1);
         let vk = sk.verification_key();
-        let genesis = build_genesis(&[sk.clone()], "zone-a");
+        let genesis = build_genesis(std::slice::from_ref(&sk), "zone-a");
 
         let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
-        mgr.accept_checkpoint("zone-a", &genesis, 1, &[vk.clone()], "t-0")
+        mgr.accept_checkpoint("zone-a", &genesis, 1, std::slice::from_ref(&vk), "t-0")
             .unwrap();
 
         let cp1 = build_after(
@@ -1278,10 +1290,10 @@ mod tests {
             1,
             SecurityEpoch::GENESIS,
             200,
-            &[sk.clone()],
+            std::slice::from_ref(&sk),
             "zone-a",
         );
-        mgr.accept_checkpoint("zone-a", &cp1, 1, &[vk.clone()], "t-1")
+        mgr.accept_checkpoint("zone-a", &cp1, 1, std::slice::from_ref(&vk), "t-1")
             .unwrap();
 
         // Attempt rollback.
@@ -1377,10 +1389,10 @@ mod tests {
     fn linkage_verification_succeeds() {
         let sk = make_sk(1);
         let vk = sk.verification_key();
-        let genesis = build_genesis(&[sk.clone()], "zone-a");
+        let genesis = build_genesis(std::slice::from_ref(&sk), "zone-a");
 
         let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
-        mgr.accept_checkpoint("zone-a", &genesis, 1, &[vk.clone()], "t-0")
+        mgr.accept_checkpoint("zone-a", &genesis, 1, std::slice::from_ref(&vk), "t-0")
             .unwrap();
 
         let cp1 = build_after(&genesis, 1, SecurityEpoch::GENESIS, 200, &[sk], "zone-a");
@@ -1393,10 +1405,10 @@ mod tests {
     fn linkage_verification_fails_wrong_prev() {
         let sk = make_sk(1);
         let vk = sk.verification_key();
-        let genesis = build_genesis(&[sk.clone()], "zone-a");
+        let genesis = build_genesis(std::slice::from_ref(&sk), "zone-a");
 
         let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
-        mgr.accept_checkpoint("zone-a", &genesis, 1, &[vk.clone()], "t-0")
+        mgr.accept_checkpoint("zone-a", &genesis, 1, std::slice::from_ref(&vk), "t-0")
             .unwrap();
 
         let cp1 = build_after(
@@ -1404,10 +1416,10 @@ mod tests {
             1,
             SecurityEpoch::GENESIS,
             200,
-            &[sk.clone()],
+            std::slice::from_ref(&sk),
             "zone-a",
         );
-        mgr.accept_checkpoint("zone-a", &cp1, 1, &[vk.clone()], "t-1")
+        mgr.accept_checkpoint("zone-a", &cp1, 1, std::slice::from_ref(&vk), "t-1")
             .unwrap();
 
         // Try to verify using genesis as prev (but frontier is at cp1).
@@ -1422,7 +1434,7 @@ mod tests {
     fn linkage_verification_unknown_zone() {
         let mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
         let sk = make_sk(1);
-        let genesis = build_genesis(&[sk.clone()], "zone-a");
+        let genesis = build_genesis(std::slice::from_ref(&sk), "zone-a");
         let cp1 = build_after(&genesis, 1, SecurityEpoch::GENESIS, 200, &[sk], "zone-a");
 
         let err = mgr

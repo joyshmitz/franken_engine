@@ -602,23 +602,23 @@ pub fn verify_token(
     }
 
     // 4. Checkpoint binding.
-    if let Some(ref binding) = token.checkpoint_binding {
-        if ctx.verifier_checkpoint_seq < binding.min_checkpoint_seq {
-            return Err(TokenError::CheckpointBindingFailed {
-                required_seq: binding.min_checkpoint_seq,
-                verifier_seq: ctx.verifier_checkpoint_seq,
-            });
-        }
+    if let Some(ref binding) = token.checkpoint_binding
+        && ctx.verifier_checkpoint_seq < binding.min_checkpoint_seq
+    {
+        return Err(TokenError::CheckpointBindingFailed {
+            required_seq: binding.min_checkpoint_seq,
+            verifier_seq: ctx.verifier_checkpoint_seq,
+        });
     }
 
     // 5. Revocation freshness binding.
-    if let Some(ref freshness) = token.revocation_freshness {
-        if ctx.verifier_revocation_seq < freshness.min_revocation_seq {
-            return Err(TokenError::RevocationFreshnessStale {
-                required_seq: freshness.min_revocation_seq,
-                verifier_seq: ctx.verifier_revocation_seq,
-            });
-        }
+    if let Some(ref freshness) = token.revocation_freshness
+        && ctx.verifier_revocation_seq < freshness.min_revocation_seq
+    {
+        return Err(TokenError::RevocationFreshnessStale {
+            required_seq: freshness.min_revocation_seq,
+            verifier_seq: ctx.verifier_revocation_seq,
+        });
     }
 
     Ok(())

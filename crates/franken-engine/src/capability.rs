@@ -13,6 +13,8 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+pub mod trust_zone;
+
 // ---------------------------------------------------------------------------
 // RuntimeCapability — the atomic permission unit
 // ---------------------------------------------------------------------------

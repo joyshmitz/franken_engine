@@ -273,16 +273,27 @@ provider = "frankensqlite"
 path = "/var/lib/franken_engine/runtime.db"
 wal_mode = true
 
+# See docs/adr/ADR-0004-frankensqlite-reuse-scope.md for required
+# SQLite substrate scope, WAL/PRAGMA ownership, and exception process.
+# See docs/FRANKENSQLITE_PERSISTENCE_INVENTORY.md for store-by-store
+# mapping (replay/evidence/benchmark/policy/witness/lineage/provenance/specialization).
+
 # Operator TUI surfaces via frankentui
 [ui]
 provider = "frankentui"
 default_view = "control-dashboard"
+
+# See docs/adr/ADR-0003-frankentui-reuse-scope.md for advanced
+# operator-surface scope and exception handling.
 
 # API layer conventions from fastapi_rust
 [api]
 enabled = true
 bind = "127.0.0.1:8787"
 transport = "http"
+
+# See docs/adr/ADR-0002-fastapi-rust-reuse-scope.md for required
+# reuse boundaries and approved exception process.
 
 # Scheduler and resource governance
 [scheduler]
@@ -327,6 +338,39 @@ default_memory_budget_mb = 128
   | evidence/frankenlab |
   +---------------------+
 ```
+
+## Deterministic E2E Harness
+
+`bd-8no5` establishes a deterministic harness substrate in `crates/franken-engine/src/e2e_harness.rs` with replay verification, structured-log assertions, artifact collection, and signed golden-update metadata.
+
+Run harness checks/tests through `rch` (CPU-intensive commands are offloaded):
+
+```bash
+# check test targets for frankenengine-engine
+./scripts/run_deterministic_e2e_harness.sh check
+
+# run deterministic harness integration tests
+./scripts/run_deterministic_e2e_harness.sh test
+
+# CI shortcut (check + test)
+./scripts/run_deterministic_e2e_harness.sh ci
+```
+
+Create a signed golden-update artifact when intentionally accepting an output digest change:
+
+```bash
+./scripts/sign_e2e_golden_update.sh \
+  --fixture-id minimal-fixture \
+  --previous-digest 2f1a... \
+  --next-digest 9b4e... \
+  --run-id run-minimal-fixture-9b4e... \
+  --signer maintainer@franken.engine \
+  --signature sig:deadbeef \
+  --rationale "policy update changed expected event stream"
+```
+
+The command writes a deterministic JSON artifact under
+`crates/franken-engine/tests/artifacts/golden-updates/`.
 
 ## Troubleshooting
 

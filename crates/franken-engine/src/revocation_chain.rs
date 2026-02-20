@@ -27,7 +27,7 @@ use crate::engine_object_id::{self, EngineObjectId, ObjectDomain, SchemaId};
 use crate::hash_tiers::ContentHash;
 use crate::policy_checkpoint::DeterministicTimestamp;
 use crate::signature_preimage::{
-    Signature, SignaturePreimage, SigningKey, VerificationKey, SIGNATURE_SENTINEL, sign_preimage,
+    SIGNATURE_SENTINEL, Signature, SignaturePreimage, SigningKey, VerificationKey, sign_preimage,
     verify_signature,
 };
 
@@ -181,9 +181,7 @@ impl SignaturePreimage for Revocation {
     }
 
     fn signature_schema(&self) -> &SchemaHash {
-        // Use a thread-local or compute on each call. For correctness and
-        // simplicity we compute each time (the function is pure and cheap).
-        &REVOCATION_SCHEMA_LAZY
+        unreachable!("use preimage_bytes() directly")
     }
 
     fn unsigned_view(&self) -> CanonicalValue {
@@ -204,17 +202,8 @@ impl SignaturePreimage for Revocation {
     }
 }
 
-// Lazy-init schema hash (computed once, reused).
-lazy_static_schema! {
-    REVOCATION_SCHEMA_LAZY, REVOCATION_SCHEMA_DEF;
-    REVOCATION_EVENT_SCHEMA_LAZY, REVOCATION_EVENT_SCHEMA_DEF;
-    REVOCATION_HEAD_SCHEMA_LAZY, REVOCATION_HEAD_SCHEMA_DEF;
-}
-
-// We can't use lazy_static easily without a dependency, so we override
-// preimage_bytes() directly to avoid the lifetime issue with signature_schema().
-// Remove the lazy_static_schema! macro call above and the signature_schema
-// references. Let's use a simpler approach.
+// Schema hashes are computed on-demand in preimage_bytes() overrides,
+// avoiding the need for lazy_static or static references.
 
 // ---------------------------------------------------------------------------
 // RevocationEvent — hash-linked chain entry
@@ -240,10 +229,7 @@ impl RevocationEvent {
             "event_id".to_string(),
             CanonicalValue::Bytes(self.event_id.as_bytes().to_vec()),
         );
-        map.insert(
-            "event_seq".to_string(),
-            CanonicalValue::U64(self.event_seq),
-        );
+        map.insert("event_seq".to_string(), CanonicalValue::U64(self.event_seq));
         map.insert(
             "prev_event".to_string(),
             match &self.prev_event {
@@ -350,7 +336,10 @@ impl SignaturePreimage for RevocationHead {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ChainError {
     /// Head sequence regression: new_seq <= current_seq.
-    HeadSequenceRegression { current_seq: u64, attempted_seq: u64 },
+    HeadSequenceRegression {
+        current_seq: u64,
+        attempted_seq: u64,
+    },
     /// Hash link mismatch: event's prev_event does not match expected.
     HashLinkMismatch {
         event_seq: u64,
@@ -513,8 +502,7 @@ impl RevocationChain {
 
     /// O(1) revocation lookup: check if a target has been revoked.
     pub fn is_revoked(&self, target_id: &EngineObjectId) -> bool {
-        let result = self.revocation_index.contains_key(target_id);
-        result
+        self.revocation_index.contains_key(target_id)
     }
 
     /// Look up the revocation event for a target, if revoked.
@@ -646,10 +634,7 @@ impl RevocationChain {
 
     /// Verify incremental append: validate that a new event correctly
     /// links to the current head.
-    pub fn verify_append(
-        &self,
-        event: &RevocationEvent,
-    ) -> Result<(), ChainError> {
+    pub fn verify_append(&self, event: &RevocationEvent) -> Result<(), ChainError> {
         let expected_seq = self.events.len() as u64;
 
         // Verify sequence continuity.
@@ -671,19 +656,17 @@ impl RevocationChain {
         }
 
         // Genesis validation.
-        if event.event_seq == 0 {
-            if event.prev_event.is_some() {
-                return Err(ChainError::InvalidGenesis {
-                    detail: "genesis event must have prev_event = None".to_string(),
-                });
-            }
+        if event.event_seq == 0 && event.prev_event.is_some() {
+            return Err(ChainError::InvalidGenesis {
+                detail: "genesis event must have prev_event = None".to_string(),
+            });
         }
 
         Ok(())
     }
 
     /// Verify the entire chain from genesis to the current head.
-    pub fn verify_chain(&self, trace_id: &str) -> Result<(), ChainError> {
+    pub fn verify_chain(&self, _trace_id: &str) -> Result<(), ChainError> {
         if self.events.is_empty() {
             return Ok(());
         }
@@ -760,8 +743,7 @@ impl RevocationChain {
             }
         }
 
-        self.audit_events
-            .len(); // borrow-check avoidance; we can't push to &self
+        self.audit_events.len(); // borrow-check avoidance; we can't push to &self
 
         Ok(())
     }
@@ -820,11 +802,7 @@ impl RevocationChain {
     }
 
     /// Lookup with audit trail.
-    pub fn is_revoked_audited(
-        &mut self,
-        target_id: &EngineObjectId,
-        trace_id: &str,
-    ) -> bool {
+    pub fn is_revoked_audited(&mut self, target_id: &EngineObjectId, trace_id: &str) -> bool {
         let result = self.revocation_index.contains_key(target_id);
         self.audit_events.push(ChainEvent {
             event_type: ChainEventType::RevocationLookup {
@@ -897,22 +875,22 @@ impl RevocationChain {
         }
 
         // Verify head matches chain if provided.
-        if let Some(ref h) = head {
-            if !events.is_empty() {
-                let last_seq = events.len() as u64 - 1;
-                if h.head_seq != last_seq {
-                    return Err(ChainError::ChainIntegrity {
-                        detail: format!(
-                            "head seq {} does not match last event seq {}",
-                            h.head_seq, last_seq
-                        ),
-                    });
-                }
-                if h.chain_hash != chain.chain_hash {
-                    return Err(ChainError::ChainIntegrity {
-                        detail: "head chain_hash does not match computed hash".to_string(),
-                    });
-                }
+        if let Some(ref h) = head
+            && !events.is_empty()
+        {
+            let last_seq = events.len() as u64 - 1;
+            if h.head_seq != last_seq {
+                return Err(ChainError::ChainIntegrity {
+                    detail: format!(
+                        "head seq {} does not match last event seq {}",
+                        h.head_seq, last_seq
+                    ),
+                });
+            }
+            if h.chain_hash != chain.chain_hash {
+                return Err(ChainError::ChainIntegrity {
+                    detail: "head chain_hash does not match computed hash".to_string(),
+                });
             }
         }
 
@@ -1562,9 +1540,11 @@ mod tests {
         chain.append(rev, &sk, "t-audit").unwrap();
 
         let events = chain.drain_events();
-        assert!(events
-            .iter()
-            .any(|e| matches!(e.event_type, ChainEventType::RevocationAppended { .. })));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e.event_type, ChainEventType::RevocationAppended { .. }))
+        );
     }
 
     #[test]
@@ -1740,9 +1720,7 @@ mod tests {
                 target,
                 &test_revocation_key(),
             );
-            chain
-                .append(rev, &sk, &format!("t-large-{i}"))
-                .unwrap();
+            chain.append(rev, &sk, &format!("t-large-{i}")).unwrap();
         }
 
         assert_eq!(chain.len(), 120);

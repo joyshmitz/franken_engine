@@ -41,12 +41,16 @@ pub enum ObjectDomain {
     Revocation,
     /// Signed extension manifests.
     SignedManifest,
+    /// Key attestation objects (owner-signed key bindings).
+    Attestation,
     /// Capability tokens (runtime capabilities, delegation tokens).
     CapabilityToken,
     /// Checkpoint artifacts (runtime checkpoint snapshots).
     CheckpointArtifact,
     /// Recovery artifacts (degraded-mode repair evidence).
     RecoveryArtifact,
+    /// Owner key bundles (bound signing/encryption/issuance key triples).
+    KeyBundle,
 }
 
 impl ObjectDomain {
@@ -57,9 +61,11 @@ impl ObjectDomain {
             Self::EvidenceRecord => b"FrankenEngine.EvidenceRecord.v1",
             Self::Revocation => b"FrankenEngine.Revocation.v1",
             Self::SignedManifest => b"FrankenEngine.SignedManifest.v1",
+            Self::Attestation => b"FrankenEngine.Attestation.v1",
             Self::CapabilityToken => b"FrankenEngine.CapabilityToken.v1",
             Self::CheckpointArtifact => b"FrankenEngine.CheckpointArtifact.v1",
             Self::RecoveryArtifact => b"FrankenEngine.RecoveryArtifact.v1",
+            Self::KeyBundle => b"FrankenEngine.KeyBundle.v1",
         }
     }
 
@@ -69,9 +75,11 @@ impl ObjectDomain {
         ObjectDomain::EvidenceRecord,
         ObjectDomain::Revocation,
         ObjectDomain::SignedManifest,
+        ObjectDomain::Attestation,
         ObjectDomain::CapabilityToken,
         ObjectDomain::CheckpointArtifact,
         ObjectDomain::RecoveryArtifact,
+        ObjectDomain::KeyBundle,
     ];
 }
 
@@ -82,9 +90,11 @@ impl fmt::Display for ObjectDomain {
             Self::EvidenceRecord => write!(f, "evidence_record"),
             Self::Revocation => write!(f, "revocation"),
             Self::SignedManifest => write!(f, "signed_manifest"),
+            Self::Attestation => write!(f, "attestation"),
             Self::CapabilityToken => write!(f, "capability_token"),
             Self::CheckpointArtifact => write!(f, "checkpoint_artifact"),
             Self::RecoveryArtifact => write!(f, "recovery_artifact"),
+            Self::KeyBundle => write!(f, "key_bundle"),
         }
     }
 }

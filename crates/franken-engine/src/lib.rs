@@ -10,43 +10,59 @@ pub mod capability;
 pub mod capability_token;
 pub mod checkpoint;
 pub mod checkpoint_frontier;
+pub mod delegation_chain;
 pub mod deterministic_serde;
+pub mod e2e_harness;
 pub mod engine_object_id;
 pub mod epoch_barrier;
 pub mod eprocess_guardrail;
+pub mod error_code;
 pub mod evidence_contract;
 pub mod evidence_ledger;
 pub mod evidence_ordering;
+pub mod fleet_immune_protocol;
 pub mod fork_detection;
 pub mod gc;
 pub mod gc_pause;
+pub mod golden_vectors;
 pub mod hash_tiers;
 pub mod idempotency_key;
 pub mod interleaving_explorer;
+pub mod key_attestation;
 pub mod key_derivation;
 pub mod lab_runtime;
 pub mod lease_tracker;
 pub mod marker_stream;
 pub mod mmr_proof;
 pub mod monitor_scheduler;
+pub mod moonshot_contract;
 pub mod obligation_channel;
 pub mod obligation_leak_policy;
 pub mod phase_gate;
 pub mod policy_checkpoint;
 pub mod policy_controller;
+pub mod principal_key_roles;
+pub mod privacy_learning_contract;
 pub mod proof_schema;
 pub mod recovery_artifact;
 pub mod regime_detector;
 pub mod region_lifecycle;
 pub mod remote_capability_gate;
 pub mod remote_computation_registry;
+pub mod reputation;
+pub mod revocation_chain;
 pub mod saga_orchestrator;
 pub mod scheduler_lane;
 pub mod security_epoch;
+pub mod session_hostcall_channel;
 pub mod signature_preimage;
 pub mod slot_registry;
 pub mod sorted_multisig;
+pub mod storage_adapter;
 pub mod supervision;
+pub mod threshold_signing;
+pub mod trust_card;
+pub mod trust_economics;
 
 use std::{error::Error, fmt};
 
@@ -196,6 +212,7 @@ fn normalize_source(source: &str) -> EvalResult<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{fs, path::Path};
 
     #[test]
     fn hybrid_routes_simple_input_to_quickjs() {
@@ -249,5 +266,40 @@ mod tests {
                 .code,
             EvalErrorCode::EmptySource
         );
+    }
+
+    #[test]
+    fn control_plane_adoption_adr_contains_required_sections() {
+        let adr_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../docs/adr/ADR-0001-control-plane-adoption-asupersync.md");
+        let adr = fs::read_to_string(&adr_path)
+            .unwrap_or_else(|err| panic!("failed to read {}: {err}", adr_path.display()));
+
+        let required_sections = [
+            "## Canonical Imported Types",
+            "## Version Policy",
+            "## Escalation Path for Missing APIs",
+        ];
+        for section in required_sections {
+            assert!(
+                adr.contains(section),
+                "ADR must contain required section: {section}"
+            );
+        }
+
+        let required_types = [
+            "Cx",
+            "TraceId",
+            "DecisionId",
+            "PolicyId",
+            "SchemaVersion",
+            "Budget",
+        ];
+        for type_name in required_types {
+            assert!(
+                adr.contains(&format!("`{type_name}`")),
+                "ADR must reference canonical type `{type_name}`"
+            );
+        }
     }
 }

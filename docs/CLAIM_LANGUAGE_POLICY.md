@@ -53,6 +53,14 @@ Forbidden unless evidence is linked inline:
 - "zero risk"
 - "category-defining" (when used as a factual present-tense claim)
 
+## Stable Error-Code Language
+
+Operational claims about runtime failures must reference stable `FE-XXXX` codes from `docs/error_code_registry_v1.json`.
+
+- Error-code semantics are append-only: assigned codes are never renumbered, reused, or deleted.
+- If behavior changes, add a new code and mark the old code deprecated; keep deprecated entries in the registry.
+- Registry version increments when codes are added or deprecated.
+
 ## Mandatory Evidence Bundle
 
 Every `SECURITY`, `PERFORMANCE`, `COMPATIBILITY`, or `DETERMINISM` claim must link an evidence bundle directory containing at minimum:

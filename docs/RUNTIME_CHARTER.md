@@ -100,3 +100,6 @@ This charter is binding alongside:
 - `AGENTS.md`
 - `PLAN_TO_CREATE_FRANKEN_ENGINE.md`
 - `docs/REPO_SPLIT_CONTRACT.md`
+- `docs/adr/ADR-0002-fastapi-rust-reuse-scope.md`
+- `docs/adr/ADR-0003-frankentui-reuse-scope.md`
+- `docs/adr/ADR-0004-frankensqlite-reuse-scope.md`

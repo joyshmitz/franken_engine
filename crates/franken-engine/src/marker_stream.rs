@@ -109,6 +109,62 @@ impl fmt::Display for DecisionType {
 }
 
 // ---------------------------------------------------------------------------
+// CorrelationId / TraceContext / RedactedPayload
+// ---------------------------------------------------------------------------
+
+/// Correlation identifier linking related audit markers across components.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct CorrelationId(String);
+
+impl CorrelationId {
+    pub fn new(raw: impl Into<String>) -> Result<Self, &'static str> {
+        let value = raw.into();
+        if value.is_empty() {
+            return Err("correlation_id must not be empty");
+        }
+        if value.len() > 128 {
+            return Err("correlation_id must be <= 128 bytes");
+        }
+        if !value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.')
+        {
+            return Err("correlation_id has unsupported characters");
+        }
+        Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for CorrelationId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// Optional full trace context (W3C trace context compatible fields).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TraceContext {
+    pub traceparent: String,
+    pub tracestate: Option<String>,
+    pub baggage: Option<String>,
+}
+
+/// Redacted payload material stored in the audit chain.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RedactedPayload {
+    /// Redacted summary safe for append-only chain storage.
+    pub redacted_summary: String,
+    /// Hash of full (potentially sensitive) payload.
+    pub payload_hash: ContentHash,
+    /// Whether redaction was applied before persistence.
+    pub redaction_applied: bool,
+}
+
+// ---------------------------------------------------------------------------
 // DecisionMarker — a single marker in the stream
 // ---------------------------------------------------------------------------
 
@@ -129,12 +185,24 @@ pub struct DecisionMarker {
     pub decision_type: DecisionType,
     /// Decision identifier for correlation with evidence entries.
     pub decision_id: String,
+    /// Optional policy identifier active at decision time.
+    pub policy_id: Option<String>,
+    /// Correlation ID that links this marker to a larger flow.
+    pub correlation_id: CorrelationId,
+    /// Optional full trace context for deep distributed tracing.
+    pub trace_context: Option<TraceContext>,
+    /// Optional principal identifier.
+    pub principal_id: Option<String>,
+    /// Optional trust/zone identifier.
+    pub zone_id: Option<String>,
+    /// Optional stable error code.
+    pub error_code: Option<String>,
     /// Hash linking to the full evidence entry in the evidence ledger.
     pub evidence_entry_hash: ContentHash,
     /// Actor (agent, operator, or system component) that made the decision.
     pub actor: String,
-    /// Concise payload summary (not the full decision payload).
-    pub payload_summary: String,
+    /// Redacted payload persisted in the append-only chain.
+    pub redacted_payload: RedactedPayload,
 }
 
 // ---------------------------------------------------------------------------
@@ -152,12 +220,26 @@ pub struct MarkerInput {
     pub decision_type: DecisionType,
     /// Decision identifier for correlation with evidence entries.
     pub decision_id: String,
+    /// Optional policy identifier active at decision time.
+    pub policy_id: Option<String>,
+    /// Correlation ID that links this marker to a larger flow.
+    pub correlation_id: CorrelationId,
+    /// Optional full trace context.
+    pub trace_context: Option<TraceContext>,
+    /// Optional principal identifier.
+    pub principal_id: Option<String>,
+    /// Optional trust/zone identifier.
+    pub zone_id: Option<String>,
+    /// Optional stable error code.
+    pub error_code: Option<String>,
     /// Hash linking to the full evidence entry in the evidence ledger.
     pub evidence_entry_hash: ContentHash,
     /// Actor (agent, operator, or system component) that made the decision.
     pub actor: String,
-    /// Concise payload summary (not the full decision payload).
+    /// Concise payload summary (already redacted).
     pub payload_summary: String,
+    /// Optional full payload used only for hashing before redaction.
+    pub full_payload: Option<String>,
     /// Trace identifier for structured audit events.
     pub trace_id: String,
 }
@@ -185,6 +267,8 @@ pub enum ChainIntegrityError {
     EmptyStream,
     /// Marker IDs are not monotonically increasing.
     NonMonotonicId { marker_id: u64, prev_marker_id: u64 },
+    /// Signed chain head does not match recomputed head.
+    HeadMismatch,
 }
 
 impl fmt::Display for ChainIntegrityError {
@@ -201,6 +285,7 @@ impl fmt::Display for ChainIntegrityError {
                 marker_id,
                 prev_marker_id,
             } => write!(f, "non-monotonic: {marker_id} after {prev_marker_id}"),
+            Self::HeadMismatch => write!(f, "chain head mismatch"),
         }
     }
 }
@@ -224,6 +309,19 @@ pub struct IntegrityCheckpoint {
     pub signed_hash: AuthenticityHash,
 }
 
+/// Signed head for the append-only chain.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuditChainHead {
+    /// Latest marker ID.
+    pub head_marker_id: u64,
+    /// Latest marker hash.
+    pub latest_marker_hash: ContentHash,
+    /// Rolling hash over the chain.
+    pub rolling_chain_hash: ContentHash,
+    /// Signed hash covering head fields.
+    pub signed_head_hash: AuthenticityHash,
+}
+
 // ---------------------------------------------------------------------------
 // MarkerEvent — structured audit event
 // ---------------------------------------------------------------------------
@@ -234,10 +332,15 @@ pub struct MarkerEvent {
     pub marker_id: u64,
     pub marker_type: String,
     pub chain_length: u64,
+    pub decision_id: String,
+    pub policy_id: Option<String>,
+    pub principal_id: Option<String>,
+    pub correlation_id: String,
     pub trace_id: String,
     pub component: String,
     pub event: String,
     pub outcome: String,
+    pub error_code: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -253,6 +356,8 @@ pub struct DecisionMarkerStream {
     markers: Vec<DecisionMarker>,
     next_marker_id: u64,
     checkpoints: Vec<IntegrityCheckpoint>,
+    chain_head: Option<AuditChainHead>,
+    rolling_chain_hash: ContentHash,
     checkpoint_interval: u64,
     checkpoint_key: Vec<u8>,
     events: Vec<MarkerEvent>,
@@ -268,6 +373,8 @@ impl DecisionMarkerStream {
             markers: Vec::new(),
             next_marker_id: 1,
             checkpoints: Vec::new(),
+            chain_head: None,
+            rolling_chain_hash: ContentHash([0u8; 32]),
             checkpoint_interval,
             checkpoint_key,
             events: Vec::new(),
@@ -297,6 +404,19 @@ impl DecisionMarkerStream {
             .unwrap_or(ContentHash([0u8; 32]));
 
         let decision_type_str = input.decision_type.to_string();
+        let decision_id_for_event = input.decision_id.clone();
+        let policy_id_for_event = input.policy_id.clone();
+        let principal_id_for_event = input.principal_id.clone();
+        let payload_material = input
+            .full_payload
+            .clone()
+            .unwrap_or_else(|| input.payload_summary.clone());
+        let payload_hash = ContentHash::compute(payload_material.as_bytes());
+        let redacted_payload = RedactedPayload {
+            redacted_summary: input.payload_summary,
+            payload_hash: payload_hash.clone(),
+            redaction_applied: true,
+        };
 
         // Build marker with placeholder hash, then compute real hash.
         let mut marker = DecisionMarker {
@@ -307,24 +427,36 @@ impl DecisionMarkerStream {
             epoch_id: input.epoch_id,
             decision_type: input.decision_type,
             decision_id: input.decision_id,
+            policy_id: input.policy_id,
+            correlation_id: input.correlation_id.clone(),
+            trace_context: input.trace_context,
+            principal_id: input.principal_id,
+            zone_id: input.zone_id,
+            error_code: input.error_code.clone(),
             evidence_entry_hash: input.evidence_entry_hash,
             actor: input.actor,
-            payload_summary: input.payload_summary,
+            redacted_payload,
         };
 
         marker.marker_hash = compute_marker_hash(&marker);
 
         self.markers.push(marker);
+        self.update_chain_head();
 
         // Emit audit event.
         self.events.push(MarkerEvent {
             marker_id,
             marker_type: decision_type_str,
             chain_length: self.markers.len() as u64,
+            decision_id: decision_id_for_event,
+            policy_id: policy_id_for_event,
+            principal_id: principal_id_for_event,
+            correlation_id: input.correlation_id.to_string(),
             trace_id: input.trace_id,
             component: "marker_stream".to_string(),
             event: "marker_appended".to_string(),
             outcome: "ok".to_string(),
+            error_code: input.error_code,
         });
 
         // Check if we should emit a checkpoint.
@@ -438,6 +570,83 @@ impl DecisionMarkerStream {
         &self.checkpoints
     }
 
+    /// Latest signed chain head.
+    pub fn chain_head(&self) -> Option<&AuditChainHead> {
+        self.chain_head.as_ref()
+    }
+
+    /// Query markers by correlation ID.
+    pub fn by_correlation_id(&self, correlation_id: &str) -> Vec<&DecisionMarker> {
+        self.markers
+            .iter()
+            .filter(|marker| marker.correlation_id.as_str() == correlation_id)
+            .collect()
+    }
+
+    /// Query markers by decision type display value.
+    pub fn by_event_type(&self, event_type: &str) -> Vec<&DecisionMarker> {
+        self.markers
+            .iter()
+            .filter(|marker| marker.decision_type.to_string() == event_type)
+            .collect()
+    }
+
+    /// Query markers by principal identifier.
+    pub fn by_principal_id(&self, principal_id: &str) -> Vec<&DecisionMarker> {
+        self.markers
+            .iter()
+            .filter(|marker| marker.principal_id.as_deref() == Some(principal_id))
+            .collect()
+    }
+
+    /// Query markers by inclusive timestamp range.
+    pub fn by_time_range(&self, start_ticks: u64, end_ticks: u64) -> Vec<&DecisionMarker> {
+        self.markers
+            .iter()
+            .filter(|marker| {
+                marker.timestamp_ticks >= start_ticks && marker.timestamp_ticks <= end_ticks
+            })
+            .collect()
+    }
+
+    /// Query markers by stable error code.
+    pub fn by_error_code(&self, error_code: &str) -> Vec<&DecisionMarker> {
+        self.markers
+            .iter()
+            .filter(|marker| marker.error_code.as_deref() == Some(error_code))
+            .collect()
+    }
+
+    /// Verify the currently stored chain head against recomputed state.
+    pub fn verify_head(&self) -> Result<(), ChainIntegrityError> {
+        if self.markers.is_empty() {
+            return Ok(());
+        }
+
+        let Some(existing_head) = self.chain_head.as_ref() else {
+            return Err(ChainIntegrityError::HeadMismatch);
+        };
+
+        let latest = self.markers.last().expect("checked non-empty");
+        let expected_rolling = recompute_rolling_hash(&self.markers);
+        let expected_signed = sign_chain_head(
+            &self.checkpoint_key,
+            latest.marker_id,
+            &latest.marker_hash,
+            &expected_rolling,
+        );
+
+        if existing_head.head_marker_id != latest.marker_id
+            || existing_head.latest_marker_hash != latest.marker_hash
+            || existing_head.rolling_chain_hash != expected_rolling
+            || existing_head.signed_head_hash != expected_signed
+        {
+            return Err(ChainIntegrityError::HeadMismatch);
+        }
+
+        Ok(())
+    }
+
     /// Drain accumulated events.
     pub fn drain_events(&mut self) -> Vec<MarkerEvent> {
         std::mem::take(&mut self.events)
@@ -465,6 +674,32 @@ impl DecisionMarkerStream {
             });
         }
     }
+
+    fn update_chain_head(&mut self) {
+        let Some(latest) = self.markers.last() else {
+            self.chain_head = None;
+            self.rolling_chain_hash = ContentHash([0u8; 32]);
+            return;
+        };
+
+        self.rolling_chain_hash = compute_rolling_hash(
+            &self.rolling_chain_hash,
+            latest.marker_id,
+            &latest.marker_hash,
+        );
+        let signed_head = sign_chain_head(
+            &self.checkpoint_key,
+            latest.marker_id,
+            &latest.marker_hash,
+            &self.rolling_chain_hash,
+        );
+        self.chain_head = Some(AuditChainHead {
+            head_marker_id: latest.marker_id,
+            latest_marker_hash: latest.marker_hash.clone(),
+            rolling_chain_hash: self.rolling_chain_hash.clone(),
+            signed_head_hash: signed_head,
+        });
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -488,15 +723,99 @@ fn compute_marker_hash(marker: &DecisionMarker) -> ContentHash {
     preimage.extend_from_slice(&(marker.decision_id.len() as u32).to_be_bytes());
     preimage.extend_from_slice(marker.decision_id.as_bytes());
 
+    match &marker.policy_id {
+        Some(policy_id) => {
+            preimage.push(1);
+            preimage.extend_from_slice(&(policy_id.len() as u32).to_be_bytes());
+            preimage.extend_from_slice(policy_id.as_bytes());
+        }
+        None => preimage.push(0),
+    }
+
+    preimage.extend_from_slice(&(marker.correlation_id.as_str().len() as u32).to_be_bytes());
+    preimage.extend_from_slice(marker.correlation_id.as_str().as_bytes());
+
+    if let Some(trace_context) = &marker.trace_context {
+        preimage.push(1);
+        preimage.extend_from_slice(&(trace_context.traceparent.len() as u32).to_be_bytes());
+        preimage.extend_from_slice(trace_context.traceparent.as_bytes());
+        if let Some(tracestate) = &trace_context.tracestate {
+            preimage.push(1);
+            preimage.extend_from_slice(&(tracestate.len() as u32).to_be_bytes());
+            preimage.extend_from_slice(tracestate.as_bytes());
+        } else {
+            preimage.push(0);
+        }
+        if let Some(baggage) = &trace_context.baggage {
+            preimage.push(1);
+            preimage.extend_from_slice(&(baggage.len() as u32).to_be_bytes());
+            preimage.extend_from_slice(baggage.as_bytes());
+        } else {
+            preimage.push(0);
+        }
+    } else {
+        preimage.push(0);
+    }
+
+    append_optional_string(&mut preimage, marker.principal_id.as_deref());
+    append_optional_string(&mut preimage, marker.zone_id.as_deref());
+    append_optional_string(&mut preimage, marker.error_code.as_deref());
+
     preimage.extend_from_slice(marker.evidence_entry_hash.as_bytes());
 
     preimage.extend_from_slice(&(marker.actor.len() as u32).to_be_bytes());
     preimage.extend_from_slice(marker.actor.as_bytes());
 
-    preimage.extend_from_slice(&(marker.payload_summary.len() as u32).to_be_bytes());
-    preimage.extend_from_slice(marker.payload_summary.as_bytes());
+    preimage
+        .extend_from_slice(&(marker.redacted_payload.redacted_summary.len() as u32).to_be_bytes());
+    preimage.extend_from_slice(marker.redacted_payload.redacted_summary.as_bytes());
+    preimage.extend_from_slice(marker.redacted_payload.payload_hash.as_bytes());
+    preimage.push(u8::from(marker.redacted_payload.redaction_applied));
 
     ContentHash::compute(&preimage)
+}
+
+fn append_optional_string(preimage: &mut Vec<u8>, value: Option<&str>) {
+    if let Some(value) = value {
+        preimage.push(1);
+        preimage.extend_from_slice(&(value.len() as u32).to_be_bytes());
+        preimage.extend_from_slice(value.as_bytes());
+    } else {
+        preimage.push(0);
+    }
+}
+
+fn compute_rolling_hash(
+    previous_rolling_hash: &ContentHash,
+    marker_id: u64,
+    marker_hash: &ContentHash,
+) -> ContentHash {
+    let mut preimage = Vec::new();
+    preimage.extend_from_slice(previous_rolling_hash.as_bytes());
+    preimage.extend_from_slice(&marker_id.to_be_bytes());
+    preimage.extend_from_slice(marker_hash.as_bytes());
+    ContentHash::compute(&preimage)
+}
+
+fn recompute_rolling_hash(markers: &[DecisionMarker]) -> ContentHash {
+    markers
+        .iter()
+        .fold(ContentHash([0u8; 32]), |rolling, marker| {
+            compute_rolling_hash(&rolling, marker.marker_id, &marker.marker_hash)
+        })
+}
+
+fn sign_chain_head(
+    checkpoint_key: &[u8],
+    marker_id: u64,
+    latest_marker_hash: &ContentHash,
+    rolling_chain_hash: &ContentHash,
+) -> AuthenticityHash {
+    let mut preimage = Vec::new();
+    preimage.extend_from_slice(&marker_id.to_be_bytes());
+    preimage.extend_from_slice(latest_marker_hash.as_bytes());
+    preimage.extend_from_slice(rolling_chain_hash.as_bytes());
+    AuthenticityHash::compute_keyed(checkpoint_key, &preimage)
 }
 
 // ---------------------------------------------------------------------------
@@ -523,9 +842,17 @@ mod tests {
                 action: SecurityActionKind::Quarantine,
             },
             decision_id: format!("decision-{id_suffix}"),
+            policy_id: Some("policy-default".to_string()),
+            correlation_id: CorrelationId::new(format!("corr-{id_suffix}"))
+                .expect("valid correlation id"),
+            trace_context: None,
+            principal_id: Some("principal-operator".to_string()),
+            zone_id: Some("zone-a".to_string()),
+            error_code: None,
             evidence_entry_hash: test_evidence_hash(),
             actor: "operator".to_string(),
             payload_summary: "quarantine target-x".to_string(),
+            full_payload: None,
             trace_id: format!("trace-{id_suffix}"),
         }
     }
@@ -546,9 +873,16 @@ mod tests {
                 action: SecurityActionKind::Quarantine,
             },
             decision_id: "dec-1".to_string(),
+            policy_id: Some("policy-default".to_string()),
+            correlation_id: CorrelationId::new("corr-basic").expect("valid correlation id"),
+            trace_context: None,
+            principal_id: None,
+            zone_id: None,
+            error_code: None,
             evidence_entry_hash: test_evidence_hash(),
             actor: "operator".to_string(),
             payload_summary: "quarantine ext-abc".to_string(),
+            full_payload: None,
             trace_id: "trace-1".to_string(),
         });
         assert_eq!(marker.marker_id, 1);
@@ -635,7 +969,7 @@ mod tests {
         }
 
         // Tamper with a marker's payload.
-        stream.markers[2].payload_summary = "tampered!".to_string();
+        stream.markers[2].redacted_payload.redacted_summary = "tampered!".to_string();
 
         let err = stream.verify_chain().unwrap_err();
         assert!(matches!(
@@ -760,9 +1094,21 @@ mod tests {
                 epoch_id: 1,
                 decision_type: dt,
                 decision_id: format!("dec-{i}"),
+                policy_id: Some("policy-default".to_string()),
+                correlation_id: CorrelationId::new(format!("corr-all-{i}"))
+                    .expect("valid correlation id"),
+                trace_context: None,
+                principal_id: None,
+                zone_id: None,
+                error_code: if i % 2 == 0 {
+                    Some("FE-TEST-0001".to_string())
+                } else {
+                    None
+                },
                 evidence_entry_hash: test_evidence_hash(),
                 actor: "system".to_string(),
                 payload_summary: "test".to_string(),
+                full_payload: None,
                 trace_id: format!("trace-{i}"),
             });
         }
@@ -804,6 +1150,12 @@ mod tests {
         assert_eq!(events.len(), 2);
         assert_eq!(events[0].marker_id, 1);
         assert_eq!(events[0].event, "marker_appended");
+        assert_eq!(events[0].decision_id, "decision-1");
+        assert_eq!(events[0].policy_id.as_deref(), Some("policy-default"));
+        assert_eq!(
+            events[0].principal_id.as_deref(),
+            Some("principal-operator")
+        );
         assert_eq!(events[1].marker_id, 2);
     }
 
@@ -815,6 +1167,278 @@ mod tests {
         assert_eq!(events1.len(), 1);
         let events2 = stream.drain_events();
         assert!(events2.is_empty());
+    }
+
+    #[test]
+    fn by_correlation_id_returns_related_markers() {
+        let mut stream = make_stream();
+        for (i, correlation) in ["corr-flow-a", "corr-flow-a", "corr-flow-b"]
+            .iter()
+            .enumerate()
+        {
+            stream.append(MarkerInput {
+                timestamp_ticks: 100 + i as u64,
+                epoch_id: 1,
+                decision_type: DecisionType::SecurityAction {
+                    action: SecurityActionKind::Quarantine,
+                },
+                decision_id: format!("dec-corr-{i}"),
+                policy_id: Some("policy-default".to_string()),
+                correlation_id: CorrelationId::new(*correlation).expect("valid correlation id"),
+                trace_context: None,
+                principal_id: None,
+                zone_id: None,
+                error_code: None,
+                evidence_entry_hash: test_evidence_hash(),
+                actor: "system".to_string(),
+                payload_summary: "redacted".to_string(),
+                full_payload: None,
+                trace_id: format!("trace-corr-{i}"),
+            });
+        }
+
+        assert_eq!(stream.by_correlation_id("corr-flow-a").len(), 2);
+        assert_eq!(stream.by_correlation_id("corr-flow-b").len(), 1);
+        assert!(stream.by_correlation_id("corr-missing").is_empty());
+    }
+
+    #[test]
+    fn by_error_code_returns_only_matching_markers() {
+        let mut stream = make_stream();
+        stream.append(MarkerInput {
+            timestamp_ticks: 100,
+            epoch_id: 1,
+            decision_type: DecisionType::SecurityAction {
+                action: SecurityActionKind::Quarantine,
+            },
+            decision_id: "dec-1".to_string(),
+            policy_id: Some("policy-default".to_string()),
+            correlation_id: CorrelationId::new("corr-err-1").expect("valid correlation id"),
+            trace_context: None,
+            principal_id: None,
+            zone_id: None,
+            error_code: Some("FE-TEST-1001".to_string()),
+            evidence_entry_hash: test_evidence_hash(),
+            actor: "system".to_string(),
+            payload_summary: "redacted".to_string(),
+            full_payload: None,
+            trace_id: "trace-1".to_string(),
+        });
+        stream.append(MarkerInput {
+            timestamp_ticks: 101,
+            epoch_id: 1,
+            decision_type: DecisionType::PolicyTransition {
+                transition: PolicyTransitionKind::Activation,
+            },
+            decision_id: "dec-2".to_string(),
+            policy_id: Some("policy-default".to_string()),
+            correlation_id: CorrelationId::new("corr-err-2").expect("valid correlation id"),
+            trace_context: None,
+            principal_id: None,
+            zone_id: None,
+            error_code: None,
+            evidence_entry_hash: test_evidence_hash(),
+            actor: "system".to_string(),
+            payload_summary: "redacted".to_string(),
+            full_payload: None,
+            trace_id: "trace-2".to_string(),
+        });
+
+        assert_eq!(stream.by_error_code("FE-TEST-1001").len(), 1);
+        assert!(stream.by_error_code("FE-TEST-9999").is_empty());
+    }
+
+    #[test]
+    fn by_principal_id_returns_only_matching_markers() {
+        let mut stream = make_stream();
+        stream.append(MarkerInput {
+            timestamp_ticks: 100,
+            epoch_id: 1,
+            decision_type: DecisionType::SecurityAction {
+                action: SecurityActionKind::Quarantine,
+            },
+            decision_id: "dec-principal-1".to_string(),
+            policy_id: Some("policy-default".to_string()),
+            correlation_id: CorrelationId::new("corr-principal-1").expect("valid correlation id"),
+            trace_context: None,
+            principal_id: Some("principal-a".to_string()),
+            zone_id: None,
+            error_code: None,
+            evidence_entry_hash: test_evidence_hash(),
+            actor: "system".to_string(),
+            payload_summary: "redacted".to_string(),
+            full_payload: None,
+            trace_id: "trace-principal-1".to_string(),
+        });
+        stream.append(MarkerInput {
+            timestamp_ticks: 101,
+            epoch_id: 1,
+            decision_type: DecisionType::SecurityAction {
+                action: SecurityActionKind::Suspend,
+            },
+            decision_id: "dec-principal-2".to_string(),
+            policy_id: Some("policy-default".to_string()),
+            correlation_id: CorrelationId::new("corr-principal-2").expect("valid correlation id"),
+            trace_context: None,
+            principal_id: Some("principal-b".to_string()),
+            zone_id: None,
+            error_code: None,
+            evidence_entry_hash: test_evidence_hash(),
+            actor: "system".to_string(),
+            payload_summary: "redacted".to_string(),
+            full_payload: None,
+            trace_id: "trace-principal-2".to_string(),
+        });
+
+        assert_eq!(stream.by_principal_id("principal-a").len(), 1);
+        assert_eq!(stream.by_principal_id("principal-b").len(), 1);
+        assert!(stream.by_principal_id("principal-missing").is_empty());
+    }
+
+    #[test]
+    fn by_time_range_returns_only_inclusive_matches() {
+        let mut stream = make_stream();
+        for i in 0..4 {
+            stream.append(MarkerInput {
+                timestamp_ticks: 100 + i * 10,
+                epoch_id: 1,
+                decision_type: DecisionType::SecurityAction {
+                    action: SecurityActionKind::Quarantine,
+                },
+                decision_id: format!("dec-time-{i}"),
+                policy_id: Some("policy-default".to_string()),
+                correlation_id: CorrelationId::new(format!("corr-time-{i}"))
+                    .expect("valid correlation id"),
+                trace_context: None,
+                principal_id: None,
+                zone_id: None,
+                error_code: None,
+                evidence_entry_hash: test_evidence_hash(),
+                actor: "system".to_string(),
+                payload_summary: "redacted".to_string(),
+                full_payload: None,
+                trace_id: format!("trace-time-{i}"),
+            });
+        }
+
+        let in_range = stream.by_time_range(110, 120);
+        assert_eq!(in_range.len(), 2);
+        assert_eq!(in_range[0].timestamp_ticks, 110);
+        assert_eq!(in_range[1].timestamp_ticks, 120);
+    }
+
+    #[test]
+    fn integration_flow_links_related_events_by_correlation_id() {
+        let mut stream = make_stream();
+        let correlation_id = CorrelationId::new("corr-integration").expect("valid correlation id");
+        let flow = [
+            DecisionType::SecurityAction {
+                action: SecurityActionKind::Quarantine,
+            },
+            DecisionType::RevocationEvent {
+                revocation: RevocationKind::Issuance,
+            },
+            DecisionType::PolicyTransition {
+                transition: PolicyTransitionKind::Activation,
+            },
+        ];
+
+        for (i, decision_type) in flow.into_iter().enumerate() {
+            stream.append(MarkerInput {
+                timestamp_ticks: 1_000 + i as u64,
+                epoch_id: 7,
+                decision_type,
+                decision_id: format!("dec-integration-{i}"),
+                policy_id: Some("policy-integration".to_string()),
+                correlation_id: correlation_id.clone(),
+                trace_context: Some(TraceContext {
+                    traceparent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00"
+                        .to_string(),
+                    tracestate: Some("vendor=value".to_string()),
+                    baggage: Some("tenant=alpha".to_string()),
+                }),
+                principal_id: Some("principal-integration".to_string()),
+                zone_id: Some("zone-integration".to_string()),
+                error_code: None,
+                evidence_entry_hash: test_evidence_hash(),
+                actor: "runtime".to_string(),
+                payload_summary: "[redacted]".to_string(),
+                full_payload: Some(format!("sensitive-flow-{i}")),
+                trace_id: "trace-integration".to_string(),
+            });
+        }
+
+        assert_eq!(stream.by_correlation_id("corr-integration").len(), 3);
+        assert_eq!(stream.by_principal_id("principal-integration").len(), 3);
+        assert!(stream.verify_chain().is_ok());
+        assert!(stream.verify_head().is_ok());
+
+        let events = stream.drain_events();
+        assert_eq!(events.len(), 3);
+        assert!(
+            events
+                .iter()
+                .all(|event| event.trace_id == "trace-integration")
+        );
+        assert!(
+            events
+                .iter()
+                .all(|event| event.policy_id.as_deref() == Some("policy-integration"))
+        );
+    }
+
+    #[test]
+    fn chain_head_advances_and_verifies() {
+        let mut stream = make_stream();
+        append_security_marker(&mut stream, "1");
+        append_security_marker(&mut stream, "2");
+
+        let head = stream.chain_head().expect("head should exist");
+        assert_eq!(head.head_marker_id, 2);
+        assert!(stream.verify_head().is_ok());
+    }
+
+    #[test]
+    fn payload_is_redacted_by_default_but_hashes_full_payload() {
+        let mut stream = make_stream();
+        let full_payload = "secret-token-value";
+        stream.append(MarkerInput {
+            timestamp_ticks: 100,
+            epoch_id: 1,
+            decision_type: DecisionType::SecurityAction {
+                action: SecurityActionKind::Quarantine,
+            },
+            decision_id: "dec-redact".to_string(),
+            policy_id: Some("policy-default".to_string()),
+            correlation_id: CorrelationId::new("corr-redact").expect("valid correlation id"),
+            trace_context: Some(TraceContext {
+                traceparent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00".to_string(),
+                tracestate: Some("vendor=value".to_string()),
+                baggage: None,
+            }),
+            principal_id: Some("principal-redact".to_string()),
+            zone_id: Some("zone-red".to_string()),
+            error_code: None,
+            evidence_entry_hash: test_evidence_hash(),
+            actor: "system".to_string(),
+            payload_summary: "[redacted]".to_string(),
+            full_payload: Some(full_payload.to_string()),
+            trace_id: "trace-redact".to_string(),
+        });
+
+        let marker = stream.get(1).expect("marker exists");
+        assert!(marker.redacted_payload.redaction_applied);
+        assert_eq!(marker.redacted_payload.redacted_summary, "[redacted]");
+        assert_eq!(
+            marker.redacted_payload.payload_hash,
+            ContentHash::compute(full_payload.as_bytes())
+        );
+        assert!(
+            !marker
+                .redacted_payload
+                .redacted_summary
+                .contains("secret-token-value")
+        );
     }
 
     // -- Get marker by ID --
@@ -883,10 +1507,15 @@ mod tests {
             marker_id: 1,
             marker_type: "security_action".to_string(),
             chain_length: 1,
+            decision_id: "dec-1".to_string(),
+            policy_id: Some("policy-default".to_string()),
+            principal_id: Some("principal-1".to_string()),
+            correlation_id: "corr-1".to_string(),
             trace_id: "trace-1".to_string(),
             component: "marker_stream".to_string(),
             event: "marker_appended".to_string(),
             outcome: "ok".to_string(),
+            error_code: None,
         };
         let json = serde_json::to_string(&event).expect("serialize");
         let restored: MarkerEvent = serde_json::from_str(&json).expect("deserialize");
