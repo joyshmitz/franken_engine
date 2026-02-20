@@ -1,0 +1,718 @@
+//! GC pause-time instrumentation and regression budgets.
+//!
+//! Measures every GC pause, records structured telemetry, and gates against
+//! defined latency budgets (p50/p95/p99) to prevent GC from becoming a
+//! tail-latency source.
+//!
+//! Plan references: Section 10.3 item 3, 9D.4 (allocation profiling),
+//! 9D (extreme-software-optimization discipline), Phase C exit gate.
+
+use std::collections::BTreeMap;
+use std::fmt;
+
+use serde::{Deserialize, Serialize};
+
+use crate::gc::GcEvent;
+
+// ---------------------------------------------------------------------------
+// PauseBudget — latency budget thresholds
+// ---------------------------------------------------------------------------
+
+/// Latency budget thresholds for GC pauses (in nanoseconds).
+///
+/// The CI regression gate compares observed GC pause percentiles against
+/// these budgets and fails the build if any threshold is exceeded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PauseBudget {
+    /// Maximum acceptable p50 pause (nanoseconds).
+    pub p50_ns: u64,
+    /// Maximum acceptable p95 pause (nanoseconds).
+    pub p95_ns: u64,
+    /// Maximum acceptable p99 pause (nanoseconds).
+    pub p99_ns: u64,
+}
+
+impl PauseBudget {
+    pub fn new(p50_ns: u64, p95_ns: u64, p99_ns: u64) -> Self {
+        Self {
+            p50_ns,
+            p95_ns,
+            p99_ns,
+        }
+    }
+}
+
+impl Default for PauseBudget {
+    fn default() -> Self {
+        Self {
+            p50_ns: 500_000,    // 500 µs
+            p95_ns: 2_000_000,  // 2 ms
+            p99_ns: 10_000_000, // 10 ms
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PauseRecord — a single GC pause measurement
+// ---------------------------------------------------------------------------
+
+/// A single recorded GC pause with structured metadata.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PauseRecord {
+    /// Monotonic sequence number (from GcEvent).
+    pub sequence: u64,
+    /// Which extension was collected.
+    pub extension_id: String,
+    /// Pause duration in nanoseconds.
+    pub pause_ns: u64,
+    /// Objects scanned during mark phase.
+    pub objects_scanned: u64,
+    /// Objects collected during sweep phase.
+    pub objects_collected: u64,
+    /// Bytes reclaimed.
+    pub bytes_reclaimed: u64,
+}
+
+impl PauseRecord {
+    /// Create a `PauseRecord` from a `GcEvent`.
+    pub fn from_gc_event(event: &GcEvent) -> Self {
+        Self {
+            sequence: event.sequence,
+            extension_id: event.extension_id.clone(),
+            pause_ns: event.pause_ns,
+            objects_scanned: event.marked_count,
+            objects_collected: event.swept_count,
+            bytes_reclaimed: event.bytes_reclaimed,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// BudgetViolation — describes a budget threshold breach
+// ---------------------------------------------------------------------------
+
+/// Which percentile budget was violated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Percentile {
+    P50,
+    P95,
+    P99,
+}
+
+impl fmt::Display for Percentile {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = match self {
+            Self::P50 => "p50",
+            Self::P95 => "p95",
+            Self::P99 => "p99",
+        };
+        f.write_str(name)
+    }
+}
+
+/// A budget violation: an observed percentile exceeded its threshold.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BudgetViolation {
+    pub percentile: Percentile,
+    /// Observed value (nanoseconds).
+    pub observed_ns: u64,
+    /// Budget threshold (nanoseconds).
+    pub budget_ns: u64,
+    /// Scope: global or per-extension.
+    pub scope: String,
+}
+
+impl fmt::Display for BudgetViolation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{} violation in '{}': observed {} ns > budget {} ns",
+            self.percentile, self.scope, self.observed_ns, self.budget_ns
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PercentileSnapshot — computed percentile values
+// ---------------------------------------------------------------------------
+
+/// Computed percentile values from a set of pause measurements.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PercentileSnapshot {
+    pub count: u64,
+    pub min_ns: u64,
+    pub max_ns: u64,
+    pub p50_ns: u64,
+    pub p95_ns: u64,
+    pub p99_ns: u64,
+}
+
+impl PercentileSnapshot {
+    /// Compute percentiles from a sorted slice of pause durations.
+    fn from_sorted(sorted: &[u64]) -> Self {
+        if sorted.is_empty() {
+            return Self {
+                count: 0,
+                min_ns: 0,
+                max_ns: 0,
+                p50_ns: 0,
+                p95_ns: 0,
+                p99_ns: 0,
+            };
+        }
+        let n = sorted.len();
+        Self {
+            count: n as u64,
+            min_ns: sorted[0],
+            max_ns: sorted[n - 1],
+            p50_ns: percentile_value(sorted, 50),
+            p95_ns: percentile_value(sorted, 95),
+            p99_ns: percentile_value(sorted, 99),
+        }
+    }
+
+    /// Check this snapshot against a budget, returning violations.
+    pub fn check_budget(&self, budget: &PauseBudget, scope: &str) -> Vec<BudgetViolation> {
+        let mut violations = Vec::new();
+        if self.count == 0 {
+            return violations;
+        }
+        if self.p50_ns > budget.p50_ns {
+            violations.push(BudgetViolation {
+                percentile: Percentile::P50,
+                observed_ns: self.p50_ns,
+                budget_ns: budget.p50_ns,
+                scope: scope.to_string(),
+            });
+        }
+        if self.p95_ns > budget.p95_ns {
+            violations.push(BudgetViolation {
+                percentile: Percentile::P95,
+                observed_ns: self.p95_ns,
+                budget_ns: budget.p95_ns,
+                scope: scope.to_string(),
+            });
+        }
+        if self.p99_ns > budget.p99_ns {
+            violations.push(BudgetViolation {
+                percentile: Percentile::P99,
+                observed_ns: self.p99_ns,
+                budget_ns: budget.p99_ns,
+                scope: scope.to_string(),
+            });
+        }
+        violations
+    }
+}
+
+/// Compute the value at a given percentile from a sorted slice.
+///
+/// Uses the nearest-rank method for deterministic results.
+fn percentile_value(sorted: &[u64], pct: u32) -> u64 {
+    if sorted.is_empty() {
+        return 0;
+    }
+    let rank = ((pct as f64 / 100.0) * sorted.len() as f64).ceil() as usize;
+    let idx = rank.saturating_sub(1).min(sorted.len() - 1);
+    sorted[idx]
+}
+
+// ---------------------------------------------------------------------------
+// PauseTracker — aggregates pause records and computes statistics
+// ---------------------------------------------------------------------------
+
+/// Tracks GC pause records and computes aggregate statistics.
+///
+/// Maintains global records and per-extension records for isolated analysis.
+/// Uses `BTreeMap` for deterministic per-extension ordering.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PauseTracker {
+    /// All pause records in insertion order.
+    records: Vec<PauseRecord>,
+    /// Per-extension pause durations (for per-extension percentile computation).
+    per_extension: BTreeMap<String, Vec<u64>>,
+    /// Budget thresholds.
+    budget: PauseBudget,
+    /// Ring-buffer capacity (0 = unlimited).
+    capacity: usize,
+}
+
+impl PauseTracker {
+    pub fn new(budget: PauseBudget) -> Self {
+        Self {
+            records: Vec::new(),
+            per_extension: BTreeMap::new(),
+            budget,
+            capacity: 0,
+        }
+    }
+
+    /// Create a tracker with a ring-buffer capacity limit.
+    pub fn with_capacity(budget: PauseBudget, capacity: usize) -> Self {
+        Self {
+            records: Vec::new(),
+            per_extension: BTreeMap::new(),
+            budget,
+            capacity,
+        }
+    }
+
+    /// Record a GC pause from a `GcEvent`.
+    pub fn record(&mut self, event: &GcEvent) {
+        let pause = PauseRecord::from_gc_event(event);
+        self.per_extension
+            .entry(event.extension_id.clone())
+            .or_default()
+            .push(event.pause_ns);
+        self.records.push(pause);
+
+        // Enforce ring-buffer capacity if set.
+        if self.capacity > 0 && self.records.len() > self.capacity {
+            let removed = self.records.remove(0);
+            // Also clean up per-extension data for the removed record.
+            if let Some(ext_pauses) = self.per_extension.get_mut(&removed.extension_id) {
+                if let Some(pos) = ext_pauses.iter().position(|&v| v == removed.pause_ns) {
+                    ext_pauses.remove(pos);
+                }
+                if ext_pauses.is_empty() {
+                    self.per_extension.remove(&removed.extension_id);
+                }
+            }
+        }
+    }
+
+    /// Compute global percentile snapshot across all extensions.
+    pub fn global_percentiles(&self) -> PercentileSnapshot {
+        let mut all_pauses: Vec<u64> = self.records.iter().map(|r| r.pause_ns).collect();
+        all_pauses.sort_unstable();
+        PercentileSnapshot::from_sorted(&all_pauses)
+    }
+
+    /// Compute percentile snapshot for a specific extension.
+    pub fn extension_percentiles(&self, extension_id: &str) -> PercentileSnapshot {
+        match self.per_extension.get(extension_id) {
+            Some(pauses) => {
+                let mut sorted = pauses.clone();
+                sorted.sort_unstable();
+                PercentileSnapshot::from_sorted(&sorted)
+            }
+            None => PercentileSnapshot::from_sorted(&[]),
+        }
+    }
+
+    /// Check all recorded pauses against the budget.
+    ///
+    /// Returns violations for global and each per-extension scope.
+    pub fn check_budget(&self) -> Vec<BudgetViolation> {
+        let mut violations = Vec::new();
+
+        // Global check.
+        let global = self.global_percentiles();
+        violations.extend(global.check_budget(&self.budget, "global"));
+
+        // Per-extension checks (deterministic order via BTreeMap).
+        for ext_id in self.per_extension.keys() {
+            let snap = self.extension_percentiles(ext_id);
+            violations.extend(snap.check_budget(&self.budget, ext_id));
+        }
+
+        violations
+    }
+
+    /// Returns true if all pauses are within budget.
+    pub fn within_budget(&self) -> bool {
+        self.check_budget().is_empty()
+    }
+
+    /// All recorded pause records.
+    pub fn records(&self) -> &[PauseRecord] {
+        &self.records
+    }
+
+    /// Number of recorded pauses.
+    pub fn count(&self) -> usize {
+        self.records.len()
+    }
+
+    /// Per-extension pause count.
+    pub fn extension_count(&self, extension_id: &str) -> usize {
+        self.per_extension.get(extension_id).map_or(0, |v| v.len())
+    }
+
+    /// Total bytes reclaimed across all recorded pauses.
+    pub fn total_bytes_reclaimed(&self) -> u64 {
+        self.records.iter().map(|r| r.bytes_reclaimed).sum()
+    }
+
+    /// Total objects collected across all recorded pauses.
+    pub fn total_objects_collected(&self) -> u64 {
+        self.records.iter().map(|r| r.objects_collected).sum()
+    }
+
+    /// Extensions with recorded pauses (deterministic order).
+    pub fn extensions(&self) -> Vec<&str> {
+        self.per_extension.keys().map(|s| s.as_str()).collect()
+    }
+
+    /// Current budget.
+    pub fn budget(&self) -> &PauseBudget {
+        &self.budget
+    }
+
+    /// Update the budget thresholds.
+    pub fn set_budget(&mut self, budget: PauseBudget) {
+        self.budget = budget;
+    }
+}
+
+impl Default for PauseTracker {
+    fn default() -> Self {
+        Self::new(PauseBudget::default())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gc::GcPhase;
+
+    fn make_event(seq: u64, ext: &str, pause_ns: u64, swept: u64, reclaimed: u64) -> GcEvent {
+        GcEvent {
+            sequence: seq,
+            extension_id: ext.to_string(),
+            phase: GcPhase::Complete,
+            marked_count: 10,
+            swept_count: swept,
+            bytes_reclaimed: reclaimed,
+            pause_ns,
+        }
+    }
+
+    // -- PauseBudget --
+
+    #[test]
+    fn default_budget_values() {
+        let b = PauseBudget::default();
+        assert_eq!(b.p50_ns, 500_000);
+        assert_eq!(b.p95_ns, 2_000_000);
+        assert_eq!(b.p99_ns, 10_000_000);
+    }
+
+    // -- PauseRecord --
+
+    #[test]
+    fn pause_record_from_gc_event() {
+        let event = make_event(1, "ext-a", 1500, 5, 1024);
+        let record = PauseRecord::from_gc_event(&event);
+        assert_eq!(record.sequence, 1);
+        assert_eq!(record.extension_id, "ext-a");
+        assert_eq!(record.pause_ns, 1500);
+        assert_eq!(record.objects_scanned, 10);
+        assert_eq!(record.objects_collected, 5);
+        assert_eq!(record.bytes_reclaimed, 1024);
+    }
+
+    // -- Percentile computation --
+
+    #[test]
+    fn percentile_from_single_value() {
+        let data = [100u64];
+        let snap = PercentileSnapshot::from_sorted(&data);
+        assert_eq!(snap.count, 1);
+        assert_eq!(snap.min_ns, 100);
+        assert_eq!(snap.max_ns, 100);
+        assert_eq!(snap.p50_ns, 100);
+        assert_eq!(snap.p95_ns, 100);
+        assert_eq!(snap.p99_ns, 100);
+    }
+
+    #[test]
+    fn percentile_from_empty() {
+        let snap = PercentileSnapshot::from_sorted(&[]);
+        assert_eq!(snap.count, 0);
+        assert_eq!(snap.p50_ns, 0);
+    }
+
+    #[test]
+    fn percentile_computation_correctness() {
+        // 100 values: 1, 2, 3, ..., 100
+        let data: Vec<u64> = (1..=100).collect();
+        let snap = PercentileSnapshot::from_sorted(&data);
+        assert_eq!(snap.count, 100);
+        assert_eq!(snap.min_ns, 1);
+        assert_eq!(snap.max_ns, 100);
+        assert_eq!(snap.p50_ns, 50);
+        assert_eq!(snap.p95_ns, 95);
+        assert_eq!(snap.p99_ns, 99);
+    }
+
+    #[test]
+    fn percentile_with_small_dataset() {
+        // 5 values: 10, 20, 30, 40, 50
+        let data = [10u64, 20, 30, 40, 50];
+        let snap = PercentileSnapshot::from_sorted(&data);
+        assert_eq!(snap.count, 5);
+        assert_eq!(snap.min_ns, 10);
+        assert_eq!(snap.max_ns, 50);
+        // p50 of 5 items: ceil(0.5*5)=3 → index 2 → value 30
+        assert_eq!(snap.p50_ns, 30);
+        // p95 of 5 items: ceil(0.95*5)=5 → index 4 → value 50
+        assert_eq!(snap.p95_ns, 50);
+        // p99 of 5 items: ceil(0.99*5)=5 → index 4 → value 50
+        assert_eq!(snap.p99_ns, 50);
+    }
+
+    // -- Budget violations --
+
+    #[test]
+    fn no_violations_within_budget() {
+        let budget = PauseBudget::new(1000, 2000, 5000);
+        let snap = PercentileSnapshot {
+            count: 10,
+            min_ns: 100,
+            max_ns: 900,
+            p50_ns: 500,
+            p95_ns: 800,
+            p99_ns: 900,
+        };
+        let violations = snap.check_budget(&budget, "test");
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn p50_violation_detected() {
+        let budget = PauseBudget::new(100, 2000, 5000);
+        let snap = PercentileSnapshot {
+            count: 10,
+            min_ns: 50,
+            max_ns: 900,
+            p50_ns: 200, // exceeds p50 budget of 100
+            p95_ns: 800,
+            p99_ns: 900,
+        };
+        let violations = snap.check_budget(&budget, "test");
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].percentile, Percentile::P50);
+        assert_eq!(violations[0].observed_ns, 200);
+        assert_eq!(violations[0].budget_ns, 100);
+    }
+
+    #[test]
+    fn multiple_violations_detected() {
+        let budget = PauseBudget::new(100, 200, 300);
+        let snap = PercentileSnapshot {
+            count: 10,
+            min_ns: 50,
+            max_ns: 900,
+            p50_ns: 200,
+            p95_ns: 400,
+            p99_ns: 900,
+        };
+        let violations = snap.check_budget(&budget, "test");
+        assert_eq!(violations.len(), 3);
+    }
+
+    #[test]
+    fn empty_snapshot_no_violations() {
+        let budget = PauseBudget::new(100, 200, 300);
+        let snap = PercentileSnapshot::from_sorted(&[]);
+        let violations = snap.check_budget(&budget, "test");
+        assert!(violations.is_empty());
+    }
+
+    // -- PauseTracker --
+
+    #[test]
+    fn tracker_records_events() {
+        let mut tracker = PauseTracker::default();
+        tracker.record(&make_event(1, "ext-a", 1000, 5, 512));
+        tracker.record(&make_event(2, "ext-a", 2000, 3, 256));
+        tracker.record(&make_event(3, "ext-b", 500, 1, 128));
+
+        assert_eq!(tracker.count(), 3);
+        assert_eq!(tracker.extension_count("ext-a"), 2);
+        assert_eq!(tracker.extension_count("ext-b"), 1);
+        assert_eq!(tracker.total_bytes_reclaimed(), 896);
+        assert_eq!(tracker.total_objects_collected(), 9);
+    }
+
+    #[test]
+    fn tracker_global_percentiles() {
+        let mut tracker = PauseTracker::default();
+        for i in 1..=100 {
+            tracker.record(&make_event(i, "ext-a", i * 100, 0, 0));
+        }
+
+        let snap = tracker.global_percentiles();
+        assert_eq!(snap.count, 100);
+        assert_eq!(snap.min_ns, 100);
+        assert_eq!(snap.max_ns, 10000);
+        assert_eq!(snap.p50_ns, 5000);
+        assert_eq!(snap.p95_ns, 9500);
+        assert_eq!(snap.p99_ns, 9900);
+    }
+
+    #[test]
+    fn tracker_per_extension_percentiles() {
+        let mut tracker = PauseTracker::default();
+        tracker.record(&make_event(1, "ext-a", 1000, 0, 0));
+        tracker.record(&make_event(2, "ext-a", 2000, 0, 0));
+        tracker.record(&make_event(3, "ext-a", 3000, 0, 0));
+        tracker.record(&make_event(4, "ext-b", 500, 0, 0));
+
+        let snap_a = tracker.extension_percentiles("ext-a");
+        assert_eq!(snap_a.count, 3);
+        assert_eq!(snap_a.min_ns, 1000);
+        assert_eq!(snap_a.max_ns, 3000);
+
+        let snap_b = tracker.extension_percentiles("ext-b");
+        assert_eq!(snap_b.count, 1);
+        assert_eq!(snap_b.p50_ns, 500);
+
+        let snap_none = tracker.extension_percentiles("ext-z");
+        assert_eq!(snap_none.count, 0);
+    }
+
+    #[test]
+    fn tracker_budget_check_within_budget() {
+        let budget = PauseBudget::new(10_000, 20_000, 50_000);
+        let mut tracker = PauseTracker::new(budget);
+        tracker.record(&make_event(1, "ext-a", 5000, 0, 0));
+        tracker.record(&make_event(2, "ext-a", 8000, 0, 0));
+
+        assert!(tracker.within_budget());
+        assert!(tracker.check_budget().is_empty());
+    }
+
+    #[test]
+    fn tracker_budget_check_violations() {
+        let budget = PauseBudget::new(100, 200, 300);
+        let mut tracker = PauseTracker::new(budget);
+        // All pauses exceed even p50 budget
+        tracker.record(&make_event(1, "ext-a", 500, 0, 0));
+        tracker.record(&make_event(2, "ext-a", 600, 0, 0));
+
+        assert!(!tracker.within_budget());
+        let violations = tracker.check_budget();
+        // Should have violations for global and ext-a
+        assert!(!violations.is_empty());
+        // Both global and ext-a p50 are violated at minimum
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.scope == "global" && v.percentile == Percentile::P50)
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.scope == "ext-a" && v.percentile == Percentile::P50)
+        );
+    }
+
+    #[test]
+    fn tracker_extensions_deterministic_order() {
+        let mut tracker = PauseTracker::default();
+        tracker.record(&make_event(1, "ext-c", 100, 0, 0));
+        tracker.record(&make_event(2, "ext-a", 200, 0, 0));
+        tracker.record(&make_event(3, "ext-b", 300, 0, 0));
+
+        let exts = tracker.extensions();
+        assert_eq!(exts, vec!["ext-a", "ext-b", "ext-c"]);
+    }
+
+    #[test]
+    fn tracker_ring_buffer_capacity() {
+        let budget = PauseBudget::default();
+        let mut tracker = PauseTracker::with_capacity(budget, 3);
+
+        tracker.record(&make_event(1, "ext-a", 100, 0, 0));
+        tracker.record(&make_event(2, "ext-a", 200, 0, 0));
+        tracker.record(&make_event(3, "ext-a", 300, 0, 0));
+        assert_eq!(tracker.count(), 3);
+
+        // Adding a 4th record should evict the oldest.
+        tracker.record(&make_event(4, "ext-a", 400, 0, 0));
+        assert_eq!(tracker.count(), 3);
+        assert_eq!(tracker.records()[0].sequence, 2);
+        assert_eq!(tracker.records()[2].sequence, 4);
+    }
+
+    #[test]
+    fn tracker_set_budget() {
+        let mut tracker = PauseTracker::default();
+        let new_budget = PauseBudget::new(100, 200, 300);
+        tracker.set_budget(new_budget);
+        assert_eq!(tracker.budget().p50_ns, 100);
+        assert_eq!(tracker.budget().p95_ns, 200);
+        assert_eq!(tracker.budget().p99_ns, 300);
+    }
+
+    #[test]
+    fn violation_display() {
+        let v = BudgetViolation {
+            percentile: Percentile::P95,
+            observed_ns: 5000,
+            budget_ns: 2000,
+            scope: "ext-a".to_string(),
+        };
+        assert_eq!(
+            v.to_string(),
+            "p95 violation in 'ext-a': observed 5000 ns > budget 2000 ns"
+        );
+    }
+
+    #[test]
+    fn percentile_display() {
+        assert_eq!(Percentile::P50.to_string(), "p50");
+        assert_eq!(Percentile::P95.to_string(), "p95");
+        assert_eq!(Percentile::P99.to_string(), "p99");
+    }
+
+    // -- Serialization --
+
+    #[test]
+    fn pause_tracker_serialization_round_trip() {
+        let mut tracker = PauseTracker::new(PauseBudget::new(1000, 2000, 5000));
+        tracker.record(&make_event(1, "ext-a", 500, 3, 256));
+        tracker.record(&make_event(2, "ext-b", 800, 1, 128));
+
+        let json = serde_json::to_string(&tracker).expect("serialize");
+        let restored: PauseTracker = serde_json::from_str(&json).expect("deserialize");
+
+        assert_eq!(tracker.count(), restored.count());
+        assert_eq!(tracker.global_percentiles(), restored.global_percentiles());
+        assert_eq!(
+            tracker.extension_percentiles("ext-a"),
+            restored.extension_percentiles("ext-a")
+        );
+        assert_eq!(tracker.budget().p50_ns, restored.budget().p50_ns);
+    }
+
+    // -- Integration with GcCollector --
+
+    #[test]
+    fn integration_gc_collector_to_pause_tracker() {
+        use crate::gc::{GcCollector, GcConfig};
+
+        let mut gc = GcCollector::new(GcConfig::deterministic());
+        gc.register_heap("ext-a".into()).unwrap();
+
+        let obj = gc.allocate("ext-a", 100).unwrap();
+        gc.unroot("ext-a", obj).unwrap();
+
+        let event = gc.collect("ext-a").unwrap();
+
+        let mut tracker = PauseTracker::default();
+        tracker.record(&event);
+
+        assert_eq!(tracker.count(), 1);
+        let snap = tracker.global_percentiles();
+        assert_eq!(snap.count, 1);
+        assert_eq!(snap.p50_ns, 1000); // deterministic mode sentinel
+        assert!(tracker.within_budget()); // 1000 ns < 500_000 ns p50 budget
+    }
+}

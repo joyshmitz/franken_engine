@@ -1,0 +1,674 @@
+//! Evidence-and-decision contract template for subsystem proposals.
+//!
+//! Every major subsystem proposal must satisfy this contract before merge.
+//! The template enforces artifact-backed discipline: "no contract, no merge."
+//!
+//! Plan references: Section 11 (Evidence And Decision Contracts — Mandatory),
+//! 5.1 (extreme-software-optimization baseline/profile/prove), 5.2 (alien-
+//! artifact-coding expected-loss), 5.3 (alien-graveyard EV threshold).
+
+use std::fmt;
+
+use serde::{Deserialize, Serialize};
+
+// ---------------------------------------------------------------------------
+// ContractVersion — schema versioning for backward compatibility
+// ---------------------------------------------------------------------------
+
+/// Schema version for the evidence contract format.
+///
+/// Versioning enables backward-compatible evolution: old contracts remain
+/// valid while new required fields can be added in later versions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ContractVersion {
+    pub major: u32,
+    pub minor: u32,
+}
+
+impl ContractVersion {
+    pub const CURRENT: Self = Self { major: 1, minor: 0 };
+
+    pub fn new(major: u32, minor: u32) -> Self {
+        Self { major, minor }
+    }
+
+    /// Whether this version is compatible with the current version.
+    pub fn is_compatible(&self) -> bool {
+        self.major == Self::CURRENT.major
+    }
+}
+
+impl fmt::Display for ContractVersion {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}.{}", self.major, self.minor)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// EvTier — expected-value assessment tier
+// ---------------------------------------------------------------------------
+
+/// EV assessment tier (from alien-graveyard methodology, Section 5.3).
+///
+/// Proposals must achieve EV >= 2.0 to proceed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EvTier {
+    /// EV < 1.0 — net negative, reject.
+    Reject,
+    /// 1.0 <= EV < 2.0 — marginal, requires exceptional justification.
+    Marginal,
+    /// 2.0 <= EV < 5.0 — clear positive, standard approval path.
+    Positive,
+    /// EV >= 5.0 — high-impact, prioritize.
+    HighImpact,
+}
+
+impl EvTier {
+    /// Classify an EV score into a tier.
+    pub fn from_score(ev: f64) -> Self {
+        if ev < 1.0 {
+            Self::Reject
+        } else if ev < 2.0 {
+            Self::Marginal
+        } else if ev < 5.0 {
+            Self::Positive
+        } else {
+            Self::HighImpact
+        }
+    }
+
+    /// Whether this tier meets the minimum threshold (EV >= 2.0).
+    pub fn meets_threshold(&self) -> bool {
+        matches!(self, Self::Positive | Self::HighImpact)
+    }
+}
+
+impl fmt::Display for EvTier {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let label = match self {
+            Self::Reject => "reject (EV < 1.0)",
+            Self::Marginal => "marginal (1.0 <= EV < 2.0)",
+            Self::Positive => "positive (2.0 <= EV < 5.0)",
+            Self::HighImpact => "high-impact (EV >= 5.0)",
+        };
+        f.write_str(label)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// RolloutStage — staged deployment strategy (Section 8.8)
+// ---------------------------------------------------------------------------
+
+/// Staged rollout strategy per Section 8.8.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RolloutStage {
+    Shadow,
+    Canary,
+    Ramp,
+    Default,
+}
+
+impl fmt::Display for RolloutStage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let label = match self {
+            Self::Shadow => "shadow",
+            Self::Canary => "canary",
+            Self::Ramp => "ramp",
+            Self::Default => "default",
+        };
+        f.write_str(label)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// EvidenceContract — the mandatory contract template
+// ---------------------------------------------------------------------------
+
+/// The mandatory evidence-and-decision contract that every major subsystem
+/// proposal must satisfy.
+///
+/// All fields are required.  Validation rejects contracts with any empty
+/// or missing field.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EvidenceContract {
+    /// Schema version for backward compatibility.
+    pub version: ContractVersion,
+
+    // -- Required fields per Section 11 --
+    /// What is being proposed and why.
+    pub change_summary: String,
+
+    /// Profile data, threat model, or risk assessment justifying the change.
+    pub hotspot_evidence: String,
+
+    /// Expected value score (numeric).
+    pub ev_score: f64,
+
+    /// EV tier classification.
+    pub ev_tier: EvTier,
+
+    /// Explicit loss matrix for the action space.
+    pub expected_loss_model: String,
+
+    /// Conditions under which the change auto-reverts or degrades to safe mode.
+    pub fallback_trigger: String,
+
+    /// Staged deployment strategy stages.
+    pub rollout_stages: Vec<RolloutStage>,
+
+    /// Exact command(s) to revert the change.
+    pub rollback_command: String,
+
+    /// Before/after performance data, golden output checksums, test results.
+    pub benchmark_artifacts: String,
+}
+
+// ---------------------------------------------------------------------------
+// ContractValidationError — typed validation errors
+// ---------------------------------------------------------------------------
+
+/// Validation errors for evidence contracts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ContractValidationError {
+    /// A required text field is empty or whitespace-only.
+    MissingField { field: String },
+    /// The EV score is below the minimum threshold.
+    EvBelowThreshold { score_str: String, tier: String },
+    /// The EV tier does not match the EV score.
+    EvTierMismatch {
+        score_str: String,
+        declared_tier: String,
+        expected_tier: String,
+    },
+    /// No rollout stages defined.
+    EmptyRolloutStages,
+    /// Rollout stages are not in the correct order.
+    InvalidRolloutOrder { stage: String, position: usize },
+    /// Contract version is incompatible.
+    IncompatibleVersion { version: String },
+    /// EV score is NaN or infinite.
+    InvalidEvScore,
+}
+
+impl fmt::Display for ContractValidationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingField { field } => {
+                write!(f, "evidence contract missing required field: {}", field)
+            }
+            Self::EvBelowThreshold { score_str, tier } => {
+                write!(
+                    f,
+                    "EV score {} (tier: {}) is below the minimum threshold (>= 2.0)",
+                    score_str, tier
+                )
+            }
+            Self::EvTierMismatch {
+                score_str,
+                declared_tier,
+                expected_tier,
+            } => write!(
+                f,
+                "EV tier mismatch: score {} should be tier '{}' but declared as '{}'",
+                score_str, expected_tier, declared_tier
+            ),
+            Self::EmptyRolloutStages => {
+                write!(
+                    f,
+                    "evidence contract must define at least one rollout stage"
+                )
+            }
+            Self::InvalidRolloutOrder { stage, position } => write!(
+                f,
+                "rollout stage '{}' at position {} violates required ordering (shadow -> canary -> ramp -> default)",
+                stage, position
+            ),
+            Self::IncompatibleVersion { version } => {
+                write!(
+                    f,
+                    "evidence contract version {} is incompatible with current version {}",
+                    version,
+                    ContractVersion::CURRENT
+                )
+            }
+            Self::InvalidEvScore => write!(f, "EV score must be a finite number"),
+        }
+    }
+}
+
+impl std::error::Error for ContractValidationError {}
+
+// ---------------------------------------------------------------------------
+// Validation
+// ---------------------------------------------------------------------------
+
+impl EvidenceContract {
+    /// Validate the contract, returning all errors found.
+    ///
+    /// Returns `Ok(())` if the contract satisfies all requirements.
+    /// Returns `Err(errors)` with every validation failure.
+    pub fn validate(&self) -> Result<(), Vec<ContractValidationError>> {
+        let errors = validate_contract(self);
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
+    }
+}
+
+/// Validate an evidence contract, returning all discovered errors.
+pub fn validate_contract(contract: &EvidenceContract) -> Vec<ContractValidationError> {
+    let mut errors = Vec::new();
+
+    // Version compatibility.
+    if !contract.version.is_compatible() {
+        errors.push(ContractValidationError::IncompatibleVersion {
+            version: contract.version.to_string(),
+        });
+    }
+
+    // Required text fields.
+    let text_fields = [
+        ("change_summary", &contract.change_summary),
+        ("hotspot_evidence", &contract.hotspot_evidence),
+        ("expected_loss_model", &contract.expected_loss_model),
+        ("fallback_trigger", &contract.fallback_trigger),
+        ("rollback_command", &contract.rollback_command),
+        ("benchmark_artifacts", &contract.benchmark_artifacts),
+    ];
+    for (name, value) in text_fields {
+        if value.trim().is_empty() {
+            errors.push(ContractValidationError::MissingField {
+                field: name.to_string(),
+            });
+        }
+    }
+
+    // EV score validity.
+    if contract.ev_score.is_nan() || contract.ev_score.is_infinite() {
+        errors.push(ContractValidationError::InvalidEvScore);
+    } else {
+        // EV tier consistency.
+        let expected_tier = EvTier::from_score(contract.ev_score);
+        if contract.ev_tier != expected_tier {
+            errors.push(ContractValidationError::EvTierMismatch {
+                score_str: format!("{:.2}", contract.ev_score),
+                declared_tier: contract.ev_tier.to_string(),
+                expected_tier: expected_tier.to_string(),
+            });
+        }
+
+        // EV threshold check.
+        if !contract.ev_tier.meets_threshold() {
+            errors.push(ContractValidationError::EvBelowThreshold {
+                score_str: format!("{:.2}", contract.ev_score),
+                tier: contract.ev_tier.to_string(),
+            });
+        }
+    }
+
+    // Rollout stages.
+    if contract.rollout_stages.is_empty() {
+        errors.push(ContractValidationError::EmptyRolloutStages);
+    } else {
+        // Validate ordering: each stage must not precede the previous one.
+        fn stage_order(s: &RolloutStage) -> u8 {
+            match s {
+                RolloutStage::Shadow => 0,
+                RolloutStage::Canary => 1,
+                RolloutStage::Ramp => 2,
+                RolloutStage::Default => 3,
+            }
+        }
+        for i in 1..contract.rollout_stages.len() {
+            if stage_order(&contract.rollout_stages[i])
+                < stage_order(&contract.rollout_stages[i - 1])
+            {
+                errors.push(ContractValidationError::InvalidRolloutOrder {
+                    stage: contract.rollout_stages[i].to_string(),
+                    position: i,
+                });
+            }
+        }
+    }
+
+    errors
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn valid_contract() -> EvidenceContract {
+        EvidenceContract {
+            version: ContractVersion::CURRENT,
+            change_summary: "Add deterministic GC with per-extension isolation".to_string(),
+            hotspot_evidence: "Profile shows GC pauses dominate p99 latency at 15ms".to_string(),
+            ev_score: 3.5,
+            ev_tier: EvTier::Positive,
+            expected_loss_model: "Action: deploy GC, Loss(no-deploy)=high latency, Loss(deploy-bad)=rollback cost ~2h".to_string(),
+            fallback_trigger: "p99 GC pause exceeds 10ms for 5 consecutive minutes".to_string(),
+            rollout_stages: vec![
+                RolloutStage::Shadow,
+                RolloutStage::Canary,
+                RolloutStage::Ramp,
+                RolloutStage::Default,
+            ],
+            rollback_command: "cargo run -- rollback gc-v1".to_string(),
+            benchmark_artifacts: "Before: p99=15ms, After: p99=3ms. Golden hash: abc123".to_string(),
+        }
+    }
+
+    // -- Valid contract --
+
+    #[test]
+    fn valid_contract_passes_validation() {
+        let contract = valid_contract();
+        assert!(contract.validate().is_ok());
+    }
+
+    // -- Missing fields --
+
+    #[test]
+    fn missing_change_summary_fails() {
+        let mut contract = valid_contract();
+        contract.change_summary = "   ".to_string();
+        let errors = contract.validate().unwrap_err();
+        assert!(errors.iter().any(|e| matches!(
+            e,
+            ContractValidationError::MissingField { field } if field == "change_summary"
+        )));
+    }
+
+    #[test]
+    fn missing_hotspot_evidence_fails() {
+        let mut contract = valid_contract();
+        contract.hotspot_evidence = String::new();
+        let errors = contract.validate().unwrap_err();
+        assert!(errors.iter().any(|e| matches!(
+            e,
+            ContractValidationError::MissingField { field } if field == "hotspot_evidence"
+        )));
+    }
+
+    #[test]
+    fn missing_expected_loss_model_fails() {
+        let mut contract = valid_contract();
+        contract.expected_loss_model = String::new();
+        let errors = contract.validate().unwrap_err();
+        assert!(errors.iter().any(|e| matches!(
+            e,
+            ContractValidationError::MissingField { field } if field == "expected_loss_model"
+        )));
+    }
+
+    #[test]
+    fn missing_fallback_trigger_fails() {
+        let mut contract = valid_contract();
+        contract.fallback_trigger = String::new();
+        let errors = contract.validate().unwrap_err();
+        assert!(errors.iter().any(|e| matches!(
+            e,
+            ContractValidationError::MissingField { field } if field == "fallback_trigger"
+        )));
+    }
+
+    #[test]
+    fn missing_rollback_command_fails() {
+        let mut contract = valid_contract();
+        contract.rollback_command = String::new();
+        let errors = contract.validate().unwrap_err();
+        assert!(errors.iter().any(|e| matches!(
+            e,
+            ContractValidationError::MissingField { field } if field == "rollback_command"
+        )));
+    }
+
+    #[test]
+    fn missing_benchmark_artifacts_fails() {
+        let mut contract = valid_contract();
+        contract.benchmark_artifacts = String::new();
+        let errors = contract.validate().unwrap_err();
+        assert!(errors.iter().any(|e| matches!(
+            e,
+            ContractValidationError::MissingField { field } if field == "benchmark_artifacts"
+        )));
+    }
+
+    #[test]
+    fn all_fields_empty_produces_multiple_errors() {
+        let contract = EvidenceContract {
+            version: ContractVersion::CURRENT,
+            change_summary: String::new(),
+            hotspot_evidence: String::new(),
+            ev_score: 3.0,
+            ev_tier: EvTier::Positive,
+            expected_loss_model: String::new(),
+            fallback_trigger: String::new(),
+            rollout_stages: vec![RolloutStage::Shadow],
+            rollback_command: String::new(),
+            benchmark_artifacts: String::new(),
+        };
+        let errors = contract.validate().unwrap_err();
+        // 6 text fields are empty.
+        let missing_count = errors
+            .iter()
+            .filter(|e| matches!(e, ContractValidationError::MissingField { .. }))
+            .count();
+        assert_eq!(missing_count, 6);
+    }
+
+    // -- EV score and tier --
+
+    #[test]
+    fn ev_below_threshold_fails() {
+        let mut contract = valid_contract();
+        contract.ev_score = 1.5;
+        contract.ev_tier = EvTier::Marginal;
+        let errors = contract.validate().unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, ContractValidationError::EvBelowThreshold { .. }))
+        );
+    }
+
+    #[test]
+    fn ev_tier_mismatch_fails() {
+        let mut contract = valid_contract();
+        contract.ev_score = 3.0;
+        contract.ev_tier = EvTier::HighImpact; // should be Positive
+        let errors = contract.validate().unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, ContractValidationError::EvTierMismatch { .. }))
+        );
+    }
+
+    #[test]
+    fn ev_reject_tier_fails() {
+        let mut contract = valid_contract();
+        contract.ev_score = 0.5;
+        contract.ev_tier = EvTier::Reject;
+        let errors = contract.validate().unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, ContractValidationError::EvBelowThreshold { .. }))
+        );
+    }
+
+    #[test]
+    fn ev_high_impact_passes() {
+        let mut contract = valid_contract();
+        contract.ev_score = 7.0;
+        contract.ev_tier = EvTier::HighImpact;
+        assert!(contract.validate().is_ok());
+    }
+
+    #[test]
+    fn ev_nan_fails() {
+        let mut contract = valid_contract();
+        contract.ev_score = f64::NAN;
+        let errors = contract.validate().unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, ContractValidationError::InvalidEvScore))
+        );
+    }
+
+    #[test]
+    fn ev_infinity_fails() {
+        let mut contract = valid_contract();
+        contract.ev_score = f64::INFINITY;
+        let errors = contract.validate().unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, ContractValidationError::InvalidEvScore))
+        );
+    }
+
+    // -- Rollout stages --
+
+    #[test]
+    fn empty_rollout_stages_fails() {
+        let mut contract = valid_contract();
+        contract.rollout_stages.clear();
+        let errors = contract.validate().unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, ContractValidationError::EmptyRolloutStages))
+        );
+    }
+
+    #[test]
+    fn single_rollout_stage_passes() {
+        let mut contract = valid_contract();
+        contract.rollout_stages = vec![RolloutStage::Shadow];
+        assert!(contract.validate().is_ok());
+    }
+
+    #[test]
+    fn out_of_order_rollout_stages_fails() {
+        let mut contract = valid_contract();
+        contract.rollout_stages = vec![
+            RolloutStage::Canary,
+            RolloutStage::Shadow, // out of order
+        ];
+        let errors = contract.validate().unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, ContractValidationError::InvalidRolloutOrder { .. }))
+        );
+    }
+
+    #[test]
+    fn duplicate_rollout_stages_allowed() {
+        let mut contract = valid_contract();
+        contract.rollout_stages = vec![RolloutStage::Canary, RolloutStage::Canary];
+        assert!(contract.validate().is_ok());
+    }
+
+    // -- Version --
+
+    #[test]
+    fn incompatible_version_fails() {
+        let mut contract = valid_contract();
+        contract.version = ContractVersion::new(2, 0);
+        let errors = contract.validate().unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, ContractValidationError::IncompatibleVersion { .. }))
+        );
+    }
+
+    #[test]
+    fn compatible_minor_version_passes() {
+        let mut contract = valid_contract();
+        contract.version = ContractVersion::new(1, 5);
+        assert!(contract.validate().is_ok());
+    }
+
+    // -- EvTier classification --
+
+    #[test]
+    fn ev_tier_from_score_classification() {
+        assert_eq!(EvTier::from_score(0.5), EvTier::Reject);
+        assert_eq!(EvTier::from_score(1.0), EvTier::Marginal);
+        assert_eq!(EvTier::from_score(1.99), EvTier::Marginal);
+        assert_eq!(EvTier::from_score(2.0), EvTier::Positive);
+        assert_eq!(EvTier::from_score(4.99), EvTier::Positive);
+        assert_eq!(EvTier::from_score(5.0), EvTier::HighImpact);
+        assert_eq!(EvTier::from_score(100.0), EvTier::HighImpact);
+    }
+
+    #[test]
+    fn ev_tier_meets_threshold() {
+        assert!(!EvTier::Reject.meets_threshold());
+        assert!(!EvTier::Marginal.meets_threshold());
+        assert!(EvTier::Positive.meets_threshold());
+        assert!(EvTier::HighImpact.meets_threshold());
+    }
+
+    // -- Display --
+
+    #[test]
+    fn contract_version_display() {
+        assert_eq!(ContractVersion::CURRENT.to_string(), "1.0");
+        assert_eq!(ContractVersion::new(2, 3).to_string(), "2.3");
+    }
+
+    #[test]
+    fn rollout_stage_display() {
+        assert_eq!(RolloutStage::Shadow.to_string(), "shadow");
+        assert_eq!(RolloutStage::Canary.to_string(), "canary");
+        assert_eq!(RolloutStage::Ramp.to_string(), "ramp");
+        assert_eq!(RolloutStage::Default.to_string(), "default");
+    }
+
+    #[test]
+    fn validation_error_display() {
+        let err = ContractValidationError::MissingField {
+            field: "change_summary".to_string(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "evidence contract missing required field: change_summary"
+        );
+
+        let err = ContractValidationError::EmptyRolloutStages;
+        assert_eq!(
+            err.to_string(),
+            "evidence contract must define at least one rollout stage"
+        );
+    }
+
+    // -- Serialization --
+
+    #[test]
+    fn evidence_contract_serialization_round_trip() {
+        let contract = valid_contract();
+        let json = serde_json::to_string(&contract).expect("serialize");
+        let restored: EvidenceContract = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(contract, restored);
+    }
+
+    #[test]
+    fn contract_version_serialization() {
+        let v = ContractVersion::CURRENT;
+        let json = serde_json::to_string(&v).expect("serialize");
+        let restored: ContractVersion = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(v, restored);
+    }
+}

@@ -1,0 +1,943 @@
+//! Epoch transition barrier preventing mixed-epoch critical operations.
+//!
+//! When a security epoch advances, all in-flight critical operations must
+//! either complete under the old epoch or be aborted — no operation may
+//! straddle the boundary.  The [`EpochBarrier`] provides read-side
+//! [`EpochGuard`]s for critical operations and a write-side transition
+//! protocol that drains in-flight guards before advancing.
+//!
+//! Plan references: Section 10.11 item 19, 9G.6 (epoch-scoped validity,
+//! key derivation with transition barriers), Top-10 #5 (supply-chain
+//! trust), Top-10 #10 (provenance, revocation fabric).
+
+use std::fmt;
+
+use serde::{Deserialize, Serialize};
+
+use crate::security_epoch::{SecurityEpoch, TransitionReason};
+
+// ---------------------------------------------------------------------------
+// BarrierState — phase of the epoch barrier
+// ---------------------------------------------------------------------------
+
+/// Current phase of the epoch barrier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BarrierState {
+    /// Normal operation — guards can be acquired.
+    Open,
+    /// Transition in progress — new guards are rejected, draining old ones.
+    Draining,
+    /// Transition is complete but barrier has not yet reopened (finalization).
+    Finalizing,
+}
+
+impl fmt::Display for BarrierState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = match self {
+            Self::Open => "open",
+            Self::Draining => "draining",
+            Self::Finalizing => "finalizing",
+        };
+        f.write_str(name)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// BarrierError — typed barrier failures
+// ---------------------------------------------------------------------------
+
+/// Typed error for epoch barrier operations.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BarrierError {
+    /// Guard acquisition rejected because the barrier is transitioning.
+    EpochTransitioning {
+        current_epoch: SecurityEpoch,
+        state: BarrierState,
+    },
+    /// Transition cannot start because one is already in progress.
+    TransitionAlreadyInProgress { current_epoch: SecurityEpoch },
+    /// Drain timeout expired with guards still held.
+    DrainTimeout {
+        epoch: SecurityEpoch,
+        remaining_guards: u64,
+        timeout_ms: u64,
+    },
+    /// Attempted to complete a transition that was not in progress.
+    NoTransitionInProgress,
+    /// New epoch is not strictly greater than the current epoch.
+    NonMonotonicTransition {
+        current: SecurityEpoch,
+        attempted: SecurityEpoch,
+    },
+}
+
+impl fmt::Display for BarrierError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EpochTransitioning {
+                current_epoch,
+                state,
+            } => write!(
+                f,
+                "barrier is {state}, cannot acquire guard at {current_epoch}"
+            ),
+            Self::TransitionAlreadyInProgress { current_epoch } => {
+                write!(f, "transition already in progress at {current_epoch}")
+            }
+            Self::DrainTimeout {
+                epoch,
+                remaining_guards,
+                timeout_ms,
+            } => write!(
+                f,
+                "drain timeout at {epoch}: {remaining_guards} guards remaining after {timeout_ms}ms"
+            ),
+            Self::NoTransitionInProgress => write!(f, "no transition in progress to complete"),
+            Self::NonMonotonicTransition { current, attempted } => write!(
+                f,
+                "non-monotonic transition: current {current}, attempted {attempted}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for BarrierError {}
+
+// ---------------------------------------------------------------------------
+// CriticalOpKind — categorizes operations needing the barrier
+// ---------------------------------------------------------------------------
+
+/// Categories of critical operations that must use the epoch barrier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum CriticalOpKind {
+    /// Decision-contract evaluation (policy action selection).
+    DecisionEval,
+    /// Evidence entry emission.
+    EvidenceEmission,
+    /// Key derivation and session establishment.
+    KeyDerivation,
+    /// Capability token issuance and validation.
+    CapabilityCheck,
+    /// Revocation check execution.
+    RevocationCheck,
+    /// Remote operation initiation.
+    RemoteOperation,
+}
+
+impl fmt::Display for CriticalOpKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = match self {
+            Self::DecisionEval => "decision_eval",
+            Self::EvidenceEmission => "evidence_emission",
+            Self::KeyDerivation => "key_derivation",
+            Self::CapabilityCheck => "capability_check",
+            Self::RevocationCheck => "revocation_check",
+            Self::RemoteOperation => "remote_operation",
+        };
+        f.write_str(name)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// EpochGuard — read-side guard for critical operations
+// ---------------------------------------------------------------------------
+
+/// Guard token returned by [`EpochBarrier::enter_critical`].
+///
+/// Represents an in-flight critical operation bound to a specific epoch.
+/// When dropped (via [`EpochBarrier::release_guard`]), decrements the
+/// in-flight count.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EpochGuard {
+    /// Unique guard identifier for tracking.
+    pub guard_id: u64,
+    /// Epoch under which this operation is executing.
+    pub epoch: SecurityEpoch,
+    /// Kind of critical operation.
+    pub op_kind: CriticalOpKind,
+    /// Trace identifier for correlation.
+    pub trace_id: String,
+}
+
+impl fmt::Display for EpochGuard {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "EpochGuard(#{}, {}, {})",
+            self.guard_id, self.epoch, self.op_kind
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// TransitionEvidence — structured evidence for epoch transitions
+// ---------------------------------------------------------------------------
+
+/// Structured evidence emitted for every epoch transition.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TransitionEvidence {
+    /// Epoch before transition.
+    pub old_epoch: SecurityEpoch,
+    /// Epoch after transition.
+    pub new_epoch: SecurityEpoch,
+    /// Reason for the transition.
+    pub reason: TransitionReason,
+    /// Number of in-flight guards when transition started.
+    pub in_flight_at_start: u64,
+    /// Number of in-flight guards when transition completed.
+    pub in_flight_at_complete: u64,
+    /// Number of guards forcibly cancelled.
+    pub forced_cancellations: u64,
+    /// Transition duration in milliseconds (0 for deterministic mode).
+    pub duration_ms: u64,
+    /// Trace identifier.
+    pub trace_id: String,
+}
+
+// ---------------------------------------------------------------------------
+// BarrierConfig
+// ---------------------------------------------------------------------------
+
+/// Configuration for the epoch barrier.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BarrierConfig {
+    /// Drain timeout in milliseconds before forced cancellation.
+    /// Default: 5000ms.
+    pub drain_timeout_ms: u64,
+    /// Whether this barrier runs in deterministic test mode.
+    /// In deterministic mode, timing is fixed and transitions are instant.
+    pub deterministic: bool,
+}
+
+impl Default for BarrierConfig {
+    fn default() -> Self {
+        Self {
+            drain_timeout_ms: 5000,
+            deterministic: false,
+        }
+    }
+}
+
+impl BarrierConfig {
+    /// Create a config for deterministic test mode.
+    pub fn deterministic() -> Self {
+        Self {
+            drain_timeout_ms: 0,
+            deterministic: true,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// EpochBarrier — the barrier state machine
+// ---------------------------------------------------------------------------
+
+/// Epoch transition barrier enforcing that no critical operation
+/// straddles an epoch boundary.
+///
+/// Read-side: [`enter_critical`] / [`release_guard`].
+/// Write-side: [`begin_transition`] / [`complete_transition`].
+#[derive(Debug)]
+pub struct EpochBarrier {
+    config: BarrierConfig,
+    current_epoch: SecurityEpoch,
+    state: BarrierState,
+    in_flight_count: u64,
+    next_guard_id: u64,
+    pending_new_epoch: Option<SecurityEpoch>,
+    pending_reason: Option<TransitionReason>,
+    pending_trace_id: Option<String>,
+    in_flight_at_transition_start: u64,
+    forced_cancellations: u64,
+    evidence: Vec<TransitionEvidence>,
+}
+
+impl EpochBarrier {
+    /// Create a new barrier at the given epoch.
+    pub fn new(epoch: SecurityEpoch, config: BarrierConfig) -> Self {
+        Self {
+            config,
+            current_epoch: epoch,
+            state: BarrierState::Open,
+            in_flight_count: 0,
+            next_guard_id: 1,
+            pending_new_epoch: None,
+            pending_reason: None,
+            pending_trace_id: None,
+            in_flight_at_transition_start: 0,
+            forced_cancellations: 0,
+            evidence: Vec::new(),
+        }
+    }
+
+    /// The current epoch.
+    pub fn current_epoch(&self) -> SecurityEpoch {
+        self.current_epoch
+    }
+
+    /// The current barrier state.
+    pub fn state(&self) -> BarrierState {
+        self.state
+    }
+
+    /// Number of in-flight guards.
+    pub fn in_flight(&self) -> u64 {
+        self.in_flight_count
+    }
+
+    /// Acquire a read-side guard for a critical operation.
+    ///
+    /// Fails if the barrier is transitioning (draining or finalizing).
+    pub fn enter_critical(
+        &mut self,
+        op_kind: CriticalOpKind,
+        trace_id: &str,
+    ) -> Result<EpochGuard, BarrierError> {
+        if self.state != BarrierState::Open {
+            return Err(BarrierError::EpochTransitioning {
+                current_epoch: self.current_epoch,
+                state: self.state,
+            });
+        }
+
+        let guard_id = self.next_guard_id;
+        self.next_guard_id += 1;
+        self.in_flight_count += 1;
+
+        Ok(EpochGuard {
+            guard_id,
+            epoch: self.current_epoch,
+            op_kind,
+            trace_id: trace_id.to_string(),
+        })
+    }
+
+    /// Release a guard, decrementing the in-flight count.
+    ///
+    /// Returns `true` if the guard was valid (epoch matches current or
+    /// pending transition), `false` if the guard is stale.
+    pub fn release_guard(&mut self, guard: &EpochGuard) -> bool {
+        // Only accept guards from the current epoch.
+        if guard.epoch != self.current_epoch {
+            return false;
+        }
+        if self.in_flight_count == 0 {
+            return false;
+        }
+        self.in_flight_count -= 1;
+        true
+    }
+
+    /// Begin an epoch transition.
+    ///
+    /// Moves the barrier to `Draining` state.  New `enter_critical`
+    /// calls will be rejected.  Returns the number of in-flight guards
+    /// that must drain before the transition can complete.
+    pub fn begin_transition(
+        &mut self,
+        new_epoch: SecurityEpoch,
+        reason: TransitionReason,
+        trace_id: &str,
+    ) -> Result<u64, BarrierError> {
+        if self.state != BarrierState::Open {
+            return Err(BarrierError::TransitionAlreadyInProgress {
+                current_epoch: self.current_epoch,
+            });
+        }
+
+        if new_epoch <= self.current_epoch {
+            return Err(BarrierError::NonMonotonicTransition {
+                current: self.current_epoch,
+                attempted: new_epoch,
+            });
+        }
+
+        self.state = BarrierState::Draining;
+        self.pending_new_epoch = Some(new_epoch);
+        self.pending_reason = Some(reason);
+        self.pending_trace_id = Some(trace_id.to_string());
+        self.in_flight_at_transition_start = self.in_flight_count;
+        self.forced_cancellations = 0;
+
+        Ok(self.in_flight_count)
+    }
+
+    /// Force-cancel remaining in-flight guards.
+    ///
+    /// Used when drain timeout expires.  Resets in-flight count to zero
+    /// and records the number of forced cancellations.
+    pub fn force_cancel_remaining(&mut self) -> Result<u64, BarrierError> {
+        if self.state != BarrierState::Draining {
+            return Err(BarrierError::NoTransitionInProgress);
+        }
+
+        let cancelled = self.in_flight_count;
+        self.forced_cancellations += cancelled;
+        self.in_flight_count = 0;
+        Ok(cancelled)
+    }
+
+    /// Check if the barrier is ready to complete the transition.
+    ///
+    /// Returns `true` if all in-flight guards have been released or
+    /// force-cancelled.
+    pub fn can_complete(&self) -> bool {
+        self.state == BarrierState::Draining && self.in_flight_count == 0
+    }
+
+    /// Complete the transition, advancing to the new epoch.
+    ///
+    /// Fails if there are still in-flight guards or no transition
+    /// is in progress.
+    pub fn complete_transition(&mut self) -> Result<TransitionEvidence, BarrierError> {
+        if self.state != BarrierState::Draining {
+            return Err(BarrierError::NoTransitionInProgress);
+        }
+
+        if self.in_flight_count > 0 {
+            return Err(BarrierError::DrainTimeout {
+                epoch: self.current_epoch,
+                remaining_guards: self.in_flight_count,
+                timeout_ms: self.config.drain_timeout_ms,
+            });
+        }
+
+        let old_epoch = self.current_epoch;
+        let new_epoch = self.pending_new_epoch.take().expect("pending epoch set");
+        let reason = self.pending_reason.take().expect("pending reason set");
+        let trace_id = self.pending_trace_id.take().expect("pending trace set");
+
+        let evidence = TransitionEvidence {
+            old_epoch,
+            new_epoch,
+            reason,
+            in_flight_at_start: self.in_flight_at_transition_start,
+            in_flight_at_complete: 0,
+            forced_cancellations: self.forced_cancellations,
+            duration_ms: 0,
+            trace_id,
+        };
+
+        self.current_epoch = new_epoch;
+        self.state = BarrierState::Open;
+        self.forced_cancellations = 0;
+        self.in_flight_at_transition_start = 0;
+
+        self.evidence.push(evidence.clone());
+        Ok(evidence)
+    }
+
+    /// Execute a full transition cycle: begin, force-cancel if needed,
+    /// and complete.
+    ///
+    /// Convenience method for deterministic test mode or when immediate
+    /// transition is acceptable.
+    pub fn transition_now(
+        &mut self,
+        new_epoch: SecurityEpoch,
+        reason: TransitionReason,
+        trace_id: &str,
+    ) -> Result<TransitionEvidence, BarrierError> {
+        self.begin_transition(new_epoch, reason, trace_id)?;
+
+        if self.in_flight_count > 0 {
+            self.force_cancel_remaining()?;
+        }
+
+        self.complete_transition()
+    }
+
+    /// Recorded transition evidence.
+    pub fn evidence(&self) -> &[TransitionEvidence] {
+        &self.evidence
+    }
+
+    /// The barrier configuration.
+    pub fn config(&self) -> &BarrierConfig {
+        &self.config
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn det_barrier(epoch: u64) -> EpochBarrier {
+        EpochBarrier::new(
+            SecurityEpoch::from_raw(epoch),
+            BarrierConfig::deterministic(),
+        )
+    }
+
+    // -- Basic guard lifecycle --
+
+    #[test]
+    fn enter_and_release_guard() {
+        let mut barrier = det_barrier(1);
+        let guard = barrier
+            .enter_critical(CriticalOpKind::DecisionEval, "t1")
+            .expect("enter");
+        assert_eq!(barrier.in_flight(), 1);
+        assert_eq!(guard.epoch, SecurityEpoch::from_raw(1));
+        assert_eq!(guard.op_kind, CriticalOpKind::DecisionEval);
+
+        assert!(barrier.release_guard(&guard));
+        assert_eq!(barrier.in_flight(), 0);
+    }
+
+    #[test]
+    fn multiple_concurrent_guards() {
+        let mut barrier = det_barrier(1);
+        let g1 = barrier
+            .enter_critical(CriticalOpKind::EvidenceEmission, "t1")
+            .expect("g1");
+        let g2 = barrier
+            .enter_critical(CriticalOpKind::KeyDerivation, "t2")
+            .expect("g2");
+        let g3 = barrier
+            .enter_critical(CriticalOpKind::CapabilityCheck, "t3")
+            .expect("g3");
+        assert_eq!(barrier.in_flight(), 3);
+
+        barrier.release_guard(&g1);
+        barrier.release_guard(&g2);
+        barrier.release_guard(&g3);
+        assert_eq!(barrier.in_flight(), 0);
+    }
+
+    #[test]
+    fn guard_ids_are_unique() {
+        let mut barrier = det_barrier(1);
+        let g1 = barrier
+            .enter_critical(CriticalOpKind::DecisionEval, "t1")
+            .expect("g1");
+        let g2 = barrier
+            .enter_critical(CriticalOpKind::DecisionEval, "t2")
+            .expect("g2");
+        assert_ne!(g1.guard_id, g2.guard_id);
+    }
+
+    // -- Guard acquisition during transition --
+
+    #[test]
+    fn enter_rejected_during_drain() {
+        let mut barrier = det_barrier(1);
+        barrier
+            .begin_transition(
+                SecurityEpoch::from_raw(2),
+                TransitionReason::PolicyKeyRotation,
+                "t1",
+            )
+            .expect("begin");
+
+        let err = barrier
+            .enter_critical(CriticalOpKind::DecisionEval, "t2")
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            BarrierError::EpochTransitioning {
+                state: BarrierState::Draining,
+                ..
+            }
+        ));
+    }
+
+    // -- Transition lifecycle --
+
+    #[test]
+    fn clean_transition_with_no_in_flight() {
+        let mut barrier = det_barrier(1);
+
+        let in_flight = barrier
+            .begin_transition(
+                SecurityEpoch::from_raw(2),
+                TransitionReason::PolicyKeyRotation,
+                "trace-1",
+            )
+            .expect("begin");
+        assert_eq!(in_flight, 0);
+        assert_eq!(barrier.state(), BarrierState::Draining);
+
+        let evidence = barrier.complete_transition().expect("complete");
+        assert_eq!(evidence.old_epoch, SecurityEpoch::from_raw(1));
+        assert_eq!(evidence.new_epoch, SecurityEpoch::from_raw(2));
+        assert_eq!(evidence.in_flight_at_start, 0);
+        assert_eq!(evidence.forced_cancellations, 0);
+        assert_eq!(barrier.current_epoch(), SecurityEpoch::from_raw(2));
+        assert_eq!(barrier.state(), BarrierState::Open);
+    }
+
+    #[test]
+    fn transition_with_guards_drained() {
+        let mut barrier = det_barrier(1);
+
+        // Acquire two guards.
+        let g1 = barrier
+            .enter_critical(CriticalOpKind::DecisionEval, "t1")
+            .expect("g1");
+        let g2 = barrier
+            .enter_critical(CriticalOpKind::EvidenceEmission, "t2")
+            .expect("g2");
+
+        // Begin transition — should report 2 in flight.
+        let in_flight = barrier
+            .begin_transition(
+                SecurityEpoch::from_raw(2),
+                TransitionReason::RevocationFrontierAdvance,
+                "trace-2",
+            )
+            .expect("begin");
+        assert_eq!(in_flight, 2);
+        assert!(!barrier.can_complete());
+
+        // Release guards.
+        barrier.release_guard(&g1);
+        assert!(!barrier.can_complete());
+        barrier.release_guard(&g2);
+        assert!(barrier.can_complete());
+
+        // Complete.
+        let evidence = barrier.complete_transition().expect("complete");
+        assert_eq!(evidence.in_flight_at_start, 2);
+        assert_eq!(evidence.forced_cancellations, 0);
+        assert_eq!(barrier.current_epoch(), SecurityEpoch::from_raw(2));
+    }
+
+    #[test]
+    fn transition_with_forced_cancellation() {
+        let mut barrier = det_barrier(1);
+
+        let _g1 = barrier
+            .enter_critical(CriticalOpKind::RemoteOperation, "t1")
+            .expect("g1");
+        let _g2 = barrier
+            .enter_critical(CriticalOpKind::KeyDerivation, "t2")
+            .expect("g2");
+
+        barrier
+            .begin_transition(
+                SecurityEpoch::from_raw(2),
+                TransitionReason::GuardrailConfigChange,
+                "trace-3",
+            )
+            .expect("begin");
+
+        // Force cancel instead of waiting.
+        let cancelled = barrier.force_cancel_remaining().expect("force cancel");
+        assert_eq!(cancelled, 2);
+        assert_eq!(barrier.in_flight(), 0);
+
+        let evidence = barrier.complete_transition().expect("complete");
+        assert_eq!(evidence.forced_cancellations, 2);
+    }
+
+    // -- transition_now convenience --
+
+    #[test]
+    fn transition_now_with_no_guards() {
+        let mut barrier = det_barrier(1);
+        let evidence = barrier
+            .transition_now(
+                SecurityEpoch::from_raw(2),
+                TransitionReason::LossMatrixUpdate,
+                "trace-now",
+            )
+            .expect("now");
+        assert_eq!(evidence.old_epoch, SecurityEpoch::from_raw(1));
+        assert_eq!(evidence.new_epoch, SecurityEpoch::from_raw(2));
+        assert_eq!(evidence.forced_cancellations, 0);
+    }
+
+    #[test]
+    fn transition_now_force_cancels_in_flight() {
+        let mut barrier = det_barrier(5);
+        let _g = barrier
+            .enter_critical(CriticalOpKind::RevocationCheck, "t1")
+            .expect("g");
+
+        let evidence = barrier
+            .transition_now(
+                SecurityEpoch::from_raw(6),
+                TransitionReason::OperatorManualBump,
+                "trace-force",
+            )
+            .expect("now");
+        assert_eq!(evidence.forced_cancellations, 1);
+        assert_eq!(barrier.current_epoch(), SecurityEpoch::from_raw(6));
+    }
+
+    // -- Error conditions --
+
+    #[test]
+    fn double_transition_rejected() {
+        let mut barrier = det_barrier(1);
+        barrier
+            .begin_transition(
+                SecurityEpoch::from_raw(2),
+                TransitionReason::PolicyKeyRotation,
+                "t1",
+            )
+            .expect("begin");
+
+        let err = barrier
+            .begin_transition(
+                SecurityEpoch::from_raw(3),
+                TransitionReason::PolicyKeyRotation,
+                "t2",
+            )
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            BarrierError::TransitionAlreadyInProgress { .. }
+        ));
+    }
+
+    #[test]
+    fn non_monotonic_transition_rejected() {
+        let mut barrier = det_barrier(5);
+        let err = barrier
+            .begin_transition(
+                SecurityEpoch::from_raw(3),
+                TransitionReason::PolicyKeyRotation,
+                "t1",
+            )
+            .unwrap_err();
+        assert!(matches!(err, BarrierError::NonMonotonicTransition { .. }));
+    }
+
+    #[test]
+    fn same_epoch_transition_rejected() {
+        let mut barrier = det_barrier(5);
+        let err = barrier
+            .begin_transition(
+                SecurityEpoch::from_raw(5),
+                TransitionReason::PolicyKeyRotation,
+                "t1",
+            )
+            .unwrap_err();
+        assert!(matches!(err, BarrierError::NonMonotonicTransition { .. }));
+    }
+
+    #[test]
+    fn complete_without_transition_rejected() {
+        let mut barrier = det_barrier(1);
+        let err = barrier.complete_transition().unwrap_err();
+        assert!(matches!(err, BarrierError::NoTransitionInProgress));
+    }
+
+    #[test]
+    fn complete_with_guards_still_held_rejected() {
+        let mut barrier = det_barrier(1);
+        let _g = barrier
+            .enter_critical(CriticalOpKind::DecisionEval, "t1")
+            .expect("g");
+
+        barrier
+            .begin_transition(
+                SecurityEpoch::from_raw(2),
+                TransitionReason::PolicyKeyRotation,
+                "t1",
+            )
+            .expect("begin");
+
+        let err = barrier.complete_transition().unwrap_err();
+        assert!(matches!(err, BarrierError::DrainTimeout { .. }));
+    }
+
+    // -- Sequential transitions --
+
+    #[test]
+    fn sequential_transitions() {
+        let mut barrier = det_barrier(1);
+
+        for i in 2..=5 {
+            let evidence = barrier
+                .transition_now(
+                    SecurityEpoch::from_raw(i),
+                    TransitionReason::PolicyKeyRotation,
+                    &format!("trace-{i}"),
+                )
+                .expect("transition");
+            assert_eq!(evidence.new_epoch, SecurityEpoch::from_raw(i));
+        }
+
+        assert_eq!(barrier.current_epoch(), SecurityEpoch::from_raw(5));
+        assert_eq!(barrier.evidence().len(), 4);
+    }
+
+    // -- Post-transition guard acquisition --
+
+    #[test]
+    fn guards_work_after_transition() {
+        let mut barrier = det_barrier(1);
+        barrier
+            .transition_now(
+                SecurityEpoch::from_raw(2),
+                TransitionReason::PolicyKeyRotation,
+                "t1",
+            )
+            .expect("transition");
+
+        let guard = barrier
+            .enter_critical(CriticalOpKind::DecisionEval, "t2")
+            .expect("guard");
+        assert_eq!(guard.epoch, SecurityEpoch::from_raw(2));
+        barrier.release_guard(&guard);
+    }
+
+    // -- Evidence recording --
+
+    #[test]
+    fn evidence_records_transition_details() {
+        let mut barrier = det_barrier(10);
+
+        let _g = barrier
+            .enter_critical(CriticalOpKind::EvidenceEmission, "t1")
+            .expect("g");
+
+        barrier
+            .transition_now(
+                SecurityEpoch::from_raw(11),
+                TransitionReason::RemoteTrustConfigChange,
+                "trace-detail",
+            )
+            .expect("transition");
+
+        let ev = &barrier.evidence()[0];
+        assert_eq!(ev.old_epoch, SecurityEpoch::from_raw(10));
+        assert_eq!(ev.new_epoch, SecurityEpoch::from_raw(11));
+        assert_eq!(ev.reason, TransitionReason::RemoteTrustConfigChange);
+        assert_eq!(ev.in_flight_at_start, 1);
+        assert_eq!(ev.forced_cancellations, 1);
+        assert_eq!(ev.trace_id, "trace-detail");
+    }
+
+    // -- Display and error formatting --
+
+    #[test]
+    fn barrier_state_display() {
+        assert_eq!(BarrierState::Open.to_string(), "open");
+        assert_eq!(BarrierState::Draining.to_string(), "draining");
+        assert_eq!(BarrierState::Finalizing.to_string(), "finalizing");
+    }
+
+    #[test]
+    fn critical_op_kind_display() {
+        assert_eq!(CriticalOpKind::DecisionEval.to_string(), "decision_eval");
+        assert_eq!(
+            CriticalOpKind::EvidenceEmission.to_string(),
+            "evidence_emission"
+        );
+        assert_eq!(CriticalOpKind::KeyDerivation.to_string(), "key_derivation");
+        assert_eq!(
+            CriticalOpKind::CapabilityCheck.to_string(),
+            "capability_check"
+        );
+        assert_eq!(
+            CriticalOpKind::RevocationCheck.to_string(),
+            "revocation_check"
+        );
+        assert_eq!(
+            CriticalOpKind::RemoteOperation.to_string(),
+            "remote_operation"
+        );
+    }
+
+    #[test]
+    fn barrier_error_display() {
+        let err = BarrierError::EpochTransitioning {
+            current_epoch: SecurityEpoch::from_raw(5),
+            state: BarrierState::Draining,
+        };
+        assert_eq!(
+            err.to_string(),
+            "barrier is draining, cannot acquire guard at epoch:5"
+        );
+    }
+
+    #[test]
+    fn epoch_guard_display() {
+        let guard = EpochGuard {
+            guard_id: 42,
+            epoch: SecurityEpoch::from_raw(3),
+            op_kind: CriticalOpKind::KeyDerivation,
+            trace_id: "t".to_string(),
+        };
+        assert_eq!(
+            guard.to_string(),
+            "EpochGuard(#42, epoch:3, key_derivation)"
+        );
+    }
+
+    // -- Serialization --
+
+    #[test]
+    fn transition_evidence_serialization_round_trip() {
+        let evidence = TransitionEvidence {
+            old_epoch: SecurityEpoch::from_raw(1),
+            new_epoch: SecurityEpoch::from_raw(2),
+            reason: TransitionReason::PolicyKeyRotation,
+            in_flight_at_start: 3,
+            in_flight_at_complete: 0,
+            forced_cancellations: 1,
+            duration_ms: 0,
+            trace_id: "test-trace".to_string(),
+        };
+        let json = serde_json::to_string(&evidence).expect("serialize");
+        let restored: TransitionEvidence = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(evidence, restored);
+    }
+
+    #[test]
+    fn barrier_error_serialization_round_trip() {
+        let errors = vec![
+            BarrierError::EpochTransitioning {
+                current_epoch: SecurityEpoch::from_raw(1),
+                state: BarrierState::Draining,
+            },
+            BarrierError::TransitionAlreadyInProgress {
+                current_epoch: SecurityEpoch::from_raw(2),
+            },
+            BarrierError::DrainTimeout {
+                epoch: SecurityEpoch::from_raw(3),
+                remaining_guards: 5,
+                timeout_ms: 5000,
+            },
+            BarrierError::NoTransitionInProgress,
+            BarrierError::NonMonotonicTransition {
+                current: SecurityEpoch::from_raw(5),
+                attempted: SecurityEpoch::from_raw(3),
+            },
+        ];
+        for err in &errors {
+            let json = serde_json::to_string(err).expect("serialize");
+            let restored: BarrierError = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*err, restored);
+        }
+    }
+
+    #[test]
+    fn epoch_guard_serialization_round_trip() {
+        let guard = EpochGuard {
+            guard_id: 7,
+            epoch: SecurityEpoch::from_raw(3),
+            op_kind: CriticalOpKind::RemoteOperation,
+            trace_id: "t-123".to_string(),
+        };
+        let json = serde_json::to_string(&guard).expect("serialize");
+        let restored: EpochGuard = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(guard, restored);
+    }
+
+    #[test]
+    fn barrier_config_serialization_round_trip() {
+        let config = BarrierConfig::default();
+        let json = serde_json::to_string(&config).expect("serialize");
+        let restored: BarrierConfig = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(config, restored);
+    }
+}

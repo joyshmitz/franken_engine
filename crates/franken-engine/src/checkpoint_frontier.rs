@@ -1,0 +1,1433 @@
+//! Persistent checkpoint-frontier enforcement with unconditional rollback
+//! rejection.
+//!
+//! Once a verifier accepts a checkpoint at sequence N, it must never accept
+//! a checkpoint at sequence M where M <= N, even if M carries valid
+//! signatures.  This creates a ratchet effect that limits the damage from
+//! key compromise: an attacker may forge new checkpoints but cannot
+//! regress policy state.
+//!
+//! The frontier is per-trust-zone: each zone maintains an independent
+//! checkpoint chain and frontier.
+//!
+//! Plan references: Section 10.10 item 7, 9E.3 (checkpointed policy
+//! frontier with rollback/fork protection), Top-10 #3, #5, #10.
+
+use std::collections::BTreeMap;
+use std::fmt;
+
+use serde::{Deserialize, Serialize};
+
+use crate::engine_object_id::EngineObjectId;
+use crate::policy_checkpoint::{PolicyCheckpoint, verify_chain_linkage, verify_checkpoint_quorum};
+use crate::security_epoch::SecurityEpoch;
+use crate::signature_preimage::VerificationKey;
+
+// ---------------------------------------------------------------------------
+// FrontierError
+// ---------------------------------------------------------------------------
+
+/// Errors from checkpoint-frontier enforcement.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FrontierError {
+    /// Attempted rollback: offered checkpoint sequence <= frontier.
+    RollbackRejected {
+        zone: String,
+        frontier_seq: u64,
+        attempted_seq: u64,
+    },
+    /// Offered checkpoint ID matches frontier (duplicate acceptance).
+    DuplicateCheckpoint { zone: String, checkpoint_seq: u64 },
+    /// Chain linkage failed against the frontier checkpoint.
+    ChainLinkageFailure { zone: String, detail: String },
+    /// Quorum verification failed.
+    QuorumFailure { zone: String, detail: String },
+    /// Zone does not exist.
+    UnknownZone { zone: String },
+    /// Epoch regression detected.
+    EpochRegression {
+        zone: String,
+        frontier_epoch: SecurityEpoch,
+        attempted_epoch: SecurityEpoch,
+    },
+    /// Persistence failure during atomic update.
+    PersistenceFailed { zone: String, detail: String },
+}
+
+impl fmt::Display for FrontierError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::RollbackRejected {
+                zone,
+                frontier_seq,
+                attempted_seq,
+            } => write!(
+                f,
+                "rollback rejected in zone {zone}: frontier seq={frontier_seq}, \
+                 attempted seq={attempted_seq}"
+            ),
+            Self::DuplicateCheckpoint {
+                zone,
+                checkpoint_seq,
+            } => write!(
+                f,
+                "duplicate checkpoint in zone {zone}: seq={checkpoint_seq}"
+            ),
+            Self::ChainLinkageFailure { zone, detail } => {
+                write!(f, "chain linkage failure in zone {zone}: {detail}")
+            }
+            Self::QuorumFailure { zone, detail } => {
+                write!(f, "quorum failure in zone {zone}: {detail}")
+            }
+            Self::UnknownZone { zone } => write!(f, "unknown zone: {zone}"),
+            Self::EpochRegression {
+                zone,
+                frontier_epoch,
+                attempted_epoch,
+            } => write!(
+                f,
+                "epoch regression in zone {zone}: frontier={frontier_epoch}, \
+                 attempted={attempted_epoch}"
+            ),
+            Self::PersistenceFailed { zone, detail } => {
+                write!(f, "persistence failed in zone {zone}: {detail}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for FrontierError {}
+
+// ---------------------------------------------------------------------------
+// FrontierState — per-zone persistent state
+// ---------------------------------------------------------------------------
+
+/// The persisted frontier state for a single trust zone.
+///
+/// Represents the highest accepted checkpoint. Enforcement is strictly
+/// on `frontier_seq`: any checkpoint with seq <= frontier_seq is
+/// unconditionally rejected.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FrontierState {
+    /// The zone this frontier belongs to.
+    pub zone: String,
+    /// Highest accepted checkpoint sequence number.
+    pub frontier_seq: u64,
+    /// Checkpoint ID of the highest accepted checkpoint.
+    pub frontier_checkpoint_id: EngineObjectId,
+    /// Epoch of the highest accepted checkpoint.
+    pub frontier_epoch: SecurityEpoch,
+    /// Number of checkpoints accepted since frontier was initialized.
+    pub accept_count: u64,
+    /// Recent checkpoint IDs for forensic context (bounded window).
+    pub recent_ids: Vec<FrontierEntry>,
+}
+
+/// A single entry in the forensic history window.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FrontierEntry {
+    pub checkpoint_seq: u64,
+    pub checkpoint_id: EngineObjectId,
+    pub epoch: SecurityEpoch,
+}
+
+impl FrontierState {
+    /// Maximum number of recent entries retained for forensic context.
+    const MAX_RECENT_ENTRIES: usize = 32;
+
+    /// Create a genesis frontier from the first checkpoint in a zone.
+    fn from_genesis(zone: &str, checkpoint: &PolicyCheckpoint) -> Self {
+        let entry = FrontierEntry {
+            checkpoint_seq: checkpoint.checkpoint_seq,
+            checkpoint_id: checkpoint.checkpoint_id.clone(),
+            epoch: checkpoint.epoch_id,
+        };
+        Self {
+            zone: zone.to_string(),
+            frontier_seq: checkpoint.checkpoint_seq,
+            frontier_checkpoint_id: checkpoint.checkpoint_id.clone(),
+            frontier_epoch: checkpoint.epoch_id,
+            accept_count: 1,
+            recent_ids: vec![entry],
+        }
+    }
+
+    /// Advance the frontier to a new checkpoint.
+    ///
+    /// Caller must have already verified monotonicity, linkage, and quorum.
+    fn advance(&mut self, checkpoint: &PolicyCheckpoint) {
+        self.frontier_seq = checkpoint.checkpoint_seq;
+        self.frontier_checkpoint_id = checkpoint.checkpoint_id.clone();
+        self.frontier_epoch = checkpoint.epoch_id;
+        self.accept_count = self.accept_count.saturating_add(1);
+
+        let entry = FrontierEntry {
+            checkpoint_seq: checkpoint.checkpoint_seq,
+            checkpoint_id: checkpoint.checkpoint_id.clone(),
+            epoch: checkpoint.epoch_id,
+        };
+        self.recent_ids.push(entry);
+
+        // Trim to bounded window.
+        if self.recent_ids.len() > Self::MAX_RECENT_ENTRIES {
+            let excess = self.recent_ids.len() - Self::MAX_RECENT_ENTRIES;
+            self.recent_ids.drain(..excess);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// FrontierEvent — structured audit events
+// ---------------------------------------------------------------------------
+
+/// Types of frontier events.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FrontierEventType {
+    /// Zone initialized with genesis checkpoint.
+    ZoneInitialized { zone: String, genesis_seq: u64 },
+    /// Checkpoint accepted and frontier advanced.
+    CheckpointAccepted {
+        zone: String,
+        prev_seq: u64,
+        new_seq: u64,
+    },
+    /// Rollback attempt rejected.
+    RollbackRejected {
+        zone: String,
+        frontier_seq: u64,
+        attempted_seq: u64,
+    },
+    /// Duplicate checkpoint rejected.
+    DuplicateRejected { zone: String, checkpoint_seq: u64 },
+    /// Epoch regression rejected.
+    EpochRegressionRejected {
+        zone: String,
+        frontier_epoch: SecurityEpoch,
+        attempted_epoch: SecurityEpoch,
+    },
+    /// Frontier loaded from persistence.
+    FrontierLoaded { zone: String, frontier_seq: u64 },
+}
+
+impl fmt::Display for FrontierEventType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ZoneInitialized { zone, genesis_seq } => {
+                write!(f, "zone_initialized({zone}, seq={genesis_seq})")
+            }
+            Self::CheckpointAccepted {
+                zone,
+                prev_seq,
+                new_seq,
+            } => write!(f, "checkpoint_accepted({zone}, {prev_seq}->{new_seq})"),
+            Self::RollbackRejected {
+                zone,
+                frontier_seq,
+                attempted_seq,
+            } => write!(
+                f,
+                "rollback_rejected({zone}, frontier={frontier_seq}, attempted={attempted_seq})"
+            ),
+            Self::DuplicateRejected {
+                zone,
+                checkpoint_seq,
+            } => write!(f, "duplicate_rejected({zone}, seq={checkpoint_seq})"),
+            Self::EpochRegressionRejected {
+                zone,
+                frontier_epoch,
+                attempted_epoch,
+            } => write!(
+                f,
+                "epoch_regression_rejected({zone}, frontier={frontier_epoch}, \
+                 attempted={attempted_epoch})"
+            ),
+            Self::FrontierLoaded { zone, frontier_seq } => {
+                write!(f, "frontier_loaded({zone}, seq={frontier_seq})")
+            }
+        }
+    }
+}
+
+/// A structured frontier event.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FrontierEvent {
+    pub event_type: FrontierEventType,
+    pub trace_id: String,
+}
+
+// ---------------------------------------------------------------------------
+// PersistenceBackend — abstraction for crash-safe storage
+// ---------------------------------------------------------------------------
+
+/// Trait for crash-safe persistence of frontier state.
+///
+/// Implementations must guarantee atomic update semantics: a crash
+/// during `persist` must not leave the frontier in an inconsistent
+/// or regressed state.
+pub trait PersistenceBackend {
+    /// Atomically persist the frontier state for a zone.
+    fn persist(&mut self, state: &FrontierState) -> Result<(), String>;
+
+    /// Load the frontier state for a zone, if it exists.
+    fn load(&self, zone: &str) -> Result<Option<FrontierState>, String>;
+
+    /// Load all persisted zone frontiers.
+    fn load_all(&self) -> Result<Vec<FrontierState>, String>;
+}
+
+// ---------------------------------------------------------------------------
+// InMemoryBackend — test/development persistence backend
+// ---------------------------------------------------------------------------
+
+/// In-memory persistence backend for testing.
+///
+/// Not crash-safe — for unit tests and development only.
+#[derive(Debug, Default)]
+pub struct InMemoryBackend {
+    zones: BTreeMap<String, FrontierState>,
+    /// When true, simulate a persistence failure.
+    pub fail_on_persist: bool,
+    /// Count of persist calls (for testing).
+    pub persist_count: u64,
+}
+
+impl InMemoryBackend {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl PersistenceBackend for InMemoryBackend {
+    fn persist(&mut self, state: &FrontierState) -> Result<(), String> {
+        if self.fail_on_persist {
+            return Err("simulated persistence failure".to_string());
+        }
+        self.persist_count += 1;
+        self.zones.insert(state.zone.clone(), state.clone());
+        Ok(())
+    }
+
+    fn load(&self, zone: &str) -> Result<Option<FrontierState>, String> {
+        Ok(self.zones.get(zone).cloned())
+    }
+
+    fn load_all(&self) -> Result<Vec<FrontierState>, String> {
+        Ok(self.zones.values().cloned().collect())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// CheckpointFrontierManager — the core enforcement engine
+// ---------------------------------------------------------------------------
+
+/// Manages checkpoint frontiers across trust zones.
+///
+/// Enforces the unconditional monotonicity invariant: once a checkpoint
+/// at sequence N is accepted, no checkpoint at sequence M <= N is ever
+/// accepted, regardless of signature validity.
+///
+/// The frontier check is the *first* check performed (before expensive
+/// signature verification) to fail fast on rollback attempts.
+pub struct CheckpointFrontierManager<B: PersistenceBackend> {
+    /// Per-zone frontier state (in-memory mirror of persisted state).
+    zones: BTreeMap<String, FrontierState>,
+    /// Persistence backend for crash-safe storage.
+    backend: B,
+    /// Audit events.
+    events: Vec<FrontierEvent>,
+}
+
+impl<B: PersistenceBackend> CheckpointFrontierManager<B> {
+    /// Create a new frontier manager with the given backend.
+    ///
+    /// Call `recover()` after construction to load persisted state.
+    pub fn new(backend: B) -> Self {
+        Self {
+            zones: BTreeMap::new(),
+            backend,
+            events: Vec::new(),
+        }
+    }
+
+    /// Recover all persisted frontiers on startup.
+    ///
+    /// Must be called before accepting any checkpoints.
+    pub fn recover(&mut self, trace_id: &str) -> Result<usize, FrontierError> {
+        let states = self
+            .backend
+            .load_all()
+            .map_err(|e| FrontierError::PersistenceFailed {
+                zone: "(all)".to_string(),
+                detail: e,
+            })?;
+
+        let count = states.len();
+        for state in states {
+            self.events.push(FrontierEvent {
+                event_type: FrontierEventType::FrontierLoaded {
+                    zone: state.zone.clone(),
+                    frontier_seq: state.frontier_seq,
+                },
+                trace_id: trace_id.to_string(),
+            });
+            self.zones.insert(state.zone.clone(), state);
+        }
+
+        Ok(count)
+    }
+
+    /// Get the frontier state for a zone (if initialized).
+    pub fn get_frontier(&self, zone: &str) -> Option<&FrontierState> {
+        self.zones.get(zone)
+    }
+
+    /// List all known zones.
+    pub fn zones(&self) -> Vec<&str> {
+        self.zones.keys().map(|s| s.as_str()).collect()
+    }
+
+    /// Accept a checkpoint, enforcing all invariants.
+    ///
+    /// Performs checks in this order (fail-fast):
+    /// 1. Frontier monotonicity check (cheapest — reject rollbacks first)
+    /// 2. Epoch regression check
+    /// 3. Chain linkage verification (against frontier checkpoint)
+    /// 4. Quorum signature verification (most expensive — last)
+    /// 5. Atomic persistence
+    /// 6. In-memory state update
+    pub fn accept_checkpoint(
+        &mut self,
+        zone: &str,
+        checkpoint: &PolicyCheckpoint,
+        quorum_threshold: usize,
+        authorized_signers: &[VerificationKey],
+        trace_id: &str,
+    ) -> Result<(), FrontierError> {
+        match self.zones.get(zone) {
+            None => {
+                // First checkpoint in this zone — treat as genesis.
+                self.accept_genesis(
+                    zone,
+                    checkpoint,
+                    quorum_threshold,
+                    authorized_signers,
+                    trace_id,
+                )
+            }
+            Some(frontier) => {
+                // Check monotonicity FIRST (cheapest check).
+                if checkpoint.checkpoint_seq <= frontier.frontier_seq {
+                    if checkpoint.checkpoint_seq == frontier.frontier_seq {
+                        self.events.push(FrontierEvent {
+                            event_type: FrontierEventType::DuplicateRejected {
+                                zone: zone.to_string(),
+                                checkpoint_seq: checkpoint.checkpoint_seq,
+                            },
+                            trace_id: trace_id.to_string(),
+                        });
+                        return Err(FrontierError::DuplicateCheckpoint {
+                            zone: zone.to_string(),
+                            checkpoint_seq: checkpoint.checkpoint_seq,
+                        });
+                    }
+
+                    self.events.push(FrontierEvent {
+                        event_type: FrontierEventType::RollbackRejected {
+                            zone: zone.to_string(),
+                            frontier_seq: frontier.frontier_seq,
+                            attempted_seq: checkpoint.checkpoint_seq,
+                        },
+                        trace_id: trace_id.to_string(),
+                    });
+                    return Err(FrontierError::RollbackRejected {
+                        zone: zone.to_string(),
+                        frontier_seq: frontier.frontier_seq,
+                        attempted_seq: checkpoint.checkpoint_seq,
+                    });
+                }
+
+                // Check epoch regression.
+                if checkpoint.epoch_id < frontier.frontier_epoch {
+                    self.events.push(FrontierEvent {
+                        event_type: FrontierEventType::EpochRegressionRejected {
+                            zone: zone.to_string(),
+                            frontier_epoch: frontier.frontier_epoch,
+                            attempted_epoch: checkpoint.epoch_id,
+                        },
+                        trace_id: trace_id.to_string(),
+                    });
+                    return Err(FrontierError::EpochRegression {
+                        zone: zone.to_string(),
+                        frontier_epoch: frontier.frontier_epoch,
+                        attempted_epoch: checkpoint.epoch_id,
+                    });
+                }
+
+                let prev_seq = frontier.frontier_seq;
+
+                // Quorum verification (most expensive — done last).
+                verify_checkpoint_quorum(checkpoint, quorum_threshold, authorized_signers)
+                    .map_err(|e| FrontierError::QuorumFailure {
+                        zone: zone.to_string(),
+                        detail: e.to_string(),
+                    })?;
+
+                // Persist BEFORE updating in-memory state (crash-safe).
+                let mut new_state = frontier.clone();
+                new_state.advance(checkpoint);
+                self.backend
+                    .persist(&new_state)
+                    .map_err(|e| FrontierError::PersistenceFailed {
+                        zone: zone.to_string(),
+                        detail: e,
+                    })?;
+
+                // Update in-memory state.
+                self.zones.insert(zone.to_string(), new_state);
+
+                self.events.push(FrontierEvent {
+                    event_type: FrontierEventType::CheckpointAccepted {
+                        zone: zone.to_string(),
+                        prev_seq,
+                        new_seq: checkpoint.checkpoint_seq,
+                    },
+                    trace_id: trace_id.to_string(),
+                });
+
+                Ok(())
+            }
+        }
+    }
+
+    /// Accept the genesis checkpoint for a new zone.
+    fn accept_genesis(
+        &mut self,
+        zone: &str,
+        checkpoint: &PolicyCheckpoint,
+        quorum_threshold: usize,
+        authorized_signers: &[VerificationKey],
+        trace_id: &str,
+    ) -> Result<(), FrontierError> {
+        // Verify quorum even for genesis.
+        verify_checkpoint_quorum(checkpoint, quorum_threshold, authorized_signers).map_err(
+            |e| FrontierError::QuorumFailure {
+                zone: zone.to_string(),
+                detail: e.to_string(),
+            },
+        )?;
+
+        let state = FrontierState::from_genesis(zone, checkpoint);
+
+        // Persist before in-memory update.
+        self.backend
+            .persist(&state)
+            .map_err(|e| FrontierError::PersistenceFailed {
+                zone: zone.to_string(),
+                detail: e,
+            })?;
+
+        self.zones.insert(zone.to_string(), state);
+
+        self.events.push(FrontierEvent {
+            event_type: FrontierEventType::ZoneInitialized {
+                zone: zone.to_string(),
+                genesis_seq: checkpoint.checkpoint_seq,
+            },
+            trace_id: trace_id.to_string(),
+        });
+
+        Ok(())
+    }
+
+    /// Verify chain linkage between the frontier checkpoint and a new
+    /// checkpoint, given access to the full frontier checkpoint object.
+    ///
+    /// This is an optional additional check that requires the caller
+    /// to have the full previous checkpoint object available.
+    pub fn verify_linkage_against_frontier(
+        &self,
+        zone: &str,
+        prev_checkpoint: &PolicyCheckpoint,
+        new_checkpoint: &PolicyCheckpoint,
+    ) -> Result<(), FrontierError> {
+        let frontier = self
+            .zones
+            .get(zone)
+            .ok_or_else(|| FrontierError::UnknownZone {
+                zone: zone.to_string(),
+            })?;
+
+        // The prev_checkpoint must be the current frontier.
+        if prev_checkpoint.checkpoint_id != frontier.frontier_checkpoint_id {
+            return Err(FrontierError::ChainLinkageFailure {
+                zone: zone.to_string(),
+                detail: format!(
+                    "prev checkpoint {} does not match frontier {}",
+                    prev_checkpoint.checkpoint_id, frontier.frontier_checkpoint_id
+                ),
+            });
+        }
+
+        verify_chain_linkage(prev_checkpoint, new_checkpoint).map_err(|e| {
+            FrontierError::ChainLinkageFailure {
+                zone: zone.to_string(),
+                detail: e.to_string(),
+            }
+        })?;
+
+        Ok(())
+    }
+
+    /// Drain accumulated events.
+    pub fn drain_events(&mut self) -> Vec<FrontierEvent> {
+        std::mem::take(&mut self.events)
+    }
+
+    /// Count of events by type for diagnostics.
+    pub fn event_counts(&self) -> BTreeMap<String, usize> {
+        let mut counts = BTreeMap::new();
+        for event in &self.events {
+            let key = match &event.event_type {
+                FrontierEventType::ZoneInitialized { .. } => "zone_initialized",
+                FrontierEventType::CheckpointAccepted { .. } => "checkpoint_accepted",
+                FrontierEventType::RollbackRejected { .. } => "rollback_rejected",
+                FrontierEventType::DuplicateRejected { .. } => "duplicate_rejected",
+                FrontierEventType::EpochRegressionRejected { .. } => "epoch_regression_rejected",
+                FrontierEventType::FrontierLoaded { .. } => "frontier_loaded",
+            };
+            *counts.entry(key.to_string()).or_insert(0) += 1;
+        }
+        counts
+    }
+
+    /// Access the underlying backend (for testing/inspection).
+    pub fn backend(&self) -> &B {
+        &self.backend
+    }
+
+    /// Mutable access to the underlying backend (for testing).
+    pub fn backend_mut(&mut self) -> &mut B {
+        &mut self.backend
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hash_tiers::ContentHash;
+    use crate::policy_checkpoint::{
+        CheckpointBuilder, DeterministicTimestamp, PolicyHead, PolicyType,
+    };
+    use crate::signature_preimage::SigningKey;
+
+    fn make_sk(seed: u8) -> SigningKey {
+        SigningKey::from_bytes([seed; 32])
+    }
+
+    fn make_policy_head(pt: PolicyType, version: u64) -> PolicyHead {
+        let hash_input = format!("{pt}-v{version}");
+        PolicyHead {
+            policy_type: pt,
+            policy_hash: ContentHash::compute(hash_input.as_bytes()),
+            policy_version: version,
+        }
+    }
+
+    fn build_genesis(keys: &[SigningKey], zone: &str) -> PolicyCheckpoint {
+        CheckpointBuilder::genesis(SecurityEpoch::GENESIS, DeterministicTimestamp(100), zone)
+            .add_policy_head(make_policy_head(PolicyType::RuntimeExecution, 1))
+            .build(keys)
+            .unwrap()
+    }
+
+    fn build_after(
+        prev: &PolicyCheckpoint,
+        seq: u64,
+        epoch: SecurityEpoch,
+        tick: u64,
+        keys: &[SigningKey],
+        zone: &str,
+    ) -> PolicyCheckpoint {
+        CheckpointBuilder::after(prev, seq, epoch, DeterministicTimestamp(tick), zone)
+            .add_policy_head(make_policy_head(PolicyType::RuntimeExecution, seq + 1))
+            .build(keys)
+            .unwrap()
+    }
+
+    // -- Genesis acceptance --
+
+    #[test]
+    fn genesis_checkpoint_accepted() {
+        let sk = make_sk(1);
+        let vk = sk.verification_key();
+        let genesis = build_genesis(&[sk], "zone-a");
+
+        let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
+        mgr.accept_checkpoint("zone-a", &genesis, 1, &[vk], "t-genesis")
+            .unwrap();
+
+        let frontier = mgr.get_frontier("zone-a").unwrap();
+        assert_eq!(frontier.frontier_seq, 0);
+        assert_eq!(frontier.frontier_checkpoint_id, genesis.checkpoint_id);
+        assert_eq!(frontier.accept_count, 1);
+    }
+
+    #[test]
+    fn genesis_emits_zone_initialized_event() {
+        let sk = make_sk(1);
+        let vk = sk.verification_key();
+        let genesis = build_genesis(&[sk], "zone-a");
+
+        let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
+        mgr.accept_checkpoint("zone-a", &genesis, 1, &[vk], "t-1")
+            .unwrap();
+
+        let events = mgr.drain_events();
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            &events[0].event_type,
+            FrontierEventType::ZoneInitialized { zone, genesis_seq: 0 }
+            if zone == "zone-a"
+        ));
+    }
+
+    // -- Sequential acceptance --
+
+    #[test]
+    fn sequential_checkpoints_accepted() {
+        let sk = make_sk(1);
+        let vk = sk.verification_key();
+        let genesis = build_genesis(&[sk.clone()], "zone-a");
+
+        let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
+        mgr.accept_checkpoint("zone-a", &genesis, 1, &[vk.clone()], "t-0")
+            .unwrap();
+
+        let cp1 = build_after(
+            &genesis,
+            1,
+            SecurityEpoch::GENESIS,
+            200,
+            &[sk.clone()],
+            "zone-a",
+        );
+        mgr.accept_checkpoint("zone-a", &cp1, 1, &[vk.clone()], "t-1")
+            .unwrap();
+
+        let cp2 = build_after(&cp1, 2, SecurityEpoch::GENESIS, 300, &[sk], "zone-a");
+        mgr.accept_checkpoint("zone-a", &cp2, 1, &[vk], "t-2")
+            .unwrap();
+
+        let frontier = mgr.get_frontier("zone-a").unwrap();
+        assert_eq!(frontier.frontier_seq, 2);
+        assert_eq!(frontier.frontier_checkpoint_id, cp2.checkpoint_id);
+        assert_eq!(frontier.accept_count, 3);
+    }
+
+    // -- Rollback rejection (core invariant) --
+
+    #[test]
+    fn rollback_rejected_unconditionally() {
+        let sk = make_sk(1);
+        let vk = sk.verification_key();
+        let genesis = build_genesis(&[sk.clone()], "zone-a");
+
+        let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
+        mgr.accept_checkpoint("zone-a", &genesis, 1, &[vk.clone()], "t-0")
+            .unwrap();
+
+        let cp1 = build_after(
+            &genesis,
+            1,
+            SecurityEpoch::GENESIS,
+            200,
+            &[sk.clone()],
+            "zone-a",
+        );
+        mgr.accept_checkpoint("zone-a", &cp1, 1, &[vk.clone()], "t-1")
+            .unwrap();
+
+        // Build a validly-signed checkpoint at seq=0 (rollback to genesis level).
+        // This must be rejected even though signatures are valid.
+        let rollback = build_genesis(&[sk], "zone-a");
+        let err = mgr
+            .accept_checkpoint("zone-a", &rollback, 1, &[vk], "t-rollback")
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            FrontierError::RollbackRejected {
+                frontier_seq: 1,
+                attempted_seq: 0,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn rollback_emits_rejection_event() {
+        let sk = make_sk(1);
+        let vk = sk.verification_key();
+        let genesis = build_genesis(&[sk.clone()], "zone-a");
+
+        let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
+        mgr.accept_checkpoint("zone-a", &genesis, 1, &[vk.clone()], "t-0")
+            .unwrap();
+
+        let cp1 = build_after(
+            &genesis,
+            1,
+            SecurityEpoch::GENESIS,
+            200,
+            &[sk.clone()],
+            "zone-a",
+        );
+        mgr.accept_checkpoint("zone-a", &cp1, 1, &[vk.clone()], "t-1")
+            .unwrap();
+
+        // Drain previous events.
+        mgr.drain_events();
+
+        let rollback = build_genesis(&[sk], "zone-a");
+        let _ = mgr.accept_checkpoint("zone-a", &rollback, 1, &[vk], "t-rollback");
+
+        let events = mgr.drain_events();
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(&e.event_type, FrontierEventType::RollbackRejected { .. }))
+        );
+    }
+
+    // -- Duplicate rejection --
+
+    #[test]
+    fn duplicate_checkpoint_rejected() {
+        let sk = make_sk(1);
+        let vk = sk.verification_key();
+        let genesis = build_genesis(&[sk.clone()], "zone-a");
+
+        let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
+        mgr.accept_checkpoint("zone-a", &genesis, 1, &[vk.clone()], "t-0")
+            .unwrap();
+
+        let cp1 = build_after(
+            &genesis,
+            1,
+            SecurityEpoch::GENESIS,
+            200,
+            &[sk.clone()],
+            "zone-a",
+        );
+        mgr.accept_checkpoint("zone-a", &cp1, 1, &[vk.clone()], "t-1")
+            .unwrap();
+
+        // Try to accept cp1 again (same seq=1).
+        let dup = build_after(&genesis, 1, SecurityEpoch::GENESIS, 250, &[sk], "zone-a");
+        let err = mgr
+            .accept_checkpoint("zone-a", &dup, 1, &[vk], "t-dup")
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            FrontierError::DuplicateCheckpoint {
+                checkpoint_seq: 1,
+                ..
+            }
+        ));
+    }
+
+    // -- Epoch regression --
+
+    #[test]
+    fn epoch_regression_rejected() {
+        let sk = make_sk(1);
+        let vk = sk.verification_key();
+
+        // Accept genesis at epoch 5.
+        let genesis_e5 = CheckpointBuilder::genesis(
+            SecurityEpoch::from_raw(5),
+            DeterministicTimestamp(100),
+            "zone-a",
+        )
+        .add_policy_head(make_policy_head(PolicyType::RuntimeExecution, 1))
+        .build(&[sk.clone()])
+        .unwrap();
+
+        let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
+        mgr.accept_checkpoint("zone-a", &genesis_e5, 1, &[vk.clone()], "t-0")
+            .unwrap();
+
+        // Advance to seq=1, still at epoch 5.
+        let cp1 = build_after(
+            &genesis_e5,
+            1,
+            SecurityEpoch::from_raw(5),
+            200,
+            &[sk.clone()],
+            "zone-a",
+        );
+        mgr.accept_checkpoint("zone-a", &cp1, 1, &[vk.clone()], "t-1")
+            .unwrap();
+
+        // Build a seq=2 checkpoint at epoch 3 (regression). The builder
+        // won't catch this because it only checks against its direct
+        // predecessor. We pass epoch 5 predecessor but tell builder
+        // we want epoch 3. Actually the builder DOES check prev_epoch.
+        // Instead, build from a separate chain with lower epoch and
+        // higher seq, then attempt to inject it.
+        let independent_genesis = CheckpointBuilder::genesis(
+            SecurityEpoch::from_raw(3),
+            DeterministicTimestamp(50),
+            "zone-a",
+        )
+        .add_policy_head(make_policy_head(PolicyType::RuntimeExecution, 1))
+        .build(&[sk.clone()])
+        .unwrap();
+
+        // Build seq=2 from the epoch-3 chain.
+        let regressed_cp = build_after(
+            &independent_genesis,
+            2,
+            SecurityEpoch::from_raw(3),
+            300,
+            &[sk],
+            "zone-a",
+        );
+
+        // This has seq=2 > frontier seq=1, but epoch=3 < frontier epoch=5.
+        // Frontier must reject it.
+        let err = mgr
+            .accept_checkpoint("zone-a", &regressed_cp, 1, &[vk], "t-regress")
+            .unwrap_err();
+
+        assert!(matches!(err, FrontierError::EpochRegression { .. }));
+    }
+
+    // -- Per-zone isolation --
+
+    #[test]
+    fn zones_are_independent() {
+        let sk = make_sk(1);
+        let vk = sk.verification_key();
+        let genesis_a = build_genesis(&[sk.clone()], "zone-a");
+        let genesis_b = build_genesis(&[sk.clone()], "zone-b");
+
+        let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
+        mgr.accept_checkpoint("zone-a", &genesis_a, 1, &[vk.clone()], "t-a0")
+            .unwrap();
+        mgr.accept_checkpoint("zone-b", &genesis_b, 1, &[vk.clone()], "t-b0")
+            .unwrap();
+
+        // Advance zone-a to seq=3.
+        let cp_a1 = build_after(
+            &genesis_a,
+            1,
+            SecurityEpoch::GENESIS,
+            200,
+            &[sk.clone()],
+            "zone-a",
+        );
+        mgr.accept_checkpoint("zone-a", &cp_a1, 1, &[vk.clone()], "t-a1")
+            .unwrap();
+
+        let cp_a2 = build_after(
+            &cp_a1,
+            2,
+            SecurityEpoch::GENESIS,
+            300,
+            &[sk.clone()],
+            "zone-a",
+        );
+        mgr.accept_checkpoint("zone-a", &cp_a2, 1, &[vk.clone()], "t-a2")
+            .unwrap();
+
+        let cp_a3 = build_after(
+            &cp_a2,
+            3,
+            SecurityEpoch::GENESIS,
+            400,
+            &[sk.clone()],
+            "zone-a",
+        );
+        mgr.accept_checkpoint("zone-a", &cp_a3, 1, &[vk.clone()], "t-a3")
+            .unwrap();
+
+        // Zone-b should still be at seq=0.
+        let frontier_b = mgr.get_frontier("zone-b").unwrap();
+        assert_eq!(frontier_b.frontier_seq, 0);
+
+        // Zone-a should be at seq=3.
+        let frontier_a = mgr.get_frontier("zone-a").unwrap();
+        assert_eq!(frontier_a.frontier_seq, 3);
+
+        // Zone-b can still accept seq=1.
+        let cp_b1 = build_after(&genesis_b, 1, SecurityEpoch::GENESIS, 200, &[sk], "zone-b");
+        mgr.accept_checkpoint("zone-b", &cp_b1, 1, &[vk], "t-b1")
+            .unwrap();
+
+        let frontier_b = mgr.get_frontier("zone-b").unwrap();
+        assert_eq!(frontier_b.frontier_seq, 1);
+    }
+
+    // -- Quorum failure --
+
+    #[test]
+    fn quorum_failure_rejects_acceptance() {
+        let sk = make_sk(1);
+        let wrong_vk = VerificationKey::from_bytes([0xFF; 32]);
+        let genesis = build_genesis(&[sk], "zone-a");
+
+        let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
+        // Provide wrong authorized signers.
+        let err = mgr
+            .accept_checkpoint("zone-a", &genesis, 1, &[wrong_vk], "t-bad")
+            .unwrap_err();
+
+        assert!(matches!(err, FrontierError::QuorumFailure { .. }));
+        // Zone should not be initialized.
+        assert!(mgr.get_frontier("zone-a").is_none());
+    }
+
+    // -- Persistence --
+
+    #[test]
+    fn frontier_persisted_on_acceptance() {
+        let sk = make_sk(1);
+        let vk = sk.verification_key();
+        let genesis = build_genesis(&[sk], "zone-a");
+
+        let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
+        mgr.accept_checkpoint("zone-a", &genesis, 1, &[vk], "t-0")
+            .unwrap();
+
+        assert_eq!(mgr.backend().persist_count, 1);
+        let loaded = mgr.backend().load("zone-a").unwrap().unwrap();
+        assert_eq!(loaded.frontier_seq, 0);
+        assert_eq!(loaded.zone, "zone-a");
+    }
+
+    #[test]
+    fn persistence_failure_prevents_acceptance() {
+        let sk = make_sk(1);
+        let vk = sk.verification_key();
+        let genesis = build_genesis(&[sk.clone()], "zone-a");
+
+        let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
+        mgr.accept_checkpoint("zone-a", &genesis, 1, &[vk.clone()], "t-0")
+            .unwrap();
+
+        // Enable failure.
+        mgr.backend_mut().fail_on_persist = true;
+
+        let cp1 = build_after(&genesis, 1, SecurityEpoch::GENESIS, 200, &[sk], "zone-a");
+        let err = mgr
+            .accept_checkpoint("zone-a", &cp1, 1, &[vk], "t-fail")
+            .unwrap_err();
+
+        assert!(matches!(err, FrontierError::PersistenceFailed { .. }));
+
+        // Frontier should NOT have advanced.
+        let frontier = mgr.get_frontier("zone-a").unwrap();
+        assert_eq!(frontier.frontier_seq, 0);
+    }
+
+    // -- Recovery --
+
+    #[test]
+    fn recovery_loads_persisted_frontier() {
+        let sk = make_sk(1);
+        let vk = sk.verification_key();
+        let genesis = build_genesis(&[sk.clone()], "zone-a");
+
+        let mut backend = InMemoryBackend::new();
+
+        // Build the state directly in the backend to simulate a
+        // previous session that persisted frontier at seq=2.
+        let cp1 = build_after(
+            &genesis,
+            1,
+            SecurityEpoch::GENESIS,
+            200,
+            &[sk.clone()],
+            "zone-a",
+        );
+        let cp2 = build_after(
+            &cp1,
+            2,
+            SecurityEpoch::GENESIS,
+            300,
+            &[sk.clone()],
+            "zone-a",
+        );
+
+        let mut state = FrontierState::from_genesis("zone-a", &genesis);
+        state.advance(&cp1);
+        state.advance(&cp2);
+        backend.persist(&state).unwrap();
+
+        // Create new manager and recover.
+        let mut mgr = CheckpointFrontierManager::new(backend);
+        let count = mgr.recover("t-recover").unwrap();
+        assert_eq!(count, 1);
+
+        let frontier = mgr.get_frontier("zone-a").unwrap();
+        assert_eq!(frontier.frontier_seq, 2);
+        assert_eq!(frontier.accept_count, 3);
+
+        // Rollback to seq=1 must be rejected.
+        let rollback = build_after(
+            &genesis,
+            1,
+            SecurityEpoch::GENESIS,
+            250,
+            &[sk.clone()],
+            "zone-a",
+        );
+        let err = mgr
+            .accept_checkpoint("zone-a", &rollback, 1, &[vk.clone()], "t-post-recover")
+            .unwrap_err();
+        assert!(matches!(err, FrontierError::RollbackRejected { .. }));
+
+        // Seq=3 should be accepted.
+        let cp3 = build_after(
+            &cp2,
+            3,
+            SecurityEpoch::GENESIS,
+            400,
+            &[sk.clone()],
+            "zone-a",
+        );
+        mgr.accept_checkpoint("zone-a", &cp3, 1, &[vk], "t-3")
+            .unwrap();
+
+        let frontier = mgr.get_frontier("zone-a").unwrap();
+        assert_eq!(frontier.frontier_seq, 3);
+    }
+
+    // -- Forensic history --
+
+    #[test]
+    fn recent_ids_tracked() {
+        let sk = make_sk(1);
+        let vk = sk.verification_key();
+        let genesis = build_genesis(&[sk.clone()], "zone-a");
+
+        let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
+        mgr.accept_checkpoint("zone-a", &genesis, 1, &[vk.clone()], "t-0")
+            .unwrap();
+
+        let cp1 = build_after(
+            &genesis,
+            1,
+            SecurityEpoch::GENESIS,
+            200,
+            &[sk.clone()],
+            "zone-a",
+        );
+        mgr.accept_checkpoint("zone-a", &cp1, 1, &[vk.clone()], "t-1")
+            .unwrap();
+
+        let cp2 = build_after(&cp1, 2, SecurityEpoch::GENESIS, 300, &[sk], "zone-a");
+        mgr.accept_checkpoint("zone-a", &cp2, 1, &[vk], "t-2")
+            .unwrap();
+
+        let frontier = mgr.get_frontier("zone-a").unwrap();
+        assert_eq!(frontier.recent_ids.len(), 3);
+        assert_eq!(frontier.recent_ids[0].checkpoint_seq, 0);
+        assert_eq!(frontier.recent_ids[1].checkpoint_seq, 1);
+        assert_eq!(frontier.recent_ids[2].checkpoint_seq, 2);
+    }
+
+    #[test]
+    fn recent_ids_bounded() {
+        let sk = make_sk(1);
+        let vk = sk.verification_key();
+        let genesis = build_genesis(&[sk.clone()], "zone-a");
+
+        let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
+        mgr.accept_checkpoint("zone-a", &genesis, 1, &[vk.clone()], "t-0")
+            .unwrap();
+
+        // Accept 40 more checkpoints (exceeds MAX_RECENT_ENTRIES=32).
+        let mut prev = genesis;
+        for i in 1..=40u64 {
+            let cp = build_after(
+                &prev,
+                i,
+                SecurityEpoch::GENESIS,
+                100 + i * 100,
+                &[sk.clone()],
+                "zone-a",
+            );
+            mgr.accept_checkpoint("zone-a", &cp, 1, &[vk.clone()], &format!("t-{i}"))
+                .unwrap();
+            prev = cp;
+        }
+
+        let frontier = mgr.get_frontier("zone-a").unwrap();
+        assert!(frontier.recent_ids.len() <= FrontierState::MAX_RECENT_ENTRIES);
+        // The last entry should be seq=40.
+        assert_eq!(frontier.recent_ids.last().unwrap().checkpoint_seq, 40);
+    }
+
+    // -- Unknown zone --
+
+    #[test]
+    fn unknown_zone_returns_none() {
+        let mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
+        assert!(mgr.get_frontier("nonexistent").is_none());
+    }
+
+    // -- Multiple signers --
+
+    #[test]
+    fn multi_signer_quorum_accepted() {
+        let sk1 = make_sk(1);
+        let sk2 = make_sk(2);
+        let vk1 = sk1.verification_key();
+        let vk2 = sk2.verification_key();
+
+        let genesis = CheckpointBuilder::genesis(
+            SecurityEpoch::GENESIS,
+            DeterministicTimestamp(100),
+            "zone-a",
+        )
+        .add_policy_head(make_policy_head(PolicyType::RuntimeExecution, 1))
+        .build(&[sk1, sk2])
+        .unwrap();
+
+        let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
+        mgr.accept_checkpoint("zone-a", &genesis, 2, &[vk1, vk2], "t-0")
+            .unwrap();
+
+        let frontier = mgr.get_frontier("zone-a").unwrap();
+        assert_eq!(frontier.frontier_seq, 0);
+    }
+
+    // -- Epoch transition --
+
+    #[test]
+    fn epoch_transition_accepted() {
+        let sk = make_sk(1);
+        let vk = sk.verification_key();
+        let genesis = build_genesis(&[sk.clone()], "zone-a");
+
+        let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
+        mgr.accept_checkpoint("zone-a", &genesis, 1, &[vk.clone()], "t-0")
+            .unwrap();
+
+        // Epoch transition from 0 to 5.
+        let cp1 = build_after(
+            &genesis,
+            1,
+            SecurityEpoch::from_raw(5),
+            200,
+            &[sk],
+            "zone-a",
+        );
+        mgr.accept_checkpoint("zone-a", &cp1, 1, &[vk], "t-1")
+            .unwrap();
+
+        let frontier = mgr.get_frontier("zone-a").unwrap();
+        assert_eq!(frontier.frontier_epoch, SecurityEpoch::from_raw(5));
+    }
+
+    // -- zones() listing --
+
+    #[test]
+    fn zones_listing() {
+        let sk = make_sk(1);
+        let vk = sk.verification_key();
+
+        let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
+        assert!(mgr.zones().is_empty());
+
+        let genesis_a = build_genesis(&[sk.clone()], "zone-a");
+        mgr.accept_checkpoint("zone-a", &genesis_a, 1, &[vk.clone()], "t-a")
+            .unwrap();
+
+        let genesis_b = build_genesis(&[sk], "zone-b");
+        mgr.accept_checkpoint("zone-b", &genesis_b, 1, &[vk], "t-b")
+            .unwrap();
+
+        let zones = mgr.zones();
+        assert_eq!(zones.len(), 2);
+        assert!(zones.contains(&"zone-a"));
+        assert!(zones.contains(&"zone-b"));
+    }
+
+    // -- Event counts --
+
+    #[test]
+    fn event_counts_accurate() {
+        let sk = make_sk(1);
+        let vk = sk.verification_key();
+        let genesis = build_genesis(&[sk.clone()], "zone-a");
+
+        let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
+        mgr.accept_checkpoint("zone-a", &genesis, 1, &[vk.clone()], "t-0")
+            .unwrap();
+
+        let cp1 = build_after(
+            &genesis,
+            1,
+            SecurityEpoch::GENESIS,
+            200,
+            &[sk.clone()],
+            "zone-a",
+        );
+        mgr.accept_checkpoint("zone-a", &cp1, 1, &[vk.clone()], "t-1")
+            .unwrap();
+
+        // Attempt rollback.
+        let rollback = build_genesis(&[sk], "zone-a");
+        let _ = mgr.accept_checkpoint("zone-a", &rollback, 1, &[vk], "t-bad");
+
+        let counts = mgr.event_counts();
+        assert_eq!(counts["zone_initialized"], 1);
+        assert_eq!(counts["checkpoint_accepted"], 1);
+        assert_eq!(counts["rollback_rejected"], 1);
+    }
+
+    // -- Serialization --
+
+    #[test]
+    fn frontier_state_serialization_round_trip() {
+        let sk = make_sk(1);
+        let genesis = build_genesis(&[sk], "zone-a");
+        let state = FrontierState::from_genesis("zone-a", &genesis);
+
+        let json = serde_json::to_string(&state).expect("serialize");
+        let restored: FrontierState = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(state, restored);
+    }
+
+    #[test]
+    fn frontier_error_serialization_round_trip() {
+        let errors = vec![
+            FrontierError::RollbackRejected {
+                zone: "z".to_string(),
+                frontier_seq: 5,
+                attempted_seq: 3,
+            },
+            FrontierError::DuplicateCheckpoint {
+                zone: "z".to_string(),
+                checkpoint_seq: 5,
+            },
+            FrontierError::UnknownZone {
+                zone: "z".to_string(),
+            },
+        ];
+        for err in &errors {
+            let json = serde_json::to_string(err).expect("serialize");
+            let restored: FrontierError = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*err, restored);
+        }
+    }
+
+    #[test]
+    fn frontier_event_serialization_round_trip() {
+        let event = FrontierEvent {
+            event_type: FrontierEventType::CheckpointAccepted {
+                zone: "z".to_string(),
+                prev_seq: 1,
+                new_seq: 2,
+            },
+            trace_id: "t-1".to_string(),
+        };
+        let json = serde_json::to_string(&event).expect("serialize");
+        let restored: FrontierEvent = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(event, restored);
+    }
+
+    // -- Display --
+
+    #[test]
+    fn frontier_error_display() {
+        let err = FrontierError::RollbackRejected {
+            zone: "zone-a".to_string(),
+            frontier_seq: 10,
+            attempted_seq: 5,
+        };
+        let s = err.to_string();
+        assert!(s.contains("zone-a"));
+        assert!(s.contains("10"));
+        assert!(s.contains("5"));
+    }
+
+    #[test]
+    fn frontier_event_type_display() {
+        let et = FrontierEventType::CheckpointAccepted {
+            zone: "z".to_string(),
+            prev_seq: 1,
+            new_seq: 2,
+        };
+        assert!(et.to_string().contains("1"));
+        assert!(et.to_string().contains("2"));
+    }
+
+    // -- Chain linkage verification --
+
+    #[test]
+    fn linkage_verification_succeeds() {
+        let sk = make_sk(1);
+        let vk = sk.verification_key();
+        let genesis = build_genesis(&[sk.clone()], "zone-a");
+
+        let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
+        mgr.accept_checkpoint("zone-a", &genesis, 1, &[vk.clone()], "t-0")
+            .unwrap();
+
+        let cp1 = build_after(&genesis, 1, SecurityEpoch::GENESIS, 200, &[sk], "zone-a");
+
+        mgr.verify_linkage_against_frontier("zone-a", &genesis, &cp1)
+            .unwrap();
+    }
+
+    #[test]
+    fn linkage_verification_fails_wrong_prev() {
+        let sk = make_sk(1);
+        let vk = sk.verification_key();
+        let genesis = build_genesis(&[sk.clone()], "zone-a");
+
+        let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
+        mgr.accept_checkpoint("zone-a", &genesis, 1, &[vk.clone()], "t-0")
+            .unwrap();
+
+        let cp1 = build_after(
+            &genesis,
+            1,
+            SecurityEpoch::GENESIS,
+            200,
+            &[sk.clone()],
+            "zone-a",
+        );
+        mgr.accept_checkpoint("zone-a", &cp1, 1, &[vk.clone()], "t-1")
+            .unwrap();
+
+        // Try to verify using genesis as prev (but frontier is at cp1).
+        let cp2 = build_after(&cp1, 2, SecurityEpoch::GENESIS, 300, &[sk], "zone-a");
+        let err = mgr
+            .verify_linkage_against_frontier("zone-a", &genesis, &cp2)
+            .unwrap_err();
+        assert!(matches!(err, FrontierError::ChainLinkageFailure { .. }));
+    }
+
+    #[test]
+    fn linkage_verification_unknown_zone() {
+        let mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
+        let sk = make_sk(1);
+        let genesis = build_genesis(&[sk.clone()], "zone-a");
+        let cp1 = build_after(&genesis, 1, SecurityEpoch::GENESIS, 200, &[sk], "zone-a");
+
+        let err = mgr
+            .verify_linkage_against_frontier("zone-nope", &genesis, &cp1)
+            .unwrap_err();
+        assert!(matches!(err, FrontierError::UnknownZone { .. }));
+    }
+}
