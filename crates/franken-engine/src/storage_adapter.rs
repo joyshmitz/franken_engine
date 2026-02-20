@@ -501,7 +501,7 @@ impl StorageAdapter for InMemoryStorageAdapter {
                 return Ok(Vec::new());
             };
 
-            let mut out: Vec<StoreRecord> = state
+            let out: Vec<StoreRecord> = state
                 .records
                 .values()
                 .filter(|record| {
@@ -518,10 +518,7 @@ impl StorageAdapter for InMemoryStorageAdapter {
                 .cloned()
                 .collect();
 
-            if let Some(limit) = query.limit {
-                out.truncate(limit);
-            }
-            Ok(out)
+            Ok(canonicalize_records(out, query.limit))
         })();
 
         self.record_event(
@@ -812,9 +809,17 @@ impl<B: FrankensqliteBackend> StorageAdapter for FrankensqliteStorageAdapter<B> 
                     detail: "limit cannot be zero".to_string(),
                 });
             }
-            self.backend
-                .query_records(store, query)
-                .map_err(Self::map_backend_error)
+
+            // Query without a limit first, then canonicalize and truncate locally.
+            // This prevents backend row-order variation from changing visible results.
+            let mut unconstrained = query.clone();
+            unconstrained.limit = None;
+
+            let rows = self
+                .backend
+                .query_records(store, &unconstrained)
+                .map_err(Self::map_backend_error)?;
+            Ok(canonicalize_records(rows, query.limit))
         })();
 
         self.record_event(
@@ -879,6 +884,21 @@ impl<B: FrankensqliteBackend> StorageAdapter for FrankensqliteStorageAdapter<B> 
 
 fn digest_hex(bytes: &[u8]) -> String {
     format!("{:016x}", fnv1a64(bytes))
+}
+
+fn canonicalize_records(mut rows: Vec<StoreRecord>, limit: Option<usize>) -> Vec<StoreRecord> {
+    rows.sort_by(|a, b| {
+        a.key
+            .cmp(&b.key)
+            .then(a.revision.cmp(&b.revision))
+            .then(a.value.cmp(&b.value))
+            .then(a.metadata.cmp(&b.metadata))
+    });
+
+    if let Some(limit) = limit {
+        rows.truncate(limit);
+    }
+    rows
 }
 
 fn fnv1a64(bytes: &[u8]) -> u64 {

@@ -892,6 +892,8 @@ mod tests {
             timestamp_ticks: 1000,
             signer_key_id,
             correlation_id: format!("corr-{opt_id}"),
+            decision_impact: crate::tee_attestation_policy::DecisionImpact::Standard,
+            attestation_bindings: None,
             signature: AuthenticityHash::compute_keyed(&[], &[]),
         }
         .sign(TEST_KEY)

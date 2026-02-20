@@ -1,0 +1,1239 @@
+//! Governance audit ledger for moonshot portfolio decisions.
+//!
+//! This module provides an append-only, hash-linked governance ledger for
+//! automatic and human-override portfolio decisions. Entries are signed and can
+//! be queried by moonshot, actor, decision type, time range, and override
+//! status.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
+
+use serde::{Deserialize, Serialize};
+
+use crate::hash_tiers::{AuthenticityHash, ContentHash};
+use crate::portfolio_governor::{GovernorDecision, GovernorDecisionKind, Scorecard};
+
+/// Decision classes captured by the governance ledger.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum GovernanceDecisionType {
+    Promote,
+    Hold,
+    Kill,
+    Pause,
+    Resume,
+    Override,
+}
+
+impl fmt::Display for GovernanceDecisionType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Promote => write!(f, "promote"),
+            Self::Hold => write!(f, "hold"),
+            Self::Kill => write!(f, "kill"),
+            Self::Pause => write!(f, "pause"),
+            Self::Resume => write!(f, "resume"),
+            Self::Override => write!(f, "override"),
+        }
+    }
+}
+
+/// Actor type responsible for a governance decision.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum GovernanceActor {
+    System(String),
+    Human(String),
+}
+
+impl GovernanceActor {
+    pub fn actor_id(&self) -> &str {
+        match self {
+            Self::System(id) | Self::Human(id) => id,
+        }
+    }
+
+    pub fn is_human(&self) -> bool {
+        matches!(self, Self::Human(_))
+    }
+}
+
+/// Structured rationale attached to each governance decision.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GovernanceRationale {
+    pub summary: String,
+    pub passed_criteria: Vec<String>,
+    pub failed_criteria: Vec<String>,
+    pub confidence_millionths: u64,
+    pub risk_of_harm_millionths: u64,
+    pub bypassed_risk_criteria: Vec<String>,
+    pub acknowledged_bypass: bool,
+}
+
+impl GovernanceRationale {
+    pub fn for_automatic_decision(
+        summary: impl Into<String>,
+        confidence_millionths: u64,
+        risk_of_harm_millionths: u64,
+        passed_criteria: Vec<String>,
+        failed_criteria: Vec<String>,
+    ) -> Self {
+        Self {
+            summary: summary.into(),
+            passed_criteria,
+            failed_criteria,
+            confidence_millionths,
+            risk_of_harm_millionths,
+            bypassed_risk_criteria: Vec::new(),
+            acknowledged_bypass: false,
+        }
+    }
+}
+
+/// Scorecard snapshot embedded in the governance ledger.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScorecardSnapshot {
+    pub ev_millionths: i64,
+    pub confidence_millionths: u64,
+    pub risk_of_harm_millionths: u64,
+    pub implementation_friction_millionths: u64,
+    pub cross_initiative_interference_millionths: u64,
+    pub operational_burden_millionths: u64,
+}
+
+impl From<&Scorecard> for ScorecardSnapshot {
+    fn from(scorecard: &Scorecard) -> Self {
+        Self {
+            ev_millionths: scorecard.ev_millionths,
+            confidence_millionths: scorecard.confidence_millionths,
+            risk_of_harm_millionths: scorecard.risk_of_harm_millionths,
+            implementation_friction_millionths: scorecard.implementation_friction_millionths,
+            cross_initiative_interference_millionths: scorecard
+                .cross_initiative_interference_millionths,
+            operational_burden_millionths: scorecard.operational_burden_millionths,
+        }
+    }
+}
+
+/// Input payload used when appending a new governance ledger entry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GovernanceLedgerInput {
+    pub decision_id: String,
+    pub moonshot_id: String,
+    pub decision_type: GovernanceDecisionType,
+    pub actor: GovernanceActor,
+    pub rationale: GovernanceRationale,
+    pub scorecard_snapshot: ScorecardSnapshot,
+    pub artifact_references: Vec<String>,
+    pub timestamp_ns: u64,
+    pub moonshot_started_at_ns: Option<u64>,
+}
+
+/// Hash-chained governance ledger entry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GovernanceLedgerEntry {
+    pub sequence: u64,
+    pub decision_id: String,
+    pub moonshot_id: String,
+    pub decision_type: GovernanceDecisionType,
+    pub actor: GovernanceActor,
+    pub rationale: GovernanceRationale,
+    pub scorecard_snapshot: ScorecardSnapshot,
+    pub artifact_references: Vec<String>,
+    pub timestamp_ns: u64,
+    pub moonshot_started_at_ns: Option<u64>,
+    pub is_override: bool,
+    pub previous_hash: Option<String>,
+    pub entry_hash: String,
+    pub signature: String,
+}
+
+/// Signed checkpoint for efficient consistency verification.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GovernanceLedgerCheckpoint {
+    pub checkpoint_id: String,
+    pub sequence: u64,
+    pub entry_count: usize,
+    pub head_hash: String,
+    pub timestamp_ns: u64,
+    pub signature: String,
+}
+
+/// Ledger configuration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GovernanceLedgerConfig {
+    pub checkpoint_interval: usize,
+    pub signer_key: Vec<u8>,
+    pub policy_id: String,
+}
+
+impl Default for GovernanceLedgerConfig {
+    fn default() -> Self {
+        Self {
+            checkpoint_interval: 64,
+            signer_key: b"governance-ledger-default".to_vec(),
+            policy_id: "moonshot-governor-policy-v1".to_string(),
+        }
+    }
+}
+
+/// Stable structured event emitted by governance ledger operations.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GovernanceLogEvent {
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub component: String,
+    pub event: String,
+    pub outcome: String,
+    pub error_code: Option<String>,
+    pub timestamp_ns: u64,
+}
+
+/// Query filters for ledger entries.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GovernanceLedgerQuery {
+    pub moonshot_id: Option<String>,
+    pub decision_types: Option<BTreeSet<GovernanceDecisionType>>,
+    pub actor_id: Option<String>,
+    pub start_time_ns: Option<u64>,
+    pub end_time_ns: Option<u64>,
+    pub override_only: Option<bool>,
+}
+
+impl GovernanceLedgerQuery {
+    pub fn all() -> Self {
+        Self {
+            moonshot_id: None,
+            decision_types: None,
+            actor_id: None,
+            start_time_ns: None,
+            end_time_ns: None,
+            override_only: None,
+        }
+    }
+}
+
+/// Aggregate governance reporting metrics.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GovernanceReport {
+    pub total_decisions: usize,
+    pub override_count: usize,
+    pub kill_count: usize,
+    pub override_frequency_millionths: u64,
+    pub kill_rate_millionths: u64,
+    pub mean_time_to_decision_ns: Option<u64>,
+    pub portfolio_health_trend: Vec<PortfolioHealthPoint>,
+}
+
+/// Time-window aggregate point for portfolio health trend.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PortfolioHealthPoint {
+    pub window_start_ns: u64,
+    pub window_end_ns: u64,
+    pub decision_count: usize,
+    pub promote_count: usize,
+    pub hold_count: usize,
+    pub kill_count: usize,
+    pub override_count: usize,
+    pub avg_confidence_millionths: u64,
+    pub avg_risk_millionths: u64,
+}
+
+/// Governance ledger errors.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GovernanceLedgerError {
+    InvalidConfig { reason: String },
+    InvalidInput { field: String, reason: String },
+    DuplicateDecisionId { decision_id: String },
+    OutOfOrderTimestamp { previous_ns: u64, new_ns: u64 },
+    SerializationFailed { reason: String },
+    HashChainMismatch { sequence: u64 },
+    SignatureMismatch { sequence: u64 },
+    EntryHashMismatch { sequence: u64 },
+    EmptyLedger,
+}
+
+impl GovernanceLedgerError {
+    fn serialization(reason: impl Into<String>) -> Self {
+        Self::SerializationFailed {
+            reason: reason.into(),
+        }
+    }
+
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::InvalidConfig { .. } => "FE-GOV-LED-0001",
+            Self::InvalidInput { .. } => "FE-GOV-LED-0002",
+            Self::DuplicateDecisionId { .. } => "FE-GOV-LED-0003",
+            Self::OutOfOrderTimestamp { .. } => "FE-GOV-LED-0004",
+            Self::SerializationFailed { .. } => "FE-GOV-LED-0005",
+            Self::HashChainMismatch { .. } => "FE-GOV-LED-0006",
+            Self::SignatureMismatch { .. } => "FE-GOV-LED-0007",
+            Self::EntryHashMismatch { .. } => "FE-GOV-LED-0008",
+            Self::EmptyLedger => "FE-GOV-LED-0009",
+        }
+    }
+}
+
+impl fmt::Display for GovernanceLedgerError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidConfig { reason } => write!(f, "invalid ledger config: {reason}"),
+            Self::InvalidInput { field, reason } => {
+                write!(f, "invalid ledger input field '{field}': {reason}")
+            }
+            Self::DuplicateDecisionId { decision_id } => {
+                write!(f, "duplicate decision_id in ledger: {decision_id}")
+            }
+            Self::OutOfOrderTimestamp {
+                previous_ns,
+                new_ns,
+            } => write!(
+                f,
+                "out-of-order ledger timestamp: previous={previous_ns}, new={new_ns}"
+            ),
+            Self::SerializationFailed { reason } => write!(f, "serialization failed: {reason}"),
+            Self::HashChainMismatch { sequence } => {
+                write!(f, "hash chain mismatch at sequence {sequence}")
+            }
+            Self::SignatureMismatch { sequence } => {
+                write!(f, "signature mismatch at sequence {sequence}")
+            }
+            Self::EntryHashMismatch { sequence } => {
+                write!(f, "entry hash mismatch at sequence {sequence}")
+            }
+            Self::EmptyLedger => write!(f, "ledger is empty"),
+        }
+    }
+}
+
+impl std::error::Error for GovernanceLedgerError {}
+
+/// Append-only governance audit ledger.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GovernanceAuditLedger {
+    pub config: GovernanceLedgerConfig,
+    entries: Vec<GovernanceLedgerEntry>,
+    checkpoints: Vec<GovernanceLedgerCheckpoint>,
+    events: Vec<GovernanceLogEvent>,
+}
+
+impl GovernanceAuditLedger {
+    pub fn new(config: GovernanceLedgerConfig) -> Result<Self, GovernanceLedgerError> {
+        if config.checkpoint_interval == 0 {
+            return Err(GovernanceLedgerError::InvalidConfig {
+                reason: "checkpoint_interval must be >= 1".to_string(),
+            });
+        }
+        if config.signer_key.is_empty() {
+            return Err(GovernanceLedgerError::InvalidConfig {
+                reason: "signer_key must not be empty".to_string(),
+            });
+        }
+        if config.policy_id.trim().is_empty() {
+            return Err(GovernanceLedgerError::InvalidConfig {
+                reason: "policy_id must not be empty".to_string(),
+            });
+        }
+        Ok(Self {
+            config,
+            entries: Vec::new(),
+            checkpoints: Vec::new(),
+            events: Vec::new(),
+        })
+    }
+
+    pub fn entries(&self) -> &[GovernanceLedgerEntry] {
+        &self.entries
+    }
+
+    pub fn checkpoints(&self) -> &[GovernanceLedgerCheckpoint] {
+        &self.checkpoints
+    }
+
+    pub fn events(&self) -> &[GovernanceLogEvent] {
+        &self.events
+    }
+
+    pub fn append_governor_decision(
+        &mut self,
+        decision: &GovernorDecision,
+        actor: GovernanceActor,
+        artifact_references: Vec<String>,
+        moonshot_started_at_ns: Option<u64>,
+    ) -> Result<GovernanceLedgerEntry, GovernanceLedgerError> {
+        let decision_type = match decision.kind {
+            GovernorDecisionKind::Promote { .. } => GovernanceDecisionType::Promote,
+            GovernorDecisionKind::Hold { .. } => GovernanceDecisionType::Hold,
+            GovernorDecisionKind::Kill { .. } => GovernanceDecisionType::Kill,
+            GovernorDecisionKind::Pause { .. } => GovernanceDecisionType::Pause,
+            GovernorDecisionKind::Resume => GovernanceDecisionType::Resume,
+        };
+        let rationale = GovernanceRationale::for_automatic_decision(
+            decision.rationale.clone(),
+            decision.scorecard.confidence_millionths,
+            decision.scorecard.risk_of_harm_millionths,
+            Vec::new(),
+            Vec::new(),
+        );
+        self.append(GovernanceLedgerInput {
+            decision_id: decision.decision_id.clone(),
+            moonshot_id: decision.moonshot_id.clone(),
+            decision_type,
+            actor,
+            rationale,
+            scorecard_snapshot: ScorecardSnapshot::from(&decision.scorecard),
+            artifact_references,
+            timestamp_ns: decision.timestamp_ns,
+            moonshot_started_at_ns,
+        })
+    }
+
+    pub fn append(
+        &mut self,
+        mut input: GovernanceLedgerInput,
+    ) -> Result<GovernanceLedgerEntry, GovernanceLedgerError> {
+        if let Err(err) = self.validate_input(&input) {
+            let decision_id = if input.decision_id.trim().is_empty() {
+                "unknown-decision".to_string()
+            } else {
+                input.decision_id.clone()
+            };
+            self.record_event(
+                &decision_id,
+                "append_decision",
+                "rejected",
+                Some(err.code()),
+                input.timestamp_ns,
+            );
+            return Err(err);
+        }
+
+        if self
+            .entries
+            .iter()
+            .any(|entry| entry.decision_id == input.decision_id)
+        {
+            let err = GovernanceLedgerError::DuplicateDecisionId {
+                decision_id: input.decision_id,
+            };
+            self.record_event(
+                "duplicate-decision",
+                "append_decision",
+                "rejected",
+                Some(err.code()),
+                input.timestamp_ns,
+            );
+            return Err(err);
+        }
+
+        if let Some(last) = self.entries.last()
+            && input.timestamp_ns < last.timestamp_ns
+        {
+            let err = GovernanceLedgerError::OutOfOrderTimestamp {
+                previous_ns: last.timestamp_ns,
+                new_ns: input.timestamp_ns,
+            };
+            self.record_event(
+                &input.decision_id,
+                "append_decision",
+                "rejected",
+                Some(err.code()),
+                input.timestamp_ns,
+            );
+            return Err(err);
+        }
+
+        input.artifact_references.sort();
+        input.artifact_references.dedup();
+
+        let sequence = self.entries.len() as u64 + 1;
+        let previous_hash = self.entries.last().map(|entry| entry.entry_hash.clone());
+        let is_override = input.decision_type == GovernanceDecisionType::Override;
+
+        let preimage = match entry_preimage(sequence, &input, previous_hash.as_deref()) {
+            Ok(preimage) => preimage,
+            Err(err) => {
+                self.record_event(
+                    &input.decision_id,
+                    "append_decision",
+                    "error",
+                    Some(err.code()),
+                    input.timestamp_ns,
+                );
+                return Err(err);
+            }
+        };
+        let entry_hash = ContentHash::compute(&preimage).to_hex();
+        let signature =
+            AuthenticityHash::compute_keyed(&preimage, &self.config.signer_key).to_hex();
+
+        let entry = GovernanceLedgerEntry {
+            sequence,
+            decision_id: input.decision_id,
+            moonshot_id: input.moonshot_id,
+            decision_type: input.decision_type,
+            actor: input.actor,
+            rationale: input.rationale,
+            scorecard_snapshot: input.scorecard_snapshot,
+            artifact_references: input.artifact_references,
+            timestamp_ns: input.timestamp_ns,
+            moonshot_started_at_ns: input.moonshot_started_at_ns,
+            is_override,
+            previous_hash,
+            entry_hash,
+            signature,
+        };
+
+        self.entries.push(entry.clone());
+        if self
+            .entries
+            .len()
+            .is_multiple_of(self.config.checkpoint_interval)
+        {
+            let checkpoint = match self.create_checkpoint(entry.timestamp_ns) {
+                Ok(checkpoint) => checkpoint,
+                Err(err) => {
+                    let _ = self.entries.pop();
+                    self.record_event(
+                        &entry.decision_id,
+                        "checkpoint_create",
+                        "error",
+                        Some(err.code()),
+                        entry.timestamp_ns,
+                    );
+                    return Err(err);
+                }
+            };
+            self.checkpoints.push(checkpoint);
+            self.record_event(
+                &entry.decision_id,
+                "checkpoint_create",
+                "success",
+                None,
+                entry.timestamp_ns,
+            );
+        }
+        self.record_event(
+            &entry.decision_id,
+            "append_decision",
+            "success",
+            None,
+            entry.timestamp_ns,
+        );
+        Ok(entry)
+    }
+
+    pub fn verify_chain(&self) -> Result<(), GovernanceLedgerError> {
+        for (idx, entry) in self.entries.iter().enumerate() {
+            let expected_prev = if idx == 0 {
+                None
+            } else {
+                Some(self.entries[idx - 1].entry_hash.as_str())
+            };
+            if entry.previous_hash.as_deref() != expected_prev {
+                return Err(GovernanceLedgerError::HashChainMismatch {
+                    sequence: entry.sequence,
+                });
+            }
+
+            let input = GovernanceLedgerInput {
+                decision_id: entry.decision_id.clone(),
+                moonshot_id: entry.moonshot_id.clone(),
+                decision_type: entry.decision_type,
+                actor: entry.actor.clone(),
+                rationale: entry.rationale.clone(),
+                scorecard_snapshot: entry.scorecard_snapshot.clone(),
+                artifact_references: entry.artifact_references.clone(),
+                timestamp_ns: entry.timestamp_ns,
+                moonshot_started_at_ns: entry.moonshot_started_at_ns,
+            };
+            let preimage = entry_preimage(entry.sequence, &input, entry.previous_hash.as_deref())?;
+            let recomputed_hash = ContentHash::compute(&preimage).to_hex();
+            if recomputed_hash != entry.entry_hash {
+                return Err(GovernanceLedgerError::EntryHashMismatch {
+                    sequence: entry.sequence,
+                });
+            }
+            let recomputed_signature =
+                AuthenticityHash::compute_keyed(&preimage, &self.config.signer_key).to_hex();
+            if recomputed_signature != entry.signature {
+                return Err(GovernanceLedgerError::SignatureMismatch {
+                    sequence: entry.sequence,
+                });
+            }
+        }
+
+        for checkpoint in &self.checkpoints {
+            let preimage = checkpoint_preimage(
+                checkpoint.sequence,
+                checkpoint.entry_count,
+                &checkpoint.head_hash,
+                checkpoint.timestamp_ns,
+            )?;
+            let signature =
+                AuthenticityHash::compute_keyed(&preimage, &self.config.signer_key).to_hex();
+            if signature != checkpoint.signature {
+                return Err(GovernanceLedgerError::SignatureMismatch {
+                    sequence: checkpoint.sequence,
+                });
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn query(&self, query: &GovernanceLedgerQuery) -> Vec<GovernanceLedgerEntry> {
+        self.entries
+            .iter()
+            .filter(|entry| {
+                query
+                    .moonshot_id
+                    .as_ref()
+                    .is_none_or(|moonshot_id| &entry.moonshot_id == moonshot_id)
+            })
+            .filter(|entry| {
+                query
+                    .decision_types
+                    .as_ref()
+                    .is_none_or(|types| types.contains(&entry.decision_type))
+            })
+            .filter(|entry| {
+                query
+                    .actor_id
+                    .as_ref()
+                    .is_none_or(|actor_id| entry.actor.actor_id() == actor_id)
+            })
+            .filter(|entry| {
+                query
+                    .start_time_ns
+                    .is_none_or(|start| entry.timestamp_ns >= start)
+            })
+            .filter(|entry| {
+                query
+                    .end_time_ns
+                    .is_none_or(|end| entry.timestamp_ns <= end)
+            })
+            .filter(|entry| {
+                query
+                    .override_only
+                    .is_none_or(|only| entry.is_override == only)
+            })
+            .cloned()
+            .collect()
+    }
+
+    pub fn governance_report(
+        &self,
+        start_time_ns: u64,
+        end_time_ns: u64,
+        window_ns: u64,
+    ) -> Result<GovernanceReport, GovernanceLedgerError> {
+        if end_time_ns < start_time_ns {
+            return Err(GovernanceLedgerError::InvalidInput {
+                field: "end_time_ns".to_string(),
+                reason: "must be >= start_time_ns".to_string(),
+            });
+        }
+        if window_ns == 0 {
+            return Err(GovernanceLedgerError::InvalidInput {
+                field: "window_ns".to_string(),
+                reason: "must be >= 1".to_string(),
+            });
+        }
+
+        let filtered: Vec<&GovernanceLedgerEntry> = self
+            .entries
+            .iter()
+            .filter(|entry| {
+                entry.timestamp_ns >= start_time_ns && entry.timestamp_ns <= end_time_ns
+            })
+            .collect();
+        let total = filtered.len();
+        let override_count = filtered.iter().filter(|entry| entry.is_override).count();
+        let kill_count = filtered
+            .iter()
+            .filter(|entry| entry.decision_type == GovernanceDecisionType::Kill)
+            .count();
+        let override_frequency = ratio_millionths(override_count, total);
+        let kill_rate = ratio_millionths(kill_count, total);
+
+        let mut decision_latencies = Vec::new();
+        for entry in &filtered {
+            if let Some(started_at) = entry.moonshot_started_at_ns
+                && entry.timestamp_ns >= started_at
+            {
+                decision_latencies.push(entry.timestamp_ns - started_at);
+            }
+        }
+        let mean_time_to_decision_ns = if decision_latencies.is_empty() {
+            None
+        } else {
+            let sum: u128 = decision_latencies.iter().map(|v| *v as u128).sum();
+            Some((sum / decision_latencies.len() as u128) as u64)
+        };
+
+        let mut buckets: BTreeMap<u64, WindowAccumulator> = BTreeMap::new();
+        for entry in filtered {
+            let bucket_start =
+                start_time_ns + ((entry.timestamp_ns - start_time_ns) / window_ns) * window_ns;
+            let bucket = buckets.entry(bucket_start).or_default();
+            bucket.decision_count += 1;
+            bucket.sum_confidence += entry.rationale.confidence_millionths as u128;
+            bucket.sum_risk += entry.rationale.risk_of_harm_millionths as u128;
+            match entry.decision_type {
+                GovernanceDecisionType::Promote => bucket.promote_count += 1,
+                GovernanceDecisionType::Hold => bucket.hold_count += 1,
+                GovernanceDecisionType::Kill => bucket.kill_count += 1,
+                _ => {}
+            }
+            if entry.is_override {
+                bucket.override_count += 1;
+            }
+        }
+
+        let mut trend = Vec::new();
+        for (bucket_start, bucket) in buckets {
+            let avg_confidence = if bucket.decision_count == 0 {
+                0
+            } else {
+                (bucket.sum_confidence / bucket.decision_count as u128) as u64
+            };
+            let avg_risk = if bucket.decision_count == 0 {
+                0
+            } else {
+                (bucket.sum_risk / bucket.decision_count as u128) as u64
+            };
+            trend.push(PortfolioHealthPoint {
+                window_start_ns: bucket_start,
+                window_end_ns: bucket_start.saturating_add(window_ns.saturating_sub(1)),
+                decision_count: bucket.decision_count,
+                promote_count: bucket.promote_count,
+                hold_count: bucket.hold_count,
+                kill_count: bucket.kill_count,
+                override_count: bucket.override_count,
+                avg_confidence_millionths: avg_confidence,
+                avg_risk_millionths: avg_risk,
+            });
+        }
+
+        Ok(GovernanceReport {
+            total_decisions: total,
+            override_count,
+            kill_count,
+            override_frequency_millionths: override_frequency,
+            kill_rate_millionths: kill_rate,
+            mean_time_to_decision_ns,
+            portfolio_health_trend: trend,
+        })
+    }
+
+    pub fn latest_checkpoint(&self) -> Option<&GovernanceLedgerCheckpoint> {
+        self.checkpoints.last()
+    }
+
+    pub fn latest_entry(&self) -> Option<&GovernanceLedgerEntry> {
+        self.entries.last()
+    }
+
+    fn create_checkpoint(
+        &self,
+        timestamp_ns: u64,
+    ) -> Result<GovernanceLedgerCheckpoint, GovernanceLedgerError> {
+        let last = self
+            .entries
+            .last()
+            .ok_or(GovernanceLedgerError::EmptyLedger)?;
+        let sequence = last.sequence;
+        let entry_count = self.entries.len();
+        let head_hash = last.entry_hash.clone();
+        let preimage = checkpoint_preimage(sequence, entry_count, &head_hash, timestamp_ns)?;
+        let checkpoint_id = ContentHash::compute(&preimage).to_hex();
+        let signature =
+            AuthenticityHash::compute_keyed(&preimage, &self.config.signer_key).to_hex();
+        Ok(GovernanceLedgerCheckpoint {
+            checkpoint_id,
+            sequence,
+            entry_count,
+            head_hash,
+            timestamp_ns,
+            signature,
+        })
+    }
+
+    fn validate_input(&self, input: &GovernanceLedgerInput) -> Result<(), GovernanceLedgerError> {
+        if input.decision_id.trim().is_empty() {
+            return Err(GovernanceLedgerError::InvalidInput {
+                field: "decision_id".to_string(),
+                reason: "must not be empty".to_string(),
+            });
+        }
+        if input.moonshot_id.trim().is_empty() {
+            return Err(GovernanceLedgerError::InvalidInput {
+                field: "moonshot_id".to_string(),
+                reason: "must not be empty".to_string(),
+            });
+        }
+        if input.actor.actor_id().trim().is_empty() {
+            return Err(GovernanceLedgerError::InvalidInput {
+                field: "actor".to_string(),
+                reason: "actor identifier must not be empty".to_string(),
+            });
+        }
+        if input.rationale.summary.trim().is_empty() {
+            return Err(GovernanceLedgerError::InvalidInput {
+                field: "rationale.summary".to_string(),
+                reason: "must not be empty".to_string(),
+            });
+        }
+        if input.rationale.confidence_millionths > 1_000_000 {
+            return Err(GovernanceLedgerError::InvalidInput {
+                field: "rationale.confidence_millionths".to_string(),
+                reason: "must be within 0..=1_000_000".to_string(),
+            });
+        }
+        if input.rationale.risk_of_harm_millionths > 1_000_000 {
+            return Err(GovernanceLedgerError::InvalidInput {
+                field: "rationale.risk_of_harm_millionths".to_string(),
+                reason: "must be within 0..=1_000_000".to_string(),
+            });
+        }
+
+        if input.decision_type == GovernanceDecisionType::Override {
+            if !input.actor.is_human() {
+                return Err(GovernanceLedgerError::InvalidInput {
+                    field: "actor".to_string(),
+                    reason: "override decisions must be attributed to a human actor".to_string(),
+                });
+            }
+            if input.rationale.bypassed_risk_criteria.is_empty() {
+                return Err(GovernanceLedgerError::InvalidInput {
+                    field: "rationale.bypassed_risk_criteria".to_string(),
+                    reason: "override decisions must include bypassed risk criteria".to_string(),
+                });
+            }
+            if !input.rationale.acknowledged_bypass {
+                return Err(GovernanceLedgerError::InvalidInput {
+                    field: "rationale.acknowledged_bypass".to_string(),
+                    reason: "override decisions must acknowledge bypass".to_string(),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn record_event(
+        &mut self,
+        decision_id: &str,
+        event: &str,
+        outcome: &str,
+        error_code: Option<&str>,
+        timestamp_ns: u64,
+    ) {
+        self.events.push(GovernanceLogEvent {
+            trace_id: format!("trace:{decision_id}"),
+            decision_id: decision_id.to_string(),
+            policy_id: self.config.policy_id.clone(),
+            component: "governance_audit_ledger".to_string(),
+            event: event.to_string(),
+            outcome: outcome.to_string(),
+            error_code: error_code.map(str::to_string),
+            timestamp_ns,
+        });
+    }
+}
+
+#[derive(Debug, Default)]
+struct WindowAccumulator {
+    decision_count: usize,
+    promote_count: usize,
+    hold_count: usize,
+    kill_count: usize,
+    override_count: usize,
+    sum_confidence: u128,
+    sum_risk: u128,
+}
+
+fn ratio_millionths(part: usize, total: usize) -> u64 {
+    if total == 0 {
+        return 0;
+    }
+    ((part as u128 * 1_000_000u128) / total as u128) as u64
+}
+
+fn entry_preimage(
+    sequence: u64,
+    input: &GovernanceLedgerInput,
+    previous_hash: Option<&str>,
+) -> Result<Vec<u8>, GovernanceLedgerError> {
+    #[derive(Serialize)]
+    struct EntryPreimage<'a> {
+        sequence: u64,
+        previous_hash: Option<&'a str>,
+        decision_id: &'a str,
+        moonshot_id: &'a str,
+        decision_type: GovernanceDecisionType,
+        actor: &'a GovernanceActor,
+        rationale: &'a GovernanceRationale,
+        scorecard_snapshot: &'a ScorecardSnapshot,
+        artifact_references: &'a [String],
+        timestamp_ns: u64,
+        moonshot_started_at_ns: Option<u64>,
+    }
+
+    serde_json::to_vec(&EntryPreimage {
+        sequence,
+        previous_hash,
+        decision_id: &input.decision_id,
+        moonshot_id: &input.moonshot_id,
+        decision_type: input.decision_type,
+        actor: &input.actor,
+        rationale: &input.rationale,
+        scorecard_snapshot: &input.scorecard_snapshot,
+        artifact_references: &input.artifact_references,
+        timestamp_ns: input.timestamp_ns,
+        moonshot_started_at_ns: input.moonshot_started_at_ns,
+    })
+    .map_err(|err| GovernanceLedgerError::serialization(err.to_string()))
+}
+
+fn checkpoint_preimage(
+    sequence: u64,
+    entry_count: usize,
+    head_hash: &str,
+    timestamp_ns: u64,
+) -> Result<Vec<u8>, GovernanceLedgerError> {
+    #[derive(Serialize)]
+    struct CheckpointPreimage<'a> {
+        sequence: u64,
+        entry_count: usize,
+        head_hash: &'a str,
+        timestamp_ns: u64,
+    }
+
+    serde_json::to_vec(&CheckpointPreimage {
+        sequence,
+        entry_count,
+        head_hash,
+        timestamp_ns,
+    })
+    .map_err(|err| GovernanceLedgerError::serialization(err.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::moonshot_contract::MoonshotStage;
+    use crate::security_epoch::SecurityEpoch;
+
+    fn sample_scorecard() -> Scorecard {
+        Scorecard {
+            moonshot_id: "moon-1".to_string(),
+            ev_millionths: 800_000,
+            confidence_millionths: 820_000,
+            risk_of_harm_millionths: 110_000,
+            implementation_friction_millionths: 120_000,
+            cross_initiative_interference_millionths: 80_000,
+            operational_burden_millionths: 250_000,
+            computed_at_ns: 100,
+            epoch: SecurityEpoch::from_raw(7),
+        }
+    }
+
+    fn automatic_input(
+        decision_id: &str,
+        moonshot_id: &str,
+        decision_type: GovernanceDecisionType,
+        timestamp_ns: u64,
+    ) -> GovernanceLedgerInput {
+        GovernanceLedgerInput {
+            decision_id: decision_id.to_string(),
+            moonshot_id: moonshot_id.to_string(),
+            decision_type,
+            actor: GovernanceActor::System("governor".to_string()),
+            rationale: GovernanceRationale::for_automatic_decision(
+                "automatic gate decision",
+                800_000,
+                120_000,
+                vec!["artifact_obligations_met".to_string()],
+                vec![],
+            ),
+            scorecard_snapshot: ScorecardSnapshot::from(&sample_scorecard()),
+            artifact_references: vec!["artifact://scorecard/1".to_string()],
+            timestamp_ns,
+            moonshot_started_at_ns: Some(1),
+        }
+    }
+
+    fn override_input(decision_id: &str, timestamp_ns: u64) -> GovernanceLedgerInput {
+        GovernanceLedgerInput {
+            decision_id: decision_id.to_string(),
+            moonshot_id: "moon-1".to_string(),
+            decision_type: GovernanceDecisionType::Override,
+            actor: GovernanceActor::Human("operator-1".to_string()),
+            rationale: GovernanceRationale {
+                summary: "override promotion due external incident context".to_string(),
+                passed_criteria: vec!["artifact_obligations_met".to_string()],
+                failed_criteria: vec!["risk_threshold".to_string()],
+                confidence_millionths: 700_000,
+                risk_of_harm_millionths: 250_000,
+                bypassed_risk_criteria: vec!["risk_of_harm <= 200_000".to_string()],
+                acknowledged_bypass: true,
+            },
+            scorecard_snapshot: ScorecardSnapshot::from(&sample_scorecard()),
+            artifact_references: vec!["artifact://override/1".to_string()],
+            timestamp_ns,
+            moonshot_started_at_ns: Some(1),
+        }
+    }
+
+    fn ledger() -> GovernanceAuditLedger {
+        GovernanceAuditLedger::new(GovernanceLedgerConfig {
+            checkpoint_interval: 2,
+            signer_key: b"ledger-test-key".to_vec(),
+            policy_id: "moonshot-governor-policy-test".to_string(),
+        })
+        .expect("ledger")
+    }
+
+    #[test]
+    fn append_entries_and_verify_chain() {
+        let mut ledger = ledger();
+        ledger
+            .append(automatic_input(
+                "decision-1",
+                "moon-1",
+                GovernanceDecisionType::Promote,
+                10,
+            ))
+            .expect("append decision-1");
+        ledger
+            .append(automatic_input(
+                "decision-2",
+                "moon-1",
+                GovernanceDecisionType::Hold,
+                20,
+            ))
+            .expect("append decision-2");
+        ledger.verify_chain().expect("chain verifies");
+        assert_eq!(ledger.entries().len(), 2);
+        assert_eq!(ledger.checkpoints().len(), 1);
+        assert_eq!(ledger.events().len(), 3);
+        let append_event = ledger
+            .events()
+            .iter()
+            .find(|event| event.event == "append_decision" && event.outcome == "success")
+            .expect("append event");
+        assert_eq!(append_event.policy_id, "moonshot-governor-policy-test");
+        assert_eq!(append_event.component, "governance_audit_ledger");
+        assert!(append_event.error_code.is_none());
+    }
+
+    #[test]
+    fn tamper_detection_catches_hash_mismatch() {
+        let mut ledger = ledger();
+        ledger
+            .append(automatic_input(
+                "decision-1",
+                "moon-1",
+                GovernanceDecisionType::Promote,
+                10,
+            ))
+            .expect("append");
+        ledger.entries[0].rationale.summary = "tampered".to_string();
+        let err = ledger.verify_chain().expect_err("must fail");
+        assert!(matches!(
+            err,
+            GovernanceLedgerError::EntryHashMismatch { .. }
+        ));
+    }
+
+    #[test]
+    fn duplicate_decision_id_rejected() {
+        let mut ledger = ledger();
+        ledger
+            .append(automatic_input(
+                "decision-1",
+                "moon-1",
+                GovernanceDecisionType::Promote,
+                10,
+            ))
+            .expect("append");
+        let err = ledger
+            .append(automatic_input(
+                "decision-1",
+                "moon-1",
+                GovernanceDecisionType::Hold,
+                11,
+            ))
+            .expect_err("duplicate rejected");
+        assert!(matches!(
+            err,
+            GovernanceLedgerError::DuplicateDecisionId { .. }
+        ));
+    }
+
+    #[test]
+    fn override_requires_human_actor_and_acknowledgement() {
+        let mut ledger = ledger();
+        let mut input = override_input("decision-ovr", 10);
+        input.actor = GovernanceActor::System("governor".to_string());
+        let err = ledger.append(input).expect_err("override must be human");
+        assert!(matches!(err, GovernanceLedgerError::InvalidInput { .. }));
+
+        let mut input2 = override_input("decision-ovr-2", 11);
+        input2.rationale.acknowledged_bypass = false;
+        let err = ledger
+            .append(input2)
+            .expect_err("override must acknowledge bypass");
+        assert!(matches!(err, GovernanceLedgerError::InvalidInput { .. }));
+    }
+
+    #[test]
+    fn query_filters_by_actor_type_and_override() {
+        let mut ledger = ledger();
+        ledger
+            .append(automatic_input(
+                "decision-1",
+                "moon-1",
+                GovernanceDecisionType::Promote,
+                10,
+            ))
+            .expect("append promote");
+        ledger
+            .append(override_input("decision-2", 20))
+            .expect("append override");
+
+        let q = GovernanceLedgerQuery {
+            moonshot_id: Some("moon-1".to_string()),
+            decision_types: None,
+            actor_id: Some("operator-1".to_string()),
+            start_time_ns: None,
+            end_time_ns: None,
+            override_only: Some(true),
+        };
+        let rows = ledger.query(&q);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].decision_id, "decision-2");
+        assert!(rows[0].is_override);
+    }
+
+    #[test]
+    fn governance_report_computes_override_frequency_kill_rate_and_trend() {
+        let mut ledger = ledger();
+        ledger
+            .append(automatic_input(
+                "decision-1",
+                "moon-1",
+                GovernanceDecisionType::Promote,
+                10,
+            ))
+            .expect("append promote");
+        ledger
+            .append(automatic_input(
+                "decision-2",
+                "moon-1",
+                GovernanceDecisionType::Kill,
+                20,
+            ))
+            .expect("append kill");
+        ledger
+            .append(override_input("decision-3", 30))
+            .expect("append override");
+
+        let report = ledger
+            .governance_report(0, 100, 25)
+            .expect("report generation");
+        assert_eq!(report.total_decisions, 3);
+        assert_eq!(report.override_count, 1);
+        assert_eq!(report.kill_count, 1);
+        assert_eq!(report.override_frequency_millionths, 333_333);
+        assert_eq!(report.kill_rate_millionths, 333_333);
+        assert_eq!(report.mean_time_to_decision_ns, Some(19));
+        assert!(!report.portfolio_health_trend.is_empty());
+    }
+
+    #[test]
+    fn append_governor_decision_maps_decision_types() {
+        let mut ledger = ledger();
+        let decision = GovernorDecision {
+            decision_id: "gov-1".to_string(),
+            moonshot_id: "moon-1".to_string(),
+            kind: GovernorDecisionKind::Promote {
+                from: MoonshotStage::Research,
+                to: MoonshotStage::Shadow,
+            },
+            scorecard: sample_scorecard(),
+            timestamp_ns: 50,
+            epoch: SecurityEpoch::from_raw(7),
+            rationale: "all stage gates met".to_string(),
+        };
+        let row = ledger
+            .append_governor_decision(
+                &decision,
+                GovernanceActor::System("governor".to_string()),
+                vec!["artifact://scorecard/gov-1".to_string()],
+                Some(1),
+            )
+            .expect("append governor decision");
+        assert_eq!(row.decision_type, GovernanceDecisionType::Promote);
+        assert_eq!(row.actor.actor_id(), "governor");
+    }
+
+    #[test]
+    fn checkpoint_signature_verifies() {
+        let mut ledger = ledger();
+        ledger
+            .append(automatic_input(
+                "decision-1",
+                "moon-1",
+                GovernanceDecisionType::Promote,
+                10,
+            ))
+            .expect("append #1");
+        ledger
+            .append(automatic_input(
+                "decision-2",
+                "moon-1",
+                GovernanceDecisionType::Hold,
+                20,
+            ))
+            .expect("append #2");
+        let checkpoint = ledger.latest_checkpoint().expect("checkpoint").clone();
+        assert_eq!(checkpoint.entry_count, 2);
+        ledger.verify_chain().expect("checkpoint signature valid");
+    }
+
+    #[test]
+    fn report_validation_rejects_invalid_windows() {
+        let ledger = ledger();
+        let err = ledger
+            .governance_report(100, 50, 10)
+            .expect_err("invalid end window");
+        assert!(matches!(err, GovernanceLedgerError::InvalidInput { .. }));
+
+        let err = ledger
+            .governance_report(0, 50, 0)
+            .expect_err("invalid window size");
+        assert!(matches!(err, GovernanceLedgerError::InvalidInput { .. }));
+    }
+
+    #[test]
+    fn rejected_append_emits_structured_error_event() {
+        let mut ledger = ledger();
+        let mut invalid = override_input("bad-override", 10);
+        invalid.rationale.acknowledged_bypass = false;
+        let err = ledger
+            .append(invalid)
+            .expect_err("invalid override must fail");
+        assert_eq!(err.code(), "FE-GOV-LED-0002");
+
+        let event = ledger.events().last().expect("error event");
+        assert_eq!(event.trace_id, "trace:bad-override");
+        assert_eq!(event.decision_id, "bad-override");
+        assert_eq!(event.policy_id, "moonshot-governor-policy-test");
+        assert_eq!(event.component, "governance_audit_ledger");
+        assert_eq!(event.event, "append_decision");
+        assert_eq!(event.outcome, "rejected");
+        assert_eq!(event.error_code.as_deref(), Some("FE-GOV-LED-0002"));
+    }
+}

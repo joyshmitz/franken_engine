@@ -12,11 +12,16 @@
 //! Plan references: Section 10.15, subsection 9I.3 (Moonshot Portfolio
 //! Governor), item 2 of 3.
 
+pub mod governance_audit_ledger;
+
 use std::collections::BTreeMap;
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+use self::governance_audit_ledger::{
+    GovernanceActor, GovernanceAuditLedger, GovernanceLedgerConfig,
+};
 use crate::moonshot_contract::{ArtifactType, MetricDirection, MoonshotContract, MoonshotStage};
 use crate::security_epoch::SecurityEpoch;
 
@@ -288,6 +293,10 @@ pub struct PortfolioGovernor {
     pub epoch: SecurityEpoch,
     /// Monotonic decision counter.
     decision_counter: u64,
+    /// Optional append-only governance audit ledger for decision artifacts.
+    governance_ledger: Option<GovernanceAuditLedger>,
+    /// System actor identifier used for automatic decisions.
+    governance_actor_id: String,
 }
 
 impl PortfolioGovernor {
@@ -298,7 +307,34 @@ impl PortfolioGovernor {
             moonshots: BTreeMap::new(),
             epoch,
             decision_counter: 0,
+            governance_ledger: None,
+            governance_actor_id: "portfolio-governor".to_string(),
         }
+    }
+
+    /// Enable append-only governance ledger recording for automatic decisions.
+    pub fn enable_governance_audit_ledger(
+        &mut self,
+        config: GovernanceLedgerConfig,
+        actor_id: impl Into<String>,
+    ) -> Result<(), GovernorError> {
+        let actor_id = actor_id.into();
+        if actor_id.trim().is_empty() {
+            return Err(GovernorError::InvalidGovernanceActor { actor_id });
+        }
+
+        let ledger =
+            GovernanceAuditLedger::new(config).map_err(|err| GovernorError::LedgerConfig {
+                reason: err.to_string(),
+            })?;
+        self.governance_actor_id = actor_id;
+        self.governance_ledger = Some(ledger);
+        Ok(())
+    }
+
+    /// Access the configured governance audit ledger, if enabled.
+    pub fn governance_audit_ledger(&self) -> Option<&GovernanceAuditLedger> {
+        self.governance_ledger.as_ref()
     }
 
     /// Register a new moonshot initiative.
@@ -502,7 +538,7 @@ impl PortfolioGovernor {
                 scorecard,
                 now_ns,
                 "Moonshot is already at production stage; no further promotion possible.",
-            );
+            )?;
             return Ok(decision);
         }
 
@@ -521,7 +557,7 @@ impl PortfolioGovernor {
                 scorecard,
                 now_ns,
                 "Stage artifact obligations are incomplete; cannot promote.",
-            );
+            )?;
             return Ok(decision);
         }
 
@@ -535,7 +571,7 @@ impl PortfolioGovernor {
                 scorecard,
                 now_ns,
                 "Confidence is below the hold threshold; need more evidence.",
-            );
+            )?;
             return Ok(decision);
         }
 
@@ -549,7 +585,7 @@ impl PortfolioGovernor {
                 scorecard,
                 now_ns,
                 "Risk-of-harm exceeds promotion threshold.",
-            );
+            )?;
             return Ok(decision);
         }
 
@@ -563,7 +599,7 @@ impl PortfolioGovernor {
                 scorecard,
                 now_ns,
                 "Confidence is above hold but below promotion threshold.",
-            );
+            )?;
             return Ok(decision);
         }
 
@@ -582,7 +618,7 @@ impl PortfolioGovernor {
             scorecard,
             now_ns,
             &format!("All gate criteria met; promoting from {current_stage} to {next_stage}."),
-        );
+        )?;
 
         // Apply the promotion.
         let state = self.moonshots.get_mut(moonshot_id).unwrap();
@@ -642,7 +678,7 @@ impl PortfolioGovernor {
             scorecard,
             now_ns,
             &rationale,
-        );
+        )?;
 
         // Apply the kill.
         let state = self.moonshots.get_mut(moonshot_id).unwrap();
@@ -689,7 +725,7 @@ impl PortfolioGovernor {
             scorecard,
             now_ns,
             &format!("Paused: {reason}"),
-        );
+        )?;
 
         Ok(decision)
     }
@@ -723,7 +759,7 @@ impl PortfolioGovernor {
             scorecard,
             now_ns,
             "Resumed from pause.",
-        );
+        )?;
 
         Ok(decision)
     }
@@ -771,7 +807,7 @@ impl PortfolioGovernor {
         scorecard: Scorecard,
         now_ns: u64,
         rationale: &str,
-    ) -> GovernorDecision {
+    ) -> Result<GovernorDecision, GovernorError> {
         self.decision_counter += 1;
         let decision = GovernorDecision {
             decision_id: format!("gov-{}", self.decision_counter),
@@ -783,12 +819,46 @@ impl PortfolioGovernor {
             rationale: rationale.into(),
         };
 
+        if let Some(ledger) = self.governance_ledger.as_mut() {
+            let (artifact_references, moonshot_started_at_ns) = self
+                .moonshots
+                .get(moonshot_id)
+                .map(|state| {
+                    (
+                        state
+                            .completed_artifacts
+                            .iter()
+                            .map(|artifact| {
+                                format!(
+                                    "artifact://{}/{}",
+                                    artifact.artifact_id, artifact.content_hash
+                                )
+                            })
+                            .collect(),
+                        Some(state.started_at_ns),
+                    )
+                })
+                .unwrap_or_else(|| (Vec::new(), None));
+
+            ledger
+                .append_governor_decision(
+                    &decision,
+                    GovernanceActor::System(self.governance_actor_id.clone()),
+                    artifact_references,
+                    moonshot_started_at_ns,
+                )
+                .map_err(|err| GovernorError::LedgerWriteFailed {
+                    decision_id: decision.decision_id.clone(),
+                    reason: err.to_string(),
+                })?;
+        }
+
         if let Some(state) = self.moonshots.get_mut(moonshot_id) {
             state.scorecard_history.push(scorecard);
             state.decisions.push(decision.clone());
         }
 
-        decision
+        Ok(decision)
     }
 
     fn compute_risk_score(&self, state: &MoonshotState) -> u64 {
@@ -857,6 +927,12 @@ pub enum GovernorError {
     AlreadyRegistered { id: String },
     /// Moonshot is not in paused state.
     NotPaused { id: String },
+    /// Governance ledger configuration is invalid.
+    LedgerConfig { reason: String },
+    /// A decision could not be persisted in the governance ledger.
+    LedgerWriteFailed { decision_id: String, reason: String },
+    /// Governance actor identifier is invalid.
+    InvalidGovernanceActor { actor_id: String },
 }
 
 impl fmt::Display for GovernorError {
@@ -876,6 +952,21 @@ impl fmt::Display for GovernorError {
                 write!(f, "already registered: {id}")
             }
             Self::NotPaused { id } => write!(f, "not paused: {id}"),
+            Self::LedgerConfig { reason } => {
+                write!(f, "invalid governance ledger config: {reason}")
+            }
+            Self::LedgerWriteFailed {
+                decision_id,
+                reason,
+            } => {
+                write!(
+                    f,
+                    "failed to persist decision {decision_id} in ledger: {reason}"
+                )
+            }
+            Self::InvalidGovernanceActor { actor_id } => {
+                write!(f, "invalid governance actor identifier: {actor_id}")
+            }
         }
     }
 }
@@ -1453,6 +1544,42 @@ mod tests {
         let decisions = gov.decisions("mc-test-001").unwrap();
         assert_eq!(decisions.len(), 1);
         assert_eq!(decisions[0].decision_id, "gov-1");
+    }
+
+    #[test]
+    fn automatic_decisions_are_persisted_when_governance_ledger_enabled() {
+        let mut gov = test_governor();
+        gov.enable_governance_audit_ledger(
+            GovernanceLedgerConfig {
+                checkpoint_interval: 2,
+                signer_key: b"governor-ledger-test-key".to_vec(),
+                policy_id: "moonshot-governor-policy-test".to_string(),
+            },
+            "moonshot-governor-system",
+        )
+        .expect("enable ledger");
+        register_test_moonshot(&mut gov);
+
+        gov.evaluate_gate("mc-test-001", 2_000_000_000).unwrap();
+        let ledger = gov.governance_audit_ledger().expect("ledger configured");
+        assert_eq!(ledger.entries().len(), 1);
+        assert_eq!(ledger.entries()[0].decision_id, "gov-1");
+        assert_eq!(
+            ledger.entries()[0].actor.actor_id(),
+            "moonshot-governor-system"
+        );
+        assert_eq!(ledger.events().len(), 1);
+        assert_eq!(ledger.events()[0].event, "append_decision");
+        assert_eq!(ledger.events()[0].outcome, "success");
+    }
+
+    #[test]
+    fn enable_governance_ledger_rejects_empty_actor_identifier() {
+        let mut gov = test_governor();
+        let err = gov
+            .enable_governance_audit_ledger(GovernanceLedgerConfig::default(), "")
+            .expect_err("must reject empty actor identifier");
+        assert!(matches!(err, GovernorError::InvalidGovernanceActor { .. }));
     }
 
     #[test]

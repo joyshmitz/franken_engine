@@ -7,7 +7,7 @@
 //! Plan references: Section 10.12 item 1, 9H.1 (proof-carrying adaptive
 //! optimizer), 9F.1 (verified adaptive compiler).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::engine_object_id::{EngineObjectId, ObjectDomain, SchemaId};
 use crate::hash_tiers::{AuthenticityHash, ContentHash};
 use crate::security_epoch::SecurityEpoch;
+use crate::tee_attestation_policy::DecisionImpact;
 
 // ---------------------------------------------------------------------------
 // Schema version
@@ -28,11 +29,21 @@ pub struct SchemaVersion {
 }
 
 impl SchemaVersion {
-    pub const CURRENT: Self = Self { major: 1, minor: 0 };
+    pub const V1_0: Self = Self { major: 1, minor: 0 };
+    pub const V1_1: Self = Self { major: 1, minor: 1 };
+    pub const ATTESTATION_BINDING_INTRO: Self = Self::V1_1;
+    pub const CURRENT: Self = Self::V1_1;
 
     /// Whether this version is compatible with `other` (same major version).
     pub fn is_compatible_with(&self, other: &Self) -> bool {
         self.major == other.major
+    }
+
+    /// Whether this schema supports attestation binding fields.
+    pub fn supports_attestation_bindings(&self) -> bool {
+        self.major > Self::ATTESTATION_BINDING_INTRO.major
+            || (self.major == Self::ATTESTATION_BINDING_INTRO.major
+                && self.minor >= Self::ATTESTATION_BINDING_INTRO.minor)
     }
 }
 
@@ -227,6 +238,127 @@ impl fmt::Display for SignerRole {
 }
 
 // ---------------------------------------------------------------------------
+// Receipt attestation bindings
+// ---------------------------------------------------------------------------
+
+/// Explicit freshness window for attestation bindings.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttestationValidityWindow {
+    /// Inclusive start timestamp for attestation freshness.
+    pub start_timestamp_ticks: u64,
+    /// Inclusive end timestamp for attestation freshness.
+    pub end_timestamp_ticks: u64,
+}
+
+impl AttestationValidityWindow {
+    fn validate(&self) -> Result<(), ProofSchemaError> {
+        if self.end_timestamp_ticks < self.start_timestamp_ticks {
+            return Err(ProofSchemaError::InvalidAttestationBindings {
+                reason: "validity_window.end_timestamp_ticks must be >= start_timestamp_ticks"
+                    .to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    fn contains(&self, timestamp_ticks: u64) -> bool {
+        self.start_timestamp_ticks <= timestamp_ticks && timestamp_ticks <= self.end_timestamp_ticks
+    }
+}
+
+/// Cryptographic attestation bindings for TEE-produced receipts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReceiptAttestationBindings {
+    /// Hash of the full TEE quote accompanying this receipt.
+    pub quote_digest: ContentHash,
+    /// ID of the approved measurement active at signing time.
+    pub measurement_id: EngineObjectId,
+    /// ID of the attested signer key bound to the measured cell identity.
+    pub attested_signer_key_id: EngineObjectId,
+    /// Challenge nonce preventing quote replay.
+    pub nonce: [u8; 32],
+    /// Freshness window for this attestation binding.
+    pub validity_window: AttestationValidityWindow,
+}
+
+impl ReceiptAttestationBindings {
+    fn validate(&self) -> Result<(), ProofSchemaError> {
+        self.validity_window.validate()?;
+        if self.nonce.iter().all(|byte| *byte == 0) {
+            return Err(ProofSchemaError::InvalidAttestationBindings {
+                reason: "nonce must not be all zeros".to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    fn append_to_preimage(&self, preimage: &mut Vec<u8>) {
+        preimage.extend_from_slice(self.quote_digest.as_bytes());
+        preimage.extend_from_slice(self.measurement_id.as_bytes());
+        preimage.extend_from_slice(self.attested_signer_key_id.as_bytes());
+        preimage.extend_from_slice(&self.nonce);
+        preimage.extend_from_slice(&self.validity_window.start_timestamp_ticks.to_be_bytes());
+        preimage.extend_from_slice(&self.validity_window.end_timestamp_ticks.to_be_bytes());
+    }
+}
+
+/// Policy-controlled threshold for attestation-binding requirements.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttestationRequirementPolicy {
+    /// Receipts at or above this impact tier must include attestation bindings.
+    pub require_at_or_above: DecisionImpact,
+    /// Allow pre-attestation schema receipts (v1.0) to validate without bindings.
+    pub allow_legacy_receipts_without_attestation: bool,
+}
+
+impl Default for AttestationRequirementPolicy {
+    fn default() -> Self {
+        Self {
+            require_at_or_above: DecisionImpact::HighImpact,
+            allow_legacy_receipts_without_attestation: true,
+        }
+    }
+}
+
+impl AttestationRequirementPolicy {
+    fn requires_attestation(&self, receipt: &OptReceipt) -> bool {
+        if self.allow_legacy_receipts_without_attestation
+            && !receipt.schema_version.supports_attestation_bindings()
+        {
+            return false;
+        }
+        receipt.decision_impact >= self.require_at_or_above
+    }
+}
+
+/// Registry enforcing nonce uniqueness for attested receipt verification.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ReceiptNonceRegistry {
+    seen: BTreeSet<(EngineObjectId, [u8; 32])>,
+}
+
+impl ReceiptNonceRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn check_and_record(
+        &mut self,
+        attested_signer_key_id: &EngineObjectId,
+        nonce: [u8; 32],
+    ) -> Result<(), ProofSchemaError> {
+        let key = (attested_signer_key_id.clone(), nonce);
+        if !self.seen.insert(key) {
+            return Err(ProofSchemaError::NonceReplay {
+                attested_signer_key_id: attested_signer_key_id.clone(),
+                nonce_hex: format_nonce_hex(&nonce),
+            });
+        }
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
 // OptReceipt — optimizer activation receipt
 // ---------------------------------------------------------------------------
 
@@ -259,6 +391,12 @@ pub struct OptReceipt {
     pub signer_key_id: EngineObjectId,
     /// Correlation ID for audit chain linkage.
     pub correlation_id: String,
+    /// Sentinel risk tier for this decision class.
+    #[serde(default = "default_decision_impact")]
+    pub decision_impact: DecisionImpact,
+    /// Optional TEE attestation bindings (mandatory for policy-selected tiers).
+    #[serde(default)]
+    pub attestation_bindings: Option<ReceiptAttestationBindings>,
     /// Signature over the unsigned view of this receipt.
     pub signature: AuthenticityHash,
 }
@@ -307,6 +445,17 @@ impl OptReceipt {
 
         // Correlation.
         append_length_prefixed(&mut preimage, self.correlation_id.as_bytes());
+
+        if self.schema_version.supports_attestation_bindings() {
+            append_length_prefixed(&mut preimage, decision_impact_bytes(self.decision_impact));
+            match &self.attestation_bindings {
+                Some(bindings) => {
+                    preimage.push(1);
+                    bindings.append_to_preimage(&mut preimage);
+                }
+                None => preimage.push(0),
+            }
+        }
 
         preimage
     }
@@ -451,6 +600,17 @@ pub enum ProofSchemaError {
         receipt_epoch: u64,
         current_epoch: u64,
     },
+    /// Receipt requires attestation bindings but none were provided.
+    MissingAttestationBindings { impact: DecisionImpact },
+    /// Attestation bindings present on unsupported schema version.
+    UnexpectedAttestationBindingsForVersion { schema_version: SchemaVersion },
+    /// Attestation bindings failed deterministic validation.
+    InvalidAttestationBindings { reason: String },
+    /// Attestation nonce has already been observed for this signer key.
+    NonceReplay {
+        attested_signer_key_id: EngineObjectId,
+        nonce_hex: String,
+    },
 }
 
 impl fmt::Display for ProofSchemaError {
@@ -486,6 +646,28 @@ impl fmt::Display for ProofSchemaError {
                 f,
                 "epoch mismatch: receipt epoch {receipt_epoch}, current {current_epoch}"
             ),
+            Self::MissingAttestationBindings { impact } => {
+                write!(
+                    f,
+                    "missing required attestation bindings for impact {impact:?}"
+                )
+            }
+            Self::UnexpectedAttestationBindingsForVersion { schema_version } => write!(
+                f,
+                "attestation bindings not allowed for schema version {schema_version}"
+            ),
+            Self::InvalidAttestationBindings { reason } => {
+                write!(f, "invalid attestation bindings: {reason}")
+            }
+            Self::NonceReplay {
+                attested_signer_key_id,
+                nonce_hex,
+            } => write!(
+                f,
+                "nonce replay detected for signer {} nonce {}",
+                attested_signer_key_id.to_hex(),
+                nonce_hex
+            ),
         }
     }
 }
@@ -501,6 +683,23 @@ pub fn validate_receipt(
     receipt: &OptReceipt,
     signing_key: &[u8],
     current_epoch: SecurityEpoch,
+) -> Result<(), ProofSchemaError> {
+    validate_receipt_with_policy(
+        receipt,
+        signing_key,
+        current_epoch,
+        &AttestationRequirementPolicy::default(),
+        None,
+    )
+}
+
+/// Validate an `OptReceipt` with a caller-supplied attestation policy.
+pub fn validate_receipt_with_policy(
+    receipt: &OptReceipt,
+    signing_key: &[u8],
+    current_epoch: SecurityEpoch,
+    policy: &AttestationRequirementPolicy,
+    mut nonce_registry: Option<&mut ReceiptNonceRegistry>,
 ) -> Result<(), ProofSchemaError> {
     // Version compatibility.
     if !receipt
@@ -527,6 +726,35 @@ pub fn validate_receipt(
     if receipt.correlation_id.is_empty() {
         return Err(ProofSchemaError::MissingField {
             field: "correlation_id".to_string(),
+        });
+    }
+
+    if !receipt.schema_version.supports_attestation_bindings()
+        && receipt.attestation_bindings.is_some()
+    {
+        return Err(ProofSchemaError::UnexpectedAttestationBindingsForVersion {
+            schema_version: receipt.schema_version,
+        });
+    }
+
+    if let Some(bindings) = &receipt.attestation_bindings {
+        bindings.validate()?;
+        if !bindings.validity_window.contains(receipt.timestamp_ticks) {
+            return Err(ProofSchemaError::InvalidAttestationBindings {
+                reason: "receipt timestamp outside attestation validity_window".to_string(),
+            });
+        }
+        if bindings.attested_signer_key_id != receipt.signer_key_id {
+            return Err(ProofSchemaError::InvalidAttestationBindings {
+                reason: "attested_signer_key_id must match signer_key_id".to_string(),
+            });
+        }
+        if let Some(registry) = &mut nonce_registry {
+            registry.check_and_record(&bindings.attested_signer_key_id, bindings.nonce)?;
+        }
+    } else if policy.requires_attestation(receipt) {
+        return Err(ProofSchemaError::MissingAttestationBindings {
+            impact: receipt.decision_impact,
         });
     }
 
@@ -624,6 +852,21 @@ pub fn check_signer_authorization(
 // Helpers
 // ---------------------------------------------------------------------------
 
+fn default_decision_impact() -> DecisionImpact {
+    DecisionImpact::Standard
+}
+
+fn decision_impact_bytes(impact: DecisionImpact) -> &'static [u8] {
+    match impact {
+        DecisionImpact::Standard => b"standard",
+        DecisionImpact::HighImpact => b"high_impact",
+    }
+}
+
+fn format_nonce_hex(nonce: &[u8; 32]) -> String {
+    nonce.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 /// Append a length-prefixed byte slice to a preimage buffer.
 fn append_length_prefixed(buf: &mut Vec<u8>, data: &[u8]) {
     buf.extend_from_slice(&(data.len() as u32).to_be_bytes());
@@ -661,6 +904,25 @@ mod tests {
         }
     }
 
+    fn test_attestation_bindings() -> ReceiptAttestationBindings {
+        ReceiptAttestationBindings {
+            quote_digest: ContentHash::compute(b"quote"),
+            measurement_id: derive_id(
+                ObjectDomain::Attestation,
+                "test-zone",
+                &SchemaId::from_definition(b"measurement"),
+                b"measurement-v1",
+            )
+            .expect("measurement id"),
+            attested_signer_key_id: test_signer_key_id(),
+            nonce: [7u8; 32],
+            validity_window: AttestationValidityWindow {
+                start_timestamp_ticks: 900,
+                end_timestamp_ticks: 1200,
+            },
+        }
+    }
+
     fn test_receipt_unsigned() -> OptReceipt {
         let digest = test_invariance_digest();
         OptReceipt {
@@ -680,6 +942,8 @@ mod tests {
             timestamp_ticks: 1000,
             signer_key_id: test_signer_key_id(),
             correlation_id: "corr-001".to_string(),
+            decision_impact: DecisionImpact::Standard,
+            attestation_bindings: None,
             signature: AuthenticityHash::compute(b"placeholder"),
         }
     }
@@ -719,7 +983,7 @@ mod tests {
 
     #[test]
     fn schema_version_display() {
-        assert_eq!(SchemaVersion::CURRENT.to_string(), "1.0");
+        assert_eq!(SchemaVersion::CURRENT.to_string(), "1.1");
     }
 
     // -- InvarianceDigest --
@@ -889,6 +1153,103 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn validate_high_impact_receipt_requires_attestation_bindings() {
+        let mut receipt = test_receipt_unsigned();
+        receipt.decision_impact = DecisionImpact::HighImpact;
+        let receipt = receipt.sign(TEST_KEY);
+        assert!(matches!(
+            validate_receipt(&receipt, TEST_KEY, test_epoch()),
+            Err(ProofSchemaError::MissingAttestationBindings { .. })
+        ));
+    }
+
+    #[test]
+    fn validate_high_impact_receipt_with_attestation_bindings() {
+        let mut receipt = test_receipt_unsigned();
+        receipt.decision_impact = DecisionImpact::HighImpact;
+        receipt.attestation_bindings = Some(test_attestation_bindings());
+        let receipt = receipt.sign(TEST_KEY);
+        assert!(validate_receipt(&receipt, TEST_KEY, test_epoch()).is_ok());
+    }
+
+    #[test]
+    fn validate_policy_threshold_can_require_standard_receipts() {
+        let receipt = test_receipt();
+        let policy = AttestationRequirementPolicy {
+            require_at_or_above: DecisionImpact::Standard,
+            allow_legacy_receipts_without_attestation: true,
+        };
+        assert!(matches!(
+            validate_receipt_with_policy(&receipt, TEST_KEY, test_epoch(), &policy, None),
+            Err(ProofSchemaError::MissingAttestationBindings { .. })
+        ));
+    }
+
+    #[test]
+    fn validate_legacy_high_impact_without_attestation_is_policy_controlled() {
+        let mut receipt = test_receipt_unsigned();
+        receipt.schema_version = SchemaVersion::V1_0;
+        receipt.decision_impact = DecisionImpact::HighImpact;
+        let receipt = receipt.sign(TEST_KEY);
+
+        assert!(validate_receipt(&receipt, TEST_KEY, test_epoch()).is_ok());
+
+        let strict_policy = AttestationRequirementPolicy {
+            require_at_or_above: DecisionImpact::HighImpact,
+            allow_legacy_receipts_without_attestation: false,
+        };
+        assert!(matches!(
+            validate_receipt_with_policy(&receipt, TEST_KEY, test_epoch(), &strict_policy, None),
+            Err(ProofSchemaError::MissingAttestationBindings { .. })
+        ));
+    }
+
+    #[test]
+    fn validate_attestation_bindings_not_allowed_before_v1_1() {
+        let mut receipt = test_receipt_unsigned();
+        receipt.schema_version = SchemaVersion::V1_0;
+        receipt.attestation_bindings = Some(test_attestation_bindings());
+        let receipt = receipt.sign(TEST_KEY);
+        assert!(matches!(
+            validate_receipt(&receipt, TEST_KEY, test_epoch()),
+            Err(ProofSchemaError::UnexpectedAttestationBindingsForVersion { .. })
+        ));
+    }
+
+    #[test]
+    fn validate_attestation_nonce_replay_detected() {
+        let mut nonce_registry = ReceiptNonceRegistry::new();
+
+        let mut receipt = test_receipt_unsigned();
+        receipt.decision_impact = DecisionImpact::HighImpact;
+        receipt.attestation_bindings = Some(test_attestation_bindings());
+        let receipt = receipt.sign(TEST_KEY);
+
+        assert!(
+            validate_receipt_with_policy(
+                &receipt,
+                TEST_KEY,
+                test_epoch(),
+                &AttestationRequirementPolicy::default(),
+                Some(&mut nonce_registry),
+            )
+            .is_ok()
+        );
+
+        let second = receipt.clone();
+        assert!(matches!(
+            validate_receipt_with_policy(
+                &second,
+                TEST_KEY,
+                test_epoch(),
+                &AttestationRequirementPolicy::default(),
+                Some(&mut nonce_registry),
+            ),
+            Err(ProofSchemaError::NonceReplay { .. })
+        ));
+    }
+
     // -- Token validation --
 
     #[test]
@@ -1007,6 +1368,32 @@ mod tests {
         let json = serde_json::to_string(&receipt).expect("serialize");
         let restored: OptReceipt = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(receipt, restored);
+    }
+
+    #[test]
+    fn receipt_with_attestation_serialization_round_trip() {
+        let mut receipt = test_receipt_unsigned();
+        receipt.decision_impact = DecisionImpact::HighImpact;
+        receipt.attestation_bindings = Some(test_attestation_bindings());
+        let receipt = receipt.sign(TEST_KEY);
+        let encoded = serde_json::to_vec(&receipt).expect("serialize");
+        let restored: OptReceipt = serde_json::from_slice(&encoded).expect("deserialize");
+        assert_eq!(receipt, restored);
+        assert_eq!(serde_json::to_vec(&restored).unwrap(), encoded);
+    }
+
+    #[test]
+    fn legacy_preimage_ignores_attestation_fields_by_version() {
+        let mut legacy_a = test_receipt_unsigned();
+        legacy_a.schema_version = SchemaVersion::V1_0;
+        legacy_a.decision_impact = DecisionImpact::Standard;
+        legacy_a.attestation_bindings = None;
+
+        let mut legacy_b = legacy_a.clone();
+        legacy_b.decision_impact = DecisionImpact::HighImpact;
+        legacy_b.attestation_bindings = Some(test_attestation_bindings());
+
+        assert_eq!(legacy_a.signing_preimage(), legacy_b.signing_preimage());
     }
 
     #[test]

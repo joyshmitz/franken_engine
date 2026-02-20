@@ -1004,9 +1004,11 @@ impl HasErrorCode for ProofSchemaError {
             | ProofSchemaError::MissingField { .. }
             | ProofSchemaError::NonEquivalent { .. }
             | ProofSchemaError::UnauthorizedSigner { .. }
-            | ProofSchemaError::EpochMismatch { .. } => {
-                FrankenErrorCode::ProofSchemaValidationError
-            }
+            | ProofSchemaError::EpochMismatch { .. }
+            | ProofSchemaError::MissingAttestationBindings { .. }
+            | ProofSchemaError::UnexpectedAttestationBindingsForVersion { .. }
+            | ProofSchemaError::InvalidAttestationBindings { .. }
+            | ProofSchemaError::NonceReplay { .. } => FrankenErrorCode::ProofSchemaValidationError,
         }
     }
 }
