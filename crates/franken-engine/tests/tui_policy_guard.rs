@@ -126,7 +126,7 @@ fn dependency_names(manifest: &str) -> Vec<String> {
 
 fn parse_exception_docs(docs: &[ExceptionDocumentInput]) -> Vec<ParsedException> {
     docs.iter()
-        .filter_map(|doc| parse_exception_doc(doc))
+        .filter_map(parse_exception_doc)
         .collect()
 }
 
