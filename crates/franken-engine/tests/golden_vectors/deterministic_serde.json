@@ -1,0 +1,106 @@
+{
+  "suite": "deterministic_serde",
+  "schema_version": "golden-vectors-v1",
+  "description": "Golden vectors for deterministic serialization encoding/decoding",
+  "vectors": [
+    {
+      "test_name": "encode_null",
+      "description": "Null value encodes to single tag byte 0x08",
+      "input": { "type": "Null" },
+      "expected_bytes_hex": "08"
+    },
+    {
+      "test_name": "encode_bool_true",
+      "description": "Bool(true) encodes to tag 0x03 + 0x01",
+      "input": { "type": "Bool", "value": true },
+      "expected_bytes_hex": "0301"
+    },
+    {
+      "test_name": "encode_bool_false",
+      "description": "Bool(false) encodes to tag 0x03 + 0x00",
+      "input": { "type": "Bool", "value": false },
+      "expected_bytes_hex": "0300"
+    },
+    {
+      "test_name": "encode_u64_zero",
+      "description": "U64(0) encodes to tag 0x01 + 8 bytes big-endian zero",
+      "input": { "type": "U64", "value": 0 },
+      "expected_bytes_hex": "010000000000000000"
+    },
+    {
+      "test_name": "encode_u64_one",
+      "description": "U64(1) encodes to tag 0x01 + 8 bytes big-endian",
+      "input": { "type": "U64", "value": 1 },
+      "expected_bytes_hex": "010000000000000001"
+    },
+    {
+      "test_name": "encode_u64_max",
+      "description": "U64(u64::MAX) encodes to tag 0x01 + 8 bytes 0xFF",
+      "input": { "type": "U64", "value": 18446744073709551615 },
+      "expected_bytes_hex": "01ffffffffffffffff"
+    },
+    {
+      "test_name": "encode_i64_zero",
+      "description": "I64(0) encodes to tag 0x02 + 8 bytes big-endian zero",
+      "input": { "type": "I64", "value": 0 },
+      "expected_bytes_hex": "020000000000000000"
+    },
+    {
+      "test_name": "encode_i64_negative_one",
+      "description": "I64(-1) encodes to tag 0x02 + 8 bytes big-endian twos-complement",
+      "input": { "type": "I64", "value": -1 },
+      "expected_bytes_hex": "02ffffffffffffffff"
+    },
+    {
+      "test_name": "encode_string_empty",
+      "description": "String(\"\") encodes to tag 0x05 + 4-byte length 0 + no payload",
+      "input": { "type": "String", "value": "" },
+      "expected_bytes_hex": "0500000000"
+    },
+    {
+      "test_name": "encode_string_hello",
+      "description": "String(\"hello\") encodes to tag + 4-byte len=5 + UTF-8 bytes",
+      "input": { "type": "String", "value": "hello" },
+      "expected_bytes_hex": "050000000568656c6c6f"
+    },
+    {
+      "test_name": "encode_bytes_empty",
+      "description": "Bytes([]) encodes to tag 0x04 + 4-byte length 0",
+      "input": { "type": "Bytes", "value_hex": "" },
+      "expected_bytes_hex": "0400000000"
+    },
+    {
+      "test_name": "encode_bytes_deadbeef",
+      "description": "Bytes([0xDE,0xAD,0xBE,0xEF]) encodes to tag + len=4 + payload",
+      "input": { "type": "Bytes", "value_hex": "deadbeef" },
+      "expected_bytes_hex": "0400000004deadbeef"
+    },
+    {
+      "test_name": "encode_array_empty",
+      "description": "Array([]) encodes to tag 0x06 + count=0",
+      "input": { "type": "Array", "elements": [] },
+      "expected_bytes_hex": "0600000000"
+    },
+    {
+      "test_name": "encode_array_two_u64s",
+      "description": "Array([U64(1), U64(2)]) encodes correctly",
+      "input": { "type": "Array", "elements": [
+        { "type": "U64", "value": 1 },
+        { "type": "U64", "value": 2 }
+      ]},
+      "expected_bytes_hex": "0600000002010000000000000001010000000000000002"
+    },
+    {
+      "test_name": "encode_map_empty",
+      "description": "Map({}) encodes to tag 0x07 + count=0",
+      "input": { "type": "Map", "entries": {} },
+      "expected_bytes_hex": "0700000000"
+    },
+    {
+      "test_name": "encode_map_single_entry",
+      "description": "Map({\"k\": U64(42)}) encodes with 4-byte key-length prefix",
+      "input": { "type": "Map", "entries": { "k": { "type": "U64", "value": 42 } } },
+      "expected_bytes_hex": "07000000010000000100000001000000000000002a"
+    }
+  ]
+}

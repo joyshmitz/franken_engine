@@ -1,0 +1,36 @@
+{
+  "fixture_id": "minimal-fixture",
+  "fixture_version": 1,
+  "seed": 99,
+  "virtual_time_start_micros": 5000,
+  "policy_id": "policy-minimal",
+  "steps": [
+    {
+      "component": "runtime",
+      "event": "boot",
+      "advance_micros": 100,
+      "metadata": {}
+    },
+    {
+      "component": "runtime",
+      "event": "shutdown",
+      "advance_micros": 250,
+      "metadata": {}
+    }
+  ],
+  "expected_events": [
+    {
+      "component": "runtime",
+      "event": "boot",
+      "outcome": "ok",
+      "error_code": null
+    },
+    {
+      "component": "runtime",
+      "event": "shutdown",
+      "outcome": "ok",
+      "error_code": null
+    }
+  ],
+  "determinism_check": true
+}

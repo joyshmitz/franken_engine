@@ -1,0 +1,32 @@
+{
+  "fixture_id": "replay-counterfactual-fixture",
+  "fixture_version": 1,
+  "seed": 20260220,
+  "virtual_time_start_micros": 2000,
+  "policy_id": "policy-replay-baseline",
+  "steps": [
+    {
+      "component": "scheduler",
+      "event": "dispatch",
+      "advance_micros": 125,
+      "metadata": {}
+    },
+    {
+      "component": "guardplane",
+      "event": "evaluate",
+      "advance_micros": 175,
+      "metadata": {
+        "outcome": "allow"
+      }
+    },
+    {
+      "component": "replay",
+      "event": "verify",
+      "advance_micros": 90,
+      "metadata": {}
+    }
+  ],
+  "expected_events": [],
+  "determinism_check": true
+}
+
