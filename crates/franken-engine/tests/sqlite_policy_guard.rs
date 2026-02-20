@@ -3,23 +3,37 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
-const POLICY_ID: &str = "policy-frankentui-first-v1";
-const TRACE_PREFIX: &str = "trace-tui-policy";
-const COMPONENT: &str = "tui_policy_guard";
+const POLICY_ID: &str = "policy-frankensqlite-first-v1";
+const TRACE_PREFIX: &str = "trace-sqlite-policy";
+const COMPONENT: &str = "sqlite_policy_guard";
 
-const FORBIDDEN_TUI_DEPENDENCIES: &[&str] = &[
-    "crossterm",
-    "ratatui",
-    "cursive",
-    "termion",
-    "tuirealm",
-    "tui-realm",
-    "console_engine",
-    "tui",
+const FORBIDDEN_SQLITE_DEPENDENCIES: &[&str] = &[
+    "rusqlite",
+    "libsqlite3-sys",
+    "sqlite",
+    "sqlite3",
+    "sqlx-sqlite",
+];
+const FORBIDDEN_SQLITE_TOKENS: &[&str] = &[
+    "rusqlite::",
+    "libsqlite3_sys",
+    "sqlite3::",
+    "sqlx::sqlite::",
+    "sqlx::Sqlite",
+];
+const ADAPTER_ALLOWED_PATHS: &[&str] = &[
+    "crates/franken-engine/src/storage_adapter.rs",
+    "crates/franken-engine/tests/storage_adapter.rs",
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ManifestInput {
+    path: String,
+    content: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SourceInput {
     path: String,
     content: String,
 }
@@ -33,7 +47,8 @@ struct ExceptionDocumentInput {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ExceptionScope {
     Dependency(String),
-    ModulePattern(String),
+    PathPattern(String),
+    Token(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -71,8 +86,7 @@ impl PolicyGuardReport {
     fn as_jsonl(&self) -> String {
         let mut out = String::new();
         for event in &self.events {
-            let line =
-                serde_json::to_string(event).expect("policy guard event serialization should work");
+            let line = serde_json::to_string(event).expect("event serialization should work");
             out.push_str(&line);
             out.push('\n');
         }
@@ -110,7 +124,6 @@ fn dependency_names(manifest: &str) -> Vec<String> {
         if !dependency_section(section.as_str()) {
             continue;
         }
-
         let Some((raw_key, _raw_value)) = line.split_once('=') else {
             continue;
         };
@@ -118,7 +131,7 @@ fn dependency_names(manifest: &str) -> Vec<String> {
         if key.is_empty() {
             continue;
         }
-        deps.push(key.to_string());
+        deps.push(key.to_ascii_lowercase());
     }
 
     deps
@@ -130,7 +143,7 @@ fn parse_exception_docs(docs: &[ExceptionDocumentInput]) -> Vec<ParsedException>
 
 fn parse_exception_doc(doc: &ExceptionDocumentInput) -> Option<ParsedException> {
     let normalized_path = doc.path.replace('\\', "/");
-    if !normalized_path.starts_with("docs/adr/exceptions/ADR-EXCEPTION-TUI-")
+    if !normalized_path.starts_with("docs/adr/exceptions/ADR-EXCEPTION-SQLITE-")
         || !normalized_path.ends_with(".md")
     {
         return None;
@@ -138,7 +151,6 @@ fn parse_exception_doc(doc: &ExceptionDocumentInput) -> Option<ParsedException> 
 
     let mut approved = false;
     let mut scopes = Vec::new();
-
     for raw_line in doc.content.lines() {
         let normalized = raw_line.trim().trim_start_matches('-').trim();
         if normalized.eq_ignore_ascii_case("Status: Approved") {
@@ -151,10 +163,10 @@ fn parse_exception_doc(doc: &ExceptionDocumentInput) -> Option<ParsedException> 
             let scope_raw = scope_raw.trim();
             if let Some(dep) = scope_raw.strip_prefix("dependency:") {
                 scopes.push(ExceptionScope::Dependency(dep.trim().to_string()));
-            } else if let Some(path_pattern) = scope_raw.strip_prefix("module:") {
-                scopes.push(ExceptionScope::ModulePattern(
-                    path_pattern.trim().to_string(),
-                ));
+            } else if let Some(path) = scope_raw.strip_prefix("path:") {
+                scopes.push(ExceptionScope::PathPattern(path.trim().to_string()));
+            } else if let Some(token) = scope_raw.strip_prefix("token:") {
+                scopes.push(ExceptionScope::Token(token.trim().to_string()));
             }
         }
     }
@@ -166,48 +178,7 @@ fn parse_exception_doc(doc: &ExceptionDocumentInput) -> Option<ParsedException> 
     }
 }
 
-fn is_forbidden_tui_dependency(dep: &str) -> bool {
-    let dep = dep.to_ascii_lowercase();
-    if dep.starts_with("frankentui") {
-        return false;
-    }
-    FORBIDDEN_TUI_DEPENDENCIES
-        .iter()
-        .any(|forbidden| *forbidden == dep)
-}
-
-fn dependency_exception_allowed(dep: &str, exceptions: &[ParsedException]) -> bool {
-    let dep = dep.to_ascii_lowercase();
-    exceptions.iter().any(|exception| {
-        exception
-            .scopes
-            .iter()
-            .any(|scope| matches!(scope, ExceptionScope::Dependency(allowed) if *allowed == dep))
-    })
-}
-
-fn is_blocked_local_tui_module(path: &str) -> bool {
-    let normalized = path.replace('\\', "/").to_ascii_lowercase();
-    if !normalized.ends_with(".rs") {
-        return false;
-    }
-    if !normalized.starts_with("crates/") {
-        return false;
-    }
-    if !normalized.contains("/src/") {
-        return false;
-    }
-    if normalized.contains("frankentui") {
-        return false;
-    }
-    normalized.contains("tui")
-        || normalized.contains("ratatui")
-        || normalized.contains("crossterm")
-        || normalized.contains("cursive")
-        || normalized.contains("termion")
-}
-
-fn pattern_match(pattern: &str, value: &str) -> bool {
+fn matches_pattern(pattern: &str, value: &str) -> bool {
     if let Some(prefix) = pattern.strip_suffix('*') {
         value.starts_with(prefix)
     } else {
@@ -215,30 +186,57 @@ fn pattern_match(pattern: &str, value: &str) -> bool {
     }
 }
 
-fn module_exception_allowed(path: &str, exceptions: &[ParsedException]) -> bool {
+fn dependency_exception_allowed(dep: &str, exceptions: &[ParsedException]) -> bool {
+    exceptions.iter().any(|exception| {
+        exception
+            .scopes
+            .iter()
+            .any(|scope| matches!(scope, ExceptionScope::Dependency(allowed) if allowed == dep))
+    })
+}
+
+fn path_exception_allowed(path: &str, exceptions: &[ParsedException]) -> bool {
     exceptions.iter().any(|exception| {
         exception.scopes.iter().any(|scope| match scope {
-            ExceptionScope::ModulePattern(pattern) => pattern_match(pattern.as_str(), path),
-            ExceptionScope::Dependency(_) => false,
+            ExceptionScope::PathPattern(pattern) => matches_pattern(pattern, path),
+            ExceptionScope::Dependency(_) | ExceptionScope::Token(_) => false,
         })
     })
 }
 
+fn token_exception_allowed(token: &str, exceptions: &[ParsedException]) -> bool {
+    exceptions.iter().any(|exception| {
+        exception
+            .scopes
+            .iter()
+            .any(|scope| matches!(scope, ExceptionScope::Token(allowed) if allowed == token))
+    })
+}
+
+fn is_forbidden_sqlite_dependency(dep: &str) -> bool {
+    FORBIDDEN_SQLITE_DEPENDENCIES.contains(&dep)
+}
+
+fn is_adapter_allowed_path(path: &str) -> bool {
+    ADAPTER_ALLOWED_PATHS.contains(&path)
+}
+
 fn evaluate_guard(
     manifests: &[ManifestInput],
-    module_paths: &[String],
+    sources: &[SourceInput],
     exception_docs: &[ExceptionDocumentInput],
 ) -> PolicyGuardReport {
+    let exceptions = parse_exception_docs(exception_docs);
     let mut events = Vec::new();
     let mut violations = Vec::new();
     let mut next_id = 1usize;
-    let exceptions = parse_exception_docs(exception_docs);
 
     for manifest in manifests {
         for dep in dependency_names(manifest.content.as_str()) {
-            if !is_forbidden_tui_dependency(dep.as_str()) {
+            if !is_forbidden_sqlite_dependency(dep.as_str()) {
                 continue;
             }
+
             if dependency_exception_allowed(dep.as_str(), &exceptions) {
                 events.push(PolicyGuardEvent {
                     trace_id: format!("{TRACE_PREFIX}-{next_id:04}"),
@@ -259,7 +257,7 @@ fn evaluate_guard(
             }
 
             let detail = format!(
-                "forbidden local TUI framework dependency found in {}",
+                "direct sqlite dependency is forbidden outside storage adapter policy ({})",
                 manifest.path
             );
             events.push(PolicyGuardEvent {
@@ -269,59 +267,71 @@ fn evaluate_guard(
                 component: COMPONENT.to_string(),
                 event: "dependency_scan".to_string(),
                 outcome: "fail".to_string(),
-                error_code: Some("FE-TUI-DEPENDENCY-FORBIDDEN".to_string()),
+                error_code: Some("FE-SQLITE-DEPENDENCY-FORBIDDEN".to_string()),
                 subject: dep.clone(),
                 detail: detail.clone(),
             });
             next_id += 1;
-
             violations.push(PolicyViolation {
-                error_code: "FE-TUI-DEPENDENCY-FORBIDDEN",
+                error_code: "FE-SQLITE-DEPENDENCY-FORBIDDEN",
                 subject: dep,
                 detail,
             });
         }
     }
 
-    for path in module_paths {
-        if !is_blocked_local_tui_module(path) {
+    for source in sources {
+        if is_adapter_allowed_path(source.path.as_str()) {
             continue;
         }
-        if module_exception_allowed(path.as_str(), &exceptions) {
+
+        for token in FORBIDDEN_SQLITE_TOKENS {
+            if !source.content.contains(token) {
+                continue;
+            }
+
+            if path_exception_allowed(source.path.as_str(), &exceptions)
+                || token_exception_allowed(token, &exceptions)
+            {
+                events.push(PolicyGuardEvent {
+                    trace_id: format!("{TRACE_PREFIX}-{next_id:04}"),
+                    decision_id: format!("decision-{next_id:04}"),
+                    policy_id: POLICY_ID.to_string(),
+                    component: COMPONENT.to_string(),
+                    event: "usage_scan".to_string(),
+                    outcome: "pass".to_string(),
+                    error_code: None,
+                    subject: source.path.clone(),
+                    detail: format!(
+                        "forbidden sqlite token `{token}` allowed via approved ADR exception"
+                    ),
+                });
+                next_id += 1;
+                continue;
+            }
+
+            let detail = format!(
+                "forbidden sqlite token `{token}` detected in {}",
+                source.path
+            );
             events.push(PolicyGuardEvent {
                 trace_id: format!("{TRACE_PREFIX}-{next_id:04}"),
                 decision_id: format!("decision-{next_id:04}"),
                 policy_id: POLICY_ID.to_string(),
                 component: COMPONENT.to_string(),
-                event: "module_scan".to_string(),
-                outcome: "pass".to_string(),
-                error_code: None,
-                subject: path.clone(),
-                detail: "blocked module pattern allowed via approved ADR exception".to_string(),
+                event: "usage_scan".to_string(),
+                outcome: "fail".to_string(),
+                error_code: Some("FE-SQLITE-USAGE-FORBIDDEN".to_string()),
+                subject: source.path.clone(),
+                detail: detail.clone(),
             });
             next_id += 1;
-            continue;
+            violations.push(PolicyViolation {
+                error_code: "FE-SQLITE-USAGE-FORBIDDEN",
+                subject: source.path.clone(),
+                detail,
+            });
         }
-
-        let detail = "blocked local interactive TUI module path detected".to_string();
-        events.push(PolicyGuardEvent {
-            trace_id: format!("{TRACE_PREFIX}-{next_id:04}"),
-            decision_id: format!("decision-{next_id:04}"),
-            policy_id: POLICY_ID.to_string(),
-            component: COMPONENT.to_string(),
-            event: "module_scan".to_string(),
-            outcome: "fail".to_string(),
-            error_code: Some("FE-TUI-MODULE-FORBIDDEN".to_string()),
-            subject: path.clone(),
-            detail: detail.clone(),
-        });
-        next_id += 1;
-
-        violations.push(PolicyViolation {
-            error_code: "FE-TUI-MODULE-FORBIDDEN",
-            subject: path.clone(),
-            detail,
-        });
     }
 
     events.push(PolicyGuardEvent {
@@ -338,7 +348,7 @@ fn evaluate_guard(
         error_code: if violations.is_empty() {
             None
         } else {
-            Some("FE-TUI-GUARD-BLOCKED".to_string())
+            Some("FE-SQLITE-GUARD-BLOCKED".to_string())
         },
         subject: "frankenengine-repo".to_string(),
         detail: format!("violations={}", violations.len()),
@@ -400,6 +410,24 @@ fn repo_manifests() -> Vec<ManifestInput> {
     manifests
 }
 
+fn repo_sources() -> Vec<SourceInput> {
+    let root = repo_root();
+    let mut paths = Vec::new();
+    collect_rs_files(root.join("crates").as_path(), &mut paths);
+    paths.sort();
+
+    paths
+        .into_iter()
+        .filter(|path| path.contains("/src/"))
+        .map(|path| {
+            let abs = root.join(path.as_str());
+            let content = fs::read_to_string(&abs)
+                .unwrap_or_else(|err| panic!("failed to read {}: {err}", abs.display()));
+            SourceInput { path, content }
+        })
+        .collect()
+}
+
 fn repo_exception_docs() -> Vec<ExceptionDocumentInput> {
     let root = repo_root();
     let exceptions_root = root.join("docs/adr/exceptions");
@@ -437,42 +465,55 @@ fn repo_exception_docs() -> Vec<ExceptionDocumentInput> {
 }
 
 #[test]
-fn ratatui_dependency_is_blocked_without_approved_adr_exception() {
+fn rusqlite_dependency_is_blocked_without_exception() {
     let manifests = vec![ManifestInput {
         path: "crates/franken-engine/Cargo.toml".to_string(),
         content: r#"
 [dependencies]
-ratatui = "0.29"
+rusqlite = "0.35"
 "#
         .to_string(),
     }];
-
     let report = evaluate_guard(&manifests, &[], &[]);
 
     assert_eq!(report.violations.len(), 1);
     assert_eq!(
         report.violations[0].error_code,
-        "FE-TUI-DEPENDENCY-FORBIDDEN"
+        "FE-SQLITE-DEPENDENCY-FORBIDDEN"
     );
     assert!(report.events.iter().any(|event| {
         event.event == "dependency_scan"
             && event.outcome == "fail"
-            && event.error_code.as_deref() == Some("FE-TUI-DEPENDENCY-FORBIDDEN")
+            && event.error_code.as_deref() == Some("FE-SQLITE-DEPENDENCY-FORBIDDEN")
+            && event.policy_id == POLICY_ID
+            && event.component == COMPONENT
     }));
 }
 
 #[test]
-fn frankentui_dependency_is_allowed() {
-    let manifests = vec![ManifestInput {
-        path: "crates/franken-engine/Cargo.toml".to_string(),
-        content: r#"
-[dependencies]
-frankentui = "0.1"
-"#
-        .to_string(),
+fn direct_sqlite_usage_token_is_blocked_outside_adapter_path() {
+    let sources = vec![SourceInput {
+        path: "crates/franken-engine/src/local_sqlite_wrapper.rs".to_string(),
+        content: "use rusqlite::Connection;\n".to_string(),
     }];
+    let report = evaluate_guard(&[], &sources, &[]);
 
-    let report = evaluate_guard(&manifests, &[], &[]);
+    assert_eq!(report.violations.len(), 1);
+    assert_eq!(report.violations[0].error_code, "FE-SQLITE-USAGE-FORBIDDEN");
+    assert!(report.events.iter().any(|event| {
+        event.event == "usage_scan"
+            && event.outcome == "fail"
+            && event.error_code.as_deref() == Some("FE-SQLITE-USAGE-FORBIDDEN")
+    }));
+}
+
+#[test]
+fn adapter_boundary_path_is_allowed_for_sqlite_tokens() {
+    let sources = vec![SourceInput {
+        path: "crates/franken-engine/src/storage_adapter.rs".to_string(),
+        content: "use rusqlite::Connection;\n".to_string(),
+    }];
+    let report = evaluate_guard(&[], &sources, &[]);
 
     assert!(report.violations.is_empty());
     assert!(report.events.iter().any(|event| {
@@ -484,69 +525,71 @@ frankentui = "0.1"
 }
 
 #[test]
-fn approved_adr_exception_can_bypass_forbidden_dependency() {
+fn approved_exception_can_bypass_dependency_and_usage_rules() {
     let manifests = vec![ManifestInput {
         path: "crates/franken-engine/Cargo.toml".to_string(),
         content: r#"
 [dependencies]
-ratatui = "0.29"
+rusqlite = "0.35"
 "#
         .to_string(),
     }];
+    let sources = vec![SourceInput {
+        path: "crates/franken-engine/src/legacy_adapter.rs".to_string(),
+        content: "use rusqlite::Connection;\n".to_string(),
+    }];
     let exception_docs = vec![ExceptionDocumentInput {
-        path: "docs/adr/exceptions/ADR-EXCEPTION-TUI-0001.md".to_string(),
+        path: "docs/adr/exceptions/ADR-EXCEPTION-SQLITE-0001.md".to_string(),
         content: r#"
-# ADR Exception
 Status: Approved
-Scope: dependency:ratatui
+Scope: dependency:rusqlite
+Scope: token:rusqlite::
+Scope: path:crates/franken-engine/src/legacy_adapter.rs
 "#
         .to_string(),
     }];
 
-    let report = evaluate_guard(&manifests, &[], &exception_docs);
+    let report = evaluate_guard(&manifests, &sources, &exception_docs);
 
     assert!(report.violations.is_empty());
     assert!(report.events.iter().any(|event| {
-        event.event == "dependency_scan"
-            && event.outcome == "pass"
+        event.outcome == "pass"
             && event.error_code.is_none()
-            && event.subject == "ratatui"
+            && (event.event == "dependency_scan" || event.event == "usage_scan")
     }));
 }
 
 #[test]
-fn module_pattern_violation_is_blocked_without_exception() {
-    let report = evaluate_guard(
-        &[],
-        &[String::from(
-            "crates/franken-engine/src/local_tui_dashboard.rs",
-        )],
-        &[],
-    );
+fn migration_policy_adr_contains_ci_enforcement_and_transition_timeline() {
+    let adr_path = repo_root().join("docs/adr/ADR-0004-frankensqlite-reuse-scope.md");
+    let adr = fs::read_to_string(&adr_path)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", adr_path.display()));
 
-    assert_eq!(report.violations.len(), 1);
-    assert_eq!(report.violations[0].error_code, "FE-TUI-MODULE-FORBIDDEN");
-    assert!(report.events.iter().any(|event| {
-        event.event == "module_scan"
-            && event.outcome == "fail"
-            && event.error_code.as_deref() == Some("FE-TUI-MODULE-FORBIDDEN")
-    }));
+    let required_markers = [
+        "## Migration Policy (No Ad-Hoc Local SQLite Wrappers)",
+        "scripts/check_no_local_sqlite_wrappers.sh ci",
+        "January 31, 2027",
+        "docs/adr/exceptions/ADR-EXCEPTION-SQLITE-",
+    ];
+
+    for marker in required_markers {
+        assert!(
+            adr.contains(marker),
+            "ADR-0004 must contain migration-policy marker: {marker}"
+        );
+    }
 }
 
 #[test]
-fn repository_tui_policy_guard_passes() {
+fn repository_sqlite_policy_guard_passes() {
     let manifests = repo_manifests();
-
-    let mut module_paths = Vec::new();
-    collect_rs_files(repo_root().join("crates").as_path(), &mut module_paths);
-    module_paths.sort();
-
+    let sources = repo_sources();
     let exceptions = repo_exception_docs();
-    let report = evaluate_guard(&manifests, &module_paths, &exceptions);
+    let report = evaluate_guard(&manifests, &sources, &exceptions);
 
     assert!(
         report.violations.is_empty(),
-        "TUI policy guard violations detected:\n{}",
+        "SQLite policy guard violations detected:\n{}",
         report.as_jsonl()
     );
     assert!(report.events.iter().any(|event| {

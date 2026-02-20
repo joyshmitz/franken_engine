@@ -108,6 +108,40 @@ When `/dp/frankensqlite` cannot reasonably satisfy a required persistence path:
 - Storage adapter work (`bd-89l2`) and persistence inventory (`bd-1ps3`) align to this boundary.
 - Every new store documents `raw frankensqlite` vs `sqlmodel_rust` choice with rationale (`bd-2d21`).
 
+## Migration Policy (No Ad-Hoc Local SQLite Wrappers)
+
+Effective immediately as of February 20, 2026:
+
+- New direct SQLite wrappers (for example `rusqlite`, `sqlite3`, or local one-off
+  SQLite adapter layers) are prohibited for control-plane persistence paths.
+- New control-plane persistence must route through
+  `crates/franken-engine/src/storage_adapter.rs` and the corresponding
+  `/dp/frankensqlite` integration seam.
+
+CI enforcement for this policy is provided by:
+
+```bash
+scripts/check_no_local_sqlite_wrappers.sh ci
+```
+
+This check fails when direct SQLite dependency or usage patterns are introduced
+outside the approved storage-adapter boundary.
+
+Exception process for this migration policy:
+
+- Create an approved exception record under
+  `docs/adr/exceptions/ADR-EXCEPTION-SQLITE-<id>.md`.
+- The document must include `Status: Approved` and explicit `Scope:` lines for
+  dependency/path/token exceptions.
+- Exceptions are time-bounded and must include a rollback/migration-back plan.
+
+Transition timeline:
+
+1. By March 15, 2026: any remaining direct SQLite call sites must be inventoried
+   and linked to tracked migration beads.
+2. By January 31, 2027: direct wrappers must be removed or carried by renewed,
+   explicitly approved exception artifacts.
+
 ## Operator Verification (Storage Adapter Contract)
 
 For `bd-89l2` storage-adapter verification, use:
