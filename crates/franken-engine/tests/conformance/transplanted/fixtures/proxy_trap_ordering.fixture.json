@@ -1,0 +1,5 @@
+{
+  "donor_harness": "quickjs",
+  "source": "print(proxy.getOwnPropertyDescriptor('x'));",
+  "observed_output": "trap getOwnPropertyDescriptor\nprops:z,y,x"
+}

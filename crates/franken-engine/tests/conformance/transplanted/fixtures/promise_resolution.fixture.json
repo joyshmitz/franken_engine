@@ -1,0 +1,5 @@
+{
+  "donor_harness": "quickjs",
+  "source": "$DONE(Promise.resolve(1.23456789));",
+  "observed_output": "TypeError: none\nvalue 1.23456789\nprops:b,a,c"
+}

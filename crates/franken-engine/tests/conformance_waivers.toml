@@ -1,0 +1,9 @@
+# Central conformance waiver registry.
+# Any non-passing transplanted asset must be listed here with a reason code,
+# tracking bead, and expiry date.
+
+[[waiver]]
+asset_id = "asset-example-not-yet-implemented"
+reason_code = "not_yet_implemented"
+tracking_bead = "bd-example"
+expiry_date = "2026-12-31"

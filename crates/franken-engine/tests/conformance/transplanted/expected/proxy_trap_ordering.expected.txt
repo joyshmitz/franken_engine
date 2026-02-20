@@ -1,0 +1,2 @@
+trap getOwnPropertyDescriptor
+props:x,y,z

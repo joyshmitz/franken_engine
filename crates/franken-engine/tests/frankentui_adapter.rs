@@ -1,9 +1,6 @@
-#[path = "../src/frankentui_adapter.rs"]
-mod frankentui_adapter;
-
 use std::collections::BTreeMap;
 
-use frankentui_adapter::{
+use frankenengine_engine::frankentui_adapter::{
     ActionCandidateView, AdapterEnvelope, AdapterStream, ControlDashboardPartial,
     ControlDashboardView, DashboardMetricView, DriverView, FrankentuiViewPayload,
     IncidentReplayView, PolicyExplanationCardView, PolicyExplanationPartial, ReplayEventView,

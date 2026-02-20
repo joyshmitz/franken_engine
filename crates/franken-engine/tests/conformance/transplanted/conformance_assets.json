@@ -1,0 +1,28 @@
+{
+  "schema_version": "franken-engine.conformance-assets.v1",
+  "generated_at_utc": "2026-02-20T19:00:00Z",
+  "assets": [
+    {
+      "asset_id": "asset-promise-resolution",
+      "source_donor": "quickjs",
+      "semantic_domain": "promise_resolution",
+      "normative_reference": "ES2020 27.2",
+      "fixture_path": "fixtures/promise_resolution.fixture.json",
+      "fixture_hash": "861e0b06ecd5fab9e90b0bd4d6111d074321184cbd5d6fdb5daac78e1d71f718",
+      "expected_output_path": "expected/promise_resolution.expected.txt",
+      "expected_output_hash": "6406a2315304b2b26b7759574d1d47ea0161fd98ce024d7cd16a6102934478e3",
+      "import_date": "2026-02-20"
+    },
+    {
+      "asset_id": "asset-proxy-trap-ordering",
+      "source_donor": "quickjs",
+      "semantic_domain": "proxy_trap_ordering",
+      "normative_reference": "ES2020 10.5",
+      "fixture_path": "fixtures/proxy_trap_ordering.fixture.json",
+      "fixture_hash": "0f2e651ef1ba4f669b3324fe672157ae2b87b664d30062c2626b70e548f095e9",
+      "expected_output_path": "expected/proxy_trap_ordering.expected.txt",
+      "expected_output_hash": "f83c79ea8e7fa94fe7fae00fef8373d1c5e11f119800110e1af2bc848f6926ec",
+      "import_date": "2026-02-20"
+    }
+  ]
+}
