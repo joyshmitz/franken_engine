@@ -92,6 +92,19 @@ Benchmarks, containment metrics, and policy assertions are tied to reproducible 
 5. **Constitutional integration**
 FrankenEngine reuses stronger sibling substrates instead of rebuilding them: asupersync control contracts, frankentui operator surfaces, and frankensqlite persistence.
 
+## Runtime Charter
+
+Runtime governance and native-only execution boundaries are defined in [`docs/RUNTIME_CHARTER.md`](./docs/RUNTIME_CHARTER.md).
+
+This charter is the acceptance gate for architecture changes and codifies:
+- native Rust ownership of core execution semantics
+- prohibition of binding-led core execution backends
+- deterministic replay + evidence-linkage obligations for high-impact actions
+- binding claim-language policy tied to reproducible artifact state
+- repository split and sibling-reuse constraints
+
+Reproducibility bundle templates (`env.json`, `manifest.json`, `repro.lock`) are defined in [`docs/REPRODUCIBILITY_CONTRACT.md`](./docs/REPRODUCIBILITY_CONTRACT.md) and shipped under [`docs/templates/`](./docs/templates/).
+
 ## Comparison
 
 | Dimension | FrankenEngine | Node.js | Bun |

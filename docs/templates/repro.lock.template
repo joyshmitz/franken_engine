@@ -1,0 +1,23 @@
+# franken-engine reproducibility lock
+schema_version = "franken-engine.repro-lock.v1"
+generated_at_utc = "1970-01-01T00:00:00Z"
+manifest_id = "REPLACE_WITH_MANIFEST_ID"
+source_commit = "REPLACE_WITH_GIT_COMMIT_SHA"
+
+[[entry]]
+kind = "input"
+path = "REPLACE_WITH_INPUT_PATH"
+sha256 = "REPLACE_WITH_INPUT_SHA256"
+bytes = 0
+
+[[entry]]
+kind = "output"
+path = "REPLACE_WITH_OUTPUT_PATH"
+sha256 = "REPLACE_WITH_OUTPUT_SHA256"
+bytes = 0
+
+[[entry]]
+kind = "metadata"
+path = "env.json"
+sha256 = "REPLACE_WITH_ENV_SHA256"
+bytes = 0

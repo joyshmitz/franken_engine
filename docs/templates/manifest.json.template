@@ -1,0 +1,34 @@
+{
+  "schema_version": "franken-engine.manifest.v1",
+  "manifest_id": "REPLACE_WITH_MANIFEST_ID",
+  "generated_at_utc": "1970-01-01T00:00:00Z",
+  "claim_scope": [
+    "performance",
+    "security"
+  ],
+  "description": "REPLACE_WITH_EXPERIMENT_DESCRIPTION",
+  "source_revision": {
+    "repo": "franken_engine",
+    "commit": "REPLACE_WITH_GIT_COMMIT_SHA",
+    "branch": "main"
+  },
+  "commands": [
+    "REPLACE_WITH_EXACT_COMMAND"
+  ],
+  "inputs": [
+    {
+      "path": "REPLACE_WITH_INPUT_PATH",
+      "sha256": "REPLACE_WITH_INPUT_SHA256"
+    }
+  ],
+  "outputs": [
+    {
+      "path": "REPLACE_WITH_OUTPUT_PATH",
+      "sha256": "REPLACE_WITH_OUTPUT_SHA256"
+    }
+  ],
+  "references": {
+    "env": "env.json",
+    "lock": "repro.lock"
+  }
+}
