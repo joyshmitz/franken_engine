@@ -1194,7 +1194,7 @@ mod tests {
         for v in &result.vectors {
             assert_eq!(v.boundary, SiblingRepo::Frankentui);
         }
-        assert!(result.vectors.len() > 0);
+        assert!(!result.vectors.is_empty());
     }
 
     #[test]

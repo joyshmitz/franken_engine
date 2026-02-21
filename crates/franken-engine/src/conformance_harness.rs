@@ -1,10 +1,10 @@
 #![allow(dead_code)]
 
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 use std::fs;
 use std::io;
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -842,8 +842,14 @@ impl ConformanceRunner {
                 )
             } else {
                 failed += 1;
-                let repro =
-                    self.build_minimized_repro_artifact(&run_id, &trace_id, &decision_id, asset, &fixture, &expected);
+                let repro = self.build_minimized_repro_artifact(
+                    &run_id,
+                    &trace_id,
+                    &decision_id,
+                    asset,
+                    &fixture,
+                    &expected,
+                );
                 repro
                     .verify_replay()
                     .map_err(|err| ConformanceRunError::ReproInvariant {
@@ -909,14 +915,12 @@ impl ConformanceRunner {
         let original_delta = classify_conformance_delta(expected, &actual);
         let original_failure_class = classify_failure_class(&original_delta);
 
-        let minimized = minimize_conformance_case(
-            &fixture.source,
-            expected,
-            &actual,
-            original_failure_class,
+        let minimized =
+            minimize_conformance_case(&fixture.source, expected, &actual, original_failure_class);
+        let minimized_delta = classify_conformance_delta(
+            &minimized.minimized_expected_output,
+            &minimized.minimized_actual_output,
         );
-        let minimized_delta =
-            classify_conformance_delta(&minimized.minimized_expected_output, &minimized.minimized_actual_output);
         let minimized_failure_class = classify_failure_class(&minimized_delta);
         let severity = severity_for_failure_class(minimized_failure_class);
         let failure_id = build_failure_id(
@@ -1027,6 +1031,9 @@ impl ConformanceRunner {
 pub struct ConformanceCollectedArtifacts {
     pub run_manifest_path: PathBuf,
     pub conformance_evidence_path: PathBuf,
+    pub minimized_repro_index_path: Option<PathBuf>,
+    pub minimized_repro_events_path: Option<PathBuf>,
+    pub minimized_repro_paths: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -1058,6 +1065,7 @@ impl ConformanceEvidenceCollector {
             waived_count: run.summary.waived,
             error_count: run.summary.errored,
             env_fingerprint: run.summary.env_fingerprint.clone(),
+            minimized_repro_count: run.minimized_repros.len(),
         })
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
         evidence_lines.push_str(&summary_line);
@@ -1073,9 +1081,84 @@ impl ConformanceEvidenceCollector {
         let conformance_evidence_path = run_root.join("conformance_evidence.jsonl");
         write_atomic(&conformance_evidence_path, evidence_lines.as_bytes())?;
 
+        let mut minimized_repro_paths = Vec::new();
+        let mut minimized_repro_index_path = None;
+        let mut minimized_repro_events_path = None;
+
+        if !run.minimized_repros.is_empty() {
+            let minimized_repro_root = run_root.join("minimized_repros");
+            fs::create_dir_all(&minimized_repro_root)?;
+
+            let mut repro_index = ConformanceMinimizedReproIndex {
+                schema_version: "franken-engine.conformance-min-repro-index.v1".to_string(),
+                run_id: run.run_id.clone(),
+                entries: Vec::with_capacity(run.minimized_repros.len()),
+            };
+            let mut repro_events = String::new();
+
+            for repro in &run.minimized_repros {
+                repro
+                    .verify_replay()
+                    .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+
+                let relative_path = format!("minimized_repros/{}.json", repro.failure_id);
+                let path = run_root.join(&relative_path);
+                write_atomic(&path, &canonical_json_bytes(repro)?)?;
+                minimized_repro_paths.push(path.clone());
+
+                repro_index
+                    .entries
+                    .push(ConformanceMinimizedReproIndexEntry {
+                        failure_id: repro.failure_id.clone(),
+                        artifact_id: repro.artifact_id.clone(),
+                        artifact_path: relative_path.clone(),
+                        evidence_ledger_id: repro.evidence_ledger_id.clone(),
+                        replay_command: repro.replay.replay_command.clone(),
+                        verification_command: repro.replay.verification_command.clone(),
+                        issue_tracker_id: repro.issue_tracker.issue_id.clone(),
+                    });
+
+                let policy_id = run
+                    .logs
+                    .iter()
+                    .find(|event| {
+                        event.trace_id == repro.linked_run.trace_id
+                            && event.decision_id == repro.linked_run.decision_id
+                    })
+                    .map(|event| event.policy_id.clone())
+                    .unwrap_or_else(|| "policy-conformance-v1".to_string());
+                let event_line = serde_json::to_string(&ConformanceMinimizedReproEventLine {
+                    trace_id: repro.linked_run.trace_id.clone(),
+                    decision_id: repro.linked_run.decision_id.clone(),
+                    policy_id,
+                    component: "conformance_repro_collector".to_string(),
+                    event: "minimized_repro_persisted".to_string(),
+                    outcome: "pass".to_string(),
+                    error_code: None,
+                    failure_id: repro.failure_id.clone(),
+                    artifact_path: relative_path,
+                    issue_tracker_id: repro.issue_tracker.issue_id.clone(),
+                })
+                .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+                repro_events.push_str(&event_line);
+                repro_events.push('\n');
+            }
+
+            let index_path = minimized_repro_root.join("index.json");
+            write_atomic(&index_path, &canonical_json_bytes(&repro_index)?)?;
+            minimized_repro_index_path = Some(index_path);
+
+            let events_path = minimized_repro_root.join("events.jsonl");
+            write_atomic(&events_path, repro_events.as_bytes())?;
+            minimized_repro_events_path = Some(events_path);
+        }
+
         Ok(ConformanceCollectedArtifacts {
             run_manifest_path,
             conformance_evidence_path,
+            minimized_repro_index_path,
+            minimized_repro_events_path,
+            minimized_repro_paths,
         })
     }
 }
@@ -1090,6 +1173,482 @@ struct ConformanceEvidenceSummaryLine {
     waived_count: usize,
     error_count: usize,
     env_fingerprint: String,
+    minimized_repro_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct ConformanceMinimizedReproIndex {
+    schema_version: String,
+    run_id: String,
+    entries: Vec<ConformanceMinimizedReproIndexEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct ConformanceMinimizedReproIndexEntry {
+    failure_id: String,
+    artifact_id: String,
+    artifact_path: String,
+    evidence_ledger_id: String,
+    replay_command: String,
+    verification_command: String,
+    issue_tracker_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct ConformanceMinimizedReproEventLine {
+    trace_id: String,
+    decision_id: String,
+    policy_id: String,
+    component: String,
+    event: String,
+    outcome: String,
+    error_code: Option<String>,
+    failure_id: String,
+    artifact_path: String,
+    issue_tracker_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ConformanceMinimizationOutcome {
+    minimized_source: String,
+    minimized_expected_output: String,
+    minimized_actual_output: String,
+    summary: ConformanceMinimizationSummary,
+}
+
+fn build_failure_id(asset_id: &str, seed: u64, expected: &str, actual: &str) -> String {
+    let material = format!("asset={asset_id};seed={seed};expected={expected};actual={actual}");
+    format!("cf-{}", &digest_hex(material.as_bytes())[..16])
+}
+
+fn repro_verification_digest(seed: u64, expected: &str, actual: &str) -> String {
+    let material = format!("seed={seed};expected={expected};actual={actual}");
+    digest_hex(material.as_bytes())
+}
+
+pub fn classify_conformance_delta(
+    expected: &str,
+    actual: &str,
+) -> Vec<ConformanceDeltaClassification> {
+    let expected = canonicalize_conformance_output(expected);
+    let actual = canonicalize_conformance_output(actual);
+    if expected == actual {
+        return Vec::new();
+    }
+
+    let mut deltas = Vec::new();
+
+    if let (Some(expected_props), Some(actual_props)) =
+        (parse_props_fields(&expected), parse_props_fields(&actual))
+    {
+        for removed in expected_props
+            .iter()
+            .filter(|field| !actual_props.contains(*field))
+        {
+            deltas.push(ConformanceDeltaClassification {
+                kind: ConformanceDeltaKind::SchemaFieldRemoved,
+                field: Some(removed.clone()),
+                expected: Some("present".to_string()),
+                actual: Some("missing".to_string()),
+                detail: format!("schema field `{removed}` removed from canonical props output"),
+            });
+        }
+        for added in actual_props
+            .iter()
+            .filter(|field| !expected_props.contains(*field))
+        {
+            deltas.push(ConformanceDeltaClassification {
+                kind: ConformanceDeltaKind::SchemaFieldAdded,
+                field: Some(added.clone()),
+                expected: Some("missing".to_string()),
+                actual: Some("present".to_string()),
+                detail: format!("schema field `{added}` added to canonical props output"),
+            });
+        }
+        if deltas.is_empty() {
+            deltas.push(ConformanceDeltaClassification {
+                kind: ConformanceDeltaKind::SchemaFieldModified,
+                field: None,
+                expected: Some(expected.clone()),
+                actual: Some(actual.clone()),
+                detail: "props schema changed without pure add/remove diff".to_string(),
+            });
+        }
+    }
+
+    if deltas.is_empty() {
+        let expected_error = extract_error_signature(&expected);
+        let actual_error = extract_error_signature(&actual);
+        if expected_error != actual_error {
+            deltas.push(ConformanceDeltaClassification {
+                kind: ConformanceDeltaKind::ErrorFormatChange,
+                field: None,
+                expected: expected_error,
+                actual: actual_error,
+                detail: "error surface format changed".to_string(),
+            });
+        }
+    }
+
+    if deltas.is_empty() && numeric_delta_only(&expected, &actual) {
+        deltas.push(ConformanceDeltaClassification {
+            kind: ConformanceDeltaKind::TimingChange,
+            field: None,
+            expected: Some(expected.clone()),
+            actual: Some(actual.clone()),
+            detail: "numeric-only delta indicates timing/performance shift".to_string(),
+        });
+    }
+
+    if deltas.is_empty() {
+        deltas.push(ConformanceDeltaClassification {
+            kind: ConformanceDeltaKind::BehavioralSemanticShift,
+            field: None,
+            expected: Some(expected),
+            actual: Some(actual),
+            detail: "canonical output changed in behavioral semantics".to_string(),
+        });
+    }
+
+    deltas
+}
+
+pub fn classify_failure_class(
+    deltas: &[ConformanceDeltaClassification],
+) -> ConformanceFailureClass {
+    if deltas.is_empty() {
+        return ConformanceFailureClass::Behavioral;
+    }
+    let mut resolved = delta_kind_to_failure_class(deltas[0].kind);
+    for delta in deltas.iter().skip(1) {
+        let candidate = delta_kind_to_failure_class(delta.kind);
+        if failure_class_priority(candidate) > failure_class_priority(resolved) {
+            resolved = candidate;
+        }
+    }
+    resolved
+}
+
+pub fn severity_for_failure_class(class: ConformanceFailureClass) -> ConformanceFailureSeverity {
+    match class {
+        ConformanceFailureClass::Breaking => ConformanceFailureSeverity::Critical,
+        ConformanceFailureClass::Behavioral => ConformanceFailureSeverity::Error,
+        ConformanceFailureClass::Observability => ConformanceFailureSeverity::Warning,
+        ConformanceFailureClass::Performance => ConformanceFailureSeverity::Warning,
+    }
+}
+
+fn failure_class_priority(class: ConformanceFailureClass) -> u8 {
+    match class {
+        ConformanceFailureClass::Breaking => 4,
+        ConformanceFailureClass::Behavioral => 3,
+        ConformanceFailureClass::Observability => 2,
+        ConformanceFailureClass::Performance => 1,
+    }
+}
+
+fn delta_kind_to_failure_class(kind: ConformanceDeltaKind) -> ConformanceFailureClass {
+    match kind {
+        ConformanceDeltaKind::SchemaFieldAdded
+        | ConformanceDeltaKind::SchemaFieldRemoved
+        | ConformanceDeltaKind::SchemaFieldModified => ConformanceFailureClass::Breaking,
+        ConformanceDeltaKind::BehavioralSemanticShift => ConformanceFailureClass::Behavioral,
+        ConformanceDeltaKind::TimingChange => ConformanceFailureClass::Performance,
+        ConformanceDeltaKind::ErrorFormatChange => ConformanceFailureClass::Observability,
+    }
+}
+
+fn parse_props_fields(payload: &str) -> Option<Vec<String>> {
+    for line in payload.lines() {
+        if let Some(rest) = line.strip_prefix("props:") {
+            let mut values: Vec<String> = rest
+                .split(',')
+                .map(str::trim)
+                .filter(|field| !field.is_empty())
+                .map(ToString::to_string)
+                .collect();
+            values.sort();
+            values.dedup();
+            return Some(values);
+        }
+    }
+    None
+}
+
+fn extract_error_signature(payload: &str) -> Option<String> {
+    payload
+        .lines()
+        .map(str::trim)
+        .find(|line| line.contains("Error|"))
+        .map(ToString::to_string)
+}
+
+fn numeric_delta_only(expected: &str, actual: &str) -> bool {
+    let expected_tokens: Vec<&str> = expected.split_whitespace().collect();
+    let actual_tokens: Vec<&str> = actual.split_whitespace().collect();
+    if expected_tokens.len() != actual_tokens.len() {
+        return false;
+    }
+    let mut saw_numeric_delta = false;
+    for (lhs, rhs) in expected_tokens.iter().zip(actual_tokens.iter()) {
+        match (lhs.parse::<f64>(), rhs.parse::<f64>()) {
+            (Ok(lhs_num), Ok(rhs_num)) => {
+                if (lhs_num - rhs_num).abs() > f64::EPSILON {
+                    saw_numeric_delta = true;
+                }
+            }
+            (Err(_), Err(_)) => {
+                if lhs != rhs {
+                    return false;
+                }
+            }
+            _ => return false,
+        }
+    }
+    saw_numeric_delta
+}
+
+fn minimize_conformance_case(
+    source: &str,
+    expected: &str,
+    actual: &str,
+    failure_class: ConformanceFailureClass,
+) -> ConformanceMinimizationOutcome {
+    let source_segments = split_source_segments(source);
+    let expected_lines = split_output_lines(expected);
+    let actual_lines = split_output_lines(actual);
+
+    let minimized_source_segments =
+        minimize_source_segments(&source_segments, failure_class, expected, actual);
+    let (mut minimized_expected_lines, mut minimized_actual_lines) =
+        reduce_output_lines(&expected_lines, &actual_lines, failure_class);
+    minimize_lines_greedy(
+        &mut minimized_expected_lines,
+        &minimized_actual_lines,
+        failure_class,
+        true,
+    );
+    minimize_lines_greedy(
+        &mut minimized_actual_lines,
+        &minimized_expected_lines,
+        failure_class,
+        false,
+    );
+
+    let minimized_source = join_source_segments(&minimized_source_segments);
+    let minimized_expected_output =
+        canonicalize_conformance_output(&join_output_lines(&minimized_expected_lines));
+    let minimized_actual_output =
+        canonicalize_conformance_output(&join_output_lines(&minimized_actual_lines));
+
+    let preserved_failure_class = preserves_failure_class(
+        &minimized_expected_output,
+        &minimized_actual_output,
+        failure_class,
+    );
+    let (minimized_expected_output, minimized_actual_output) = if preserved_failure_class {
+        (minimized_expected_output, minimized_actual_output)
+    } else {
+        (
+            canonicalize_conformance_output(expected),
+            canonicalize_conformance_output(actual),
+        )
+    };
+    let minimized_source_line_count = split_source_segments(&minimized_source).len();
+
+    ConformanceMinimizationOutcome {
+        minimized_source,
+        minimized_expected_output: minimized_expected_output.clone(),
+        minimized_actual_output: minimized_actual_output.clone(),
+        summary: ConformanceMinimizationSummary {
+            strategy: "greedy-delta-debugging".to_string(),
+            original_source_lines: source_segments.len(),
+            minimized_source_lines: minimized_source_line_count,
+            original_expected_lines: expected_lines.len(),
+            minimized_expected_lines: split_output_lines(&minimized_expected_output).len(),
+            original_actual_lines: actual_lines.len(),
+            minimized_actual_lines: split_output_lines(&minimized_actual_output).len(),
+            preserved_failure_class,
+        },
+    }
+}
+
+fn split_source_segments(source: &str) -> Vec<String> {
+    let normalized = source.replace("\r\n", "\n").replace('\r', "\n");
+    let mut segments = Vec::new();
+    for line in normalized.lines() {
+        for segment in line.split(';') {
+            let trimmed = segment.trim();
+            if !trimmed.is_empty() {
+                segments.push(trimmed.to_string());
+            }
+        }
+    }
+    if segments.is_empty() {
+        vec!["void 0".to_string()]
+    } else {
+        segments
+    }
+}
+
+fn join_source_segments(segments: &[String]) -> String {
+    segments.join(";\n")
+}
+
+fn split_output_lines(payload: &str) -> Vec<String> {
+    let canonical = canonicalize_conformance_output(payload);
+    let lines: Vec<String> = canonical
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(ToString::to_string)
+        .collect();
+    if lines.is_empty() {
+        vec!["<empty>".to_string()]
+    } else {
+        lines
+    }
+}
+
+fn join_output_lines(lines: &[String]) -> String {
+    lines.join("\n")
+}
+
+fn minimize_source_segments(
+    original: &[String],
+    failure_class: ConformanceFailureClass,
+    expected: &str,
+    actual: &str,
+) -> Vec<String> {
+    let mut best = if original.is_empty() {
+        vec!["void 0".to_string()]
+    } else {
+        original.to_vec()
+    };
+    let mut improved = true;
+    while improved && best.len() > 1 {
+        improved = false;
+        for idx in 0..best.len() {
+            if best.len() <= 1 {
+                break;
+            }
+            let candidate: Vec<String> = best
+                .iter()
+                .enumerate()
+                .filter(|(pos, _)| *pos != idx)
+                .map(|(_, item)| item.clone())
+                .collect();
+            if candidate.is_empty() {
+                continue;
+            }
+            if preserves_failure_class(expected, actual, failure_class) {
+                best = candidate;
+                improved = true;
+                break;
+            }
+        }
+    }
+    best
+}
+
+fn reduce_output_lines(
+    expected: &[String],
+    actual: &[String],
+    failure_class: ConformanceFailureClass,
+) -> (Vec<String>, Vec<String>) {
+    let mut start = 0usize;
+    while start < expected.len() && start < actual.len() && expected[start] == actual[start] {
+        start += 1;
+    }
+
+    let mut end_expected = expected.len();
+    let mut end_actual = actual.len();
+    while end_expected > start
+        && end_actual > start
+        && expected[end_expected - 1] == actual[end_actual - 1]
+    {
+        end_expected -= 1;
+        end_actual -= 1;
+    }
+
+    let mut expected_reduced = expected[start..end_expected].to_vec();
+    let mut actual_reduced = actual[start..end_actual].to_vec();
+
+    if expected_reduced.is_empty() {
+        expected_reduced.push(
+            expected
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "<empty>".to_string()),
+        );
+    }
+    if actual_reduced.is_empty() {
+        actual_reduced.push(
+            actual
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "<empty>".to_string()),
+        );
+    }
+
+    let expected_payload = join_output_lines(&expected_reduced);
+    let actual_payload = join_output_lines(&actual_reduced);
+    if !preserves_failure_class(&expected_payload, &actual_payload, failure_class) {
+        return (expected.to_vec(), actual.to_vec());
+    }
+
+    (expected_reduced, actual_reduced)
+}
+
+fn minimize_lines_greedy(
+    lines: &mut Vec<String>,
+    other: &[String],
+    failure_class: ConformanceFailureClass,
+    is_expected_side: bool,
+) {
+    let mut improved = true;
+    while improved && lines.len() > 1 {
+        improved = false;
+        for idx in 0..lines.len() {
+            if lines.len() <= 1 {
+                break;
+            }
+            let candidate: Vec<String> = lines
+                .iter()
+                .enumerate()
+                .filter(|(pos, _)| *pos != idx)
+                .map(|(_, line)| line.clone())
+                .collect();
+            if candidate.is_empty() {
+                continue;
+            }
+            let candidate_payload = join_output_lines(&candidate);
+            let other_payload = join_output_lines(other);
+            let preserved = if is_expected_side {
+                preserves_failure_class(&candidate_payload, &other_payload, failure_class)
+            } else {
+                preserves_failure_class(&other_payload, &candidate_payload, failure_class)
+            };
+            if preserved {
+                *lines = candidate;
+                improved = true;
+                break;
+            }
+        }
+    }
+}
+
+fn preserves_failure_class(
+    expected: &str,
+    actual: &str,
+    failure_class: ConformanceFailureClass,
+) -> bool {
+    let expected = canonicalize_conformance_output(expected);
+    let actual = canonicalize_conformance_output(actual);
+    if expected == actual {
+        return false;
+    }
+    classify_failure_class(&classify_conformance_delta(&expected, &actual)) == failure_class
 }
 
 pub fn canonicalize_conformance_output(raw: &str) -> String {

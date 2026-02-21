@@ -717,125 +717,131 @@ impl BundleBuilder {
     /// Build the bundle with computed Merkle root and signature.
     pub fn build(self) -> Result<IncidentReplayBundle, BundleError> {
         let mut artifact_entries = BTreeMap::new();
-        let mut leaf_hashes = Vec::new();
 
-        // Collect all artifact hashes in deterministic order.
+        // Collect all artifact entries with composite keys ("{kind}:{id}") to
+        // prevent collisions across artifact types sharing the same user-id.
         for (id, trace) in &self.traces {
             let hash = trace.content_hash();
             let json = serde_json::to_vec(trace).unwrap_or_default();
+            let key = format!("{}:{id}", BundleArtifactKind::Trace);
             artifact_entries.insert(
-                id.clone(),
+                key,
                 ArtifactEntry {
                     artifact_id: id.clone(),
                     kind: BundleArtifactKind::Trace,
-                    content_hash: hash.clone(),
+                    content_hash: hash,
                     redacted: false,
                     size_bytes: json.len() as u64,
                 },
             );
-            leaf_hashes.push(hash);
         }
 
         for (id, entry) in &self.evidence_entries {
             let json = serde_json::to_vec(entry).unwrap_or_default();
             let hash = ContentHash::compute(&json);
+            let key = format!("{}:{id}", BundleArtifactKind::Evidence);
             artifact_entries.insert(
-                id.clone(),
+                key,
                 ArtifactEntry {
                     artifact_id: id.clone(),
                     kind: BundleArtifactKind::Evidence,
-                    content_hash: hash.clone(),
+                    content_hash: hash,
                     redacted: false,
                     size_bytes: json.len() as u64,
                 },
             );
-            leaf_hashes.push(hash);
         }
 
         for (id, receipt) in &self.opt_receipts {
             let json = serde_json::to_vec(receipt).unwrap_or_default();
             let hash = ContentHash::compute(&json);
+            let key = format!("{}:{id}", BundleArtifactKind::OptReceipt);
             artifact_entries.insert(
-                id.clone(),
+                key,
                 ArtifactEntry {
                     artifact_id: id.clone(),
                     kind: BundleArtifactKind::OptReceipt,
-                    content_hash: hash.clone(),
+                    content_hash: hash,
                     redacted: false,
                     size_bytes: json.len() as u64,
                 },
             );
-            leaf_hashes.push(hash);
         }
 
         for (id, cp) in &self.quorum_checkpoints {
             let json = serde_json::to_vec(cp).unwrap_or_default();
             let hash = ContentHash::compute(&json);
+            let key = format!("{}:{id}", BundleArtifactKind::QuorumCheckpoint);
             artifact_entries.insert(
-                id.clone(),
+                key,
                 ArtifactEntry {
                     artifact_id: id.clone(),
                     kind: BundleArtifactKind::QuorumCheckpoint,
-                    content_hash: hash.clone(),
+                    content_hash: hash,
                     redacted: false,
                     size_bytes: json.len() as u64,
                 },
             );
-            leaf_hashes.push(hash);
         }
 
         for (id, log) in &self.nondeterminism_logs {
             let hash = log.content_hash();
             let json = serde_json::to_vec(log).unwrap_or_default();
+            let key = format!("{}:{id}", BundleArtifactKind::NondeterminismLog);
             artifact_entries.insert(
-                id.clone(),
+                key,
                 ArtifactEntry {
                     artifact_id: id.clone(),
                     kind: BundleArtifactKind::NondeterminismLog,
-                    content_hash: hash.clone(),
+                    content_hash: hash,
                     redacted: false,
                     size_bytes: json.len() as u64,
                 },
             );
-            leaf_hashes.push(hash);
         }
 
         for (id, cf) in &self.counterfactual_results {
             let json = serde_json::to_vec(cf).unwrap_or_default();
             let hash = ContentHash::compute(&json);
+            let key = format!("{}:{id}", BundleArtifactKind::CounterfactualResult);
             artifact_entries.insert(
-                id.clone(),
+                key,
                 ArtifactEntry {
                     artifact_id: id.clone(),
                     kind: BundleArtifactKind::CounterfactualResult,
-                    content_hash: hash.clone(),
+                    content_hash: hash,
                     redacted: false,
                     size_bytes: json.len() as u64,
                 },
             );
-            leaf_hashes.push(hash);
         }
 
         for (id, snap) in &self.policy_snapshots {
             let json = serde_json::to_vec(snap).unwrap_or_default();
             let hash = ContentHash::compute(&json);
+            let key = format!("{}:{id}", BundleArtifactKind::PolicySnapshot);
             artifact_entries.insert(
-                id.clone(),
+                key,
                 ArtifactEntry {
                     artifact_id: id.clone(),
                     kind: BundleArtifactKind::PolicySnapshot,
-                    content_hash: hash.clone(),
+                    content_hash: hash,
                     redacted: false,
                     size_bytes: json.len() as u64,
                 },
             );
-            leaf_hashes.push(hash);
         }
 
         if artifact_entries.is_empty() {
             return Err(BundleError::EmptyBundle);
         }
 
+        // Leaf hashes in BTreeMap order — matches verify_integrity() which
+        // also iterates artifact_entries.values() in sorted-key order.
+        let leaf_hashes: Vec<ContentHash> = artifact_entries
+            .values()
+            .map(|e| e.content_hash.clone())
+            .collect();
         let merkle_root = compute_merkle_root(&leaf_hashes);
 
         // Derive bundle ID.
@@ -1328,38 +1334,40 @@ impl BundleVerifier {
         bundle: &IncidentReplayBundle,
         report: &mut VerificationReport,
     ) {
-        for (id, entry) in &bundle.manifest.artifacts {
+        for entry in bundle.manifest.artifacts.values() {
+            let aid = &entry.artifact_id;
             let computed_hash = match entry.kind {
-                BundleArtifactKind::Trace => bundle.traces.get(id).map(|t| t.content_hash()),
+                BundleArtifactKind::Trace => bundle.traces.get(aid).map(|t| t.content_hash()),
                 BundleArtifactKind::Evidence => bundle
                     .evidence_entries
-                    .get(id)
+                    .get(aid)
                     .map(|e| ContentHash::compute(&serde_json::to_vec(e).unwrap_or_default())),
                 BundleArtifactKind::OptReceipt => bundle
                     .opt_receipts
-                    .get(id)
+                    .get(aid)
                     .map(|r| ContentHash::compute(&serde_json::to_vec(r).unwrap_or_default())),
                 BundleArtifactKind::QuorumCheckpoint => bundle
                     .quorum_checkpoints
-                    .get(id)
+                    .get(aid)
                     .map(|c| ContentHash::compute(&serde_json::to_vec(c).unwrap_or_default())),
-                BundleArtifactKind::NondeterminismLog => {
-                    bundle.nondeterminism_logs.get(id).map(|l| l.content_hash())
-                }
+                BundleArtifactKind::NondeterminismLog => bundle
+                    .nondeterminism_logs
+                    .get(aid)
+                    .map(|l| l.content_hash()),
                 BundleArtifactKind::CounterfactualResult => bundle
                     .counterfactual_results
-                    .get(id)
+                    .get(aid)
                     .map(|r| ContentHash::compute(&serde_json::to_vec(r).unwrap_or_default())),
                 BundleArtifactKind::PolicySnapshot => bundle
                     .policy_snapshots
-                    .get(id)
+                    .get(aid)
                     .map(|s| ContentHash::compute(&serde_json::to_vec(s).unwrap_or_default())),
             };
 
             match computed_hash {
                 Some(hash) => {
                     report.add_check(VerificationCheck {
-                        name: format!("artifact-hash:{id}"),
+                        name: format!("artifact-hash:{aid}"),
                         category: VerificationCategory::ArtifactHash,
                         outcome: if hash == entry.content_hash {
                             CheckOutcome::Pass
@@ -1376,7 +1384,7 @@ impl BundleVerifier {
                 }
                 None => {
                     report.add_check(VerificationCheck {
-                        name: format!("artifact-hash:{id}"),
+                        name: format!("artifact-hash:{aid}"),
                         category: VerificationCategory::ArtifactHash,
                         outcome: if entry.redacted {
                             CheckOutcome::Skipped {
@@ -1580,7 +1588,7 @@ mod tests {
     #[test]
     fn merkle_root_single_leaf() {
         let leaf = ContentHash::compute(b"hello");
-        let root = compute_merkle_root(&[leaf.clone()]);
+        let root = compute_merkle_root(std::slice::from_ref(&leaf));
         assert_eq!(root, leaf);
     }
 
@@ -1647,8 +1655,8 @@ mod tests {
     #[test]
     fn merkle_proof_single_leaf() {
         let leaf = ContentHash::compute(b"only");
-        let root = compute_merkle_root(&[leaf.clone()]);
-        let proof = build_merkle_proof(&[leaf.clone()], 0);
+        let root = compute_merkle_root(std::slice::from_ref(&leaf));
+        let proof = build_merkle_proof(std::slice::from_ref(&leaf), 0);
         assert!(proof.is_empty());
         assert!(verify_merkle_proof(&leaf, &proof, &root));
     }
@@ -1776,11 +1784,15 @@ mod tests {
     #[test]
     fn verify_integrity_detects_artifact_hash_tampering() {
         let mut bundle = build_test_bundle();
-        // Tamper with a trace's content.
-        if let Some(trace) = bundle.traces.values_mut().next() {
-            trace
-                .metadata
-                .insert("tampered".to_string(), "yes".to_string());
+        // Tamper with the stored content hash of a trace artifact so the
+        // verifier detects a mismatch when it recomputes the hash.
+        if let Some(entry) = bundle
+            .manifest
+            .artifacts
+            .values_mut()
+            .find(|e| e.kind == BundleArtifactKind::Trace)
+        {
+            entry.content_hash = ContentHash::compute(b"tampered-hash");
         }
 
         let verifier = BundleVerifier::new();
@@ -1891,10 +1903,10 @@ mod tests {
     fn verify_replay_detects_chain_tampering() {
         let mut bundle = build_test_bundle();
         // Tamper with a trace entry's hash to break chain integrity.
-        if let Some(trace) = bundle.traces.values_mut().next() {
-            if let Some(entry) = trace.entries.first_mut() {
-                entry.entry_hash = ContentHash::compute(b"tampered-hash");
-            }
+        if let Some(trace) = bundle.traces.values_mut().next()
+            && let Some(entry) = trace.entries.first_mut()
+        {
+            entry.entry_hash = ContentHash::compute(b"tampered-hash");
         }
 
         let verifier = BundleVerifier::new();
@@ -1994,8 +2006,10 @@ mod tests {
 
     #[test]
     fn redaction_policy_serde_roundtrip() {
-        let mut policy = RedactionPolicy::default();
-        policy.redact_extension_ids = true;
+        let mut policy = RedactionPolicy {
+            redact_extension_ids: true,
+            ..RedactionPolicy::default()
+        };
         policy.custom_redaction_keys.insert("tenant_id".to_string());
 
         let json = serde_json::to_string(&policy).unwrap();

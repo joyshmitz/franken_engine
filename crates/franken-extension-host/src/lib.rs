@@ -7,11 +7,24 @@ use std::collections::BTreeSet;
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Capability(pub String);
 
+impl Capability {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for Capability {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 /// Extension manifest from the engine's perspective.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExtensionManifest {
     pub name: String,
     pub version: String,
+    pub entrypoint: String,
     pub capabilities: BTreeSet<Capability>,
 }
 
@@ -34,6 +47,11 @@ pub fn validate_manifest(manifest: &ExtensionManifest) -> Result<(), ManifestVal
     if manifest.name.is_empty() {
         return Err(ManifestValidationError {
             message: "name must not be empty".to_string(),
+        });
+    }
+    if manifest.entrypoint.is_empty() {
+        return Err(ManifestValidationError {
+            message: "entrypoint must not be empty".to_string(),
         });
     }
     Ok(())

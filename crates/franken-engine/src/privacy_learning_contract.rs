@@ -701,68 +701,69 @@ pub struct RandomnessCommitment {
     pub signature: Signature,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RandomnessCommitmentHashInput {
+    phase_id: String,
+    seed_hash: [u8; 32],
+    prng_algorithm: PrngAlgorithm,
+    sequence_counter: u64,
+    epoch_id: SecurityEpoch,
+    previous_commitment_hash: Option<[u8; 32]>,
+    evidence_object_id: EngineObjectId,
+}
+
+impl RandomnessCommitmentHashInput {
+    fn from_commitment(commitment: &RandomnessCommitment) -> Self {
+        Self {
+            phase_id: commitment.phase_id.clone(),
+            seed_hash: commitment.seed_hash,
+            prng_algorithm: commitment.prng_algorithm,
+            sequence_counter: commitment.sequence_counter,
+            epoch_id: commitment.epoch_id,
+            previous_commitment_hash: commitment.previous_commitment_hash,
+            evidence_object_id: commitment.evidence_object_id.clone(),
+        }
+    }
+}
+
 impl RandomnessCommitment {
-    fn canonical_view(
-        phase_id: &str,
-        seed_hash: [u8; 32],
-        prng_algorithm: PrngAlgorithm,
-        sequence_counter: u64,
-        epoch_id: SecurityEpoch,
-        previous_commitment_hash: Option<[u8; 32]>,
-        evidence_object_id: &EngineObjectId,
-    ) -> CanonicalValue {
+    fn canonical_view(input: &RandomnessCommitmentHashInput) -> CanonicalValue {
         let mut map = BTreeMap::new();
         map.insert(
             "epoch_id".to_string(),
-            CanonicalValue::U64(epoch_id.as_u64()),
+            CanonicalValue::U64(input.epoch_id.as_u64()),
         );
         map.insert(
             "evidence_object_id".to_string(),
-            CanonicalValue::Bytes(evidence_object_id.as_bytes().to_vec()),
+            CanonicalValue::Bytes(input.evidence_object_id.as_bytes().to_vec()),
         );
         map.insert(
             "phase_id".to_string(),
-            CanonicalValue::String(phase_id.to_string()),
+            CanonicalValue::String(input.phase_id.clone()),
         );
         map.insert(
             "prng_algorithm".to_string(),
-            CanonicalValue::String(prng_algorithm.to_string()),
+            CanonicalValue::String(input.prng_algorithm.to_string()),
         );
         map.insert(
             "previous_commitment_hash".to_string(),
-            hash_optional(previous_commitment_hash),
+            hash_optional(input.previous_commitment_hash),
         );
         map.insert(
             "seed_hash".to_string(),
-            CanonicalValue::Bytes(seed_hash.to_vec()),
+            CanonicalValue::Bytes(input.seed_hash.to_vec()),
         );
         map.insert(
             "sequence_counter".to_string(),
-            CanonicalValue::U64(sequence_counter),
+            CanonicalValue::U64(input.sequence_counter),
         );
         CanonicalValue::Map(map)
     }
 
-    fn compute_hash_from_fields(
-        phase_id: &str,
-        seed_hash: [u8; 32],
-        prng_algorithm: PrngAlgorithm,
-        sequence_counter: u64,
-        epoch_id: SecurityEpoch,
-        previous_commitment_hash: Option<[u8; 32]>,
-        evidence_object_id: &EngineObjectId,
-    ) -> [u8; 32] {
+    fn compute_hash_from_fields(input: &RandomnessCommitmentHashInput) -> [u8; 32] {
         let domain = ObjectDomain::EvidenceRecord.tag();
         let schema = commitment_schema();
-        let value = Self::canonical_view(
-            phase_id,
-            seed_hash,
-            prng_algorithm,
-            sequence_counter,
-            epoch_id,
-            previous_commitment_hash,
-            evidence_object_id,
-        );
+        let value = Self::canonical_view(input);
         let encoded = deterministic_serde::encode_value(&value);
         let mut preimage = Vec::with_capacity(domain.len() + 32 + encoded.len());
         preimage.extend_from_slice(domain);
@@ -772,15 +773,8 @@ impl RandomnessCommitment {
     }
 
     fn recompute_hash(&self) -> [u8; 32] {
-        Self::compute_hash_from_fields(
-            &self.phase_id,
-            self.seed_hash,
-            self.prng_algorithm,
-            self.sequence_counter,
-            self.epoch_id,
-            self.previous_commitment_hash,
-            &self.evidence_object_id,
-        )
+        let input = RandomnessCommitmentHashInput::from_commitment(self);
+        Self::compute_hash_from_fields(&input)
     }
 
     pub fn verify_integrity(
@@ -1037,15 +1031,16 @@ impl RandomnessTranscript {
         let seed_hash = hash_bytes(seed);
         let sequence_counter = self.commitments.len() as u64 + 1;
         let previous_commitment_hash = self.commitments.last().map(|entry| entry.commitment_hash);
-        let commitment_hash = RandomnessCommitment::compute_hash_from_fields(
-            phase_id,
+        let hash_input = RandomnessCommitmentHashInput {
+            phase_id: phase_id.to_string(),
             seed_hash,
             prng_algorithm,
             sequence_counter,
             epoch_id,
             previous_commitment_hash,
-            &evidence_object_id,
-        );
+            evidence_object_id: evidence_object_id.clone(),
+        };
+        let commitment_hash = RandomnessCommitment::compute_hash_from_fields(&hash_input);
 
         let signature = sign_preimage(signing_key, &commitment_hash).map_err(|e| {
             ContractError::SignatureFailed {
@@ -1648,6 +1643,944 @@ impl Default for ContractRegistry {
 }
 
 // ---------------------------------------------------------------------------
+// Shadow evaluation promotion gate
+// ---------------------------------------------------------------------------
+
+const SHADOW_PROMOTION_DECISION_SCHEMA_DEF: &[u8] = b"FrankenEngine.ShadowPromotionDecision.v1";
+const SHADOW_OVERRIDE_SCHEMA_DEF: &[u8] = b"FrankenEngine.ShadowPromotionOverride.v1";
+const SHADOW_ROLLBACK_RECEIPT_SCHEMA_DEF: &[u8] = b"FrankenEngine.ShadowRollbackReceipt.v1";
+
+fn shadow_promotion_schema() -> SchemaHash {
+    SchemaHash::from_definition(SHADOW_PROMOTION_DECISION_SCHEMA_DEF)
+}
+
+fn shadow_override_schema() -> SchemaHash {
+    SchemaHash::from_definition(SHADOW_OVERRIDE_SCHEMA_DEF)
+}
+
+fn shadow_rollback_receipt_schema() -> SchemaHash {
+    SchemaHash::from_definition(SHADOW_ROLLBACK_RECEIPT_SCHEMA_DEF)
+}
+
+/// Safety metrics evaluated by the shadow-promotion gate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum SafetyMetric {
+    FalsePositiveRate,
+    FalseNegativeRate,
+    CalibrationError,
+    DriftDetectionAccuracy,
+    ContainmentTime,
+}
+
+impl SafetyMetric {
+    pub const ALL: &'static [SafetyMetric] = &[
+        SafetyMetric::FalsePositiveRate,
+        SafetyMetric::FalseNegativeRate,
+        SafetyMetric::CalibrationError,
+        SafetyMetric::DriftDetectionAccuracy,
+        SafetyMetric::ContainmentTime,
+    ];
+
+    fn higher_is_better(self) -> bool {
+        matches!(self, Self::DriftDetectionAccuracy)
+    }
+}
+
+impl fmt::Display for SafetyMetric {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::FalsePositiveRate => write!(f, "false_positive_rate"),
+            Self::FalseNegativeRate => write!(f, "false_negative_rate"),
+            Self::CalibrationError => write!(f, "calibration_error"),
+            Self::DriftDetectionAccuracy => write!(f, "drift_detection_accuracy"),
+            Self::ContainmentTime => write!(f, "containment_time"),
+        }
+    }
+}
+
+/// Snapshot of safety metrics in fixed-point millionths.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SafetyMetricSnapshot {
+    pub values_millionths: BTreeMap<SafetyMetric, i64>,
+}
+
+impl SafetyMetricSnapshot {
+    pub fn validate(&self) -> Result<(), ContractError> {
+        for metric in SafetyMetric::ALL {
+            if !self.values_millionths.contains_key(metric) {
+                return Err(ContractError::InvalidShadowEvaluation {
+                    detail: format!("missing safety metric in snapshot: {metric}"),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    pub fn metric_value(&self, metric: SafetyMetric) -> i64 {
+        self.values_millionths.get(&metric).copied().unwrap_or(0)
+    }
+}
+
+/// Replay inputs proving the shadow evaluation is deterministic and reproducible.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShadowReplayReference {
+    pub replay_corpus_id: String,
+    pub randomness_snapshot_id: String,
+    pub replay_seed_hash: [u8; 32],
+    pub replay_seed_counter: u64,
+}
+
+impl ShadowReplayReference {
+    fn validate(&self) -> Result<(), ContractError> {
+        if self.replay_corpus_id.trim().is_empty() {
+            return Err(ContractError::InvalidShadowEvaluation {
+                detail: "replay_corpus_id must not be empty".to_string(),
+            });
+        }
+        if self.randomness_snapshot_id.trim().is_empty() {
+            return Err(ContractError::InvalidShadowEvaluation {
+                detail: "randomness_snapshot_id must not be empty".to_string(),
+            });
+        }
+        if self.replay_seed_hash == [0u8; 32] {
+            return Err(ContractError::InvalidShadowEvaluation {
+                detail: "replay_seed_hash must not be all zeros".to_string(),
+            });
+        }
+        Ok(())
+    }
+}
+
+/// Shadow-gate configuration thresholds.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShadowEvaluationGateConfig {
+    /// Maximum tolerated regression (millionths) before hard rejection.
+    pub regression_tolerance_millionths: u64,
+    /// Minimum significant improvement (millionths) for at least one metric.
+    pub min_required_improvement_millionths: u64,
+}
+
+impl ShadowEvaluationGateConfig {
+    fn validate(&self) -> Result<(), ContractError> {
+        if self.min_required_improvement_millionths == 0 {
+            return Err(ContractError::InvalidShadowEvaluation {
+                detail: "min_required_improvement_millionths must be > 0".to_string(),
+            });
+        }
+        Ok(())
+    }
+}
+
+impl Default for ShadowEvaluationGateConfig {
+    fn default() -> Self {
+        Self {
+            regression_tolerance_millionths: 5_000,
+            min_required_improvement_millionths: 2_500,
+        }
+    }
+}
+
+/// Candidate model/policy update evaluated by the shadow gate.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShadowEvaluationCandidate {
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub candidate_version: String,
+    pub baseline_snapshot_id: String,
+    pub rollback_token: String,
+    pub epoch_id: SecurityEpoch,
+    pub baseline_metrics: SafetyMetricSnapshot,
+    pub candidate_metrics: SafetyMetricSnapshot,
+    pub replay_reference: ShadowReplayReference,
+    pub epsilon_spent_millionths: i64,
+    pub delta_spent_millionths: i64,
+}
+
+impl ShadowEvaluationCandidate {
+    fn validate(&self) -> Result<(), ContractError> {
+        if self.trace_id.trim().is_empty() {
+            return Err(ContractError::InvalidShadowEvaluation {
+                detail: "trace_id must not be empty".to_string(),
+            });
+        }
+        if self.decision_id.trim().is_empty() {
+            return Err(ContractError::InvalidShadowEvaluation {
+                detail: "decision_id must not be empty".to_string(),
+            });
+        }
+        if self.policy_id.trim().is_empty() {
+            return Err(ContractError::InvalidShadowEvaluation {
+                detail: "policy_id must not be empty".to_string(),
+            });
+        }
+        if self.candidate_version.trim().is_empty() {
+            return Err(ContractError::InvalidShadowEvaluation {
+                detail: "candidate_version must not be empty".to_string(),
+            });
+        }
+        if self.rollback_token.trim().is_empty() {
+            return Err(ContractError::InvalidShadowEvaluation {
+                detail: "rollback_token must not be empty".to_string(),
+            });
+        }
+        if self.epsilon_spent_millionths < 0 || self.delta_spent_millionths < 0 {
+            return Err(ContractError::InvalidShadowEvaluation {
+                detail: "budget spend values must be >= 0".to_string(),
+            });
+        }
+        self.baseline_metrics.validate()?;
+        self.candidate_metrics.validate()?;
+        self.replay_reference.validate()?;
+        Ok(())
+    }
+}
+
+/// Per-metric assessment output from the shadow gate.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShadowMetricAssessment {
+    pub baseline_value_millionths: i64,
+    pub candidate_value_millionths: i64,
+    pub improvement_millionths: i64,
+    pub regressed: bool,
+    pub significant_improvement: bool,
+}
+
+/// Privacy budget status attached to a promotion decision.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShadowPrivacyBudgetStatus {
+    pub epsilon_spent_millionths: i64,
+    pub epsilon_limit_millionths: i64,
+    pub delta_spent_millionths: i64,
+    pub delta_limit_millionths: i64,
+    pub within_budget: bool,
+}
+
+/// Promotion verdict emitted by the shadow gate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ShadowPromotionVerdict {
+    Pass,
+    Reject,
+    OverrideApproved,
+}
+
+impl fmt::Display for ShadowPromotionVerdict {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Pass => write!(f, "pass"),
+            Self::Reject => write!(f, "reject"),
+            Self::OverrideApproved => write!(f, "override_approved"),
+        }
+    }
+}
+
+/// Human override request for rejected promotion candidates.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HumanOverrideRequest {
+    pub operator_id: String,
+    pub summary: String,
+    pub bypassed_risk_criteria: Vec<String>,
+    pub acknowledged_bypass: bool,
+}
+
+/// Signed human override artifact attached to promotion decisions.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HumanOverrideJustificationArtifact {
+    pub operator_id: String,
+    pub summary: String,
+    pub bypassed_risk_criteria: Vec<String>,
+    pub acknowledged_bypass: bool,
+    pub override_hash: [u8; 32],
+    pub signature: Signature,
+}
+
+impl HumanOverrideJustificationArtifact {
+    fn from_request(
+        request: HumanOverrideRequest,
+        decision_hash: [u8; 32],
+        signing_key: &SigningKey,
+    ) -> Result<Self, ContractError> {
+        if request.operator_id.trim().is_empty() {
+            return Err(ContractError::InvalidShadowOverride {
+                detail: "operator_id must not be empty".to_string(),
+            });
+        }
+        if request.summary.trim().is_empty() {
+            return Err(ContractError::InvalidShadowOverride {
+                detail: "summary must not be empty".to_string(),
+            });
+        }
+        if request.bypassed_risk_criteria.is_empty() {
+            return Err(ContractError::InvalidShadowOverride {
+                detail: "bypassed_risk_criteria must not be empty".to_string(),
+            });
+        }
+        if !request.acknowledged_bypass {
+            return Err(ContractError::InvalidShadowOverride {
+                detail: "acknowledged_bypass must be true".to_string(),
+            });
+        }
+
+        let mut map = BTreeMap::new();
+        map.insert(
+            "decision_hash".to_string(),
+            CanonicalValue::Bytes(decision_hash.to_vec()),
+        );
+        map.insert(
+            "operator_id".to_string(),
+            CanonicalValue::String(request.operator_id.clone()),
+        );
+        map.insert(
+            "summary".to_string(),
+            CanonicalValue::String(request.summary.clone()),
+        );
+        map.insert(
+            "acknowledged_bypass".to_string(),
+            CanonicalValue::Bool(request.acknowledged_bypass),
+        );
+        map.insert(
+            "bypassed_risk_criteria".to_string(),
+            CanonicalValue::Array(
+                request
+                    .bypassed_risk_criteria
+                    .iter()
+                    .map(|criterion| CanonicalValue::String(criterion.clone()))
+                    .collect(),
+            ),
+        );
+        let unsigned = CanonicalValue::Map(map);
+        let encoded = deterministic_serde::encode_value(&unsigned);
+        let mut preimage =
+            Vec::with_capacity(ObjectDomain::EvidenceRecord.tag().len() + 32 + encoded.len());
+        preimage.extend_from_slice(ObjectDomain::EvidenceRecord.tag());
+        preimage.extend_from_slice(shadow_override_schema().as_bytes());
+        preimage.extend_from_slice(&encoded);
+        let override_hash = hash_bytes(&preimage);
+        let signature = sign_preimage(signing_key, &override_hash).map_err(|e| {
+            ContractError::SignatureFailed {
+                detail: format!("failed to sign human override artifact: {e}"),
+            }
+        })?;
+
+        Ok(Self {
+            operator_id: request.operator_id,
+            summary: request.summary,
+            bypassed_risk_criteria: request.bypassed_risk_criteria,
+            acknowledged_bypass: request.acknowledged_bypass,
+            override_hash,
+            signature,
+        })
+    }
+}
+
+/// Signed promotion decision artifact produced by the shadow gate.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShadowPromotionDecisionArtifact {
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub candidate_version: String,
+    pub baseline_snapshot_id: String,
+    pub rollback_token: String,
+    pub epoch_id: SecurityEpoch,
+    pub replay_reference: ShadowReplayReference,
+    pub metric_assessments: BTreeMap<SafetyMetric, ShadowMetricAssessment>,
+    pub privacy_budget_status: ShadowPrivacyBudgetStatus,
+    pub deterministic_replay_ok: bool,
+    pub significant_improvement_count: usize,
+    pub failure_reasons: Vec<String>,
+    pub verdict: ShadowPromotionVerdict,
+    pub human_override: Option<HumanOverrideJustificationArtifact>,
+    pub artifact_hash: [u8; 32],
+    pub signature: Signature,
+}
+
+impl ShadowPromotionDecisionArtifact {
+    fn unsigned_view(&self) -> CanonicalValue {
+        let mut map = BTreeMap::new();
+        map.insert(
+            "baseline_snapshot_id".to_string(),
+            CanonicalValue::String(self.baseline_snapshot_id.clone()),
+        );
+        map.insert(
+            "candidate_version".to_string(),
+            CanonicalValue::String(self.candidate_version.clone()),
+        );
+        map.insert(
+            "decision_id".to_string(),
+            CanonicalValue::String(self.decision_id.clone()),
+        );
+        map.insert(
+            "deterministic_replay_ok".to_string(),
+            CanonicalValue::Bool(self.deterministic_replay_ok),
+        );
+        map.insert(
+            "epoch_id".to_string(),
+            CanonicalValue::U64(self.epoch_id.as_u64()),
+        );
+        map.insert(
+            "failure_reasons".to_string(),
+            CanonicalValue::Array(
+                self.failure_reasons
+                    .iter()
+                    .map(|reason| CanonicalValue::String(reason.clone()))
+                    .collect(),
+            ),
+        );
+        map.insert(
+            "policy_id".to_string(),
+            CanonicalValue::String(self.policy_id.clone()),
+        );
+        map.insert(
+            "privacy_budget_status".to_string(),
+            CanonicalValue::Map(BTreeMap::from([
+                (
+                    "epsilon_limit_millionths".to_string(),
+                    CanonicalValue::I64(self.privacy_budget_status.epsilon_limit_millionths),
+                ),
+                (
+                    "epsilon_spent_millionths".to_string(),
+                    CanonicalValue::I64(self.privacy_budget_status.epsilon_spent_millionths),
+                ),
+                (
+                    "delta_limit_millionths".to_string(),
+                    CanonicalValue::I64(self.privacy_budget_status.delta_limit_millionths),
+                ),
+                (
+                    "delta_spent_millionths".to_string(),
+                    CanonicalValue::I64(self.privacy_budget_status.delta_spent_millionths),
+                ),
+                (
+                    "within_budget".to_string(),
+                    CanonicalValue::Bool(self.privacy_budget_status.within_budget),
+                ),
+            ])),
+        );
+        map.insert(
+            "replay_reference".to_string(),
+            CanonicalValue::Map(BTreeMap::from([
+                (
+                    "replay_corpus_id".to_string(),
+                    CanonicalValue::String(self.replay_reference.replay_corpus_id.clone()),
+                ),
+                (
+                    "randomness_snapshot_id".to_string(),
+                    CanonicalValue::String(self.replay_reference.randomness_snapshot_id.clone()),
+                ),
+                (
+                    "replay_seed_hash".to_string(),
+                    CanonicalValue::Bytes(self.replay_reference.replay_seed_hash.to_vec()),
+                ),
+                (
+                    "replay_seed_counter".to_string(),
+                    CanonicalValue::U64(self.replay_reference.replay_seed_counter),
+                ),
+            ])),
+        );
+        map.insert(
+            "rollback_token".to_string(),
+            CanonicalValue::String(self.rollback_token.clone()),
+        );
+        map.insert(
+            "significant_improvement_count".to_string(),
+            CanonicalValue::U64(self.significant_improvement_count as u64),
+        );
+        map.insert(
+            "trace_id".to_string(),
+            CanonicalValue::String(self.trace_id.clone()),
+        );
+        map.insert(
+            "verdict".to_string(),
+            CanonicalValue::String(self.verdict.to_string()),
+        );
+        map.insert(
+            "metric_assessments".to_string(),
+            CanonicalValue::Map(
+                self.metric_assessments
+                    .iter()
+                    .map(|(metric, assessment)| {
+                        (
+                            metric.to_string(),
+                            CanonicalValue::Map(BTreeMap::from([
+                                (
+                                    "baseline_value_millionths".to_string(),
+                                    CanonicalValue::I64(assessment.baseline_value_millionths),
+                                ),
+                                (
+                                    "candidate_value_millionths".to_string(),
+                                    CanonicalValue::I64(assessment.candidate_value_millionths),
+                                ),
+                                (
+                                    "improvement_millionths".to_string(),
+                                    CanonicalValue::I64(assessment.improvement_millionths),
+                                ),
+                                (
+                                    "regressed".to_string(),
+                                    CanonicalValue::Bool(assessment.regressed),
+                                ),
+                                (
+                                    "significant_improvement".to_string(),
+                                    CanonicalValue::Bool(assessment.significant_improvement),
+                                ),
+                            ])),
+                        )
+                    })
+                    .collect(),
+            ),
+        );
+        map.insert(
+            "human_override".to_string(),
+            match &self.human_override {
+                Some(override_artifact) => CanonicalValue::Map(BTreeMap::from([
+                    (
+                        "operator_id".to_string(),
+                        CanonicalValue::String(override_artifact.operator_id.clone()),
+                    ),
+                    (
+                        "summary".to_string(),
+                        CanonicalValue::String(override_artifact.summary.clone()),
+                    ),
+                    (
+                        "acknowledged_bypass".to_string(),
+                        CanonicalValue::Bool(override_artifact.acknowledged_bypass),
+                    ),
+                    (
+                        "bypassed_risk_criteria".to_string(),
+                        CanonicalValue::Array(
+                            override_artifact
+                                .bypassed_risk_criteria
+                                .iter()
+                                .map(|criterion| CanonicalValue::String(criterion.clone()))
+                                .collect(),
+                        ),
+                    ),
+                    (
+                        "override_hash".to_string(),
+                        CanonicalValue::Bytes(override_artifact.override_hash.to_vec()),
+                    ),
+                ])),
+                None => CanonicalValue::Null,
+            },
+        );
+        CanonicalValue::Map(map)
+    }
+
+    fn refresh_signature(&mut self, signing_key: &SigningKey) -> Result<(), ContractError> {
+        let value = self.unsigned_view();
+        let encoded = deterministic_serde::encode_value(&value);
+        let mut preimage =
+            Vec::with_capacity(ObjectDomain::EvidenceRecord.tag().len() + 32 + encoded.len());
+        preimage.extend_from_slice(ObjectDomain::EvidenceRecord.tag());
+        preimage.extend_from_slice(shadow_promotion_schema().as_bytes());
+        preimage.extend_from_slice(&encoded);
+        self.artifact_hash = hash_bytes(&preimage);
+        self.signature = sign_preimage(signing_key, &self.artifact_hash).map_err(|e| {
+            ContractError::SignatureFailed {
+                detail: format!("failed to sign shadow promotion decision: {e}"),
+            }
+        })?;
+        Ok(())
+    }
+}
+
+/// Incident receipt emitted when automatic rollback is triggered.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShadowRollbackIncidentReceipt {
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub candidate_version: String,
+    pub rollback_token: String,
+    pub triggered_regressions: Vec<SafetyMetric>,
+    pub reason: String,
+    pub receipt_hash: [u8; 32],
+    pub signature: Signature,
+}
+
+impl ShadowRollbackIncidentReceipt {
+    fn sign(&mut self, signing_key: &SigningKey) -> Result<(), ContractError> {
+        let mut map = BTreeMap::new();
+        map.insert(
+            "trace_id".to_string(),
+            CanonicalValue::String(self.trace_id.clone()),
+        );
+        map.insert(
+            "decision_id".to_string(),
+            CanonicalValue::String(self.decision_id.clone()),
+        );
+        map.insert(
+            "policy_id".to_string(),
+            CanonicalValue::String(self.policy_id.clone()),
+        );
+        map.insert(
+            "candidate_version".to_string(),
+            CanonicalValue::String(self.candidate_version.clone()),
+        );
+        map.insert(
+            "rollback_token".to_string(),
+            CanonicalValue::String(self.rollback_token.clone()),
+        );
+        map.insert(
+            "reason".to_string(),
+            CanonicalValue::String(self.reason.clone()),
+        );
+        map.insert(
+            "triggered_regressions".to_string(),
+            CanonicalValue::Array(
+                self.triggered_regressions
+                    .iter()
+                    .map(|metric| CanonicalValue::String(metric.to_string()))
+                    .collect(),
+            ),
+        );
+        let encoded = deterministic_serde::encode_value(&CanonicalValue::Map(map));
+        let mut preimage =
+            Vec::with_capacity(ObjectDomain::EvidenceRecord.tag().len() + 32 + encoded.len());
+        preimage.extend_from_slice(ObjectDomain::EvidenceRecord.tag());
+        preimage.extend_from_slice(shadow_rollback_receipt_schema().as_bytes());
+        preimage.extend_from_slice(&encoded);
+        self.receipt_hash = hash_bytes(&preimage);
+        self.signature = sign_preimage(signing_key, &self.receipt_hash).map_err(|e| {
+            ContractError::SignatureFailed {
+                detail: format!("failed to sign rollback receipt: {e}"),
+            }
+        })?;
+        Ok(())
+    }
+}
+
+/// Structured gate event with stable fields for operational telemetry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShadowGateEvent {
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub component: String,
+    pub event: String,
+    pub outcome: String,
+    pub error_code: Option<String>,
+}
+
+/// Deterministic shadow-evaluation gate for policy/model promotions.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShadowEvaluationGate {
+    pub config: ShadowEvaluationGateConfig,
+    events: Vec<ShadowGateEvent>,
+    promoted_artifacts: BTreeMap<String, ShadowPromotionDecisionArtifact>,
+}
+
+impl ShadowEvaluationGate {
+    pub fn new(config: ShadowEvaluationGateConfig) -> Result<Self, ContractError> {
+        config.validate()?;
+        Ok(Self {
+            config,
+            events: Vec::new(),
+            promoted_artifacts: BTreeMap::new(),
+        })
+    }
+
+    pub fn events(&self) -> &[ShadowGateEvent] {
+        &self.events
+    }
+
+    pub fn drain_events(&mut self) -> Vec<ShadowGateEvent> {
+        std::mem::take(&mut self.events)
+    }
+
+    pub fn active_artifact(&self, policy_id: &str) -> Option<&ShadowPromotionDecisionArtifact> {
+        self.promoted_artifacts.get(policy_id)
+    }
+
+    pub fn evaluate_candidate(
+        &mut self,
+        contract: &PrivacyLearningContract,
+        candidate: ShadowEvaluationCandidate,
+        signing_key: &SigningKey,
+    ) -> Result<ShadowPromotionDecisionArtifact, ContractError> {
+        if let Err(err) = candidate.validate() {
+            self.emit_event(
+                &candidate.trace_id,
+                &candidate.decision_id,
+                &candidate.policy_id,
+                "shadow_evaluation",
+                "error",
+                Some("FE-PLC-SHADOW-0001"),
+            );
+            return Err(err);
+        }
+
+        let mut metric_assessments = BTreeMap::new();
+        let mut regression_metrics = Vec::new();
+        let mut significant_improvement_count = 0usize;
+
+        for metric in SafetyMetric::ALL {
+            let baseline = candidate.baseline_metrics.metric_value(*metric);
+            let observed = candidate.candidate_metrics.metric_value(*metric);
+            let improvement = if metric.higher_is_better() {
+                observed - baseline
+            } else {
+                baseline - observed
+            };
+            let regressed = improvement < -(self.config.regression_tolerance_millionths as i64);
+            let significant = improvement >= self.config.min_required_improvement_millionths as i64;
+            if regressed {
+                regression_metrics.push(*metric);
+            }
+            if significant {
+                significant_improvement_count += 1;
+            }
+            metric_assessments.insert(
+                *metric,
+                ShadowMetricAssessment {
+                    baseline_value_millionths: baseline,
+                    candidate_value_millionths: observed,
+                    improvement_millionths: improvement,
+                    regressed,
+                    significant_improvement: significant,
+                },
+            );
+        }
+
+        let budget_status = ShadowPrivacyBudgetStatus {
+            epsilon_spent_millionths: candidate.epsilon_spent_millionths,
+            epsilon_limit_millionths: contract.dp_budget.epsilon_per_epoch_millionths,
+            delta_spent_millionths: candidate.delta_spent_millionths,
+            delta_limit_millionths: contract.dp_budget.delta_per_epoch_millionths,
+            within_budget: candidate.epsilon_spent_millionths
+                <= contract.dp_budget.epsilon_per_epoch_millionths
+                && candidate.delta_spent_millionths
+                    <= contract.dp_budget.delta_per_epoch_millionths,
+        };
+
+        let deterministic_replay_ok = candidate.replay_reference.replay_seed_hash != [0u8; 32]
+            && !candidate
+                .replay_reference
+                .replay_corpus_id
+                .trim()
+                .is_empty()
+            && !candidate
+                .replay_reference
+                .randomness_snapshot_id
+                .trim()
+                .is_empty();
+
+        let mut failure_reasons = Vec::new();
+        let mut error_code: Option<&str> = None;
+
+        if !budget_status.within_budget {
+            failure_reasons.push("privacy budget exceeded for epoch".to_string());
+            error_code.get_or_insert("FE-PLC-SHADOW-0002");
+        }
+        if !regression_metrics.is_empty() {
+            failure_reasons.push(format!(
+                "safety metric regression beyond tolerance: {}",
+                regression_metrics
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+            error_code.get_or_insert("FE-PLC-SHADOW-0004");
+        }
+        if significant_improvement_count == 0 {
+            failure_reasons.push("no significant safety metric improvement".to_string());
+            error_code.get_or_insert("FE-PLC-SHADOW-0005");
+        }
+        if !deterministic_replay_ok {
+            failure_reasons.push("replay determinism inputs are incomplete or invalid".to_string());
+            error_code.get_or_insert("FE-PLC-SHADOW-0003");
+        }
+
+        let verdict = if failure_reasons.is_empty() {
+            ShadowPromotionVerdict::Pass
+        } else {
+            ShadowPromotionVerdict::Reject
+        };
+
+        let mut artifact = ShadowPromotionDecisionArtifact {
+            trace_id: candidate.trace_id.clone(),
+            decision_id: candidate.decision_id.clone(),
+            policy_id: candidate.policy_id.clone(),
+            candidate_version: candidate.candidate_version.clone(),
+            baseline_snapshot_id: candidate.baseline_snapshot_id.clone(),
+            rollback_token: candidate.rollback_token.clone(),
+            epoch_id: candidate.epoch_id,
+            replay_reference: candidate.replay_reference.clone(),
+            metric_assessments,
+            privacy_budget_status: budget_status,
+            deterministic_replay_ok,
+            significant_improvement_count,
+            failure_reasons,
+            verdict,
+            human_override: None,
+            artifact_hash: [0u8; 32],
+            signature: Signature::from_bytes(SIGNATURE_SENTINEL),
+        };
+        artifact.refresh_signature(signing_key)?;
+
+        if verdict == ShadowPromotionVerdict::Pass {
+            self.promoted_artifacts
+                .insert(artifact.policy_id.clone(), artifact.clone());
+            self.emit_event(
+                &artifact.trace_id,
+                &artifact.decision_id,
+                &artifact.policy_id,
+                "shadow_evaluation",
+                "pass",
+                None,
+            );
+        } else {
+            self.emit_event(
+                &artifact.trace_id,
+                &artifact.decision_id,
+                &artifact.policy_id,
+                "shadow_evaluation",
+                "reject",
+                error_code,
+            );
+        }
+
+        Ok(artifact)
+    }
+
+    pub fn apply_human_override(
+        &mut self,
+        artifact: &ShadowPromotionDecisionArtifact,
+        request: HumanOverrideRequest,
+        signing_key: &SigningKey,
+    ) -> Result<ShadowPromotionDecisionArtifact, ContractError> {
+        let override_artifact = HumanOverrideJustificationArtifact::from_request(
+            request,
+            artifact.artifact_hash,
+            signing_key,
+        )
+        .inspect_err(|_| {
+            self.emit_event(
+                &artifact.trace_id,
+                &artifact.decision_id,
+                &artifact.policy_id,
+                "human_override",
+                "reject",
+                Some("FE-PLC-SHADOW-0006"),
+            );
+        })?;
+
+        let mut updated = artifact.clone();
+        updated.verdict = ShadowPromotionVerdict::OverrideApproved;
+        updated.human_override = Some(override_artifact);
+        updated
+            .failure_reasons
+            .push("human override approved with signed justification".to_string());
+        updated.refresh_signature(signing_key)?;
+
+        self.promoted_artifacts
+            .insert(updated.policy_id.clone(), updated.clone());
+        self.emit_event(
+            &updated.trace_id,
+            &updated.decision_id,
+            &updated.policy_id,
+            "human_override",
+            "override_approved",
+            None,
+        );
+
+        Ok(updated)
+    }
+
+    pub fn evaluate_post_deployment_metrics(
+        &mut self,
+        artifact: &ShadowPromotionDecisionArtifact,
+        post_metrics: SafetyMetricSnapshot,
+        signing_key: &SigningKey,
+    ) -> Result<Option<ShadowRollbackIncidentReceipt>, ContractError> {
+        post_metrics.validate()?;
+
+        let mut regressions = Vec::new();
+        for metric in SafetyMetric::ALL {
+            let baseline = artifact
+                .metric_assessments
+                .get(metric)
+                .map(|assessment| assessment.candidate_value_millionths)
+                .unwrap_or(0);
+            let observed = post_metrics.metric_value(*metric);
+            let improvement = if metric.higher_is_better() {
+                observed - baseline
+            } else {
+                baseline - observed
+            };
+            if improvement < -(self.config.regression_tolerance_millionths as i64) {
+                regressions.push(*metric);
+            }
+        }
+
+        if regressions.is_empty() {
+            self.emit_event(
+                &artifact.trace_id,
+                &artifact.decision_id,
+                &artifact.policy_id,
+                "post_deployment_guard",
+                "pass",
+                None,
+            );
+            return Ok(None);
+        }
+
+        let reason = format!(
+            "automatic rollback triggered due to post-deployment regressions: {}",
+            regressions
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        let mut receipt = ShadowRollbackIncidentReceipt {
+            trace_id: artifact.trace_id.clone(),
+            decision_id: artifact.decision_id.clone(),
+            policy_id: artifact.policy_id.clone(),
+            candidate_version: artifact.candidate_version.clone(),
+            rollback_token: artifact.rollback_token.clone(),
+            triggered_regressions: regressions,
+            reason,
+            receipt_hash: [0u8; 32],
+            signature: Signature::from_bytes(SIGNATURE_SENTINEL),
+        };
+        receipt.sign(signing_key)?;
+
+        self.promoted_artifacts.remove(&artifact.policy_id);
+        self.emit_event(
+            &receipt.trace_id,
+            &receipt.decision_id,
+            &receipt.policy_id,
+            "automatic_rollback",
+            "rollback_triggered",
+            Some("FE-PLC-SHADOW-0007"),
+        );
+
+        Ok(Some(receipt))
+    }
+
+    fn emit_event(
+        &mut self,
+        trace_id: &str,
+        decision_id: &str,
+        policy_id: &str,
+        event: &str,
+        outcome: &str,
+        error_code: Option<&str>,
+    ) {
+        self.events.push(ShadowGateEvent {
+            trace_id: trace_id.to_string(),
+            decision_id: decision_id.to_string(),
+            policy_id: policy_id.to_string(),
+            component: "shadow_evaluation_gate".to_string(),
+            event: event.to_string(),
+            outcome: outcome.to_string(),
+            error_code: error_code.map(str::to_string),
+        });
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Error types
 // ---------------------------------------------------------------------------
 
@@ -1715,6 +2648,12 @@ pub enum ContractError {
         existing_epoch: SecurityEpoch,
         new_epoch: SecurityEpoch,
     },
+    InvalidShadowEvaluation {
+        detail: String,
+    },
+    InvalidShadowOverride {
+        detail: String,
+    },
 }
 
 impl fmt::Display for ContractError {
@@ -1772,6 +2711,12 @@ impl fmt::Display for ContractError {
                 f,
                 "epoch not advanced for zone {zone}: existing={existing_epoch}, new={new_epoch}"
             ),
+            Self::InvalidShadowEvaluation { detail } => {
+                write!(f, "invalid shadow evaluation: {detail}")
+            }
+            Self::InvalidShadowOverride { detail } => {
+                write!(f, "invalid shadow override: {detail}")
+            }
         }
     }
 }
@@ -1932,6 +2877,80 @@ mod tests {
 
     fn evidence_id(byte: u8) -> EngineObjectId {
         EngineObjectId([byte; 32])
+    }
+
+    fn baseline_metrics() -> SafetyMetricSnapshot {
+        SafetyMetricSnapshot {
+            values_millionths: BTreeMap::from([
+                (SafetyMetric::FalsePositiveRate, 120_000),
+                (SafetyMetric::FalseNegativeRate, 90_000),
+                (SafetyMetric::CalibrationError, 70_000),
+                (SafetyMetric::DriftDetectionAccuracy, 760_000),
+                (SafetyMetric::ContainmentTime, 500_000),
+            ]),
+        }
+    }
+
+    fn improved_metrics() -> SafetyMetricSnapshot {
+        SafetyMetricSnapshot {
+            values_millionths: BTreeMap::from([
+                (SafetyMetric::FalsePositiveRate, 115_000),
+                (SafetyMetric::FalseNegativeRate, 88_000),
+                (SafetyMetric::CalibrationError, 68_000),
+                (SafetyMetric::DriftDetectionAccuracy, 780_000),
+                (SafetyMetric::ContainmentTime, 495_000),
+            ]),
+        }
+    }
+
+    fn regressed_metrics() -> SafetyMetricSnapshot {
+        SafetyMetricSnapshot {
+            values_millionths: BTreeMap::from([
+                (SafetyMetric::FalsePositiveRate, 145_000),
+                (SafetyMetric::FalseNegativeRate, 95_000),
+                (SafetyMetric::CalibrationError, 75_000),
+                (SafetyMetric::DriftDetectionAccuracy, 740_000),
+                (SafetyMetric::ContainmentTime, 520_000),
+            ]),
+        }
+    }
+
+    fn replay_reference() -> ShadowReplayReference {
+        ShadowReplayReference {
+            replay_corpus_id: "corpus-2026-02".to_string(),
+            randomness_snapshot_id: "rng-snapshot-7".to_string(),
+            replay_seed_hash: [0x5A; 32],
+            replay_seed_counter: 42,
+        }
+    }
+
+    fn candidate_with_metrics(
+        candidate_metrics: SafetyMetricSnapshot,
+        epsilon_spent_millionths: i64,
+        delta_spent_millionths: i64,
+    ) -> ShadowEvaluationCandidate {
+        ShadowEvaluationCandidate {
+            trace_id: "trace-shadow-1".to_string(),
+            decision_id: "decision-shadow-1".to_string(),
+            policy_id: "policy-shadow-1".to_string(),
+            candidate_version: "v2026.02.20".to_string(),
+            baseline_snapshot_id: "snapshot-2026-02-19".to_string(),
+            rollback_token: "rollback-token-shadow-1".to_string(),
+            epoch_id: SecurityEpoch::from_raw(9),
+            baseline_metrics: baseline_metrics(),
+            candidate_metrics,
+            replay_reference: replay_reference(),
+            epsilon_spent_millionths,
+            delta_spent_millionths,
+        }
+    }
+
+    fn shadow_gate() -> ShadowEvaluationGate {
+        ShadowEvaluationGate::new(ShadowEvaluationGateConfig {
+            regression_tolerance_millionths: 5_000,
+            min_required_improvement_millionths: 2_500,
+        })
+        .expect("shadow gate")
     }
 
     // -------------------------------------------------------------------
@@ -2930,6 +3949,224 @@ mod tests {
             let json = serde_json::to_string(err).expect("serialize");
             let restored: ContractError = serde_json::from_str(&json).expect("deserialize");
             assert_eq!(*err, restored);
+        }
+    }
+
+    // -------------------------------------------------------------------
+    // Shadow evaluation gate tests
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn shadow_gate_passes_candidate_with_budget_compliance_and_improvement() {
+        let contract = create_test_contract();
+        let mut gate = shadow_gate();
+        let artifact = gate
+            .evaluate_candidate(
+                &contract,
+                candidate_with_metrics(improved_metrics(), 90_000, 900),
+                &governance_signing_key(),
+            )
+            .expect("shadow evaluation");
+
+        assert_eq!(artifact.verdict, ShadowPromotionVerdict::Pass);
+        assert!(artifact.privacy_budget_status.within_budget);
+        assert!(artifact.significant_improvement_count > 0);
+        assert!(artifact.failure_reasons.is_empty());
+        assert_eq!(gate.events().len(), 1);
+        assert_eq!(gate.events()[0].event, "shadow_evaluation");
+        assert_eq!(gate.events()[0].outcome, "pass");
+        assert!(gate.events()[0].error_code.is_none());
+    }
+
+    #[test]
+    fn shadow_gate_rejects_candidate_on_budget_exhaustion() {
+        let contract = create_test_contract();
+        let mut gate = shadow_gate();
+        let artifact = gate
+            .evaluate_candidate(
+                &contract,
+                candidate_with_metrics(
+                    improved_metrics(),
+                    contract.dp_budget.epsilon_per_epoch_millionths + 1,
+                    contract.dp_budget.delta_per_epoch_millionths + 1,
+                ),
+                &governance_signing_key(),
+            )
+            .expect("shadow evaluation");
+
+        assert_eq!(artifact.verdict, ShadowPromotionVerdict::Reject);
+        assert!(!artifact.privacy_budget_status.within_budget);
+        assert!(
+            artifact
+                .failure_reasons
+                .iter()
+                .any(|reason| reason.contains("privacy budget exceeded"))
+        );
+        assert_eq!(
+            gate.events()[0].error_code.as_deref(),
+            Some("FE-PLC-SHADOW-0002")
+        );
+    }
+
+    #[test]
+    fn shadow_gate_rejects_regression_and_allows_signed_override() {
+        let contract = create_test_contract();
+        let mut gate = shadow_gate();
+        let rejected = gate
+            .evaluate_candidate(
+                &contract,
+                candidate_with_metrics(regressed_metrics(), 90_000, 900),
+                &governance_signing_key(),
+            )
+            .expect("shadow evaluation");
+        assert_eq!(rejected.verdict, ShadowPromotionVerdict::Reject);
+
+        let overridden = gate
+            .apply_human_override(
+                &rejected,
+                HumanOverrideRequest {
+                    operator_id: "governor-operator-7".to_string(),
+                    summary: "manual promotion required to preserve external SLA".to_string(),
+                    bypassed_risk_criteria: vec![
+                        "false_positive_rate <= baseline+5000".to_string(),
+                    ],
+                    acknowledged_bypass: true,
+                },
+                &governance_signing_key(),
+            )
+            .expect("override");
+
+        assert_eq!(overridden.verdict, ShadowPromotionVerdict::OverrideApproved);
+        assert!(overridden.human_override.is_some());
+        assert_eq!(gate.events().last().expect("event").event, "human_override");
+        assert_eq!(
+            gate.events().last().expect("event").outcome,
+            "override_approved"
+        );
+    }
+
+    #[test]
+    fn shadow_gate_triggers_automatic_rollback_on_post_deployment_regression() {
+        let contract = create_test_contract();
+        let mut gate = shadow_gate();
+        let artifact = gate
+            .evaluate_candidate(
+                &contract,
+                candidate_with_metrics(improved_metrics(), 90_000, 900),
+                &governance_signing_key(),
+            )
+            .expect("shadow evaluation");
+        assert_eq!(artifact.verdict, ShadowPromotionVerdict::Pass);
+
+        let rollback = gate
+            .evaluate_post_deployment_metrics(
+                &artifact,
+                regressed_metrics(),
+                &governance_signing_key(),
+            )
+            .expect("post deployment check")
+            .expect("rollback must trigger");
+
+        assert_eq!(rollback.policy_id, artifact.policy_id);
+        assert!(!rollback.triggered_regressions.is_empty());
+        assert_eq!(gate.active_artifact(&artifact.policy_id), None);
+        assert_eq!(
+            gate.events().last().expect("event").event,
+            "automatic_rollback"
+        );
+        assert_eq!(
+            gate.events().last().expect("event").error_code.as_deref(),
+            Some("FE-PLC-SHADOW-0007")
+        );
+    }
+
+    #[test]
+    fn shadow_gate_events_have_stable_fields() {
+        let contract = create_test_contract();
+        let mut gate = shadow_gate();
+        let artifact = gate
+            .evaluate_candidate(
+                &contract,
+                candidate_with_metrics(improved_metrics(), 90_000, 900),
+                &governance_signing_key(),
+            )
+            .expect("shadow evaluation");
+        let event = gate.events().last().expect("event");
+
+        assert_eq!(event.trace_id, artifact.trace_id);
+        assert_eq!(event.decision_id, artifact.decision_id);
+        assert_eq!(event.policy_id, artifact.policy_id);
+        assert_eq!(event.component, "shadow_evaluation_gate");
+        assert_eq!(event.event, "shadow_evaluation");
+        assert_eq!(event.outcome, "pass");
+        assert!(event.error_code.is_none());
+    }
+
+    #[test]
+    fn shadow_gate_property_any_criterion_failure_prevents_pass() {
+        let contract = create_test_contract();
+
+        for budget_ok in [true, false] {
+            for regression in [false, true] {
+                for improvement in [false, true] {
+                    for deterministic in [true, false] {
+                        let mut gate = shadow_gate();
+
+                        let mut metrics = if regression {
+                            regressed_metrics()
+                        } else if improvement {
+                            improved_metrics()
+                        } else {
+                            baseline_metrics()
+                        };
+
+                        // Mixed case: include a significant improvement while also regressing one metric.
+                        if regression && improvement {
+                            metrics.values_millionths.insert(
+                                SafetyMetric::DriftDetectionAccuracy,
+                                baseline_metrics()
+                                    .metric_value(SafetyMetric::DriftDetectionAccuracy)
+                                    + 10_000,
+                            );
+                        }
+
+                        let mut candidate = candidate_with_metrics(
+                            metrics,
+                            if budget_ok {
+                                90_000
+                            } else {
+                                contract.dp_budget.epsilon_per_epoch_millionths + 1
+                            },
+                            if budget_ok {
+                                900
+                            } else {
+                                contract.dp_budget.delta_per_epoch_millionths + 1
+                            },
+                        );
+                        if !deterministic {
+                            candidate.replay_reference.replay_seed_hash = [0u8; 32];
+                        }
+
+                        let result = gate.evaluate_candidate(
+                            &contract,
+                            candidate,
+                            &governance_signing_key(),
+                        );
+                        let should_pass = budget_ok && !regression && improvement && deterministic;
+                        match result {
+                            Ok(artifact) => {
+                                assert_eq!(
+                                    artifact.verdict == ShadowPromotionVerdict::Pass,
+                                    should_pass
+                                );
+                            }
+                            Err(_) => {
+                                assert!(!deterministic);
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
