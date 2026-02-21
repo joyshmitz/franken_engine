@@ -1,23 +1,42 @@
-# franken-engine reproducibility lock
-schema_version = "franken-engine.repro-lock.v1"
-generated_at_utc = "1970-01-01T00:00:00Z"
-manifest_id = "REPLACE_WITH_MANIFEST_ID"
-source_commit = "REPLACE_WITH_GIT_COMMIT_SHA"
-
-[[entry]]
-kind = "input"
-path = "REPLACE_WITH_INPUT_PATH"
-sha256 = "REPLACE_WITH_INPUT_SHA256"
-bytes = 0
-
-[[entry]]
-kind = "output"
-path = "REPLACE_WITH_OUTPUT_PATH"
-sha256 = "REPLACE_WITH_OUTPUT_SHA256"
-bytes = 0
-
-[[entry]]
-kind = "metadata"
-path = "env.json"
-sha256 = "REPLACE_WITH_ENV_SHA256"
-bytes = 0
+{
+  "schema_version": "franken-engine.repro-lock.v1",
+  "schema_hash": "sha256:REPLACE_WITH_SCHEMA_HASH",
+  "generated_at_utc": "1970-01-01T00:00:00Z",
+  "lock_id": "REPLACE_WITH_LOCK_ID",
+  "manifest_id": "REPLACE_WITH_MANIFEST_ID",
+  "source_commit": "REPLACE_WITH_GIT_COMMIT_SHA",
+  "determinism": {
+    "allow_network": false,
+    "allow_wall_clock": false,
+    "allow_randomness": false,
+    "max_clock_skew_seconds": 0
+  },
+  "commands": [
+    "REPLACE_WITH_EXACT_COMMAND_1",
+    "REPLACE_WITH_EXACT_COMMAND_2"
+  ],
+  "inputs": [
+    {
+      "path": "REPLACE_WITH_INPUT_PATH",
+      "sha256": "REPLACE_WITH_INPUT_SHA256",
+      "bytes": 0,
+      "kind": "input"
+    }
+  ],
+  "expected_outputs": [
+    {
+      "path": "REPLACE_WITH_OUTPUT_PATH",
+      "sha256": "REPLACE_WITH_OUTPUT_SHA256",
+      "bytes": 0,
+      "kind": "output"
+    }
+  ],
+  "replay": {
+    "trace_id": "REPLACE_WITH_TRACE_ID",
+    "replay_pointer": "replay://REPLACE_WITH_REPLAY_ID"
+  },
+  "verification": {
+    "command": "frankenctl repro verify --bundle artifacts/REPLACE_WITH_BUNDLE_ID --output artifacts/REPLACE_WITH_BUNDLE_ID/verify_report.json",
+    "expected_verdict": "pass"
+  }
+}

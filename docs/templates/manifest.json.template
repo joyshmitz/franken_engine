@@ -1,20 +1,48 @@
 {
   "schema_version": "franken-engine.manifest.v1",
+  "schema_hash": "sha256:REPLACE_WITH_SCHEMA_HASH",
   "manifest_id": "REPLACE_WITH_MANIFEST_ID",
   "generated_at_utc": "1970-01-01T00:00:00Z",
-  "claim_scope": [
-    "performance",
-    "security"
-  ],
-  "description": "REPLACE_WITH_EXPERIMENT_DESCRIPTION",
+  "claim": {
+    "claim_id": "REPLACE_WITH_CLAIM_ID",
+    "class": "PERFORMANCE",
+    "statement": "REPLACE_WITH_CLAIM_STATEMENT",
+    "status": "observed",
+    "bundle_root": "artifacts/REPLACE_WITH_BUNDLE_ID"
+  },
   "source_revision": {
     "repo": "franken_engine",
-    "commit": "REPLACE_WITH_GIT_COMMIT_SHA",
-    "branch": "main"
+    "branch": "main",
+    "commit": "REPLACE_WITH_GIT_COMMIT_SHA"
   },
-  "commands": [
-    "REPLACE_WITH_EXACT_COMMAND"
-  ],
+  "provenance": {
+    "trace_id": "REPLACE_WITH_TRACE_ID",
+    "decision_id": "REPLACE_WITH_DECISION_ID",
+    "policy_id": "REPLACE_WITH_POLICY_ID",
+    "replay_pointer": "replay://REPLACE_WITH_REPLAY_ID",
+    "evidence_pointer": "evidence://REPLACE_WITH_EVIDENCE_ID",
+    "receipt_ids": [
+      "REPLACE_WITH_RECEIPT_ID"
+    ]
+  },
+  "artifacts": {
+    "env": {
+      "path": "env.json",
+      "sha256": "REPLACE_WITH_ENV_SHA256"
+    },
+    "lock": {
+      "path": "repro.lock",
+      "sha256": "REPLACE_WITH_LOCK_SHA256"
+    },
+    "commands": {
+      "path": "commands.txt",
+      "sha256": "REPLACE_WITH_COMMANDS_SHA256"
+    },
+    "results": {
+      "path": "results.json",
+      "sha256": "REPLACE_WITH_RESULTS_SHA256"
+    }
+  },
   "inputs": [
     {
       "path": "REPLACE_WITH_INPUT_PATH",
@@ -27,8 +55,19 @@
       "sha256": "REPLACE_WITH_OUTPUT_SHA256"
     }
   ],
-  "references": {
-    "env": "env.json",
-    "lock": "repro.lock"
+  "canonicalization": {
+    "format": "json",
+    "key_order": "lexicographic",
+    "newline": "lf",
+    "hash_algorithm": "sha256"
+  },
+  "validation": {
+    "validator": "frankenctl repro verify",
+    "error_taxonomy": "FE-REPRO-0001..FE-REPRO-0008"
+  },
+  "retention": {
+    "min_days": 365,
+    "high_impact_min_days": 730,
+    "rotation_policy": "archive-with-addressable-retrieval"
   }
 }

@@ -1,0 +1,3 @@
+cargo check -p frankenengine-engine --test reproducibility_contract
+cargo test -p frankenengine-engine --test reproducibility_contract
+cargo clippy -p frankenengine-engine --test reproducibility_contract -- -D warnings

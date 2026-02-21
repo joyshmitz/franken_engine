@@ -1,13 +1,13 @@
 # Reproducibility Contract Template
 
-This document defines the required contract for evidence bundles used to support FrankenEngine claims and deterministic replay workflows.
+Use this template set to build a deterministic reproducibility bundle for benchmark, security, compatibility, and replay claims.
 
-Required files per bundle:
+Required files:
 - `env.json`
 - `manifest.json`
 - `repro.lock`
 
-Optional supporting files:
+Recommended supporting files:
 - `commands.txt`
 - `results.json`
 - `README.md`
@@ -15,162 +15,150 @@ Optional supporting files:
 ## Directory Layout
 
 ```text
-artifacts/<claim_or_run_id>/
+artifacts/<bundle_id>/
   env.json
   manifest.json
   repro.lock
-  commands.txt           # recommended
-  results.json           # recommended
-  README.md              # recommended
-  payload/               # referenced artifacts
+  commands.txt
+  results.json
+  README.md
+  payload/
     ...
 ```
 
+## Schema Compatibility Rules
+
+- Current schema majors:
+  - `franken-engine.env.v1`
+  - `franken-engine.manifest.v1`
+  - `franken-engine.repro-lock.v1`
+- Optional additive fields are allowed within a major.
+- Required-field changes require a major version bump.
+- Validation is fail-closed for missing required fields.
+
+## Canonicalization Rules
+
+Contract files must serialize as canonical JSON:
+- UTF-8
+- lexicographic key ordering
+- LF newlines
+- stable array ordering
+- `sha256` digests computed over full canonical bytes
+
 ## 1) `env.json` Template
 
-`env.json` captures execution environment and runtime mode. Values should be concrete, not inferred.
+`env.json` captures runtime environment and policy context.
 
-```json
-{
-  "schema_version": "1.0",
-  "captured_at_utc": "2026-02-20T07:00:00Z",
-  "host": {
-    "os": "linux",
-    "kernel": "6.8.0",
-    "arch": "x86_64",
-    "cpu_model": "AMD EPYC ...",
-    "logical_cores": 32,
-    "memory_bytes": 137438953472
-  },
-  "toolchain": {
-    "rustc": "1.87.0-nightly",
-    "cargo": "1.87.0-nightly",
-    "frankenengine_git_commit": "abc123...",
-    "frankenengine_git_dirty": false
-  },
-  "runtime": {
-    "mode": "secure",
-    "lane": "hybrid",
-    "features": ["quickjs-native", "v8-native"]
-  },
-  "policy": {
-    "policy_version": "policy-2026-02-20",
-    "policy_digest_sha256": "..."
-  }
-}
-```
+Required fields:
+- `schema_version`
+- `schema_hash`
+- `captured_at_utc`
+- `project`
+- `host`
+- `toolchain`
+- `runtime`
+- `policy`
 
-Validation rules:
-- `schema_version`, `captured_at_utc`, `toolchain.frankenengine_git_commit`, and `runtime.mode` are required.
-- `captured_at_utc` must be RFC3339 UTC timestamp.
-- `frankenengine_git_dirty` must be explicitly true/false.
+Template file: `docs/templates/env.json.template`
 
 ## 2) `manifest.json` Template
 
-`manifest.json` is the canonical index of artifact files, hashes, and claim metadata.
+`manifest.json` is the authority index for claim metadata, provenance linkage, and artifact digests.
 
-```json
-{
-  "schema_version": "1.0",
-  "bundle_id": "claim-2026-02-20-001",
-  "claim": {
-    "class": "PERFORMANCE",
-    "statement": "Hybrid routing median latency <= 250ms under defined workload",
-    "source_location": "README.md#L359"
-  },
-  "source": {
-    "git_commit": "abc123...",
-    "git_branch": "main"
-  },
-  "files": [
-    {
-      "path": "env.json",
-      "sha256": "..."
-    },
-    {
-      "path": "repro.lock",
-      "sha256": "..."
-    },
-    {
-      "path": "results.json",
-      "sha256": "..."
-    }
-  ],
-  "generator": {
-    "name": "frankenctl",
-    "version": "0.1.0"
-  }
-}
-```
+Required fields:
+- `schema_version`
+- `schema_hash`
+- `manifest_id`
+- `generated_at_utc`
+- `claim`
+- `source_revision`
+- `provenance`
+- `artifacts`
+- `inputs`
+- `outputs`
+- `canonicalization`
+- `validation`
+- `retention`
 
-Validation rules:
-- `bundle_id` must be unique within artifact store.
-- Every listed file must exist and hash-match.
-- `claim.class` must be one of:
-  - `SECURITY`
-  - `PERFORMANCE`
-  - `COMPATIBILITY`
-  - `DETERMINISM`
-  - `GOVERNANCE`
+Template file: `docs/templates/manifest.json.template`
 
 ## 3) `repro.lock` Template
 
-`repro.lock` freezes command sequence and inputs used to regenerate results.
+`repro.lock` freezes the deterministic command recipe and expected outputs.
 
-```json
-{
-  "schema_version": "1.0",
-  "lock_id": "repro-2026-02-20-001",
-  "inputs": {
-    "dataset_ids": ["workload-ext-heavy-v1"],
-    "config_files": [
-      {
-        "path": "runtime/franken-engine.toml",
-        "sha256": "..."
-      }
-    ],
-    "policy_files": [
-      {
-        "path": "policies/default.toml",
-        "sha256": "..."
-      }
-    ]
-  },
-  "commands": [
-    "frankenctl benchmark run --suite extension-heavy --out ./artifacts/results.json",
-    "frankenctl replay run --trace trace_01J..."
-  ],
-  "expected_outputs": [
-    {
-      "path": "results.json",
-      "sha256": "..."
-    }
-  ],
-  "constraints": {
-    "allow_network": false,
-    "allow_time_drift_seconds": 0
-  }
-}
+Required fields:
+- `schema_version`
+- `schema_hash`
+- `generated_at_utc`
+- `lock_id`
+- `manifest_id`
+- `source_commit`
+- `determinism`
+- `commands`
+- `inputs`
+- `expected_outputs`
+- `replay`
+- `verification`
+
+Template file: `docs/templates/repro.lock.template`
+
+## Provenance Linkage Requirements
+
+`manifest.json.provenance` must include:
+- `trace_id`
+- `decision_id`
+- `policy_id`
+- `replay_pointer`
+- `evidence_pointer`
+- `receipt_ids`
+
+`manifest.json.artifacts` must reference `env.json` and `repro.lock` with matching digests.
+
+## Validator Contract (Deterministic)
+
+One-command verifier flow:
+
+```bash
+frankenctl repro verify --bundle artifacts/<bundle_id> --output artifacts/<bundle_id>/verify_report.json
 ```
 
-Validation rules:
-- `commands` must be complete and ordered.
-- Input hashes must resolve to present files.
-- `expected_outputs` hashes must match generated artifacts.
+Validator output must include stable fields:
+- `trace_id`
+- `decision_id`
+- `policy_id`
+- `component`
+- `event`
+- `outcome`
+- `error_code`
 
-## Generation Workflow
+Stable error taxonomy:
+- `FE-REPRO-0001` through `FE-REPRO-0008` (see `docs/REPRODUCIBILITY_CONTRACT.md`)
 
-1. Generate or collect runtime outputs.
-2. Capture environment metadata into `env.json`.
-3. Freeze reproduction recipe into `repro.lock`.
-4. Compute all hashes and emit `manifest.json`.
-5. Verify bundle by replaying `commands` and checking `expected_outputs`.
+## Fail-Closed and Degraded Mode
 
-## Publication Checklist
+- Missing/partial/stale/inconsistent bundles fail validation.
+- Degraded mode is diagnostic-only and cannot publish `observed` claims.
+- Any override must emit explicit override artifact with operator rationale.
 
-- Claim references bundle path and `bundle_id`.
-- `manifest.json` hashes validate.
-- Replay from `repro.lock` reproduces expected outputs.
-- Reviewer records pass/fail decision in release notes or PR discussion.
+## CI Gate Contract
 
-If checklist is incomplete, claim must be downgraded to intent-language.
+CI must fail if:
+- required files are missing,
+- schema validation fails,
+- any hash mismatch occurs,
+- locked commands fail,
+- expected outputs do not match declared digests.
+
+## Retention and Rotation
+
+- Minimum retention for published bundles: 365 days.
+- High-impact security/replay bundles: 730 days.
+- Rotation must keep content-addressable retrieval and audit traceability.
+
+## Operator Checklist
+
+1. Fill all template placeholders.
+2. Run deterministic verifier command.
+3. Confirm pass verdict and hash matches.
+4. Attach bundle path and verifier report to claim publication context.
+5. If validation fails, downgrade to intent-language.
