@@ -581,6 +581,18 @@ fn migration_policy_adr_contains_ci_enforcement_and_transition_timeline() {
 }
 
 #[test]
+fn version_matrix_workflow_runs_sqlite_policy_guard_check() {
+    let workflow_path = repo_root().join(".github/workflows/version_matrix_conformance.yml");
+    let workflow = fs::read_to_string(&workflow_path)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", workflow_path.display()));
+
+    assert!(
+        workflow.contains("./scripts/check_no_local_sqlite_wrappers.sh ci"),
+        "version_matrix_conformance workflow must run sqlite wrapper policy guard script"
+    );
+}
+
+#[test]
 fn repository_sqlite_policy_guard_passes() {
     let manifests = repo_manifests();
     let sources = repo_sources();

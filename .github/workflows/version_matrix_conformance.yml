@@ -1,0 +1,45 @@
+name: Version Matrix Conformance
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  matrix-conformance:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: [n, n_minus_1, n_plus_1]
+    env:
+      RUSTUP_TOOLCHAIN: nightly
+      VERSION_MATRIX_LANES: ${{ matrix.lane }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: version-matrix-conformance
+
+      - name: Enforce SQLite wrapper policy guard
+        run: ./scripts/check_no_local_sqlite_wrappers.sh ci
+
+      - name: Run version-matrix lane script
+        run: ./scripts/run_version_matrix_lane.sh ci
+
+      - name: Upload matrix artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: version-matrix-${{ matrix.lane }}
+          path: artifacts/version_matrix_lane/
