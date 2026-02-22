@@ -35,6 +35,10 @@ use crate::security_epoch::SecurityEpoch;
 use crate::signature_preimage::{
     Signature, SigningKey, VerificationKey, sign_preimage, verify_signature,
 };
+use crate::storage_adapter::{
+    BatchPutEntry, EventContext, MigrationReceipt, StorageAdapter, StorageError, StoreKind,
+    StoreQuery,
+};
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -1548,6 +1552,806 @@ impl WitnessStore {
             .filter(|w| w.lifecycle_state == state)
             .collect()
     }
+}
+
+// ---------------------------------------------------------------------------
+// WitnessIndexStore — storage-adapter backed witness/index persistence
+// ---------------------------------------------------------------------------
+
+const WITNESS_INDEX_SCHEMA_VERSION: u32 = 1;
+const TABLE_WITNESSES: &str = "witnesses";
+const TABLE_WITNESS_BY_ID: &str = "witness_by_id";
+const TABLE_WITNESS_BY_CAPABILITY: &str = "witness_by_capability";
+const TABLE_WITNESS_BY_EXTENSION: &str = "witness_by_extension";
+const TABLE_WITNESS_ESCROW_RECEIPTS: &str = "witness_escrow_receipts";
+
+/// Persisted witness record for `StoreKind::PlasWitness`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WitnessIndexRecord {
+    pub witness_id: EngineObjectId,
+    pub extension_id: EngineObjectId,
+    pub policy_id: EngineObjectId,
+    pub epoch: SecurityEpoch,
+    pub lifecycle_state: LifecycleState,
+    pub promotion_timestamp_ns: u64,
+    pub content_hash: ContentHash,
+    pub witness: CapabilityWitness,
+}
+
+impl WitnessIndexRecord {
+    fn cursor_key(&self) -> String {
+        format!(
+            "{:020}:{}:{}",
+            self.promotion_timestamp_ns,
+            self.content_hash.to_hex(),
+            hex::encode(self.witness_id.as_bytes())
+        )
+    }
+}
+
+/// Canonical receipt record for replay joins with witness state.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilityEscrowReceiptRecord {
+    pub receipt_id: String,
+    pub extension_id: EngineObjectId,
+    pub capability: Option<Capability>,
+    pub decision_kind: String,
+    pub outcome: String,
+    pub timestamp_ns: u64,
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub error_code: Option<String>,
+}
+
+impl CapabilityEscrowReceiptRecord {
+    fn sort_key(&self) -> String {
+        format!("{:020}:{}", self.timestamp_ns, self.receipt_id)
+    }
+}
+
+/// Deterministic query selector for witness retrieval.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WitnessIndexQuery {
+    pub extension_id: Option<EngineObjectId>,
+    pub policy_id: Option<EngineObjectId>,
+    pub epoch: Option<SecurityEpoch>,
+    pub lifecycle_state: Option<LifecycleState>,
+    pub capability: Option<Capability>,
+    pub start_timestamp_ns: Option<u64>,
+    pub end_timestamp_ns: Option<u64>,
+    pub include_revoked: bool,
+    pub cursor: Option<String>,
+    pub limit: usize,
+}
+
+impl Default for WitnessIndexQuery {
+    fn default() -> Self {
+        Self {
+            extension_id: None,
+            policy_id: None,
+            epoch: None,
+            lifecycle_state: None,
+            capability: None,
+            start_timestamp_ns: None,
+            end_timestamp_ns: None,
+            include_revoked: true,
+            cursor: None,
+            limit: 128,
+        }
+    }
+}
+
+/// Page of deterministically ordered witness records.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WitnessIndexPage {
+    pub records: Vec<WitnessIndexRecord>,
+    pub next_cursor: Option<String>,
+}
+
+/// Replay join query for witness state + escrow receipts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WitnessReplayJoinQuery {
+    pub extension_id: EngineObjectId,
+    pub start_timestamp_ns: Option<u64>,
+    pub end_timestamp_ns: Option<u64>,
+    pub include_revoked: bool,
+}
+
+/// Replay join output row for one witness window.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WitnessReplayJoinRow {
+    pub witness: WitnessIndexRecord,
+    pub receipts: Vec<CapabilityEscrowReceiptRecord>,
+}
+
+/// Structured event emitted by witness index operations.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WitnessIndexEvent {
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub component: String,
+    pub event: String,
+    pub outcome: String,
+    pub error_code: Option<String>,
+}
+
+/// Error taxonomy for witness/index persistence and replay joins.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WitnessIndexError {
+    Storage(StorageError),
+    Serialization { operation: String, detail: String },
+    CorruptRecord { key: String, detail: String },
+    InvalidInput { detail: String },
+}
+
+impl WitnessIndexError {
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::Storage(_) => "FE-WITIDX-0001",
+            Self::Serialization { .. } => "FE-WITIDX-0002",
+            Self::CorruptRecord { .. } => "FE-WITIDX-0003",
+            Self::InvalidInput { .. } => "FE-WITIDX-0004",
+        }
+    }
+}
+
+impl fmt::Display for WitnessIndexError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Storage(err) => write!(f, "storage error: {err}"),
+            Self::Serialization { operation, detail } => {
+                write!(f, "serialization error during {operation}: {detail}")
+            }
+            Self::CorruptRecord { key, detail } => {
+                write!(f, "corrupt record `{key}`: {detail}")
+            }
+            Self::InvalidInput { detail } => write!(f, "invalid input: {detail}"),
+        }
+    }
+}
+
+impl std::error::Error for WitnessIndexError {}
+
+impl From<StorageError> for WitnessIndexError {
+    fn from(value: StorageError) -> Self {
+        Self::Storage(value)
+    }
+}
+
+/// Typed PLAS witness/index store backed by the storage-adapter contract.
+#[derive(Debug)]
+pub struct WitnessIndexStore<A: StorageAdapter> {
+    adapter: A,
+    events: Vec<WitnessIndexEvent>,
+}
+
+impl<A: StorageAdapter> WitnessIndexStore<A> {
+    pub fn new(adapter: A) -> Self {
+        Self {
+            adapter,
+            events: Vec::new(),
+        }
+    }
+
+    pub fn into_inner(self) -> A {
+        self.adapter
+    }
+
+    pub fn events(&self) -> &[WitnessIndexEvent] {
+        &self.events
+    }
+
+    pub fn adapter_mut(&mut self) -> &mut A {
+        &mut self.adapter
+    }
+
+    pub fn ensure_schema_version(&self) -> Result<(), WitnessIndexError> {
+        self.adapter
+            .ensure_schema_version(WITNESS_INDEX_SCHEMA_VERSION)
+            .map_err(WitnessIndexError::from)
+    }
+
+    pub fn migrate_schema(
+        &mut self,
+        target_version: u32,
+        context: &EventContext,
+    ) -> Result<MigrationReceipt, WitnessIndexError> {
+        let result = self
+            .adapter
+            .migrate_to(target_version)
+            .map_err(WitnessIndexError::from);
+        self.emit_event(
+            context,
+            "migrate_schema",
+            if result.is_ok() { "ok" } else { "error" },
+            result.as_ref().err(),
+        );
+        result
+    }
+
+    /// Persist a witness plus deterministic index rows.
+    pub fn index_witness(
+        &mut self,
+        witness: &CapabilityWitness,
+        promotion_timestamp_ns: u64,
+        context: &EventContext,
+    ) -> Result<WitnessIndexRecord, WitnessIndexError> {
+        let result = (|| {
+            witness
+                .verify_integrity()
+                .map_err(|err| WitnessIndexError::InvalidInput {
+                    detail: format!("witness integrity verification failed: {err}"),
+                })?;
+
+            let record = WitnessIndexRecord {
+                witness_id: witness.witness_id.clone(),
+                extension_id: witness.extension_id.clone(),
+                policy_id: witness.policy_id.clone(),
+                epoch: witness.epoch,
+                lifecycle_state: witness.lifecycle_state,
+                promotion_timestamp_ns,
+                content_hash: witness.content_hash.clone(),
+                witness: witness.clone(),
+            };
+
+            let record_key = witness_record_key(&record);
+            let mut entries = Vec::new();
+
+            let mut witness_metadata = witness_index_table_metadata(TABLE_WITNESSES);
+            witness_metadata.insert(
+                "witness_id".to_string(),
+                hex::encode(record.witness_id.as_bytes()),
+            );
+            witness_metadata.insert(
+                "extension_id".to_string(),
+                hex::encode(record.extension_id.as_bytes()),
+            );
+            witness_metadata.insert(
+                "policy_id".to_string(),
+                hex::encode(record.policy_id.as_bytes()),
+            );
+            witness_metadata.insert("epoch".to_string(), record.epoch.as_u64().to_string());
+            witness_metadata.insert(
+                "lifecycle_state".to_string(),
+                record.lifecycle_state.to_string(),
+            );
+            witness_metadata.insert(
+                "promotion_timestamp_ns".to_string(),
+                record.promotion_timestamp_ns.to_string(),
+            );
+            witness_metadata.insert("content_hash".to_string(), record.content_hash.to_hex());
+            let witness_value =
+                serde_json::to_vec(&record).map_err(|err| WitnessIndexError::Serialization {
+                    operation: "serialize witness index record".to_string(),
+                    detail: err.to_string(),
+                })?;
+            entries.push(BatchPutEntry {
+                key: record_key.clone(),
+                value: witness_value,
+                metadata: witness_metadata,
+            });
+
+            entries.push(BatchPutEntry {
+                key: witness_by_id_key(&record.witness_id),
+                value: record_key.as_bytes().to_vec(),
+                metadata: witness_index_table_metadata(TABLE_WITNESS_BY_ID),
+            });
+            entries.push(BatchPutEntry {
+                key: witness_by_extension_key(&record),
+                value: record_key.as_bytes().to_vec(),
+                metadata: witness_index_table_metadata(TABLE_WITNESS_BY_EXTENSION),
+            });
+
+            for capability in &record.witness.required_capabilities {
+                entries.push(BatchPutEntry {
+                    key: witness_by_capability_key(capability, &record),
+                    value: record_key.as_bytes().to_vec(),
+                    metadata: witness_index_table_metadata(TABLE_WITNESS_BY_CAPABILITY),
+                });
+            }
+
+            self.adapter
+                .put_batch(StoreKind::PlasWitness, entries, context)
+                .map_err(WitnessIndexError::from)?;
+
+            Ok(record)
+        })();
+
+        self.emit_event(
+            context,
+            "index_witness",
+            if result.is_ok() { "ok" } else { "error" },
+            result.as_ref().err(),
+        );
+        result
+    }
+
+    /// Persist an escrow/grant/deny receipt for replay-join queries.
+    pub fn index_escrow_receipt(
+        &mut self,
+        receipt: CapabilityEscrowReceiptRecord,
+        context: &EventContext,
+    ) -> Result<(), WitnessIndexError> {
+        let result = (|| {
+            if receipt.receipt_id.trim().is_empty() {
+                return Err(WitnessIndexError::InvalidInput {
+                    detail: "receipt_id cannot be empty".to_string(),
+                });
+            }
+            if receipt.decision_kind.trim().is_empty() {
+                return Err(WitnessIndexError::InvalidInput {
+                    detail: "decision_kind cannot be empty".to_string(),
+                });
+            }
+            if receipt.outcome.trim().is_empty() {
+                return Err(WitnessIndexError::InvalidInput {
+                    detail: "outcome cannot be empty".to_string(),
+                });
+            }
+
+            let key = escrow_receipt_key(&receipt.extension_id, receipt.timestamp_ns, &receipt.receipt_id);
+            let mut metadata = witness_index_table_metadata(TABLE_WITNESS_ESCROW_RECEIPTS);
+            metadata.insert(
+                "extension_id".to_string(),
+                hex::encode(receipt.extension_id.as_bytes()),
+            );
+            metadata.insert("decision_kind".to_string(), receipt.decision_kind.clone());
+            metadata.insert("outcome".to_string(), receipt.outcome.clone());
+            metadata.insert("timestamp_ns".to_string(), receipt.timestamp_ns.to_string());
+            if let Some(capability) = &receipt.capability {
+                metadata.insert("capability".to_string(), capability.as_str().to_string());
+            }
+
+            let value =
+                serde_json::to_vec(&receipt).map_err(|err| WitnessIndexError::Serialization {
+                    operation: "serialize escrow receipt record".to_string(),
+                    detail: err.to_string(),
+                })?;
+            self.adapter
+                .put(StoreKind::PlasWitness, key, value, metadata, context)
+                .map_err(WitnessIndexError::from)?;
+            Ok(())
+        })();
+
+        self.emit_event(
+            context,
+            "index_escrow_receipt",
+            if result.is_ok() { "ok" } else { "error" },
+            result.as_ref().err(),
+        );
+        result
+    }
+
+    /// Lookup one witness by content-addressed witness id.
+    pub fn witness_by_id(
+        &mut self,
+        witness_id: &EngineObjectId,
+        context: &EventContext,
+    ) -> Result<Option<WitnessIndexRecord>, WitnessIndexError> {
+        let result = (|| {
+            let Some(pointer) = self
+                .adapter
+                .get(StoreKind::PlasWitness, &witness_by_id_key(witness_id), context)?
+            else {
+                return Ok(None);
+            };
+            let pointed_key =
+                String::from_utf8(pointer.value).map_err(|err| WitnessIndexError::CorruptRecord {
+                    key: pointer.key,
+                    detail: err.to_string(),
+                })?;
+            self.read_witness_record(&pointed_key, context)
+        })();
+
+        self.emit_event(
+            context,
+            "witness_by_id",
+            if result.is_ok() { "ok" } else { "error" },
+            result.as_ref().err(),
+        );
+        result
+    }
+
+    /// Deterministic witness retrieval with cursor pagination.
+    pub fn query_witnesses(
+        &mut self,
+        query: &WitnessIndexQuery,
+        context: &EventContext,
+    ) -> Result<WitnessIndexPage, WitnessIndexError> {
+        let result = (|| {
+            if query.limit == 0 {
+                return Err(WitnessIndexError::InvalidInput {
+                    detail: "query limit cannot be zero".to_string(),
+                });
+            }
+            let mut keyed = self.collect_filtered_witnesses(query, context)?;
+            keyed.sort_by(|(a, _), (b, _)| a.cmp(b));
+            if let Some(cursor) = &query.cursor {
+                keyed.retain(|(key, _)| key > cursor);
+            }
+
+            let has_more = keyed.len() > query.limit;
+            keyed.truncate(query.limit);
+            let next_cursor = if has_more {
+                keyed.last().map(|(key, _)| key.clone())
+            } else {
+                None
+            };
+            let records = keyed.into_iter().map(|(_, record)| record).collect();
+            Ok(WitnessIndexPage {
+                records,
+                next_cursor,
+            })
+        })();
+
+        self.emit_event(
+            context,
+            "query_witnesses",
+            if result.is_ok() { "ok" } else { "error" },
+            result.as_ref().err(),
+        );
+        result
+    }
+
+    /// Deterministic replay join between witness state windows and escrow receipts.
+    pub fn replay_join(
+        &mut self,
+        query: &WitnessReplayJoinQuery,
+        context: &EventContext,
+    ) -> Result<Vec<WitnessReplayJoinRow>, WitnessIndexError> {
+        let result = (|| {
+            let mut witness_query = WitnessIndexQuery {
+                extension_id: Some(query.extension_id.clone()),
+                include_revoked: query.include_revoked,
+                limit: usize::MAX,
+                ..WitnessIndexQuery::default()
+            };
+            // Ignore cursor for full replay windows.
+            witness_query.cursor = None;
+            let mut witnesses: Vec<WitnessIndexRecord> = self
+                .collect_filtered_witnesses(&witness_query, context)?
+                .into_iter()
+                .map(|(_, record)| record)
+                .collect();
+            witnesses.sort_by(|a, b| a.cursor_key().cmp(&b.cursor_key()));
+
+            let start_ns = query.start_timestamp_ns.unwrap_or(0);
+            let end_ns = query.end_timestamp_ns.unwrap_or(u64::MAX);
+            if start_ns > end_ns {
+                return Err(WitnessIndexError::InvalidInput {
+                    detail: "start_timestamp_ns cannot exceed end_timestamp_ns".to_string(),
+                });
+            }
+
+            let mut receipts = self.escrow_receipts_for_extension(&query.extension_id, context)?;
+            receipts.retain(|receipt| receipt.timestamp_ns >= start_ns && receipt.timestamp_ns <= end_ns);
+            receipts.sort_by(|a, b| a.sort_key().cmp(&b.sort_key()));
+
+            let mut rows = Vec::new();
+            for (idx, witness) in witnesses.iter().enumerate() {
+                let window_start = witness.promotion_timestamp_ns;
+                let window_end = witnesses
+                    .get(idx + 1)
+                    .map(|next| next.promotion_timestamp_ns)
+                    .unwrap_or(u64::MAX);
+
+                let effective_start = window_start.max(start_ns);
+                let effective_end_exclusive = window_end.min(end_ns.saturating_add(1));
+                if effective_start >= effective_end_exclusive {
+                    continue;
+                }
+
+                let mut window_receipts = Vec::new();
+                for receipt in &receipts {
+                    if receipt.timestamp_ns >= effective_start
+                        && receipt.timestamp_ns < effective_end_exclusive
+                    {
+                        window_receipts.push(receipt.clone());
+                    }
+                }
+                rows.push(WitnessReplayJoinRow {
+                    witness: witness.clone(),
+                    receipts: window_receipts,
+                });
+            }
+            rows.sort_by(|a, b| a.witness.cursor_key().cmp(&b.witness.cursor_key()));
+            Ok(rows)
+        })();
+
+        self.emit_event(
+            context,
+            "replay_join",
+            if result.is_ok() { "ok" } else { "error" },
+            result.as_ref().err(),
+        );
+        result
+    }
+
+    /// Deterministic snapshot hash for conformance checks.
+    pub fn deterministic_snapshot_hash(
+        &mut self,
+        extension_id: &EngineObjectId,
+        context: &EventContext,
+    ) -> Result<String, WitnessIndexError> {
+        let query = WitnessIndexQuery {
+            extension_id: Some(extension_id.clone()),
+            include_revoked: true,
+            limit: usize::MAX,
+            ..WitnessIndexQuery::default()
+        };
+        let mut witnesses: Vec<WitnessIndexRecord> = self
+            .collect_filtered_witnesses(&query, context)?
+            .into_iter()
+            .map(|(_, record)| record)
+            .collect();
+        witnesses.sort_by(|a, b| a.cursor_key().cmp(&b.cursor_key()));
+        let mut receipts = self.escrow_receipts_for_extension(extension_id, context)?;
+        receipts.sort_by(|a, b| a.sort_key().cmp(&b.sort_key()));
+
+        let payload = serde_json::to_vec(&(witnesses, receipts)).map_err(|err| {
+            WitnessIndexError::Serialization {
+                operation: "serialize witness snapshot hash payload".to_string(),
+                detail: err.to_string(),
+            }
+        })?;
+        Ok(ContentHash::compute(&payload).to_hex())
+    }
+
+    fn collect_filtered_witnesses(
+        &mut self,
+        query: &WitnessIndexQuery,
+        context: &EventContext,
+    ) -> Result<Vec<(String, WitnessIndexRecord)>, WitnessIndexError> {
+        let mut records = if let Some(capability) = &query.capability {
+            self.load_witnesses_from_pointer_prefix(
+                &witness_by_capability_prefix(capability),
+                context,
+            )?
+        } else if let Some(extension_id) = &query.extension_id {
+            self.load_witnesses_from_pointer_prefix(&witness_by_extension_prefix(extension_id), context)?
+        } else {
+            self.load_witnesses_from_table(context)?
+        };
+
+        records.retain(|record| witness_matches_query(record, query));
+
+        // Deduplicate by witness id in case index rows overlap.
+        let mut dedup = BTreeMap::<Vec<u8>, WitnessIndexRecord>::new();
+        for record in records {
+            dedup.insert(record.witness_id.as_bytes().to_vec(), record);
+        }
+
+        let out = dedup
+            .into_values()
+            .map(|record| (record.cursor_key(), record))
+            .collect();
+        Ok(out)
+    }
+
+    fn load_witnesses_from_table(
+        &mut self,
+        context: &EventContext,
+    ) -> Result<Vec<WitnessIndexRecord>, WitnessIndexError> {
+        let rows = self.adapter.query(
+            StoreKind::PlasWitness,
+            &StoreQuery {
+                key_prefix: Some(format!("{TABLE_WITNESSES}/")),
+                metadata_filters: BTreeMap::new(),
+                limit: None,
+            },
+            context,
+        )?;
+
+        let mut records = Vec::new();
+        for row in rows {
+            let decoded: WitnessIndexRecord =
+                serde_json::from_slice(&row.value).map_err(|err| WitnessIndexError::CorruptRecord {
+                    key: row.key,
+                    detail: err.to_string(),
+                })?;
+            records.push(decoded);
+        }
+        Ok(records)
+    }
+
+    fn load_witnesses_from_pointer_prefix(
+        &mut self,
+        prefix: &str,
+        context: &EventContext,
+    ) -> Result<Vec<WitnessIndexRecord>, WitnessIndexError> {
+        let pointers = self.adapter.query(
+            StoreKind::PlasWitness,
+            &StoreQuery {
+                key_prefix: Some(prefix.to_string()),
+                metadata_filters: BTreeMap::new(),
+                limit: None,
+            },
+            context,
+        )?;
+
+        let mut records = Vec::new();
+        for pointer in pointers {
+            let pointed_key =
+                String::from_utf8(pointer.value).map_err(|err| WitnessIndexError::CorruptRecord {
+                    key: pointer.key,
+                    detail: err.to_string(),
+                })?;
+            if let Some(record) = self.read_witness_record(&pointed_key, context)? {
+                records.push(record);
+            }
+        }
+        Ok(records)
+    }
+
+    fn read_witness_record(
+        &mut self,
+        key: &str,
+        context: &EventContext,
+    ) -> Result<Option<WitnessIndexRecord>, WitnessIndexError> {
+        let Some(record) = self.adapter.get(StoreKind::PlasWitness, key, context)? else {
+            return Ok(None);
+        };
+        let decoded: WitnessIndexRecord =
+            serde_json::from_slice(&record.value).map_err(|err| WitnessIndexError::CorruptRecord {
+                key: record.key,
+                detail: err.to_string(),
+            })?;
+        Ok(Some(decoded))
+    }
+
+    fn escrow_receipts_for_extension(
+        &mut self,
+        extension_id: &EngineObjectId,
+        context: &EventContext,
+    ) -> Result<Vec<CapabilityEscrowReceiptRecord>, WitnessIndexError> {
+        let rows = self.adapter.query(
+            StoreKind::PlasWitness,
+            &StoreQuery {
+                key_prefix: Some(escrow_receipt_prefix(extension_id)),
+                metadata_filters: BTreeMap::new(),
+                limit: None,
+            },
+            context,
+        )?;
+
+        let mut receipts = Vec::new();
+        for row in rows {
+            let decoded: CapabilityEscrowReceiptRecord = serde_json::from_slice(&row.value)
+                .map_err(|err| WitnessIndexError::CorruptRecord {
+                    key: row.key,
+                    detail: err.to_string(),
+                })?;
+            receipts.push(decoded);
+        }
+        Ok(receipts)
+    }
+
+    fn emit_event(
+        &mut self,
+        context: &EventContext,
+        event: &str,
+        outcome: &str,
+        error: Option<&WitnessIndexError>,
+    ) {
+        self.events.push(WitnessIndexEvent {
+            trace_id: context.trace_id.clone(),
+            decision_id: context.decision_id.clone(),
+            policy_id: context.policy_id.clone(),
+            component: "capability_witness_index".to_string(),
+            event: event.to_string(),
+            outcome: outcome.to_string(),
+            error_code: error.map(|err| err.code().to_string()),
+        });
+    }
+}
+
+fn witness_matches_query(record: &WitnessIndexRecord, query: &WitnessIndexQuery) -> bool {
+    if let Some(extension_id) = &query.extension_id && record.extension_id != *extension_id {
+        return false;
+    }
+    if let Some(policy_id) = &query.policy_id && record.policy_id != *policy_id {
+        return false;
+    }
+    if let Some(epoch) = query.epoch && record.epoch != epoch {
+        return false;
+    }
+    if let Some(lifecycle_state) = query.lifecycle_state && record.lifecycle_state != lifecycle_state {
+        return false;
+    }
+    if !query.include_revoked && record.lifecycle_state == LifecycleState::Revoked {
+        return false;
+    }
+    if let Some(capability) = &query.capability
+        && !record.witness.required_capabilities.contains(capability)
+    {
+        return false;
+    }
+    if let Some(start_timestamp_ns) = query.start_timestamp_ns
+        && record.promotion_timestamp_ns < start_timestamp_ns
+    {
+        return false;
+    }
+    if let Some(end_timestamp_ns) = query.end_timestamp_ns
+        && record.promotion_timestamp_ns > end_timestamp_ns
+    {
+        return false;
+    }
+    true
+}
+
+fn witness_index_table_metadata(table: &str) -> BTreeMap<String, String> {
+    let mut metadata = BTreeMap::new();
+    metadata.insert("table".to_string(), table.to_string());
+    metadata
+}
+
+fn object_id_segment(object_id: &EngineObjectId) -> String {
+    hex::encode(object_id.as_bytes())
+}
+
+fn capability_segment(capability: &Capability) -> String {
+    hex::encode(capability.as_str().as_bytes())
+}
+
+fn witness_record_key(record: &WitnessIndexRecord) -> String {
+    format!(
+        "{TABLE_WITNESSES}/{}/{:020}/{:020}/{}",
+        object_id_segment(&record.extension_id),
+        record.epoch.as_u64(),
+        record.promotion_timestamp_ns,
+        record.content_hash.to_hex()
+    )
+}
+
+fn witness_by_id_key(witness_id: &EngineObjectId) -> String {
+    format!("{TABLE_WITNESS_BY_ID}/{}", object_id_segment(witness_id))
+}
+
+fn witness_by_extension_prefix(extension_id: &EngineObjectId) -> String {
+    format!("{TABLE_WITNESS_BY_EXTENSION}/{}/", object_id_segment(extension_id))
+}
+
+fn witness_by_extension_key(record: &WitnessIndexRecord) -> String {
+    format!(
+        "{}{:020}/{}/{}",
+        witness_by_extension_prefix(&record.extension_id),
+        record.promotion_timestamp_ns,
+        record.content_hash.to_hex(),
+        object_id_segment(&record.witness_id)
+    )
+}
+
+fn witness_by_capability_prefix(capability: &Capability) -> String {
+    format!("{TABLE_WITNESS_BY_CAPABILITY}/{}/", capability_segment(capability))
+}
+
+fn witness_by_capability_key(capability: &Capability, record: &WitnessIndexRecord) -> String {
+    format!(
+        "{}/{}/{:020}/{}/{}",
+        witness_by_capability_prefix(capability).trim_end_matches('/'),
+        object_id_segment(&record.extension_id),
+        record.promotion_timestamp_ns,
+        record.content_hash.to_hex(),
+        object_id_segment(&record.witness_id)
+    )
+}
+
+fn escrow_receipt_prefix(extension_id: &EngineObjectId) -> String {
+    format!(
+        "{TABLE_WITNESS_ESCROW_RECEIPTS}/{}/",
+        object_id_segment(extension_id)
+    )
+}
+
+fn escrow_receipt_key(extension_id: &EngineObjectId, timestamp_ns: u64, receipt_id: &str) -> String {
+    format!(
+        "{}{:020}/{}",
+        escrow_receipt_prefix(extension_id),
+        timestamp_ns,
+        receipt_id
+    )
 }
 
 // ---------------------------------------------------------------------------
