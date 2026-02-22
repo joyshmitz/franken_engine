@@ -7,14 +7,14 @@ cd "$root_dir"
 mode="${1:-ci}"
 toolchain="${RUSTUP_TOOLCHAIN:-nightly}"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
-target_dir="${CARGO_TARGET_DIR:-/tmp/rch_target_franken_engine_shadow_evaluation_gate_${timestamp}}"
-artifact_root="${SHADOW_EVAL_GATE_ARTIFACT_ROOT:-artifacts/shadow_evaluation_gate}"
+target_dir="${CARGO_TARGET_DIR:-/tmp/rch_target_franken_engine_plas_benchmark_bundle_${timestamp}}"
+artifact_root="${PLAS_BENCHMARK_BUNDLE_ARTIFACT_ROOT:-artifacts/plas_benchmark_bundle}"
 run_dir="$artifact_root/$timestamp"
 manifest_path="$run_dir/run_manifest.json"
-events_path="$run_dir/shadow_evaluation_gate_events.jsonl"
+events_path="$run_dir/plas_benchmark_bundle_events.jsonl"
 logs_dir="$run_dir/logs"
 rch_timeout_seconds="${RCH_EXEC_TIMEOUT_SECONDS:-900}"
-bead_id="${SHADOW_EVAL_GATE_BEAD_ID:-bd-24ie}"
+bead_id="${PLAS_BENCHMARK_BUNDLE_BEAD_ID:-bd-25b7}"
 
 mkdir -p "$run_dir" "$logs_dir"
 
@@ -65,30 +65,31 @@ json_or_null() {
 run_mode() {
   case "$mode" in
     check)
-      run_step "cargo check -p frankenengine-engine --test shadow_evaluation_gate" \
-        cargo check -p frankenengine-engine --test shadow_evaluation_gate
+      run_step "cargo check -p frankenengine-engine --test plas_benchmark_bundle" \
+        cargo check -p frankenengine-engine --test plas_benchmark_bundle
       ;;
     test)
-      run_step "cargo test -p frankenengine-engine --test shadow_evaluation_gate" \
-        cargo test -p frankenengine-engine --test shadow_evaluation_gate
+      run_step "cargo test -p frankenengine-engine --test plas_benchmark_bundle" \
+        cargo test -p frankenengine-engine --test plas_benchmark_bundle
       ;;
     clippy)
-      run_step "cargo clippy -p frankenengine-engine --test shadow_evaluation_gate -- -D warnings" \
-        cargo clippy -p frankenengine-engine --test shadow_evaluation_gate -- -D warnings
+      run_step "cargo clippy -p frankenengine-engine --test plas_benchmark_bundle -- -D warnings" \
+        cargo clippy -p frankenengine-engine --test plas_benchmark_bundle -- -D warnings
       ;;
     ci)
-      run_step "cargo check -p frankenengine-engine --test shadow_evaluation_gate" \
-        cargo check -p frankenengine-engine --test shadow_evaluation_gate
-      run_step "cargo test -p frankenengine-engine --test shadow_evaluation_gate" \
-        cargo test -p frankenengine-engine --test shadow_evaluation_gate
-      run_step "cargo clippy -p frankenengine-engine --test shadow_evaluation_gate -- -D warnings" \
-        cargo clippy -p frankenengine-engine --test shadow_evaluation_gate -- -D warnings
+      run_step "cargo check -p frankenengine-engine --test plas_benchmark_bundle" \
+        cargo check -p frankenengine-engine --test plas_benchmark_bundle
+      run_step "cargo test -p frankenengine-engine --test plas_benchmark_bundle" \
+        cargo test -p frankenengine-engine --test plas_benchmark_bundle
+      run_step "cargo clippy -p frankenengine-engine --test plas_benchmark_bundle -- -D warnings" \
+        cargo clippy -p frankenengine-engine --test plas_benchmark_bundle -- -D warnings
       ;;
     *)
       echo "usage: $0 [check|test|clippy|ci]" >&2
       exit 2
       ;;
   esac
+
   mode_completed=true
 }
 
@@ -106,7 +107,7 @@ write_manifest() {
     error_code_json='null'
   else
     outcome="fail"
-    error_code_json='"FE-SHADOW-EVAL-GATE-0010"'
+    error_code_json='"FE-PLAS-BENCH-2004"'
   fi
 
   git_commit="$(git rev-parse HEAD 2>/dev/null || echo "unknown")"
@@ -121,20 +122,20 @@ write_manifest() {
 
   {
     echo "{"
-    echo '  "schema_version": "franken-engine.shadow-evaluation-gate.run-manifest.v1",'
-    echo '  "component": "shadow_evaluation_gate_suite",'
-    echo "  \"bead_id\": \"${bead_id}\","
-    echo "  \"mode\": \"${mode}\","
-    echo "  \"generated_at_utc\": \"${timestamp}\","
-    echo "  \"toolchain\": \"${toolchain}\","
-    echo "  \"cargo_target_dir\": \"${target_dir}\","
-    echo "  \"git_commit\": \"${git_commit}\","
+    echo '  "schema_version": "franken-engine.plas-benchmark-bundle.run-manifest.v1",'
+    echo '  "component": "plas_benchmark_bundle_suite",'
+    echo "  \"bead_id\": \"${bead_id}\"," 
+    echo "  \"mode\": \"${mode}\"," 
+    echo "  \"generated_at_utc\": \"${timestamp}\"," 
+    echo "  \"toolchain\": \"${toolchain}\"," 
+    echo "  \"cargo_target_dir\": \"${target_dir}\"," 
+    echo "  \"git_commit\": \"${git_commit}\"," 
     echo "  \"dirty_worktree\": ${dirty_worktree},"
-    echo "  \"outcome\": \"${outcome}\","
+    echo "  \"outcome\": \"${outcome}\"," 
     echo "  \"mode_completed\": ${mode_completed},"
     echo "  \"commands_executed\": ${#commands_run[@]},"
     if [[ -n "$failed_command" ]]; then
-      echo "  \"failed_command\": \"${failed_command}\","
+      echo "  \"failed_command\": \"${failed_command}\"," 
     fi
     echo "  \"failed_log\": ${failed_log_json},"
     echo '  "commands": ['
@@ -156,29 +157,29 @@ write_manifest() {
     done
     echo '  ],'
     echo '  "artifacts": {'
-    echo "    \"command_log\": \"${run_dir}/commands.txt\","
-    echo "    \"logs_dir\": \"${logs_dir}\","
-    echo "    \"manifest\": \"${manifest_path}\","
-    echo "    \"events\": \"${events_path}\","
-    echo '    "source_module": "crates/franken-engine/src/privacy_learning_contract.rs",'
-    echo '    "integration_test": "crates/franken-engine/tests/shadow_evaluation_gate.rs"'
+    echo "    \"command_log\": \"${run_dir}/commands.txt\"," 
+    echo "    \"logs_dir\": \"${logs_dir}\"," 
+    echo "    \"manifest\": \"${manifest_path}\"," 
+    echo "    \"events\": \"${events_path}\"," 
+    echo '    "source_module": "crates/franken-engine/src/plas_benchmark_bundle.rs",'
+    echo '    "integration_test": "crates/franken-engine/tests/plas_benchmark_bundle.rs"'
     echo '  },'
     echo '  "operator_verification": ['
-    echo "    \"cat ${manifest_path}\","
-    echo "    \"cat ${events_path}\","
-    echo "    \"cat ${run_dir}/commands.txt\","
-    echo "    \"find ${logs_dir} -maxdepth 1 -type f | sort\","
+    echo "    \"cat ${manifest_path}\"," 
+    echo "    \"cat ${events_path}\"," 
+    echo "    \"cat ${run_dir}/commands.txt\"," 
+    echo "    \"find ${logs_dir} -maxdepth 1 -type f | sort\"," 
     echo "    \"${0} ci\""
     echo '  ]'
     echo "}"
   } >"$manifest_path"
 
   {
-    echo "{\"trace_id\":\"trace-shadow-eval-${timestamp}\",\"decision_id\":\"decision-shadow-eval-${timestamp}\",\"policy_id\":\"policy-shadow-eval-v1\",\"component\":\"shadow_evaluation_gate_suite\",\"event\":\"suite_completed\",\"outcome\":\"${outcome}\",\"error_code\":${error_code_json}}"
+    echo "{\"trace_id\":\"trace-plas-benchmark-bundle-${timestamp}\",\"decision_id\":\"decision-plas-benchmark-bundle-${timestamp}\",\"policy_id\":\"policy-plas-benchmark-bundle-v1\",\"component\":\"plas_benchmark_bundle_suite\",\"event\":\"suite_completed\",\"outcome\":\"${outcome}\",\"error_code\":${error_code_json}}"
   } >"$events_path"
 
-  echo "Shadow evaluation gate manifest: $manifest_path"
-  echo "Shadow evaluation gate events: $events_path"
+  echo "PLAS benchmark bundle manifest: $manifest_path"
+  echo "PLAS benchmark bundle events: $events_path"
 }
 
 trap 'write_manifest $?' EXIT

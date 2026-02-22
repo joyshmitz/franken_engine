@@ -7,14 +7,14 @@ cd "$root_dir"
 mode="${1:-ci}"
 toolchain="${RUSTUP_TOOLCHAIN:-nightly}"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
-target_dir="${CARGO_TARGET_DIR:-/tmp/rch_target_franken_engine_shadow_evaluation_gate_${timestamp}}"
-artifact_root="${SHADOW_EVAL_GATE_ARTIFACT_ROOT:-artifacts/shadow_evaluation_gate}"
+target_dir="${CARGO_TARGET_DIR:-/tmp/rch_target_franken_engine_plas_lockstep_${timestamp}}"
+artifact_root="${PLAS_LOCKSTEP_ARTIFACT_ROOT:-artifacts/plas_lockstep}"
 run_dir="$artifact_root/$timestamp"
 manifest_path="$run_dir/run_manifest.json"
-events_path="$run_dir/shadow_evaluation_gate_events.jsonl"
+events_path="$run_dir/plas_lockstep_events.jsonl"
 logs_dir="$run_dir/logs"
 rch_timeout_seconds="${RCH_EXEC_TIMEOUT_SECONDS:-900}"
-bead_id="${SHADOW_EVAL_GATE_BEAD_ID:-bd-24ie}"
+bead_id="${PLAS_LOCKSTEP_BEAD_ID:-bd-32d3}"
 
 mkdir -p "$run_dir" "$logs_dir"
 
@@ -37,7 +37,6 @@ run_step() {
   commands_run+=("$command_text")
   command_logs+=("$log_path")
   echo "==> $command_text"
-
   if run_rch "$@" > >(tee "$log_path") 2>&1; then
     return 0
   fi
@@ -65,24 +64,24 @@ json_or_null() {
 run_mode() {
   case "$mode" in
     check)
-      run_step "cargo check -p frankenengine-engine --test shadow_evaluation_gate" \
-        cargo check -p frankenengine-engine --test shadow_evaluation_gate
+      run_step "cargo check -p frankenengine-engine --test plas_lockstep_integration" \
+        cargo check -p frankenengine-engine --test plas_lockstep_integration
       ;;
     test)
-      run_step "cargo test -p frankenengine-engine --test shadow_evaluation_gate" \
-        cargo test -p frankenengine-engine --test shadow_evaluation_gate
+      run_step "cargo test -p frankenengine-engine --test plas_lockstep_integration" \
+        cargo test -p frankenengine-engine --test plas_lockstep_integration
       ;;
     clippy)
-      run_step "cargo clippy -p frankenengine-engine --test shadow_evaluation_gate -- -D warnings" \
-        cargo clippy -p frankenengine-engine --test shadow_evaluation_gate -- -D warnings
+      run_step "cargo clippy -p frankenengine-engine --test plas_lockstep_integration -- -D warnings" \
+        cargo clippy -p frankenengine-engine --test plas_lockstep_integration -- -D warnings
       ;;
     ci)
-      run_step "cargo check -p frankenengine-engine --test shadow_evaluation_gate" \
-        cargo check -p frankenengine-engine --test shadow_evaluation_gate
-      run_step "cargo test -p frankenengine-engine --test shadow_evaluation_gate" \
-        cargo test -p frankenengine-engine --test shadow_evaluation_gate
-      run_step "cargo clippy -p frankenengine-engine --test shadow_evaluation_gate -- -D warnings" \
-        cargo clippy -p frankenengine-engine --test shadow_evaluation_gate -- -D warnings
+      run_step "cargo check -p frankenengine-engine --test plas_lockstep_integration" \
+        cargo check -p frankenengine-engine --test plas_lockstep_integration
+      run_step "cargo test -p frankenengine-engine --test plas_lockstep_integration" \
+        cargo test -p frankenengine-engine --test plas_lockstep_integration
+      run_step "cargo clippy -p frankenengine-engine --test plas_lockstep_integration -- -D warnings" \
+        cargo clippy -p frankenengine-engine --test plas_lockstep_integration -- -D warnings
       ;;
     *)
       echo "usage: $0 [check|test|clippy|ci]" >&2
@@ -106,7 +105,7 @@ write_manifest() {
     error_code_json='null'
   else
     outcome="fail"
-    error_code_json='"FE-SHADOW-EVAL-GATE-0010"'
+    error_code_json='"FE-PLAS-LOCKSTEP-0010"'
   fi
 
   git_commit="$(git rev-parse HEAD 2>/dev/null || echo "unknown")"
@@ -121,8 +120,8 @@ write_manifest() {
 
   {
     echo "{"
-    echo '  "schema_version": "franken-engine.shadow-evaluation-gate.run-manifest.v1",'
-    echo '  "component": "shadow_evaluation_gate_suite",'
+    echo '  "schema_version": "franken-engine.plas-lockstep-suite.run-manifest.v1",'
+    echo '  "component": "plas_lockstep_suite",'
     echo "  \"bead_id\": \"${bead_id}\","
     echo "  \"mode\": \"${mode}\","
     echo "  \"generated_at_utc\": \"${timestamp}\","
@@ -160,8 +159,8 @@ write_manifest() {
     echo "    \"logs_dir\": \"${logs_dir}\","
     echo "    \"manifest\": \"${manifest_path}\","
     echo "    \"events\": \"${events_path}\","
-    echo '    "source_module": "crates/franken-engine/src/privacy_learning_contract.rs",'
-    echo '    "integration_test": "crates/franken-engine/tests/shadow_evaluation_gate.rs"'
+    echo '    "source_module": "crates/franken-engine/src/plas_lockstep.rs",'
+    echo '    "integration_test": "crates/franken-engine/tests/plas_lockstep_integration.rs"'
     echo '  },'
     echo '  "operator_verification": ['
     echo "    \"cat ${manifest_path}\","
@@ -174,11 +173,11 @@ write_manifest() {
   } >"$manifest_path"
 
   {
-    echo "{\"trace_id\":\"trace-shadow-eval-${timestamp}\",\"decision_id\":\"decision-shadow-eval-${timestamp}\",\"policy_id\":\"policy-shadow-eval-v1\",\"component\":\"shadow_evaluation_gate_suite\",\"event\":\"suite_completed\",\"outcome\":\"${outcome}\",\"error_code\":${error_code_json}}"
+    echo "{\"trace_id\":\"trace-plas-lockstep-${timestamp}\",\"decision_id\":\"decision-plas-lockstep-${timestamp}\",\"policy_id\":\"policy-plas-lockstep-v1\",\"component\":\"plas_lockstep_suite\",\"event\":\"suite_completed\",\"outcome\":\"${outcome}\",\"error_code\":${error_code_json}}"
   } >"$events_path"
 
-  echo "Shadow evaluation gate manifest: $manifest_path"
-  echo "Shadow evaluation gate events: $events_path"
+  echo "PLAS lockstep run manifest: $manifest_path"
+  echo "PLAS lockstep events: $events_path"
 }
 
 trap 'write_manifest $?' EXIT
