@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![allow(clippy::too_many_arguments)]
 
 pub fn placeholder_extension_host_symbol() {}
 
@@ -177,9 +178,7 @@ impl ManifestValidationError {
             Self::InvalidCapabilityLattice {
                 declared,
                 missing_implied,
-            } => format!(
-                "capability `{declared}` requires implied capability `{missing_implied}`"
-            ),
+            } => format!("capability `{declared}` requires implied capability `{missing_implied}`"),
             Self::MissingPublisherSignature => {
                 "publisher_signature is required for signed supply-chain manifests".to_string()
             }
@@ -1601,6 +1600,21 @@ impl HostcallType {
     pub const fn is_sink(self) -> bool {
         matches!(self, Self::FsWrite | Self::NetworkSend | Self::IpcSend)
     }
+
+    pub const fn default_escrow_route(self) -> CapabilityEscrowRoute {
+        match self {
+            Self::FsWrite | Self::NetworkSend | Self::ProcessSpawn | Self::IpcSend => {
+                CapabilityEscrowRoute::Challenge
+            }
+            Self::FsRead
+            | Self::NetworkRecv
+            | Self::EnvRead
+            | Self::MemAlloc
+            | Self::TimerCreate
+            | Self::CryptoOp
+            | Self::IpcRecv => CapabilityEscrowRoute::Sandbox,
+        }
+    }
 }
 
 impl fmt::Display for HostcallType {
@@ -1617,6 +1631,11 @@ pub enum DenialReason {
     },
     CapabilityEscalation {
         attempted: Capability,
+    },
+    CapabilityEscrowPending {
+        attempted: Capability,
+        action: CapabilityEscrowRoute,
+        escrow_id: String,
     },
 }
 
@@ -1703,6 +1722,1563 @@ impl HostcallSinkPolicy {
 pub struct HostcallDispatchOutcome<T> {
     pub result: HostcallResult,
     pub output: Option<Labeled<T>>,
+}
+
+const CAPABILITY_ESCROW_COMPONENT: &str = "capability_escrow_gateway";
+const ESCROW_CHALLENGE_ERROR_CODE: &str = "FE-ESCROW-0001";
+const ESCROW_SANDBOX_ERROR_CODE: &str = "FE-ESCROW-0002";
+const ESCROW_FLOOD_ERROR_CODE: &str = "FE-ESCROW-0003";
+const ESCROW_MANUAL_DENY_ERROR_CODE: &str = "FE-ESCROW-0004";
+const ESCROW_EXPIRED_ERROR_CODE: &str = "FE-ESCROW-0005";
+const ESCROW_GRANT_INVALID_ERROR_CODE: &str = "FE-ESCROW-0006";
+const ESCROW_GRANT_EXPIRED_ERROR_CODE: &str = "FE-ESCROW-0007";
+const ESCROW_GRANT_EXHAUSTED_ERROR_CODE: &str = "FE-ESCROW-0008";
+const ESCROW_POST_REVIEW_ERROR_CODE: &str = "FE-ESCROW-0009";
+const ESCROW_RECEIPT_EMISSION_ERROR_CODE: &str = "FE-ESCROW-0010";
+const DEFAULT_ESCROW_REQUEST_TTL_NS: u64 = 300_000_000_000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CapabilityEscrowRoute {
+    Challenge,
+    Sandbox,
+}
+
+impl CapabilityEscrowRoute {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Challenge => "challenge",
+            Self::Sandbox => "sandbox",
+        }
+    }
+}
+
+impl fmt::Display for CapabilityEscrowRoute {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str((*self).as_str())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CapabilityEscrowState {
+    Requested,
+    Challenged,
+    Sandboxed,
+    Approved,
+    Denied,
+    Expired,
+}
+
+impl CapabilityEscrowState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Requested => "requested",
+            Self::Challenged => "challenged",
+            Self::Sandboxed => "sandboxed",
+            Self::Approved => "approved",
+            Self::Denied => "denied",
+            Self::Expired => "expired",
+        }
+    }
+}
+
+impl fmt::Display for CapabilityEscrowState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str((*self).as_str())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilityEscrowRequest {
+    pub request_id: String,
+    pub extension_id: String,
+    pub hostcall_type: HostcallType,
+    pub capability: Capability,
+    pub justification: String,
+    pub timestamp_ns: u64,
+    pub expires_at_ns: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilityEscrowRecord {
+    pub request_id: String,
+    pub extension_id: String,
+    pub hostcall_type: HostcallType,
+    pub capability: Capability,
+    pub justification: String,
+    pub state: CapabilityEscrowState,
+    pub created_at_ns: u64,
+    pub expires_at_ns: u64,
+    pub updated_at_ns: u64,
+}
+
+impl CapabilityEscrowRecord {
+    pub const fn is_terminal(&self) -> bool {
+        matches!(
+            self.state,
+            CapabilityEscrowState::Denied | CapabilityEscrowState::Expired
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EscrowCondition {
+    pub key: String,
+    pub value: String,
+}
+
+impl EscrowCondition {
+    pub fn new(key: impl Into<String>, value: impl Into<String>) -> Self {
+        Self {
+            key: key.into(),
+            value: value.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CapabilityEscrowDecisionKind {
+    Challenge,
+    Sandbox,
+    Approve,
+    Deny,
+    EmergencyGrant,
+    Expire,
+}
+
+impl CapabilityEscrowDecisionKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Challenge => "challenge",
+            Self::Sandbox => "sandbox",
+            Self::Approve => "approve",
+            Self::Deny => "deny",
+            Self::EmergencyGrant => "emergency_grant",
+            Self::Expire => "expire",
+        }
+    }
+}
+
+impl fmt::Display for CapabilityEscrowDecisionKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str((*self).as_str())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilityEscrowDecisionReceipt {
+    pub receipt_id: String,
+    pub request_id: String,
+    pub extension_id: String,
+    pub capability: Capability,
+    pub decision: CapabilityEscrowDecisionKind,
+    pub state: CapabilityEscrowState,
+    pub trace_ref: String,
+    pub replay_seed: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub active_witness_ref: String,
+    pub contract_chain: Vec<String>,
+    pub conditions: Vec<EscrowCondition>,
+    pub outcome: String,
+    pub error_code: Option<String>,
+    pub timestamp_ns: u64,
+    pub signature: [u8; 32],
+}
+
+#[derive(Serialize)]
+struct CapabilityEscrowReceiptSigningPayload<'a> {
+    receipt_id: &'a str,
+    request_id: &'a str,
+    extension_id: &'a str,
+    capability: Capability,
+    decision: CapabilityEscrowDecisionKind,
+    state: CapabilityEscrowState,
+    trace_ref: &'a str,
+    replay_seed: &'a str,
+    decision_id: &'a str,
+    policy_id: &'a str,
+    active_witness_ref: &'a str,
+    contract_chain: &'a [String],
+    conditions: &'a [EscrowCondition],
+    outcome: &'a str,
+    error_code: &'a Option<String>,
+    timestamp_ns: u64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilityEscrowReceiptQuery {
+    pub extension_id: Option<String>,
+    pub capability: Option<Capability>,
+    pub decision: Option<CapabilityEscrowDecisionKind>,
+    pub outcome: Option<String>,
+    pub timestamp_from_ns: Option<u64>,
+    pub timestamp_to_ns: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilityEscrowReplayContext {
+    pub receipt: CapabilityEscrowDecisionReceipt,
+    pub event: CapabilityEscrowDecisionEvent,
+    pub evidence: CapabilityEscrowEvidence,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilityEscrowReceiptCompletenessReport {
+    pub complete: bool,
+    pub receipts: usize,
+    pub events: usize,
+    pub evidence: usize,
+    pub missing_event_receipt_ids: Vec<String>,
+    pub missing_evidence_receipt_ids: Vec<String>,
+}
+
+impl CapabilityEscrowDecisionReceipt {
+    #[allow(clippy::too_many_arguments)]
+    fn new_signed(
+        request_id: &str,
+        extension_id: &str,
+        capability: Capability,
+        decision: CapabilityEscrowDecisionKind,
+        state: CapabilityEscrowState,
+        trace_ref: String,
+        replay_seed: String,
+        decision_id: &str,
+        policy_id: &str,
+        active_witness_ref: String,
+        contract_chain: Vec<String>,
+        conditions: Vec<EscrowCondition>,
+        outcome: String,
+        error_code: Option<String>,
+        timestamp_ns: u64,
+        signer: &DecisionSigningKey,
+    ) -> Result<Self, CapabilityEscrowError> {
+        let receipt_id =
+            derive_escrow_receipt_id(request_id, timestamp_ns, decision.as_str(), state.as_str());
+        let payload = CapabilityEscrowReceiptSigningPayload {
+            receipt_id: &receipt_id,
+            request_id,
+            extension_id,
+            capability,
+            decision,
+            state,
+            trace_ref: &trace_ref,
+            replay_seed: &replay_seed,
+            decision_id,
+            policy_id,
+            active_witness_ref: &active_witness_ref,
+            contract_chain: &contract_chain,
+            conditions: &conditions,
+            outcome: &outcome,
+            error_code: &error_code,
+            timestamp_ns,
+        };
+        let payload_bytes = serde_json::to_vec(&payload).map_err(|err| {
+            CapabilityEscrowError::ReceiptEmissionFailed {
+                request_id: request_id.to_string(),
+                detail: err.to_string(),
+            }
+        })?;
+        let signature = signer.sign(&payload_bytes);
+        Ok(Self {
+            receipt_id,
+            request_id: request_id.to_string(),
+            extension_id: extension_id.to_string(),
+            capability,
+            decision,
+            state,
+            trace_ref,
+            replay_seed,
+            decision_id: decision_id.to_string(),
+            policy_id: policy_id.to_string(),
+            active_witness_ref,
+            contract_chain,
+            conditions,
+            outcome,
+            error_code,
+            timestamp_ns,
+            signature,
+        })
+    }
+
+    fn signing_payload_bytes(&self) -> Result<Vec<u8>, CapabilityEscrowError> {
+        let payload = CapabilityEscrowReceiptSigningPayload {
+            receipt_id: &self.receipt_id,
+            request_id: &self.request_id,
+            extension_id: &self.extension_id,
+            capability: self.capability,
+            decision: self.decision,
+            state: self.state,
+            trace_ref: &self.trace_ref,
+            replay_seed: &self.replay_seed,
+            decision_id: &self.decision_id,
+            policy_id: &self.policy_id,
+            active_witness_ref: &self.active_witness_ref,
+            contract_chain: &self.contract_chain,
+            conditions: &self.conditions,
+            outcome: &self.outcome,
+            error_code: &self.error_code,
+            timestamp_ns: self.timestamp_ns,
+        };
+        serde_json::to_vec(&payload).map_err(|err| CapabilityEscrowError::ReceiptEmissionFailed {
+            request_id: self.request_id.clone(),
+            detail: err.to_string(),
+        })
+    }
+
+    pub fn verify(&self, public_key: &DecisionPublicKey) -> bool {
+        self.signing_payload_bytes()
+            .map(|payload| public_key.verify(&payload, &self.signature))
+            .unwrap_or(false)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilityEscrowDecisionEvent {
+    pub trace_id: String,
+    pub trace_ref: String,
+    pub replay_seed: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub component: String,
+    pub event: String,
+    pub outcome: String,
+    pub error_code: Option<String>,
+    pub extension_id: String,
+    pub request_id: String,
+    pub capability: Capability,
+    pub state: CapabilityEscrowState,
+    pub receipt_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilityEscrowEvidence {
+    pub extension_id: String,
+    pub request_id: String,
+    pub capability: Capability,
+    pub state: CapabilityEscrowState,
+    pub trace_ref: String,
+    pub replay_seed: String,
+    pub decision_id: String,
+    pub receipt_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EmergencyGrantArtifact {
+    pub grant_id: String,
+    pub request_id: String,
+    pub extension_id: String,
+    pub capability_granted: Capability,
+    pub justification: String,
+    pub authorized_actor: String,
+    pub expiry_timestamp: u64,
+    pub max_invocation_count: u32,
+    pub mandatory_post_review: bool,
+    pub rollback_on_expiry: bool,
+    pub issued_at_ns: u64,
+    pub signature: [u8; 32],
+}
+
+#[derive(Serialize)]
+struct EmergencyGrantSigningPayload<'a> {
+    grant_id: &'a str,
+    request_id: &'a str,
+    extension_id: &'a str,
+    capability_granted: Capability,
+    justification: &'a str,
+    authorized_actor: &'a str,
+    expiry_timestamp: u64,
+    max_invocation_count: u32,
+    mandatory_post_review: bool,
+    rollback_on_expiry: bool,
+    issued_at_ns: u64,
+}
+
+impl EmergencyGrantArtifact {
+    #[allow(clippy::too_many_arguments)]
+    fn new_signed(
+        request_id: &str,
+        extension_id: &str,
+        capability_granted: Capability,
+        justification: String,
+        authorized_actor: String,
+        expiry_timestamp: u64,
+        max_invocation_count: u32,
+        mandatory_post_review: bool,
+        rollback_on_expiry: bool,
+        issued_at_ns: u64,
+        signer: &DecisionSigningKey,
+    ) -> Self {
+        let grant_id = derive_emergency_grant_id(request_id, &authorized_actor, issued_at_ns);
+        let payload = EmergencyGrantSigningPayload {
+            grant_id: &grant_id,
+            request_id,
+            extension_id,
+            capability_granted,
+            justification: &justification,
+            authorized_actor: &authorized_actor,
+            expiry_timestamp,
+            max_invocation_count,
+            mandatory_post_review,
+            rollback_on_expiry,
+            issued_at_ns,
+        };
+        let signature = signer
+            .sign(&serde_json::to_vec(&payload).expect("emergency grant payload should serialize"));
+        Self {
+            grant_id,
+            request_id: request_id.to_string(),
+            extension_id: extension_id.to_string(),
+            capability_granted,
+            justification,
+            authorized_actor,
+            expiry_timestamp,
+            max_invocation_count,
+            mandatory_post_review,
+            rollback_on_expiry,
+            issued_at_ns,
+            signature,
+        }
+    }
+
+    fn signing_payload_bytes(&self) -> Vec<u8> {
+        let payload = EmergencyGrantSigningPayload {
+            grant_id: &self.grant_id,
+            request_id: &self.request_id,
+            extension_id: &self.extension_id,
+            capability_granted: self.capability_granted,
+            justification: &self.justification,
+            authorized_actor: &self.authorized_actor,
+            expiry_timestamp: self.expiry_timestamp,
+            max_invocation_count: self.max_invocation_count,
+            mandatory_post_review: self.mandatory_post_review,
+            rollback_on_expiry: self.rollback_on_expiry,
+            issued_at_ns: self.issued_at_ns,
+        };
+        serde_json::to_vec(&payload).expect("emergency grant payload should serialize")
+    }
+
+    pub fn verify(&self, public_key: &DecisionPublicKey) -> bool {
+        public_key.verify(&self.signing_payload_bytes(), &self.signature)
+    }
+
+    pub const fn is_expired(&self, timestamp_ns: u64) -> bool {
+        timestamp_ns >= self.expiry_timestamp
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct ActiveEmergencyGrant {
+    artifact: EmergencyGrantArtifact,
+    invocations_used: u32,
+    revoked: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CapabilityEscrowError {
+    UnknownRequest {
+        request_id: String,
+    },
+    InvalidStateTransition {
+        request_id: String,
+        from: CapabilityEscrowState,
+        to: CapabilityEscrowState,
+    },
+    RequestNotActionable {
+        request_id: String,
+        state: CapabilityEscrowState,
+    },
+    InvalidEmergencyGrant {
+        field: &'static str,
+        detail: String,
+    },
+    PostReviewNotPending {
+        grant_id: String,
+    },
+    ReceiptEmissionFailed {
+        request_id: String,
+        detail: String,
+    },
+}
+
+impl CapabilityEscrowError {
+    pub const fn error_code(&self) -> &'static str {
+        match self {
+            Self::UnknownRequest { .. } => ESCROW_MANUAL_DENY_ERROR_CODE,
+            Self::InvalidStateTransition { .. } => ESCROW_MANUAL_DENY_ERROR_CODE,
+            Self::RequestNotActionable { .. } => ESCROW_MANUAL_DENY_ERROR_CODE,
+            Self::InvalidEmergencyGrant { .. } => ESCROW_GRANT_INVALID_ERROR_CODE,
+            Self::PostReviewNotPending { .. } => ESCROW_POST_REVIEW_ERROR_CODE,
+            Self::ReceiptEmissionFailed { .. } => ESCROW_RECEIPT_EMISSION_ERROR_CODE,
+        }
+    }
+}
+
+impl fmt::Display for CapabilityEscrowError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnknownRequest { request_id } => {
+                write!(f, "unknown capability escrow request: {request_id}")
+            }
+            Self::InvalidStateTransition {
+                request_id,
+                from,
+                to,
+            } => write!(
+                f,
+                "invalid escrow state transition for {request_id}: {from} -> {to}"
+            ),
+            Self::RequestNotActionable { request_id, state } => write!(
+                f,
+                "escrow request {request_id} in state {state} cannot be actioned"
+            ),
+            Self::InvalidEmergencyGrant { field, detail } => {
+                write!(f, "invalid emergency grant field `{field}`: {detail}")
+            }
+            Self::PostReviewNotPending { grant_id } => {
+                write!(
+                    f,
+                    "mandatory post review is not pending for grant {grant_id}"
+                )
+            }
+            Self::ReceiptEmissionFailed { request_id, detail } => {
+                write!(
+                    f,
+                    "failed to emit escrow decision receipt for {request_id}: {detail}"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for CapabilityEscrowError {}
+
+pub struct CapabilityEscrowEvaluationContext {
+    pub open_requests_for_extension: usize,
+}
+
+pub enum CapabilityEscrowContractVerdict {
+    Continue,
+    Challenge { detail: String },
+    Sandbox { profile: String },
+    Deny { error_code: String, detail: String },
+}
+
+pub trait CapabilityEscrowDecisionContract: Send + Sync {
+    fn contract_id(&self) -> &'static str;
+
+    fn evaluate(
+        &self,
+        request: &CapabilityEscrowRequest,
+        context: &CapabilityEscrowEvaluationContext,
+    ) -> CapabilityEscrowContractVerdict;
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct EscrowFloodProtectionContract {
+    pub max_open_requests_per_extension: usize,
+}
+
+impl Default for EscrowFloodProtectionContract {
+    fn default() -> Self {
+        Self {
+            max_open_requests_per_extension: 16,
+        }
+    }
+}
+
+impl CapabilityEscrowDecisionContract for EscrowFloodProtectionContract {
+    fn contract_id(&self) -> &'static str {
+        "escrow_flood_protection"
+    }
+
+    fn evaluate(
+        &self,
+        _request: &CapabilityEscrowRequest,
+        context: &CapabilityEscrowEvaluationContext,
+    ) -> CapabilityEscrowContractVerdict {
+        if context.open_requests_for_extension >= self.max_open_requests_per_extension {
+            CapabilityEscrowContractVerdict::Deny {
+                error_code: ESCROW_FLOOD_ERROR_CODE.to_string(),
+                detail: format!(
+                    "open capability escrow requests exceed limit {}",
+                    self.max_open_requests_per_extension
+                ),
+            }
+        } else {
+            CapabilityEscrowContractVerdict::Continue
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct EscrowJustificationContract;
+
+impl CapabilityEscrowDecisionContract for EscrowJustificationContract {
+    fn contract_id(&self) -> &'static str {
+        "escrow_justification"
+    }
+
+    fn evaluate(
+        &self,
+        request: &CapabilityEscrowRequest,
+        _context: &CapabilityEscrowEvaluationContext,
+    ) -> CapabilityEscrowContractVerdict {
+        if request.justification.trim().is_empty() {
+            CapabilityEscrowContractVerdict::Challenge {
+                detail: "request justification required for out-of-envelope capability".to_string(),
+            }
+        } else {
+            CapabilityEscrowContractVerdict::Continue
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct EscrowDefaultRouteContract;
+
+impl CapabilityEscrowDecisionContract for EscrowDefaultRouteContract {
+    fn contract_id(&self) -> &'static str {
+        "escrow_default_route"
+    }
+
+    fn evaluate(
+        &self,
+        request: &CapabilityEscrowRequest,
+        _context: &CapabilityEscrowEvaluationContext,
+    ) -> CapabilityEscrowContractVerdict {
+        match request.hostcall_type.default_escrow_route() {
+            CapabilityEscrowRoute::Challenge => CapabilityEscrowContractVerdict::Challenge {
+                detail: "manual challenge required before capability elevation".to_string(),
+            },
+            CapabilityEscrowRoute::Sandbox => CapabilityEscrowContractVerdict::Sandbox {
+                profile: "deterministic_sandbox_v1".to_string(),
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilityEscrowDecision {
+    pub request_id: String,
+    pub state: CapabilityEscrowState,
+    pub receipt_id: String,
+    pub outcome: String,
+    pub error_code: Option<String>,
+}
+
+pub enum CapabilityEscrowResolution {
+    AuthorizedByApproval {
+        request_id: String,
+    },
+    AuthorizedByEmergencyGrant {
+        grant_id: String,
+    },
+    Escrowed {
+        decision: CapabilityEscrowDecision,
+        route: CapabilityEscrowRoute,
+    },
+    Denied {
+        decision: CapabilityEscrowDecision,
+    },
+}
+
+pub struct CapabilityEscrowGateway {
+    contracts: Vec<Box<dyn CapabilityEscrowDecisionContract>>,
+    signing_key: DecisionSigningKey,
+    records: BTreeMap<String, CapabilityEscrowRecord>,
+    receipts: Vec<CapabilityEscrowDecisionReceipt>,
+    events: Vec<CapabilityEscrowDecisionEvent>,
+    evidence: Vec<CapabilityEscrowEvidence>,
+    emergency_grants: BTreeMap<String, ActiveEmergencyGrant>,
+    pending_post_reviews: BTreeSet<String>,
+    emergency_grant_only_requests: BTreeSet<String>,
+    request_sequence: u64,
+    request_ttl_ns: u64,
+}
+
+impl CapabilityEscrowGateway {
+    pub fn with_default_contracts(signing_key: DecisionSigningKey) -> Self {
+        let contracts: Vec<Box<dyn CapabilityEscrowDecisionContract>> = vec![
+            Box::new(EscrowFloodProtectionContract::default()),
+            Box::new(EscrowJustificationContract),
+            Box::new(EscrowDefaultRouteContract),
+        ];
+        Self::new(signing_key, contracts)
+    }
+
+    pub fn new(
+        signing_key: DecisionSigningKey,
+        contracts: Vec<Box<dyn CapabilityEscrowDecisionContract>>,
+    ) -> Self {
+        Self {
+            contracts,
+            signing_key,
+            records: BTreeMap::new(),
+            receipts: Vec::new(),
+            events: Vec::new(),
+            evidence: Vec::new(),
+            emergency_grants: BTreeMap::new(),
+            pending_post_reviews: BTreeSet::new(),
+            emergency_grant_only_requests: BTreeSet::new(),
+            request_sequence: 0,
+            request_ttl_ns: DEFAULT_ESCROW_REQUEST_TTL_NS,
+        }
+    }
+
+    pub fn records(&self) -> &BTreeMap<String, CapabilityEscrowRecord> {
+        &self.records
+    }
+
+    pub fn receipts(&self) -> &[CapabilityEscrowDecisionReceipt] {
+        &self.receipts
+    }
+
+    pub fn events(&self) -> &[CapabilityEscrowDecisionEvent] {
+        &self.events
+    }
+
+    pub fn evidence(&self) -> &[CapabilityEscrowEvidence] {
+        &self.evidence
+    }
+
+    pub fn pending_post_reviews(&self) -> &BTreeSet<String> {
+        &self.pending_post_reviews
+    }
+
+    pub fn active_emergency_grants(&self) -> Vec<EmergencyGrantArtifact> {
+        self.emergency_grants
+            .values()
+            .filter(|grant| !grant.revoked)
+            .map(|grant| grant.artifact.clone())
+            .collect()
+    }
+
+    pub fn query_receipts(
+        &self,
+        query: &CapabilityEscrowReceiptQuery,
+    ) -> Vec<&CapabilityEscrowDecisionReceipt> {
+        self.receipts
+            .iter()
+            .filter(|receipt| {
+                if let Some(extension_id) = query.extension_id.as_deref() {
+                    if receipt.extension_id != extension_id {
+                        return false;
+                    }
+                }
+                if let Some(capability) = query.capability {
+                    if receipt.capability != capability {
+                        return false;
+                    }
+                }
+                if let Some(decision) = query.decision {
+                    if receipt.decision != decision {
+                        return false;
+                    }
+                }
+                if let Some(outcome) = query.outcome.as_deref() {
+                    if receipt.outcome != outcome {
+                        return false;
+                    }
+                }
+                if let Some(start_ns) = query.timestamp_from_ns {
+                    if receipt.timestamp_ns < start_ns {
+                        return false;
+                    }
+                }
+                if let Some(end_ns) = query.timestamp_to_ns {
+                    if receipt.timestamp_ns > end_ns {
+                        return false;
+                    }
+                }
+                true
+            })
+            .collect()
+    }
+
+    pub fn replay_context_for_receipt(
+        &self,
+        receipt_id: &str,
+    ) -> Option<CapabilityEscrowReplayContext> {
+        let receipt = self
+            .receipts
+            .iter()
+            .find(|item| item.receipt_id == receipt_id)?
+            .clone();
+        let event = self
+            .events
+            .iter()
+            .find(|item| item.receipt_id == receipt_id)?
+            .clone();
+        let evidence = self
+            .evidence
+            .iter()
+            .find(|item| item.receipt_id == receipt_id)?
+            .clone();
+        Some(CapabilityEscrowReplayContext {
+            receipt,
+            event,
+            evidence,
+        })
+    }
+
+    pub fn receipt_completeness_report(&self) -> CapabilityEscrowReceiptCompletenessReport {
+        let event_receipt_ids: BTreeSet<&str> = self
+            .events
+            .iter()
+            .map(|event| event.receipt_id.as_str())
+            .collect();
+        let evidence_receipt_ids: BTreeSet<&str> = self
+            .evidence
+            .iter()
+            .map(|item| item.receipt_id.as_str())
+            .collect();
+        let missing_event_receipt_ids: Vec<String> = self
+            .receipts
+            .iter()
+            .filter(|receipt| !event_receipt_ids.contains(receipt.receipt_id.as_str()))
+            .map(|receipt| receipt.receipt_id.clone())
+            .collect();
+        let missing_evidence_receipt_ids: Vec<String> = self
+            .receipts
+            .iter()
+            .filter(|receipt| !evidence_receipt_ids.contains(receipt.receipt_id.as_str()))
+            .map(|receipt| receipt.receipt_id.clone())
+            .collect();
+        CapabilityEscrowReceiptCompletenessReport {
+            complete: missing_event_receipt_ids.is_empty()
+                && missing_evidence_receipt_ids.is_empty(),
+            receipts: self.receipts.len(),
+            events: self.events.len(),
+            evidence: self.evidence.len(),
+            missing_event_receipt_ids,
+            missing_evidence_receipt_ids,
+        }
+    }
+
+    pub fn public_key(&self) -> DecisionPublicKey {
+        self.signing_key.public_key()
+    }
+
+    pub fn set_request_ttl_ns(&mut self, ttl_ns: u64) {
+        self.request_ttl_ns = ttl_ns.max(1);
+    }
+
+    pub fn resolve_out_of_envelope_request(
+        &mut self,
+        extension_id: &str,
+        hostcall_type: HostcallType,
+        capability: Capability,
+        justification: &str,
+        timestamp_ns: u64,
+        context: &FlowEnforcementContext<'_>,
+    ) -> Result<CapabilityEscrowResolution, CapabilityEscrowError> {
+        self.expire(timestamp_ns, context)?;
+
+        if let Some(request_id) =
+            self.latest_active_approved_request(extension_id, capability, timestamp_ns)
+        {
+            return Ok(CapabilityEscrowResolution::AuthorizedByApproval { request_id });
+        }
+
+        if let Some(grant_id) =
+            self.consume_matching_emergency_grant(extension_id, capability, timestamp_ns, context)?
+        {
+            return Ok(CapabilityEscrowResolution::AuthorizedByEmergencyGrant { grant_id });
+        }
+
+        self.request_sequence = self.request_sequence.saturating_add(1);
+        let request_id = derive_escrow_request_id(
+            extension_id,
+            capability,
+            hostcall_type,
+            timestamp_ns,
+            self.request_sequence,
+        );
+        let request = CapabilityEscrowRequest {
+            request_id: request_id.clone(),
+            extension_id: extension_id.to_string(),
+            hostcall_type,
+            capability,
+            justification: justification.to_string(),
+            timestamp_ns,
+            expires_at_ns: timestamp_ns.saturating_add(self.request_ttl_ns),
+        };
+        self.records.insert(
+            request_id.clone(),
+            CapabilityEscrowRecord {
+                request_id: request_id.clone(),
+                extension_id: extension_id.to_string(),
+                hostcall_type,
+                capability,
+                justification: request.justification.clone(),
+                state: CapabilityEscrowState::Requested,
+                created_at_ns: timestamp_ns,
+                expires_at_ns: request.expires_at_ns,
+                updated_at_ns: timestamp_ns,
+            },
+        );
+
+        let eval_context = CapabilityEscrowEvaluationContext {
+            open_requests_for_extension: self.open_request_count(extension_id),
+        };
+
+        let mut contract_chain = Vec::new();
+        let mut conditions = Vec::new();
+        let mut terminal: Option<(CapabilityEscrowState, String, Option<String>)> = None;
+        for contract in &self.contracts {
+            contract_chain.push(contract.contract_id().to_string());
+            match contract.evaluate(&request, &eval_context) {
+                CapabilityEscrowContractVerdict::Continue => {}
+                CapabilityEscrowContractVerdict::Challenge { detail } => {
+                    conditions.push(EscrowCondition::new("escrow_action", "challenge"));
+                    conditions.push(EscrowCondition::new("justification_request", detail));
+                    terminal = Some((
+                        CapabilityEscrowState::Challenged,
+                        "challenged".to_string(),
+                        Some(ESCROW_CHALLENGE_ERROR_CODE.to_string()),
+                    ));
+                    break;
+                }
+                CapabilityEscrowContractVerdict::Sandbox { profile } => {
+                    conditions.push(EscrowCondition::new("escrow_action", "sandbox"));
+                    conditions.push(EscrowCondition::new("sandbox_config", profile));
+                    terminal = Some((
+                        CapabilityEscrowState::Sandboxed,
+                        "sandboxed".to_string(),
+                        Some(ESCROW_SANDBOX_ERROR_CODE.to_string()),
+                    ));
+                    break;
+                }
+                CapabilityEscrowContractVerdict::Deny { error_code, detail } => {
+                    conditions.push(EscrowCondition::new("escrow_action", "deny"));
+                    conditions.push(EscrowCondition::new("denial_reason", detail));
+                    conditions.push(EscrowCondition::new(
+                        "remediation_guidance",
+                        "request policy exception or update active witness envelope",
+                    ));
+                    terminal = Some((
+                        CapabilityEscrowState::Denied,
+                        "denied".to_string(),
+                        Some(error_code),
+                    ));
+                    break;
+                }
+            }
+        }
+
+        let (state, outcome, error_code) = terminal.unwrap_or((
+            CapabilityEscrowState::Challenged,
+            "challenged".to_string(),
+            Some(ESCROW_CHALLENGE_ERROR_CODE.to_string()),
+        ));
+        let decision_kind = match state {
+            CapabilityEscrowState::Challenged => CapabilityEscrowDecisionKind::Challenge,
+            CapabilityEscrowState::Sandboxed => CapabilityEscrowDecisionKind::Sandbox,
+            CapabilityEscrowState::Denied => CapabilityEscrowDecisionKind::Deny,
+            _ => CapabilityEscrowDecisionKind::Challenge,
+        };
+        let decision = match self.transition_record(
+            &request_id,
+            state,
+            decision_kind,
+            contract_chain,
+            conditions,
+            timestamp_ns,
+            context,
+            outcome,
+            error_code,
+        ) {
+            Ok(decision) => decision,
+            Err(err) => {
+                // Fail closed: if receipt emission/linking fails, discard the transient request.
+                self.records.remove(&request_id);
+                self.emergency_grant_only_requests.remove(&request_id);
+                return Err(err);
+            }
+        };
+
+        match state {
+            CapabilityEscrowState::Challenged => Ok(CapabilityEscrowResolution::Escrowed {
+                decision,
+                route: CapabilityEscrowRoute::Challenge,
+            }),
+            CapabilityEscrowState::Sandboxed => Ok(CapabilityEscrowResolution::Escrowed {
+                decision,
+                route: CapabilityEscrowRoute::Sandbox,
+            }),
+            CapabilityEscrowState::Denied => Ok(CapabilityEscrowResolution::Denied { decision }),
+            _ => Ok(CapabilityEscrowResolution::Escrowed {
+                decision,
+                route: CapabilityEscrowRoute::Challenge,
+            }),
+        }
+    }
+
+    pub fn approve_request(
+        &mut self,
+        request_id: &str,
+        timestamp_ns: u64,
+        context: &FlowEnforcementContext<'_>,
+    ) -> Result<CapabilityEscrowDecisionReceipt, CapabilityEscrowError> {
+        self.expire(timestamp_ns, context)?;
+        let state = self.current_state(request_id)?;
+        if !matches!(
+            state,
+            CapabilityEscrowState::Requested
+                | CapabilityEscrowState::Challenged
+                | CapabilityEscrowState::Sandboxed
+        ) {
+            return Err(CapabilityEscrowError::RequestNotActionable {
+                request_id: request_id.to_string(),
+                state,
+            });
+        }
+
+        let decision = self.transition_record(
+            request_id,
+            CapabilityEscrowState::Approved,
+            CapabilityEscrowDecisionKind::Approve,
+            vec!["manual_approval".to_string()],
+            vec![EscrowCondition::new("approved_by", "operator")],
+            timestamp_ns,
+            context,
+            "approved".to_string(),
+            None,
+        )?;
+        let receipt = self
+            .receipts
+            .iter()
+            .find(|receipt| receipt.receipt_id == decision.receipt_id)
+            .cloned()
+            .ok_or_else(|| CapabilityEscrowError::UnknownRequest {
+                request_id: request_id.to_string(),
+            })?;
+        self.emergency_grant_only_requests.remove(request_id);
+        Ok(receipt)
+    }
+
+    pub fn deny_request(
+        &mut self,
+        request_id: &str,
+        reason: impl Into<String>,
+        timestamp_ns: u64,
+        context: &FlowEnforcementContext<'_>,
+    ) -> Result<CapabilityEscrowDecisionReceipt, CapabilityEscrowError> {
+        self.expire(timestamp_ns, context)?;
+        let state = self.current_state(request_id)?;
+        if !matches!(
+            state,
+            CapabilityEscrowState::Requested
+                | CapabilityEscrowState::Challenged
+                | CapabilityEscrowState::Sandboxed
+        ) {
+            return Err(CapabilityEscrowError::RequestNotActionable {
+                request_id: request_id.to_string(),
+                state,
+            });
+        }
+
+        let decision = self.transition_record(
+            request_id,
+            CapabilityEscrowState::Denied,
+            CapabilityEscrowDecisionKind::Deny,
+            vec!["manual_denial".to_string()],
+            vec![
+                EscrowCondition::new("escrow_action", "deny"),
+                EscrowCondition::new("denial_reason", reason.into()),
+                EscrowCondition::new(
+                    "remediation_guidance",
+                    "request policy exception or update active witness envelope",
+                ),
+            ],
+            timestamp_ns,
+            context,
+            "denied".to_string(),
+            Some(ESCROW_MANUAL_DENY_ERROR_CODE.to_string()),
+        )?;
+        let receipt = self
+            .receipts
+            .iter()
+            .find(|receipt| receipt.receipt_id == decision.receipt_id)
+            .cloned()
+            .ok_or_else(|| CapabilityEscrowError::UnknownRequest {
+                request_id: request_id.to_string(),
+            })?;
+        self.emergency_grant_only_requests.remove(request_id);
+        Ok(receipt)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn issue_emergency_grant(
+        &mut self,
+        request_id: &str,
+        authorized_actor: &str,
+        justification: &str,
+        expiry_timestamp: u64,
+        max_invocation_count: u32,
+        mandatory_post_review: bool,
+        rollback_on_expiry: bool,
+        timestamp_ns: u64,
+        context: &FlowEnforcementContext<'_>,
+    ) -> Result<EmergencyGrantArtifact, CapabilityEscrowError> {
+        self.expire(timestamp_ns, context)?;
+        if authorized_actor.trim().is_empty() {
+            return Err(CapabilityEscrowError::InvalidEmergencyGrant {
+                field: "authorized_actor",
+                detail: "must not be empty".to_string(),
+            });
+        }
+        if justification.trim().is_empty() {
+            return Err(CapabilityEscrowError::InvalidEmergencyGrant {
+                field: "justification",
+                detail: "must not be empty".to_string(),
+            });
+        }
+        if max_invocation_count == 0 {
+            return Err(CapabilityEscrowError::InvalidEmergencyGrant {
+                field: "max_invocation_count",
+                detail: "must be greater than zero".to_string(),
+            });
+        }
+        if expiry_timestamp <= timestamp_ns {
+            return Err(CapabilityEscrowError::InvalidEmergencyGrant {
+                field: "expiry_timestamp",
+                detail: "must be in the future".to_string(),
+            });
+        }
+
+        let state = self.current_state(request_id)?;
+        if !matches!(
+            state,
+            CapabilityEscrowState::Requested
+                | CapabilityEscrowState::Challenged
+                | CapabilityEscrowState::Sandboxed
+                | CapabilityEscrowState::Approved
+        ) {
+            return Err(CapabilityEscrowError::RequestNotActionable {
+                request_id: request_id.to_string(),
+                state,
+            });
+        }
+
+        if state != CapabilityEscrowState::Approved {
+            self.transition_record(
+                request_id,
+                CapabilityEscrowState::Approved,
+                CapabilityEscrowDecisionKind::Approve,
+                vec!["pre_grant_approval".to_string()],
+                vec![EscrowCondition::new("approved_by", authorized_actor)],
+                timestamp_ns,
+                context,
+                "approved".to_string(),
+                None,
+            )?;
+        }
+
+        let record = self.records.get(request_id).cloned().ok_or_else(|| {
+            CapabilityEscrowError::UnknownRequest {
+                request_id: request_id.to_string(),
+            }
+        })?;
+
+        let artifact = EmergencyGrantArtifact::new_signed(
+            request_id,
+            &record.extension_id,
+            record.capability,
+            justification.to_string(),
+            authorized_actor.to_string(),
+            expiry_timestamp,
+            max_invocation_count,
+            mandatory_post_review,
+            rollback_on_expiry,
+            timestamp_ns,
+            &self.signing_key,
+        );
+        let grant_id = artifact.grant_id.clone();
+        self.emergency_grants.insert(
+            grant_id.clone(),
+            ActiveEmergencyGrant {
+                artifact: artifact.clone(),
+                invocations_used: 0,
+                revoked: false,
+            },
+        );
+        self.emergency_grant_only_requests
+            .insert(request_id.to_string());
+        if mandatory_post_review {
+            self.pending_post_reviews.insert(grant_id.clone());
+        }
+        let review_obligation_id = if mandatory_post_review {
+            format!("post-review-{grant_id}")
+        } else {
+            "none".to_string()
+        };
+        self.transition_record(
+            request_id,
+            CapabilityEscrowState::Approved,
+            CapabilityEscrowDecisionKind::EmergencyGrant,
+            vec!["emergency_grant_contract".to_string()],
+            vec![
+                EscrowCondition::new("escrow_action", "emergency_grant"),
+                EscrowCondition::new("grant_id", grant_id),
+                EscrowCondition::new("authorized_actor", authorized_actor.to_string()),
+                EscrowCondition::new("justification", justification.to_string()),
+                EscrowCondition::new("expiry_timestamp", expiry_timestamp.to_string()),
+                EscrowCondition::new("max_invocation_count", max_invocation_count.to_string()),
+                EscrowCondition::new("rollback_on_expiry", rollback_on_expiry.to_string()),
+                EscrowCondition::new("mandatory_post_review", mandatory_post_review.to_string()),
+                EscrowCondition::new("review_obligation_id", review_obligation_id),
+            ],
+            timestamp_ns,
+            context,
+            "emergency_granted".to_string(),
+            None,
+        )?;
+        Ok(artifact)
+    }
+
+    pub fn complete_post_review(&mut self, grant_id: &str) -> Result<(), CapabilityEscrowError> {
+        if self.pending_post_reviews.remove(grant_id) {
+            Ok(())
+        } else {
+            Err(CapabilityEscrowError::PostReviewNotPending {
+                grant_id: grant_id.to_string(),
+            })
+        }
+    }
+
+    pub fn expire(
+        &mut self,
+        timestamp_ns: u64,
+        context: &FlowEnforcementContext<'_>,
+    ) -> Result<(), CapabilityEscrowError> {
+        let expiring_requests: Vec<String> = self
+            .records
+            .iter()
+            .filter(|(_, record)| {
+                matches!(
+                    record.state,
+                    CapabilityEscrowState::Requested
+                        | CapabilityEscrowState::Challenged
+                        | CapabilityEscrowState::Sandboxed
+                        | CapabilityEscrowState::Approved
+                ) && timestamp_ns >= record.expires_at_ns
+            })
+            .map(|(request_id, _)| request_id.clone())
+            .collect();
+        for request_id in expiring_requests {
+            self.transition_record(
+                &request_id,
+                CapabilityEscrowState::Expired,
+                CapabilityEscrowDecisionKind::Expire,
+                vec!["expiry_timer".to_string()],
+                vec![EscrowCondition::new("expired_at", timestamp_ns.to_string())],
+                timestamp_ns,
+                context,
+                "expired".to_string(),
+                Some(ESCROW_EXPIRED_ERROR_CODE.to_string()),
+            )?;
+        }
+
+        let expiring_grants: Vec<String> = self
+            .emergency_grants
+            .iter()
+            .filter(|(_, grant)| {
+                !grant.revoked
+                    && (grant.artifact.is_expired(timestamp_ns)
+                        || grant.invocations_used >= grant.artifact.max_invocation_count)
+            })
+            .map(|(grant_id, _)| grant_id.clone())
+            .collect();
+        for grant_id in expiring_grants {
+            let expired_payload = if let Some(grant) = self.emergency_grants.get_mut(&grant_id) {
+                grant.revoked = true;
+                let error_code = if grant.artifact.is_expired(timestamp_ns) {
+                    ESCROW_GRANT_EXPIRED_ERROR_CODE.to_string()
+                } else {
+                    ESCROW_GRANT_EXHAUSTED_ERROR_CODE.to_string()
+                };
+                Some((
+                    grant.artifact.request_id.clone(),
+                    grant.artifact.rollback_on_expiry,
+                    error_code,
+                ))
+            } else {
+                None
+            };
+            if let Some((request_id, rollback_on_expiry, error_code)) = expired_payload {
+                self.transition_record(
+                    &request_id,
+                    CapabilityEscrowState::Expired,
+                    CapabilityEscrowDecisionKind::Expire,
+                    vec!["emergency_grant_expiry".to_string()],
+                    vec![
+                        EscrowCondition::new("grant_id", grant_id),
+                        EscrowCondition::new("rollback_on_expiry", rollback_on_expiry.to_string()),
+                    ],
+                    timestamp_ns,
+                    context,
+                    "expired".to_string(),
+                    Some(error_code),
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    fn consume_matching_emergency_grant(
+        &mut self,
+        extension_id: &str,
+        capability: Capability,
+        timestamp_ns: u64,
+        context: &FlowEnforcementContext<'_>,
+    ) -> Result<Option<String>, CapabilityEscrowError> {
+        let matching_grant_id = self
+            .emergency_grants
+            .iter()
+            .find(|(_, grant)| {
+                !grant.revoked
+                    && grant.artifact.extension_id == extension_id
+                    && grant.artifact.capability_granted == capability
+            })
+            .map(|(grant_id, _)| grant_id.clone());
+
+        let Some(grant_id) = matching_grant_id else {
+            return Ok(None);
+        };
+        self.expire(timestamp_ns, context)?;
+        let Some(grant) = self.emergency_grants.get_mut(&grant_id) else {
+            return Ok(None);
+        };
+        if grant.revoked {
+            return Ok(None);
+        }
+        if grant.artifact.is_expired(timestamp_ns) {
+            grant.revoked = true;
+            return Ok(None);
+        }
+        if grant.invocations_used >= grant.artifact.max_invocation_count {
+            grant.revoked = true;
+            return Ok(None);
+        }
+        grant.invocations_used = grant.invocations_used.saturating_add(1);
+        Ok(Some(grant_id))
+    }
+
+    fn latest_active_approved_request(
+        &self,
+        extension_id: &str,
+        capability: Capability,
+        timestamp_ns: u64,
+    ) -> Option<String> {
+        self.records
+            .values()
+            .filter(|record| {
+                record.extension_id == extension_id
+                    && record.capability == capability
+                    && record.state == CapabilityEscrowState::Approved
+                    && timestamp_ns < record.expires_at_ns
+                    && !self
+                        .emergency_grant_only_requests
+                        .contains(record.request_id.as_str())
+            })
+            .max_by_key(|record| record.updated_at_ns)
+            .map(|record| record.request_id.clone())
+    }
+
+    fn open_request_count(&self, extension_id: &str) -> usize {
+        self.records
+            .values()
+            .filter(|record| {
+                record.extension_id == extension_id
+                    && !matches!(
+                        record.state,
+                        CapabilityEscrowState::Denied | CapabilityEscrowState::Expired
+                    )
+            })
+            .count()
+    }
+
+    fn current_state(
+        &self,
+        request_id: &str,
+    ) -> Result<CapabilityEscrowState, CapabilityEscrowError> {
+        self.records
+            .get(request_id)
+            .map(|record| record.state)
+            .ok_or_else(|| CapabilityEscrowError::UnknownRequest {
+                request_id: request_id.to_string(),
+            })
+    }
+
+    fn validate_receipt_context(
+        request_id: &str,
+        context: &FlowEnforcementContext<'_>,
+    ) -> Result<(), CapabilityEscrowError> {
+        if context.trace_id.trim().is_empty() {
+            return Err(CapabilityEscrowError::ReceiptEmissionFailed {
+                request_id: request_id.to_string(),
+                detail: "trace_id must not be empty".to_string(),
+            });
+        }
+        if context.decision_id.trim().is_empty() {
+            return Err(CapabilityEscrowError::ReceiptEmissionFailed {
+                request_id: request_id.to_string(),
+                detail: "decision_id must not be empty".to_string(),
+            });
+        }
+        if context.policy_id.trim().is_empty() {
+            return Err(CapabilityEscrowError::ReceiptEmissionFailed {
+                request_id: request_id.to_string(),
+                detail: "policy_id must not be empty".to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build_receipt(
+        &self,
+        request_id: &str,
+        extension_id: &str,
+        capability: Capability,
+        decision_kind: CapabilityEscrowDecisionKind,
+        next_state: CapabilityEscrowState,
+        contract_chain: Vec<String>,
+        conditions: Vec<EscrowCondition>,
+        timestamp_ns: u64,
+        context: &FlowEnforcementContext<'_>,
+        outcome: String,
+        error_code: Option<String>,
+    ) -> Result<CapabilityEscrowDecisionReceipt, CapabilityEscrowError> {
+        Self::validate_receipt_context(request_id, context)?;
+        let trace_ref = format!(
+            "trace:{}#decision:{}",
+            context.trace_id, context.decision_id
+        );
+        let replay_seed = derive_escrow_replay_seed(
+            request_id,
+            context.trace_id,
+            context.decision_id,
+            context.policy_id,
+            decision_kind.as_str(),
+            next_state.as_str(),
+            timestamp_ns,
+        );
+        CapabilityEscrowDecisionReceipt::new_signed(
+            request_id,
+            extension_id,
+            capability,
+            decision_kind,
+            next_state,
+            trace_ref,
+            replay_seed,
+            context.decision_id,
+            context.policy_id,
+            context.policy_id.to_string(),
+            contract_chain,
+            conditions,
+            outcome,
+            error_code,
+            timestamp_ns,
+            &self.signing_key,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn transition_record(
+        &mut self,
+        request_id: &str,
+        next_state: CapabilityEscrowState,
+        decision_kind: CapabilityEscrowDecisionKind,
+        contract_chain: Vec<String>,
+        conditions: Vec<EscrowCondition>,
+        timestamp_ns: u64,
+        context: &FlowEnforcementContext<'_>,
+        outcome: String,
+        error_code: Option<String>,
+    ) -> Result<CapabilityEscrowDecision, CapabilityEscrowError> {
+        let (extension_id, capability, current_state) = self
+            .records
+            .get(request_id)
+            .map(|record| (record.extension_id.clone(), record.capability, record.state))
+            .ok_or_else(|| CapabilityEscrowError::UnknownRequest {
+                request_id: request_id.to_string(),
+            })?;
+        if current_state != next_state && !escrow_transition_allowed(current_state, next_state) {
+            return Err(CapabilityEscrowError::InvalidStateTransition {
+                request_id: request_id.to_string(),
+                from: current_state,
+                to: next_state,
+            });
+        }
+
+        let receipt = self.build_receipt(
+            request_id,
+            &extension_id,
+            capability,
+            decision_kind,
+            next_state,
+            contract_chain,
+            conditions,
+            timestamp_ns,
+            context,
+            outcome.clone(),
+            error_code.clone(),
+        )?;
+
+        let record = self.records.get_mut(request_id).ok_or_else(|| {
+            CapabilityEscrowError::UnknownRequest {
+                request_id: request_id.to_string(),
+            }
+        })?;
+        record.state = next_state;
+        record.updated_at_ns = timestamp_ns;
+        self.receipts.push(receipt.clone());
+        self.events.push(CapabilityEscrowDecisionEvent {
+            trace_id: context.trace_id.to_string(),
+            trace_ref: receipt.trace_ref.clone(),
+            replay_seed: receipt.replay_seed.clone(),
+            decision_id: context.decision_id.to_string(),
+            policy_id: context.policy_id.to_string(),
+            component: CAPABILITY_ESCROW_COMPONENT.to_string(),
+            event: "capability_escrow_decision".to_string(),
+            outcome: outcome.clone(),
+            error_code: error_code.clone(),
+            extension_id: record.extension_id.clone(),
+            request_id: request_id.to_string(),
+            capability: record.capability,
+            state: next_state,
+            receipt_id: receipt.receipt_id.clone(),
+        });
+        self.evidence.push(CapabilityEscrowEvidence {
+            extension_id: record.extension_id.clone(),
+            request_id: request_id.to_string(),
+            capability: record.capability,
+            state: next_state,
+            trace_ref: receipt.trace_ref.clone(),
+            replay_seed: receipt.replay_seed.clone(),
+            decision_id: context.decision_id.to_string(),
+            receipt_id: receipt.receipt_id.clone(),
+        });
+
+        Ok(CapabilityEscrowDecision {
+            request_id: request_id.to_string(),
+            state: next_state,
+            receipt_id: receipt.receipt_id,
+            outcome,
+            error_code,
+        })
+    }
+}
+
+impl Default for CapabilityEscrowGateway {
+    fn default() -> Self {
+        Self::with_default_contracts(DecisionSigningKey::default())
+    }
 }
 
 /// Runtime dispatcher that enforces flow-label checks at hostcall boundaries.
@@ -1935,7 +3511,10 @@ impl fmt::Display for DeclassificationDenialReason {
                 "label distance too large: secrecy_distance={secrecy_distance}, integrity_distance={integrity_distance}"
             ),
             Self::InvalidPurpose { purpose, target } => {
-                write!(f, "purpose '{purpose}' is invalid for target secrecy {target:?}")
+                write!(
+                    f,
+                    "purpose '{purpose}' is invalid for target secrecy {target:?}"
+                )
             }
             Self::RateLimited {
                 max_requests,
@@ -2628,6 +4207,125 @@ const fn denial_severity(distance: u8) -> DeclassificationEvidenceSeverity {
     }
 }
 
+const fn escrow_transition_allowed(from: CapabilityEscrowState, to: CapabilityEscrowState) -> bool {
+    matches!(
+        (from, to),
+        (
+            CapabilityEscrowState::Requested,
+            CapabilityEscrowState::Challenged
+        ) | (
+            CapabilityEscrowState::Requested,
+            CapabilityEscrowState::Sandboxed
+        ) | (
+            CapabilityEscrowState::Requested,
+            CapabilityEscrowState::Approved
+        ) | (
+            CapabilityEscrowState::Requested,
+            CapabilityEscrowState::Denied
+        ) | (
+            CapabilityEscrowState::Requested,
+            CapabilityEscrowState::Expired
+        ) | (
+            CapabilityEscrowState::Challenged,
+            CapabilityEscrowState::Sandboxed
+        ) | (
+            CapabilityEscrowState::Challenged,
+            CapabilityEscrowState::Approved
+        ) | (
+            CapabilityEscrowState::Challenged,
+            CapabilityEscrowState::Denied
+        ) | (
+            CapabilityEscrowState::Challenged,
+            CapabilityEscrowState::Expired
+        ) | (
+            CapabilityEscrowState::Sandboxed,
+            CapabilityEscrowState::Challenged
+        ) | (
+            CapabilityEscrowState::Sandboxed,
+            CapabilityEscrowState::Approved
+        ) | (
+            CapabilityEscrowState::Sandboxed,
+            CapabilityEscrowState::Denied
+        ) | (
+            CapabilityEscrowState::Sandboxed,
+            CapabilityEscrowState::Expired
+        ) | (
+            CapabilityEscrowState::Approved,
+            CapabilityEscrowState::Expired
+        ) | (
+            CapabilityEscrowState::Approved,
+            CapabilityEscrowState::Approved
+        ) | (CapabilityEscrowState::Denied, CapabilityEscrowState::Denied)
+            | (
+                CapabilityEscrowState::Expired,
+                CapabilityEscrowState::Expired
+            )
+    )
+}
+
+fn derive_escrow_receipt_id(
+    request_id: &str,
+    timestamp_ns: u64,
+    decision_tag: &str,
+    state_tag: &str,
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(request_id.as_bytes());
+    hasher.update(timestamp_ns.to_le_bytes());
+    hasher.update(decision_tag.as_bytes());
+    hasher.update(state_tag.as_bytes());
+    let digest = hasher.finalize();
+    format!("escr-{}", to_hex(&digest[..12]))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn derive_escrow_replay_seed(
+    request_id: &str,
+    trace_id: &str,
+    decision_id: &str,
+    policy_id: &str,
+    decision_tag: &str,
+    state_tag: &str,
+    timestamp_ns: u64,
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(request_id.as_bytes());
+    hasher.update(trace_id.as_bytes());
+    hasher.update(decision_id.as_bytes());
+    hasher.update(policy_id.as_bytes());
+    hasher.update(decision_tag.as_bytes());
+    hasher.update(state_tag.as_bytes());
+    hasher.update(timestamp_ns.to_le_bytes());
+    let digest = hasher.finalize();
+    format!("replay-{}", to_hex(&digest[..16]))
+}
+
+fn derive_escrow_request_id(
+    extension_id: &str,
+    capability: Capability,
+    hostcall_type: HostcallType,
+    timestamp_ns: u64,
+    sequence: u64,
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(extension_id.as_bytes());
+    hasher.update(capability.as_str().as_bytes());
+    hasher.update(hostcall_type.as_str().as_bytes());
+    hasher.update(timestamp_ns.to_le_bytes());
+    hasher.update(sequence.to_le_bytes());
+    let digest = hasher.finalize();
+    format!("esc-{}", to_hex(&digest[..12]))
+}
+
+fn derive_emergency_grant_id(request_id: &str, actor: &str, issued_at_ns: u64) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(request_id.as_bytes());
+    hasher.update(actor.as_bytes());
+    hasher.update(issued_at_ns.to_le_bytes());
+    let digest = hasher.finalize();
+    format!("egrant-{}", to_hex(&digest[..12]))
+}
+
 fn derive_receipt_id(request_id: &str, timestamp_ns: u64, outcome_tag: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(request_id.as_bytes());
@@ -2746,6 +4444,7 @@ pub enum DelegateCellEvidence {
         attempted: Capability,
         decision_id: String,
     },
+    CapabilityEscrow(CapabilityEscrowEvidence),
     DeclassificationDenied(DeclassificationDeniedEvidence),
     LifetimeExpired {
         delegate_id: String,
@@ -2768,6 +4467,7 @@ pub enum DelegateCellError {
     },
     ManifestValidation(ManifestValidationError),
     Lifecycle(LifecycleError),
+    CapabilityEscrow(CapabilityEscrowError),
     LifetimeExpired {
         delegate_id: String,
         expired_at_ns: u64,
@@ -2796,6 +4496,9 @@ impl fmt::Display for DelegateCellError {
                 write!(f, "delegate manifest validation failed: {error}")
             }
             Self::Lifecycle(error) => write!(f, "delegate lifecycle error: {error}"),
+            Self::CapabilityEscrow(error) => {
+                write!(f, "delegate capability escrow error: {error}")
+            }
             Self::LifetimeExpired {
                 delegate_id,
                 expired_at_ns,
@@ -2818,6 +4521,12 @@ impl From<ManifestValidationError> for DelegateCellError {
 impl From<LifecycleError> for DelegateCellError {
     fn from(value: LifecycleError) -> Self {
         Self::Lifecycle(value)
+    }
+}
+
+impl From<CapabilityEscrowError> for DelegateCellError {
+    fn from(value: CapabilityEscrowError) -> Self {
+        Self::CapabilityEscrow(value)
     }
 }
 
@@ -2845,6 +4554,7 @@ pub struct DelegateCell {
     manifest: DelegateCellManifest,
     lifecycle_manager: ExtensionLifecycleManager,
     hostcall_dispatcher: HostcallDispatcher,
+    capability_escrow_gateway: CapabilityEscrowGateway,
     declassification_gateway: DeclassificationGateway,
     guardplane_state: DelegateGuardplaneState,
     policy: DelegateCellPolicy,
@@ -2853,6 +4563,7 @@ pub struct DelegateCell {
     lifetime_expired_recorded: bool,
     events: Vec<DelegateCellEvent>,
     evidence: Vec<DelegateCellEvidence>,
+    capability_escrow_evidence_cursor: usize,
 }
 
 impl DelegateCell {
@@ -2890,6 +4601,172 @@ impl DelegateCell {
 
     pub fn declassification_receipts(&self) -> &[CryptographicDecisionReceipt] {
         self.declassification_gateway.receipt_log().receipts()
+    }
+
+    pub fn capability_escrow_records(&self) -> &BTreeMap<String, CapabilityEscrowRecord> {
+        self.capability_escrow_gateway.records()
+    }
+
+    pub fn capability_escrow_receipts(&self) -> &[CapabilityEscrowDecisionReceipt] {
+        self.capability_escrow_gateway.receipts()
+    }
+
+    pub fn capability_escrow_events(&self) -> &[CapabilityEscrowDecisionEvent] {
+        self.capability_escrow_gateway.events()
+    }
+
+    pub fn query_capability_escrow_receipts(
+        &self,
+        query: &CapabilityEscrowReceiptQuery,
+    ) -> Vec<&CapabilityEscrowDecisionReceipt> {
+        self.capability_escrow_gateway.query_receipts(query)
+    }
+
+    pub fn capability_escrow_replay_context(
+        &self,
+        receipt_id: &str,
+    ) -> Option<CapabilityEscrowReplayContext> {
+        self.capability_escrow_gateway
+            .replay_context_for_receipt(receipt_id)
+    }
+
+    pub fn capability_escrow_receipt_completeness(
+        &self,
+    ) -> CapabilityEscrowReceiptCompletenessReport {
+        self.capability_escrow_gateway.receipt_completeness_report()
+    }
+
+    pub fn capability_escrow_public_key(&self) -> DecisionPublicKey {
+        self.capability_escrow_gateway.public_key()
+    }
+
+    pub fn active_emergency_grants(&self) -> Vec<EmergencyGrantArtifact> {
+        self.capability_escrow_gateway.active_emergency_grants()
+    }
+
+    pub fn pending_emergency_post_reviews(&self) -> &BTreeSet<String> {
+        self.capability_escrow_gateway.pending_post_reviews()
+    }
+
+    pub fn approve_capability_escrow_request(
+        &mut self,
+        request_id: &str,
+        timestamp_ns: u64,
+        flow_context: &FlowEnforcementContext<'_>,
+    ) -> Result<CapabilityEscrowDecisionReceipt, DelegateCellError> {
+        let receipt = self.capability_escrow_gateway.approve_request(
+            request_id,
+            timestamp_ns,
+            flow_context,
+        )?;
+        self.sync_capability_escrow_evidence();
+        Ok(receipt)
+    }
+
+    pub fn deny_capability_escrow_request(
+        &mut self,
+        request_id: &str,
+        reason: impl Into<String>,
+        timestamp_ns: u64,
+        flow_context: &FlowEnforcementContext<'_>,
+    ) -> Result<CapabilityEscrowDecisionReceipt, DelegateCellError> {
+        let receipt = self.capability_escrow_gateway.deny_request(
+            request_id,
+            reason,
+            timestamp_ns,
+            flow_context,
+        )?;
+        self.sync_capability_escrow_evidence();
+        Ok(receipt)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn issue_emergency_capability_grant(
+        &mut self,
+        request_id: &str,
+        authorized_actor: &str,
+        justification: &str,
+        expiry_timestamp: u64,
+        max_invocation_count: u32,
+        mandatory_post_review: bool,
+        rollback_on_expiry: bool,
+        timestamp_ns: u64,
+        flow_context: &FlowEnforcementContext<'_>,
+    ) -> Result<EmergencyGrantArtifact, DelegateCellError> {
+        let artifact = self.capability_escrow_gateway.issue_emergency_grant(
+            request_id,
+            authorized_actor,
+            justification,
+            expiry_timestamp,
+            max_invocation_count,
+            mandatory_post_review,
+            rollback_on_expiry,
+            timestamp_ns,
+            flow_context,
+        )?;
+        self.sync_capability_escrow_evidence();
+        Ok(artifact)
+    }
+
+    pub fn complete_emergency_post_review(
+        &mut self,
+        grant_id: &str,
+    ) -> Result<(), DelegateCellError> {
+        self.capability_escrow_gateway
+            .complete_post_review(grant_id)?;
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn issue_capability_emergency_grant(
+        &mut self,
+        request_id: &str,
+        authorized_actor: &str,
+        justification: &str,
+        expiry_timestamp: u64,
+        max_invocation_count: u32,
+        mandatory_post_review: bool,
+        rollback_on_expiry: bool,
+        timestamp_ns: u64,
+        flow_context: &FlowEnforcementContext<'_>,
+    ) -> Result<EmergencyGrantArtifact, DelegateCellError> {
+        self.issue_emergency_capability_grant(
+            request_id,
+            authorized_actor,
+            justification,
+            expiry_timestamp,
+            max_invocation_count,
+            mandatory_post_review,
+            rollback_on_expiry,
+            timestamp_ns,
+            flow_context,
+        )
+    }
+
+    pub fn complete_capability_post_review(
+        &mut self,
+        grant_id: &str,
+    ) -> Result<(), DelegateCellError> {
+        self.complete_emergency_post_review(grant_id)
+    }
+
+    pub fn capability_escrow_pending_post_reviews(&self) -> &BTreeSet<String> {
+        self.pending_emergency_post_reviews()
+    }
+
+    pub fn capability_escrow_active_emergency_grants(&self) -> Vec<EmergencyGrantArtifact> {
+        self.active_emergency_grants()
+    }
+
+    pub fn expire_capability_escrow(
+        &mut self,
+        timestamp_ns: u64,
+        flow_context: &FlowEnforcementContext<'_>,
+    ) -> Result<(), DelegateCellError> {
+        self.capability_escrow_gateway
+            .expire(timestamp_ns, flow_context)?;
+        self.sync_capability_escrow_evidence();
+        Ok(())
     }
 
     pub fn events(&self) -> &[DelegateCellEvent] {
@@ -2993,14 +4870,155 @@ impl DelegateCell {
         flow_context: &FlowEnforcementContext<'_>,
         lifecycle_context: &LifecycleContext<'_>,
     ) -> Result<HostcallDispatchOutcome<T>, DelegateCellError> {
+        self.dispatch_hostcall_with_escrow(
+            hostcall_type,
+            attempted_capability,
+            argument,
+            timestamp_ns,
+            flow_context,
+            lifecycle_context,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn dispatch_hostcall_with_escrow<T: Clone>(
+        &mut self,
+        hostcall_type: HostcallType,
+        attempted_capability: Capability,
+        argument: Labeled<T>,
+        timestamp_ns: u64,
+        flow_context: &FlowEnforcementContext<'_>,
+        lifecycle_context: &LifecycleContext<'_>,
+        escrow_justification: Option<&str>,
+    ) -> Result<HostcallDispatchOutcome<T>, DelegateCellError> {
         self.check_lifetime(timestamp_ns, lifecycle_context)?;
         self.lifecycle_manager
             .consume_hostcall(timestamp_ns, lifecycle_context)?;
 
+        let mut effective_capabilities = self.manifest.base_manifest.capabilities.clone();
+        let in_envelope = effective_capabilities.contains(&attempted_capability);
+        if !in_envelope {
+            let justification = escrow_justification.unwrap_or("delegate out-of-envelope hostcall");
+            let resolution = self
+                .capability_escrow_gateway
+                .resolve_out_of_envelope_request(
+                    &self.delegate_id,
+                    hostcall_type,
+                    attempted_capability,
+                    justification,
+                    timestamp_ns,
+                    flow_context,
+                )?;
+            self.sync_capability_escrow_evidence();
+            match resolution {
+                CapabilityEscrowResolution::AuthorizedByApproval { request_id: _ } => {
+                    effective_capabilities.insert(attempted_capability);
+                    self.record_event(
+                        flow_context.trace_id,
+                        flow_context.decision_id,
+                        flow_context.policy_id,
+                        "delegate_capability_escrow",
+                        "approved",
+                        None,
+                    );
+                    self.record_event(
+                        flow_context.trace_id,
+                        flow_context.decision_id,
+                        flow_context.policy_id,
+                        "delegate_capability_escrow_authorization",
+                        "approved",
+                        None,
+                    );
+                }
+                CapabilityEscrowResolution::AuthorizedByEmergencyGrant { grant_id: _ } => {
+                    effective_capabilities.insert(attempted_capability);
+                    self.record_event(
+                        flow_context.trace_id,
+                        flow_context.decision_id,
+                        flow_context.policy_id,
+                        "delegate_capability_escrow",
+                        "emergency_granted",
+                        None,
+                    );
+                }
+                CapabilityEscrowResolution::Escrowed { decision, route } => {
+                    self.evidence
+                        .push(DelegateCellEvidence::CapabilityEscalation {
+                            delegate_id: self.delegate_id.clone(),
+                            attempted: attempted_capability,
+                            decision_id: flow_context.decision_id.to_string(),
+                        });
+                    self.apply_guardplane_penalty(self.policy.capability_escalation_penalty_micros);
+                    self.record_event(
+                        flow_context.trace_id,
+                        flow_context.decision_id,
+                        flow_context.policy_id,
+                        "delegate_capability_escrow",
+                        route.as_str(),
+                        decision.error_code.as_deref(),
+                    );
+                    self.record_event(
+                        flow_context.trace_id,
+                        flow_context.decision_id,
+                        flow_context.policy_id,
+                        "delegate_hostcall",
+                        "blocked",
+                        decision.error_code.as_deref(),
+                    );
+                    return Ok(HostcallDispatchOutcome {
+                        result: HostcallResult::Denied {
+                            reason: DenialReason::CapabilityEscrowPending {
+                                attempted: attempted_capability,
+                                action: route,
+                                escrow_id: decision.request_id,
+                            },
+                        },
+                        output: None,
+                    });
+                }
+                CapabilityEscrowResolution::Denied { decision } => {
+                    self.evidence
+                        .push(DelegateCellEvidence::CapabilityEscalation {
+                            delegate_id: self.delegate_id.clone(),
+                            attempted: attempted_capability,
+                            decision_id: flow_context.decision_id.to_string(),
+                        });
+                    self.apply_guardplane_penalty(self.policy.capability_escalation_penalty_micros);
+                    self.record_event(
+                        flow_context.trace_id,
+                        flow_context.decision_id,
+                        flow_context.policy_id,
+                        "delegate_capability_escrow",
+                        "denied",
+                        decision.error_code.as_deref(),
+                    );
+                    self.record_event(
+                        flow_context.trace_id,
+                        flow_context.decision_id,
+                        flow_context.policy_id,
+                        "delegate_hostcall",
+                        "blocked",
+                        decision.error_code.as_deref(),
+                    );
+                    return Ok(HostcallDispatchOutcome {
+                        result: HostcallResult::Denied {
+                            reason: DenialReason::CapabilityEscrowPending {
+                                attempted: attempted_capability,
+                                action: hostcall_type.default_escrow_route(),
+                                escrow_id: decision.request_id,
+                            },
+                        },
+                        output: None,
+                    });
+                }
+            }
+        }
+
         let outcome = self.hostcall_dispatcher.dispatch(
             &self.delegate_id,
             hostcall_type,
-            &self.manifest.base_manifest.capabilities,
+            &effective_capabilities,
             attempted_capability,
             argument,
             flow_context,
@@ -3038,6 +5056,24 @@ impl DelegateCell {
                         attempted: *attempted,
                         decision_id: flow_context.decision_id.to_string(),
                     });
+                self.apply_guardplane_penalty(self.policy.capability_escalation_penalty_micros);
+                self.record_event(
+                    flow_context.trace_id,
+                    flow_context.decision_id,
+                    flow_context.policy_id,
+                    "delegate_hostcall",
+                    "blocked",
+                    Some("FE-DELEGATE-0003"),
+                );
+            }
+            HostcallResult::Denied {
+                reason:
+                    DenialReason::CapabilityEscrowPending {
+                        attempted: _,
+                        action: _,
+                        escrow_id: _,
+                    },
+            } => {
                 self.apply_guardplane_penalty(self.policy.capability_escalation_penalty_micros);
                 self.record_event(
                     flow_context.trace_id,
@@ -3133,6 +5169,20 @@ impl DelegateCell {
         Ok(outcome)
     }
 
+    fn sync_capability_escrow_evidence(&mut self) {
+        let evidence = self.capability_escrow_gateway.evidence();
+        if self.capability_escrow_evidence_cursor >= evidence.len() {
+            return;
+        }
+        self.evidence.extend(
+            evidence[self.capability_escrow_evidence_cursor..]
+                .iter()
+                .cloned()
+                .map(DelegateCellEvidence::CapabilityEscrow),
+        );
+        self.capability_escrow_evidence_cursor = evidence.len();
+    }
+
     fn apply_guardplane_penalty(&mut self, penalty_micros: u64) {
         self.guardplane_state.posterior_micros =
             (self.guardplane_state.posterior_micros + penalty_micros).min(1_000_000);
@@ -3219,6 +5269,9 @@ impl DelegateCellFactory {
             delegate_id: delegate_id.clone(),
             lifecycle_manager,
             hostcall_dispatcher: HostcallDispatcher::new(self.sink_policy),
+            capability_escrow_gateway: CapabilityEscrowGateway::with_default_contracts(
+                self.decision_signing_key,
+            ),
             declassification_gateway: DeclassificationGateway::with_default_contracts(
                 self.decision_signing_key,
             ),
@@ -3232,6 +5285,7 @@ impl DelegateCellFactory {
             lifetime_expired_recorded: false,
             events: Vec::new(),
             evidence: Vec::new(),
+            capability_escrow_evidence_cursor: 0,
             manifest,
         };
         delegate.record_event(
@@ -4535,7 +6589,7 @@ mod delegate_cell_tests {
     }
 
     #[test]
-    fn capability_escalation_emits_delegate_evidence_and_posterior_shift() {
+    fn out_of_envelope_hostcall_enters_escrow_and_updates_guardplane() {
         let factory = DelegateCellFactory::default();
         let mut delegate = factory
             .create_delegate_cell(
@@ -4563,13 +6617,17 @@ mod delegate_cell_tests {
         assert!(matches!(
             outcome.result,
             HostcallResult::Denied {
-                reason: DenialReason::CapabilityEscalation { .. }
+                reason: DenialReason::CapabilityEscrowPending {
+                    attempted: Capability::ProcessSpawn,
+                    action: CapabilityEscrowRoute::Challenge,
+                    ..
+                }
             }
         ));
         assert!(delegate
             .evidence()
             .iter()
-            .any(|item| matches!(item, DelegateCellEvidence::CapabilityEscalation { .. })));
+            .any(|item| matches!(item, DelegateCellEvidence::CapabilityEscrow(_))));
         assert!(delegate.guardplane_state().posterior_micros > baseline);
     }
 
