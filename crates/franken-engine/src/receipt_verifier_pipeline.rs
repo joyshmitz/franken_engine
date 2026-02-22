@@ -1498,11 +1498,13 @@ mod tests {
             verdict.failure_class,
             Some(VerificationFailureClass::Signature)
         );
-        assert!(verdict
-            .signature
-            .checks
-            .iter()
-            .any(|c| c.check == "signer_not_revoked" && c.outcome == "fail"));
+        assert!(
+            verdict
+                .signature
+                .checks
+                .iter()
+                .any(|c| c.check == "signer_not_revoked" && c.outcome == "fail")
+        );
     }
 
     #[test]
@@ -1511,11 +1513,13 @@ mod tests {
         request.signature.signer_revocation.source = "".to_string();
         let verdict = verify_receipt_request(&receipt_id, &request);
         assert!(!verdict.passed);
-        assert!(verdict
-            .signature
-            .checks
-            .iter()
-            .any(|c| c.check == "revocation_source_present" && c.outcome == "fail"));
+        assert!(
+            verdict
+                .signature
+                .checks
+                .iter()
+                .any(|c| c.check == "revocation_source_present" && c.outcome == "fail")
+        );
     }
 
     #[test]
@@ -1524,11 +1528,13 @@ mod tests {
         request.signature.signer_revocation.signer_key_id = EngineObjectId([0xAA; 32]);
         let verdict = verify_receipt_request(&receipt_id, &request);
         assert!(!verdict.passed);
-        assert!(verdict
-            .signature
-            .checks
-            .iter()
-            .any(|c| c.check == "signer_key_id_matches_receipt" && c.outcome == "fail"));
+        assert!(
+            verdict
+                .signature
+                .checks
+                .iter()
+                .any(|c| c.check == "signer_key_id_matches_receipt" && c.outcome == "fail")
+        );
     }
 
     #[test]
@@ -1537,11 +1543,13 @@ mod tests {
         request.signature.expected_preimage_hash = ContentHash::compute(b"wrong");
         let verdict = verify_receipt_request(&receipt_id, &request);
         assert!(!verdict.passed);
-        assert!(verdict
-            .signature
-            .checks
-            .iter()
-            .any(|c| c.check == "canonical_preimage_hash_matches" && c.outcome == "fail"));
+        assert!(
+            verdict
+                .signature
+                .checks
+                .iter()
+                .any(|c| c.check == "canonical_preimage_hash_matches" && c.outcome == "fail")
+        );
     }
 
     // --- Transparency layer failure modes ---
@@ -1552,11 +1560,13 @@ mod tests {
         request.transparency.operator_keys[0].revoked = true;
         let verdict = verify_receipt_request(&receipt_id, &request);
         assert!(!verdict.passed);
-        assert!(verdict
-            .transparency
-            .checks
-            .iter()
-            .any(|c| c.check == "checkpoint_operator_key_not_revoked" && c.outcome == "fail"));
+        assert!(
+            verdict
+                .transparency
+                .checks
+                .iter()
+                .any(|c| c.check == "checkpoint_operator_key_not_revoked" && c.outcome == "fail")
+        );
     }
 
     #[test]
@@ -1565,11 +1575,13 @@ mod tests {
         request.transparency.operator_keys.clear();
         let verdict = verify_receipt_request(&receipt_id, &request);
         assert!(!verdict.passed);
-        assert!(verdict
-            .transparency
-            .checks
-            .iter()
-            .any(|c| c.check == "checkpoint_operator_key_found" && c.outcome == "fail"));
+        assert!(
+            verdict
+                .transparency
+                .checks
+                .iter()
+                .any(|c| c.check == "checkpoint_operator_key_found" && c.outcome == "fail")
+        );
     }
 
     #[test]
@@ -1582,8 +1594,7 @@ mod tests {
             .transparency
             .checks
             .iter()
-            .any(|c| c.check == "inclusion_root_matches_checkpoint_root"
-                && c.outcome == "fail"));
+            .any(|c| c.check == "inclusion_root_matches_checkpoint_root" && c.outcome == "fail"));
     }
 
     #[test]
@@ -1592,13 +1603,9 @@ mod tests {
         request.transparency.inclusion_proof.stream_length = 999;
         let verdict = verify_receipt_request(&receipt_id, &request);
         assert!(!verdict.passed);
-        assert!(verdict
-            .transparency
-            .checks
-            .iter()
-            .any(|c| c.check
-                == "checkpoint_log_length_matches_inclusion_stream_length"
-                && c.outcome == "fail"));
+        assert!(verdict.transparency.checks.iter().any(|c| c.check
+            == "checkpoint_log_length_matches_inclusion_stream_length"
+            && c.outcome == "fail"));
     }
 
     // --- Attestation layer failure modes ---
@@ -1608,19 +1615,18 @@ mod tests {
         let (receipt_id, mut request) = build_valid_fixture();
         request.receipt.attestation_bindings = None;
         // Re-sign the receipt since bindings changed
-        let signed = request
-            .receipt
-            .sign(&request.signature.signing_key_bytes);
-        request.signature.expected_preimage_hash =
-            ContentHash::compute(&signed.signing_preimage());
+        let signed = request.receipt.sign(&request.signature.signing_key_bytes);
+        request.signature.expected_preimage_hash = ContentHash::compute(&signed.signing_preimage());
         request.receipt = signed;
         let verdict = verify_receipt_request(&receipt_id, &request);
         assert!(!verdict.passed);
-        assert!(verdict
-            .attestation
-            .checks
-            .iter()
-            .any(|c| c.check == "receipt_has_attestation_bindings" && c.outcome == "fail"));
+        assert!(
+            verdict
+                .attestation
+                .checks
+                .iter()
+                .any(|c| c.check == "receipt_has_attestation_bindings" && c.outcome == "fail")
+        );
     }
 
     #[test]
@@ -1635,8 +1641,7 @@ mod tests {
             .attestation
             .checks
             .iter()
-            .any(|c| c.check == "attested_signer_matches_receipt_signer"
-                && c.outcome == "fail"));
+            .any(|c| c.check == "attested_signer_matches_receipt_signer" && c.outcome == "fail"));
     }
 
     #[test]
@@ -1647,11 +1652,13 @@ mod tests {
         }
         let verdict = verify_receipt_request(&receipt_id, &request);
         assert!(!verdict.passed);
-        assert!(verdict
-            .attestation
-            .checks
-            .iter()
-            .any(|c| c.check == "quote_nonce_matches_binding" && c.outcome == "fail"));
+        assert!(
+            verdict
+                .attestation
+                .checks
+                .iter()
+                .any(|c| c.check == "quote_nonce_matches_binding" && c.outcome == "fail")
+        );
     }
 
     #[test]
@@ -1660,11 +1667,13 @@ mod tests {
         request.attestation.trust_roots.clear();
         let verdict = verify_receipt_request(&receipt_id, &request);
         assert!(!verdict.passed);
-        assert!(verdict
-            .attestation
-            .checks
-            .iter()
-            .any(|c| c.check == "quote_trust_root_available" && c.outcome == "fail"));
+        assert!(
+            verdict
+                .attestation
+                .checks
+                .iter()
+                .any(|c| c.check == "quote_trust_root_available" && c.outcome == "fail")
+        );
     }
 
     #[test]
@@ -1673,12 +1682,9 @@ mod tests {
         request.attestation.policy_quote.trust_root_id = "wrong-root".to_string();
         let verdict = verify_receipt_request(&receipt_id, &request);
         assert!(!verdict.passed);
-        assert!(verdict
-            .attestation
-            .checks
-            .iter()
-            .any(|c| c.check == "policy_quote_trust_root_matches_attested_signer"
-                && c.outcome == "fail"));
+        assert!(verdict.attestation.checks.iter().any(|c| c.check
+            == "policy_quote_trust_root_matches_attested_signer"
+            && c.outcome == "fail"));
     }
 
     #[test]
@@ -1687,12 +1693,9 @@ mod tests {
         request.attestation.policy_quote.measurement.digest_hex = "aa".repeat(32);
         let verdict = verify_receipt_request(&receipt_id, &request);
         assert!(!verdict.passed);
-        assert!(verdict
-            .attestation
-            .checks
-            .iter()
-            .any(|c| c.check == "policy_quote_measurement_matches_attested_measurement"
-                && c.outcome == "fail"));
+        assert!(verdict.attestation.checks.iter().any(|c| c.check
+            == "policy_quote_measurement_matches_attested_measurement"
+            && c.outcome == "fail"));
     }
 
     // --- Stale cache warnings ---
@@ -1707,9 +1710,11 @@ mod tests {
             verdict.failure_class,
             Some(VerificationFailureClass::StaleData)
         );
-        assert!(verdict
-            .warnings
-            .contains(&"signature_revocation_cache_stale".to_string()));
+        assert!(
+            verdict
+                .warnings
+                .contains(&"signature_revocation_cache_stale".to_string())
+        );
     }
 
     #[test]
@@ -1718,9 +1723,11 @@ mod tests {
         request.transparency.cache_stale = true;
         let verdict = verify_receipt_request(&receipt_id, &request);
         assert!(!verdict.passed);
-        assert!(verdict
-            .warnings
-            .contains(&"transparency_cache_stale".to_string()));
+        assert!(
+            verdict
+                .warnings
+                .contains(&"transparency_cache_stale".to_string())
+        );
     }
 
     #[test]
@@ -1729,9 +1736,11 @@ mod tests {
         request.attestation.revocation_cache_stale = true;
         let verdict = verify_receipt_request(&receipt_id, &request);
         assert!(!verdict.passed);
-        assert!(verdict
-            .warnings
-            .contains(&"attestation_revocation_cache_stale".to_string()));
+        assert!(
+            verdict
+                .warnings
+                .contains(&"attestation_revocation_cache_stale".to_string())
+        );
     }
 
     #[test]
@@ -1802,10 +1811,12 @@ mod tests {
     fn verdict_logs_include_completion_event() {
         let (receipt_id, request) = build_valid_fixture();
         let verdict = verify_receipt_request(&receipt_id, &request);
-        assert!(verdict
-            .logs
-            .iter()
-            .any(|log| log.event == "receipt_verification_complete"));
+        assert!(
+            verdict
+                .logs
+                .iter()
+                .any(|log| log.event == "receipt_verification_complete")
+        );
     }
 
     #[test]

@@ -716,10 +716,8 @@ impl EpochInvalidationEngine {
         for spec_id in ids {
             if self.do_invalidate(spec_id, reason, current_ns).is_ok() {
                 count += 1;
+                self.track_invalidation(current_ns);
             }
-        }
-        if count > 0 {
-            self.track_invalidation(current_ns);
         }
         count
     }

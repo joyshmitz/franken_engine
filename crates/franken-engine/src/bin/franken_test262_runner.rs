@@ -133,7 +133,10 @@ fn parse_args() -> Result<CliArgs, String> {
                 return Err(usage().to_string());
             }
             other => {
-                return Err(format!("unknown argument: {other}. {usage}", usage = usage()));
+                return Err(format!(
+                    "unknown argument: {other}. {usage}",
+                    usage = usage()
+                ));
             }
         }
     }
@@ -232,13 +235,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         },
     };
 
-    let run = runner.run(
-        &pins,
-        &profile,
-        &waivers,
-        &observed,
-        previous_hwm.as_ref(),
-    )?;
+    let run = runner.run(&pins, &profile, &waivers, &observed, previous_hwm.as_ref())?;
 
     let next_hwm = next_high_water_mark(&run, previous_hwm.as_ref());
     let collector = Test262EvidenceCollector::new(&args.output_root)?;
@@ -250,7 +247,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     println!("test262 run_id={}", run.run_id);
-    println!("test262 total_profile_tests={}", run.summary.total_profile_tests);
+    println!(
+        "test262 total_profile_tests={}",
+        run.summary.total_profile_tests
+    );
     println!("test262 passed={}", run.summary.passed);
     println!("test262 failed={}", run.summary.failed);
     println!("test262 waived={}", run.summary.waived);

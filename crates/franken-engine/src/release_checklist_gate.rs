@@ -1239,19 +1239,25 @@ mod tests {
 
     #[test]
     fn error_requires_rollback_non_storage_variants() {
-        assert!(!ReleaseChecklistError::InvalidTimestamp {
-            value: "bad".to_string()
-        }
-        .requires_rollback());
-        assert!(!ReleaseChecklistError::InvalidItem {
-            item_id: "x".to_string(),
-            detail: "d".to_string()
-        }
-        .requires_rollback());
-        assert!(!ReleaseChecklistError::SerializationFailure {
-            detail: "d".to_string()
-        }
-        .requires_rollback());
+        assert!(
+            !ReleaseChecklistError::InvalidTimestamp {
+                value: "bad".to_string()
+            }
+            .requires_rollback()
+        );
+        assert!(
+            !ReleaseChecklistError::InvalidItem {
+                item_id: "x".to_string(),
+                detail: "d".to_string()
+            }
+            .requires_rollback()
+        );
+        assert!(
+            !ReleaseChecklistError::SerializationFailure {
+                detail: "d".to_string()
+            }
+            .requires_rollback()
+        );
     }
 
     // ── ReleaseChecklistError Display (remaining variants) ────────────
@@ -1683,10 +1689,7 @@ mod tests {
         assert!(decision.blocked);
         assert!(!decision.blockers.is_empty());
         assert_eq!(decision.outcome, "deny");
-        assert_eq!(
-            decision.error_code.as_deref(),
-            Some(ERROR_RELEASE_BLOCKED)
-        );
+        assert_eq!(decision.error_code.as_deref(), Some(ERROR_RELEASE_BLOCKED));
     }
 
     #[test]
@@ -1729,38 +1732,24 @@ mod tests {
     fn query_empty_release_tag_errors() {
         use crate::storage_adapter::InMemoryStorageAdapter;
         let mut adapter = InMemoryStorageAdapter::default();
-        let err =
-            query_release_checklists_by_tag(&mut adapter, "", "t", "d", "p").unwrap_err();
-        assert!(matches!(
-            err,
-            ReleaseChecklistError::InvalidRequest { .. }
-        ));
+        let err = query_release_checklists_by_tag(&mut adapter, "", "t", "d", "p").unwrap_err();
+        assert!(matches!(err, ReleaseChecklistError::InvalidRequest { .. }));
     }
 
     #[test]
     fn query_empty_trace_id_errors() {
         use crate::storage_adapter::InMemoryStorageAdapter;
         let mut adapter = InMemoryStorageAdapter::default();
-        let err =
-            query_release_checklists_by_tag(&mut adapter, "v1", "", "d", "p").unwrap_err();
-        assert!(matches!(
-            err,
-            ReleaseChecklistError::InvalidRequest { .. }
-        ));
+        let err = query_release_checklists_by_tag(&mut adapter, "v1", "", "d", "p").unwrap_err();
+        assert!(matches!(err, ReleaseChecklistError::InvalidRequest { .. }));
     }
 
     #[test]
     fn query_nonexistent_tag_returns_empty() {
         use crate::storage_adapter::InMemoryStorageAdapter;
         let mut adapter = InMemoryStorageAdapter::default();
-        let results = query_release_checklists_by_tag(
-            &mut adapter,
-            "nonexistent",
-            "t",
-            "d",
-            "p",
-        )
-        .unwrap();
+        let results =
+            query_release_checklists_by_tag(&mut adapter, "nonexistent", "t", "d", "p").unwrap();
         assert!(results.is_empty());
     }
 

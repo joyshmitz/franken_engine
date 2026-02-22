@@ -1136,8 +1136,7 @@ const value: number = 1;
     fn jsx_preserve_skips_lowering() {
         let mut config = TsNormalizationConfig::default();
         config.compiler_options.jsx = "preserve".to_string();
-        let output =
-            normalize_typescript_to_es2020("<Widget />", &config, "t", "d", "p").unwrap();
+        let output = normalize_typescript_to_es2020("<Widget />", &config, "t", "d", "p").unwrap();
         // In preserve mode, JSX is NOT lowered to createElement
         assert!(!output.normalized_source.contains("createElement"));
     }
@@ -1280,7 +1279,11 @@ const value: number = 1;
             "p",
         )
         .unwrap();
-        assert!(output.normalized_source.contains("createElement(\"div\", null, hello)"));
+        assert!(
+            output
+                .normalized_source
+                .contains("createElement(\"div\", null, hello)")
+        );
     }
 
     // --- Namespace edge cases ---
@@ -1816,7 +1819,12 @@ const value: number = 1;
             "p",
         )
         .unwrap();
-        let steps: Vec<&str> = output.witness.decisions.iter().map(|d| d.step.as_str()).collect();
+        let steps: Vec<&str> = output
+            .witness
+            .decisions
+            .iter()
+            .map(|d| d.step.as_str())
+            .collect();
         assert!(steps.contains(&"type_only_import_elision"));
         assert!(steps.contains(&"namespace_lowering"));
         assert!(steps.contains(&"decorator_lowering"));
@@ -1834,13 +1842,8 @@ const value: number = 1;
 
     #[test]
     fn empty_source_produces_failure_event() {
-        let _ = normalize_typescript_to_es2020(
-            "   ",
-            &TsNormalizationConfig::default(),
-            "t",
-            "d",
-            "p",
-        );
+        let _ =
+            normalize_typescript_to_es2020("   ", &TsNormalizationConfig::default(), "t", "d", "p");
         // Just ensuring no panic — the error return is tested elsewhere
     }
 
