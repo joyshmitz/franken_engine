@@ -409,15 +409,23 @@ fn sequential_checkpoints_advance_frontier() {
         .unwrap();
 
     let cp1 = build_after(
-        &genesis, 1, SecurityEpoch::GENESIS, 200,
-        slice::from_ref(&sk), "zone-a",
+        &genesis,
+        1,
+        SecurityEpoch::GENESIS,
+        200,
+        slice::from_ref(&sk),
+        "zone-a",
     );
     mgr.accept_checkpoint("zone-a", &cp1, 1, slice::from_ref(&vk), "t-1")
         .unwrap();
 
     let cp2 = build_after(
-        &cp1, 2, SecurityEpoch::GENESIS, 300,
-        slice::from_ref(&sk), "zone-a",
+        &cp1,
+        2,
+        SecurityEpoch::GENESIS,
+        300,
+        slice::from_ref(&sk),
+        "zone-a",
     );
     mgr.accept_checkpoint("zone-a", &cp2, 1, slice::from_ref(&vk), "t-2")
         .unwrap();
@@ -439,8 +447,12 @@ fn sequential_acceptance_emits_checkpoint_accepted_events() {
         .unwrap();
 
     let cp1 = build_after(
-        &genesis, 1, SecurityEpoch::GENESIS, 200,
-        slice::from_ref(&sk), "zone-a",
+        &genesis,
+        1,
+        SecurityEpoch::GENESIS,
+        200,
+        slice::from_ref(&sk),
+        "zone-a",
     );
     mgr.accept_checkpoint("zone-a", &cp1, 1, slice::from_ref(&vk), "t-1")
         .unwrap();
@@ -476,8 +488,12 @@ fn rollback_rejected_unconditionally() {
         .unwrap();
 
     let cp1 = build_after(
-        &genesis, 1, SecurityEpoch::GENESIS, 200,
-        slice::from_ref(&sk), "zone-a",
+        &genesis,
+        1,
+        SecurityEpoch::GENESIS,
+        200,
+        slice::from_ref(&sk),
+        "zone-a",
     );
     mgr.accept_checkpoint("zone-a", &cp1, 1, slice::from_ref(&vk), "t-1")
         .unwrap();
@@ -509,8 +525,12 @@ fn rollback_emits_rejection_event() {
         .unwrap();
 
     let cp1 = build_after(
-        &genesis, 1, SecurityEpoch::GENESIS, 200,
-        slice::from_ref(&sk), "zone-a",
+        &genesis,
+        1,
+        SecurityEpoch::GENESIS,
+        200,
+        slice::from_ref(&sk),
+        "zone-a",
     );
     mgr.accept_checkpoint("zone-a", &cp1, 1, slice::from_ref(&vk), "t-1")
         .unwrap();
@@ -520,9 +540,11 @@ fn rollback_emits_rejection_event() {
     let _ = mgr.accept_checkpoint("zone-a", &rollback, 1, slice::from_ref(&vk), "t-rollback");
 
     let events = mgr.drain_events();
-    assert!(events
-        .iter()
-        .any(|e| matches!(&e.event_type, FrontierEventType::RollbackRejected { .. })));
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(&e.event_type, FrontierEventType::RollbackRejected { .. }))
+    );
 }
 
 #[test]
@@ -536,8 +558,12 @@ fn rollback_does_not_advance_frontier() {
         .unwrap();
 
     let cp1 = build_after(
-        &genesis, 1, SecurityEpoch::GENESIS, 200,
-        slice::from_ref(&sk), "zone-a",
+        &genesis,
+        1,
+        SecurityEpoch::GENESIS,
+        200,
+        slice::from_ref(&sk),
+        "zone-a",
     );
     mgr.accept_checkpoint("zone-a", &cp1, 1, slice::from_ref(&vk), "t-1")
         .unwrap();
@@ -564,16 +590,24 @@ fn duplicate_checkpoint_rejected() {
         .unwrap();
 
     let cp1 = build_after(
-        &genesis, 1, SecurityEpoch::GENESIS, 200,
-        slice::from_ref(&sk), "zone-a",
+        &genesis,
+        1,
+        SecurityEpoch::GENESIS,
+        200,
+        slice::from_ref(&sk),
+        "zone-a",
     );
     mgr.accept_checkpoint("zone-a", &cp1, 1, slice::from_ref(&vk), "t-1")
         .unwrap();
 
     // Attempt to accept seq=1 again
     let dup = build_after(
-        &genesis, 1, SecurityEpoch::GENESIS, 250,
-        slice::from_ref(&sk), "zone-a",
+        &genesis,
+        1,
+        SecurityEpoch::GENESIS,
+        250,
+        slice::from_ref(&sk),
+        "zone-a",
     );
     let err = mgr
         .accept_checkpoint("zone-a", &dup, 1, slice::from_ref(&vk), "t-dup")
@@ -597,26 +631,34 @@ fn epoch_regression_rejected() {
     let sk = make_sk(1);
     let vk = sk.verification_key();
 
-    let genesis_e5 = build_genesis_epoch(slice::from_ref(&sk), SecurityEpoch::from_raw(5), "zone-a");
+    let genesis_e5 =
+        build_genesis_epoch(slice::from_ref(&sk), SecurityEpoch::from_raw(5), "zone-a");
 
     let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
     mgr.accept_checkpoint("zone-a", &genesis_e5, 1, slice::from_ref(&vk), "t-0")
         .unwrap();
 
     let cp1 = build_after(
-        &genesis_e5, 1, SecurityEpoch::from_raw(5), 200,
-        slice::from_ref(&sk), "zone-a",
+        &genesis_e5,
+        1,
+        SecurityEpoch::from_raw(5),
+        200,
+        slice::from_ref(&sk),
+        "zone-a",
     );
     mgr.accept_checkpoint("zone-a", &cp1, 1, slice::from_ref(&vk), "t-1")
         .unwrap();
 
     // Build from independent chain at lower epoch
-    let independent_genesis = build_genesis_epoch(
-        slice::from_ref(&sk), SecurityEpoch::from_raw(3), "zone-a",
-    );
+    let independent_genesis =
+        build_genesis_epoch(slice::from_ref(&sk), SecurityEpoch::from_raw(3), "zone-a");
     let regressed = build_after(
-        &independent_genesis, 2, SecurityEpoch::from_raw(3), 300,
-        slice::from_ref(&sk), "zone-a",
+        &independent_genesis,
+        2,
+        SecurityEpoch::from_raw(3),
+        300,
+        slice::from_ref(&sk),
+        "zone-a",
     );
 
     let err = mgr
@@ -630,27 +672,35 @@ fn epoch_regression_emits_event() {
     let sk = make_sk(1);
     let vk = sk.verification_key();
 
-    let genesis_e5 = build_genesis_epoch(slice::from_ref(&sk), SecurityEpoch::from_raw(5), "zone-a");
+    let genesis_e5 =
+        build_genesis_epoch(slice::from_ref(&sk), SecurityEpoch::from_raw(5), "zone-a");
 
     let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
     mgr.accept_checkpoint("zone-a", &genesis_e5, 1, slice::from_ref(&vk), "t-0")
         .unwrap();
 
     let cp1 = build_after(
-        &genesis_e5, 1, SecurityEpoch::from_raw(5), 200,
-        slice::from_ref(&sk), "zone-a",
+        &genesis_e5,
+        1,
+        SecurityEpoch::from_raw(5),
+        200,
+        slice::from_ref(&sk),
+        "zone-a",
     );
     mgr.accept_checkpoint("zone-a", &cp1, 1, slice::from_ref(&vk), "t-1")
         .unwrap();
 
     mgr.drain_events();
 
-    let independent_genesis = build_genesis_epoch(
-        slice::from_ref(&sk), SecurityEpoch::from_raw(3), "zone-a",
-    );
+    let independent_genesis =
+        build_genesis_epoch(slice::from_ref(&sk), SecurityEpoch::from_raw(3), "zone-a");
     let regressed = build_after(
-        &independent_genesis, 2, SecurityEpoch::from_raw(3), 300,
-        slice::from_ref(&sk), "zone-a",
+        &independent_genesis,
+        2,
+        SecurityEpoch::from_raw(3),
+        300,
+        slice::from_ref(&sk),
+        "zone-a",
     );
     let _ = mgr.accept_checkpoint("zone-a", &regressed, 1, slice::from_ref(&vk), "t-regress");
 
@@ -676,8 +726,12 @@ fn epoch_transition_forward_accepted() {
         .unwrap();
 
     let cp1 = build_after(
-        &genesis, 1, SecurityEpoch::from_raw(5), 200,
-        slice::from_ref(&sk), "zone-a",
+        &genesis,
+        1,
+        SecurityEpoch::from_raw(5),
+        200,
+        slice::from_ref(&sk),
+        "zone-a",
     );
     mgr.accept_checkpoint("zone-a", &cp1, 1, slice::from_ref(&vk), "t-1")
         .unwrap();
@@ -704,8 +758,12 @@ fn zones_are_independent() {
         .unwrap();
 
     let cp_a1 = build_after(
-        &genesis_a, 1, SecurityEpoch::GENESIS, 200,
-        slice::from_ref(&sk), "zone-a",
+        &genesis_a,
+        1,
+        SecurityEpoch::GENESIS,
+        200,
+        slice::from_ref(&sk),
+        "zone-a",
     );
     mgr.accept_checkpoint("zone-a", &cp_a1, 1, slice::from_ref(&vk), "t-a1")
         .unwrap();
@@ -714,8 +772,12 @@ fn zones_are_independent() {
     assert_eq!(mgr.get_frontier("zone-a").unwrap().frontier_seq, 1);
 
     let cp_b1 = build_after(
-        &genesis_b, 1, SecurityEpoch::GENESIS, 200,
-        slice::from_ref(&sk), "zone-b",
+        &genesis_b,
+        1,
+        SecurityEpoch::GENESIS,
+        200,
+        slice::from_ref(&sk),
+        "zone-b",
     );
     mgr.accept_checkpoint("zone-b", &cp_b1, 1, slice::from_ref(&vk), "t-b1")
         .unwrap();
@@ -753,8 +815,12 @@ fn quorum_failure_rejects_subsequent_checkpoint() {
         .unwrap();
 
     let cp1 = build_after(
-        &genesis, 1, SecurityEpoch::GENESIS, 200,
-        slice::from_ref(&sk), "zone-a",
+        &genesis,
+        1,
+        SecurityEpoch::GENESIS,
+        200,
+        slice::from_ref(&sk),
+        "zone-a",
     );
     let err = mgr
         .accept_checkpoint("zone-a", &cp1, 1, slice::from_ref(&wrong_vk), "t-bad")
@@ -806,8 +872,12 @@ fn frontier_persisted_on_each_acceptance() {
     assert_eq!(mgr.backend().persist_count, 1);
 
     let cp1 = build_after(
-        &genesis, 1, SecurityEpoch::GENESIS, 200,
-        slice::from_ref(&sk), "zone-a",
+        &genesis,
+        1,
+        SecurityEpoch::GENESIS,
+        200,
+        slice::from_ref(&sk),
+        "zone-a",
     );
     mgr.accept_checkpoint("zone-a", &cp1, 1, slice::from_ref(&vk), "t-1")
         .unwrap();
@@ -827,8 +897,12 @@ fn persistence_failure_prevents_frontier_advance() {
     mgr.backend_mut().fail_on_persist = true;
 
     let cp1 = build_after(
-        &genesis, 1, SecurityEpoch::GENESIS, 200,
-        slice::from_ref(&sk), "zone-a",
+        &genesis,
+        1,
+        SecurityEpoch::GENESIS,
+        200,
+        slice::from_ref(&sk),
+        "zone-a",
     );
     let err = mgr
         .accept_checkpoint("zone-a", &cp1, 1, slice::from_ref(&vk), "t-fail")
@@ -856,8 +930,12 @@ fn recovery_loads_persisted_frontier() {
         .unwrap();
 
     let cp1 = build_after(
-        &genesis, 1, SecurityEpoch::GENESIS, 200,
-        slice::from_ref(&sk), "zone-a",
+        &genesis,
+        1,
+        SecurityEpoch::GENESIS,
+        200,
+        slice::from_ref(&sk),
+        "zone-a",
     );
     mgr1.accept_checkpoint("zone-a", &cp1, 1, slice::from_ref(&vk), "t-1")
         .unwrap();
@@ -922,15 +1000,23 @@ fn recent_ids_tracked() {
         .unwrap();
 
     let cp1 = build_after(
-        &genesis, 1, SecurityEpoch::GENESIS, 200,
-        slice::from_ref(&sk), "zone-a",
+        &genesis,
+        1,
+        SecurityEpoch::GENESIS,
+        200,
+        slice::from_ref(&sk),
+        "zone-a",
     );
     mgr.accept_checkpoint("zone-a", &cp1, 1, slice::from_ref(&vk), "t-1")
         .unwrap();
 
     let cp2 = build_after(
-        &cp1, 2, SecurityEpoch::GENESIS, 300,
-        slice::from_ref(&sk), "zone-a",
+        &cp1,
+        2,
+        SecurityEpoch::GENESIS,
+        300,
+        slice::from_ref(&sk),
+        "zone-a",
     );
     mgr.accept_checkpoint("zone-a", &cp2, 1, slice::from_ref(&vk), "t-2")
         .unwrap();
@@ -989,8 +1075,12 @@ fn event_counts_accurate() {
         .unwrap();
 
     let cp1 = build_after(
-        &genesis, 1, SecurityEpoch::GENESIS, 200,
-        slice::from_ref(&sk), "zone-a",
+        &genesis,
+        1,
+        SecurityEpoch::GENESIS,
+        200,
+        slice::from_ref(&sk),
+        "zone-a",
     );
     mgr.accept_checkpoint("zone-a", &cp1, 1, slice::from_ref(&vk), "t-1")
         .unwrap();
@@ -1036,8 +1126,12 @@ fn linkage_verification_succeeds() {
         .unwrap();
 
     let cp1 = build_after(
-        &genesis, 1, SecurityEpoch::GENESIS, 200,
-        slice::from_ref(&sk), "zone-a",
+        &genesis,
+        1,
+        SecurityEpoch::GENESIS,
+        200,
+        slice::from_ref(&sk),
+        "zone-a",
     );
 
     mgr.verify_linkage_against_frontier("zone-a", &genesis, &cp1)
@@ -1055,16 +1149,24 @@ fn linkage_verification_fails_wrong_prev() {
         .unwrap();
 
     let cp1 = build_after(
-        &genesis, 1, SecurityEpoch::GENESIS, 200,
-        slice::from_ref(&sk), "zone-a",
+        &genesis,
+        1,
+        SecurityEpoch::GENESIS,
+        200,
+        slice::from_ref(&sk),
+        "zone-a",
     );
     mgr.accept_checkpoint("zone-a", &cp1, 1, slice::from_ref(&vk), "t-1")
         .unwrap();
 
     // Try with genesis as prev (but frontier is at cp1)
     let cp2 = build_after(
-        &cp1, 2, SecurityEpoch::GENESIS, 300,
-        slice::from_ref(&sk), "zone-a",
+        &cp1,
+        2,
+        SecurityEpoch::GENESIS,
+        300,
+        slice::from_ref(&sk),
+        "zone-a",
     );
     let err = mgr
         .verify_linkage_against_frontier("zone-a", &genesis, &cp2)
@@ -1077,8 +1179,12 @@ fn linkage_verification_unknown_zone() {
     let sk = make_sk(1);
     let genesis = build_genesis(slice::from_ref(&sk), "zone-a");
     let cp1 = build_after(
-        &genesis, 1, SecurityEpoch::GENESIS, 200,
-        slice::from_ref(&sk), "zone-a",
+        &genesis,
+        1,
+        SecurityEpoch::GENESIS,
+        200,
+        slice::from_ref(&sk),
+        "zone-a",
     );
 
     let mgr = CheckpointFrontierManager::new(InMemoryBackend::new());

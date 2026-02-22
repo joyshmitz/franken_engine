@@ -6,8 +6,9 @@ use frankenengine_engine::privacy_learning_contract::{
     ClippingMethod, ClippingStrategy, CompositionMethod, CoordinatorTrustModel,
     CreateContractInput, DataRetentionPolicy, DpBudgetSemantics, FeatureField, FeatureFieldType,
     FeatureSchema, HumanOverrideRequest, SafetyMetric, SafetyMetricSnapshot, SecretSharingScheme,
-    SecureAggregationRequirements, ShadowEvaluationCandidate, ShadowEvaluationGate,
-    ShadowEvaluationGateConfig, ShadowPromotionVerdict, ShadowReplayReference, UpdatePolicy,
+    SecureAggregationRequirements, ShadowBurnInThresholdProfile, ShadowEvaluationCandidate,
+    ShadowEvaluationGate, ShadowEvaluationGateConfig, ShadowExtensionClass,
+    ShadowPromotionVerdict, ShadowReplayReference, ShadowRollbackReadinessArtifacts, UpdatePolicy,
 };
 use frankenengine_engine::security_epoch::SecurityEpoch;
 use frankenengine_engine::signature_preimage::SigningKey;
@@ -132,6 +133,15 @@ fn replay_reference() -> ShadowReplayReference {
     }
 }
 
+fn rollback_readiness() -> ShadowRollbackReadinessArtifacts {
+    ShadowRollbackReadinessArtifacts {
+        rollback_command_tested: true,
+        previous_policy_snapshot_id: "snapshot-v7.0".to_string(),
+        transition_receipt_signed: true,
+        rollback_playbook_ref: "playbook://shadow-gate/rollback".to_string(),
+    }
+}
+
 fn candidate(
     decision_id: &str,
     candidate_metrics: SafetyMetricSnapshot,
@@ -142,10 +152,16 @@ fn candidate(
         trace_id: format!("trace-{decision_id}"),
         decision_id: decision_id.to_string(),
         policy_id: "policy-shadow-gate".to_string(),
+        extension_class: ShadowExtensionClass::Standard,
         candidate_version: "v7.1".to_string(),
         baseline_snapshot_id: "snapshot-v7.0".to_string(),
         rollback_token: "rollback-token-v7.0".to_string(),
         epoch_id: SecurityEpoch::from_raw(7),
+        shadow_started_at_ns: 1_000_000_000,
+        evaluation_completed_at_ns: 1_000_000_120,
+        shadow_success_rate_millionths: 997_000,
+        false_deny_rate_millionths: 4_000,
+        rollback_readiness: rollback_readiness(),
         baseline_metrics: baseline_metrics(),
         candidate_metrics,
         replay_reference: replay_reference(),
@@ -155,9 +171,26 @@ fn candidate(
 }
 
 fn gate() -> ShadowEvaluationGate {
+    let mut profiles = BTreeMap::new();
+    profiles.insert(
+        ShadowExtensionClass::HighRisk,
+        ShadowBurnInThresholdProfile {
+            min_shadow_success_rate_millionths: 999_000,
+            max_false_deny_rate_millionths: 1_000,
+            min_burn_in_duration_ns: 100,
+            require_verified_rollback_artifacts: true,
+        },
+    );
     ShadowEvaluationGate::new(ShadowEvaluationGateConfig {
         regression_tolerance_millionths: 5_000,
         min_required_improvement_millionths: 2_500,
+        default_burn_in_profile: ShadowBurnInThresholdProfile {
+            min_shadow_success_rate_millionths: 995_000,
+            max_false_deny_rate_millionths: 5_000,
+            min_burn_in_duration_ns: 100,
+            require_verified_rollback_artifacts: true,
+        },
+        burn_in_profiles_by_extension_class: profiles,
     })
     .expect("gate")
 }
@@ -210,6 +243,12 @@ fn shadow_gate_full_lifecycle_pass_reject_override_and_rollback() {
     assert_eq!(overridden.verdict, ShadowPromotionVerdict::OverrideApproved);
     assert!(gate.active_artifact("policy-shadow-gate").is_some());
     assert!(overridden.human_override.is_some());
+
+    let scorecards = gate.scorecard_entries();
+    assert!(scorecards.len() >= 2);
+    assert!(scorecards
+        .iter()
+        .any(|entry| entry.policy_id == "policy-shadow-gate"));
 }
 
 #[test]
@@ -227,4 +266,46 @@ fn shadow_gate_rejects_nondeterministic_replay_inputs() {
         err.to_string()
             .contains("replay_seed_hash must not be all zeros")
     );
+}
+
+#[test]
+fn shadow_gate_early_terminates_when_false_deny_exceeds_threshold() {
+    let contract = contract();
+    let mut gate = gate();
+    let signing = governance_signing_key();
+
+    let mut excessive_false_deny = candidate("decision-early-stop", improved_metrics(), 90_000, 900);
+    excessive_false_deny.false_deny_rate_millionths = 7_500;
+
+    let artifact = gate
+        .evaluate_candidate(&contract, excessive_false_deny, &signing)
+        .expect("shadow evaluation");
+    assert_eq!(artifact.verdict, ShadowPromotionVerdict::Reject);
+    assert!(artifact.burn_in_early_terminated);
+    assert!(artifact
+        .failure_reasons
+        .iter()
+        .any(|reason| reason.contains("false-deny rate")));
+    assert!(gate
+        .events()
+        .iter()
+        .any(|event| event.event == "shadow_evaluation" && event.outcome == "early_terminated"));
+}
+
+#[test]
+fn shadow_gate_applies_stricter_high_risk_threshold_profile() {
+    let contract = contract();
+    let mut gate = gate();
+    let signing = governance_signing_key();
+
+    let mut high_risk = candidate("decision-high-risk", improved_metrics(), 90_000, 900);
+    high_risk.extension_class = ShadowExtensionClass::HighRisk;
+    let artifact = gate
+        .evaluate_candidate(&contract, high_risk, &signing)
+        .expect("shadow evaluation");
+    assert_eq!(artifact.verdict, ShadowPromotionVerdict::Reject);
+    assert!(artifact
+        .failure_reasons
+        .iter()
+        .any(|reason| reason.contains("shadow success rate")));
 }

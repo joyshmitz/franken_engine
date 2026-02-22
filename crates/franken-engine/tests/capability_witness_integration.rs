@@ -7,11 +7,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use frankenengine_engine::capability_witness::{
-    CapabilityWitness, ConfidenceInterval, CustomTheoremExtension, DenialRecord, LifecycleState,
-    ProofKind, ProofObligation, PromotionTheoremInput, PromotionTheoremKind,
-    PublicationEntryKind, RollbackToken, SourceCapabilitySet, WitnessBuilder, WitnessError,
-    WitnessPublicationConfig, WitnessPublicationError, WitnessPublicationPipeline,
-    WitnessPublicationQuery, WitnessSchemaVersion, WitnessStore, WitnessValidator,
+    CapabilityEscrowReceiptRecord, CapabilityWitness, ConfidenceInterval, CustomTheoremExtension,
+    DenialRecord, LifecycleState, PromotionTheoremInput, PromotionTheoremKind, ProofKind,
+    ProofObligation, PublicationEntryKind, RollbackToken, SourceCapabilitySet, WitnessBuilder,
+    WitnessError, WitnessIndexQuery, WitnessIndexStore, WitnessPublicationConfig,
+    WitnessPublicationError, WitnessPublicationPipeline, WitnessPublicationQuery,
+    WitnessReplayJoinQuery, WitnessSchemaVersion, WitnessStore, WitnessValidator,
 };
 use frankenengine_engine::engine_object_id::{self, EngineObjectId, ObjectDomain, SchemaId};
 use frankenengine_engine::hash_tiers::ContentHash;
@@ -19,6 +20,7 @@ use frankenengine_engine::policy_theorem_compiler::Capability;
 use frankenengine_engine::portfolio_governor::governance_audit_ledger::GovernanceLedgerConfig;
 use frankenengine_engine::security_epoch::SecurityEpoch;
 use frankenengine_engine::signature_preimage::SigningKey;
+use frankenengine_engine::storage_adapter::{EventContext, InMemoryStorageAdapter};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -130,18 +132,24 @@ fn build_draft_witness() -> CapabilityWitness {
     let cap_w = Capability::new("write-data");
     let cap_a = Capability::new("admin-access");
     let sk = make_sk(13);
-    let mut w = WitnessBuilder::new(ext_id(), policy_id(), SecurityEpoch::from_raw(100), 5000, sk)
-        .require(cap_r.clone())
-        .require(cap_w.clone())
-        .deny(cap_a, "not needed")
-        .proof(make_proof(&cap_r))
-        .proof(make_proof(&cap_w))
-        .confidence(ConfidenceInterval::from_trials(100, 95))
-        .replay_seed(42)
-        .transcript_hash(ContentHash::compute(b"synthesis-transcript"))
-        .meta("synthesizer", "plas-v1")
-        .build()
-        .unwrap();
+    let mut w = WitnessBuilder::new(
+        ext_id(),
+        policy_id(),
+        SecurityEpoch::from_raw(100),
+        5000,
+        sk,
+    )
+    .require(cap_r.clone())
+    .require(cap_w.clone())
+    .deny(cap_a, "not needed")
+    .proof(make_proof(&cap_r))
+    .proof(make_proof(&cap_w))
+    .confidence(ConfidenceInterval::from_trials(100, 95))
+    .replay_seed(42)
+    .transcript_hash(ContentHash::compute(b"synthesis-transcript"))
+    .meta("synthesizer", "plas-v1")
+    .build()
+    .unwrap();
     apply_passing_theorems(&mut w, &make_sk(13));
     w
 }
@@ -160,7 +168,9 @@ fn build_promoted(seed: u64) -> CapabilityWitness {
     .proof(make_proof(&cap))
     .confidence(ConfidenceInterval::from_trials(120, 118))
     .replay_seed(seed)
-    .transcript_hash(ContentHash::compute(format!("transcript-{seed}").as_bytes()))
+    .transcript_hash(ContentHash::compute(
+        format!("transcript-{seed}").as_bytes(),
+    ))
     .build()
     .unwrap();
     apply_passing_theorems(&mut w, &make_sk(13));
@@ -169,9 +179,42 @@ fn build_promoted(seed: u64) -> CapabilityWitness {
     w
 }
 
-fn default_pipeline(
-    sk: &SigningKey,
-) -> WitnessPublicationPipeline {
+fn build_promoted_for_extension(
+    extension_id: EngineObjectId,
+    capability_name: &str,
+    epoch: u64,
+    timestamp_ns: u64,
+) -> CapabilityWitness {
+    let cap = Capability::new(capability_name.to_string());
+    let sk = make_sk(13);
+    let mut w = WitnessBuilder::new(
+        extension_id,
+        policy_id(),
+        SecurityEpoch::from_raw(epoch),
+        timestamp_ns,
+        sk,
+    )
+    .require(cap.clone())
+    .proof(make_proof(&cap))
+    .confidence(ConfidenceInterval::from_trials(120, 118))
+    .replay_seed(epoch)
+    .transcript_hash(ContentHash::compute(
+        format!("transcript-{capability_name}-{epoch}").as_bytes(),
+    ))
+    .build()
+    .unwrap();
+    apply_passing_theorems(&mut w, &make_sk(13));
+    w.transition_to(LifecycleState::Validated).unwrap();
+    w.transition_to(LifecycleState::Promoted).unwrap();
+    w
+}
+
+fn index_ctx() -> EventContext {
+    EventContext::new("trace-witness-index", "decision-witness-index", "policy-witness-index")
+        .expect("index context")
+}
+
+fn default_pipeline(sk: &SigningKey) -> WitnessPublicationPipeline {
     WitnessPublicationPipeline::new(
         SecurityEpoch::from_raw(500),
         SigningKey::from_bytes(*sk.as_bytes()),
@@ -598,7 +641,11 @@ fn builder_empty_required_set_fails() {
 
 #[test]
 fn builder_require_all() {
-    let caps = [Capability::new("a"), Capability::new("b"), Capability::new("c")];
+    let caps = [
+        Capability::new("a"),
+        Capability::new("b"),
+        Capability::new("c"),
+    ];
     let sk = make_sk(13);
     let w = WitnessBuilder::new(ext_id(), policy_id(), SecurityEpoch::from_raw(1), 1000, sk)
         .require_all(caps.iter().cloned())
@@ -635,12 +682,18 @@ fn builder_with_rollback_token() {
         created_epoch: SecurityEpoch::from_raw(99),
         sequence: 1,
     };
-    let w = WitnessBuilder::new(ext_id(), policy_id(), SecurityEpoch::from_raw(100), 5000, sk)
-        .require(cap.clone())
-        .proof(make_proof(&cap))
-        .rollback(token)
-        .build()
-        .unwrap();
+    let w = WitnessBuilder::new(
+        ext_id(),
+        policy_id(),
+        SecurityEpoch::from_raw(100),
+        5000,
+        sk,
+    )
+    .require(cap.clone())
+    .proof(make_proof(&cap))
+    .rollback(token)
+    .build()
+    .unwrap();
     assert!(w.rollback_token.is_some());
     assert_eq!(w.rollback_token.as_ref().unwrap().sequence, 1);
 }
@@ -797,7 +850,9 @@ fn evaluate_promotion_theorems_all_pass() {
         .proof(make_proof(&cap))
         .build()
         .unwrap();
-    let report = w.evaluate_promotion_theorems(&passing_theorem_input(&w)).unwrap();
+    let report = w
+        .evaluate_promotion_theorems(&passing_theorem_input(&w))
+        .unwrap();
     assert!(report.all_passed);
     assert_eq!(report.results.len(), 3); // merge, attenuation, non-interference
 }
@@ -971,7 +1026,9 @@ fn apply_promotion_theorem_report_sets_metadata() {
         .proof(make_proof(&cap))
         .build()
         .unwrap();
-    let report = w.evaluate_promotion_theorems(&passing_theorem_input(&w)).unwrap();
+    let report = w
+        .evaluate_promotion_theorems(&passing_theorem_input(&w))
+        .unwrap();
     w.apply_promotion_theorem_report(&report);
     assert_eq!(
         w.metadata.get("promotion_theorem.all_passed"),
@@ -992,7 +1049,9 @@ fn structured_events_from_report() {
         .proof(make_proof(&cap))
         .build()
         .unwrap();
-    let report = w.evaluate_promotion_theorems(&passing_theorem_input(&w)).unwrap();
+    let report = w
+        .evaluate_promotion_theorems(&passing_theorem_input(&w))
+        .unwrap();
     let events = report.structured_events("t1", "d1", "p1");
     // 3 theorem results + 1 gate summary
     assert_eq!(events.len(), 4);
@@ -1027,12 +1086,17 @@ fn validator_passes_valid_witness() {
 #[test]
 fn validator_detects_incompatible_schema() {
     let mut w = build_draft_witness();
-    w.schema_version = WitnessSchemaVersion { major: 99, minor: 0 };
+    w.schema_version = WitnessSchemaVersion {
+        major: 99,
+        minor: 0,
+    };
     let v = WitnessValidator::new();
     let errors = v.validate(&w);
-    assert!(errors
-        .iter()
-        .any(|e| matches!(e, WitnessError::IncompatibleSchema { .. })));
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e, WitnessError::IncompatibleSchema { .. }))
+    );
 }
 
 #[test]
@@ -1047,9 +1111,11 @@ fn validator_detects_low_confidence() {
         .unwrap();
     let v = WitnessValidator::new();
     let errors = v.validate(&w);
-    assert!(errors
-        .iter()
-        .any(|e| matches!(e, WitnessError::InvalidConfidence { .. })));
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e, WitnessError::InvalidConfidence { .. }))
+    );
 }
 
 #[test]
@@ -1058,7 +1124,10 @@ fn validator_serde_round_trip() {
     let json = serde_json::to_string(&v).unwrap();
     let restored: WitnessValidator = serde_json::from_str(&json).unwrap();
     assert_eq!(v.supported_version, restored.supported_version);
-    assert_eq!(v.min_confidence_millionths, restored.min_confidence_millionths);
+    assert_eq!(
+        v.min_confidence_millionths,
+        restored.min_confidence_millionths
+    );
 }
 
 // ===========================================================================
@@ -1094,10 +1163,7 @@ fn store_lifecycle_to_active() {
     s.transition(&wid, LifecycleState::Promoted).unwrap();
     s.transition(&wid, LifecycleState::Active).unwrap();
     assert!(s.active_for_extension(&eid).is_some());
-    assert_eq!(
-        s.get(&wid).unwrap().lifecycle_state,
-        LifecycleState::Active
-    );
+    assert_eq!(s.get(&wid).unwrap().lifecycle_state, LifecycleState::Active);
 }
 
 #[test]
@@ -1276,8 +1342,7 @@ fn publication_error_display_all_variants() {
 
 #[test]
 fn publication_error_is_std_error() {
-    let err: Box<dyn std::error::Error> =
-        Box::new(WitnessPublicationError::EmptyRevocationReason);
+    let err: Box<dyn std::error::Error> = Box::new(WitnessPublicationError::EmptyRevocationReason);
     assert!(!err.to_string().is_empty());
 }
 
@@ -1310,12 +1375,8 @@ fn pipeline_new_default_config() {
 #[test]
 fn pipeline_new_with_governance() {
     let sk = make_sk(17);
-    let p = WitnessPublicationPipeline::new(
-        SecurityEpoch::from_raw(500),
-        sk,
-        governance_config(),
-    )
-    .unwrap();
+    let p = WitnessPublicationPipeline::new(SecurityEpoch::from_raw(500), sk, governance_config())
+        .unwrap();
     assert!(p.governance_ledger().is_some());
 }
 
@@ -1332,10 +1393,7 @@ fn pipeline_zero_checkpoint_interval_fails() {
         },
     )
     .unwrap_err();
-    assert!(matches!(
-        err,
-        WitnessPublicationError::InvalidConfig { .. }
-    ));
+    assert!(matches!(err, WitnessPublicationError::InvalidConfig { .. }));
 }
 
 #[test]
@@ -1351,10 +1409,7 @@ fn pipeline_empty_policy_id_fails() {
         },
     )
     .unwrap_err();
-    assert!(matches!(
-        err,
-        WitnessPublicationError::InvalidConfig { .. }
-    ));
+    assert!(matches!(err, WitnessPublicationError::InvalidConfig { .. }));
 }
 
 // ===========================================================================
@@ -1460,7 +1515,10 @@ fn pipeline_revoke_published_witness() {
     assert!(art.is_revoked());
     let rev = art.revocation_proof.as_ref().unwrap();
     assert_eq!(rev.log_entry.kind, PublicationEntryKind::Revoke);
-    assert_eq!(rev.log_entry.revocation_reason.as_deref(), Some("compromise"));
+    assert_eq!(
+        rev.log_entry.revocation_reason.as_deref(),
+        Some("compromise")
+    );
     assert_eq!(p.evidence_entries().len(), 2);
     assert_eq!(p.governance_ledger().unwrap().entries().len(), 2);
 }

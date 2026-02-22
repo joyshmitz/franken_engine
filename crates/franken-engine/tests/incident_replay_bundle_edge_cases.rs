@@ -7,18 +7,17 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use frankenengine_engine::causal_replay::{
-    ActionDeltaReport, CounterfactualConfig, DecisionSnapshot,
-    NondeterminismLog, NondeterminismSource, RecorderConfig, RecordingMode, TraceRecord,
-    TraceRecorder,
+    ActionDeltaReport, CounterfactualConfig, DecisionSnapshot, NondeterminismLog,
+    NondeterminismSource, RecorderConfig, RecordingMode, TraceRecord, TraceRecorder,
 };
 use frankenengine_engine::evidence_ledger::{ChosenAction, DecisionType, EvidenceEntryBuilder};
 use frankenengine_engine::hash_tiers::ContentHash;
 use frankenengine_engine::incident_replay_bundle::{
-    ArtifactEntry, BundleArtifactKind, BundleBuilder, BundleError, BundleFormatVersion,
-    BundleInspection, BundleManifest, BundleVerifier, CategorySummary, CheckOutcome,
-    CounterfactualResult, IncidentReplayBundle, PolicySnapshot, RedactionPolicy,
-    VerificationCategory, VerificationCheck, VerificationReport, BUNDLE_FORMAT_VERSION,
-    compute_merkle_root, build_merkle_proof, verify_merkle_proof,
+    ArtifactEntry, BUNDLE_FORMAT_VERSION, BundleArtifactKind, BundleBuilder, BundleError,
+    BundleFormatVersion, BundleInspection, BundleManifest, BundleVerifier, CategorySummary,
+    CheckOutcome, CounterfactualResult, IncidentReplayBundle, PolicySnapshot, RedactionPolicy,
+    VerificationCategory, VerificationCheck, VerificationReport, build_merkle_proof,
+    compute_merkle_root, verify_merkle_proof,
 };
 use frankenengine_engine::security_epoch::SecurityEpoch;
 use frankenengine_engine::signature_preimage::SigningKey;
@@ -512,7 +511,10 @@ fn merkle_root_leaf_order_matters() {
     let b = ContentHash::compute(b"beta");
     let root_ab = compute_merkle_root(&[a.clone(), b.clone()]);
     let root_ba = compute_merkle_root(&[b, a]);
-    assert_ne!(root_ab, root_ba, "different leaf order must produce different root");
+    assert_ne!(
+        root_ab, root_ba,
+        "different leaf order must produce different root"
+    );
 }
 
 #[test]
@@ -713,7 +715,11 @@ fn builder_artifact_keys_use_composite_format() {
 fn builder_artifact_sizes_positive() {
     let bundle = build_test_bundle();
     for entry in bundle.manifest.artifacts.values() {
-        assert!(entry.size_bytes > 0, "artifact {:?} should have non-zero size", entry.kind);
+        assert!(
+            entry.size_bytes > 0,
+            "artifact {:?} should have non-zero size",
+            entry.kind
+        );
     }
 }
 
@@ -1148,7 +1154,10 @@ fn signature_invalid_with_tampered_manifest() {
 
     let verifier = BundleVerifier::new();
     let report = verifier.verify_signature(&bundle, &vk, 6000);
-    assert!(!report.passed, "tampered manifest should fail signature check");
+    assert!(
+        !report.passed,
+        "tampered manifest should fail signature check"
+    );
 }
 
 // ===========================================================================

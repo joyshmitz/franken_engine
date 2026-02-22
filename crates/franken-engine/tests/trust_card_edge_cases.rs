@@ -503,10 +503,7 @@ fn trust_card_serde_roundtrip() {
 fn trust_card_serde_with_evidence_and_history() {
     let mut graph = test_graph_with_extension();
     graph
-        .add_evidence(
-            "ext-1",
-            test_evidence("ev-1", EvidenceType::IncidentRecord),
-        )
+        .add_evidence("ext-1", test_evidence("ev-1", EvidenceType::IncidentRecord))
         .unwrap();
     graph
         .transition_trust(
@@ -682,7 +679,13 @@ fn pipeline_default() {
 fn pipeline_empty_subscriptions_pass_all() {
     let mut pipeline = UpdatePipeline::new();
     // No subscriptions means all extensions pass through.
-    let tt = make_trust_transition("tt-1", "ext-any", TrustLevel::Unknown, TrustLevel::Suspicious, 5000);
+    let tt = make_trust_transition(
+        "tt-1",
+        "ext-any",
+        TrustLevel::Unknown,
+        TrustLevel::Suspicious,
+        5000,
+    );
     pipeline.on_trust_transition(&tt);
     assert_eq!(pipeline.pending_count(), 1);
 }
@@ -707,13 +710,21 @@ fn pipeline_filters_unsubscribed_extensions() {
     pipeline.subscribe("ext-1");
 
     let tt_ext2 = make_trust_transition(
-        "tt-1", "ext-2", TrustLevel::Unknown, TrustLevel::Suspicious, 5000,
+        "tt-1",
+        "ext-2",
+        TrustLevel::Unknown,
+        TrustLevel::Suspicious,
+        5000,
     );
     pipeline.on_trust_transition(&tt_ext2);
     assert_eq!(pipeline.pending_count(), 0, "ext-2 should be filtered");
 
     let tt_ext1 = make_trust_transition(
-        "tt-2", "ext-1", TrustLevel::Unknown, TrustLevel::Provisional, 6000,
+        "tt-2",
+        "ext-1",
+        TrustLevel::Unknown,
+        TrustLevel::Provisional,
+        6000,
     );
     pipeline.on_trust_transition(&tt_ext1);
     assert_eq!(pipeline.pending_count(), 1, "ext-1 should pass");
@@ -723,7 +734,11 @@ fn pipeline_filters_unsubscribed_extensions() {
 fn pipeline_drain_clears_notifications() {
     let mut pipeline = UpdatePipeline::new();
     let tt = make_trust_transition(
-        "tt-1", "ext-1", TrustLevel::Unknown, TrustLevel::Suspicious, 5000,
+        "tt-1",
+        "ext-1",
+        TrustLevel::Unknown,
+        TrustLevel::Suspicious,
+        5000,
     );
     pipeline.on_trust_transition(&tt);
     assert_eq!(pipeline.pending_count(), 1);
@@ -832,8 +847,12 @@ fn cache_invalidate_all() {
     let epoch = SecurityEpoch::from_raw(1);
     let now = 10_000_000_000u64;
 
-    cache.get_or_generate(&generator, &graph, "ext-1", epoch, now).unwrap();
-    cache.get_or_generate(&generator, &graph, "ext-2", epoch, now).unwrap();
+    cache
+        .get_or_generate(&generator, &graph, "ext-1", epoch, now)
+        .unwrap();
+    cache
+        .get_or_generate(&generator, &graph, "ext-2", epoch, now)
+        .unwrap();
     assert_eq!(cache.cached_count(), 2);
 
     cache.invalidate_all();
@@ -974,7 +993,10 @@ fn card_determinism() {
 
     let json1 = serde_json::to_string(&card1).unwrap();
     let json2 = serde_json::to_string(&card2).unwrap();
-    assert_eq!(json1, json2, "identical inputs must produce identical cards");
+    assert_eq!(
+        json1, json2,
+        "identical inputs must produce identical cards"
+    );
 }
 
 #[test]

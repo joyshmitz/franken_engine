@@ -7,8 +7,9 @@ use frankenengine_engine::privacy_learning_contract::{
     DpBudgetSemantics, FeatureField, FeatureFieldType, FeatureSchema, HumanOverrideRequest,
     PrivacyLearningContract, PrngAlgorithm, RandomnessTranscript, SafetyMetric,
     SafetyMetricSnapshot, SecretSharingScheme, SecureAggregationRequirements, SeedEscrowRecord,
-    ShadowEvaluationCandidate, ShadowEvaluationGate, ShadowEvaluationGateConfig,
-    ShadowPromotionVerdict, ShadowReplayReference, UpdatePolicy, contract_schema,
+    ShadowBurnInThresholdProfile, ShadowEvaluationCandidate, ShadowEvaluationGate,
+    ShadowEvaluationGateConfig, ShadowExtensionClass, ShadowPromotionVerdict,
+    ShadowReplayReference, ShadowRollbackReadinessArtifacts, UpdatePolicy, contract_schema,
     contract_schema_id,
 };
 use frankenengine_engine::security_epoch::SecurityEpoch;
@@ -179,6 +180,15 @@ fn replay_reference() -> ShadowReplayReference {
     }
 }
 
+fn rollback_readiness() -> ShadowRollbackReadinessArtifacts {
+    ShadowRollbackReadinessArtifacts {
+        rollback_command_tested: true,
+        previous_policy_snapshot_id: "snapshot-2026-02-19".to_string(),
+        transition_receipt_signed: true,
+        rollback_playbook_ref: "playbook://shadow-gate/rollback-v1".to_string(),
+    }
+}
+
 fn candidate_with_metrics(
     candidate_metrics: SafetyMetricSnapshot,
     epsilon_spent_millionths: i64,
@@ -188,10 +198,16 @@ fn candidate_with_metrics(
         trace_id: "trace-shadow-1".to_string(),
         decision_id: "decision-shadow-1".to_string(),
         policy_id: "policy-shadow-1".to_string(),
+        extension_class: ShadowExtensionClass::Standard,
         candidate_version: "v2026.02.20".to_string(),
         baseline_snapshot_id: "snapshot-2026-02-19".to_string(),
         rollback_token: "rollback-token-shadow-1".to_string(),
         epoch_id: SecurityEpoch::from_raw(9),
+        shadow_started_at_ns: 1_000_000_000,
+        evaluation_completed_at_ns: 1_000_000_120,
+        shadow_success_rate_millionths: 997_000,
+        false_deny_rate_millionths: 4_000,
+        rollback_readiness: rollback_readiness(),
         baseline_metrics: baseline_metrics(),
         candidate_metrics,
         replay_reference: replay_reference(),
@@ -204,6 +220,13 @@ fn shadow_gate() -> ShadowEvaluationGate {
     ShadowEvaluationGate::new(ShadowEvaluationGateConfig {
         regression_tolerance_millionths: 5_000,
         min_required_improvement_millionths: 2_500,
+        default_burn_in_profile: ShadowBurnInThresholdProfile {
+            min_shadow_success_rate_millionths: 995_000,
+            max_false_deny_rate_millionths: 5_000,
+            min_burn_in_duration_ns: 100,
+            require_verified_rollback_artifacts: true,
+        },
+        burn_in_profiles_by_extension_class: BTreeMap::new(),
     })
     .expect("shadow gate")
 }
@@ -526,6 +549,7 @@ fn shadow_gate_config_zero_improvement_rejected() {
     let config = ShadowEvaluationGateConfig {
         regression_tolerance_millionths: 5_000,
         min_required_improvement_millionths: 0,
+        ..ShadowEvaluationGateConfig::default()
     };
     let result = ShadowEvaluationGate::new(config);
     assert!(result.is_err());
@@ -536,6 +560,7 @@ fn shadow_gate_config_zero_regression_tolerance_allowed() {
     let config = ShadowEvaluationGateConfig {
         regression_tolerance_millionths: 0,
         min_required_improvement_millionths: 1_000,
+        ..ShadowEvaluationGateConfig::default()
     };
     assert!(ShadowEvaluationGate::new(config).is_ok());
 }
@@ -654,6 +679,47 @@ fn shadow_gate_rejects_negative_delta_spent() {
     let candidate = candidate_with_metrics(improved_metrics(), 90_000, -1);
     let result = gate.evaluate_candidate(&contract, candidate, &governance_signing_key());
     assert!(result.is_err());
+}
+
+#[test]
+fn shadow_gate_rejects_when_burn_in_duration_below_threshold() {
+    let contract = create_test_contract();
+    let mut gate = shadow_gate();
+    let mut candidate = candidate_with_metrics(improved_metrics(), 90_000, 900);
+    candidate.evaluation_completed_at_ns = candidate.shadow_started_at_ns + 10;
+
+    let artifact = gate
+        .evaluate_candidate(&contract, candidate, &governance_signing_key())
+        .expect("shadow evaluation");
+    assert_eq!(artifact.verdict, ShadowPromotionVerdict::Reject);
+    assert!(artifact
+        .failure_reasons
+        .iter()
+        .any(|reason| reason.contains("burn-in duration")));
+    assert!(gate.events().iter().any(|event| {
+        event.error_code.as_deref() == Some("FE-PLC-SHADOW-0008")
+            && event.event == "shadow_evaluation"
+    }));
+}
+
+#[test]
+fn shadow_gate_rejects_when_rollback_artifacts_not_verified() {
+    let contract = create_test_contract();
+    let mut gate = shadow_gate();
+    let mut candidate = candidate_with_metrics(improved_metrics(), 90_000, 900);
+    candidate.rollback_readiness.rollback_command_tested = false;
+
+    let artifact = gate
+        .evaluate_candidate(&contract, candidate, &governance_signing_key())
+        .expect("shadow evaluation");
+    assert_eq!(artifact.verdict, ShadowPromotionVerdict::Reject);
+    assert!(artifact.failure_reasons.iter().any(|reason| {
+        reason.contains("rollback readiness artifacts are incomplete or unverified")
+    }));
+    assert!(gate.events().iter().any(|event| {
+        event.error_code.as_deref() == Some("FE-PLC-SHADOW-0011")
+            && event.event == "shadow_evaluation"
+    }));
 }
 
 #[test]

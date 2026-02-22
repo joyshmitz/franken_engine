@@ -4,12 +4,12 @@
 use std::collections::BTreeSet;
 
 use frankenengine_engine::ifc_artifacts::{
-    ClearanceClass, ClaimStrength, ConfinementClaim, DeclassificationDecision,
+    ClaimStrength, ClearanceClass, ConfinementClaim, DeclassificationDecision,
     DeclassificationObligation, DeclassificationReceipt, DeclassificationRoute, FlowCheckResult,
     FlowEnvelope, FlowPolicy, FlowProof, FlowRule, IfcSchemaVersion, IfcValidationError,
     Ir2LabelSource, Label, ProofMethod,
 };
-use frankenengine_engine::signature_preimage::{Signature, SigningKey, SIGNATURE_SENTINEL};
+use frankenengine_engine::signature_preimage::{SIGNATURE_SENTINEL, Signature, SigningKey};
 
 // ── helpers ──────────────────────────────────────────────────────────────
 
@@ -259,7 +259,10 @@ fn label_meet_all_single_returns_identity() {
 #[test]
 fn label_can_flow_to_reflexive() {
     for label in Label::all_builtin() {
-        assert!(label.can_flow_to(&label), "label {label} should flow to itself");
+        assert!(
+            label.can_flow_to(&label),
+            "label {label} should flow to itself"
+        );
     }
 }
 
@@ -318,7 +321,7 @@ fn obligation_expiry_exact_boundary() {
     };
     assert!(!obl.is_expired(99));
     assert!(!obl.is_expired(100)); // at boundary: not expired
-    assert!(obl.is_expired(101));  // past boundary: expired
+    assert!(obl.is_expired(101)); // past boundary: expired
 }
 
 #[test]
@@ -1155,9 +1158,7 @@ fn serde_roundtrip_large_flow_envelope() {
         extension_id: "ext-big".into(),
         producible_labels: labels,
         accessible_clearances: clearances,
-        authorized_declassifications: (0..20)
-            .map(|i| format!("obl-{i:03}"))
-            .collect(),
+        authorized_declassifications: (0..20).map(|i| format!("obl-{i:03}")).collect(),
         policy_ref: "pol-big".into(),
         epoch_id: 42,
         schema_version: IfcSchemaVersion::CURRENT,
