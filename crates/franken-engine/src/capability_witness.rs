@@ -2022,7 +2022,7 @@ impl<A: StorageAdapter> WitnessIndexStore<A> {
                 .into_iter()
                 .map(|(_, record)| record)
                 .collect();
-            witnesses.sort_by(|a, b| a.cursor_key().cmp(&b.cursor_key()));
+            witnesses.sort_by_key(|a| a.cursor_key());
 
             let start_ns = query.start_timestamp_ns.unwrap_or(0);
             let end_ns = query.end_timestamp_ns.unwrap_or(u64::MAX);
@@ -2036,7 +2036,7 @@ impl<A: StorageAdapter> WitnessIndexStore<A> {
             receipts.retain(|receipt| {
                 receipt.timestamp_ns >= start_ns && receipt.timestamp_ns <= end_ns
             });
-            receipts.sort_by(|a, b| a.sort_key().cmp(&b.sort_key()));
+            receipts.sort_by_key(|a| a.sort_key());
 
             let mut rows = Vec::new();
             for (idx, witness) in witnesses.iter().enumerate() {
@@ -2065,7 +2065,7 @@ impl<A: StorageAdapter> WitnessIndexStore<A> {
                     receipts: window_receipts,
                 });
             }
-            rows.sort_by(|a, b| a.witness.cursor_key().cmp(&b.witness.cursor_key()));
+            rows.sort_by_key(|a| a.witness.cursor_key());
             Ok(rows)
         })();
 
@@ -2095,9 +2095,9 @@ impl<A: StorageAdapter> WitnessIndexStore<A> {
             .into_iter()
             .map(|(_, record)| record)
             .collect();
-        witnesses.sort_by(|a, b| a.cursor_key().cmp(&b.cursor_key()));
+        witnesses.sort_by_key(|a| a.cursor_key());
         let mut receipts = self.escrow_receipts_for_extension(extension_id, context)?;
-        receipts.sort_by(|a, b| a.sort_key().cmp(&b.sort_key()));
+        receipts.sort_by_key(|a| a.sort_key());
 
         let payload = serde_json::to_vec(&(witnesses, receipts)).map_err(|err| {
             WitnessIndexError::Serialization {
