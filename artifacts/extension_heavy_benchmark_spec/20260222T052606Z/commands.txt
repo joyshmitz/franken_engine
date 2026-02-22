@@ -1,0 +1,2 @@
+cargo check -p frankenengine-engine --test extension_heavy_benchmark_spec --test extension_heavy_benchmark_matrix
+cargo test -p frankenengine-engine --test extension_heavy_benchmark_spec --test extension_heavy_benchmark_matrix

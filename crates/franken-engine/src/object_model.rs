@@ -705,11 +705,7 @@ impl ObjectHeap {
     }
 
     /// Allocate a Proxy object.
-    pub fn alloc_proxy(
-        &mut self,
-        target: ObjectHandle,
-        handler: ObjectHandle,
-    ) -> ObjectHandle {
+    pub fn alloc_proxy(&mut self, target: ObjectHandle, handler: ObjectHandle) -> ObjectHandle {
         let handle = ObjectHandle(self.objects.len() as u32);
         self.objects
             .push(ManagedObject::Proxy(ProxyObject::new(target, handler)));
@@ -824,9 +820,8 @@ impl ObjectHeap {
                 }
                 // If property exists and is writable, or is new and object is extensible.
                 if o.properties.contains_key(&key) {
-                    if let Some(PropertyDescriptor::Data {
-                        value: ref mut v, ..
-                    }) = o.properties.get_mut(&key)
+                    if let Some(PropertyDescriptor::Data { value: v, .. }) =
+                        o.properties.get_mut(&key)
                     {
                         *v = value;
                         return Ok(true);
@@ -1110,8 +1105,7 @@ impl ObjectHeap {
                     .collect(),
                 ManagedObject::Proxy(_) => {
                     return Err(ObjectError::TypeError(
-                        "Object.assign source cannot be proxy (handled by interpreter)"
-                            .to_string(),
+                        "Object.assign source cannot be proxy (handled by interpreter)".to_string(),
                     ));
                 }
             };
@@ -1245,9 +1239,18 @@ impl ProxyInvariantChecker {
                     Some(existing) if !existing.is_configurable() => {
                         // Both non-configurable: check value compatibility for data descriptors.
                         if let (
-                            PropertyDescriptor::Data { value: tv, writable: tw, .. },
-                            PropertyDescriptor::Data { value: ev, writable: ew, .. },
-                        ) = (td, existing) {
+                            PropertyDescriptor::Data {
+                                value: tv,
+                                writable: tw,
+                                ..
+                            },
+                            PropertyDescriptor::Data {
+                                value: ev,
+                                writable: ew,
+                                ..
+                            },
+                        ) = (td, existing)
+                        {
                             if !tw && !ew && !tv.same_value(ev) {
                                 return Err(ObjectError::TypeError(format!(
                                     "proxy getOwnPropertyDescriptor: non-configurable non-writable property '{key}' must have same value"
@@ -1494,9 +1497,18 @@ impl ProxyInvariantChecker {
                     Some(td) if !td.is_configurable() => {
                         // Both non-configurable: check value compatibility.
                         if let (
-                            PropertyDescriptor::Data { value: nv, writable: nw, .. },
-                            PropertyDescriptor::Data { value: tv, writable: tw, .. },
-                        ) = (desc, td) {
+                            PropertyDescriptor::Data {
+                                value: nv,
+                                writable: nw,
+                                ..
+                            },
+                            PropertyDescriptor::Data {
+                                value: tv,
+                                writable: tw,
+                                ..
+                            },
+                        ) = (desc, td)
+                        {
                             if !tw && !nw && !nv.same_value(tv) {
                                 return Err(ObjectError::TypeError(format!(
                                     "proxy defineProperty: cannot change value of non-configurable non-writable property '{key}'"
@@ -1983,8 +1995,14 @@ mod tests {
         let target = heap.alloc_plain();
         heap.assign(target, &[src]).unwrap();
 
-        assert_eq!(heap.get_property(target, &str_key("a")).unwrap(), int_val(1));
-        assert_eq!(heap.get_property(target, &str_key("b")).unwrap(), int_val(2));
+        assert_eq!(
+            heap.get_property(target, &str_key("a")).unwrap(),
+            int_val(1)
+        );
+        assert_eq!(
+            heap.get_property(target, &str_key("b")).unwrap(),
+            int_val(2)
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -2039,14 +2057,10 @@ mod tests {
         .unwrap();
 
         // Trap returns correct value — ok.
-        assert!(
-            ProxyInvariantChecker::check_get(&obj, &str_key("x"), &int_val(42)).is_ok()
-        );
+        assert!(ProxyInvariantChecker::check_get(&obj, &str_key("x"), &int_val(42)).is_ok());
 
         // Trap returns different value — error.
-        assert!(
-            ProxyInvariantChecker::check_get(&obj, &str_key("x"), &int_val(99)).is_err()
-        );
+        assert!(ProxyInvariantChecker::check_get(&obj, &str_key("x"), &int_val(99)).is_err());
     }
 
     // -----------------------------------------------------------------------
@@ -2068,12 +2082,8 @@ mod tests {
         .unwrap();
 
         // Cannot report non-configurable as non-existent.
-        assert!(
-            ProxyInvariantChecker::check_has(&obj, &str_key("x"), false).is_err()
-        );
-        assert!(
-            ProxyInvariantChecker::check_has(&obj, &str_key("x"), true).is_ok()
-        );
+        assert!(ProxyInvariantChecker::check_has(&obj, &str_key("x"), false).is_err());
+        assert!(ProxyInvariantChecker::check_has(&obj, &str_key("x"), true).is_ok());
     }
 
     // -----------------------------------------------------------------------
@@ -2094,12 +2104,8 @@ mod tests {
         )
         .unwrap();
 
-        assert!(
-            ProxyInvariantChecker::check_delete(&obj, &str_key("x"), true).is_err()
-        );
-        assert!(
-            ProxyInvariantChecker::check_delete(&obj, &str_key("x"), false).is_ok()
-        );
+        assert!(ProxyInvariantChecker::check_delete(&obj, &str_key("x"), true).is_err());
+        assert!(ProxyInvariantChecker::check_delete(&obj, &str_key("x"), false).is_ok());
     }
 
     // -----------------------------------------------------------------------
@@ -2124,18 +2130,13 @@ mod tests {
         assert!(ProxyInvariantChecker::check_own_keys(&obj, &[]).is_err());
 
         // Includes the key — ok.
-        assert!(
-            ProxyInvariantChecker::check_own_keys(&obj, &[str_key("required")]).is_ok()
-        );
+        assert!(ProxyInvariantChecker::check_own_keys(&obj, &[str_key("required")]).is_ok());
     }
 
     #[test]
     fn proxy_invariant_own_keys_no_duplicates() {
         let obj = OrdinaryObject::default();
-        let result = ProxyInvariantChecker::check_own_keys(
-            &obj,
-            &[str_key("a"), str_key("a")],
-        );
+        let result = ProxyInvariantChecker::check_own_keys(&obj, &[str_key("a"), str_key("a")]);
         assert!(result.is_err());
     }
 
@@ -2173,9 +2174,7 @@ mod tests {
         obj.extensible = false;
 
         // Must return same prototype.
-        assert!(
-            ProxyInvariantChecker::check_get_prototype_of(&obj, Some(ObjectHandle(5))).is_ok()
-        );
+        assert!(ProxyInvariantChecker::check_get_prototype_of(&obj, Some(ObjectHandle(5))).is_ok());
         assert!(
             ProxyInvariantChecker::check_get_prototype_of(&obj, Some(ObjectHandle(6))).is_err()
         );
@@ -2302,8 +2301,7 @@ mod tests {
             .unwrap();
 
         let parent = heap.alloc(Some(grandparent));
-        heap.set_property(parent, str_key("p"), int_val(2))
-            .unwrap();
+        heap.set_property(parent, str_key("p"), int_val(2)).unwrap();
 
         let child = heap.alloc(Some(parent));
         heap.set_property(child, str_key("c"), int_val(3)).unwrap();
@@ -2319,10 +2317,7 @@ mod tests {
 
     #[test]
     fn property_key_serde_roundtrip() {
-        for key in [
-            str_key("foo"),
-            PropertyKey::Symbol(SymbolId(42)),
-        ] {
+        for key in [str_key("foo"), PropertyKey::Symbol(SymbolId(42))] {
             let json = serde_json::to_string(&key).unwrap();
             let deser: PropertyKey = serde_json::from_str(&json).unwrap();
             assert_eq!(key, deser);
@@ -2439,13 +2434,9 @@ mod tests {
         .unwrap();
 
         // Cannot set to different value.
-        assert!(
-            ProxyInvariantChecker::check_set(&obj, &str_key("x"), &int_val(99), true).is_err()
-        );
+        assert!(ProxyInvariantChecker::check_set(&obj, &str_key("x"), &int_val(99), true).is_err());
         // Same value — ok.
-        assert!(
-            ProxyInvariantChecker::check_set(&obj, &str_key("x"), &int_val(42), true).is_ok()
-        );
+        assert!(ProxyInvariantChecker::check_set(&obj, &str_key("x"), &int_val(42), true).is_ok());
     }
 
     // -----------------------------------------------------------------------
@@ -2466,9 +2457,7 @@ mod tests {
         )
         .unwrap();
 
-        assert!(
-            ProxyInvariantChecker::check_set(&obj, &str_key("x"), &int_val(1), true).is_err()
-        );
+        assert!(ProxyInvariantChecker::check_set(&obj, &str_key("x"), &int_val(1), true).is_err());
     }
 
     // -----------------------------------------------------------------------
@@ -2485,13 +2474,7 @@ mod tests {
         obj.extensible = false;
 
         // Exact permutation — ok.
-        assert!(
-            ProxyInvariantChecker::check_own_keys(
-                &obj,
-                &[str_key("b"), str_key("a")]
-            )
-            .is_ok()
-        );
+        assert!(ProxyInvariantChecker::check_own_keys(&obj, &[str_key("b"), str_key("a")]).is_ok());
 
         // Extra key — error.
         assert!(
@@ -2503,9 +2486,7 @@ mod tests {
         );
 
         // Missing key — error.
-        assert!(
-            ProxyInvariantChecker::check_own_keys(&obj, &[str_key("a")]).is_err()
-        );
+        assert!(ProxyInvariantChecker::check_own_keys(&obj, &[str_key("a")]).is_err());
     }
 
     // -----------------------------------------------------------------------
@@ -2520,22 +2501,14 @@ mod tests {
 
         // Same prototype — ok.
         assert!(
-            ProxyInvariantChecker::check_set_prototype_of(
-                &obj,
-                Some(ObjectHandle(5)),
-                true
-            )
-            .is_ok()
+            ProxyInvariantChecker::check_set_prototype_of(&obj, Some(ObjectHandle(5)), true)
+                .is_ok()
         );
 
         // Different prototype — error.
         assert!(
-            ProxyInvariantChecker::check_set_prototype_of(
-                &obj,
-                Some(ObjectHandle(6)),
-                true
-            )
-            .is_err()
+            ProxyInvariantChecker::check_set_prototype_of(&obj, Some(ObjectHandle(6)), true)
+                .is_err()
         );
     }
 
@@ -2551,9 +2524,7 @@ mod tests {
         obj.extensible = false;
 
         // Cannot report existing property as non-existent.
-        assert!(
-            ProxyInvariantChecker::check_get_own_property(&obj, &str_key("x"), &None).is_err()
-        );
+        assert!(ProxyInvariantChecker::check_get_own_property(&obj, &str_key("x"), &None).is_err());
 
         // Cannot report new property as existent.
         let fake_desc = Some(PropertyDescriptor::data(int_val(2)));
@@ -2676,12 +2647,8 @@ mod tests {
         .unwrap();
 
         // Must return undefined.
-        assert!(
-            ProxyInvariantChecker::check_get(&obj, &str_key("x"), &JsValue::Undefined).is_ok()
-        );
-        assert!(
-            ProxyInvariantChecker::check_get(&obj, &str_key("x"), &int_val(42)).is_err()
-        );
+        assert!(ProxyInvariantChecker::check_get(&obj, &str_key("x"), &JsValue::Undefined).is_ok());
+        assert!(ProxyInvariantChecker::check_get(&obj, &str_key("x"), &int_val(42)).is_err());
     }
 
     // -----------------------------------------------------------------------
@@ -2870,13 +2837,8 @@ mod tests {
 
         // Cannot define non-configurable when target doesn't have the property.
         assert!(
-            ProxyInvariantChecker::check_define_own_property(
-                &obj,
-                &str_key("x"),
-                &desc,
-                true
-            )
-            .is_err()
+            ProxyInvariantChecker::check_define_own_property(&obj, &str_key("x"), &desc, true)
+                .is_err()
         );
     }
 
@@ -2908,7 +2870,13 @@ mod tests {
         let target = heap.alloc_plain();
         heap.assign(target, &[s1, s2]).unwrap();
 
-        assert_eq!(heap.get_property(target, &str_key("a")).unwrap(), int_val(3));
-        assert_eq!(heap.get_property(target, &str_key("b")).unwrap(), int_val(2));
+        assert_eq!(
+            heap.get_property(target, &str_key("a")).unwrap(),
+            int_val(3)
+        );
+        assert_eq!(
+            heap.get_property(target, &str_key("b")).unwrap(),
+            int_val(2)
+        );
     }
 }
