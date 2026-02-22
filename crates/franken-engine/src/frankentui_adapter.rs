@@ -591,8 +591,7 @@ impl ControlPlaneInvariantsDashboardView {
         }
 
         let mut benchmark_points = input.benchmark_points;
-        benchmark_points
-            .sort_by(|left, right| left.timestamp_unix_ms.cmp(&right.timestamp_unix_ms));
+        benchmark_points.sort_by_key(|left| left.timestamp_unix_ms);
 
         let mut safe_mode_activations = input.safe_mode_activations;
         safe_mode_activations.sort_by(|left, right| {

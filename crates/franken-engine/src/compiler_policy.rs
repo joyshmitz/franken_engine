@@ -611,7 +611,7 @@ impl CompilerPolicyEngine {
             decision_id: decision_id.to_string(),
             policy_id: self.config.policy_id.clone(),
             region_id: region.region_id.clone(),
-            optimization_class: region.optimization_class.clone(),
+            optimization_class: region.optimization_class,
             outcome,
             detail: detail.clone(),
             proof_ids,

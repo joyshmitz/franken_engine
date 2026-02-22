@@ -27,6 +27,7 @@ pub enum Capability {
     NetClient,
     HostCall,
     ProcessSpawn,
+    Declassify,
 }
 
 impl Capability {
@@ -37,15 +38,18 @@ impl Capability {
             Self::NetClient => "net_client",
             Self::HostCall => "host_call",
             Self::ProcessSpawn => "process_spawn",
+            Self::Declassify => "declassify",
         }
     }
 
     pub const fn implied_capabilities(self) -> &'static [Capability] {
         match self {
             Self::FsWrite => WRITE_IMPLIES,
-            Self::FsRead | Self::NetClient | Self::HostCall | Self::ProcessSpawn => {
-                EMPTY_CAPABILITIES
-            }
+            Self::FsRead
+            | Self::NetClient
+            | Self::HostCall
+            | Self::ProcessSpawn
+            | Self::Declassify => EMPTY_CAPABILITIES,
         }
     }
 }
@@ -119,7 +123,7 @@ pub enum StaticManifestValidationError {
 }
 
 /// Runtime manifest validation error with deterministic codes/messages.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum ManifestValidationError {
     EmptyName,
     EmptyVersion,
@@ -205,7 +209,12 @@ impl ManifestValidationError {
 
 impl fmt::Display for ManifestValidationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "manifest validation error [{}]: {}", self.error_code(), self.message())
+        write!(
+            f,
+            "manifest validation error [{}]: {}",
+            self.error_code(),
+            self.message()
+        )
     }
 }
 
@@ -249,7 +258,7 @@ pub struct ManifestValidationEvent {
 }
 
 /// Validation report with structured event + optional runtime error.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ManifestValidationReport {
     pub event: ManifestValidationEvent,
     pub error: Option<ManifestValidationError>,
@@ -443,12 +452,13 @@ pub fn canonical_manifest_json(
             None => Value::Null,
         },
     );
-    map.insert("version".to_string(), Value::String(manifest.version.clone()));
+    map.insert(
+        "version".to_string(),
+        Value::String(manifest.version.clone()),
+    );
 
     serde_json::to_string(&map).map_err(|error| {
-        ManifestValidationError::CanonicalSerialization(format!(
-            "json encoding failed: {error}"
-        ))
+        ManifestValidationError::CanonicalSerialization(format!("json encoding failed: {error}"))
     })
 }
 
@@ -558,10 +568,7 @@ pub fn validate_manifest(manifest: &ExtensionManifest) -> Result<(), ManifestVal
         return Err(ManifestValidationError::FieldTooLong {
             field: "trust_chain_ref",
             max: MAX_TRUST_CHAIN_REF_LEN,
-            actual: manifest
-                .trust_chain_ref
-                .as_deref()
-                .map_or(0, str::len),
+            actual: manifest.trust_chain_ref.as_deref().map_or(0, str::len),
         });
     }
 
@@ -602,6 +609,2673 @@ pub fn validate_manifest_with_context(
             error: Some(error),
         },
     }
+}
+
+pub const DEFAULT_TERMINATION_GRACE_PERIOD_NS: u64 = 5_000_000_000;
+pub const MAX_TERMINATION_GRACE_PERIOD_NS: u64 = 30_000_000_000;
+const LIFECYCLE_COMPONENT: &str = "extension_lifecycle_manager";
+
+/// Full extension lifecycle state machine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtensionState {
+    Unloaded,
+    Validating,
+    Loading,
+    Starting,
+    Running,
+    Suspending,
+    Suspended,
+    Resuming,
+    Terminating,
+    Terminated,
+    Quarantined,
+}
+
+impl ExtensionState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Unloaded => "unloaded",
+            Self::Validating => "validating",
+            Self::Loading => "loading",
+            Self::Starting => "starting",
+            Self::Running => "running",
+            Self::Suspending => "suspending",
+            Self::Suspended => "suspended",
+            Self::Resuming => "resuming",
+            Self::Terminating => "terminating",
+            Self::Terminated => "terminated",
+            Self::Quarantined => "quarantined",
+        }
+    }
+}
+
+impl fmt::Display for ExtensionState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str((*self).as_str())
+    }
+}
+
+/// Lifecycle transitions; only valid pairs are accepted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LifecycleTransition {
+    Validate,
+    Load,
+    Start,
+    Activate,
+    Suspend,
+    Freeze,
+    Resume,
+    Reactivate,
+    Terminate,
+    Finalize,
+    Quarantine,
+}
+
+impl LifecycleTransition {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Validate => "validate",
+            Self::Load => "load",
+            Self::Start => "start",
+            Self::Activate => "activate",
+            Self::Suspend => "suspend",
+            Self::Freeze => "freeze",
+            Self::Resume => "resume",
+            Self::Reactivate => "reactivate",
+            Self::Terminate => "terminate",
+            Self::Finalize => "finalize",
+            Self::Quarantine => "quarantine",
+        }
+    }
+}
+
+impl fmt::Display for LifecycleTransition {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str((*self).as_str())
+    }
+}
+
+/// Resource-budget action once one dimension reaches zero.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BudgetExhaustionPolicy {
+    Suspend,
+    Terminate,
+}
+
+impl BudgetExhaustionPolicy {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Suspend => "suspend",
+            Self::Terminate => "terminate",
+        }
+    }
+}
+
+impl fmt::Display for BudgetExhaustionPolicy {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str((*self).as_str())
+    }
+}
+
+/// Opaque per-extension budget handle tracked by the lifecycle manager.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResourceBudget {
+    pub cpu_time_ns_remaining: u64,
+    pub memory_bytes_remaining: u64,
+    pub hostcall_count_remaining: u64,
+}
+
+impl ResourceBudget {
+    pub const fn new(
+        cpu_time_ns_remaining: u64,
+        memory_bytes_remaining: u64,
+        hostcall_count_remaining: u64,
+    ) -> Self {
+        Self {
+            cpu_time_ns_remaining,
+            memory_bytes_remaining,
+            hostcall_count_remaining,
+        }
+    }
+
+    fn exhausted_dimension(&self) -> Option<(&'static str, u64)> {
+        if self.cpu_time_ns_remaining == 0 {
+            Some(("cpu_time_ns_remaining", 0))
+        } else if self.memory_bytes_remaining == 0 {
+            Some(("memory_bytes_remaining", 0))
+        } else if self.hostcall_count_remaining == 0 {
+            Some(("hostcall_count_remaining", 0))
+        } else {
+            None
+        }
+    }
+
+    fn consume_cpu(&mut self, amount: u64) {
+        self.cpu_time_ns_remaining = self.cpu_time_ns_remaining.saturating_sub(amount);
+    }
+
+    fn consume_memory(&mut self, amount: u64) {
+        self.memory_bytes_remaining = self.memory_bytes_remaining.saturating_sub(amount);
+    }
+
+    fn consume_hostcall(&mut self) {
+        self.hostcall_count_remaining = self.hostcall_count_remaining.saturating_sub(1);
+    }
+}
+
+/// Cooperative termination protocol config.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CancellationConfig {
+    pub grace_period_ns: u64,
+}
+
+impl Default for CancellationConfig {
+    fn default() -> Self {
+        Self {
+            grace_period_ns: DEFAULT_TERMINATION_GRACE_PERIOD_NS,
+        }
+    }
+}
+
+impl CancellationConfig {
+    pub fn clamped(self) -> Self {
+        let grace_period_ns = self
+            .grace_period_ns
+            .clamp(1, MAX_TERMINATION_GRACE_PERIOD_NS);
+        Self { grace_period_ns }
+    }
+}
+
+/// Structured context keys required by plan-level logging contracts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LifecycleContext<'a> {
+    pub trace_id: &'a str,
+    pub decision_id: &'a str,
+    pub policy_id: &'a str,
+}
+
+impl<'a> LifecycleContext<'a> {
+    pub const fn new(trace_id: &'a str, decision_id: &'a str, policy_id: &'a str) -> Self {
+        Self {
+            trace_id,
+            decision_id,
+            policy_id,
+        }
+    }
+}
+
+/// Monotonic transition log used for deterministic replay.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LifecycleTransitionRecord {
+    pub monotonic_timestamp_ns: u64,
+    pub extension_id: String,
+    pub from_state: ExtensionState,
+    pub to_state: ExtensionState,
+    pub transition: LifecycleTransition,
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+}
+
+/// Structured lifecycle event (stable keys for telemetry/evidence).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LifecycleEvent {
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub component: String,
+    pub event: String,
+    pub outcome: String,
+    pub error_code: Option<String>,
+    pub extension_id: String,
+    pub from_state: String,
+    pub to_state: String,
+    pub transition: String,
+    pub timestamp_ns: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct PendingTermination {
+    cancel_token: String,
+    started_at_ns: u64,
+    deadline_ns: u64,
+}
+
+/// Deterministic lifecycle errors.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LifecycleError {
+    InvalidTransition {
+        extension_id: String,
+        current_state: ExtensionState,
+        attempted_transition: LifecycleTransition,
+    },
+    MissingValidatedManifest {
+        extension_id: String,
+        attempted_transition: LifecycleTransition,
+    },
+    BudgetExhausted {
+        extension_id: String,
+        dimension: &'static str,
+        remaining: u64,
+        attempted_transition: LifecycleTransition,
+        action: LifecycleTransition,
+    },
+    NonMonotonicTimestamp {
+        previous: u64,
+        current: u64,
+    },
+    MissingCancelToken {
+        extension_id: String,
+    },
+    TerminationPending {
+        extension_id: String,
+        now_ns: u64,
+        deadline_ns: u64,
+    },
+}
+
+impl LifecycleError {
+    pub const fn error_code(&self) -> &'static str {
+        match self {
+            Self::InvalidTransition { .. } => "FE-LIFECYCLE-0001",
+            Self::MissingValidatedManifest { .. } => "FE-LIFECYCLE-0002",
+            Self::BudgetExhausted { .. } => "FE-LIFECYCLE-0003",
+            Self::NonMonotonicTimestamp { .. } => "FE-LIFECYCLE-0004",
+            Self::MissingCancelToken { .. } => "FE-LIFECYCLE-0005",
+            Self::TerminationPending { .. } => "FE-LIFECYCLE-0006",
+        }
+    }
+
+    pub fn message(&self) -> String {
+        match self {
+            Self::InvalidTransition {
+                extension_id,
+                current_state,
+                attempted_transition,
+            } => format!(
+                "extension_id={extension_id} current_state={current_state} attempted_transition={attempted_transition}"
+            ),
+            Self::MissingValidatedManifest {
+                extension_id,
+                attempted_transition,
+            } => format!(
+                "extension_id={extension_id} attempted_transition={attempted_transition} requires validated manifest"
+            ),
+            Self::BudgetExhausted {
+                extension_id,
+                dimension,
+                remaining,
+                attempted_transition,
+                action,
+            } => format!(
+                "extension_id={extension_id} dimension={dimension} remaining={remaining} attempted_transition={attempted_transition} action={action}"
+            ),
+            Self::NonMonotonicTimestamp { previous, current } => {
+                format!("non-monotonic timestamp: previous={previous} current={current}")
+            }
+            Self::MissingCancelToken { extension_id } => {
+                format!("extension_id={extension_id} missing cancel token for termination protocol")
+            }
+            Self::TerminationPending {
+                extension_id,
+                now_ns,
+                deadline_ns,
+            } => format!(
+                "extension_id={extension_id} termination pending: now_ns={now_ns} deadline_ns={deadline_ns}"
+            ),
+        }
+    }
+}
+
+impl fmt::Display for LifecycleError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "lifecycle error [{}]: {}",
+            self.error_code(),
+            self.message()
+        )
+    }
+}
+
+impl std::error::Error for LifecycleError {}
+
+/// Compile-active lifecycle manager for a single extension.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExtensionLifecycleManager {
+    extension_id: String,
+    state: ExtensionState,
+    validated_manifest: Option<ExtensionManifest>,
+    resource_budget: ResourceBudget,
+    budget_policy: BudgetExhaustionPolicy,
+    cancellation: CancellationConfig,
+    transition_log: Vec<LifecycleTransitionRecord>,
+    telemetry_events: Vec<LifecycleEvent>,
+    pending_termination: Option<PendingTermination>,
+    last_timestamp_ns: Option<u64>,
+}
+
+impl ExtensionLifecycleManager {
+    pub fn new(
+        extension_id: impl Into<String>,
+        resource_budget: ResourceBudget,
+        budget_policy: BudgetExhaustionPolicy,
+        cancellation: CancellationConfig,
+    ) -> Self {
+        Self {
+            extension_id: extension_id.into(),
+            state: ExtensionState::Unloaded,
+            validated_manifest: None,
+            resource_budget,
+            budget_policy,
+            cancellation: cancellation.clamped(),
+            transition_log: Vec::new(),
+            telemetry_events: Vec::new(),
+            pending_termination: None,
+            last_timestamp_ns: None,
+        }
+    }
+
+    pub fn extension_id(&self) -> &str {
+        &self.extension_id
+    }
+
+    pub fn state(&self) -> ExtensionState {
+        self.state
+    }
+
+    pub fn validated_manifest(&self) -> Option<&ExtensionManifest> {
+        self.validated_manifest.as_ref()
+    }
+
+    pub fn resource_budget(&self) -> &ResourceBudget {
+        &self.resource_budget
+    }
+
+    pub fn transition_log(&self) -> &[LifecycleTransitionRecord] {
+        &self.transition_log
+    }
+
+    pub fn telemetry_events(&self) -> &[LifecycleEvent] {
+        &self.telemetry_events
+    }
+
+    pub fn pending_cancel_token(&self) -> Option<&str> {
+        self.pending_termination
+            .as_ref()
+            .map(|pending| pending.cancel_token.as_str())
+    }
+
+    pub fn set_validated_manifest(
+        &mut self,
+        manifest: ExtensionManifest,
+    ) -> Result<(), ManifestValidationError> {
+        validate_manifest(&manifest)?;
+        self.validated_manifest = Some(manifest);
+        Ok(())
+    }
+
+    pub fn apply_transition(
+        &mut self,
+        transition: LifecycleTransition,
+        timestamp_ns: u64,
+        context: &LifecycleContext<'_>,
+    ) -> Result<LifecycleEvent, LifecycleError> {
+        self.ensure_monotonic(timestamp_ns)?;
+
+        if let Some(error) = self.enforce_budget_guard(transition, timestamp_ns, context) {
+            return Err(error);
+        }
+
+        let Some(target_state) = lifecycle_target_state(self.state, transition) else {
+            let error = LifecycleError::InvalidTransition {
+                extension_id: self.extension_id.clone(),
+                current_state: self.state,
+                attempted_transition: transition,
+            };
+            self.record_failure(self.state, transition, timestamp_ns, context, &error);
+            return Err(error);
+        };
+
+        if transition_requires_manifest(transition) && self.validated_manifest.is_none() {
+            let error = LifecycleError::MissingValidatedManifest {
+                extension_id: self.extension_id.clone(),
+                attempted_transition: transition,
+            };
+            self.record_failure(self.state, transition, timestamp_ns, context, &error);
+            return Err(error);
+        }
+
+        if transition == LifecycleTransition::Terminate {
+            self.pending_termination = Some(PendingTermination {
+                cancel_token: format!("cancel:{}:{timestamp_ns}", self.extension_id),
+                started_at_ns: timestamp_ns,
+                deadline_ns: timestamp_ns.saturating_add(self.cancellation.grace_period_ns),
+            });
+        }
+
+        let from_state = self.state;
+        self.state = target_state;
+        if matches!(
+            transition,
+            LifecycleTransition::Finalize | LifecycleTransition::Quarantine
+        ) {
+            self.pending_termination = None;
+        }
+
+        Ok(self.record_success(
+            from_state,
+            target_state,
+            transition,
+            timestamp_ns,
+            context,
+            "pass",
+        ))
+    }
+
+    /// Complete cooperative termination protocol (9G.2).
+    pub fn complete_termination(
+        &mut self,
+        timestamp_ns: u64,
+        context: &LifecycleContext<'_>,
+        cooperative_ack: bool,
+        quarantine_on_timeout: bool,
+    ) -> Result<LifecycleEvent, LifecycleError> {
+        self.ensure_monotonic(timestamp_ns)?;
+        if self.state != ExtensionState::Terminating {
+            let error = LifecycleError::InvalidTransition {
+                extension_id: self.extension_id.clone(),
+                current_state: self.state,
+                attempted_transition: LifecycleTransition::Finalize,
+            };
+            self.record_failure(
+                self.state,
+                LifecycleTransition::Finalize,
+                timestamp_ns,
+                context,
+                &error,
+            );
+            return Err(error);
+        }
+
+        let Some(pending) = self.pending_termination.clone() else {
+            let error = LifecycleError::MissingCancelToken {
+                extension_id: self.extension_id.clone(),
+            };
+            self.record_failure(
+                self.state,
+                LifecycleTransition::Finalize,
+                timestamp_ns,
+                context,
+                &error,
+            );
+            return Err(error);
+        };
+
+        if cooperative_ack {
+            return self.apply_transition(LifecycleTransition::Finalize, timestamp_ns, context);
+        }
+
+        if timestamp_ns <= pending.deadline_ns {
+            let error = LifecycleError::TerminationPending {
+                extension_id: self.extension_id.clone(),
+                now_ns: timestamp_ns,
+                deadline_ns: pending.deadline_ns,
+            };
+            self.record_failure(
+                self.state,
+                LifecycleTransition::Finalize,
+                timestamp_ns,
+                context,
+                &error,
+            );
+            return Err(error);
+        }
+
+        let transition = if quarantine_on_timeout {
+            LifecycleTransition::Quarantine
+        } else {
+            LifecycleTransition::Finalize
+        };
+        let Some(target_state) = lifecycle_target_state(self.state, transition) else {
+            let error = LifecycleError::InvalidTransition {
+                extension_id: self.extension_id.clone(),
+                current_state: self.state,
+                attempted_transition: transition,
+            };
+            self.record_failure(self.state, transition, timestamp_ns, context, &error);
+            return Err(error);
+        };
+        let from_state = self.state;
+        self.state = target_state;
+        self.pending_termination = None;
+        Ok(self.record_success(
+            from_state,
+            target_state,
+            transition,
+            timestamp_ns,
+            context,
+            "forced",
+        ))
+    }
+
+    pub fn consume_cpu_time(
+        &mut self,
+        amount_ns: u64,
+        timestamp_ns: u64,
+        context: &LifecycleContext<'_>,
+    ) -> Result<(), LifecycleError> {
+        self.ensure_monotonic(timestamp_ns)?;
+        self.resource_budget.consume_cpu(amount_ns);
+        if let Some(error) =
+            self.enforce_budget_guard(LifecycleTransition::Suspend, timestamp_ns, context)
+        {
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub fn consume_memory_bytes(
+        &mut self,
+        amount_bytes: u64,
+        timestamp_ns: u64,
+        context: &LifecycleContext<'_>,
+    ) -> Result<(), LifecycleError> {
+        self.ensure_monotonic(timestamp_ns)?;
+        self.resource_budget.consume_memory(amount_bytes);
+        if let Some(error) =
+            self.enforce_budget_guard(LifecycleTransition::Suspend, timestamp_ns, context)
+        {
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub fn consume_hostcall(
+        &mut self,
+        timestamp_ns: u64,
+        context: &LifecycleContext<'_>,
+    ) -> Result<(), LifecycleError> {
+        self.ensure_monotonic(timestamp_ns)?;
+        self.resource_budget.consume_hostcall();
+        if let Some(error) =
+            self.enforce_budget_guard(LifecycleTransition::Suspend, timestamp_ns, context)
+        {
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    fn ensure_monotonic(&self, timestamp_ns: u64) -> Result<(), LifecycleError> {
+        if let Some(previous) = self.last_timestamp_ns {
+            if timestamp_ns < previous {
+                return Err(LifecycleError::NonMonotonicTimestamp {
+                    previous,
+                    current: timestamp_ns,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn enforce_budget_guard(
+        &mut self,
+        attempted_transition: LifecycleTransition,
+        timestamp_ns: u64,
+        context: &LifecycleContext<'_>,
+    ) -> Option<LifecycleError> {
+        let (dimension, remaining) = self.resource_budget.exhausted_dimension()?;
+        let action = match self.budget_policy {
+            BudgetExhaustionPolicy::Suspend
+                if matches!(
+                    self.state,
+                    ExtensionState::Running | ExtensionState::Starting | ExtensionState::Resuming
+                ) =>
+            {
+                LifecycleTransition::Suspend
+            }
+            _ => LifecycleTransition::Terminate,
+        };
+        let error = LifecycleError::BudgetExhausted {
+            extension_id: self.extension_id.clone(),
+            dimension,
+            remaining,
+            attempted_transition,
+            action,
+        };
+
+        if let Some(target_state) = lifecycle_target_state(self.state, action) {
+            if action == LifecycleTransition::Terminate && self.pending_termination.is_none() {
+                self.pending_termination = Some(PendingTermination {
+                    cancel_token: format!("cancel:{}:{timestamp_ns}", self.extension_id),
+                    started_at_ns: timestamp_ns,
+                    deadline_ns: timestamp_ns.saturating_add(self.cancellation.grace_period_ns),
+                });
+            }
+            let from_state = self.state;
+            self.state = target_state;
+            self.record_event(
+                from_state,
+                target_state,
+                action,
+                timestamp_ns,
+                context,
+                ("fail", Some(error.error_code())),
+            );
+        }
+
+        Some(error)
+    }
+
+    fn record_failure(
+        &mut self,
+        from_state: ExtensionState,
+        transition: LifecycleTransition,
+        timestamp_ns: u64,
+        context: &LifecycleContext<'_>,
+        error: &LifecycleError,
+    ) {
+        self.record_event(
+            from_state,
+            from_state,
+            transition,
+            timestamp_ns,
+            context,
+            ("fail", Some(error.error_code())),
+        );
+    }
+
+    fn record_success(
+        &mut self,
+        from_state: ExtensionState,
+        to_state: ExtensionState,
+        transition: LifecycleTransition,
+        timestamp_ns: u64,
+        context: &LifecycleContext<'_>,
+        outcome: &str,
+    ) -> LifecycleEvent {
+        self.record_event(
+            from_state,
+            to_state,
+            transition,
+            timestamp_ns,
+            context,
+            (outcome, None),
+        )
+    }
+
+    fn record_event(
+        &mut self,
+        from_state: ExtensionState,
+        to_state: ExtensionState,
+        transition: LifecycleTransition,
+        timestamp_ns: u64,
+        context: &LifecycleContext<'_>,
+        status: (&str, Option<&str>),
+    ) -> LifecycleEvent {
+        let (outcome, error_code) = status;
+        let event = LifecycleEvent {
+            trace_id: context.trace_id.to_string(),
+            decision_id: context.decision_id.to_string(),
+            policy_id: context.policy_id.to_string(),
+            component: LIFECYCLE_COMPONENT.to_string(),
+            event: "lifecycle_transition".to_string(),
+            outcome: outcome.to_string(),
+            error_code: error_code.map(str::to_string),
+            extension_id: self.extension_id.clone(),
+            from_state: from_state.as_str().to_string(),
+            to_state: to_state.as_str().to_string(),
+            transition: transition.as_str().to_string(),
+            timestamp_ns,
+        };
+        self.telemetry_events.push(event.clone());
+        if from_state != to_state {
+            self.transition_log.push(LifecycleTransitionRecord {
+                monotonic_timestamp_ns: timestamp_ns,
+                extension_id: self.extension_id.clone(),
+                from_state,
+                to_state,
+                transition,
+                trace_id: context.trace_id.to_string(),
+                decision_id: context.decision_id.to_string(),
+                policy_id: context.policy_id.to_string(),
+            });
+        }
+        self.last_timestamp_ns = Some(timestamp_ns);
+        event
+    }
+}
+
+fn transition_requires_manifest(transition: LifecycleTransition) -> bool {
+    !matches!(transition, LifecycleTransition::Validate)
+}
+
+/// Deterministic transition function for compile-active state-machine checking.
+pub const fn lifecycle_target_state(
+    state: ExtensionState,
+    transition: LifecycleTransition,
+) -> Option<ExtensionState> {
+    use ExtensionState as S;
+    use LifecycleTransition as T;
+    match (state, transition) {
+        (S::Unloaded, T::Validate) => Some(S::Validating),
+        (S::Validating, T::Load) => Some(S::Loading),
+        (S::Loading, T::Start) => Some(S::Starting),
+        (S::Starting, T::Activate) => Some(S::Running),
+        (S::Running, T::Suspend) => Some(S::Suspending),
+        (S::Suspending, T::Freeze) => Some(S::Suspended),
+        (S::Suspended, T::Resume) => Some(S::Resuming),
+        (S::Resuming, T::Reactivate) => Some(S::Running),
+        (S::Validating, T::Terminate)
+        | (S::Loading, T::Terminate)
+        | (S::Starting, T::Terminate)
+        | (S::Running, T::Terminate)
+        | (S::Suspending, T::Terminate)
+        | (S::Suspended, T::Terminate)
+        | (S::Resuming, T::Terminate) => Some(S::Terminating),
+        (S::Terminating, T::Finalize) => Some(S::Terminated),
+        (S::Validating, T::Quarantine)
+        | (S::Loading, T::Quarantine)
+        | (S::Starting, T::Quarantine)
+        | (S::Running, T::Quarantine)
+        | (S::Suspending, T::Quarantine)
+        | (S::Suspended, T::Quarantine)
+        | (S::Resuming, T::Quarantine)
+        | (S::Terminating, T::Quarantine) => Some(S::Quarantined),
+        _ => None,
+    }
+}
+
+pub fn allowed_lifecycle_transitions(state: ExtensionState) -> &'static [LifecycleTransition] {
+    use ExtensionState as S;
+    use LifecycleTransition as T;
+    match state {
+        S::Unloaded => &[T::Validate],
+        S::Validating => &[T::Load, T::Terminate, T::Quarantine],
+        S::Loading => &[T::Start, T::Terminate, T::Quarantine],
+        S::Starting => &[T::Activate, T::Terminate, T::Quarantine],
+        S::Running => &[T::Suspend, T::Terminate, T::Quarantine],
+        S::Suspending => &[T::Freeze, T::Terminate, T::Quarantine],
+        S::Suspended => &[T::Resume, T::Terminate, T::Quarantine],
+        S::Resuming => &[T::Reactivate, T::Terminate, T::Quarantine],
+        S::Terminating => &[T::Finalize, T::Quarantine],
+        S::Terminated => &[],
+        S::Quarantined => &[],
+    }
+}
+
+/// IFC secrecy lattice labels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SecrecyLevel {
+    Public,
+    Internal,
+    Confidential,
+    Secret,
+    TopSecret,
+}
+
+impl SecrecyLevel {
+    pub const fn rank(self) -> u8 {
+        self as u8
+    }
+}
+
+/// IFC integrity lattice labels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IntegrityLevel {
+    Untrusted,
+    Validated,
+    Verified,
+    Trusted,
+}
+
+impl IntegrityLevel {
+    pub const fn rank(self) -> u8 {
+        self as u8
+    }
+}
+
+/// Runtime flow label carried by hostcall inputs/outputs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FlowLabel {
+    secrecy: SecrecyLevel,
+    integrity: IntegrityLevel,
+}
+
+impl FlowLabel {
+    pub const fn new(secrecy: SecrecyLevel, integrity: IntegrityLevel) -> Self {
+        Self { secrecy, integrity }
+    }
+
+    /// Join operation for combined values:
+    /// secrecy=max, integrity=min.
+    pub fn join(self, other: Self) -> Self {
+        let secrecy = if self.secrecy >= other.secrecy {
+            self.secrecy
+        } else {
+            other.secrecy
+        };
+        let integrity = if self.integrity <= other.integrity {
+            self.integrity
+        } else {
+            other.integrity
+        };
+        Self { secrecy, integrity }
+    }
+
+    pub const fn secrecy(self) -> SecrecyLevel {
+        self.secrecy
+    }
+
+    pub const fn integrity(self) -> IntegrityLevel {
+        self.integrity
+    }
+}
+
+impl Default for FlowLabel {
+    fn default() -> Self {
+        // Edge-case default for unlabeled values: maximally restrictive.
+        Self::new(SecrecyLevel::TopSecret, IntegrityLevel::Untrusted)
+    }
+}
+
+/// Sink-level clearance policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SinkClearance {
+    pub max_secrecy: SecrecyLevel,
+    pub min_integrity: IntegrityLevel,
+}
+
+impl SinkClearance {
+    pub const fn new(max_secrecy: SecrecyLevel, min_integrity: IntegrityLevel) -> Self {
+        Self {
+            max_secrecy,
+            min_integrity,
+        }
+    }
+}
+
+/// Runtime lattice checks for hostcall boundary enforcement.
+pub struct FlowLabelLattice;
+
+impl FlowLabelLattice {
+    /// Standard Bell-LaPadula + Biba check.
+    pub const fn can_flow(from: &FlowLabel, to: &FlowLabel) -> bool {
+        from.secrecy().rank() <= to.secrecy().rank()
+            && from.integrity().rank() >= to.integrity().rank()
+    }
+
+    pub const fn can_flow_to_sink(from: &FlowLabel, sink: &SinkClearance) -> bool {
+        from.secrecy().rank() <= sink.max_secrecy.rank()
+            && from.integrity().rank() >= sink.min_integrity.rank()
+    }
+}
+
+/// Immutable wrapper that preserves flow labels end-to-end.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Labeled<T> {
+    value: T,
+    label: FlowLabel,
+}
+
+impl<T> Labeled<T> {
+    pub const fn new(value: T, label: FlowLabel) -> Self {
+        Self { value, label }
+    }
+
+    pub fn system_generated(value: T) -> Self {
+        Self {
+            value,
+            label: FlowLabel::new(SecrecyLevel::Public, IntegrityLevel::Trusted),
+        }
+    }
+
+    pub const fn label(&self) -> FlowLabel {
+        self.label
+    }
+
+    pub const fn value(&self) -> &T {
+        &self.value
+    }
+
+    pub fn into_inner(self) -> T {
+        self.value
+    }
+
+    pub fn map<U>(self, f: impl FnOnce(T) -> U) -> Labeled<U> {
+        Labeled {
+            value: f(self.value),
+            label: self.label,
+        }
+    }
+}
+
+impl<T> From<T> for Labeled<T> {
+    fn from(value: T) -> Self {
+        Self {
+            value,
+            label: FlowLabel::default(),
+        }
+    }
+}
+
+/// Runtime hostcall categories used by flow checks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HostcallType {
+    FsRead,
+    FsWrite,
+    NetworkSend,
+    NetworkRecv,
+    ProcessSpawn,
+    EnvRead,
+    MemAlloc,
+    TimerCreate,
+    CryptoOp,
+    IpcSend,
+    IpcRecv,
+}
+
+impl HostcallType {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::FsRead => "fs_read",
+            Self::FsWrite => "fs_write",
+            Self::NetworkSend => "network_send",
+            Self::NetworkRecv => "network_recv",
+            Self::ProcessSpawn => "process_spawn",
+            Self::EnvRead => "env_read",
+            Self::MemAlloc => "mem_alloc",
+            Self::TimerCreate => "timer_create",
+            Self::CryptoOp => "crypto_op",
+            Self::IpcSend => "ipc_send",
+            Self::IpcRecv => "ipc_recv",
+        }
+    }
+
+    pub const fn is_sink(self) -> bool {
+        matches!(self, Self::FsWrite | Self::NetworkSend | Self::IpcSend)
+    }
+}
+
+impl fmt::Display for HostcallType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str((*self).as_str())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DenialReason {
+    FlowViolation {
+        source: FlowLabel,
+        sink: SinkClearance,
+    },
+    CapabilityEscalation {
+        attempted: Capability,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HostcallResult {
+    Success,
+    Denied { reason: DenialReason },
+    Error { code: u32 },
+    Timeout,
+}
+
+/// Deterministic event emitted when runtime IFC denies a hostcall.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FlowViolationEvent {
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub component: String,
+    pub event: String,
+    pub outcome: String,
+    pub error_code: String,
+    pub extension_id: String,
+    pub hostcall_type: HostcallType,
+    pub source_label: FlowLabel,
+    pub sink_clearance: SinkClearance,
+}
+
+/// Evidence item consumed by Guardplane/Bayesian updater.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FlowViolationEvidence {
+    pub extension_id: String,
+    pub hostcall_type: HostcallType,
+    pub source_label: FlowLabel,
+    pub sink_clearance: SinkClearance,
+    pub decision_id: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FlowEnforcementContext<'a> {
+    pub trace_id: &'a str,
+    pub decision_id: &'a str,
+    pub policy_id: &'a str,
+}
+
+impl<'a> FlowEnforcementContext<'a> {
+    pub const fn new(trace_id: &'a str, decision_id: &'a str, policy_id: &'a str) -> Self {
+        Self {
+            trace_id,
+            decision_id,
+            policy_id,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HostcallSinkPolicy {
+    pub fs_write: SinkClearance,
+    pub network_send: SinkClearance,
+    pub ipc_send: SinkClearance,
+}
+
+impl Default for HostcallSinkPolicy {
+    fn default() -> Self {
+        Self {
+            fs_write: SinkClearance::new(SecrecyLevel::Internal, IntegrityLevel::Validated),
+            network_send: SinkClearance::new(SecrecyLevel::Public, IntegrityLevel::Validated),
+            ipc_send: SinkClearance::new(SecrecyLevel::Secret, IntegrityLevel::Untrusted),
+        }
+    }
+}
+
+impl HostcallSinkPolicy {
+    pub const fn clearance_for(self, hostcall_type: HostcallType) -> Option<SinkClearance> {
+        match hostcall_type {
+            HostcallType::FsWrite => Some(self.fs_write),
+            HostcallType::NetworkSend => Some(self.network_send),
+            HostcallType::IpcSend => Some(self.ipc_send),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostcallDispatchOutcome<T> {
+    pub result: HostcallResult,
+    pub output: Option<Labeled<T>>,
+}
+
+/// Runtime dispatcher that enforces flow-label checks at hostcall boundaries.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HostcallDispatcher {
+    sink_policy: HostcallSinkPolicy,
+    violation_events: Vec<FlowViolationEvent>,
+    guardplane_evidence: Vec<FlowViolationEvidence>,
+}
+
+impl HostcallDispatcher {
+    pub fn new(sink_policy: HostcallSinkPolicy) -> Self {
+        Self {
+            sink_policy,
+            violation_events: Vec::new(),
+            guardplane_evidence: Vec::new(),
+        }
+    }
+
+    pub fn violation_events(&self) -> &[FlowViolationEvent] {
+        &self.violation_events
+    }
+
+    pub fn guardplane_evidence(&self) -> &[FlowViolationEvidence] {
+        &self.guardplane_evidence
+    }
+
+    pub fn dispatch<T: Clone>(
+        &mut self,
+        extension_id: &str,
+        hostcall_type: HostcallType,
+        declared_capabilities: &BTreeSet<Capability>,
+        attempted_capability: Capability,
+        argument: Labeled<T>,
+        context: &FlowEnforcementContext<'_>,
+    ) -> HostcallDispatchOutcome<T> {
+        if !declared_capabilities.contains(&attempted_capability) {
+            return HostcallDispatchOutcome {
+                result: HostcallResult::Denied {
+                    reason: DenialReason::CapabilityEscalation {
+                        attempted: attempted_capability,
+                    },
+                },
+                output: None,
+            };
+        }
+
+        if let Some(clearance) = self.sink_policy.clearance_for(hostcall_type) {
+            if !FlowLabelLattice::can_flow_to_sink(&argument.label, &clearance) {
+                let event = FlowViolationEvent {
+                    trace_id: context.trace_id.to_string(),
+                    decision_id: context.decision_id.to_string(),
+                    policy_id: context.policy_id.to_string(),
+                    component: "runtime_flow_enforcement".to_string(),
+                    event: "hostcall_flow_violation".to_string(),
+                    outcome: "blocked".to_string(),
+                    error_code: "FE-FLOW-0001".to_string(),
+                    extension_id: extension_id.to_string(),
+                    hostcall_type,
+                    source_label: argument.label,
+                    sink_clearance: clearance,
+                };
+                self.violation_events.push(event);
+                self.guardplane_evidence.push(FlowViolationEvidence {
+                    extension_id: extension_id.to_string(),
+                    hostcall_type,
+                    source_label: argument.label,
+                    sink_clearance: clearance,
+                    decision_id: context.decision_id.to_string(),
+                });
+
+                return HostcallDispatchOutcome {
+                    result: HostcallResult::Denied {
+                        reason: DenialReason::FlowViolation {
+                            source: argument.label,
+                            sink: clearance,
+                        },
+                    },
+                    output: None,
+                };
+            }
+        }
+
+        HostcallDispatchOutcome {
+            result: HostcallResult::Success,
+            output: Some(argument),
+        }
+    }
+}
+
+const DECLASSIFICATION_COMPONENT: &str = "declassification_gateway";
+
+/// Stable reference to data targeted by a declassification request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DataRef {
+    pub namespace: String,
+    pub key: String,
+}
+
+impl DataRef {
+    pub fn new(namespace: impl Into<String>, key: impl Into<String>) -> Self {
+        Self {
+            namespace: namespace.into(),
+            key: key.into(),
+        }
+    }
+}
+
+/// Explicit purpose attached to a declassification request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeclassificationPurpose {
+    UserConsent,
+    AggregationAnonymization,
+    PublicApiResponse,
+    DiagnosticExport,
+    OperatorOverride,
+    Custom(String),
+}
+
+impl DeclassificationPurpose {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::UserConsent => "user_consent",
+            Self::AggregationAnonymization => "aggregation_anonymization",
+            Self::PublicApiResponse => "public_api_response",
+            Self::DiagnosticExport => "diagnostic_export",
+            Self::OperatorOverride => "operator_override",
+            Self::Custom(_) => "custom",
+        }
+    }
+}
+
+impl fmt::Display for DeclassificationPurpose {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Custom(value) => write!(f, "custom:{value}"),
+            _ => f.write_str(self.as_str()),
+        }
+    }
+}
+
+/// Mandatory input contract for declassification gateway evaluation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeclassificationRequest {
+    pub request_id: String,
+    pub requester: String,
+    pub data_ref: DataRef,
+    pub current_label: FlowLabel,
+    pub target_label: FlowLabel,
+    pub purpose: DeclassificationPurpose,
+    pub justification: String,
+    pub timestamp_ns: u64,
+}
+
+/// Condition attached to an approved contract step.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeclassificationCondition {
+    pub key: String,
+    pub value: String,
+}
+
+impl DeclassificationCondition {
+    pub fn new(key: impl Into<String>, value: impl Into<String>) -> Self {
+        Self {
+            key: key.into(),
+            value: value.into(),
+        }
+    }
+}
+
+/// Deferred-decision challenge descriptor.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeclassificationChallenge {
+    pub challenge_type: String,
+    pub detail: String,
+}
+
+/// Deterministic denial taxonomy for declassification requests.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DeclassificationDenialReason {
+    MissingCapability {
+        capability: Capability,
+    },
+    LabelDistanceTooLarge {
+        secrecy_distance: u8,
+        integrity_distance: u8,
+    },
+    InvalidPurpose {
+        purpose: DeclassificationPurpose,
+        target: SecrecyLevel,
+    },
+    RateLimited {
+        max_requests: u32,
+        window_ns: u64,
+    },
+    NoDeclassificationRequired,
+    EmptyJustification,
+    ContractRejected {
+        contract_id: String,
+        detail: String,
+    },
+}
+
+impl DeclassificationDenialReason {
+    pub const fn error_code(&self) -> &'static str {
+        match self {
+            Self::MissingCapability { .. } => "FE-DECLASS-0001",
+            Self::LabelDistanceTooLarge { .. } => "FE-DECLASS-0002",
+            Self::InvalidPurpose { .. } => "FE-DECLASS-0003",
+            Self::RateLimited { .. } => "FE-DECLASS-0004",
+            Self::NoDeclassificationRequired => "FE-DECLASS-0005",
+            Self::EmptyJustification => "FE-DECLASS-0006",
+            Self::ContractRejected { .. } => "FE-DECLASS-0007",
+        }
+    }
+}
+
+impl fmt::Display for DeclassificationDenialReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingCapability { capability } => {
+                write!(f, "missing required capability: {capability}")
+            }
+            Self::LabelDistanceTooLarge {
+                secrecy_distance,
+                integrity_distance,
+            } => write!(
+                f,
+                "label distance too large: secrecy_distance={secrecy_distance}, integrity_distance={integrity_distance}"
+            ),
+            Self::InvalidPurpose { purpose, target } => {
+                write!(f, "purpose '{purpose}' is invalid for target secrecy {target:?}")
+            }
+            Self::RateLimited {
+                max_requests,
+                window_ns,
+            } => write!(
+                f,
+                "rate limit exceeded: max_requests={max_requests}, window_ns={window_ns}"
+            ),
+            Self::NoDeclassificationRequired => f.write_str("flow is already lattice-legal"),
+            Self::EmptyJustification => f.write_str("justification must not be empty"),
+            Self::ContractRejected {
+                contract_id,
+                detail,
+            } => {
+                write!(f, "contract '{contract_id}' rejected request: {detail}")
+            }
+        }
+    }
+}
+
+/// Decision-contract verdict for one contract evaluation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DecisionVerdict {
+    Approved {
+        conditions: Vec<DeclassificationCondition>,
+    },
+    Denied {
+        reason: DeclassificationDenialReason,
+    },
+    Deferred {
+        challenge: DeclassificationChallenge,
+    },
+}
+
+/// Evaluation context passed into decision contracts.
+#[derive(Debug, Clone, Copy)]
+pub struct DeclassificationEvaluationContext<'a> {
+    requester_capabilities: &'a BTreeSet<Capability>,
+    request_history: Option<&'a [u64]>,
+    request_timestamp_ns: u64,
+}
+
+impl<'a> DeclassificationEvaluationContext<'a> {
+    pub const fn new(
+        requester_capabilities: &'a BTreeSet<Capability>,
+        request_history: Option<&'a [u64]>,
+        request_timestamp_ns: u64,
+    ) -> Self {
+        Self {
+            requester_capabilities,
+            request_history,
+            request_timestamp_ns,
+        }
+    }
+
+    pub fn has_capability(&self, capability: Capability) -> bool {
+        self.requester_capabilities.contains(&capability)
+    }
+
+    pub fn request_count_within_window(&self, window_ns: u64) -> u32 {
+        let lower_bound = self.request_timestamp_ns.saturating_sub(window_ns);
+        self.request_history.map_or(0, |history| {
+            history
+                .iter()
+                .filter(|timestamp| {
+                    **timestamp >= lower_bound && **timestamp <= self.request_timestamp_ns
+                })
+                .count() as u32
+        })
+    }
+}
+
+/// Contract interface for composable declassification decisions.
+pub trait DecisionContract: Send + Sync {
+    fn contract_id(&self) -> &'static str;
+
+    fn evaluate(
+        &self,
+        request: &DeclassificationRequest,
+        context: &DeclassificationEvaluationContext<'_>,
+    ) -> DecisionVerdict;
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RequesterCapabilityContract;
+
+impl DecisionContract for RequesterCapabilityContract {
+    fn contract_id(&self) -> &'static str {
+        "requester_capability"
+    }
+
+    fn evaluate(
+        &self,
+        _request: &DeclassificationRequest,
+        context: &DeclassificationEvaluationContext<'_>,
+    ) -> DecisionVerdict {
+        if context.has_capability(Capability::Declassify) {
+            DecisionVerdict::Approved {
+                conditions: vec![DeclassificationCondition::new("capability", "declassify")],
+            }
+        } else {
+            DecisionVerdict::Denied {
+                reason: DeclassificationDenialReason::MissingCapability {
+                    capability: Capability::Declassify,
+                },
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct LabelDistanceContract;
+
+impl DecisionContract for LabelDistanceContract {
+    fn contract_id(&self) -> &'static str {
+        "label_distance"
+    }
+
+    fn evaluate(
+        &self,
+        request: &DeclassificationRequest,
+        _context: &DeclassificationEvaluationContext<'_>,
+    ) -> DecisionVerdict {
+        let secrecy_distance = secrecy_drop_levels(request.current_label, request.target_label);
+        let integrity_distance =
+            integrity_raise_levels(request.current_label, request.target_label);
+        let max_distance = secrecy_distance.max(integrity_distance);
+
+        if max_distance == 0 {
+            return DecisionVerdict::Denied {
+                reason: DeclassificationDenialReason::NoDeclassificationRequired,
+            };
+        }
+
+        if max_distance > 1 && !matches!(request.purpose, DeclassificationPurpose::OperatorOverride)
+        {
+            return DecisionVerdict::Denied {
+                reason: DeclassificationDenialReason::LabelDistanceTooLarge {
+                    secrecy_distance,
+                    integrity_distance,
+                },
+            };
+        }
+
+        DecisionVerdict::Approved {
+            conditions: vec![DeclassificationCondition::new(
+                "label_distance",
+                max_distance.to_string(),
+            )],
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PurposeValidityContract;
+
+impl DecisionContract for PurposeValidityContract {
+    fn contract_id(&self) -> &'static str {
+        "purpose_validity"
+    }
+
+    fn evaluate(
+        &self,
+        request: &DeclassificationRequest,
+        _context: &DeclassificationEvaluationContext<'_>,
+    ) -> DecisionVerdict {
+        if purpose_allowed_for_target(&request.purpose, request.target_label.secrecy()) {
+            DecisionVerdict::Approved {
+                conditions: vec![DeclassificationCondition::new(
+                    "purpose",
+                    request.purpose.to_string(),
+                )],
+            }
+        } else {
+            DecisionVerdict::Denied {
+                reason: DeclassificationDenialReason::InvalidPurpose {
+                    purpose: request.purpose.clone(),
+                    target: request.target_label.secrecy(),
+                },
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RateLimitContract {
+    pub max_requests: u32,
+    pub window_ns: u64,
+}
+
+impl RateLimitContract {
+    pub const fn new(max_requests: u32, window_ns: u64) -> Self {
+        Self {
+            max_requests,
+            window_ns,
+        }
+    }
+}
+
+impl DecisionContract for RateLimitContract {
+    fn contract_id(&self) -> &'static str {
+        "rate_limit"
+    }
+
+    fn evaluate(
+        &self,
+        _request: &DeclassificationRequest,
+        context: &DeclassificationEvaluationContext<'_>,
+    ) -> DecisionVerdict {
+        let count = context.request_count_within_window(self.window_ns);
+        if count >= self.max_requests {
+            DecisionVerdict::Denied {
+                reason: DeclassificationDenialReason::RateLimited {
+                    max_requests: self.max_requests,
+                    window_ns: self.window_ns,
+                },
+            }
+        } else {
+            DecisionVerdict::Approved {
+                conditions: vec![DeclassificationCondition::new(
+                    "rate_limit_remaining",
+                    (self.max_requests - count - 1).to_string(),
+                )],
+            }
+        }
+    }
+}
+
+/// Symmetric key used for deterministic decision receipt signing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DecisionSigningKey {
+    bytes: [u8; 32],
+}
+
+impl Default for DecisionSigningKey {
+    fn default() -> Self {
+        Self { bytes: [0x42; 32] }
+    }
+}
+
+impl DecisionSigningKey {
+    pub const fn new(bytes: [u8; 32]) -> Self {
+        Self { bytes }
+    }
+
+    pub const fn public_key(self) -> DecisionPublicKey {
+        DecisionPublicKey { bytes: self.bytes }
+    }
+
+    pub fn sign(&self, payload: &[u8]) -> [u8; 32] {
+        let mut hasher = Sha256::new();
+        hasher.update(self.bytes);
+        hasher.update(payload);
+        let digest = hasher.finalize();
+        let mut signature = [0u8; 32];
+        signature.copy_from_slice(&digest);
+        signature
+    }
+}
+
+/// Offline-verifiable public key counterpart for decision receipts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DecisionPublicKey {
+    bytes: [u8; 32],
+}
+
+impl DecisionPublicKey {
+    pub fn verify(&self, payload: &[u8], signature: &[u8; 32]) -> bool {
+        let mut hasher = Sha256::new();
+        hasher.update(self.bytes);
+        hasher.update(payload);
+        let digest = hasher.finalize();
+        digest.as_slice() == signature
+    }
+}
+
+/// Signed decision receipt for approved/denied/deferred declassification outcomes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CryptographicDecisionReceipt {
+    pub receipt_id: String,
+    pub request_id: String,
+    pub verdict: DecisionVerdict,
+    pub contract_chain: Vec<String>,
+    pub conditions: Vec<DeclassificationCondition>,
+    pub posterior_at_decision_micros: u64,
+    pub timestamp_ns: u64,
+    pub signature: [u8; 32],
+}
+
+#[derive(Serialize)]
+struct ReceiptSigningPayload<'a> {
+    receipt_id: &'a str,
+    request_id: &'a str,
+    verdict: &'a DecisionVerdict,
+    contract_chain: &'a [String],
+    conditions: &'a [DeclassificationCondition],
+    posterior_at_decision_micros: u64,
+    timestamp_ns: u64,
+}
+
+impl CryptographicDecisionReceipt {
+    fn new_signed(
+        request_id: &str,
+        verdict: DecisionVerdict,
+        contract_chain: Vec<String>,
+        conditions: Vec<DeclassificationCondition>,
+        posterior_at_decision_micros: u64,
+        timestamp_ns: u64,
+        signer: &DecisionSigningKey,
+    ) -> Self {
+        let outcome_tag = match &verdict {
+            DecisionVerdict::Approved { .. } => "approved",
+            DecisionVerdict::Denied { .. } => "denied",
+            DecisionVerdict::Deferred { .. } => "deferred",
+        };
+        let receipt_id = derive_receipt_id(request_id, timestamp_ns, outcome_tag);
+        let payload = ReceiptSigningPayload {
+            receipt_id: &receipt_id,
+            request_id,
+            verdict: &verdict,
+            contract_chain: &contract_chain,
+            conditions: &conditions,
+            posterior_at_decision_micros,
+            timestamp_ns,
+        };
+        let signature = signer
+            .sign(&serde_json::to_vec(&payload).expect("receipt signing payload should serialize"));
+        Self {
+            receipt_id,
+            request_id: request_id.to_string(),
+            verdict,
+            contract_chain,
+            conditions,
+            posterior_at_decision_micros,
+            timestamp_ns,
+            signature,
+        }
+    }
+
+    fn signing_payload_bytes(&self) -> Vec<u8> {
+        let payload = ReceiptSigningPayload {
+            receipt_id: &self.receipt_id,
+            request_id: &self.request_id,
+            verdict: &self.verdict,
+            contract_chain: &self.contract_chain,
+            conditions: &self.conditions,
+            posterior_at_decision_micros: self.posterior_at_decision_micros,
+            timestamp_ns: self.timestamp_ns,
+        };
+        serde_json::to_vec(&payload).expect("receipt signing payload should serialize")
+    }
+
+    pub fn verify(&self, public_key: &DecisionPublicKey) -> bool {
+        public_key.verify(&self.signing_payload_bytes(), &self.signature)
+    }
+}
+
+/// Append-only receipt log.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DecisionReceiptLog {
+    receipts: Vec<CryptographicDecisionReceipt>,
+}
+
+impl DecisionReceiptLog {
+    pub fn append(&mut self, receipt: CryptographicDecisionReceipt) {
+        self.receipts.push(receipt);
+    }
+
+    pub fn receipts(&self) -> &[CryptographicDecisionReceipt] {
+        &self.receipts
+    }
+}
+
+/// Structured stable event for declassification contract outcomes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeclassificationDecisionEvent {
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub component: String,
+    pub event: String,
+    pub outcome: String,
+    pub error_code: Option<String>,
+    pub request_id: String,
+    pub requester: String,
+    pub receipt_id: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeclassificationEvidenceSeverity {
+    High,
+    Critical,
+}
+
+/// Guardplane evidence emitted on denied declassification requests.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeclassificationDeniedEvidence {
+    pub request_id: String,
+    pub requester: String,
+    pub reason: DeclassificationDenialReason,
+    pub severity: DeclassificationEvidenceSeverity,
+    pub label_distance: u8,
+    pub decision_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DeclassificationOutcome {
+    Approved {
+        new_label: FlowLabel,
+        receipt: CryptographicDecisionReceipt,
+    },
+    Denied {
+        reason: DeclassificationDenialReason,
+        receipt: CryptographicDecisionReceipt,
+    },
+    Deferred {
+        challenge: DeclassificationChallenge,
+        receipt: CryptographicDecisionReceipt,
+    },
+}
+
+/// Mandatory gateway for all runtime declassification requests.
+pub struct DeclassificationGateway {
+    contracts: Vec<Box<dyn DecisionContract>>,
+    signing_key: DecisionSigningKey,
+    receipt_log: DecisionReceiptLog,
+    events: Vec<DeclassificationDecisionEvent>,
+    denied_evidence: Vec<DeclassificationDeniedEvidence>,
+    request_history_by_requester: BTreeMap<String, Vec<u64>>,
+}
+
+impl DeclassificationGateway {
+    pub fn with_default_contracts(signing_key: DecisionSigningKey) -> Self {
+        let contracts: Vec<Box<dyn DecisionContract>> = vec![
+            Box::new(RequesterCapabilityContract),
+            Box::new(LabelDistanceContract),
+            Box::new(PurposeValidityContract),
+            Box::new(RateLimitContract::new(8, 60_000_000_000)),
+        ];
+        Self::new(signing_key, contracts)
+    }
+
+    pub fn new(signing_key: DecisionSigningKey, contracts: Vec<Box<dyn DecisionContract>>) -> Self {
+        Self {
+            contracts,
+            signing_key,
+            receipt_log: DecisionReceiptLog::default(),
+            events: Vec::new(),
+            denied_evidence: Vec::new(),
+            request_history_by_requester: BTreeMap::new(),
+        }
+    }
+
+    pub fn receipt_log(&self) -> &DecisionReceiptLog {
+        &self.receipt_log
+    }
+
+    pub fn events(&self) -> &[DeclassificationDecisionEvent] {
+        &self.events
+    }
+
+    pub fn denied_evidence(&self) -> &[DeclassificationDeniedEvidence] {
+        &self.denied_evidence
+    }
+
+    pub fn public_key(&self) -> DecisionPublicKey {
+        self.signing_key.public_key()
+    }
+
+    pub fn evaluate_request(
+        &mut self,
+        request: DeclassificationRequest,
+        requester_capabilities: &BTreeSet<Capability>,
+        posterior_at_decision_micros: u64,
+        context: &FlowEnforcementContext<'_>,
+    ) -> DeclassificationOutcome {
+        let mut contract_chain = Vec::new();
+        let mut conditions = Vec::new();
+        let mut verdict_override = None;
+
+        if request.justification.trim().is_empty() {
+            verdict_override = Some(DecisionVerdict::Denied {
+                reason: DeclassificationDenialReason::EmptyJustification,
+            });
+        } else if FlowLabelLattice::can_flow(&request.current_label, &request.target_label) {
+            verdict_override = Some(DecisionVerdict::Denied {
+                reason: DeclassificationDenialReason::NoDeclassificationRequired,
+            });
+        }
+
+        let verdict = if let Some(verdict) = verdict_override {
+            verdict
+        } else {
+            let request_history = self
+                .request_history_by_requester
+                .get(request.requester.as_str())
+                .map(Vec::as_slice);
+            let eval_context = DeclassificationEvaluationContext::new(
+                requester_capabilities,
+                request_history,
+                request.timestamp_ns,
+            );
+            let mut terminal_verdict = None;
+
+            for contract in &self.contracts {
+                contract_chain.push(contract.contract_id().to_string());
+                match contract.evaluate(&request, &eval_context) {
+                    DecisionVerdict::Approved {
+                        conditions: contract_conditions,
+                    } => {
+                        conditions.extend(contract_conditions);
+                    }
+                    DecisionVerdict::Denied { reason } => {
+                        terminal_verdict = Some(DecisionVerdict::Denied { reason });
+                        break;
+                    }
+                    DecisionVerdict::Deferred { challenge } => {
+                        terminal_verdict = Some(DecisionVerdict::Deferred { challenge });
+                        break;
+                    }
+                }
+            }
+
+            terminal_verdict.unwrap_or_else(|| DecisionVerdict::Approved {
+                conditions: conditions.clone(),
+            })
+        };
+
+        let receipt = CryptographicDecisionReceipt::new_signed(
+            &request.request_id,
+            verdict.clone(),
+            contract_chain,
+            conditions,
+            posterior_at_decision_micros,
+            request.timestamp_ns,
+            &self.signing_key,
+        );
+        self.receipt_log.append(receipt.clone());
+        self.request_history_by_requester
+            .entry(request.requester.clone())
+            .or_default()
+            .push(request.timestamp_ns);
+
+        let (outcome, error_code) = match verdict {
+            DecisionVerdict::Approved { .. } => {
+                self.events.push(DeclassificationDecisionEvent {
+                    trace_id: context.trace_id.to_string(),
+                    decision_id: context.decision_id.to_string(),
+                    policy_id: context.policy_id.to_string(),
+                    component: DECLASSIFICATION_COMPONENT.to_string(),
+                    event: "declassification_request".to_string(),
+                    outcome: "approved".to_string(),
+                    error_code: None,
+                    request_id: request.request_id,
+                    requester: request.requester,
+                    receipt_id: receipt.receipt_id.clone(),
+                });
+                (
+                    DeclassificationOutcome::Approved {
+                        new_label: request.target_label,
+                        receipt,
+                    },
+                    None,
+                )
+            }
+            DecisionVerdict::Denied { reason } => {
+                let label_distance =
+                    declassification_label_distance(request.current_label, request.target_label);
+                self.denied_evidence.push(DeclassificationDeniedEvidence {
+                    request_id: request.request_id.clone(),
+                    requester: request.requester.clone(),
+                    reason: reason.clone(),
+                    severity: denial_severity(label_distance),
+                    label_distance,
+                    decision_id: context.decision_id.to_string(),
+                });
+                let error_code_value = reason.error_code().to_string();
+                self.events.push(DeclassificationDecisionEvent {
+                    trace_id: context.trace_id.to_string(),
+                    decision_id: context.decision_id.to_string(),
+                    policy_id: context.policy_id.to_string(),
+                    component: DECLASSIFICATION_COMPONENT.to_string(),
+                    event: "declassification_request".to_string(),
+                    outcome: "denied".to_string(),
+                    error_code: Some(error_code_value.clone()),
+                    request_id: request.request_id,
+                    requester: request.requester,
+                    receipt_id: receipt.receipt_id.clone(),
+                });
+                (
+                    DeclassificationOutcome::Denied { reason, receipt },
+                    Some(error_code_value),
+                )
+            }
+            DecisionVerdict::Deferred { challenge } => {
+                self.events.push(DeclassificationDecisionEvent {
+                    trace_id: context.trace_id.to_string(),
+                    decision_id: context.decision_id.to_string(),
+                    policy_id: context.policy_id.to_string(),
+                    component: DECLASSIFICATION_COMPONENT.to_string(),
+                    event: "declassification_request".to_string(),
+                    outcome: "deferred".to_string(),
+                    error_code: Some("FE-DECLASS-0008".to_string()),
+                    request_id: request.request_id,
+                    requester: request.requester,
+                    receipt_id: receipt.receipt_id.clone(),
+                });
+                (
+                    DeclassificationOutcome::Deferred { challenge, receipt },
+                    Some("FE-DECLASS-0008".to_string()),
+                )
+            }
+        };
+
+        let _ = error_code;
+        outcome
+    }
+}
+
+impl Default for DeclassificationGateway {
+    fn default() -> Self {
+        Self::with_default_contracts(DecisionSigningKey::default())
+    }
+}
+
+fn purpose_allowed_for_target(purpose: &DeclassificationPurpose, target: SecrecyLevel) -> bool {
+    match target {
+        SecrecyLevel::Public => matches!(
+            purpose,
+            DeclassificationPurpose::UserConsent
+                | DeclassificationPurpose::AggregationAnonymization
+                | DeclassificationPurpose::PublicApiResponse
+                | DeclassificationPurpose::DiagnosticExport
+                | DeclassificationPurpose::OperatorOverride
+                | DeclassificationPurpose::Custom(_)
+        ),
+        SecrecyLevel::Internal => matches!(
+            purpose,
+            DeclassificationPurpose::UserConsent
+                | DeclassificationPurpose::AggregationAnonymization
+                | DeclassificationPurpose::DiagnosticExport
+                | DeclassificationPurpose::OperatorOverride
+                | DeclassificationPurpose::Custom(_)
+        ),
+        SecrecyLevel::Confidential => matches!(
+            purpose,
+            DeclassificationPurpose::UserConsent
+                | DeclassificationPurpose::AggregationAnonymization
+                | DeclassificationPurpose::DiagnosticExport
+                | DeclassificationPurpose::OperatorOverride
+        ),
+        SecrecyLevel::Secret => matches!(
+            purpose,
+            DeclassificationPurpose::UserConsent | DeclassificationPurpose::OperatorOverride
+        ),
+        SecrecyLevel::TopSecret => matches!(purpose, DeclassificationPurpose::OperatorOverride),
+    }
+}
+
+const fn secrecy_drop_levels(current: FlowLabel, target: FlowLabel) -> u8 {
+    current
+        .secrecy()
+        .rank()
+        .saturating_sub(target.secrecy().rank())
+}
+
+const fn integrity_raise_levels(current: FlowLabel, target: FlowLabel) -> u8 {
+    target
+        .integrity()
+        .rank()
+        .saturating_sub(current.integrity().rank())
+}
+
+const fn declassification_label_distance(current: FlowLabel, target: FlowLabel) -> u8 {
+    let secrecy_distance = secrecy_drop_levels(current, target);
+    let integrity_distance = integrity_raise_levels(current, target);
+    if secrecy_distance > integrity_distance {
+        secrecy_distance
+    } else {
+        integrity_distance
+    }
+}
+
+const fn denial_severity(distance: u8) -> DeclassificationEvidenceSeverity {
+    if distance >= 3 {
+        DeclassificationEvidenceSeverity::Critical
+    } else {
+        DeclassificationEvidenceSeverity::High
+    }
+}
+
+fn derive_receipt_id(request_id: &str, timestamp_ns: u64, outcome_tag: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(request_id.as_bytes());
+    hasher.update(timestamp_ns.to_le_bytes());
+    hasher.update(outcome_tag.as_bytes());
+    let digest = hasher.finalize();
+    format!("dcr-{}", to_hex(&digest[..12]))
+}
+
+fn to_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        output.push(HEX[(byte >> 4) as usize] as char);
+        output.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    output
+}
+
+pub const MAX_DELEGATE_LIFETIME_NS: u64 = 86_400_000_000_000;
+pub const MAX_DELEGATE_CPU_BUDGET_NS: u64 = 60_000_000_000;
+pub const MAX_DELEGATE_MEMORY_BUDGET_BYTES: u64 = 512 * 1024 * 1024;
+pub const MAX_DELEGATE_HOSTCALL_BUDGET: u64 = 100_000;
+const DELEGATE_COMPONENT: &str = "delegate_cell_policy";
+
+/// Delegate-cell scope authorizing specific runtime-internal operations.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DelegationScope {
+    ModuleReplacement,
+    ConfigUpdate,
+    DiagnosticCollection,
+    TrustChainRotation,
+    Custom(String),
+}
+
+impl DelegationScope {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::ModuleReplacement => "module_replacement",
+            Self::ConfigUpdate => "config_update",
+            Self::DiagnosticCollection => "diagnostic_collection",
+            Self::TrustChainRotation => "trust_chain_rotation",
+            Self::Custom(_) => "custom",
+        }
+    }
+}
+
+impl fmt::Display for DelegationScope {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Custom(value) => write!(f, "custom:{value}"),
+            _ => f.write_str(self.as_str()),
+        }
+    }
+}
+
+/// Extension manifest extension for delegate-cell creation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DelegateCellManifest {
+    pub base_manifest: ExtensionManifest,
+    pub delegation_scope: DelegationScope,
+    pub delegator_id: String,
+    pub max_lifetime_ns: u64,
+}
+
+/// Configurable guardplane tuning for delegate-cell risk updates.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DelegateCellPolicy {
+    pub initial_posterior_micros: u64,
+    pub capability_escalation_penalty_micros: u64,
+    pub flow_violation_penalty_micros: u64,
+    pub declassification_denial_penalty_micros: u64,
+    pub false_positive_cost_micros: u64,
+    pub false_negative_cost_micros: u64,
+}
+
+impl Default for DelegateCellPolicy {
+    fn default() -> Self {
+        Self {
+            initial_posterior_micros: 200_000,
+            capability_escalation_penalty_micros: 220_000,
+            flow_violation_penalty_micros: 150_000,
+            declassification_denial_penalty_micros: 110_000,
+            false_positive_cost_micros: 400_000,
+            false_negative_cost_micros: 850_000,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DelegateGuardplaneState {
+    pub delegate_id: String,
+    pub posterior_micros: u64,
+}
+
+/// Stable structured event for delegate-cell operations.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DelegateCellEvent {
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub component: String,
+    pub event: String,
+    pub outcome: String,
+    pub error_code: Option<String>,
+    pub delegate_id: String,
+    pub delegation_scope: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DelegateCellEvidence {
+    FlowViolation(FlowViolationEvidence),
+    CapabilityEscalation {
+        delegate_id: String,
+        attempted: Capability,
+        decision_id: String,
+    },
+    DeclassificationDenied(DeclassificationDeniedEvidence),
+    LifetimeExpired {
+        delegate_id: String,
+        expired_at_ns: u64,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DelegateCellError {
+    InvalidDelegateId,
+    InvalidDelegatorId,
+    InvalidMaxLifetime {
+        requested_ns: u64,
+    },
+    MissingCapabilities,
+    InvalidBudget {
+        field: &'static str,
+        value: u64,
+        max_allowed: u64,
+    },
+    ManifestValidation(ManifestValidationError),
+    Lifecycle(LifecycleError),
+    LifetimeExpired {
+        delegate_id: String,
+        expired_at_ns: u64,
+    },
+}
+
+impl fmt::Display for DelegateCellError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidDelegateId => f.write_str("delegate_id must not be empty"),
+            Self::InvalidDelegatorId => f.write_str("delegator_id must not be empty"),
+            Self::InvalidMaxLifetime { requested_ns } => write!(
+                f,
+                "max_lifetime_ns must be in 1..={MAX_DELEGATE_LIFETIME_NS}, got {requested_ns}"
+            ),
+            Self::MissingCapabilities => f.write_str("delegate manifest must declare capabilities"),
+            Self::InvalidBudget {
+                field,
+                value,
+                max_allowed,
+            } => write!(
+                f,
+                "delegate budget {field} out of bounds: value={value}, max_allowed={max_allowed}"
+            ),
+            Self::ManifestValidation(error) => {
+                write!(f, "delegate manifest validation failed: {error}")
+            }
+            Self::Lifecycle(error) => write!(f, "delegate lifecycle error: {error}"),
+            Self::LifetimeExpired {
+                delegate_id,
+                expired_at_ns,
+            } => write!(
+                f,
+                "delegate '{delegate_id}' exceeded max lifetime at {expired_at_ns}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for DelegateCellError {}
+
+impl From<ManifestValidationError> for DelegateCellError {
+    fn from(value: ManifestValidationError) -> Self {
+        Self::ManifestValidation(value)
+    }
+}
+
+impl From<LifecycleError> for DelegateCellError {
+    fn from(value: LifecycleError) -> Self {
+        Self::Lifecycle(value)
+    }
+}
+
+impl DelegateCellManifest {
+    pub fn validate(&self) -> Result<(), DelegateCellError> {
+        if self.delegator_id.trim().is_empty() {
+            return Err(DelegateCellError::InvalidDelegatorId);
+        }
+        if self.max_lifetime_ns == 0 || self.max_lifetime_ns > MAX_DELEGATE_LIFETIME_NS {
+            return Err(DelegateCellError::InvalidMaxLifetime {
+                requested_ns: self.max_lifetime_ns,
+            });
+        }
+        if self.base_manifest.capabilities.is_empty() {
+            return Err(DelegateCellError::MissingCapabilities);
+        }
+        validate_manifest(&self.base_manifest)?;
+        Ok(())
+    }
+}
+
+/// Runtime representation of a delegate cell that must follow extension security policy.
+pub struct DelegateCell {
+    delegate_id: String,
+    manifest: DelegateCellManifest,
+    lifecycle_manager: ExtensionLifecycleManager,
+    hostcall_dispatcher: HostcallDispatcher,
+    declassification_gateway: DeclassificationGateway,
+    guardplane_state: DelegateGuardplaneState,
+    policy: DelegateCellPolicy,
+    created_at_ns: u64,
+    expires_at_ns: u64,
+    lifetime_expired_recorded: bool,
+    events: Vec<DelegateCellEvent>,
+    evidence: Vec<DelegateCellEvidence>,
+}
+
+impl DelegateCell {
+    pub fn delegate_id(&self) -> &str {
+        &self.delegate_id
+    }
+
+    pub fn manifest(&self) -> &DelegateCellManifest {
+        &self.manifest
+    }
+
+    pub const fn created_at_ns(&self) -> u64 {
+        self.created_at_ns
+    }
+
+    pub const fn expires_at_ns(&self) -> u64 {
+        self.expires_at_ns
+    }
+
+    pub fn state(&self) -> ExtensionState {
+        self.lifecycle_manager.state()
+    }
+
+    pub fn guardplane_state(&self) -> &DelegateGuardplaneState {
+        &self.guardplane_state
+    }
+
+    pub fn lifecycle_manager(&self) -> &ExtensionLifecycleManager {
+        &self.lifecycle_manager
+    }
+
+    pub fn hostcall_violation_events(&self) -> &[FlowViolationEvent] {
+        self.hostcall_dispatcher.violation_events()
+    }
+
+    pub fn declassification_receipts(&self) -> &[CryptographicDecisionReceipt] {
+        self.declassification_gateway.receipt_log().receipts()
+    }
+
+    pub fn events(&self) -> &[DelegateCellEvent] {
+        &self.events
+    }
+
+    pub fn evidence(&self) -> &[DelegateCellEvidence] {
+        &self.evidence
+    }
+
+    pub fn apply_transition(
+        &mut self,
+        transition: LifecycleTransition,
+        timestamp_ns: u64,
+        context: &LifecycleContext<'_>,
+    ) -> Result<LifecycleEvent, DelegateCellError> {
+        self.check_lifetime(timestamp_ns, context)?;
+        let event = self
+            .lifecycle_manager
+            .apply_transition(transition, timestamp_ns, context)?;
+        self.record_event(
+            context.trace_id,
+            context.decision_id,
+            context.policy_id,
+            "delegate_lifecycle_transition",
+            "ok",
+            None,
+        );
+        Ok(event)
+    }
+
+    pub fn check_lifetime(
+        &mut self,
+        timestamp_ns: u64,
+        context: &LifecycleContext<'_>,
+    ) -> Result<(), DelegateCellError> {
+        if timestamp_ns < self.expires_at_ns {
+            return Ok(());
+        }
+        if self.lifetime_expired_recorded {
+            return Err(DelegateCellError::LifetimeExpired {
+                delegate_id: self.delegate_id.clone(),
+                expired_at_ns: self.expires_at_ns,
+            });
+        }
+
+        let state = self.lifecycle_manager.state();
+        if !matches!(
+            state,
+            ExtensionState::Terminated | ExtensionState::Quarantined
+        ) {
+            if lifecycle_target_state(state, LifecycleTransition::Terminate).is_some() {
+                let _ = self.lifecycle_manager.apply_transition(
+                    LifecycleTransition::Terminate,
+                    timestamp_ns,
+                    context,
+                );
+            } else if lifecycle_target_state(state, LifecycleTransition::Quarantine).is_some() {
+                let _ = self.lifecycle_manager.apply_transition(
+                    LifecycleTransition::Quarantine,
+                    timestamp_ns,
+                    context,
+                );
+            }
+
+            if self.lifecycle_manager.state() == ExtensionState::Terminating {
+                let _ = self.lifecycle_manager.complete_termination(
+                    timestamp_ns.saturating_add(1),
+                    context,
+                    false,
+                    false,
+                );
+            }
+        }
+
+        self.lifetime_expired_recorded = true;
+        self.evidence.push(DelegateCellEvidence::LifetimeExpired {
+            delegate_id: self.delegate_id.clone(),
+            expired_at_ns: self.expires_at_ns,
+        });
+        self.record_event(
+            context.trace_id,
+            context.decision_id,
+            context.policy_id,
+            "delegate_lifetime_expired",
+            "forced_containment",
+            Some("FE-DELEGATE-0004"),
+        );
+        Err(DelegateCellError::LifetimeExpired {
+            delegate_id: self.delegate_id.clone(),
+            expired_at_ns: self.expires_at_ns,
+        })
+    }
+
+    pub fn dispatch_hostcall<T: Clone>(
+        &mut self,
+        hostcall_type: HostcallType,
+        attempted_capability: Capability,
+        argument: Labeled<T>,
+        timestamp_ns: u64,
+        flow_context: &FlowEnforcementContext<'_>,
+        lifecycle_context: &LifecycleContext<'_>,
+    ) -> Result<HostcallDispatchOutcome<T>, DelegateCellError> {
+        self.check_lifetime(timestamp_ns, lifecycle_context)?;
+        self.lifecycle_manager
+            .consume_hostcall(timestamp_ns, lifecycle_context)?;
+
+        let outcome = self.hostcall_dispatcher.dispatch(
+            &self.delegate_id,
+            hostcall_type,
+            &self.manifest.base_manifest.capabilities,
+            attempted_capability,
+            argument,
+            flow_context,
+        );
+
+        match &outcome.result {
+            HostcallResult::Denied {
+                reason: DenialReason::FlowViolation { .. },
+            } => {
+                if let Some(last_evidence) = self
+                    .hostcall_dispatcher
+                    .guardplane_evidence()
+                    .last()
+                    .cloned()
+                {
+                    self.evidence
+                        .push(DelegateCellEvidence::FlowViolation(last_evidence));
+                }
+                self.apply_guardplane_penalty(self.policy.flow_violation_penalty_micros);
+                self.record_event(
+                    flow_context.trace_id,
+                    flow_context.decision_id,
+                    flow_context.policy_id,
+                    "delegate_hostcall",
+                    "blocked",
+                    Some("FE-FLOW-0001"),
+                );
+            }
+            HostcallResult::Denied {
+                reason: DenialReason::CapabilityEscalation { attempted },
+            } => {
+                self.evidence
+                    .push(DelegateCellEvidence::CapabilityEscalation {
+                        delegate_id: self.delegate_id.clone(),
+                        attempted: *attempted,
+                        decision_id: flow_context.decision_id.to_string(),
+                    });
+                self.apply_guardplane_penalty(self.policy.capability_escalation_penalty_micros);
+                self.record_event(
+                    flow_context.trace_id,
+                    flow_context.decision_id,
+                    flow_context.policy_id,
+                    "delegate_hostcall",
+                    "blocked",
+                    Some("FE-DELEGATE-0003"),
+                );
+            }
+            HostcallResult::Success => {
+                self.record_event(
+                    flow_context.trace_id,
+                    flow_context.decision_id,
+                    flow_context.policy_id,
+                    "delegate_hostcall",
+                    "allowed",
+                    None,
+                );
+            }
+            HostcallResult::Error { .. } | HostcallResult::Timeout => {
+                self.record_event(
+                    flow_context.trace_id,
+                    flow_context.decision_id,
+                    flow_context.policy_id,
+                    "delegate_hostcall",
+                    "failed",
+                    Some("FE-DELEGATE-0005"),
+                );
+            }
+        }
+
+        Ok(outcome)
+    }
+
+    pub fn request_declassification(
+        &mut self,
+        request: DeclassificationRequest,
+        flow_context: &FlowEnforcementContext<'_>,
+        lifecycle_context: &LifecycleContext<'_>,
+    ) -> Result<DeclassificationOutcome, DelegateCellError> {
+        self.check_lifetime(request.timestamp_ns, lifecycle_context)?;
+        let outcome = self.declassification_gateway.evaluate_request(
+            request,
+            &self.manifest.base_manifest.capabilities,
+            self.guardplane_state.posterior_micros,
+            flow_context,
+        );
+
+        match &outcome {
+            DeclassificationOutcome::Approved { .. } => {
+                self.record_event(
+                    flow_context.trace_id,
+                    flow_context.decision_id,
+                    flow_context.policy_id,
+                    "delegate_declassification",
+                    "approved",
+                    None,
+                );
+            }
+            DeclassificationOutcome::Denied { reason, .. } => {
+                if let Some(last) = self
+                    .declassification_gateway
+                    .denied_evidence()
+                    .last()
+                    .cloned()
+                {
+                    self.evidence
+                        .push(DelegateCellEvidence::DeclassificationDenied(last));
+                }
+                self.apply_guardplane_penalty(self.policy.declassification_denial_penalty_micros);
+                self.record_event(
+                    flow_context.trace_id,
+                    flow_context.decision_id,
+                    flow_context.policy_id,
+                    "delegate_declassification",
+                    "denied",
+                    Some(reason.error_code()),
+                );
+            }
+            DeclassificationOutcome::Deferred { .. } => {
+                self.record_event(
+                    flow_context.trace_id,
+                    flow_context.decision_id,
+                    flow_context.policy_id,
+                    "delegate_declassification",
+                    "deferred",
+                    Some("FE-DECLASS-0008"),
+                );
+            }
+        }
+
+        Ok(outcome)
+    }
+
+    fn apply_guardplane_penalty(&mut self, penalty_micros: u64) {
+        self.guardplane_state.posterior_micros =
+            (self.guardplane_state.posterior_micros + penalty_micros).min(1_000_000);
+    }
+
+    fn record_event(
+        &mut self,
+        trace_id: &str,
+        decision_id: &str,
+        policy_id: &str,
+        event: &str,
+        outcome: &str,
+        error_code: Option<&str>,
+    ) {
+        self.events.push(DelegateCellEvent {
+            trace_id: trace_id.to_string(),
+            decision_id: decision_id.to_string(),
+            policy_id: policy_id.to_string(),
+            component: DELEGATE_COMPONENT.to_string(),
+            event: event.to_string(),
+            outcome: outcome.to_string(),
+            error_code: error_code.map(str::to_string),
+            delegate_id: self.delegate_id.clone(),
+            delegation_scope: self.manifest.delegation_scope.to_string(),
+        });
+    }
+}
+
+/// Factory ensuring delegate cells are created through full security policy path.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct DelegateCellFactory {
+    pub sink_policy: HostcallSinkPolicy,
+    pub cancellation_config: CancellationConfig,
+    pub policy: DelegateCellPolicy,
+    pub decision_signing_key: DecisionSigningKey,
+}
+
+impl DelegateCellFactory {
+    pub fn create_delegate_cell(
+        &self,
+        delegate_id: impl Into<String>,
+        manifest: DelegateCellManifest,
+        budget: ResourceBudget,
+        budget_policy: BudgetExhaustionPolicy,
+        created_at_ns: u64,
+        lifecycle_context: &LifecycleContext<'_>,
+    ) -> Result<DelegateCell, DelegateCellError> {
+        let delegate_id = delegate_id.into();
+        if delegate_id.trim().is_empty() {
+            return Err(DelegateCellError::InvalidDelegateId);
+        }
+        manifest.validate()?;
+        validate_delegate_budget(&budget)?;
+
+        let mut lifecycle_manager = ExtensionLifecycleManager::new(
+            delegate_id.clone(),
+            budget,
+            budget_policy,
+            self.cancellation_config,
+        );
+        lifecycle_manager.set_validated_manifest(manifest.base_manifest.clone())?;
+        lifecycle_manager.apply_transition(
+            LifecycleTransition::Validate,
+            created_at_ns.saturating_add(1),
+            lifecycle_context,
+        )?;
+        lifecycle_manager.apply_transition(
+            LifecycleTransition::Load,
+            created_at_ns.saturating_add(2),
+            lifecycle_context,
+        )?;
+        lifecycle_manager.apply_transition(
+            LifecycleTransition::Start,
+            created_at_ns.saturating_add(3),
+            lifecycle_context,
+        )?;
+        lifecycle_manager.apply_transition(
+            LifecycleTransition::Activate,
+            created_at_ns.saturating_add(4),
+            lifecycle_context,
+        )?;
+
+        let mut delegate = DelegateCell {
+            delegate_id: delegate_id.clone(),
+            lifecycle_manager,
+            hostcall_dispatcher: HostcallDispatcher::new(self.sink_policy),
+            declassification_gateway: DeclassificationGateway::with_default_contracts(
+                self.decision_signing_key,
+            ),
+            guardplane_state: DelegateGuardplaneState {
+                delegate_id: delegate_id.clone(),
+                posterior_micros: self.policy.initial_posterior_micros,
+            },
+            policy: self.policy.clone(),
+            created_at_ns,
+            expires_at_ns: created_at_ns.saturating_add(manifest.max_lifetime_ns),
+            lifetime_expired_recorded: false,
+            events: Vec::new(),
+            evidence: Vec::new(),
+            manifest,
+        };
+        delegate.record_event(
+            lifecycle_context.trace_id,
+            lifecycle_context.decision_id,
+            lifecycle_context.policy_id,
+            "delegate_cell_created",
+            "ok",
+            None,
+        );
+
+        Ok(delegate)
+    }
+}
+
+fn validate_delegate_budget(budget: &ResourceBudget) -> Result<(), DelegateCellError> {
+    if budget.cpu_time_ns_remaining == 0
+        || budget.cpu_time_ns_remaining > MAX_DELEGATE_CPU_BUDGET_NS
+    {
+        return Err(DelegateCellError::InvalidBudget {
+            field: "cpu_time_ns_remaining",
+            value: budget.cpu_time_ns_remaining,
+            max_allowed: MAX_DELEGATE_CPU_BUDGET_NS,
+        });
+    }
+    if budget.memory_bytes_remaining == 0
+        || budget.memory_bytes_remaining > MAX_DELEGATE_MEMORY_BUDGET_BYTES
+    {
+        return Err(DelegateCellError::InvalidBudget {
+            field: "memory_bytes_remaining",
+            value: budget.memory_bytes_remaining,
+            max_allowed: MAX_DELEGATE_MEMORY_BUDGET_BYTES,
+        });
+    }
+    if budget.hostcall_count_remaining == 0
+        || budget.hostcall_count_remaining > MAX_DELEGATE_HOSTCALL_BUDGET
+    {
+        return Err(DelegateCellError::InvalidBudget {
+            field: "hostcall_count_remaining",
+            value: budget.hostcall_count_remaining,
+            max_allowed: MAX_DELEGATE_HOSTCALL_BUDGET,
+        });
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -765,5 +3439,1300 @@ mod tests {
                 missing_implied: Capability::FsRead,
             })
         );
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+    use std::thread;
+
+    fn lifecycle_manifest() -> ExtensionManifest {
+        let mut manifest = ExtensionManifest {
+            name: "lifecycle-ext".to_string(),
+            version: "1.0.0".to_string(),
+            entrypoint: "dist/main.js".to_string(),
+            capabilities: [Capability::FsRead, Capability::FsWrite]
+                .into_iter()
+                .collect(),
+            publisher_signature: Some(vec![1, 2, 3, 4]),
+            content_hash: [0; 32],
+            trust_chain_ref: Some("chain/lifecycle".to_string()),
+            min_engine_version: CURRENT_ENGINE_VERSION.to_string(),
+        };
+        manifest.content_hash = compute_content_hash(&manifest).expect("content hash");
+        manifest
+    }
+
+    fn context() -> LifecycleContext<'static> {
+        LifecycleContext::new("trace-life", "decision-life", "policy-life")
+    }
+
+    fn manager_in_running_state(
+        extension_id: &str,
+        budget_policy: BudgetExhaustionPolicy,
+        hostcall_budget: u64,
+    ) -> ExtensionLifecycleManager {
+        let mut manager = ExtensionLifecycleManager::new(
+            extension_id.to_string(),
+            ResourceBudget::new(5_000_000_000, 1024 * 1024, hostcall_budget),
+            budget_policy,
+            CancellationConfig::default(),
+        );
+        manager
+            .set_validated_manifest(lifecycle_manifest())
+            .expect("validated manifest");
+        let cx = context();
+        manager
+            .apply_transition(LifecycleTransition::Validate, 10, &cx)
+            .expect("validate");
+        manager
+            .apply_transition(LifecycleTransition::Load, 20, &cx)
+            .expect("load");
+        manager
+            .apply_transition(LifecycleTransition::Start, 30, &cx)
+            .expect("start");
+        manager
+            .apply_transition(LifecycleTransition::Activate, 40, &cx)
+            .expect("activate");
+        manager
+    }
+
+    #[test]
+    fn full_lifecycle_path_transitions_and_protocol_complete() {
+        let cx = context();
+        let mut manager =
+            manager_in_running_state("ext-full", BudgetExhaustionPolicy::Suspend, 100);
+        assert_eq!(manager.state(), ExtensionState::Running);
+
+        manager
+            .apply_transition(LifecycleTransition::Suspend, 50, &cx)
+            .expect("suspend");
+        manager
+            .apply_transition(LifecycleTransition::Freeze, 60, &cx)
+            .expect("freeze");
+        manager
+            .apply_transition(LifecycleTransition::Resume, 70, &cx)
+            .expect("resume");
+        manager
+            .apply_transition(LifecycleTransition::Reactivate, 80, &cx)
+            .expect("reactivate");
+        manager
+            .apply_transition(LifecycleTransition::Terminate, 90, &cx)
+            .expect("terminate");
+        assert!(manager.pending_cancel_token().is_some());
+
+        manager
+            .complete_termination(95, &cx, true, false)
+            .expect("cooperative finalize");
+        assert_eq!(manager.state(), ExtensionState::Terminated);
+        assert!(manager.pending_cancel_token().is_none());
+    }
+
+    #[test]
+    fn invalid_transition_rejected_with_deterministic_context() {
+        let cx = context();
+        let mut manager = ExtensionLifecycleManager::new(
+            "ext-invalid",
+            ResourceBudget::new(1, 1, 1),
+            BudgetExhaustionPolicy::Suspend,
+            CancellationConfig::default(),
+        );
+        let error = manager
+            .apply_transition(LifecycleTransition::Resume, 1, &cx)
+            .expect_err("invalid transition");
+        assert_eq!(
+            error,
+            LifecycleError::InvalidTransition {
+                extension_id: "ext-invalid".to_string(),
+                current_state: ExtensionState::Unloaded,
+                attempted_transition: LifecycleTransition::Resume,
+            }
+        );
+        let last_event = manager.telemetry_events().last().expect("event");
+        assert_eq!(last_event.outcome, "fail");
+        assert_eq!(last_event.error_code.as_deref(), Some("FE-LIFECYCLE-0001"));
+    }
+
+    #[test]
+    fn budget_exhaustion_triggers_configured_containment_action() {
+        let cx = context();
+
+        let mut suspend_manager =
+            manager_in_running_state("ext-budget-suspend", BudgetExhaustionPolicy::Suspend, 2);
+        suspend_manager
+            .consume_hostcall(41, &cx)
+            .expect("first hostcall");
+        let err = suspend_manager
+            .consume_hostcall(42, &cx)
+            .expect_err("budget exhaustion");
+        assert!(matches!(err, LifecycleError::BudgetExhausted { .. }));
+        assert_eq!(suspend_manager.state(), ExtensionState::Suspending);
+
+        let mut terminate_manager =
+            manager_in_running_state("ext-budget-terminate", BudgetExhaustionPolicy::Terminate, 2);
+        terminate_manager
+            .consume_hostcall(41, &cx)
+            .expect("first hostcall");
+        let err = terminate_manager
+            .consume_hostcall(42, &cx)
+            .expect_err("budget exhaustion");
+        assert!(matches!(err, LifecycleError::BudgetExhausted { .. }));
+        assert_eq!(terminate_manager.state(), ExtensionState::Terminating);
+        assert!(terminate_manager.pending_cancel_token().is_some());
+    }
+
+    #[test]
+    fn termination_timeout_forces_finalize_or_quarantine() {
+        let cx = context();
+
+        let mut forced_finalize =
+            manager_in_running_state("ext-timeout-finalize", BudgetExhaustionPolicy::Suspend, 10);
+        forced_finalize
+            .apply_transition(LifecycleTransition::Terminate, 100, &cx)
+            .expect("terminate");
+        let event = forced_finalize
+            .complete_termination(
+                100 + DEFAULT_TERMINATION_GRACE_PERIOD_NS + 1,
+                &cx,
+                false,
+                false,
+            )
+            .expect("forced finalize");
+        assert_eq!(event.outcome, "forced");
+        assert_eq!(forced_finalize.state(), ExtensionState::Terminated);
+
+        let mut forced_quarantine = manager_in_running_state(
+            "ext-timeout-quarantine",
+            BudgetExhaustionPolicy::Suspend,
+            10,
+        );
+        forced_quarantine
+            .apply_transition(LifecycleTransition::Terminate, 200, &cx)
+            .expect("terminate");
+        let event = forced_quarantine
+            .complete_termination(
+                200 + DEFAULT_TERMINATION_GRACE_PERIOD_NS + 1,
+                &cx,
+                false,
+                true,
+            )
+            .expect("forced quarantine");
+        assert_eq!(event.outcome, "forced");
+        assert_eq!(forced_quarantine.state(), ExtensionState::Quarantined);
+    }
+
+    #[test]
+    fn state_machine_exhaustiveness_matches_allowed_transition_table() {
+        let states = [
+            ExtensionState::Unloaded,
+            ExtensionState::Validating,
+            ExtensionState::Loading,
+            ExtensionState::Starting,
+            ExtensionState::Running,
+            ExtensionState::Suspending,
+            ExtensionState::Suspended,
+            ExtensionState::Resuming,
+            ExtensionState::Terminating,
+            ExtensionState::Terminated,
+            ExtensionState::Quarantined,
+        ];
+        let transitions = [
+            LifecycleTransition::Validate,
+            LifecycleTransition::Load,
+            LifecycleTransition::Start,
+            LifecycleTransition::Activate,
+            LifecycleTransition::Suspend,
+            LifecycleTransition::Freeze,
+            LifecycleTransition::Resume,
+            LifecycleTransition::Reactivate,
+            LifecycleTransition::Terminate,
+            LifecycleTransition::Finalize,
+            LifecycleTransition::Quarantine,
+        ];
+
+        for state in states {
+            let allowed = allowed_lifecycle_transitions(state);
+            for transition in transitions {
+                let expected = allowed.contains(&transition);
+                let actual = lifecycle_target_state(state, transition).is_some();
+                assert_eq!(
+                    actual, expected,
+                    "state={} transition={} mismatch",
+                    state, transition
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn deterministic_replay_produces_identical_logs_and_events() {
+        let cx = context();
+        let sequence = [
+            (LifecycleTransition::Validate, 10),
+            (LifecycleTransition::Load, 20),
+            (LifecycleTransition::Start, 30),
+            (LifecycleTransition::Activate, 40),
+            (LifecycleTransition::Suspend, 50),
+            (LifecycleTransition::Freeze, 60),
+            (LifecycleTransition::Resume, 70),
+            (LifecycleTransition::Reactivate, 80),
+            (LifecycleTransition::Terminate, 90),
+        ];
+
+        let mut first = ExtensionLifecycleManager::new(
+            "ext-replay",
+            ResourceBudget::new(5_000_000_000, 1_000_000, 100),
+            BudgetExhaustionPolicy::Suspend,
+            CancellationConfig::default(),
+        );
+        first
+            .set_validated_manifest(lifecycle_manifest())
+            .expect("manifest");
+        for (transition, ts) in sequence {
+            first
+                .apply_transition(transition, ts, &cx)
+                .expect("transition");
+        }
+        first
+            .complete_termination(95, &cx, true, false)
+            .expect("finalize");
+        let first_log = first.transition_log().to_vec();
+        let first_events = first.telemetry_events().to_vec();
+
+        let mut second = ExtensionLifecycleManager::new(
+            "ext-replay",
+            ResourceBudget::new(5_000_000_000, 1_000_000, 100),
+            BudgetExhaustionPolicy::Suspend,
+            CancellationConfig::default(),
+        );
+        second
+            .set_validated_manifest(lifecycle_manifest())
+            .expect("manifest");
+        for (transition, ts) in sequence {
+            second
+                .apply_transition(transition, ts, &cx)
+                .expect("transition");
+        }
+        second
+            .complete_termination(95, &cx, true, false)
+            .expect("finalize");
+
+        assert_eq!(first_log, second.transition_log());
+        assert_eq!(first_events, second.telemetry_events());
+    }
+
+    #[test]
+    fn non_monotonic_timestamps_are_rejected() {
+        let cx = context();
+        let mut manager = ExtensionLifecycleManager::new(
+            "ext-time",
+            ResourceBudget::new(5_000_000_000, 1_000_000, 100),
+            BudgetExhaustionPolicy::Suspend,
+            CancellationConfig::default(),
+        );
+        manager
+            .set_validated_manifest(lifecycle_manifest())
+            .expect("manifest");
+        manager
+            .apply_transition(LifecycleTransition::Validate, 10, &cx)
+            .expect("validate");
+
+        let error = manager
+            .apply_transition(LifecycleTransition::Load, 9, &cx)
+            .expect_err("non-monotonic");
+        assert_eq!(
+            error,
+            LifecycleError::NonMonotonicTimestamp {
+                previous: 10,
+                current: 9,
+            }
+        );
+    }
+
+    #[test]
+    fn multiple_managers_run_independently_in_parallel() {
+        let handle_a = thread::spawn(|| {
+            let cx = LifecycleContext::new("trace-a", "decision-a", "policy-a");
+            let mut manager =
+                manager_in_running_state("ext-a", BudgetExhaustionPolicy::Suspend, 100);
+            manager
+                .apply_transition(LifecycleTransition::Terminate, 90, &cx)
+                .expect("terminate");
+            manager
+                .complete_termination(95, &cx, true, false)
+                .expect("complete");
+            (
+                manager.extension_id().to_string(),
+                manager.state(),
+                manager.transition_log().len(),
+            )
+        });
+        let handle_b = thread::spawn(|| {
+            let cx = LifecycleContext::new("trace-b", "decision-b", "policy-b");
+            let mut manager =
+                manager_in_running_state("ext-b", BudgetExhaustionPolicy::Terminate, 2);
+            manager.consume_hostcall(41, &cx).expect("hostcall1");
+            let _ = manager.consume_hostcall(42, &cx);
+            (
+                manager.extension_id().to_string(),
+                manager.state(),
+                manager.transition_log().len(),
+            )
+        });
+
+        let (id_a, state_a, log_a) = handle_a.join().expect("thread a");
+        let (id_b, state_b, log_b) = handle_b.join().expect("thread b");
+        assert_eq!(id_a, "ext-a");
+        assert_eq!(state_a, ExtensionState::Terminated);
+        assert!(log_a >= 5);
+
+        assert_eq!(id_b, "ext-b");
+        assert_eq!(state_b, ExtensionState::Terminating);
+        assert!(log_b >= 5);
+    }
+
+    #[test]
+    fn lifecycle_manager_is_send_and_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<ExtensionLifecycleManager>();
+    }
+}
+
+#[cfg(test)]
+mod flow_label_tests {
+    use super::*;
+    use std::hint::black_box;
+    use std::time::Instant;
+
+    fn flow_context() -> FlowEnforcementContext<'static> {
+        FlowEnforcementContext::new("trace-flow", "decision-flow", "policy-flow")
+    }
+
+    fn declared_caps() -> BTreeSet<Capability> {
+        [
+            Capability::FsRead,
+            Capability::FsWrite,
+            Capability::NetClient,
+            Capability::HostCall,
+            Capability::ProcessSpawn,
+        ]
+        .into_iter()
+        .collect()
+    }
+
+    #[test]
+    fn lattice_can_flow_and_rejects_unauthorized_paths() {
+        let public_trusted = FlowLabel::new(SecrecyLevel::Public, IntegrityLevel::Trusted);
+        let secret_untrusted = FlowLabel::new(SecrecyLevel::Secret, IntegrityLevel::Untrusted);
+        let internal_validated = FlowLabel::new(SecrecyLevel::Internal, IntegrityLevel::Validated);
+
+        assert!(FlowLabelLattice::can_flow(
+            &public_trusted,
+            &internal_validated
+        ));
+        assert!(!FlowLabelLattice::can_flow(
+            &secret_untrusted,
+            &internal_validated
+        ));
+    }
+
+    #[test]
+    fn join_semantics_use_max_secrecy_and_min_integrity() {
+        let a = FlowLabel::new(SecrecyLevel::Internal, IntegrityLevel::Trusted);
+        let b = FlowLabel::new(SecrecyLevel::Secret, IntegrityLevel::Validated);
+        let joined = a.join(b);
+        assert_eq!(
+            joined,
+            FlowLabel::new(SecrecyLevel::Secret, IntegrityLevel::Validated)
+        );
+    }
+
+    #[test]
+    fn sink_clearance_blocks_secret_to_public_network_egress() {
+        let mut dispatcher = HostcallDispatcher::new(HostcallSinkPolicy::default());
+        let payload = Labeled::new(
+            "token".to_string(),
+            FlowLabel::new(SecrecyLevel::Secret, IntegrityLevel::Validated),
+        );
+        let outcome = dispatcher.dispatch(
+            "ext-a",
+            HostcallType::NetworkSend,
+            &declared_caps(),
+            Capability::NetClient,
+            payload,
+            &flow_context(),
+        );
+
+        assert!(matches!(
+            outcome.result,
+            HostcallResult::Denied {
+                reason: DenialReason::FlowViolation { .. }
+            }
+        ));
+        assert!(outcome.output.is_none());
+        assert_eq!(dispatcher.violation_events().len(), 1);
+        assert_eq!(dispatcher.guardplane_evidence().len(), 1);
+    }
+
+    #[test]
+    fn sink_clearance_allows_public_to_secret_sink() {
+        let mut dispatcher = HostcallDispatcher::new(HostcallSinkPolicy::default());
+        let payload = Labeled::new(
+            "log-line".to_string(),
+            FlowLabel::new(SecrecyLevel::Public, IntegrityLevel::Trusted),
+        );
+        let outcome = dispatcher.dispatch(
+            "ext-a",
+            HostcallType::IpcSend,
+            &declared_caps(),
+            Capability::HostCall,
+            payload.clone(),
+            &flow_context(),
+        );
+
+        assert_eq!(outcome.result, HostcallResult::Success);
+        assert_eq!(outcome.output, Some(payload));
+        assert!(dispatcher.violation_events().is_empty());
+    }
+
+    #[test]
+    fn capability_escalation_is_denied() {
+        let mut dispatcher = HostcallDispatcher::new(HostcallSinkPolicy::default());
+        let declared: BTreeSet<Capability> = [Capability::FsRead].into_iter().collect();
+        let payload = Labeled::system_generated("diag".to_string());
+        let outcome = dispatcher.dispatch(
+            "ext-a",
+            HostcallType::ProcessSpawn,
+            &declared,
+            Capability::ProcessSpawn,
+            payload,
+            &flow_context(),
+        );
+
+        assert!(matches!(
+            outcome.result,
+            HostcallResult::Denied {
+                reason: DenialReason::CapabilityEscalation { .. }
+            }
+        ));
+        assert!(outcome.output.is_none());
+    }
+
+    #[test]
+    fn ipc_propagation_preserves_labels_and_blocks_follow_on_exfiltration() {
+        let mut dispatcher = HostcallDispatcher::new(HostcallSinkPolicy::default());
+        let ipc_payload = Labeled::new(
+            vec![1u8, 2, 3],
+            FlowLabel::new(SecrecyLevel::Confidential, IntegrityLevel::Validated),
+        );
+
+        let ipc_outcome = dispatcher.dispatch(
+            "ext-a",
+            HostcallType::IpcSend,
+            &declared_caps(),
+            Capability::HostCall,
+            ipc_payload,
+            &flow_context(),
+        );
+        assert_eq!(ipc_outcome.result, HostcallResult::Success);
+        let inherited = ipc_outcome.output.expect("ipc output");
+        assert_eq!(
+            inherited.label(),
+            FlowLabel::new(SecrecyLevel::Confidential, IntegrityLevel::Validated)
+        );
+
+        let net_outcome = dispatcher.dispatch(
+            "ext-b",
+            HostcallType::NetworkSend,
+            &declared_caps(),
+            Capability::NetClient,
+            inherited,
+            &flow_context(),
+        );
+        assert!(matches!(
+            net_outcome.result,
+            HostcallResult::Denied {
+                reason: DenialReason::FlowViolation { .. }
+            }
+        ));
+    }
+
+    #[test]
+    fn violation_event_contains_required_stable_fields() {
+        let mut dispatcher = HostcallDispatcher::new(HostcallSinkPolicy::default());
+        let payload = Labeled::new(
+            "secret".to_string(),
+            FlowLabel::new(SecrecyLevel::TopSecret, IntegrityLevel::Validated),
+        );
+        let _ = dispatcher.dispatch(
+            "ext-a",
+            HostcallType::NetworkSend,
+            &declared_caps(),
+            Capability::NetClient,
+            payload,
+            &flow_context(),
+        );
+        let event = dispatcher
+            .violation_events()
+            .last()
+            .expect("violation event emitted");
+        assert_eq!(event.trace_id, "trace-flow");
+        assert_eq!(event.decision_id, "decision-flow");
+        assert_eq!(event.policy_id, "policy-flow");
+        assert_eq!(event.component, "runtime_flow_enforcement");
+        assert_eq!(event.event, "hostcall_flow_violation");
+        assert_eq!(event.outcome, "blocked");
+        assert_eq!(event.error_code, "FE-FLOW-0001");
+    }
+
+    #[test]
+    fn default_and_system_labels_match_edge_case_policy() {
+        let unlabeled: Labeled<&str> = "unlabeled".into();
+        assert_eq!(
+            unlabeled.label(),
+            FlowLabel::new(SecrecyLevel::TopSecret, IntegrityLevel::Untrusted)
+        );
+
+        let system = Labeled::system_generated("system");
+        assert_eq!(
+            system.label(),
+            FlowLabel::new(SecrecyLevel::Public, IntegrityLevel::Trusted)
+        );
+    }
+
+    #[test]
+    fn hostcall_flow_check_has_low_runtime_overhead() {
+        let source = FlowLabel::new(SecrecyLevel::Internal, IntegrityLevel::Validated);
+        let sink = SinkClearance::new(SecrecyLevel::Secret, IntegrityLevel::Untrusted);
+        let iterations = 200_000u128;
+        let start = Instant::now();
+        let mut count = 0u64;
+        for _ in 0..iterations {
+            if black_box(FlowLabelLattice::can_flow_to_sink(&source, &sink)) {
+                count += 1;
+            }
+        }
+        let elapsed_ns = start.elapsed().as_nanos();
+        let avg_ns = elapsed_ns / iterations;
+        assert_eq!(count, iterations as u64);
+        // Debug test environments are noisy; keep this as a sanity guard.
+        assert!(avg_ns < 50_000, "avg flow-check cost too high: {avg_ns}ns");
+    }
+}
+
+#[cfg(test)]
+mod declassification_tests {
+    use super::*;
+
+    fn declass_context() -> FlowEnforcementContext<'static> {
+        FlowEnforcementContext::new("trace-declass", "decision-declass", "policy-declass")
+    }
+
+    fn requester_capabilities(with_declassify: bool) -> BTreeSet<Capability> {
+        let mut capabilities: BTreeSet<Capability> = [
+            Capability::FsRead,
+            Capability::NetClient,
+            Capability::HostCall,
+        ]
+        .into_iter()
+        .collect();
+        if with_declassify {
+            capabilities.insert(Capability::Declassify);
+        }
+        capabilities
+    }
+
+    fn make_request(
+        request_id: &str,
+        requester: &str,
+        current_label: FlowLabel,
+        target_label: FlowLabel,
+        purpose: DeclassificationPurpose,
+        timestamp_ns: u64,
+    ) -> DeclassificationRequest {
+        DeclassificationRequest {
+            request_id: request_id.to_string(),
+            requester: requester.to_string(),
+            data_ref: DataRef::new("memory", "payload"),
+            current_label,
+            target_label,
+            purpose,
+            justification: "operator approved transition".to_string(),
+            timestamp_ns,
+        }
+    }
+
+    #[test]
+    fn requester_capability_contract_denies_without_declassify() {
+        let mut gateway = DeclassificationGateway::default();
+        let request = make_request(
+            "req-cap-1",
+            "ext-a",
+            FlowLabel::new(SecrecyLevel::Secret, IntegrityLevel::Validated),
+            FlowLabel::new(SecrecyLevel::Internal, IntegrityLevel::Validated),
+            DeclassificationPurpose::DiagnosticExport,
+            10,
+        );
+
+        let outcome = gateway.evaluate_request(
+            request,
+            &requester_capabilities(false),
+            450_000,
+            &declass_context(),
+        );
+
+        match outcome {
+            DeclassificationOutcome::Denied { reason, receipt } => {
+                assert!(matches!(
+                    reason,
+                    DeclassificationDenialReason::MissingCapability {
+                        capability: Capability::Declassify
+                    }
+                ));
+                assert!(receipt.verify(&gateway.public_key()));
+            }
+            other => panic!("expected denied outcome, got {other:?}"),
+        }
+
+        assert_eq!(gateway.denied_evidence().len(), 1);
+        assert_eq!(
+            gateway.denied_evidence()[0].severity,
+            DeclassificationEvidenceSeverity::High
+        );
+    }
+
+    #[test]
+    fn label_distance_contract_requires_operator_override_for_multi_level_drop() {
+        let current = FlowLabel::new(SecrecyLevel::Secret, IntegrityLevel::Validated);
+        let target = FlowLabel::new(SecrecyLevel::Public, IntegrityLevel::Validated);
+        let caps = requester_capabilities(true);
+
+        let mut denied_gateway = DeclassificationGateway::default();
+        let denied = denied_gateway.evaluate_request(
+            make_request(
+                "req-distance-denied",
+                "ext-a",
+                current,
+                target,
+                DeclassificationPurpose::PublicApiResponse,
+                20,
+            ),
+            &caps,
+            500_000,
+            &declass_context(),
+        );
+        assert!(matches!(
+            denied,
+            DeclassificationOutcome::Denied {
+                reason: DeclassificationDenialReason::LabelDistanceTooLarge { .. },
+                ..
+            }
+        ));
+
+        let mut approved_gateway = DeclassificationGateway::default();
+        let approved = approved_gateway.evaluate_request(
+            make_request(
+                "req-distance-approved",
+                "ext-a",
+                current,
+                target,
+                DeclassificationPurpose::OperatorOverride,
+                30,
+            ),
+            &caps,
+            500_000,
+            &declass_context(),
+        );
+        assert!(matches!(approved, DeclassificationOutcome::Approved { .. }));
+    }
+
+    #[test]
+    fn purpose_validity_contract_enforces_target_level_constraints() {
+        let mut gateway = DeclassificationGateway::default();
+        let outcome = gateway.evaluate_request(
+            make_request(
+                "req-purpose-1",
+                "ext-a",
+                FlowLabel::new(SecrecyLevel::TopSecret, IntegrityLevel::Validated),
+                FlowLabel::new(SecrecyLevel::Secret, IntegrityLevel::Validated),
+                DeclassificationPurpose::PublicApiResponse,
+                40,
+            ),
+            &requester_capabilities(true),
+            500_000,
+            &declass_context(),
+        );
+
+        assert!(matches!(
+            outcome,
+            DeclassificationOutcome::Denied {
+                reason: DeclassificationDenialReason::InvalidPurpose { .. },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn rate_limit_contract_denies_after_threshold() {
+        let contracts: Vec<Box<dyn DecisionContract>> = vec![
+            Box::new(RequesterCapabilityContract),
+            Box::new(LabelDistanceContract),
+            Box::new(PurposeValidityContract),
+            Box::new(RateLimitContract::new(2, 1_000)),
+        ];
+        let mut gateway = DeclassificationGateway::new(DecisionSigningKey::default(), contracts);
+        let caps = requester_capabilities(true);
+        let base_current = FlowLabel::new(SecrecyLevel::Confidential, IntegrityLevel::Validated);
+        let base_target = FlowLabel::new(SecrecyLevel::Internal, IntegrityLevel::Validated);
+
+        let first = gateway.evaluate_request(
+            make_request(
+                "req-rate-1",
+                "ext-a",
+                base_current,
+                base_target,
+                DeclassificationPurpose::DiagnosticExport,
+                100,
+            ),
+            &caps,
+            500_000,
+            &declass_context(),
+        );
+        let second = gateway.evaluate_request(
+            make_request(
+                "req-rate-2",
+                "ext-a",
+                base_current,
+                base_target,
+                DeclassificationPurpose::DiagnosticExport,
+                200,
+            ),
+            &caps,
+            500_000,
+            &declass_context(),
+        );
+        let third = gateway.evaluate_request(
+            make_request(
+                "req-rate-3",
+                "ext-a",
+                base_current,
+                base_target,
+                DeclassificationPurpose::DiagnosticExport,
+                300,
+            ),
+            &caps,
+            500_000,
+            &declass_context(),
+        );
+
+        assert!(matches!(first, DeclassificationOutcome::Approved { .. }));
+        assert!(matches!(second, DeclassificationOutcome::Approved { .. }));
+        assert!(matches!(
+            third,
+            DeclassificationOutcome::Denied {
+                reason: DeclassificationDenialReason::RateLimited { .. },
+                ..
+            }
+        ));
+    }
+
+    #[derive(Debug)]
+    struct AlwaysDenyContract;
+
+    impl DecisionContract for AlwaysDenyContract {
+        fn contract_id(&self) -> &'static str {
+            "always_deny"
+        }
+
+        fn evaluate(
+            &self,
+            _request: &DeclassificationRequest,
+            _context: &DeclassificationEvaluationContext<'_>,
+        ) -> DecisionVerdict {
+            DecisionVerdict::Denied {
+                reason: DeclassificationDenialReason::ContractRejected {
+                    contract_id: self.contract_id().to_string(),
+                    detail: "forced deny".to_string(),
+                },
+            }
+        }
+    }
+
+    #[test]
+    fn contract_chain_short_circuits_on_first_denial() {
+        let contracts: Vec<Box<dyn DecisionContract>> = vec![
+            Box::new(RequesterCapabilityContract),
+            Box::new(AlwaysDenyContract),
+            Box::new(PurposeValidityContract),
+        ];
+        let mut gateway = DeclassificationGateway::new(DecisionSigningKey::default(), contracts);
+        let outcome = gateway.evaluate_request(
+            make_request(
+                "req-chain-1",
+                "ext-a",
+                FlowLabel::new(SecrecyLevel::Confidential, IntegrityLevel::Validated),
+                FlowLabel::new(SecrecyLevel::Internal, IntegrityLevel::Validated),
+                DeclassificationPurpose::DiagnosticExport,
+                500,
+            ),
+            &requester_capabilities(true),
+            500_000,
+            &declass_context(),
+        );
+
+        let receipt = match outcome {
+            DeclassificationOutcome::Denied { receipt, .. } => receipt,
+            other => panic!("expected denied outcome, got {other:?}"),
+        };
+        assert_eq!(
+            receipt.contract_chain,
+            vec![
+                "requester_capability".to_string(),
+                "always_deny".to_string()
+            ]
+        );
+        assert!(receipt.verify(&gateway.public_key()));
+    }
+
+    #[test]
+    fn decision_receipts_are_signed_and_append_only() {
+        let mut gateway = DeclassificationGateway::default();
+        let caps = requester_capabilities(true);
+        let current = FlowLabel::new(SecrecyLevel::Confidential, IntegrityLevel::Validated);
+        let target = FlowLabel::new(SecrecyLevel::Internal, IntegrityLevel::Validated);
+
+        let first = gateway.evaluate_request(
+            make_request(
+                "req-receipt-1",
+                "ext-a",
+                current,
+                target,
+                DeclassificationPurpose::DiagnosticExport,
+                600,
+            ),
+            &caps,
+            500_000,
+            &declass_context(),
+        );
+        let second = gateway.evaluate_request(
+            make_request(
+                "req-receipt-2",
+                "ext-a",
+                current,
+                target,
+                DeclassificationPurpose::DiagnosticExport,
+                700,
+            ),
+            &caps,
+            500_000,
+            &declass_context(),
+        );
+        assert!(matches!(first, DeclassificationOutcome::Approved { .. }));
+        assert!(matches!(second, DeclassificationOutcome::Approved { .. }));
+
+        let receipts = gateway.receipt_log().receipts();
+        assert_eq!(receipts.len(), 2);
+        assert_eq!(receipts[0].request_id, "req-receipt-1");
+        assert_eq!(receipts[1].request_id, "req-receipt-2");
+        assert!(receipts
+            .iter()
+            .all(|receipt| receipt.verify(&gateway.public_key())));
+    }
+
+    #[test]
+    fn integration_declassification_then_hostcall_egress() {
+        let mut dispatcher = HostcallDispatcher::new(HostcallSinkPolicy::default());
+        let mut gateway = DeclassificationGateway::default();
+        let caps = requester_capabilities(true);
+
+        let secret_payload = Labeled::new(
+            "token-123".to_string(),
+            FlowLabel::new(SecrecyLevel::Secret, IntegrityLevel::Validated),
+        );
+        let blocked = dispatcher.dispatch(
+            "ext-a",
+            HostcallType::NetworkSend,
+            &caps,
+            Capability::NetClient,
+            secret_payload.clone(),
+            &declass_context(),
+        );
+        assert!(matches!(
+            blocked.result,
+            HostcallResult::Denied {
+                reason: DenialReason::FlowViolation { .. }
+            }
+        ));
+
+        let decision = gateway.evaluate_request(
+            make_request(
+                "req-int-1",
+                "ext-a",
+                secret_payload.label(),
+                FlowLabel::new(SecrecyLevel::Public, IntegrityLevel::Validated),
+                DeclassificationPurpose::OperatorOverride,
+                800,
+            ),
+            &caps,
+            500_000,
+            &declass_context(),
+        );
+        let (new_label, receipt) = match decision {
+            DeclassificationOutcome::Approved { new_label, receipt } => (new_label, receipt),
+            other => panic!("expected approved outcome, got {other:?}"),
+        };
+        assert!(receipt.verify(&gateway.public_key()));
+
+        let relabeled_payload = Labeled::new(secret_payload.into_inner(), new_label);
+        let allowed = dispatcher.dispatch(
+            "ext-a",
+            HostcallType::NetworkSend,
+            &caps,
+            Capability::NetClient,
+            relabeled_payload,
+            &declass_context(),
+        );
+        assert_eq!(allowed.result, HostcallResult::Success);
+    }
+
+    #[test]
+    fn declassification_events_emit_required_stable_fields() {
+        let mut gateway = DeclassificationGateway::default();
+        let _ = gateway.evaluate_request(
+            make_request(
+                "req-event-1",
+                "ext-a",
+                FlowLabel::new(SecrecyLevel::Secret, IntegrityLevel::Validated),
+                FlowLabel::new(SecrecyLevel::Internal, IntegrityLevel::Validated),
+                DeclassificationPurpose::DiagnosticExport,
+                900,
+            ),
+            &requester_capabilities(false),
+            500_000,
+            &declass_context(),
+        );
+
+        let event = gateway.events().last().expect("declassification event");
+        assert_eq!(event.trace_id, "trace-declass");
+        assert_eq!(event.decision_id, "decision-declass");
+        assert_eq!(event.policy_id, "policy-declass");
+        assert_eq!(event.component, "declassification_gateway");
+        assert_eq!(event.event, "declassification_request");
+        assert_eq!(event.outcome, "denied");
+        assert_eq!(event.error_code.as_deref(), Some("FE-DECLASS-0001"));
+    }
+}
+
+#[cfg(test)]
+mod delegate_cell_tests {
+    use super::*;
+
+    fn delegate_base_manifest(capabilities: &[Capability]) -> ExtensionManifest {
+        let mut manifest = ExtensionManifest {
+            name: "delegate-ext".to_string(),
+            version: "1.0.0".to_string(),
+            entrypoint: "dist/delegate.js".to_string(),
+            capabilities: capabilities.iter().copied().collect(),
+            publisher_signature: Some(vec![1, 2, 3, 4]),
+            content_hash: [0; 32],
+            trust_chain_ref: Some("chain/delegate".to_string()),
+            min_engine_version: CURRENT_ENGINE_VERSION.to_string(),
+        };
+        manifest.content_hash = compute_content_hash(&manifest).expect("content hash");
+        manifest
+    }
+
+    fn delegate_manifest(
+        capabilities: &[Capability],
+        max_lifetime_ns: u64,
+    ) -> DelegateCellManifest {
+        DelegateCellManifest {
+            base_manifest: delegate_base_manifest(capabilities),
+            delegation_scope: DelegationScope::DiagnosticCollection,
+            delegator_id: "engine-core".to_string(),
+            max_lifetime_ns,
+        }
+    }
+
+    fn lifecycle_context() -> LifecycleContext<'static> {
+        LifecycleContext::new("trace-delegate", "decision-delegate", "policy-delegate")
+    }
+
+    fn flow_context() -> FlowEnforcementContext<'static> {
+        FlowEnforcementContext::new(
+            "trace-flow-delegate",
+            "decision-flow-delegate",
+            "policy-flow-delegate",
+        )
+    }
+
+    #[test]
+    fn delegate_manifest_validation_rejects_invalid_configuration() {
+        let empty_delegator = DelegateCellManifest {
+            base_manifest: delegate_base_manifest(&[Capability::FsRead]),
+            delegation_scope: DelegationScope::DiagnosticCollection,
+            delegator_id: "".to_string(),
+            max_lifetime_ns: 10,
+        };
+        assert!(matches!(
+            empty_delegator.validate(),
+            Err(DelegateCellError::InvalidDelegatorId)
+        ));
+
+        let no_caps = DelegateCellManifest {
+            base_manifest: delegate_base_manifest(&[]),
+            delegation_scope: DelegationScope::DiagnosticCollection,
+            delegator_id: "engine-core".to_string(),
+            max_lifetime_ns: 10,
+        };
+        assert!(matches!(
+            no_caps.validate(),
+            Err(DelegateCellError::MissingCapabilities)
+        ));
+
+        let invalid_lifetime = delegate_manifest(&[Capability::FsRead], 0);
+        assert!(matches!(
+            invalid_lifetime.validate(),
+            Err(DelegateCellError::InvalidMaxLifetime { .. })
+        ));
+    }
+
+    #[test]
+    fn factory_creates_delegate_with_full_lifecycle_and_guardplane_registration() {
+        let factory = DelegateCellFactory::default();
+        let delegate = factory
+            .create_delegate_cell(
+                "delegate-a",
+                delegate_manifest(
+                    &[
+                        Capability::FsRead,
+                        Capability::HostCall,
+                        Capability::NetClient,
+                        Capability::Declassify,
+                    ],
+                    1_000_000,
+                ),
+                ResourceBudget::new(1_000_000_000, 64 * 1024 * 1024, 1_000),
+                BudgetExhaustionPolicy::Suspend,
+                100,
+                &lifecycle_context(),
+            )
+            .expect("delegate created");
+
+        assert_eq!(delegate.state(), ExtensionState::Running);
+        assert_eq!(delegate.guardplane_state().delegate_id, "delegate-a");
+        assert_eq!(
+            delegate.guardplane_state().posterior_micros,
+            DelegateCellPolicy::default().initial_posterior_micros
+        );
+        assert!(delegate
+            .lifecycle_manager()
+            .transition_log()
+            .iter()
+            .any(|record| record.to_state == ExtensionState::Running));
+        assert!(!delegate.events().is_empty());
+    }
+
+    #[test]
+    fn capability_escalation_emits_delegate_evidence_and_posterior_shift() {
+        let factory = DelegateCellFactory::default();
+        let mut delegate = factory
+            .create_delegate_cell(
+                "delegate-b",
+                delegate_manifest(&[Capability::FsRead, Capability::NetClient], 1_000_000),
+                ResourceBudget::new(1_000_000_000, 64 * 1024 * 1024, 100),
+                BudgetExhaustionPolicy::Suspend,
+                200,
+                &lifecycle_context(),
+            )
+            .expect("delegate created");
+        let baseline = delegate.guardplane_state().posterior_micros;
+
+        let outcome = delegate
+            .dispatch_hostcall(
+                HostcallType::ProcessSpawn,
+                Capability::ProcessSpawn,
+                Labeled::system_generated("diag".to_string()),
+                250,
+                &flow_context(),
+                &lifecycle_context(),
+            )
+            .expect("hostcall dispatch");
+
+        assert!(matches!(
+            outcome.result,
+            HostcallResult::Denied {
+                reason: DenialReason::CapabilityEscalation { .. }
+            }
+        ));
+        assert!(delegate
+            .evidence()
+            .iter()
+            .any(|item| matches!(item, DelegateCellEvidence::CapabilityEscalation { .. })));
+        assert!(delegate.guardplane_state().posterior_micros > baseline);
+    }
+
+    #[test]
+    fn delegate_flow_violation_matches_extension_flow_enforcement_shape() {
+        let factory = DelegateCellFactory::default();
+        let mut delegate = factory
+            .create_delegate_cell(
+                "delegate-c",
+                delegate_manifest(&[Capability::FsRead, Capability::NetClient], 1_000_000),
+                ResourceBudget::new(1_000_000_000, 64 * 1024 * 1024, 100),
+                BudgetExhaustionPolicy::Suspend,
+                300,
+                &lifecycle_context(),
+            )
+            .expect("delegate created");
+        let payload = Labeled::new(
+            "secret".to_string(),
+            FlowLabel::new(SecrecyLevel::Secret, IntegrityLevel::Validated),
+        );
+
+        let outcome = delegate
+            .dispatch_hostcall(
+                HostcallType::NetworkSend,
+                Capability::NetClient,
+                payload,
+                350,
+                &flow_context(),
+                &lifecycle_context(),
+            )
+            .expect("hostcall dispatch");
+
+        assert!(matches!(
+            outcome.result,
+            HostcallResult::Denied {
+                reason: DenialReason::FlowViolation { .. }
+            }
+        ));
+        let violation = delegate
+            .hostcall_violation_events()
+            .last()
+            .expect("flow violation event");
+        assert_eq!(violation.component, "runtime_flow_enforcement");
+        assert_eq!(violation.event, "hostcall_flow_violation");
+        assert_eq!(violation.error_code, "FE-FLOW-0001");
+        assert!(delegate
+            .evidence()
+            .iter()
+            .any(|item| matches!(item, DelegateCellEvidence::FlowViolation(_))));
+    }
+
+    #[test]
+    fn delegate_lifetime_expiry_forces_containment() {
+        let factory = DelegateCellFactory::default();
+        let mut delegate = factory
+            .create_delegate_cell(
+                "delegate-d",
+                delegate_manifest(&[Capability::FsRead, Capability::NetClient], 50),
+                ResourceBudget::new(1_000_000_000, 64 * 1024 * 1024, 100),
+                BudgetExhaustionPolicy::Suspend,
+                400,
+                &lifecycle_context(),
+            )
+            .expect("delegate created");
+
+        let err = delegate
+            .check_lifetime(500, &lifecycle_context())
+            .expect_err("lifetime should expire");
+        assert!(matches!(err, DelegateCellError::LifetimeExpired { .. }));
+        assert!(matches!(
+            delegate.state(),
+            ExtensionState::Terminated | ExtensionState::Quarantined | ExtensionState::Terminating
+        ));
+        assert!(delegate
+            .evidence()
+            .iter()
+            .any(|item| matches!(item, DelegateCellEvidence::LifetimeExpired { .. })));
+    }
+
+    #[test]
+    fn delegate_declassification_path_produces_receipts_and_denial_evidence() {
+        let factory = DelegateCellFactory::default();
+        let mut allowed_delegate = factory
+            .create_delegate_cell(
+                "delegate-e",
+                delegate_manifest(
+                    &[
+                        Capability::FsRead,
+                        Capability::NetClient,
+                        Capability::Declassify,
+                        Capability::HostCall,
+                    ],
+                    1_000_000,
+                ),
+                ResourceBudget::new(1_000_000_000, 64 * 1024 * 1024, 100),
+                BudgetExhaustionPolicy::Suspend,
+                500,
+                &lifecycle_context(),
+            )
+            .expect("delegate created");
+
+        let approved = allowed_delegate
+            .request_declassification(
+                DeclassificationRequest {
+                    request_id: "delegate-dec-1".to_string(),
+                    requester: "delegate-e".to_string(),
+                    data_ref: DataRef::new("memory", "token"),
+                    current_label: FlowLabel::new(SecrecyLevel::Secret, IntegrityLevel::Validated),
+                    target_label: FlowLabel::new(SecrecyLevel::Public, IntegrityLevel::Validated),
+                    purpose: DeclassificationPurpose::OperatorOverride,
+                    justification: "approved escalation".to_string(),
+                    timestamp_ns: 550,
+                },
+                &flow_context(),
+                &lifecycle_context(),
+            )
+            .expect("declassification outcome");
+
+        match approved {
+            DeclassificationOutcome::Approved { receipt, .. } => {
+                assert!(receipt.verify(&allowed_delegate.declassification_gateway.public_key()));
+            }
+            other => panic!("expected approved declassification, got {other:?}"),
+        }
+
+        let mut denied_delegate = factory
+            .create_delegate_cell(
+                "delegate-f",
+                delegate_manifest(&[Capability::FsRead, Capability::NetClient], 1_000_000),
+                ResourceBudget::new(1_000_000_000, 64 * 1024 * 1024, 100),
+                BudgetExhaustionPolicy::Suspend,
+                600,
+                &lifecycle_context(),
+            )
+            .expect("delegate created");
+
+        let denied = denied_delegate
+            .request_declassification(
+                DeclassificationRequest {
+                    request_id: "delegate-dec-2".to_string(),
+                    requester: "delegate-f".to_string(),
+                    data_ref: DataRef::new("memory", "token"),
+                    current_label: FlowLabel::new(SecrecyLevel::Secret, IntegrityLevel::Validated),
+                    target_label: FlowLabel::new(SecrecyLevel::Internal, IntegrityLevel::Validated),
+                    purpose: DeclassificationPurpose::DiagnosticExport,
+                    justification: "attempted".to_string(),
+                    timestamp_ns: 650,
+                },
+                &flow_context(),
+                &lifecycle_context(),
+            )
+            .expect("declassification outcome");
+
+        assert!(matches!(
+            denied,
+            DeclassificationOutcome::Denied {
+                reason: DeclassificationDenialReason::MissingCapability { .. },
+                ..
+            }
+        ));
+        assert!(denied_delegate
+            .evidence()
+            .iter()
+            .any(|item| matches!(item, DelegateCellEvidence::DeclassificationDenied(_))));
     }
 }

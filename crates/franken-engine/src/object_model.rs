@@ -430,16 +430,15 @@ impl OrdinaryObject {
                         ..
                     },
                 ) = (current, &desc)
+                    && !current_w
                 {
-                    if !current_w {
-                        // Non-writable non-configurable: cannot become writable.
-                        if *new_w {
-                            return Ok(false);
-                        }
-                        // Non-writable non-configurable: cannot change value.
-                        if !current_v.same_value(new_v) {
-                            return Ok(false);
-                        }
+                    // Non-writable non-configurable: cannot become writable.
+                    if *new_w {
+                        return Ok(false);
+                    }
+                    // Non-writable non-configurable: cannot change value.
+                    if !current_v.same_value(new_v) {
+                        return Ok(false);
                     }
                 }
                 // For accessor descriptors: cannot change get/set on non-configurable.
@@ -455,10 +454,9 @@ impl OrdinaryObject {
                         ..
                     },
                 ) = (current, &desc)
+                    && (cur_get != new_get || cur_set != new_set)
                 {
-                    if cur_get != new_get || cur_set != new_set {
-                        return Ok(false);
-                    }
+                    return Ok(false);
                 }
             }
             // Update is valid.
@@ -1005,6 +1003,141 @@ impl ObjectHeap {
         }
     }
 
+    /// `Object.values(O)` — enumerable own values.
+    pub fn values(&self, handle: ObjectHandle) -> Result<Vec<JsValue>, ObjectError> {
+        let obj = self.get(handle)?;
+        match obj {
+            ManagedObject::Ordinary(o) => {
+                let result = o
+                    .own_property_keys()
+                    .into_iter()
+                    .filter(|k| matches!(k, PropertyKey::String(_)))
+                    .filter_map(|k| {
+                        o.properties.get(&k).and_then(|d| {
+                            if d.is_enumerable() {
+                                d.value().cloned()
+                            } else {
+                                None
+                            }
+                        })
+                    })
+                    .collect();
+                Ok(result)
+            }
+            ManagedObject::Proxy(_) => Err(ObjectError::TypeError(
+                "proxy ownKeys trap must be handled by interpreter".to_string(),
+            )),
+        }
+    }
+
+    /// `Object.entries(O)` — enumerable own `[key, value]` pairs.
+    pub fn entries(&self, handle: ObjectHandle) -> Result<Vec<(String, JsValue)>, ObjectError> {
+        let obj = self.get(handle)?;
+        match obj {
+            ManagedObject::Ordinary(o) => {
+                let result = o
+                    .own_property_keys()
+                    .into_iter()
+                    .filter_map(|k| match &k {
+                        PropertyKey::String(s) => o.properties.get(&k).and_then(|d| {
+                            if d.is_enumerable() {
+                                d.value().map(|v| (s.clone(), v.clone()))
+                            } else {
+                                None
+                            }
+                        }),
+                        PropertyKey::Symbol(_) => None,
+                    })
+                    .collect();
+                Ok(result)
+            }
+            ManagedObject::Proxy(_) => Err(ObjectError::TypeError(
+                "proxy ownKeys trap must be handled by interpreter".to_string(),
+            )),
+        }
+    }
+
+    /// `Object.defineProperties(O, props)` — define multiple properties.
+    pub fn define_properties(
+        &mut self,
+        handle: ObjectHandle,
+        props: Vec<(PropertyKey, PropertyDescriptor)>,
+    ) -> Result<bool, ObjectError> {
+        for (key, desc) in props {
+            if !self.define_property(handle, key, desc)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// `Object.getOwnPropertyDescriptors(O)` — all own property descriptors.
+    pub fn get_own_property_descriptors(
+        &self,
+        handle: ObjectHandle,
+    ) -> Result<Vec<(PropertyKey, PropertyDescriptor)>, ObjectError> {
+        let obj = self.get(handle)?;
+        match obj {
+            ManagedObject::Ordinary(o) => Ok(o
+                .own_property_keys()
+                .into_iter()
+                .filter_map(|k| o.properties.get(&k).map(|d| (k, d.clone())))
+                .collect()),
+            ManagedObject::Proxy(_) => Err(ObjectError::TypeError(
+                "proxy getOwnPropertyDescriptor trap must be handled by interpreter".to_string(),
+            )),
+        }
+    }
+
+    /// `for...in` enumeration: walk prototype chain, collect enumerable
+    /// string keys in ES2020 order, skipping shadowed keys.
+    pub fn for_in_keys(&self, handle: ObjectHandle) -> Result<Vec<String>, ObjectError> {
+        let mut result = Vec::new();
+        let mut seen = BTreeSet::<PropertyKey>::new();
+        let mut current = Some(handle);
+        let mut depth: u32 = 0;
+        let mut visited = BTreeSet::new();
+
+        while let Some(h) = current {
+            if depth > MAX_PROTOTYPE_CHAIN_DEPTH {
+                return Err(ObjectError::PrototypeChainTooDeep {
+                    depth,
+                    max: MAX_PROTOTYPE_CHAIN_DEPTH,
+                });
+            }
+            if !visited.insert(h) {
+                return Err(ObjectError::PrototypeCycleDetected);
+            }
+
+            let obj = self.get(h)?;
+            match obj {
+                ManagedObject::Ordinary(o) => {
+                    for k in o.own_property_keys() {
+                        if seen.contains(&k) {
+                            continue; // shadowed by own property higher in chain
+                        }
+                        seen.insert(k.clone());
+                        if let PropertyKey::String(ref s) = k {
+                            if let Some(d) = o.properties.get(&k) {
+                                if d.is_enumerable() {
+                                    result.push(s.clone());
+                                }
+                            }
+                        }
+                    }
+                    current = o.prototype;
+                }
+                ManagedObject::Proxy(_) => {
+                    return Err(ObjectError::TypeError(
+                        "proxy ownKeys trap must be handled by interpreter".to_string(),
+                    ));
+                }
+            }
+            depth += 1;
+        }
+        Ok(result)
+    }
+
     /// `Object.keys(O)` — enumerable own string keys.
     pub fn keys(&self, handle: ObjectHandle) -> Result<Vec<String>, ObjectError> {
         let obj = self.get(handle)?;
@@ -1250,12 +1383,13 @@ impl ProxyInvariantChecker {
                                 ..
                             },
                         ) = (td, existing)
+                            && !tw
+                            && !ew
+                            && !tv.same_value(ev)
                         {
-                            if !tw && !ew && !tv.same_value(ev) {
-                                return Err(ObjectError::TypeError(format!(
-                                    "proxy getOwnPropertyDescriptor: non-configurable non-writable property '{key}' must have same value"
-                                )));
-                            }
+                            return Err(ObjectError::TypeError(format!(
+                                "proxy getOwnPropertyDescriptor: non-configurable non-writable property '{key}' must have same value"
+                            )));
                         }
                         Ok(())
                     }
@@ -1275,19 +1409,17 @@ impl ProxyInvariantChecker {
         trap_result: bool,
     ) -> Result<(), ObjectError> {
         if !trap_result {
-            if let Some(td) = target.get_own_property(key) {
-                if !td.is_configurable() {
-                    return Err(ObjectError::TypeError(format!(
-                        "proxy has: cannot report non-configurable property '{key}' as non-existent"
-                    )));
-                }
+            if let Some(td) = target.get_own_property(key)
+                && !td.is_configurable()
+            {
+                return Err(ObjectError::TypeError(format!(
+                    "proxy has: cannot report non-configurable property '{key}' as non-existent"
+                )));
             }
-            if !target.extensible {
-                if target.has_own_property(key) {
-                    return Err(ObjectError::TypeError(format!(
-                        "proxy has: cannot report property '{key}' as non-existent on non-extensible target"
-                    )));
-                }
+            if !target.extensible && target.has_own_property(key) {
+                return Err(ObjectError::TypeError(format!(
+                    "proxy has: cannot report property '{key}' as non-existent on non-extensible target"
+                )));
             }
         }
         Ok(())
@@ -1299,27 +1431,27 @@ impl ProxyInvariantChecker {
         key: &PropertyKey,
         trap_result: &JsValue,
     ) -> Result<(), ObjectError> {
-        if let Some(td) = target.get_own_property(key) {
-            if !td.is_configurable() {
-                match td {
-                    PropertyDescriptor::Data {
-                        value, writable, ..
-                    } if !writable => {
-                        if !trap_result.same_value(value) {
-                            return Err(ObjectError::TypeError(format!(
-                                "proxy get: non-configurable non-writable property '{key}' must return same value"
-                            )));
-                        }
+        if let Some(td) = target.get_own_property(key)
+            && !td.is_configurable()
+        {
+            match td {
+                PropertyDescriptor::Data {
+                    value, writable, ..
+                } if !writable => {
+                    if !trap_result.same_value(value) {
+                        return Err(ObjectError::TypeError(format!(
+                            "proxy get: non-configurable non-writable property '{key}' must return same value"
+                        )));
                     }
-                    PropertyDescriptor::Accessor { get: None, .. } => {
-                        if *trap_result != JsValue::Undefined {
-                            return Err(ObjectError::TypeError(format!(
-                                "proxy get: non-configurable accessor property '{key}' with undefined getter must return undefined"
-                            )));
-                        }
-                    }
-                    _ => {}
                 }
+                PropertyDescriptor::Accessor { get: None, .. } => {
+                    if *trap_result != JsValue::Undefined {
+                        return Err(ObjectError::TypeError(format!(
+                            "proxy get: non-configurable accessor property '{key}' with undefined getter must return undefined"
+                        )));
+                    }
+                }
+                _ => {}
             }
         }
         Ok(())
@@ -1332,29 +1464,28 @@ impl ProxyInvariantChecker {
         value: &JsValue,
         trap_result: bool,
     ) -> Result<(), ObjectError> {
-        if trap_result {
-            if let Some(td) = target.get_own_property(key) {
-                if !td.is_configurable() {
-                    match td {
-                        PropertyDescriptor::Data {
-                            value: current_val,
-                            writable,
-                            ..
-                        } if !writable => {
-                            if !value.same_value(current_val) {
-                                return Err(ObjectError::TypeError(format!(
-                                    "proxy set: cannot set non-configurable non-writable property '{key}' to different value"
-                                )));
-                            }
-                        }
-                        PropertyDescriptor::Accessor { set: None, .. } => {
-                            return Err(ObjectError::TypeError(format!(
-                                "proxy set: cannot set non-configurable accessor property '{key}' with undefined setter"
-                            )));
-                        }
-                        _ => {}
+        if trap_result
+            && let Some(td) = target.get_own_property(key)
+            && !td.is_configurable()
+        {
+            match td {
+                PropertyDescriptor::Data {
+                    value: current_val,
+                    writable,
+                    ..
+                } if !writable => {
+                    if !value.same_value(current_val) {
+                        return Err(ObjectError::TypeError(format!(
+                            "proxy set: cannot set non-configurable non-writable property '{key}' to different value"
+                        )));
                     }
                 }
+                PropertyDescriptor::Accessor { set: None, .. } => {
+                    return Err(ObjectError::TypeError(format!(
+                        "proxy set: cannot set non-configurable accessor property '{key}' with undefined setter"
+                    )));
+                }
+                _ => {}
             }
         }
         Ok(())
@@ -1367,12 +1498,12 @@ impl ProxyInvariantChecker {
         trap_result: bool,
     ) -> Result<(), ObjectError> {
         if trap_result {
-            if let Some(td) = target.get_own_property(key) {
-                if !td.is_configurable() {
-                    return Err(ObjectError::TypeError(format!(
-                        "proxy deleteProperty: cannot delete non-configurable property '{key}'"
-                    )));
-                }
+            if let Some(td) = target.get_own_property(key)
+                && !td.is_configurable()
+            {
+                return Err(ObjectError::TypeError(format!(
+                    "proxy deleteProperty: cannot delete non-configurable property '{key}'"
+                )));
             }
             if !target.extensible && target.has_own_property(key) {
                 return Err(ObjectError::TypeError(format!(
@@ -1508,12 +1639,13 @@ impl ProxyInvariantChecker {
                                 ..
                             },
                         ) = (desc, td)
+                            && !tw
+                            && !nw
+                            && !nv.same_value(tv)
                         {
-                            if !tw && !nw && !nv.same_value(tv) {
-                                return Err(ObjectError::TypeError(format!(
-                                    "proxy defineProperty: cannot change value of non-configurable non-writable property '{key}'"
-                                )));
-                            }
+                            return Err(ObjectError::TypeError(format!(
+                                "proxy defineProperty: cannot change value of non-configurable non-writable property '{key}'"
+                            )));
                         }
                     }
                     _ => {
@@ -1525,6 +1657,119 @@ impl ProxyInvariantChecker {
             }
         }
         Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Reflect — ES2020 Reflect namespace
+// ---------------------------------------------------------------------------
+
+/// ES2020 `Reflect` namespace — static methods mirroring Proxy traps.
+///
+/// Each method delegates to the corresponding `ObjectHeap` operation.
+/// This provides a uniform API that mirrors the 13 Proxy trap handlers
+/// as ordinary functions per ES2020 §26.1.
+pub struct Reflect;
+
+impl Reflect {
+    /// `Reflect.get(target, propertyKey)` — ES2020 §26.1.6.
+    pub fn get(
+        heap: &ObjectHeap,
+        target: ObjectHandle,
+        key: &PropertyKey,
+    ) -> Result<JsValue, ObjectError> {
+        heap.get_property(target, key)
+    }
+
+    /// `Reflect.set(target, propertyKey, value)` — ES2020 §26.1.13.
+    pub fn set(
+        heap: &mut ObjectHeap,
+        target: ObjectHandle,
+        key: PropertyKey,
+        value: JsValue,
+    ) -> Result<bool, ObjectError> {
+        heap.set_property(target, key, value)
+    }
+
+    /// `Reflect.has(target, propertyKey)` — ES2020 §26.1.9.
+    pub fn has(
+        heap: &ObjectHeap,
+        target: ObjectHandle,
+        key: &PropertyKey,
+    ) -> Result<bool, ObjectError> {
+        heap.has_property(target, key)
+    }
+
+    /// `Reflect.deleteProperty(target, propertyKey)` — ES2020 §26.1.4.
+    pub fn delete_property(
+        heap: &mut ObjectHeap,
+        target: ObjectHandle,
+        key: &PropertyKey,
+    ) -> Result<bool, ObjectError> {
+        heap.delete_property(target, key)
+    }
+
+    /// `Reflect.ownKeys(target)` — ES2020 §26.1.11.
+    pub fn own_keys(
+        heap: &ObjectHeap,
+        target: ObjectHandle,
+    ) -> Result<Vec<PropertyKey>, ObjectError> {
+        let obj = heap.get(target)?;
+        match obj {
+            ManagedObject::Ordinary(o) => Ok(o.own_property_keys()),
+            ManagedObject::Proxy(_) => Err(ObjectError::TypeError(
+                "proxy ownKeys trap must be handled by interpreter".to_string(),
+            )),
+        }
+    }
+
+    /// `Reflect.getPrototypeOf(target)` — ES2020 §26.1.8.
+    pub fn get_prototype_of(
+        heap: &ObjectHeap,
+        target: ObjectHandle,
+    ) -> Result<Option<ObjectHandle>, ObjectError> {
+        heap.get_prototype_of(target)
+    }
+
+    /// `Reflect.setPrototypeOf(target, proto)` — ES2020 §26.1.14.
+    pub fn set_prototype_of(
+        heap: &mut ObjectHeap,
+        target: ObjectHandle,
+        proto: Option<ObjectHandle>,
+    ) -> Result<bool, ObjectError> {
+        heap.set_prototype_of(target, proto)
+    }
+
+    /// `Reflect.isExtensible(target)` — ES2020 §26.1.10.
+    pub fn is_extensible(heap: &ObjectHeap, target: ObjectHandle) -> Result<bool, ObjectError> {
+        heap.is_extensible(target)
+    }
+
+    /// `Reflect.preventExtensions(target)` — ES2020 §26.1.12.
+    pub fn prevent_extensions(
+        heap: &mut ObjectHeap,
+        target: ObjectHandle,
+    ) -> Result<bool, ObjectError> {
+        heap.prevent_extensions(target)
+    }
+
+    /// `Reflect.defineProperty(target, propertyKey, attributes)` — ES2020 §26.1.3.
+    pub fn define_property(
+        heap: &mut ObjectHeap,
+        target: ObjectHandle,
+        key: PropertyKey,
+        desc: PropertyDescriptor,
+    ) -> Result<bool, ObjectError> {
+        heap.define_property(target, key, desc)
+    }
+
+    /// `Reflect.getOwnPropertyDescriptor(target, propertyKey)` — ES2020 §26.1.7.
+    pub fn get_own_property_descriptor(
+        heap: &ObjectHeap,
+        target: ObjectHandle,
+        key: &PropertyKey,
+    ) -> Result<Option<PropertyDescriptor>, ObjectError> {
+        heap.get_own_property_descriptor(target, key)
     }
 }
 
@@ -2251,7 +2496,9 @@ mod tests {
     #[test]
     fn object_is() {
         assert!(ObjectHeap::object_is(&int_val(0), &int_val(0)));
-        assert!(!ObjectHeap::object_is(&int_val(0), &int_val(-0)));
+        // In fixed-point integer model, 0 and -0 are identical (no IEEE 754 +0/-0 distinction)
+        assert!(ObjectHeap::object_is(&int_val(0), &int_val(-0)));
+        assert!(!ObjectHeap::object_is(&int_val(0), &int_val(1)));
         assert!(ObjectHeap::object_is(&JsValue::Null, &JsValue::Null));
     }
 
@@ -2878,5 +3125,813 @@ mod tests {
             heap.get_property(target, &str_key("b")).unwrap(),
             int_val(2)
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // 51. Object.values
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn object_values_enumerable_only() {
+        let mut heap = ObjectHeap::new();
+        let h = heap.alloc_plain();
+        heap.set_property(h, str_key("a"), int_val(1)).unwrap();
+        heap.set_property(h, str_key("b"), int_val(2)).unwrap();
+        heap.define_property(
+            h,
+            str_key("hidden"),
+            PropertyDescriptor::Data {
+                value: int_val(3),
+                writable: true,
+                enumerable: false,
+                configurable: true,
+            },
+        )
+        .unwrap();
+        // Symbol keys excluded from values.
+        heap.define_property(
+            h,
+            PropertyKey::Symbol(SymbolId(100)),
+            PropertyDescriptor::data(int_val(4)),
+        )
+        .unwrap();
+
+        let vals = heap.values(h).unwrap();
+        assert_eq!(vals, vec![int_val(1), int_val(2)]);
+    }
+
+    // -----------------------------------------------------------------------
+    // 52. Object.entries
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn object_entries_enumerable_string_keys_only() {
+        let mut heap = ObjectHeap::new();
+        let h = heap.alloc_plain();
+        heap.set_property(h, str_key("x"), int_val(10)).unwrap();
+        heap.set_property(h, str_key("y"), int_val(20)).unwrap();
+        heap.define_property(
+            h,
+            str_key("secret"),
+            PropertyDescriptor::Data {
+                value: int_val(99),
+                writable: true,
+                enumerable: false,
+                configurable: true,
+            },
+        )
+        .unwrap();
+
+        let entries = heap.entries(h).unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0], ("x".to_string(), int_val(10)));
+        assert_eq!(entries[1], ("y".to_string(), int_val(20)));
+    }
+
+    // -----------------------------------------------------------------------
+    // 53. Object.defineProperties
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn define_properties_multi() {
+        let mut heap = ObjectHeap::new();
+        let h = heap.alloc_plain();
+        let props = vec![
+            (str_key("a"), PropertyDescriptor::data(int_val(1))),
+            (str_key("b"), PropertyDescriptor::data(int_val(2))),
+            (str_key("c"), PropertyDescriptor::data(int_val(3))),
+        ];
+        assert!(heap.define_properties(h, props).unwrap());
+        assert_eq!(heap.get_property(h, &str_key("a")).unwrap(), int_val(1));
+        assert_eq!(heap.get_property(h, &str_key("b")).unwrap(), int_val(2));
+        assert_eq!(heap.get_property(h, &str_key("c")).unwrap(), int_val(3));
+    }
+
+    #[test]
+    fn define_properties_fails_on_non_extensible() {
+        let mut heap = ObjectHeap::new();
+        let h = heap.alloc_plain();
+        heap.prevent_extensions(h).unwrap();
+        let props = vec![(str_key("a"), PropertyDescriptor::data(int_val(1)))];
+        assert!(!heap.define_properties(h, props).unwrap());
+    }
+
+    // -----------------------------------------------------------------------
+    // 54. Object.getOwnPropertyDescriptors
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn get_own_property_descriptors() {
+        let mut heap = ObjectHeap::new();
+        let h = heap.alloc_plain();
+        heap.set_property(h, str_key("x"), int_val(1)).unwrap();
+        heap.set_property(h, str_key("y"), int_val(2)).unwrap();
+
+        let descs = heap.get_own_property_descriptors(h).unwrap();
+        assert_eq!(descs.len(), 2);
+        // Keys are in own_property_keys order.
+        assert_eq!(descs[0].0, str_key("x"));
+        assert_eq!(descs[1].0, str_key("y"));
+    }
+
+    // -----------------------------------------------------------------------
+    // 55. for_in_keys (prototype chain enumeration)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn for_in_keys_walks_prototype_chain() {
+        let mut heap = ObjectHeap::new();
+        let proto = heap.alloc_plain();
+        heap.set_property(proto, str_key("inherited"), int_val(1))
+            .unwrap();
+
+        let child = heap.alloc(Some(proto));
+        heap.set_property(child, str_key("own"), int_val(2))
+            .unwrap();
+
+        let keys = heap.for_in_keys(child).unwrap();
+        assert_eq!(keys, vec!["own".to_string(), "inherited".to_string()]);
+    }
+
+    #[test]
+    fn for_in_keys_shadows_inherited() {
+        let mut heap = ObjectHeap::new();
+        let proto = heap.alloc_plain();
+        heap.set_property(proto, str_key("x"), int_val(1)).unwrap();
+        heap.set_property(proto, str_key("y"), int_val(2)).unwrap();
+
+        let child = heap.alloc(Some(proto));
+        heap.set_property(child, str_key("x"), int_val(3)).unwrap();
+
+        let keys = heap.for_in_keys(child).unwrap();
+        // "x" from child shadows proto's "x"; "y" is inherited
+        assert_eq!(keys, vec!["x".to_string(), "y".to_string()]);
+    }
+
+    #[test]
+    fn for_in_keys_skips_non_enumerable() {
+        let mut heap = ObjectHeap::new();
+        let proto = heap.alloc_plain();
+        heap.define_property(
+            proto,
+            str_key("hidden"),
+            PropertyDescriptor::Data {
+                value: int_val(1),
+                writable: true,
+                enumerable: false,
+                configurable: true,
+            },
+        )
+        .unwrap();
+        heap.set_property(proto, str_key("visible"), int_val(2))
+            .unwrap();
+
+        let child = heap.alloc(Some(proto));
+        let keys = heap.for_in_keys(child).unwrap();
+        assert_eq!(keys, vec!["visible".to_string()]);
+    }
+
+    #[test]
+    fn for_in_keys_skips_symbols() {
+        let mut heap = ObjectHeap::new();
+        let h = heap.alloc_plain();
+        heap.set_property(h, str_key("a"), int_val(1)).unwrap();
+        heap.define_property(
+            h,
+            PropertyKey::Symbol(SymbolId(100)),
+            PropertyDescriptor::data(int_val(2)),
+        )
+        .unwrap();
+
+        let keys = heap.for_in_keys(h).unwrap();
+        assert_eq!(keys, vec!["a".to_string()]);
+    }
+
+    #[test]
+    fn for_in_keys_three_level_chain() {
+        let mut heap = ObjectHeap::new();
+        let gp = heap.alloc_plain();
+        heap.set_property(gp, str_key("g"), int_val(1)).unwrap();
+        let parent = heap.alloc(Some(gp));
+        heap.set_property(parent, str_key("p"), int_val(2)).unwrap();
+        let child = heap.alloc(Some(parent));
+        heap.set_property(child, str_key("c"), int_val(3)).unwrap();
+
+        let keys = heap.for_in_keys(child).unwrap();
+        assert_eq!(
+            keys,
+            vec!["c".to_string(), "p".to_string(), "g".to_string()]
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // 56. Reflect API
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn reflect_get_set() {
+        let mut heap = ObjectHeap::new();
+        let h = heap.alloc_plain();
+        assert!(Reflect::set(&mut heap, h, str_key("x"), int_val(42)).unwrap());
+        assert_eq!(Reflect::get(&heap, h, &str_key("x")).unwrap(), int_val(42));
+    }
+
+    #[test]
+    fn reflect_has() {
+        let mut heap = ObjectHeap::new();
+        let h = heap.alloc_plain();
+        Reflect::set(&mut heap, h, str_key("x"), int_val(1)).unwrap();
+        assert!(Reflect::has(&heap, h, &str_key("x")).unwrap());
+        assert!(!Reflect::has(&heap, h, &str_key("y")).unwrap());
+    }
+
+    #[test]
+    fn reflect_delete_property() {
+        let mut heap = ObjectHeap::new();
+        let h = heap.alloc_plain();
+        Reflect::set(&mut heap, h, str_key("x"), int_val(1)).unwrap();
+        assert!(Reflect::delete_property(&mut heap, h, &str_key("x")).unwrap());
+        assert!(!Reflect::has(&heap, h, &str_key("x")).unwrap());
+    }
+
+    #[test]
+    fn reflect_own_keys() {
+        let mut heap = ObjectHeap::new();
+        let h = heap.alloc_plain();
+        Reflect::set(&mut heap, h, str_key("a"), int_val(1)).unwrap();
+        Reflect::set(&mut heap, h, str_key("b"), int_val(2)).unwrap();
+        let keys = Reflect::own_keys(&heap, h).unwrap();
+        assert_eq!(keys, vec![str_key("a"), str_key("b")]);
+    }
+
+    #[test]
+    fn reflect_prototype_of() {
+        let mut heap = ObjectHeap::new();
+        let proto = heap.alloc_plain();
+        let obj = heap.alloc(Some(proto));
+        assert_eq!(Reflect::get_prototype_of(&heap, obj).unwrap(), Some(proto));
+    }
+
+    #[test]
+    fn reflect_set_prototype_of() {
+        let mut heap = ObjectHeap::new();
+        let h = heap.alloc_plain();
+        let new_proto = heap.alloc_plain();
+        assert!(Reflect::set_prototype_of(&mut heap, h, Some(new_proto)).unwrap());
+        assert_eq!(
+            Reflect::get_prototype_of(&heap, h).unwrap(),
+            Some(new_proto)
+        );
+    }
+
+    #[test]
+    fn reflect_is_extensible_and_prevent() {
+        let mut heap = ObjectHeap::new();
+        let h = heap.alloc_plain();
+        assert!(Reflect::is_extensible(&heap, h).unwrap());
+        assert!(Reflect::prevent_extensions(&mut heap, h).unwrap());
+        assert!(!Reflect::is_extensible(&heap, h).unwrap());
+    }
+
+    #[test]
+    fn reflect_define_and_get_own_property_descriptor() {
+        let mut heap = ObjectHeap::new();
+        let h = heap.alloc_plain();
+        let desc = PropertyDescriptor::data(int_val(42));
+        assert!(Reflect::define_property(&mut heap, h, str_key("x"), desc.clone()).unwrap());
+        let got = Reflect::get_own_property_descriptor(&heap, h, &str_key("x")).unwrap();
+        assert_eq!(got, Some(desc));
+    }
+
+    // -----------------------------------------------------------------------
+    // 57. Edge: empty object operations
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn empty_object_values_entries_keys() {
+        let mut heap = ObjectHeap::new();
+        let h = heap.alloc_plain();
+        assert!(heap.keys(h).unwrap().is_empty());
+        assert!(heap.values(h).unwrap().is_empty());
+        assert!(heap.entries(h).unwrap().is_empty());
+        assert!(heap.for_in_keys(h).unwrap().is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // 58. Edge: Object.assign with empty source
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn object_assign_empty_sources() {
+        let mut heap = ObjectHeap::new();
+        let target = heap.alloc_plain();
+        heap.set_property(target, str_key("x"), int_val(1)).unwrap();
+        heap.assign(target, &[]).unwrap();
+        assert_eq!(
+            heap.get_property(target, &str_key("x")).unwrap(),
+            int_val(1)
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // 59. Edge: frozen object rejects define_property
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn frozen_object_rejects_define() {
+        let mut heap = ObjectHeap::new();
+        let h = heap.alloc_plain();
+        heap.set_property(h, str_key("x"), int_val(1)).unwrap();
+        heap.freeze(h).unwrap();
+
+        // Cannot redefine existing frozen property to different value.
+        let result = heap
+            .define_property(
+                h,
+                str_key("x"),
+                PropertyDescriptor::Data {
+                    value: int_val(2),
+                    writable: false,
+                    enumerable: true,
+                    configurable: false,
+                },
+            )
+            .unwrap();
+        assert!(!result);
+
+        // Cannot add new property.
+        let result = heap
+            .define_property(h, str_key("y"), PropertyDescriptor::data(int_val(3)))
+            .unwrap();
+        assert!(!result);
+    }
+
+    // -----------------------------------------------------------------------
+    // 60. Edge: sealed object allows value change on writable property
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn sealed_object_allows_value_change() {
+        let mut heap = ObjectHeap::new();
+        let h = heap.alloc_plain();
+        heap.set_property(h, str_key("x"), int_val(1)).unwrap();
+        heap.seal(h).unwrap();
+
+        // Data property is sealed (non-configurable) but writable.
+        // Define with same attributes but different value should succeed.
+        let result = heap
+            .define_property(
+                h,
+                str_key("x"),
+                PropertyDescriptor::Data {
+                    value: int_val(2),
+                    writable: true,
+                    enumerable: true,
+                    configurable: false,
+                },
+            )
+            .unwrap();
+        assert!(result);
+    }
+
+    // -----------------------------------------------------------------------
+    // 61. Object.create(null) — no prototype
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn object_create_null_prototype() {
+        let mut heap = ObjectHeap::new();
+        let h = heap.create(None);
+        assert_eq!(heap.get_prototype_of(h).unwrap(), None);
+        // Property lookup with no prototype returns undefined.
+        assert_eq!(
+            heap.get_property(h, &str_key("anything")).unwrap(),
+            JsValue::Undefined
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // 62. Proxy wrapping proxy
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn proxy_wrapping_proxy() {
+        let mut heap = ObjectHeap::new();
+        let target = heap.alloc_plain();
+        let handler1 = heap.alloc_plain();
+        let inner_proxy = heap.alloc_proxy(target, handler1);
+
+        let handler2 = heap.alloc_plain();
+        let outer_proxy = heap.alloc_proxy(inner_proxy, handler2);
+
+        // Outer is a proxy wrapping inner proxy.
+        let outer = heap.get(outer_proxy).unwrap();
+        let proxy = outer.as_proxy().unwrap();
+        assert_eq!(proxy.target().unwrap(), inner_proxy);
+
+        // Inner is a proxy wrapping target.
+        let inner = heap.get(inner_proxy).unwrap();
+        let inner_p = inner.as_proxy().unwrap();
+        assert_eq!(inner_p.target().unwrap(), target);
+    }
+
+    // -----------------------------------------------------------------------
+    // 63. Revocable proxy — double revoke is idempotent
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn proxy_double_revoke_idempotent() {
+        let mut heap = ObjectHeap::new();
+        let target = heap.alloc_plain();
+        let handler = heap.alloc_plain();
+        let proxy = heap.alloc_proxy(target, handler);
+
+        heap.revoke_proxy(proxy).unwrap();
+        heap.revoke_proxy(proxy).unwrap(); // second revoke succeeds
+
+        let p = heap.get(proxy).unwrap().as_proxy().unwrap();
+        assert!(p.is_revoked());
+    }
+
+    // -----------------------------------------------------------------------
+    // 64. Proxy invariant: [[GetOwnProperty]] non-configurable must match
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn proxy_invariant_get_own_property_non_configurable() {
+        let mut obj = OrdinaryObject::default();
+        obj.define_own_property(
+            str_key("x"),
+            PropertyDescriptor::Data {
+                value: int_val(42),
+                writable: false,
+                enumerable: true,
+                configurable: false,
+            },
+        )
+        .unwrap();
+
+        // Trap returns non-configurable with different value — error.
+        let bad_desc = Some(PropertyDescriptor::Data {
+            value: int_val(99),
+            writable: false,
+            enumerable: true,
+            configurable: false,
+        });
+        assert!(
+            ProxyInvariantChecker::check_get_own_property(&obj, &str_key("x"), &bad_desc).is_err()
+        );
+
+        // Trap returns non-configurable with same value — ok.
+        let good_desc = Some(PropertyDescriptor::Data {
+            value: int_val(42),
+            writable: false,
+            enumerable: true,
+            configurable: false,
+        });
+        assert!(
+            ProxyInvariantChecker::check_get_own_property(&obj, &str_key("x"), &good_desc).is_ok()
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // 65. Proxy invariant: [[DefineOwnProperty]] non-configurable value match
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn proxy_invariant_define_non_configurable_value_mismatch() {
+        let mut obj = OrdinaryObject::default();
+        obj.define_own_property(
+            str_key("x"),
+            PropertyDescriptor::Data {
+                value: int_val(42),
+                writable: false,
+                enumerable: true,
+                configurable: false,
+            },
+        )
+        .unwrap();
+
+        // Trap defines non-configurable non-writable with different value.
+        let desc = PropertyDescriptor::Data {
+            value: int_val(99),
+            writable: false,
+            enumerable: true,
+            configurable: false,
+        };
+        assert!(
+            ProxyInvariantChecker::check_define_own_property(&obj, &str_key("x"), &desc, true)
+                .is_err()
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // 66. Proxy invariant: [[Delete]] non-extensible any own property
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn proxy_invariant_delete_non_extensible_own_property() {
+        let mut obj = OrdinaryObject::default();
+        obj.define_own_property(str_key("x"), PropertyDescriptor::data(int_val(1)))
+            .unwrap();
+        obj.extensible = false;
+
+        // Cannot delete any own property on non-extensible target.
+        assert!(ProxyInvariantChecker::check_delete(&obj, &str_key("x"), true).is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // 67. Integer index ordering in own_property_keys
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn own_property_keys_integer_order() {
+        let mut obj = OrdinaryObject::default();
+        // Insert in non-sorted order.
+        for key in ["100", "3", "10", "1", "0"] {
+            obj.define_own_property(str_key(key), PropertyDescriptor::data(int_val(0)))
+                .unwrap();
+        }
+        let keys = obj.own_property_keys();
+        let strs: Vec<&str> = keys
+            .iter()
+            .filter_map(|k| match k {
+                PropertyKey::String(s) => Some(s.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(strs, vec!["0", "1", "3", "10", "100"]);
+    }
+
+    // -----------------------------------------------------------------------
+    // 68. Non-configurable enumerable change blocked
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn non_configurable_enumerable_change_blocked() {
+        let mut obj = OrdinaryObject::default();
+        obj.define_own_property(
+            str_key("x"),
+            PropertyDescriptor::Data {
+                value: int_val(1),
+                writable: true,
+                enumerable: true,
+                configurable: false,
+            },
+        )
+        .unwrap();
+
+        // Try to change enumerable — rejected.
+        let result = obj
+            .define_own_property(
+                str_key("x"),
+                PropertyDescriptor::Data {
+                    value: int_val(1),
+                    writable: true,
+                    enumerable: false,
+                    configurable: false,
+                },
+            )
+            .unwrap();
+        assert!(!result);
+    }
+
+    // -----------------------------------------------------------------------
+    // 69. Symbol property key serde with well-known
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn symbol_property_with_well_known() {
+        let mut heap = ObjectHeap::new();
+        let h = heap.alloc_plain();
+        let iter_key = WellKnownSymbol::Iterator.key();
+        heap.define_property(h, iter_key.clone(), PropertyDescriptor::data(int_val(1)))
+            .unwrap();
+
+        let desc = heap.get_own_property_descriptor(h, &iter_key).unwrap();
+        assert!(desc.is_some());
+        assert_eq!(desc.unwrap().value(), Some(&int_val(1)));
+    }
+
+    // -----------------------------------------------------------------------
+    // 70. OrdinaryObject class_tag and callable/constructable
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn ordinary_object_class_tag_callable() {
+        let mut obj = OrdinaryObject::default();
+        assert!(!obj.callable);
+        assert!(!obj.constructable);
+        assert!(obj.class_tag.is_none());
+
+        obj.callable = true;
+        obj.constructable = true;
+        obj.class_tag = Some("Function".to_string());
+        assert!(obj.callable);
+        assert!(obj.constructable);
+        assert_eq!(obj.class_tag.as_deref(), Some("Function"));
+    }
+
+    // -----------------------------------------------------------------------
+    // 71. Serde round-trip for OrdinaryObject
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn ordinary_object_serde_roundtrip() {
+        let mut obj = OrdinaryObject::default();
+        obj.define_own_property(str_key("x"), PropertyDescriptor::data(int_val(42)))
+            .unwrap();
+        obj.prototype = Some(ObjectHandle(5));
+        obj.class_tag = Some("TestObj".to_string());
+
+        let json = serde_json::to_string(&obj).unwrap();
+        let deser: OrdinaryObject = serde_json::from_str(&json).unwrap();
+        assert_eq!(deser.prototype, Some(ObjectHandle(5)));
+        assert_eq!(deser.class_tag.as_deref(), Some("TestObj"));
+        assert!(deser.has_own_property(&str_key("x")));
+    }
+
+    // -----------------------------------------------------------------------
+    // 72. Serde round-trip for ObjectHeap
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn object_heap_serde_roundtrip() {
+        let mut heap = ObjectHeap::new();
+        let h = heap.alloc_plain();
+        heap.set_property(h, str_key("key"), str_val("value"))
+            .unwrap();
+
+        let json = serde_json::to_string(&heap).unwrap();
+        let deser: ObjectHeap = serde_json::from_str(&json).unwrap();
+        assert_eq!(deser.len(), 1);
+        assert_eq!(
+            deser
+                .get_property(ObjectHandle(0), &str_key("key"))
+                .unwrap(),
+            str_val("value")
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // 73. Serde round-trip for SymbolRegistry
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn symbol_registry_serde_roundtrip() {
+        let mut heap = ObjectHeap::new();
+        let mut reg = SymbolRegistry::new();
+        let sym = reg.symbol_for("test_key", &mut heap);
+
+        let json = serde_json::to_string(&reg).unwrap();
+        let deser: SymbolRegistry = serde_json::from_str(&json).unwrap();
+        assert_eq!(deser.key_for(sym), Some("test_key"));
+    }
+
+    // -----------------------------------------------------------------------
+    // 74. Proxy invariant: [[Has]] non-extensible existing property
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn proxy_invariant_has_non_extensible_existing() {
+        let mut obj = OrdinaryObject::default();
+        obj.define_own_property(str_key("x"), PropertyDescriptor::data(int_val(1)))
+            .unwrap();
+        obj.extensible = false;
+
+        // Cannot report existing property as non-existent on non-extensible.
+        assert!(ProxyInvariantChecker::check_has(&obj, &str_key("x"), false).is_err());
+        assert!(ProxyInvariantChecker::check_has(&obj, &str_key("x"), true).is_ok());
+    }
+
+    // -----------------------------------------------------------------------
+    // 75. Proxy invariant: [[GetOwnProperty]] non-configurable on configurable target
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn proxy_invariant_get_own_property_non_config_on_config_target() {
+        let mut obj = OrdinaryObject::default();
+        obj.define_own_property(str_key("x"), PropertyDescriptor::data(int_val(1)))
+            .unwrap(); // configurable=true
+
+        // Trap returns non-configurable — error because target's property is configurable.
+        let trap_desc = Some(PropertyDescriptor::Data {
+            value: int_val(1),
+            writable: true,
+            enumerable: true,
+            configurable: false,
+        });
+        assert!(
+            ProxyInvariantChecker::check_get_own_property(&obj, &str_key("x"), &trap_desc).is_err()
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // 76. Reflect mirrors heap operations exactly
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn reflect_matches_heap_semantics() {
+        let mut heap = ObjectHeap::new();
+        let proto = heap.alloc_plain();
+        Reflect::set(&mut heap, proto, str_key("inherited"), int_val(100)).unwrap();
+
+        let child = heap.alloc(Some(proto));
+
+        // Reflect.get walks prototype chain just like heap.get_property.
+        assert_eq!(
+            Reflect::get(&heap, child, &str_key("inherited")).unwrap(),
+            int_val(100)
+        );
+
+        // Reflect.has walks prototype chain.
+        assert!(Reflect::has(&heap, child, &str_key("inherited")).unwrap());
+
+        // Reflect.getOwnPropertyDescriptor does NOT walk prototype chain.
+        assert_eq!(
+            Reflect::get_own_property_descriptor(&heap, child, &str_key("inherited")).unwrap(),
+            None
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // 77. Proxy invariant: [[Set]] on configurable writable allows different value
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn proxy_invariant_set_configurable_writable_allows_different() {
+        let mut obj = OrdinaryObject::default();
+        obj.define_own_property(str_key("x"), PropertyDescriptor::data(int_val(1)))
+            .unwrap(); // configurable=true, writable=true
+
+        // Setting different value should be allowed.
+        assert!(ProxyInvariantChecker::check_set(&obj, &str_key("x"), &int_val(99), true).is_ok());
+    }
+
+    // -----------------------------------------------------------------------
+    // 78. for_in_keys: non-enumerable prototype property is excluded
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn for_in_keys_non_enumerable_proto_excluded() {
+        let mut heap = ObjectHeap::new();
+        let proto = heap.alloc_plain();
+        heap.define_property(
+            proto,
+            str_key("hidden"),
+            PropertyDescriptor::Data {
+                value: int_val(1),
+                writable: true,
+                enumerable: false,
+                configurable: true,
+            },
+        )
+        .unwrap();
+
+        let child = heap.alloc(Some(proto));
+        heap.set_property(child, str_key("own"), int_val(2))
+            .unwrap();
+
+        let keys = heap.for_in_keys(child).unwrap();
+        assert_eq!(keys, vec!["own".to_string()]);
+    }
+
+    // -----------------------------------------------------------------------
+    // 79. Object.values on frozen object
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn values_on_frozen_object() {
+        let mut heap = ObjectHeap::new();
+        let h = heap.alloc_plain();
+        heap.set_property(h, str_key("a"), int_val(1)).unwrap();
+        heap.set_property(h, str_key("b"), int_val(2)).unwrap();
+        heap.freeze(h).unwrap();
+
+        // Frozen properties are non-enumerable per our freeze impl? No — freeze only
+        // sets non-configurable and non-writable but keeps enumerable unchanged.
+        // Actually, freeze doesn't change enumerable. Let me verify:
+        // Our freeze() calls set_non_configurable() and set_non_writable().
+        // It does NOT call set_non_enumerable().
+        // So frozen values are still enumerable and should appear.
+        let vals = heap.values(h).unwrap();
+        assert_eq!(vals, vec![int_val(1), int_val(2)]);
+    }
+
+    // -----------------------------------------------------------------------
+    // 80. Reflect.set on frozen property returns false
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn reflect_set_frozen_returns_false() {
+        let mut heap = ObjectHeap::new();
+        let h = heap.alloc_plain();
+        Reflect::set(&mut heap, h, str_key("x"), int_val(1)).unwrap();
+        heap.freeze(h).unwrap();
+
+        let result = Reflect::set(&mut heap, h, str_key("x"), int_val(2)).unwrap();
+        assert!(!result);
+        // Value unchanged.
+        assert_eq!(Reflect::get(&heap, h, &str_key("x")).unwrap(), int_val(1));
     }
 }

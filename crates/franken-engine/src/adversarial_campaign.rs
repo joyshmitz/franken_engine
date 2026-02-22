@@ -1429,7 +1429,7 @@ impl RedBlueLoopIntegrator {
         if new_snapshot == old_snapshot {
             return Ok(None);
         }
-        self.calibration_state.calibration_epoch = self.calibration_state.calibration_epoch + 1;
+        self.calibration_state.calibration_epoch += 1;
 
         let mut campaign_ids = self
             .outcomes

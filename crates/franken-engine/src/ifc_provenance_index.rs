@@ -221,7 +221,7 @@ pub fn error_code(err: &ProvenanceError) -> &'static str {
 
 impl From<StorageError> for ProvenanceError {
     fn from(e: StorageError) -> Self {
-        Self::StorageError(format!("{}", e.code()))
+        Self::StorageError(e.code().to_string())
     }
 }
 
@@ -337,10 +337,10 @@ impl<S: StorageAdapter> IfcProvenanceIndex<S> {
         let records = self.query_prefix(FLOW_EVENT_PREFIX, ctx)?;
         let mut results = Vec::new();
         for r in records {
-            if let Ok(rec) = serde_json::from_slice::<FlowEventRecord>(&r.value) {
-                if rec.extension_id == extension_id {
-                    results.push(rec);
-                }
+            if let Ok(rec) = serde_json::from_slice::<FlowEventRecord>(&r.value)
+                && rec.extension_id == extension_id
+            {
+                results.push(rec);
             }
         }
         results.sort();
@@ -356,10 +356,10 @@ impl<S: StorageAdapter> IfcProvenanceIndex<S> {
         let records = self.query_prefix(FLOW_PROOF_PREFIX, ctx)?;
         let mut results = Vec::new();
         for r in records {
-            if let Ok(rec) = serde_json::from_slice::<FlowProofRecord>(&r.value) {
-                if rec.extension_id == extension_id {
-                    results.push(rec);
-                }
+            if let Ok(rec) = serde_json::from_slice::<FlowProofRecord>(&r.value)
+                && rec.extension_id == extension_id
+            {
+                results.push(rec);
             }
         }
         results.sort();
@@ -375,10 +375,10 @@ impl<S: StorageAdapter> IfcProvenanceIndex<S> {
         let records = self.query_prefix(DECLASS_RECEIPT_PREFIX, ctx)?;
         let mut results = Vec::new();
         for r in records {
-            if let Ok(rec) = serde_json::from_slice::<DeclassReceiptRecord>(&r.value) {
-                if rec.extension_id == extension_id {
-                    results.push(rec);
-                }
+            if let Ok(rec) = serde_json::from_slice::<DeclassReceiptRecord>(&r.value)
+                && rec.extension_id == extension_id
+            {
+                results.push(rec);
             }
         }
         results.sort();
@@ -394,10 +394,10 @@ impl<S: StorageAdapter> IfcProvenanceIndex<S> {
         let records = self.query_prefix(CONFINEMENT_CLAIM_PREFIX, ctx)?;
         let mut results = Vec::new();
         for r in records {
-            if let Ok(rec) = serde_json::from_slice::<ConfinementClaimRecord>(&r.value) {
-                if rec.extension_id == extension_id {
-                    results.push(rec);
-                }
+            if let Ok(rec) = serde_json::from_slice::<ConfinementClaimRecord>(&r.value)
+                && rec.extension_id == extension_id
+            {
+                results.push(rec);
             }
         }
         results.sort();

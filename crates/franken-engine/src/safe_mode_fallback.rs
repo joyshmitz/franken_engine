@@ -28,6 +28,13 @@ use serde::{Deserialize, Serialize};
 use crate::control_plane::{
     ControlPlaneAdapterError, DecisionAdapter, DecisionRequest, DecisionVerdict,
 };
+use crate::receipt_verifier_pipeline::{
+    UnifiedReceiptVerificationVerdict, VerificationFailureClass,
+};
+use crate::signature_preimage::{
+    SIGNATURE_SENTINEL, Signature, SignatureError, SigningKey, VerificationKey, sign_preimage,
+    verify_signature,
+};
 
 // ---------------------------------------------------------------------------
 // FailureType — classification of control-plane failures
@@ -608,6 +615,696 @@ impl SafeModeManager {
             error_code: error_code.map(|s| s.to_string()),
         });
     }
+}
+
+// ---------------------------------------------------------------------------
+// Attestation-aware fallback policy (bd-1gcu)
+// ---------------------------------------------------------------------------
+
+const ATTESTATION_COMPONENT: &str = "attestation_safe_mode";
+const ATTESTATION_PENDING_STATUS: &str = "attestation-pending";
+
+/// Current attestation-health input to fallback evaluation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum AttestationHealth {
+    /// Attestation checks are valid and fresh.
+    Valid,
+    /// Attestation checks failed cryptographic/policy validation.
+    VerificationFailed,
+    /// Attestation evidence exists but is stale/expired.
+    EvidenceExpired,
+    /// Attestation evidence is unavailable (missing cache/source/outage).
+    EvidenceUnavailable,
+}
+
+impl AttestationHealth {
+    /// Whether this health state is usable for high-impact autonomy.
+    pub fn is_healthy(self) -> bool {
+        matches!(self, Self::Valid)
+    }
+
+    fn status_label(self) -> &'static str {
+        match self {
+            Self::Valid => "valid",
+            Self::VerificationFailed => "verification_failed",
+            Self::EvidenceExpired => "expired",
+            Self::EvidenceUnavailable => "unavailable",
+        }
+    }
+
+    fn error_code(self) -> Option<&'static str> {
+        match self {
+            Self::Valid => None,
+            Self::VerificationFailed => Some("attestation_verification_failed"),
+            Self::EvidenceExpired => Some("attestation_expired"),
+            Self::EvidenceUnavailable => Some("attestation_unavailable"),
+        }
+    }
+}
+
+impl fmt::Display for AttestationHealth {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.status_label())
+    }
+}
+
+/// Operational impact tier for autonomous actions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum ActionTier {
+    HighImpact,
+    Standard,
+    LowImpact,
+}
+
+impl fmt::Display for ActionTier {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::HighImpact => f.write_str("high_impact"),
+            Self::Standard => f.write_str("standard"),
+            Self::LowImpact => f.write_str("low_impact"),
+        }
+    }
+}
+
+/// Deterministic action taxonomy used by attestation fallback policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum AutonomousAction {
+    /// High-impact: isolate subject aggressively.
+    Quarantine,
+    /// High-impact: terminate subject execution.
+    Terminate,
+    /// High-impact: emergency capability grant.
+    EmergencyGrant,
+    /// High-impact: policy promotion/change.
+    PolicyPromotion,
+    /// High-impact: capability escalation.
+    CapabilityEscalation,
+    /// Standard: routine monitoring.
+    RoutineMonitoring,
+    /// Standard: evidence collection path.
+    EvidenceCollection,
+    /// Low-impact: telemetry/metrics only.
+    MetricsEmission,
+}
+
+impl AutonomousAction {
+    /// Default impact tier for this action class.
+    pub fn default_tier(self) -> ActionTier {
+        match self {
+            Self::Quarantine
+            | Self::Terminate
+            | Self::EmergencyGrant
+            | Self::PolicyPromotion
+            | Self::CapabilityEscalation => ActionTier::HighImpact,
+            Self::RoutineMonitoring | Self::EvidenceCollection => ActionTier::Standard,
+            Self::MetricsEmission => ActionTier::LowImpact,
+        }
+    }
+
+    fn action_name(self) -> &'static str {
+        match self {
+            Self::Quarantine => "quarantine",
+            Self::Terminate => "terminate",
+            Self::EmergencyGrant => "emergency_grant",
+            Self::PolicyPromotion => "policy_promotion",
+            Self::CapabilityEscalation => "capability_escalation",
+            Self::RoutineMonitoring => "routine_monitoring",
+            Self::EvidenceCollection => "evidence_collection",
+            Self::MetricsEmission => "metrics_emission",
+        }
+    }
+}
+
+impl fmt::Display for AutonomousAction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.action_name())
+    }
+}
+
+/// Request envelope evaluated by attestation fallback policy.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttestationActionRequest {
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub action: AutonomousAction,
+    pub tier: ActionTier,
+    pub timestamp_ns: u64,
+}
+
+impl AttestationActionRequest {
+    /// Construct a request using action-default tiering.
+    pub fn new(
+        trace_id: impl Into<String>,
+        decision_id: impl Into<String>,
+        policy_id: impl Into<String>,
+        action: AutonomousAction,
+        timestamp_ns: u64,
+    ) -> Self {
+        Self {
+            trace_id: trace_id.into(),
+            decision_id: decision_id.into(),
+            policy_id: policy_id.into(),
+            action,
+            tier: action.default_tier(),
+            timestamp_ns,
+        }
+    }
+}
+
+/// State machine for attestation-driven autonomy fallback.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+pub enum AttestationFallbackState {
+    /// Normal autonomous operation.
+    #[default]
+    Normal,
+    /// Degraded challenge/sandbox-first operation.
+    Degraded,
+    /// Temporary state while moving queued backlog for validation.
+    Restoring,
+}
+
+impl fmt::Display for AttestationFallbackState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Normal => f.write_str("normal"),
+            Self::Degraded => f.write_str("degraded"),
+            Self::Restoring => f.write_str("restoring"),
+        }
+    }
+}
+
+/// Configurable fallback policy knobs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttestationFallbackConfig {
+    /// Timeout for persistent unavailability before mandatory operator review.
+    pub unavailable_timeout_ns: u64,
+    /// Whether challenge is required for deferred high-impact actions.
+    pub challenge_on_fallback: bool,
+    /// Whether sandbox is required for deferred high-impact actions.
+    pub sandbox_on_fallback: bool,
+}
+
+impl Default for AttestationFallbackConfig {
+    fn default() -> Self {
+        Self {
+            unavailable_timeout_ns: 300_000_000_000, // 5 minutes
+            challenge_on_fallback: true,
+            sandbox_on_fallback: true,
+        }
+    }
+}
+
+/// Queued high-impact decision awaiting attestation restoration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QueuedAttestationDecision {
+    pub queue_id: u64,
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub action: AutonomousAction,
+    pub queued_at_ns: u64,
+    /// Always `attestation-pending`.
+    pub status: String,
+}
+
+/// Fallback outcome for one action evaluation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AttestationFallbackDecision {
+    /// Action can proceed (optionally with warning for non-high-impact tiers).
+    Execute {
+        attestation_status: String,
+        warning: Option<String>,
+    },
+    /// Action deferred under degraded mode with explicit pending status.
+    Deferred {
+        queue_id: u64,
+        attestation_status: String,
+        status: String,
+        challenge_required: bool,
+        sandbox_required: bool,
+    },
+}
+
+/// Stable structured event envelope for attestation fallback policy.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttestationFallbackEvent {
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub component: String,
+    pub event: String,
+    pub outcome: String,
+    pub error_code: Option<String>,
+    pub detail: String,
+}
+
+/// Signed transition receipt for fallback activation/deactivation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttestationTransitionReceipt {
+    pub sequence: u64,
+    pub from_state: AttestationFallbackState,
+    pub to_state: AttestationFallbackState,
+    pub reason: String,
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub timestamp_ns: u64,
+    pub signer_verification_key: VerificationKey,
+    pub signature: Signature,
+}
+
+impl AttestationTransitionReceipt {
+    fn preimage(&self) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&self.sequence.to_be_bytes());
+        buf.extend_from_slice(self.from_state.to_string().as_bytes());
+        buf.push(0);
+        buf.extend_from_slice(self.to_state.to_string().as_bytes());
+        buf.push(0);
+        buf.extend_from_slice(self.reason.as_bytes());
+        buf.push(0);
+        buf.extend_from_slice(self.trace_id.as_bytes());
+        buf.push(0);
+        buf.extend_from_slice(self.decision_id.as_bytes());
+        buf.push(0);
+        buf.extend_from_slice(self.policy_id.as_bytes());
+        buf.push(0);
+        buf.extend_from_slice(&self.timestamp_ns.to_be_bytes());
+        buf.extend_from_slice(self.signer_verification_key.as_bytes());
+        buf.extend_from_slice(&SIGNATURE_SENTINEL);
+        buf
+    }
+
+    fn signed(
+        sequence: u64,
+        from_state: AttestationFallbackState,
+        to_state: AttestationFallbackState,
+        reason: &str,
+        request: &AttestationActionRequest,
+        signing_key: &SigningKey,
+    ) -> Result<Self, SignatureError> {
+        let mut receipt = Self {
+            sequence,
+            from_state,
+            to_state,
+            reason: reason.to_string(),
+            trace_id: request.trace_id.clone(),
+            decision_id: request.decision_id.clone(),
+            policy_id: request.policy_id.clone(),
+            timestamp_ns: request.timestamp_ns,
+            signer_verification_key: signing_key.verification_key(),
+            signature: Signature::from_bytes(SIGNATURE_SENTINEL),
+        };
+        receipt.signature = sign_preimage(signing_key, &receipt.preimage())?;
+        Ok(receipt)
+    }
+
+    /// Verify transition receipt signature.
+    pub fn verify(&self) -> Result<(), SignatureError> {
+        verify_signature(
+            &self.signer_verification_key,
+            &self.preimage(),
+            &self.signature,
+        )
+    }
+}
+
+/// Errors from attestation fallback policy management.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AttestationFallbackError {
+    SignatureFailure { detail: String },
+}
+
+impl fmt::Display for AttestationFallbackError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::SignatureFailure { detail } => {
+                write!(f, "transition receipt signature failure: {detail}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for AttestationFallbackError {}
+
+impl From<SignatureError> for AttestationFallbackError {
+    fn from(value: SignatureError) -> Self {
+        Self::SignatureFailure {
+            detail: value.to_string(),
+        }
+    }
+}
+
+/// Deterministic policy manager for attestation-driven fallback behavior.
+#[derive(Debug, Clone)]
+pub struct AttestationFallbackManager {
+    config: AttestationFallbackConfig,
+    state: AttestationFallbackState,
+    health: AttestationHealth,
+    degraded_since_ns: Option<u64>,
+    operator_review_required: bool,
+    queue_seq: u64,
+    transition_seq: u64,
+    pending_decisions: Vec<QueuedAttestationDecision>,
+    recovery_backlog: Vec<QueuedAttestationDecision>,
+    transition_receipts: Vec<AttestationTransitionReceipt>,
+    events: Vec<AttestationFallbackEvent>,
+    transition_signing_key: SigningKey,
+}
+
+impl AttestationFallbackManager {
+    /// Create a manager with explicit transition-signing key.
+    pub fn new(config: AttestationFallbackConfig, transition_signing_key: SigningKey) -> Self {
+        Self {
+            config,
+            state: AttestationFallbackState::Normal,
+            health: AttestationHealth::Valid,
+            degraded_since_ns: None,
+            operator_review_required: false,
+            queue_seq: 0,
+            transition_seq: 0,
+            pending_decisions: Vec::new(),
+            recovery_backlog: Vec::new(),
+            transition_receipts: Vec::new(),
+            events: Vec::new(),
+            transition_signing_key,
+        }
+    }
+
+    /// Create a manager with deterministic default signing key.
+    pub fn with_default_signing_key(config: AttestationFallbackConfig) -> Self {
+        Self::new(config, SigningKey::from_bytes([11u8; 32]))
+    }
+
+    /// Current fallback state.
+    pub fn state(&self) -> AttestationFallbackState {
+        self.state
+    }
+
+    /// Current observed health.
+    pub fn health(&self) -> AttestationHealth {
+        self.health
+    }
+
+    /// Whether operator-mandatory review is currently required.
+    pub fn operator_review_required(&self) -> bool {
+        self.operator_review_required
+    }
+
+    /// Read-only view of pending high-impact decisions.
+    pub fn pending_decisions(&self) -> &[QueuedAttestationDecision] {
+        &self.pending_decisions
+    }
+
+    /// Read-only view of signed transition receipts.
+    pub fn transition_receipts(&self) -> &[AttestationTransitionReceipt] {
+        &self.transition_receipts
+    }
+
+    /// Read-only view of emitted structured events.
+    pub fn events(&self) -> &[AttestationFallbackEvent] {
+        &self.events
+    }
+
+    /// Drain queued decisions that were moved during restoration.
+    pub fn take_recovery_backlog(&mut self) -> Vec<QueuedAttestationDecision> {
+        std::mem::take(&mut self.recovery_backlog)
+    }
+
+    /// Evaluate one action under current attestation health.
+    pub fn evaluate_action(
+        &mut self,
+        request: AttestationActionRequest,
+        health: AttestationHealth,
+    ) -> Result<AttestationFallbackDecision, AttestationFallbackError> {
+        self.update_health_state(&request, health)?;
+
+        match request.tier {
+            ActionTier::LowImpact => {
+                self.emit_event(
+                    &request,
+                    "attestation_low_impact_allowed",
+                    "pass",
+                    None,
+                    "low-impact action does not require attestation",
+                );
+                Ok(AttestationFallbackDecision::Execute {
+                    attestation_status: self.health.status_label().to_string(),
+                    warning: None,
+                })
+            }
+            ActionTier::Standard => {
+                if self.health.is_healthy() {
+                    self.emit_event(
+                        &request,
+                        "attestation_standard_allowed",
+                        "pass",
+                        None,
+                        "standard action allowed with healthy attestation",
+                    );
+                    Ok(AttestationFallbackDecision::Execute {
+                        attestation_status: "valid".to_string(),
+                        warning: None,
+                    })
+                } else {
+                    let warning = format!(
+                        "attestation {} for standard action {}; continuing with warning",
+                        self.health, request.action
+                    );
+                    self.emit_event(
+                        &request,
+                        "attestation_standard_warn",
+                        "warn",
+                        self.health.error_code(),
+                        &warning,
+                    );
+                    Ok(AttestationFallbackDecision::Execute {
+                        attestation_status: "degraded".to_string(),
+                        warning: Some(warning),
+                    })
+                }
+            }
+            ActionTier::HighImpact => {
+                if self.health.is_healthy() && self.state == AttestationFallbackState::Normal {
+                    self.emit_event(
+                        &request,
+                        "attestation_high_impact_allowed",
+                        "pass",
+                        None,
+                        "high-impact action allowed with healthy attestation",
+                    );
+                    return Ok(AttestationFallbackDecision::Execute {
+                        attestation_status: "valid".to_string(),
+                        warning: None,
+                    });
+                }
+
+                let queue_id = self.queue_seq;
+                self.queue_seq = self.queue_seq.saturating_add(1);
+                self.pending_decisions.push(QueuedAttestationDecision {
+                    queue_id,
+                    trace_id: request.trace_id.clone(),
+                    decision_id: request.decision_id.clone(),
+                    policy_id: request.policy_id.clone(),
+                    action: request.action,
+                    queued_at_ns: request.timestamp_ns,
+                    status: ATTESTATION_PENDING_STATUS.to_string(),
+                });
+
+                let detail = format!(
+                    "high-impact action {} deferred with status {} under {} attestation",
+                    request.action, ATTESTATION_PENDING_STATUS, self.health
+                );
+                self.emit_event(
+                    &request,
+                    "attestation_high_impact_deferred",
+                    "defer",
+                    self.health.error_code(),
+                    &detail,
+                );
+                Ok(AttestationFallbackDecision::Deferred {
+                    queue_id,
+                    attestation_status: "degraded".to_string(),
+                    status: ATTESTATION_PENDING_STATUS.to_string(),
+                    challenge_required: self.config.challenge_on_fallback,
+                    sandbox_required: self.config.sandbox_on_fallback,
+                })
+            }
+        }
+    }
+
+    fn update_health_state(
+        &mut self,
+        request: &AttestationActionRequest,
+        health: AttestationHealth,
+    ) -> Result<(), AttestationFallbackError> {
+        self.health = health;
+
+        if health.is_healthy() {
+            if self.state == AttestationFallbackState::Degraded {
+                self.transition_state(
+                    request,
+                    AttestationFallbackState::Restoring,
+                    "attestation_restored",
+                )?;
+                self.recovery_backlog = std::mem::take(&mut self.pending_decisions);
+                self.transition_state(
+                    request,
+                    AttestationFallbackState::Normal,
+                    "attestation_recovery_complete",
+                )?;
+                self.degraded_since_ns = None;
+                self.operator_review_required = false;
+                self.emit_event(
+                    request,
+                    "attestation_recovery_backlog_ready",
+                    "pass",
+                    None,
+                    format!(
+                        "recovery backlog moved for validation: {} queued decisions",
+                        self.recovery_backlog.len()
+                    ),
+                );
+            }
+            return Ok(());
+        }
+
+        if self.state != AttestationFallbackState::Degraded {
+            self.transition_state(
+                request,
+                AttestationFallbackState::Degraded,
+                "attestation_degraded",
+            )?;
+            self.degraded_since_ns = Some(request.timestamp_ns);
+        } else if self.degraded_since_ns.is_none() {
+            self.degraded_since_ns = Some(request.timestamp_ns);
+        }
+
+        if health == AttestationHealth::EvidenceUnavailable {
+            self.maybe_escalate_operator_review(request);
+        }
+
+        Ok(())
+    }
+
+    fn maybe_escalate_operator_review(&mut self, request: &AttestationActionRequest) {
+        let Some(degraded_since_ns) = self.degraded_since_ns else {
+            return;
+        };
+        if self.operator_review_required {
+            return;
+        }
+        let elapsed = request.timestamp_ns.saturating_sub(degraded_since_ns);
+        if elapsed >= self.config.unavailable_timeout_ns {
+            self.operator_review_required = true;
+            self.emit_event(
+                request,
+                "attestation_operator_review_required",
+                "fail",
+                Some("attestation_unavailable_timeout"),
+                format!(
+                    "attestation unavailable for {}ns (threshold {}ns)",
+                    elapsed, self.config.unavailable_timeout_ns
+                ),
+            );
+        }
+    }
+
+    fn transition_state(
+        &mut self,
+        request: &AttestationActionRequest,
+        to_state: AttestationFallbackState,
+        reason: &str,
+    ) -> Result<(), AttestationFallbackError> {
+        let from_state = self.state;
+        if from_state == to_state {
+            return Ok(());
+        }
+        let receipt = AttestationTransitionReceipt::signed(
+            self.transition_seq,
+            from_state,
+            to_state,
+            reason,
+            request,
+            &self.transition_signing_key,
+        )?;
+        self.transition_seq = self.transition_seq.saturating_add(1);
+        self.state = to_state;
+        self.transition_receipts.push(receipt);
+
+        self.emit_event(
+            request,
+            "attestation_state_transition",
+            "pass",
+            None,
+            format!("{from_state} -> {to_state} ({reason})"),
+        );
+        Ok(())
+    }
+
+    fn emit_event(
+        &mut self,
+        request: &AttestationActionRequest,
+        event: &str,
+        outcome: &str,
+        error_code: Option<&str>,
+        detail: impl Into<String>,
+    ) {
+        self.events.push(AttestationFallbackEvent {
+            trace_id: request.trace_id.clone(),
+            decision_id: request.decision_id.clone(),
+            policy_id: request.policy_id.clone(),
+            component: ATTESTATION_COMPONENT.to_string(),
+            event: event.to_string(),
+            outcome: outcome.to_string(),
+            error_code: error_code.map(std::string::ToString::to_string),
+            detail: detail.into(),
+        });
+    }
+}
+
+/// Map unified verifier output to attestation-health input for fallback policy.
+pub fn attestation_health_from_verdict(
+    verdict: &UnifiedReceiptVerificationVerdict,
+) -> AttestationHealth {
+    if verdict.attestation.passed
+        && verdict.failure_class != Some(VerificationFailureClass::StaleData)
+        && !verdict
+            .warnings
+            .iter()
+            .any(|w| w.starts_with("attestation_"))
+    {
+        return AttestationHealth::Valid;
+    }
+
+    if matches!(
+        verdict.attestation.error_code.as_deref(),
+        Some("attestation_policy_quote_age_mismatch")
+    ) || verdict
+        .warnings
+        .iter()
+        .any(|warning| warning.starts_with("attestation_") && warning.contains("stale"))
+    {
+        return AttestationHealth::EvidenceExpired;
+    }
+
+    if matches!(
+        verdict.attestation.error_code.as_deref(),
+        Some("attestation_trust_root_missing")
+            | Some("attestation_quote_digest_unavailable")
+            | Some("attestation_measurement_id_derivation_failed")
+    ) {
+        return AttestationHealth::EvidenceUnavailable;
+    }
+
+    if verdict.failure_class == Some(VerificationFailureClass::StaleData) {
+        return AttestationHealth::EvidenceUnavailable;
+    }
+
+    AttestationHealth::VerificationFailed
 }
 
 // ---------------------------------------------------------------------------

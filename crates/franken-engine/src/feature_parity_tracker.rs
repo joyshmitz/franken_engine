@@ -324,12 +324,12 @@ impl WaiverRecord {
                 detail: "approved_by must not be empty".to_string(),
             });
         }
-        if let Some(until) = self.valid_until_ns {
-            if until <= self.approved_at_ns {
-                return Err(ParityTrackerError::InvalidWaiver {
-                    detail: "valid_until must be after approved_at".to_string(),
-                });
-            }
+        if let Some(until) = self.valid_until_ns
+            && until <= self.approved_at_ns
+        {
+            return Err(ParityTrackerError::InvalidWaiver {
+                detail: "valid_until must be after approved_at".to_string(),
+            });
         }
         Ok(())
     }
@@ -663,10 +663,10 @@ impl FeatureParityTracker {
         }
 
         // Mark feature as waived if not already passing
-        if let Some(entry) = self.features.get_mut(&waiver.feature_id) {
-            if entry.status != FeatureStatus::Passing {
-                entry.status = FeatureStatus::Waived;
-            }
+        if let Some(entry) = self.features.get_mut(&waiver.feature_id)
+            && entry.status != FeatureStatus::Passing
+        {
+            entry.status = FeatureStatus::Waived;
         }
 
         self.emit_event(ctx, "waiver_registered", &waiver.waiver_id, None);
