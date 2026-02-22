@@ -1220,7 +1220,7 @@ fn parse_key_value(line_no: usize, stripped: &str) -> io::Result<(String, String
 
 fn parse_quoted(line_no: usize, raw_value: &str) -> io::Result<String> {
     let trimmed = raw_value.trim();
-    if trimmed.len() < 2 || !trimmed.starts_with('"') || !trimmed.ends_with('"') {
+    if trimmed.len() <= 2 || !trimmed.starts_with('"') || !trimmed.ends_with('"') {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!("invalid TOML string at line {line_no}"),

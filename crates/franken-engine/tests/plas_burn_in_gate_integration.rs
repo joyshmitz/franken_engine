@@ -130,11 +130,11 @@ fn promotion_gate_rejects_when_success_rate_below_threshold() {
 }
 
 #[test]
-fn promotion_gate_rejects_when_false_deny_envelope_exceeded() {
+fn false_deny_envelope_breach_triggers_early_rejection_artifact() {
     let mut session = BurnInSession::new(session_config(), complete_rollback_artifacts()).unwrap();
     session.begin_shadow_evaluation().unwrap();
 
-    // 1/5 false denies = 200_000 > 100_000
+    // 1/5 false denies = 200_000 > 100_000, triggering early termination.
     session
         .record_shadow_observation(observation("obs-1", 1_000_100, true, false))
         .unwrap();
@@ -147,15 +147,15 @@ fn promotion_gate_rejects_when_false_deny_envelope_exceeded() {
     session
         .record_shadow_observation(observation("obs-4", 1_000_400, true, false))
         .unwrap();
-    session
+    let artifact = session
         .record_shadow_observation(observation("obs-5", 1_001_500, true, true))
-        .unwrap();
-
-    let artifact = session.evaluate_promotion_gate(1_002_000).unwrap();
+        .unwrap()
+        .expect("expected early rejection artifact");
     assert_eq!(session.lifecycle_state(), BurnInLifecycleState::Rejection);
-    assert!(artifact
-        .failure_codes
-        .contains(&BurnInFailureCode::FalseDenyEnvelopeExceeded));
+    assert_eq!(
+        artifact.failure_codes,
+        vec![BurnInFailureCode::EarlyTerminationFalseDeny]
+    );
 }
 
 #[test]
@@ -214,20 +214,8 @@ fn risk_class_defaults_get_stricter_for_high_risk_extensions() {
 fn structured_log_contract_is_stable() {
     let mut session = BurnInSession::new(session_config(), complete_rollback_artifacts()).unwrap();
     session.begin_shadow_evaluation().unwrap();
-    session
-        .record_shadow_observation(observation("obs-1", 1_000_100, false, true))
-        .unwrap();
-    session
-        .record_shadow_observation(observation("obs-2", 1_000_200, false, true))
-        .unwrap();
-    session
-        .record_shadow_observation(observation("obs-3", 1_000_300, false, true))
-        .unwrap();
-    session
-        .record_shadow_observation(observation("obs-4", 1_000_400, false, true))
-        .unwrap();
     let early = session
-        .record_shadow_observation(observation("obs-5", 1_000_500, false, true))
+        .record_shadow_observation(observation("obs-1", 1_000_100, false, true))
         .unwrap()
         .expect("expected early termination");
 

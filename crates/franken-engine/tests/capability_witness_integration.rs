@@ -210,8 +210,12 @@ fn build_promoted_for_extension(
 }
 
 fn index_ctx() -> EventContext {
-    EventContext::new("trace-witness-index", "decision-witness-index", "policy-witness-index")
-        .expect("index context")
+    EventContext::new(
+        "trace-witness-index",
+        "decision-witness-index",
+        "policy-witness-index",
+    )
+    .expect("index context")
 }
 
 fn default_pipeline(sk: &SigningKey) -> WitnessPublicationPipeline {
@@ -1782,4 +1786,263 @@ fn unsigned_bytes_deterministic() {
     let w1 = build_draft_witness();
     let w2 = build_draft_witness();
     assert_eq!(w1.unsigned_bytes(), w2.unsigned_bytes());
+}
+
+// ===========================================================================
+// WitnessIndexStore conformance
+// ===========================================================================
+
+#[test]
+fn witness_index_round_trip_and_index_queries_are_byte_identical() {
+    let mut index = WitnessIndexStore::new(InMemoryStorageAdapter::new());
+    let ctx = index_ctx();
+
+    let extension = ext_id();
+    let mut witness = build_promoted_for_extension(extension.clone(), "read-data", 101, 5_000);
+    witness.transition_to(LifecycleState::Active).unwrap();
+    let indexed = index.index_witness(&witness, 5_000, &ctx).unwrap();
+
+    let by_id = index
+        .witness_by_id(&witness.witness_id, &ctx)
+        .unwrap()
+        .unwrap();
+    assert_eq!(indexed.witness_id, by_id.witness_id);
+    assert_eq!(
+        serde_json::to_vec(&witness).unwrap(),
+        serde_json::to_vec(&by_id.witness).unwrap()
+    );
+
+    let by_extension = index
+        .query_witnesses(
+            &WitnessIndexQuery {
+                extension_id: Some(extension.clone()),
+                include_revoked: true,
+                limit: 10,
+                ..WitnessIndexQuery::default()
+            },
+            &ctx,
+        )
+        .unwrap();
+    assert_eq!(by_extension.records.len(), 1);
+    assert_eq!(by_extension.records[0].witness_id, witness.witness_id);
+
+    let by_capability = index
+        .query_witnesses(
+            &WitnessIndexQuery {
+                capability: Some(Capability::new("read-data")),
+                include_revoked: true,
+                limit: 10,
+                ..WitnessIndexQuery::default()
+            },
+            &ctx,
+        )
+        .unwrap();
+    assert_eq!(by_capability.records.len(), 1);
+    assert_eq!(by_capability.records[0].witness_id, witness.witness_id);
+}
+
+#[test]
+fn witness_index_cursor_pagination_is_deterministic() {
+    let mut index = WitnessIndexStore::new(InMemoryStorageAdapter::new());
+    let ctx = index_ctx();
+    let extension = ext_id();
+
+    let w1 = build_promoted_for_extension(extension.clone(), "cap-a", 11, 1_000);
+    let w2 = build_promoted_for_extension(extension.clone(), "cap-b", 12, 2_000);
+    let w3 = build_promoted_for_extension(extension.clone(), "cap-c", 13, 3_000);
+    index.index_witness(&w1, 1_000, &ctx).unwrap();
+    index.index_witness(&w2, 2_000, &ctx).unwrap();
+    index.index_witness(&w3, 3_000, &ctx).unwrap();
+
+    let page_1 = index
+        .query_witnesses(
+            &WitnessIndexQuery {
+                extension_id: Some(extension.clone()),
+                include_revoked: true,
+                limit: 2,
+                ..WitnessIndexQuery::default()
+            },
+            &ctx,
+        )
+        .unwrap();
+    assert_eq!(page_1.records.len(), 2);
+    assert_eq!(page_1.records[0].promotion_timestamp_ns, 1_000);
+    assert_eq!(page_1.records[1].promotion_timestamp_ns, 2_000);
+    assert!(page_1.next_cursor.is_some());
+
+    let page_2 = index
+        .query_witnesses(
+            &WitnessIndexQuery {
+                extension_id: Some(extension.clone()),
+                include_revoked: true,
+                cursor: page_1.next_cursor.clone(),
+                limit: 2,
+                ..WitnessIndexQuery::default()
+            },
+            &ctx,
+        )
+        .unwrap();
+    assert_eq!(page_2.records.len(), 1);
+    assert_eq!(page_2.records[0].promotion_timestamp_ns, 3_000);
+    assert!(page_2.next_cursor.is_none());
+
+    let page_1_repeat = index
+        .query_witnesses(
+            &WitnessIndexQuery {
+                extension_id: Some(extension),
+                include_revoked: true,
+                limit: 2,
+                ..WitnessIndexQuery::default()
+            },
+            &ctx,
+        )
+        .unwrap();
+    assert_eq!(page_1, page_1_repeat);
+}
+
+#[test]
+fn witness_index_replay_join_links_receipts_to_witness_windows() {
+    let mut index = WitnessIndexStore::new(InMemoryStorageAdapter::new());
+    let ctx = index_ctx();
+    let extension = ext_id();
+
+    let w1 = build_promoted_for_extension(extension.clone(), "cap-x", 21, 1_000);
+    let w2 = build_promoted_for_extension(extension.clone(), "cap-y", 22, 2_000);
+    index.index_witness(&w1, 1_000, &ctx).unwrap();
+    index.index_witness(&w2, 2_000, &ctx).unwrap();
+
+    for (receipt_id, capability, decision_kind, outcome, timestamp_ns) in [
+        (
+            "receipt-1",
+            Some(Capability::new("cap-x")),
+            "grant",
+            "allow",
+            1_100_u64,
+        ),
+        (
+            "receipt-2",
+            Some(Capability::new("cap-x")),
+            "deny",
+            "deny",
+            1_500_u64,
+        ),
+        (
+            "receipt-3",
+            Some(Capability::new("cap-y")),
+            "grant",
+            "allow",
+            2_200_u64,
+        ),
+    ] {
+        index
+            .index_escrow_receipt(
+                CapabilityEscrowReceiptRecord {
+                    receipt_id: receipt_id.to_string(),
+                    extension_id: extension.clone(),
+                    capability,
+                    decision_kind: decision_kind.to_string(),
+                    outcome: outcome.to_string(),
+                    timestamp_ns,
+                    trace_id: format!("trace-{receipt_id}"),
+                    decision_id: format!("decision-{receipt_id}"),
+                    policy_id: "policy-witness-index".to_string(),
+                    error_code: None,
+                },
+                &ctx,
+            )
+            .unwrap();
+    }
+
+    let joined = index
+        .replay_join(
+            &WitnessReplayJoinQuery {
+                extension_id: extension,
+                start_timestamp_ns: Some(1_000),
+                end_timestamp_ns: Some(2_500),
+                include_revoked: true,
+            },
+            &ctx,
+        )
+        .unwrap();
+    assert_eq!(joined.len(), 2);
+    assert_eq!(
+        joined[0]
+            .receipts
+            .iter()
+            .map(|r| r.receipt_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["receipt-1", "receipt-2"]
+    );
+    assert_eq!(
+        joined[1]
+            .receipts
+            .iter()
+            .map(|r| r.receipt_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["receipt-3"]
+    );
+}
+
+#[test]
+fn witness_index_determinism_holds_across_timing_and_insert_order() {
+    let ctx = index_ctx();
+    let extension = ext_id();
+    let w1 = build_promoted_for_extension(extension.clone(), "cap-a", 31, 1_000);
+    let w2 = build_promoted_for_extension(extension.clone(), "cap-b", 32, 2_000);
+    let r1 = CapabilityEscrowReceiptRecord {
+        receipt_id: "receipt-a".to_string(),
+        extension_id: extension.clone(),
+        capability: Some(Capability::new("cap-a")),
+        decision_kind: "grant".to_string(),
+        outcome: "allow".to_string(),
+        timestamp_ns: 1_100,
+        trace_id: "trace-a".to_string(),
+        decision_id: "decision-a".to_string(),
+        policy_id: "policy-a".to_string(),
+        error_code: None,
+    };
+    let r2 = CapabilityEscrowReceiptRecord {
+        receipt_id: "receipt-b".to_string(),
+        extension_id: extension.clone(),
+        capability: Some(Capability::new("cap-b")),
+        decision_kind: "grant".to_string(),
+        outcome: "allow".to_string(),
+        timestamp_ns: 2_100,
+        trace_id: "trace-b".to_string(),
+        decision_id: "decision-b".to_string(),
+        policy_id: "policy-b".to_string(),
+        error_code: None,
+    };
+
+    let mut idx_a = WitnessIndexStore::new(InMemoryStorageAdapter::new());
+    idx_a.index_witness(&w1, 1_000, &ctx).unwrap();
+    idx_a.index_witness(&w2, 2_000, &ctx).unwrap();
+    idx_a.index_escrow_receipt(r1.clone(), &ctx).unwrap();
+    idx_a.index_escrow_receipt(r2.clone(), &ctx).unwrap();
+
+    let mut idx_b = WitnessIndexStore::new(InMemoryStorageAdapter::new());
+    idx_b.index_witness(&w2, 2_000, &ctx).unwrap();
+    idx_b.index_witness(&w1, 1_000, &ctx).unwrap();
+    idx_b.index_escrow_receipt(r2, &ctx).unwrap();
+    idx_b.index_escrow_receipt(r1, &ctx).unwrap();
+
+    let hash_a = idx_a.deterministic_snapshot_hash(&extension, &ctx).unwrap();
+    let hash_b = idx_b.deterministic_snapshot_hash(&extension, &ctx).unwrap();
+    assert_eq!(hash_a, hash_b);
+}
+
+#[test]
+fn witness_index_schema_migration_keeps_data_queryable() {
+    let mut index = WitnessIndexStore::new(InMemoryStorageAdapter::new());
+    let ctx = index_ctx();
+    let extension = ext_id();
+    let witness = build_promoted_for_extension(extension, "cap-z", 41, 4_100);
+    index.index_witness(&witness, 4_100, &ctx).unwrap();
+
+    let receipt = index.migrate_schema(2, &ctx).unwrap();
+    assert_eq!(receipt.from_version, 1);
+    assert_eq!(receipt.to_version, 2);
+
+    let restored = index.witness_by_id(&witness.witness_id, &ctx).unwrap();
+    assert!(restored.is_some());
 }
