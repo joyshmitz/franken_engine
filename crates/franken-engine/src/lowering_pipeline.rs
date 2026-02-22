@@ -362,8 +362,8 @@ pub fn lower_ir1_to_ir2(
         .iter()
         .filter(|op| matches!(op.effect, EffectBoundary::HostcallEffect))
         .all(|op| op.required_capability.is_some());
-    let flow_metrics_consistent =
-        flow_metrics.static_proven_ops + flow_metrics.runtime_check_ops == flow_metrics.total_flow_ops;
+    let flow_metrics_consistent = flow_metrics.static_proven_ops + flow_metrics.runtime_check_ops
+        == flow_metrics.total_flow_ops;
     let static_coverage_millionths = flow_metrics.static_coverage_millionths();
     let checks = vec![
         InvariantCheck {
@@ -391,7 +391,9 @@ pub fn lower_ir1_to_ir2(
             passed: true,
             detail: format!(
                 "static_coverage_millionths={} static_proven={} total_flow_ops={}",
-                static_coverage_millionths, flow_metrics.static_proven_ops, flow_metrics.total_flow_ops
+                static_coverage_millionths,
+                flow_metrics.static_proven_ops,
+                flow_metrics.total_flow_ops
             ),
         },
     ];
@@ -738,22 +740,22 @@ fn infer_ir2_flow_annotations(ir2: &mut Ir2Module) -> FlowInferenceMetrics {
     for op in &mut ir2.ops {
         let inferred_data_label =
             infer_data_label_for_op(&op.inner, &binding_labels, last_label.clone());
-        let inferred_sink_clearance =
-            infer_sink_clearance(&op.effect, op.required_capability.as_ref(), &inferred_data_label);
+        let inferred_sink_clearance = infer_sink_clearance(
+            &op.effect,
+            op.required_capability.as_ref(),
+            &inferred_data_label,
+        );
         let requires_declassification = !inferred_data_label.can_flow_to(&inferred_sink_clearance);
-        let runtime_guard_needed = op
-            .required_capability
-            .as_ref()
-            .is_some_and(|capability| {
-                flow_requires_runtime_check(
-                    Some(&FlowAnnotation {
-                        data_label: inferred_data_label.clone(),
-                        sink_clearance: inferred_sink_clearance.clone(),
-                        declassification_required: requires_declassification,
-                    }),
-                    capability,
-                )
-            });
+        let runtime_guard_needed = op.required_capability.as_ref().is_some_and(|capability| {
+            flow_requires_runtime_check(
+                Some(&FlowAnnotation {
+                    data_label: inferred_data_label.clone(),
+                    sink_clearance: inferred_sink_clearance.clone(),
+                    declassification_required: requires_declassification,
+                }),
+                capability,
+            )
+        });
         let should_annotate = op.flow.is_some() || !matches!(op.effect, EffectBoundary::Pure);
         if should_annotate {
             metrics.total_flow_ops = metrics.total_flow_ops.saturating_add(1);
@@ -855,8 +857,7 @@ fn sink_clearance_from_capability(capability: &str) -> Label {
     if normalized.contains("credential") || normalized.contains("key_material") {
         return Label::TopSecret;
     }
-    if normalized.contains("secret") || normalized.contains("token") || normalized.contains("key")
-    {
+    if normalized.contains("secret") || normalized.contains("token") || normalized.contains("key") {
         return Label::Secret;
     }
     if normalized.contains("fs.read") {
@@ -1053,9 +1054,13 @@ mod tests {
                 .iter()
                 .all(|check| check.passed)
         );
-        assert!(result.witness.invariant_checks.iter().any(
-            |check| check.name == "ir2_static_flow_coverage_ratio"
-        ));
+        assert!(
+            result
+                .witness
+                .invariant_checks
+                .iter()
+                .any(|check| check.name == "ir2_static_flow_coverage_ratio")
+        );
     }
 
     #[test]
@@ -1102,11 +1107,13 @@ mod tests {
             .iter()
             .find(|op| matches!(op.inner, Ir1Op::Call { .. }))
             .expect("call op");
-        assert!(call_op
-            .flow
-            .as_ref()
-            .expect("flow annotation")
-            .declassification_required);
+        assert!(
+            call_op
+                .flow
+                .as_ref()
+                .expect("flow annotation")
+                .declassification_required
+        );
 
         let ir3 = lower_ir2_to_ir3(&ir2)
             .expect("IR2->IR3 should succeed")

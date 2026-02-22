@@ -1,5 +1,5 @@
 use frankenengine_engine::ast::{ParseGoal, SourceSpan, SyntaxTree};
-use frankenengine_engine::ir_contract::Ir0Module;
+use frankenengine_engine::ir_contract::{Ir0Module, Ir3Instruction};
 use frankenengine_engine::lowering_pipeline::{
     LoweringContext, LoweringPipelineError, lower_ir0_to_ir3,
 };
@@ -42,6 +42,30 @@ fn hostcall_literal_preserves_capability_intent_into_ir2() {
         .map(|cap| cap.0.as_str())
         .collect::<Vec<_>>();
     assert!(capabilities.contains(&"fs.read"));
+}
+
+#[test]
+fn dynamic_hostcall_path_inserts_runtime_ifc_guard() {
+    let parser = CanonicalEs2020Parser;
+    let tree = parser
+        .parse("doWork();", ParseGoal::Script)
+        .expect("script parse should succeed");
+    let ir0 = Ir0Module::from_syntax_tree(tree, "dynamic_hostcall_fixture.ts");
+    let context = LoweringContext::new("trace-dynamic", "decision-dynamic", "policy-dynamic");
+    let output = lower_ir0_to_ir3(&ir0, &context).expect("pipeline should succeed");
+
+    let hostcall_caps = output
+        .ir3
+        .instructions
+        .iter()
+        .filter_map(|instruction| match instruction {
+            Ir3Instruction::HostCall { capability, .. } => Some(capability.0.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert!(hostcall_caps.contains(&"ifc.check_flow"));
+    assert!(hostcall_caps.contains(&"hostcall.invoke"));
 }
 
 #[test]

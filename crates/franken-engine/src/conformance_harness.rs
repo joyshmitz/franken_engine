@@ -25,7 +25,8 @@ const IFC_SINK_CLEARANCES: &[&str] = &[
 ];
 const IFC_FLOW_PATH_TYPES: &[&str] = &["direct", "indirect", "implicit", "temporal", "covert"];
 const IFC_EXPECTED_OUTCOMES: &[&str] = &["allow", "block", "declassify"];
-const IFC_EXPECTED_EVIDENCE_TYPES: &[&str] = &["none", "flow_violation", "declassification_receipt"];
+const IFC_EXPECTED_EVIDENCE_TYPES: &[&str] =
+    &["none", "flow_violation", "declassification_receipt"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeterministicRng {
@@ -146,6 +147,18 @@ pub struct ConformanceAssetRecord {
     pub expected_output_path: String,
     pub expected_output_hash: String,
     pub import_date: String,
+    #[serde(default)]
+    pub category: Option<String>,
+    #[serde(default)]
+    pub source_labels: Vec<String>,
+    #[serde(default)]
+    pub sink_clearances: Vec<String>,
+    #[serde(default)]
+    pub flow_path_type: Option<String>,
+    #[serde(default)]
+    pub expected_outcome: Option<String>,
+    #[serde(default)]
+    pub expected_evidence_type: Option<String>,
 }
 
 impl ConformanceAssetRecord {
@@ -183,8 +196,157 @@ impl ConformanceAssetRecord {
         if self.import_date.trim().is_empty() {
             return Err(ConformanceManifestError::MissingField("import_date"));
         }
+        self.validate_ifc_fields()?;
         Ok(())
     }
+
+    fn is_ifc_asset(&self) -> bool {
+        self.semantic_domain.starts_with("ifc_corpus/")
+            || self.category.is_some()
+            || !self.source_labels.is_empty()
+            || !self.sink_clearances.is_empty()
+            || self.flow_path_type.is_some()
+            || self.expected_outcome.is_some()
+            || self.expected_evidence_type.is_some()
+    }
+
+    fn ifc_metadata(&self) -> Option<IfcAssetMetadata> {
+        let category = self.category.clone()?;
+        let flow_path_type = self.flow_path_type.clone()?;
+        let expected_outcome = self.expected_outcome.clone()?;
+        let expected_evidence_type = self.expected_evidence_type.clone()?;
+
+        Some(IfcAssetMetadata {
+            category,
+            source_labels: self.source_labels.clone(),
+            sink_clearances: self.sink_clearances.clone(),
+            flow_path_type,
+            expected_outcome,
+            expected_evidence_type,
+        })
+    }
+
+    fn validate_ifc_fields(&self) -> Result<(), ConformanceManifestError> {
+        if !self.is_ifc_asset() {
+            return Ok(());
+        }
+
+        let category = self
+            .category
+            .as_deref()
+            .ok_or(ConformanceManifestError::MissingField("category"))?;
+        if !IFC_CATEGORIES.contains(&category) {
+            return Err(ConformanceManifestError::InvalidFieldValue {
+                field: "category",
+                value: category.to_string(),
+            });
+        }
+
+        if self.source_labels.is_empty() {
+            return Err(ConformanceManifestError::MissingField("source_labels"));
+        }
+        for label in &self.source_labels {
+            if !IFC_SOURCE_LABELS.contains(&label.as_str()) {
+                return Err(ConformanceManifestError::InvalidFieldValue {
+                    field: "source_labels",
+                    value: label.clone(),
+                });
+            }
+        }
+
+        if self.sink_clearances.is_empty() {
+            return Err(ConformanceManifestError::MissingField("sink_clearances"));
+        }
+        for clearance in &self.sink_clearances {
+            if !IFC_SINK_CLEARANCES.contains(&clearance.as_str()) {
+                return Err(ConformanceManifestError::InvalidFieldValue {
+                    field: "sink_clearances",
+                    value: clearance.clone(),
+                });
+            }
+        }
+
+        let flow_path_type = self
+            .flow_path_type
+            .as_deref()
+            .ok_or(ConformanceManifestError::MissingField("flow_path_type"))?;
+        if !IFC_FLOW_PATH_TYPES.contains(&flow_path_type) {
+            return Err(ConformanceManifestError::InvalidFieldValue {
+                field: "flow_path_type",
+                value: flow_path_type.to_string(),
+            });
+        }
+
+        let expected_outcome = self
+            .expected_outcome
+            .as_deref()
+            .ok_or(ConformanceManifestError::MissingField("expected_outcome"))?;
+        if !IFC_EXPECTED_OUTCOMES.contains(&expected_outcome) {
+            return Err(ConformanceManifestError::InvalidFieldValue {
+                field: "expected_outcome",
+                value: expected_outcome.to_string(),
+            });
+        }
+
+        let expected_evidence_type = self
+            .expected_evidence_type
+            .as_deref()
+            .ok_or(ConformanceManifestError::MissingField("expected_evidence_type"))?;
+        if !IFC_EXPECTED_EVIDENCE_TYPES.contains(&expected_evidence_type) {
+            return Err(ConformanceManifestError::InvalidFieldValue {
+                field: "expected_evidence_type",
+                value: expected_evidence_type.to_string(),
+            });
+        }
+
+        match category {
+            "benign" => {
+                if expected_outcome != "allow" || expected_evidence_type != "none" {
+                    return Err(ConformanceManifestError::InvalidIfcExpectation {
+                        asset_id: self.asset_id.clone(),
+                        category: category.to_string(),
+                        expected_outcome: expected_outcome.to_string(),
+                        expected_evidence_type: expected_evidence_type.to_string(),
+                    });
+                }
+            }
+            "exfil" => {
+                if expected_outcome != "block" || expected_evidence_type != "flow_violation" {
+                    return Err(ConformanceManifestError::InvalidIfcExpectation {
+                        asset_id: self.asset_id.clone(),
+                        category: category.to_string(),
+                        expected_outcome: expected_outcome.to_string(),
+                        expected_evidence_type: expected_evidence_type.to_string(),
+                    });
+                }
+            }
+            "declassify" => {
+                if expected_outcome != "declassify"
+                    || expected_evidence_type != "declassification_receipt"
+                {
+                    return Err(ConformanceManifestError::InvalidIfcExpectation {
+                        asset_id: self.asset_id.clone(),
+                        category: category.to_string(),
+                        expected_outcome: expected_outcome.to_string(),
+                        expected_evidence_type: expected_evidence_type.to_string(),
+                    });
+                }
+            }
+            _ => {}
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct IfcAssetMetadata {
+    category: String,
+    source_labels: Vec<String>,
+    sink_clearances: Vec<String>,
+    flow_path_type: String,
+    expected_outcome: String,
+    expected_evidence_type: String,
 }
 
 #[derive(Debug, Clone)]
@@ -203,6 +365,16 @@ pub enum ConformanceManifestError {
     EmptyAssetSet,
     ManifestHasNoParent,
     MissingField(&'static str),
+    InvalidFieldValue {
+        field: &'static str,
+        value: String,
+    },
+    InvalidIfcExpectation {
+        asset_id: String,
+        category: String,
+        expected_outcome: String,
+        expected_evidence_type: String,
+    },
     AssetIo {
         asset_id: String,
         path: PathBuf,
@@ -234,6 +406,18 @@ impl fmt::Display for ConformanceManifestError {
             Self::MissingField(field) => {
                 write!(f, "manifest entry is missing required field `{field}`")
             }
+            Self::InvalidFieldValue { field, value } => {
+                write!(f, "manifest entry has invalid `{field}` value `{value}`")
+            }
+            Self::InvalidIfcExpectation {
+                asset_id,
+                category,
+                expected_outcome,
+                expected_evidence_type,
+            } => write!(
+                f,
+                "manifest entry `{asset_id}` has invalid IFC expectation for category `{category}`: outcome=`{expected_outcome}`, evidence=`{expected_evidence_type}`"
+            ),
             Self::AssetIo {
                 asset_id,
                 path,
@@ -645,7 +829,24 @@ pub struct ConformanceLogEvent {
     pub outcome: String,
     pub error_code: Option<String>,
     pub asset_id: String,
+    pub workload_id: String,
     pub semantic_domain: String,
+    #[serde(default)]
+    pub category: Option<String>,
+    #[serde(default)]
+    pub source_labels: Vec<String>,
+    #[serde(default)]
+    pub sink_clearances: Vec<String>,
+    #[serde(default)]
+    pub flow_path_type: Option<String>,
+    #[serde(default)]
+    pub expected_outcome: Option<String>,
+    #[serde(default)]
+    pub actual_outcome: Option<String>,
+    #[serde(default)]
+    pub evidence_type: Option<String>,
+    #[serde(default)]
+    pub evidence_id: Option<String>,
     pub duration_us: u64,
     pub error_detail: Option<String>,
 }
@@ -701,6 +902,45 @@ impl fmt::Display for ConformanceCiGateError {
 }
 
 impl Error for ConformanceCiGateError {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct IfcObservedOutcome {
+    outcome: Option<String>,
+    evidence_type: Option<String>,
+    evidence_id: Option<String>,
+}
+
+fn parse_ifc_observed_outcome(payload: &str) -> IfcObservedOutcome {
+    let mut outcome = None;
+    let mut evidence_type = None;
+    let mut evidence_id = None;
+
+    for token in payload.split_whitespace() {
+        if let Some(value) = token.strip_prefix("outcome:") {
+            if !value.trim().is_empty() {
+                outcome = Some(value.trim().to_string());
+            }
+            continue;
+        }
+        if let Some(value) = token.strip_prefix("evidence:") {
+            if !value.trim().is_empty() {
+                evidence_type = Some(value.trim().to_string());
+            }
+            continue;
+        }
+        if let Some(value) = token.strip_prefix("evidence_id:") {
+            if !value.trim().is_empty() {
+                evidence_id = Some(value.trim().to_string());
+            }
+        }
+    }
+
+    IfcObservedOutcome {
+        outcome,
+        evidence_type,
+        evidence_id,
+    }
+}
 
 #[derive(Debug)]
 pub enum ConformanceRunError {
@@ -840,6 +1080,23 @@ impl ConformanceRunner {
             let _adapted_source = self.adapter.adapt_source(&fixture.source);
             let actual = canonicalize_conformance_output(&fixture.observed_output);
             let expected = canonicalize_conformance_output(&expected_output);
+            let ifc_metadata = asset.record.ifc_metadata();
+            let expected_signal = parse_ifc_observed_outcome(&expected);
+            let actual_signal = parse_ifc_observed_outcome(&actual);
+
+            if let Some(metadata) = ifc_metadata.as_ref()
+                && (expected_signal.outcome.as_deref() != Some(metadata.expected_outcome.as_str())
+                    || expected_signal.evidence_type.as_deref()
+                        != Some(metadata.expected_evidence_type.as_str()))
+            {
+                return Err(ConformanceRunError::ReproInvariant {
+                    asset_id: asset.record.asset_id.clone(),
+                    detail: format!(
+                        "IFC expected-output metadata mismatch: outcome=`{:?}`, evidence=`{:?}`",
+                        expected_signal.outcome, expected_signal.evidence_type
+                    ),
+                });
+            }
 
             let (outcome, error_code, error_detail) = if actual == expected {
                 passed += 1;
@@ -884,6 +1141,23 @@ impl ConformanceRunner {
                 )
             };
 
+            let category = ifc_metadata.as_ref().map(|metadata| metadata.category.clone());
+            let source_labels = ifc_metadata
+                .as_ref()
+                .map(|metadata| metadata.source_labels.clone())
+                .unwrap_or_default();
+            let sink_clearances = ifc_metadata
+                .as_ref()
+                .map(|metadata| metadata.sink_clearances.clone())
+                .unwrap_or_default();
+            let flow_path_type = ifc_metadata
+                .as_ref()
+                .map(|metadata| metadata.flow_path_type.clone());
+            let expected_outcome = ifc_metadata
+                .as_ref()
+                .map(|metadata| metadata.expected_outcome.clone())
+                .or(expected_signal.outcome);
+
             logs.push(ConformanceLogEvent {
                 trace_id,
                 decision_id,
@@ -893,7 +1167,16 @@ impl ConformanceRunner {
                 outcome,
                 error_code,
                 asset_id: asset.record.asset_id.clone(),
+                workload_id: asset.record.asset_id.clone(),
                 semantic_domain: asset.record.semantic_domain.clone(),
+                category,
+                source_labels,
+                sink_clearances,
+                flow_path_type,
+                expected_outcome,
+                actual_outcome: actual_signal.outcome,
+                evidence_type: actual_signal.evidence_type,
+                evidence_id: actual_signal.evidence_id,
                 duration_us,
                 error_detail,
             });
@@ -1048,6 +1331,7 @@ impl ConformanceRunner {
 pub struct ConformanceCollectedArtifacts {
     pub run_manifest_path: PathBuf,
     pub conformance_evidence_path: PathBuf,
+    pub ifc_conformance_evidence_path: Option<PathBuf>,
     pub minimized_repro_index_path: Option<PathBuf>,
     pub minimized_repro_events_path: Option<PathBuf>,
     pub minimized_repro_paths: Vec<PathBuf>,
@@ -1097,6 +1381,26 @@ impl ConformanceEvidenceCollector {
 
         let conformance_evidence_path = run_root.join("conformance_evidence.jsonl");
         write_atomic(&conformance_evidence_path, evidence_lines.as_bytes())?;
+
+        let mut ifc_conformance_evidence_path = None;
+        if let Some(ifc_summary) = build_ifc_conformance_summary(run) {
+            let mut ifc_lines = String::new();
+            let summary_line = serde_json::to_string(&ifc_summary)
+                .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+            ifc_lines.push_str(&summary_line);
+            ifc_lines.push('\n');
+
+            for event in run.logs.iter().filter(|event| event.category.is_some()) {
+                let line = serde_json::to_string(event)
+                    .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+                ifc_lines.push_str(&line);
+                ifc_lines.push('\n');
+            }
+
+            let path = run_root.join("ifc_conformance_evidence.jsonl");
+            write_atomic(&path, ifc_lines.as_bytes())?;
+            ifc_conformance_evidence_path = Some(path);
+        }
 
         let mut minimized_repro_paths = Vec::new();
         let mut minimized_repro_index_path = None;
@@ -1173,6 +1477,7 @@ impl ConformanceEvidenceCollector {
         Ok(ConformanceCollectedArtifacts {
             run_manifest_path,
             conformance_evidence_path,
+            ifc_conformance_evidence_path,
             minimized_repro_index_path,
             minimized_repro_events_path,
             minimized_repro_paths,
@@ -1191,6 +1496,30 @@ struct ConformanceEvidenceSummaryLine {
     error_count: usize,
     env_fingerprint: String,
     minimized_repro_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+struct IfcCategoryCounts {
+    total: usize,
+    passed: usize,
+    failed: usize,
+    waived: usize,
+    errored: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct IfcConformanceEvidenceSummaryLine {
+    run_manifest: String,
+    run_id: String,
+    corpus_hash: String,
+    policy_snapshot_hash: String,
+    ifc_label_taxonomy_hash: String,
+    environment_fingerprint: String,
+    category_counts: BTreeMap<String, IfcCategoryCounts>,
+    false_positive_count: usize,
+    false_negative_count: usize,
+    false_negative_direct_indirect_count: usize,
+    ci_blocking_failures: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1231,6 +1560,73 @@ struct ConformanceMinimizationOutcome {
     minimized_expected_output: String,
     minimized_actual_output: String,
     summary: ConformanceMinimizationSummary,
+}
+
+fn build_ifc_conformance_summary(run: &ConformanceRunResult) -> Option<IfcConformanceEvidenceSummaryLine> {
+    let ifc_logs: Vec<&ConformanceLogEvent> =
+        run.logs.iter().filter(|event| event.category.is_some()).collect();
+    if ifc_logs.is_empty() {
+        return None;
+    }
+
+    let mut category_counts: BTreeMap<String, IfcCategoryCounts> = BTreeMap::new();
+    let mut false_positive_count = 0usize;
+    let mut false_negative_count = 0usize;
+    let mut false_negative_direct_indirect_count = 0usize;
+
+    for event in &ifc_logs {
+        let category = event
+            .category
+            .as_ref()
+            .expect("IFC logs always carry category");
+        let counts = category_counts.entry(category.clone()).or_default();
+        counts.total += 1;
+        match event.outcome.as_str() {
+            "pass" => counts.passed += 1,
+            "fail" => counts.failed += 1,
+            "waived" => counts.waived += 1,
+            _ => counts.errored += 1,
+        }
+
+        if category == "benign" && event.actual_outcome.as_deref() == Some("block") {
+            false_positive_count += 1;
+        }
+        if category == "exfil" && event.actual_outcome.as_deref() != Some("block") {
+            false_negative_count += 1;
+            if matches!(event.flow_path_type.as_deref(), Some("direct" | "indirect")) {
+                false_negative_direct_indirect_count += 1;
+            }
+        }
+    }
+
+    let policy_id = ifc_logs
+        .first()
+        .map(|event| event.policy_id.as_str())
+        .unwrap_or("policy-conformance-v1");
+    let policy_snapshot_hash = sha256_hex(policy_id.as_bytes());
+    let ci_blocking_failures = false_positive_count + false_negative_direct_indirect_count;
+
+    Some(IfcConformanceEvidenceSummaryLine {
+        run_manifest: "run_manifest.json".to_string(),
+        run_id: run.run_id.clone(),
+        corpus_hash: run.asset_manifest_hash.clone(),
+        policy_snapshot_hash,
+        ifc_label_taxonomy_hash: ifc_label_taxonomy_hash(),
+        environment_fingerprint: run.summary.env_fingerprint.clone(),
+        category_counts,
+        false_positive_count,
+        false_negative_count,
+        false_negative_direct_indirect_count,
+        ci_blocking_failures,
+    })
+}
+
+fn ifc_label_taxonomy_hash() -> String {
+    let taxonomy = serde_json::json!({
+        "source_labels": IFC_SOURCE_LABELS,
+        "sink_clearances": IFC_SINK_CLEARANCES,
+    });
+    sha256_hex(taxonomy.to_string().as_bytes())
 }
 
 fn build_failure_id(asset_id: &str, seed: u64, expected: &str, actual: &str) -> String {

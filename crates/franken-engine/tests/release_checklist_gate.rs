@@ -51,10 +51,12 @@ fn gate_allows_release_when_all_required_items_pass_and_store_with_release_tag()
         decision.storage_integration_point,
         "frankensqlite::benchmark::ledger"
     );
-    assert!(decision
-        .store_key
-        .as_ref()
-        .is_some_and(|value| value.contains("v1.2.3")));
+    assert!(
+        decision
+            .store_key
+            .as_ref()
+            .is_some_and(|value| value.contains("v1.2.3"))
+    );
 
     for event in &decision.events {
         assert_eq!(event.component, RELEASE_CHECKLIST_COMPONENT);

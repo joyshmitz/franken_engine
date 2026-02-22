@@ -268,7 +268,9 @@ struct EvaluationResult {
 }
 
 /// Parse and validate a checklist artifact from JSON.
-pub fn parse_release_checklist_json(payload: &str) -> Result<ReleaseChecklist, ReleaseChecklistError> {
+pub fn parse_release_checklist_json(
+    payload: &str,
+) -> Result<ReleaseChecklist, ReleaseChecklistError> {
     serde_json::from_str::<ReleaseChecklist>(payload).map_err(|error| {
         ReleaseChecklistError::SerializationFailure {
             detail: error.to_string(),
@@ -277,7 +279,9 @@ pub fn parse_release_checklist_json(payload: &str) -> Result<ReleaseChecklist, R
 }
 
 /// Validate checklist schema and required-item constraints.
-pub fn validate_release_checklist(checklist: &ReleaseChecklist) -> Result<(), ReleaseChecklistError> {
+pub fn validate_release_checklist(
+    checklist: &ReleaseChecklist,
+) -> Result<(), ReleaseChecklistError> {
     evaluate_checklist(checklist).map(|_| ())
 }
 
@@ -378,7 +382,9 @@ pub fn query_release_checklists_by_tag<A: StorageAdapter>(
     let mut metadata_filters = BTreeMap::new();
     metadata_filters.insert("release_tag".to_string(), release_tag.to_string());
     let query = StoreQuery {
-        key_prefix: Some(format!("{RELEASE_CHECKLIST_STORE_KEY_PREFIX}/{release_tag}/")),
+        key_prefix: Some(format!(
+            "{RELEASE_CHECKLIST_STORE_KEY_PREFIX}/{release_tag}/"
+        )),
         metadata_filters,
         limit: None,
     };
@@ -431,11 +437,19 @@ fn run_gate_impl<A: StorageAdapter>(
 
     let store_key = format!(
         "{}/{}/{}",
-        RELEASE_CHECKLIST_STORE_KEY_PREFIX, evaluation.normalized.release_tag, evaluation.checklist_id
+        RELEASE_CHECKLIST_STORE_KEY_PREFIX,
+        evaluation.normalized.release_tag,
+        evaluation.checklist_id
     );
     let mut metadata = BTreeMap::new();
-    metadata.insert("component".to_string(), RELEASE_CHECKLIST_COMPONENT.to_string());
-    metadata.insert("release_tag".to_string(), evaluation.normalized.release_tag.clone());
+    metadata.insert(
+        "component".to_string(),
+        RELEASE_CHECKLIST_COMPONENT.to_string(),
+    );
+    metadata.insert(
+        "release_tag".to_string(),
+        evaluation.normalized.release_tag.clone(),
+    );
     metadata.insert("checklist_id".to_string(), evaluation.checklist_id.clone());
     metadata.insert(
         "schema_version".to_string(),
@@ -467,7 +481,9 @@ fn run_gate_impl<A: StorageAdapter>(
     Ok((evaluation, store_key))
 }
 
-fn evaluate_checklist(checklist: &ReleaseChecklist) -> Result<EvaluationResult, ReleaseChecklistError> {
+fn evaluate_checklist(
+    checklist: &ReleaseChecklist,
+) -> Result<EvaluationResult, ReleaseChecklistError> {
     let mut normalized = checklist.clone();
     normalize_checklist(&mut normalized)?;
     let checklist_id = build_checklist_id(&normalized);
@@ -487,7 +503,10 @@ fn evaluate_checklist(checklist: &ReleaseChecklist) -> Result<EvaluationResult, 
 
     for required in REQUIRED_CHECKLIST_ITEMS {
         let Some(item) = by_id.get(required.item_id) else {
-            blockers.push(format!("missing required checklist item `{}`", required.item_id));
+            blockers.push(format!(
+                "missing required checklist item `{}`",
+                required.item_id
+            ));
             continue;
         };
 
@@ -505,8 +524,10 @@ fn evaluate_checklist(checklist: &ReleaseChecklist) -> Result<EvaluationResult, 
             ));
         }
 
-        if matches!(item.status, ChecklistItemStatus::Pass | ChecklistItemStatus::Waived)
-            && item.artifact_refs.is_empty()
+        if matches!(
+            item.status,
+            ChecklistItemStatus::Pass | ChecklistItemStatus::Waived
+        ) && item.artifact_refs.is_empty()
         {
             blockers.push(format!(
                 "required item `{}` is `{}` but has no artifact_refs",
@@ -615,8 +636,11 @@ fn normalize_checklist(checklist: &mut ReleaseChecklist) -> Result<(), ReleaseCh
             });
         }
 
-        item.artifact_refs
-            .sort_by(|left, right| left.artifact_id.cmp(&right.artifact_id).then(left.path.cmp(&right.path)));
+        item.artifact_refs.sort_by(|left, right| {
+            left.artifact_id
+                .cmp(&right.artifact_id)
+                .then(left.path.cmp(&right.path))
+        });
         for artifact in &mut item.artifact_refs {
             artifact.artifact_id = artifact.artifact_id.trim().to_string();
             artifact.path = artifact.path.trim().to_string();
@@ -644,8 +668,10 @@ fn is_required_item_id(item_id: &str) -> bool {
 }
 
 fn normalize_utc_timestamp(value: &str) -> Result<String, ReleaseChecklistError> {
-    let parsed = DateTime::parse_from_rfc3339(value).map_err(|_| ReleaseChecklistError::InvalidTimestamp {
-        value: value.to_string(),
+    let parsed = DateTime::parse_from_rfc3339(value).map_err(|_| {
+        ReleaseChecklistError::InvalidTimestamp {
+            value: value.to_string(),
+        }
     })?;
     Ok(parsed
         .with_timezone(&Utc)
