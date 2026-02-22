@@ -1,0 +1,57 @@
+{
+  "schema_version": "franken-engine.conformance-assets.v1",
+  "generated_at_utc": "2026-02-22T06:00:00Z",
+  "assets": [
+    {
+      "asset_id": "ifc-benign-dual-cap-001",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "3a1316f9d005daa251d62f5084ee6be5255101faae52453979842b9361a2ea4e",
+      "expected_output_path": "expected/benign_dual_cap.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": ["credential"],
+      "sink_clearances": ["persistence_export"],
+      "flow_path_type": "direct",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-exfil-direct-001",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_direct.fixture.json",
+      "fixture_hash": "4f7f8cc8c85aa73ef199ac740143a48b3eb0d78643d619def6547dd322834c30",
+      "expected_output_path": "expected/exfil_direct.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": ["credential"],
+      "sink_clearances": ["network_egress"],
+      "flow_path_type": "direct",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-declass-exception-001",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/declassify",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/declass_exception.fixture.json",
+      "fixture_hash": "85f3e66a10cb3e9a88f263f91fb0f9ddb99f962b9652ae9ae5da7f74d675ba9a",
+      "expected_output_path": "expected/declass_exception.expected.txt",
+      "expected_output_hash": "3bd882fa30e082cc5789e18ddac37884bb2d3a7a8acaac877429b6335c502772",
+      "import_date": "2026-02-22",
+      "category": "declassify",
+      "source_labels": ["credential"],
+      "sink_clearances": ["explicit_declassify", "network_egress"],
+      "flow_path_type": "direct",
+      "expected_outcome": "declassify",
+      "expected_evidence_type": "declassification_receipt"
+    }
+  ]
+}

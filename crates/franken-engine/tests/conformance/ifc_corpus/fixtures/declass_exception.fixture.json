@@ -1,0 +1,1 @@
+{"donor_harness":"franken-ifc","source":"secret = fs.read('/creds'); token = declassify(secret, 'operator_override'); net.send(token)","observed_output":"outcome:allow evidence:declassification_receipt"}
