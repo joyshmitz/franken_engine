@@ -816,3 +816,911 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     fs::rename(&tmp, path)?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── VirtualClock ──────────────────────────────────────────────
+
+    #[test]
+    fn virtual_clock_new_and_now() {
+        let clock = VirtualClock::new(1000);
+        assert_eq!(clock.now_micros(), 1000);
+    }
+
+    #[test]
+    fn virtual_clock_advance() {
+        let mut clock = VirtualClock::new(100);
+        clock.advance(50);
+        assert_eq!(clock.now_micros(), 150);
+    }
+
+    #[test]
+    fn virtual_clock_advance_saturating() {
+        let mut clock = VirtualClock::new(u64::MAX - 5);
+        clock.advance(100);
+        assert_eq!(clock.now_micros(), u64::MAX);
+    }
+
+    #[test]
+    fn virtual_clock_serde_round_trip() {
+        let clock = VirtualClock::new(42);
+        let json = serde_json::to_string(&clock).unwrap();
+        let back: VirtualClock = serde_json::from_str(&json).unwrap();
+        assert_eq!(clock, back);
+    }
+
+    // ── DeterministicRng ──────────────────────────────────────────
+
+    #[test]
+    fn rng_seeded_deterministic() {
+        let mut a = DeterministicRng::seeded(123);
+        let mut b = DeterministicRng::seeded(123);
+        let seq_a: Vec<u64> = (0..10).map(|_| a.next_u64()).collect();
+        let seq_b: Vec<u64> = (0..10).map(|_| b.next_u64()).collect();
+        assert_eq!(seq_a, seq_b);
+    }
+
+    #[test]
+    fn rng_different_seeds_differ() {
+        let mut a = DeterministicRng::seeded(1);
+        let mut b = DeterministicRng::seeded(2);
+        assert_ne!(a.next_u64(), b.next_u64());
+    }
+
+    #[test]
+    fn rng_zero_seed_not_stuck() {
+        let mut rng = DeterministicRng::seeded(0);
+        let v1 = rng.next_u64();
+        let v2 = rng.next_u64();
+        assert_ne!(v1, 0);
+        assert_ne!(v1, v2);
+    }
+
+    #[test]
+    fn rng_serde_round_trip() {
+        let rng = DeterministicRng::seeded(999);
+        let json = serde_json::to_string(&rng).unwrap();
+        let back: DeterministicRng = serde_json::from_str(&json).unwrap();
+        assert_eq!(rng, back);
+    }
+
+    // ── ScenarioStep / ExpectedEvent serde ────────────────────────
+
+    #[test]
+    fn scenario_step_defaults() {
+        let json = r#"{"component":"c","event":"e"}"#;
+        let step: ScenarioStep = serde_json::from_str(json).unwrap();
+        assert_eq!(step.advance_micros, 0);
+        assert!(step.metadata.is_empty());
+    }
+
+    #[test]
+    fn expected_event_round_trip() {
+        let ev = ExpectedEvent {
+            component: "comp".into(),
+            event: "evt".into(),
+            outcome: "ok".into(),
+            error_code: Some("E001".into()),
+        };
+        let json = serde_json::to_string(&ev).unwrap();
+        let back: ExpectedEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(ev, back);
+    }
+
+    // ── TestFixture ───────────────────────────────────────────────
+
+    fn valid_fixture() -> TestFixture {
+        TestFixture {
+            fixture_id: "fix-001".into(),
+            fixture_version: TestFixture::CURRENT_VERSION,
+            seed: 42,
+            virtual_time_start_micros: 1000,
+            policy_id: "policy-A".into(),
+            steps: vec![ScenarioStep {
+                component: "auth".into(),
+                event: "login".into(),
+                advance_micros: 100,
+                metadata: BTreeMap::new(),
+            }],
+            expected_events: vec![],
+            determinism_check: false,
+        }
+    }
+
+    #[test]
+    fn fixture_validate_valid() {
+        assert!(valid_fixture().validate().is_ok());
+    }
+
+    #[test]
+    fn fixture_validate_missing_fixture_id() {
+        let mut f = valid_fixture();
+        f.fixture_id = "  ".into();
+        assert!(matches!(
+            f.validate(),
+            Err(FixtureValidationError::MissingFixtureId)
+        ));
+    }
+
+    #[test]
+    fn fixture_validate_wrong_version() {
+        let mut f = valid_fixture();
+        f.fixture_version = 99;
+        assert!(matches!(
+            f.validate(),
+            Err(FixtureValidationError::UnsupportedVersion { .. })
+        ));
+    }
+
+    #[test]
+    fn fixture_validate_missing_policy_id() {
+        let mut f = valid_fixture();
+        f.policy_id = "".into();
+        assert!(matches!(
+            f.validate(),
+            Err(FixtureValidationError::MissingPolicyId)
+        ));
+    }
+
+    #[test]
+    fn fixture_validate_missing_steps() {
+        let mut f = valid_fixture();
+        f.steps.clear();
+        assert!(matches!(
+            f.validate(),
+            Err(FixtureValidationError::MissingSteps)
+        ));
+    }
+
+    #[test]
+    fn fixture_validate_empty_component() {
+        let mut f = valid_fixture();
+        f.steps[0].component = "".into();
+        assert!(matches!(
+            f.validate(),
+            Err(FixtureValidationError::InvalidStep { index: 0, .. })
+        ));
+    }
+
+    #[test]
+    fn fixture_validate_empty_event() {
+        let mut f = valid_fixture();
+        f.steps[0].event = " ".into();
+        assert!(matches!(
+            f.validate(),
+            Err(FixtureValidationError::InvalidStep { index: 0, .. })
+        ));
+    }
+
+    #[test]
+    fn fixture_serde_round_trip() {
+        let f = valid_fixture();
+        let json = serde_json::to_string(&f).unwrap();
+        let back: TestFixture = serde_json::from_str(&json).unwrap();
+        assert_eq!(f, back);
+    }
+
+    // ── FixtureValidationError Display ────────────────────────────
+
+    #[test]
+    fn fixture_error_display_missing_fixture_id() {
+        let e = FixtureValidationError::MissingFixtureId;
+        assert_eq!(e.to_string(), "fixture_id is required");
+    }
+
+    #[test]
+    fn fixture_error_display_missing_policy_id() {
+        let e = FixtureValidationError::MissingPolicyId;
+        assert_eq!(e.to_string(), "policy_id is required");
+    }
+
+    #[test]
+    fn fixture_error_display_missing_steps() {
+        let e = FixtureValidationError::MissingSteps;
+        assert_eq!(e.to_string(), "fixture must contain at least one step");
+    }
+
+    #[test]
+    fn fixture_error_display_unsupported_version() {
+        let e = FixtureValidationError::UnsupportedVersion {
+            expected: 1,
+            actual: 5,
+        };
+        assert!(e.to_string().contains("expected 1"));
+        assert!(e.to_string().contains("got 5"));
+    }
+
+    #[test]
+    fn fixture_error_display_invalid_step() {
+        let e = FixtureValidationError::InvalidStep {
+            index: 3,
+            reason: "oops".into(),
+        };
+        assert!(e.to_string().contains("index 3"));
+        assert!(e.to_string().contains("oops"));
+    }
+
+    // ── DeterministicRunner ───────────────────────────────────────
+
+    #[test]
+    fn runner_default_config() {
+        let cfg = DeterministicRunnerConfig::default();
+        assert_eq!(cfg.trace_prefix, "trace");
+    }
+
+    #[test]
+    fn runner_run_fixture_basic() {
+        let runner = DeterministicRunner::default();
+        let fixture = valid_fixture();
+        let result = runner.run_fixture(&fixture).unwrap();
+        assert_eq!(result.fixture_id, "fix-001");
+        assert_eq!(result.seed, 42);
+        assert_eq!(result.events.len(), 1);
+        assert_eq!(result.random_transcript.len(), 1);
+        assert_eq!(result.start_virtual_time_micros, 1000);
+        assert_eq!(result.end_virtual_time_micros, 1100);
+    }
+
+    #[test]
+    fn runner_run_fixture_deterministic() {
+        let runner = DeterministicRunner::default();
+        let fixture = valid_fixture();
+        let r1 = runner.run_fixture(&fixture).unwrap();
+        let r2 = runner.run_fixture(&fixture).unwrap();
+        assert_eq!(r1.output_digest, r2.output_digest);
+        assert_eq!(r1.events, r2.events);
+        assert_eq!(r1.random_transcript, r2.random_transcript);
+    }
+
+    #[test]
+    fn runner_run_fixture_rejects_invalid() {
+        let runner = DeterministicRunner::default();
+        let mut f = valid_fixture();
+        f.steps.clear();
+        assert!(runner.run_fixture(&f).is_err());
+    }
+
+    #[test]
+    fn runner_event_has_trace_prefix() {
+        let runner = DeterministicRunner {
+            config: DeterministicRunnerConfig {
+                trace_prefix: "custom".into(),
+            },
+        };
+        let result = runner.run_fixture(&valid_fixture()).unwrap();
+        assert!(result.events[0].trace_id.starts_with("custom-"));
+    }
+
+    #[test]
+    fn runner_error_code_propagation() {
+        let mut f = valid_fixture();
+        let mut meta = BTreeMap::new();
+        meta.insert("error_code".into(), "E_TEST".into());
+        f.steps[0].metadata = meta;
+        let runner = DeterministicRunner::default();
+        let result = runner.run_fixture(&f).unwrap();
+        assert_eq!(result.events[0].outcome, "error");
+        assert_eq!(result.events[0].error_code.as_deref(), Some("E_TEST"));
+    }
+
+    #[test]
+    fn runner_custom_outcome() {
+        let mut f = valid_fixture();
+        let mut meta = BTreeMap::new();
+        meta.insert("outcome".into(), "warn".into());
+        f.steps[0].metadata = meta;
+        let runner = DeterministicRunner::default();
+        let result = runner.run_fixture(&f).unwrap();
+        assert_eq!(result.events[0].outcome, "warn");
+    }
+
+    #[test]
+    fn runner_multiple_steps_time_advances() {
+        let mut f = valid_fixture();
+        f.steps.push(ScenarioStep {
+            component: "db".into(),
+            event: "query".into(),
+            advance_micros: 200,
+            metadata: BTreeMap::new(),
+        });
+        let runner = DeterministicRunner::default();
+        let result = runner.run_fixture(&f).unwrap();
+        assert_eq!(result.events.len(), 2);
+        assert_eq!(result.events[0].virtual_time_micros, 1100);
+        assert_eq!(result.events[1].virtual_time_micros, 1300);
+        assert_eq!(result.events[0].sequence, 0);
+        assert_eq!(result.events[1].sequence, 1);
+    }
+
+    // ── assert_structured_logs ────────────────────────────────────
+
+    #[test]
+    fn assert_logs_all_match() {
+        let events = vec![HarnessEvent {
+            trace_id: "t".into(),
+            decision_id: "d".into(),
+            policy_id: "p".into(),
+            component: "auth".into(),
+            event: "login".into(),
+            outcome: "ok".into(),
+            error_code: None,
+            sequence: 0,
+            virtual_time_micros: 0,
+        }];
+        let expectations = vec![LogExpectation {
+            component: "auth".into(),
+            event: "login".into(),
+            outcome: "ok".into(),
+            error_code: None,
+        }];
+        assert!(assert_structured_logs(&events, &expectations).is_ok());
+    }
+
+    #[test]
+    fn assert_logs_missing() {
+        let events = vec![];
+        let expectations = vec![LogExpectation {
+            component: "auth".into(),
+            event: "login".into(),
+            outcome: "ok".into(),
+            error_code: None,
+        }];
+        let err = assert_structured_logs(&events, &expectations).unwrap_err();
+        assert_eq!(err.missing.len(), 1);
+        assert!(err.to_string().contains("1"));
+    }
+
+    #[test]
+    fn assert_logs_empty_expectations_pass() {
+        let events = vec![HarnessEvent {
+            trace_id: "t".into(),
+            decision_id: "d".into(),
+            policy_id: "p".into(),
+            component: "c".into(),
+            event: "e".into(),
+            outcome: "ok".into(),
+            error_code: None,
+            sequence: 0,
+            virtual_time_micros: 0,
+        }];
+        assert!(assert_structured_logs(&events, &[]).is_ok());
+    }
+
+    #[test]
+    fn assert_logs_error_code_mismatch() {
+        let events = vec![HarnessEvent {
+            trace_id: "t".into(),
+            decision_id: "d".into(),
+            policy_id: "p".into(),
+            component: "auth".into(),
+            event: "login".into(),
+            outcome: "ok".into(),
+            error_code: None,
+            sequence: 0,
+            virtual_time_micros: 0,
+        }];
+        let expectations = vec![LogExpectation {
+            component: "auth".into(),
+            event: "login".into(),
+            outcome: "ok".into(),
+            error_code: Some("E001".into()),
+        }];
+        assert!(assert_structured_logs(&events, &expectations).is_err());
+    }
+
+    // ── verify_replay ─────────────────────────────────────────────
+
+    fn make_run_result(digest: &str, seed: u64) -> RunResult {
+        RunResult {
+            fixture_id: "fix-1".into(),
+            run_id: "run-1".into(),
+            seed,
+            start_virtual_time_micros: 0,
+            end_virtual_time_micros: 100,
+            random_transcript: vec![seed],
+            events: vec![],
+            output_digest: digest.into(),
+        }
+    }
+
+    #[test]
+    fn replay_matches() {
+        let a = make_run_result("abc", 1);
+        let b = make_run_result("abc", 1);
+        let v = verify_replay(&a, &b);
+        assert!(v.matches);
+        assert!(v.reason.is_none());
+    }
+
+    #[test]
+    fn replay_digest_mismatch() {
+        let a = make_run_result("abc", 1);
+        let b = make_run_result("xyz", 1);
+        let v = verify_replay(&a, &b);
+        assert!(!v.matches);
+        assert_eq!(v.reason.as_deref(), Some("digest mismatch"));
+    }
+
+    #[test]
+    fn replay_transcript_mismatch() {
+        let a = make_run_result("abc", 1);
+        let mut b = make_run_result("abc", 1);
+        b.random_transcript = vec![999];
+        let v = verify_replay(&a, &b);
+        assert!(!v.matches);
+        assert_eq!(v.reason.as_deref(), Some("random transcript mismatch"));
+    }
+
+    // ── compare_counterfactual ────────────────────────────────────
+
+    #[test]
+    fn counterfactual_identical_runs() {
+        let runner = DeterministicRunner::default();
+        let fixture = valid_fixture();
+        let a = runner.run_fixture(&fixture).unwrap();
+        let b = runner.run_fixture(&fixture).unwrap();
+        let delta = compare_counterfactual(&a, &b);
+        assert!(!delta.digest_changed);
+        assert_eq!(delta.changed_events, 0);
+        assert_eq!(delta.changed_outcomes, 0);
+        assert!(delta.diverged_at_sequence.is_none());
+    }
+
+    #[test]
+    fn counterfactual_different_seeds() {
+        let runner = DeterministicRunner::default();
+        let f1 = valid_fixture();
+        let mut f2 = valid_fixture();
+        f2.seed = 999;
+        f2.fixture_id = "fix-002".into();
+        let a = runner.run_fixture(&f1).unwrap();
+        let b = runner.run_fixture(&f2).unwrap();
+        let delta = compare_counterfactual(&a, &b);
+        assert!(delta.digest_changed);
+    }
+
+    #[test]
+    fn counterfactual_different_event_lengths() {
+        let mut a = make_run_result("a", 1);
+        a.events.push(HarnessEvent {
+            trace_id: "t".into(),
+            decision_id: "d".into(),
+            policy_id: "p".into(),
+            component: "c".into(),
+            event: "e".into(),
+            outcome: "ok".into(),
+            error_code: None,
+            sequence: 0,
+            virtual_time_micros: 0,
+        });
+        let b = make_run_result("b", 1);
+        let delta = compare_counterfactual(&a, &b);
+        assert_eq!(delta.changed_events, 1);
+        assert_eq!(delta.diverged_at_sequence, Some(0));
+    }
+
+    #[test]
+    fn counterfactual_outcome_diff() {
+        let mut a = make_run_result("a", 1);
+        let mut b = make_run_result("b", 1);
+        let evt = HarnessEvent {
+            trace_id: "t".into(),
+            decision_id: "d".into(),
+            policy_id: "p".into(),
+            component: "c".into(),
+            event: "e".into(),
+            outcome: "ok".into(),
+            error_code: None,
+            sequence: 0,
+            virtual_time_micros: 0,
+        };
+        a.events.push(evt.clone());
+        let mut evt2 = evt;
+        evt2.outcome = "fail".into();
+        b.events.push(evt2);
+        let delta = compare_counterfactual(&a, &b);
+        assert_eq!(delta.changed_outcomes, 1);
+    }
+
+    // ── RunReport ─────────────────────────────────────────────────
+
+    #[test]
+    fn run_report_from_result_pass() {
+        let runner = DeterministicRunner::default();
+        let result = runner.run_fixture(&valid_fixture()).unwrap();
+        let report = RunReport::from_result(&result);
+        assert!(report.pass);
+        assert_eq!(report.event_count, 1);
+        assert!(report.first_error_code.is_none());
+    }
+
+    #[test]
+    fn run_report_from_result_with_error() {
+        let mut f = valid_fixture();
+        let mut meta = BTreeMap::new();
+        meta.insert("error_code".into(), "E_BOOM".into());
+        f.steps[0].metadata = meta;
+        let runner = DeterministicRunner::default();
+        let result = runner.run_fixture(&f).unwrap();
+        let report = RunReport::from_result(&result);
+        assert!(!report.pass);
+        assert_eq!(report.first_error_code.as_deref(), Some("E_BOOM"));
+    }
+
+    #[test]
+    fn run_report_to_markdown_contains_status() {
+        let runner = DeterministicRunner::default();
+        let result = runner.run_fixture(&valid_fixture()).unwrap();
+        let report = RunReport::from_result(&result);
+        let md = report.to_markdown();
+        assert!(md.contains("status: `pass`"));
+        assert!(md.contains("# E2E Run Report"));
+    }
+
+    #[test]
+    fn run_report_serde_round_trip() {
+        let runner = DeterministicRunner::default();
+        let result = runner.run_fixture(&valid_fixture()).unwrap();
+        let report = RunReport::from_result(&result);
+        let json = serde_json::to_string(&report).unwrap();
+        let back: RunReport = serde_json::from_str(&json).unwrap();
+        assert_eq!(report, back);
+    }
+
+    // ── RunManifest / GoldenBaseline / SignedGoldenUpdate serde ───
+
+    #[test]
+    fn run_manifest_serde_round_trip() {
+        let m = RunManifest {
+            fixture_id: "f".into(),
+            run_id: "r".into(),
+            seed: 10,
+            event_count: 5,
+            output_digest: "abc".into(),
+            replay_pointer: "replay://r".into(),
+        };
+        let json = serde_json::to_string(&m).unwrap();
+        let back: RunManifest = serde_json::from_str(&json).unwrap();
+        assert_eq!(m, back);
+    }
+
+    #[test]
+    fn golden_baseline_serde_round_trip() {
+        let g = GoldenBaseline {
+            fixture_id: "f".into(),
+            output_digest: "d".into(),
+            source_run_id: "r".into(),
+        };
+        let json = serde_json::to_string(&g).unwrap();
+        let back: GoldenBaseline = serde_json::from_str(&json).unwrap();
+        assert_eq!(g, back);
+    }
+
+    #[test]
+    fn signed_golden_update_serde_round_trip() {
+        let u = SignedGoldenUpdate {
+            update_id: "u".into(),
+            fixture_id: "f".into(),
+            previous_digest: "p".into(),
+            next_digest: "n".into(),
+            source_run_id: "r".into(),
+            signer: "bob".into(),
+            signature: "sig".into(),
+            rationale: "reason".into(),
+        };
+        let json = serde_json::to_string(&u).unwrap();
+        let back: SignedGoldenUpdate = serde_json::from_str(&json).unwrap();
+        assert_eq!(u, back);
+    }
+
+    // ── ReplayVerification serde ──────────────────────────────────
+
+    #[test]
+    fn replay_verification_serde_round_trip() {
+        let v = ReplayVerification {
+            matches: true,
+            expected_digest: "e".into(),
+            actual_digest: "a".into(),
+            reason: None,
+        };
+        let json = serde_json::to_string(&v).unwrap();
+        let back: ReplayVerification = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+    }
+
+    // ── CounterfactualDelta serde ─────────────────────────────────
+
+    #[test]
+    fn counterfactual_delta_serde_round_trip() {
+        let d = CounterfactualDelta {
+            baseline_run_id: "b".into(),
+            counterfactual_run_id: "c".into(),
+            digest_changed: true,
+            diverged_at_sequence: Some(3),
+            changed_events: 5,
+            changed_outcomes: 2,
+        };
+        let json = serde_json::to_string(&d).unwrap();
+        let back: CounterfactualDelta = serde_json::from_str(&json).unwrap();
+        assert_eq!(d, back);
+    }
+
+    // ── GoldenVerificationError Display ───────────────────────────
+
+    #[test]
+    fn golden_error_display_missing() {
+        let e = GoldenVerificationError::MissingBaseline {
+            fixture_id: "fix-1".into(),
+        };
+        assert!(e.to_string().contains("fix-1"));
+    }
+
+    #[test]
+    fn golden_error_display_invalid() {
+        let inner = io::Error::other("bad");
+        let e = GoldenVerificationError::InvalidBaseline(inner);
+        assert!(e.to_string().contains("invalid golden baseline"));
+        assert!(e.source().is_some());
+    }
+
+    #[test]
+    fn golden_error_display_mismatch() {
+        let e = GoldenVerificationError::DigestMismatch {
+            expected: "aaa".into(),
+            actual: "bbb".into(),
+        };
+        assert!(e.to_string().contains("aaa"));
+        assert!(e.to_string().contains("bbb"));
+    }
+
+    // ── fnv1a64 ───────────────────────────────────────────────────
+
+    #[test]
+    fn fnv1a64_deterministic() {
+        let a = fnv1a64(b"hello");
+        let b = fnv1a64(b"hello");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn fnv1a64_different_inputs() {
+        assert_ne!(fnv1a64(b"hello"), fnv1a64(b"world"));
+    }
+
+    #[test]
+    fn fnv1a64_empty() {
+        let h = fnv1a64(b"");
+        // FNV-1a offset basis
+        assert_eq!(h, 0xcbf2_9ce4_8422_2325);
+    }
+
+    // ── digest_hex ────────────────────────────────────────────────
+
+    #[test]
+    fn digest_hex_deterministic() {
+        let a = digest_hex(b"test");
+        let b = digest_hex(b"test");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn digest_hex_length() {
+        let h = digest_hex(b"test");
+        assert_eq!(h.len(), 16); // 16 hex chars for u64
+    }
+
+    // ── sanitize_label ────────────────────────────────────────────
+
+    #[test]
+    fn sanitize_label_alphanumeric_passthrough() {
+        assert_eq!(sanitize_label("hello-world_123"), "hello-world_123");
+    }
+
+    #[test]
+    fn sanitize_label_replaces_special() {
+        assert_eq!(sanitize_label("a/b:c d"), "a-b-c-d");
+    }
+
+    #[test]
+    fn sanitize_label_empty() {
+        assert_eq!(sanitize_label(""), "");
+    }
+
+    // ── HarnessEvent serde ────────────────────────────────────────
+
+    #[test]
+    fn harness_event_serde_round_trip() {
+        let ev = HarnessEvent {
+            trace_id: "t".into(),
+            decision_id: "d".into(),
+            policy_id: "p".into(),
+            component: "c".into(),
+            event: "e".into(),
+            outcome: "ok".into(),
+            error_code: Some("E001".into()),
+            sequence: 7,
+            virtual_time_micros: 42,
+        };
+        let json = serde_json::to_string(&ev).unwrap();
+        let back: HarnessEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(ev, back);
+    }
+
+    // ── RunResult serde ───────────────────────────────────────────
+
+    #[test]
+    fn run_result_serde_round_trip() {
+        let runner = DeterministicRunner::default();
+        let result = runner.run_fixture(&valid_fixture()).unwrap();
+        let json = serde_json::to_string(&result).unwrap();
+        let back: RunResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(result, back);
+    }
+
+    // ── digest_run ────────────────────────────────────────────────
+
+    #[test]
+    fn digest_run_deterministic() {
+        let a = digest_run("fix", 1, &[10, 20], &[]);
+        let b = digest_run("fix", 1, &[10, 20], &[]);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn digest_run_changes_with_seed() {
+        let a = digest_run("fix", 1, &[10], &[]);
+        let b = digest_run("fix", 2, &[10], &[]);
+        assert_ne!(a, b);
+    }
+
+    // ── LogAssertionError Display ─────────────────────────────────
+
+    #[test]
+    fn log_assertion_error_display() {
+        let e = LogAssertionError {
+            missing: vec![
+                LogExpectation {
+                    component: "a".into(),
+                    event: "b".into(),
+                    outcome: "c".into(),
+                    error_code: None,
+                },
+                LogExpectation {
+                    component: "d".into(),
+                    event: "e".into(),
+                    outcome: "f".into(),
+                    error_code: None,
+                },
+            ],
+        };
+        assert!(e.to_string().contains("2"));
+    }
+
+    // ── FixtureStore / GoldenStore / ArtifactCollector with tmpdir
+
+    #[test]
+    fn fixture_store_save_and_load() {
+        let dir = std::env::temp_dir().join(format!("e2e_test_fixture_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let store = FixtureStore::new(&dir).unwrap();
+        let fixture = valid_fixture();
+        let path = store.save_fixture(&fixture).unwrap();
+        assert!(path.exists());
+        let loaded = store.load_fixture(&path).unwrap();
+        assert_eq!(fixture, loaded);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn fixture_store_rejects_invalid_fixture() {
+        let dir = std::env::temp_dir().join(format!("e2e_test_invalid_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let store = FixtureStore::new(&dir).unwrap();
+        let mut f = valid_fixture();
+        f.steps.clear();
+        assert!(store.save_fixture(&f).is_err());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn golden_store_write_and_verify() {
+        let dir = std::env::temp_dir().join(format!("e2e_test_golden_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let store = GoldenStore::new(&dir).unwrap();
+        let runner = DeterministicRunner::default();
+        let result = runner.run_fixture(&valid_fixture()).unwrap();
+        store.write_baseline(&result).unwrap();
+        assert!(store.verify_run(&result).is_ok());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn golden_store_verify_missing_baseline() {
+        let dir = std::env::temp_dir().join(format!("e2e_test_no_bl_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let store = GoldenStore::new(&dir).unwrap();
+        let result = make_run_result("abc", 1);
+        let err = store.verify_run(&result).unwrap_err();
+        assert!(matches!(
+            err,
+            GoldenVerificationError::MissingBaseline { .. }
+        ));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn golden_store_verify_digest_mismatch() {
+        let dir = std::env::temp_dir().join(format!("e2e_test_mismatch_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let store = GoldenStore::new(&dir).unwrap();
+        let runner = DeterministicRunner::default();
+        let result = runner.run_fixture(&valid_fixture()).unwrap();
+        store.write_baseline(&result).unwrap();
+        let mut altered = result.clone();
+        altered.output_digest = "tampered".into();
+        let err = store.verify_run(&altered).unwrap_err();
+        assert!(matches!(
+            err,
+            GoldenVerificationError::DigestMismatch { .. }
+        ));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn golden_store_signed_update() {
+        let dir = std::env::temp_dir().join(format!("e2e_test_signed_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let store = GoldenStore::new(&dir).unwrap();
+        let runner = DeterministicRunner::default();
+        let result = runner.run_fixture(&valid_fixture()).unwrap();
+        store.write_baseline(&result).unwrap();
+        let path = store
+            .write_signed_update(&result, "alice", "sig123", "intentional update")
+            .unwrap();
+        assert!(path.exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn golden_store_signed_update_empty_signer() {
+        let dir = std::env::temp_dir().join(format!("e2e_test_nosig_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let store = GoldenStore::new(&dir).unwrap();
+        let runner = DeterministicRunner::default();
+        let result = runner.run_fixture(&valid_fixture()).unwrap();
+        store.write_baseline(&result).unwrap();
+        assert!(
+            store
+                .write_signed_update(&result, " ", "sig", "reason")
+                .is_err()
+        );
+        assert!(
+            store
+                .write_signed_update(&result, "alice", "", "reason")
+                .is_err()
+        );
+        assert!(
+            store
+                .write_signed_update(&result, "alice", "sig", "  ")
+                .is_err()
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn artifact_collector_collect() {
+        let dir = std::env::temp_dir().join(format!("e2e_test_artifacts_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let collector = ArtifactCollector::new(&dir).unwrap();
+        let runner = DeterministicRunner::default();
+        let result = runner.run_fixture(&valid_fixture()).unwrap();
+        let artifacts = collector.collect(&result).unwrap();
+        assert!(artifacts.manifest_path.exists());
+        assert!(artifacts.events_path.exists());
+        assert!(artifacts.report_json_path.exists());
+        assert!(artifacts.report_markdown_path.exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+}

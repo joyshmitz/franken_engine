@@ -36,6 +36,13 @@ fn sample_policy(epoch: u64) -> TeeAttestationPolicy {
         }],
     );
     approved.insert(
+        TeePlatform::ArmCca,
+        vec![MeasurementDigest {
+            algorithm: MeasurementAlgorithm::Sha256,
+            digest_hex: digest_hex(0x44, 32),
+        }],
+    );
+    approved.insert(
         TeePlatform::AmdSev,
         vec![MeasurementDigest {
             algorithm: MeasurementAlgorithm::Sha384,
@@ -79,6 +86,15 @@ fn sample_policy(epoch: u64) -> TeeAttestationPolicy {
                 root_id: "tz-root-a".to_string(),
                 platform: TeePlatform::ArmTrustZone,
                 trust_anchor_pem: "-----BEGIN CERT-----TZ-A".to_string(),
+                valid_from_epoch: SecurityEpoch::from_raw(0),
+                valid_until_epoch: None,
+                pinning: TrustRootPinning::Pinned,
+                source: TrustRootSource::Policy,
+            },
+            PlatformTrustRoot {
+                root_id: "cca-root-a".to_string(),
+                platform: TeePlatform::ArmCca,
+                trust_anchor_pem: "-----BEGIN CERT-----CCA-A".to_string(),
                 valid_from_epoch: SecurityEpoch::from_raw(0),
                 valid_until_epoch: None,
                 pinning: TrustRootPinning::Pinned,

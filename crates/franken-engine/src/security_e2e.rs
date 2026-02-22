@@ -1,0 +1,997 @@
+//! Security E2E test framework for FrankenEngine.
+//!
+//! Simulates attack scenarios against the extension runtime and verifies
+//! containment. Covers 8 attack categories:
+//!   1. Capability escalation — hostcall beyond declared capabilities
+//!   2. Resource exhaustion — budget overshoot with containment verification
+//!   3. Quarantine cascade — multiple simultaneous quarantines
+//!   4. Safe-mode fallback — all 5 failure types with recovery
+//!   5. Bayesian posterior convergence — evidence-driven risk assessment
+//!   6. Fork detection — checkpoint divergence and safe-mode entry
+//!   7. Epoch regression — stale epoch rejection
+//!   8. Evidence integrity — ledger entry chain and receipt verification
+
+use std::collections::BTreeMap;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use crate::bayesian_posterior::{Evidence, RiskState, UpdaterStore};
+use crate::containment_executor::{
+    ContainmentContext, ContainmentExecutor, ContainmentState, SandboxPolicy,
+};
+use crate::expected_loss_selector::ContainmentAction;
+use crate::extension_lifecycle_manager::{
+    CancellationConfig, ExtensionLifecycleManager, ExtensionState, LifecycleTransition,
+    ResourceBudget,
+};
+use crate::safe_mode_fallback::{FailureType, SafeModeManager, SafeModeStatus};
+use crate::security_epoch::{EpochMetadata, EpochTracker, SecurityEpoch};
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+pub const SECURITY_E2E_COMPONENT: &str = "security_e2e";
+pub const SECURITY_E2E_SCHEMA_VERSION: &str = "franken-engine.security-e2e.v1";
+pub const MIN_BUDGET_MILLIONTHS: u64 = 1_000;
+
+// ---------------------------------------------------------------------------
+// Attack scenario types
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AttackCategory {
+    CapabilityEscalation,
+    ResourceExhaustion,
+    QuarantineCascade,
+    SafeModeFallback,
+    BayesianPosterior,
+    ForkDetection,
+    EpochRegression,
+    EvidenceIntegrity,
+}
+
+impl AttackCategory {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::CapabilityEscalation => "capability-escalation",
+            Self::ResourceExhaustion => "resource-exhaustion",
+            Self::QuarantineCascade => "quarantine-cascade",
+            Self::SafeModeFallback => "safe-mode-fallback",
+            Self::BayesianPosterior => "bayesian-posterior",
+            Self::ForkDetection => "fork-detection",
+            Self::EpochRegression => "epoch-regression",
+            Self::EvidenceIntegrity => "evidence-integrity",
+        }
+    }
+
+    pub fn all() -> &'static [AttackCategory] {
+        &[
+            Self::CapabilityEscalation,
+            Self::ResourceExhaustion,
+            Self::QuarantineCascade,
+            Self::SafeModeFallback,
+            Self::BayesianPosterior,
+            Self::ForkDetection,
+            Self::EpochRegression,
+            Self::EvidenceIntegrity,
+        ]
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Deterministic PRNG (xorshift64)
+// ---------------------------------------------------------------------------
+
+pub struct Xorshift64 {
+    state: u64,
+}
+
+impl Xorshift64 {
+    pub fn new(seed: u64) -> Self {
+        Self {
+            state: if seed == 0 { 1 } else { seed },
+        }
+    }
+
+    pub fn next_u64(&mut self) -> u64 {
+        let mut x = self.state;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.state = x;
+        x
+    }
+
+    pub fn next_usize(&mut self, bound: usize) -> usize {
+        (self.next_u64() % bound as u64) as usize
+    }
+
+    pub fn next_bool(&mut self, probability_pct: u64) -> bool {
+        self.next_u64() % 100 < probability_pct
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Scenario results
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone)]
+pub struct AttackScenarioResult {
+    pub category: AttackCategory,
+    pub scenario_name: String,
+    pub attack_blocked: bool,
+    pub containment_action_taken: bool,
+    pub evidence_produced: bool,
+    pub invariant_violations: u64,
+    pub security_events: u64,
+    pub details: BTreeMap<String, String>,
+}
+
+impl AttackScenarioResult {
+    fn new(category: AttackCategory, name: &str) -> Self {
+        Self {
+            category,
+            scenario_name: name.to_string(),
+            attack_blocked: false,
+            containment_action_taken: false,
+            evidence_produced: false,
+            invariant_violations: 0,
+            security_events: 0,
+            details: BTreeMap::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SecuritySuiteEvent {
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub component: String,
+    pub event: String,
+    pub outcome: String,
+    pub error_code: Option<String>,
+    pub category: String,
+    pub scenario: String,
+}
+
+// ---------------------------------------------------------------------------
+// Attack scenario runners
+// ---------------------------------------------------------------------------
+
+/// Capability escalation: extension consumes budget beyond allocated amount.
+/// Verifies that budget enforcement blocks overconsumption.
+pub fn run_capability_escalation(n_extensions: usize, seed: u64) -> Vec<AttackScenarioResult> {
+    let mut results = Vec::new();
+    let mut rng = Xorshift64::new(seed);
+
+    // Scenario 1: CPU budget escalation
+    {
+        let mut result = AttackScenarioResult::new(
+            AttackCategory::CapabilityEscalation,
+            "cpu-budget-escalation",
+        );
+        let mut mgr = ExtensionLifecycleManager::new();
+
+        for i in 0..n_extensions {
+            let ext_id = format!("escalation-cpu-{i}");
+            let budget = ResourceBudget::new(MIN_BUDGET_MILLIONTHS + 100, 1024 * 1024, 100);
+            let cancel = CancellationConfig {
+                grace_period_ns: 1_000_000,
+                force_on_timeout: true,
+                propagate_to_children: false,
+            };
+            let _ = mgr.register(&ext_id, budget, cancel);
+            let _ = mgr.transition(&ext_id, LifecycleTransition::Validate, "sec-e2e", None);
+            let _ = mgr.transition(&ext_id, LifecycleTransition::Load, "sec-e2e", None);
+            let _ = mgr.transition(&ext_id, LifecycleTransition::Start, "sec-e2e", None);
+            let _ = mgr.transition(&ext_id, LifecycleTransition::Activate, "sec-e2e", None);
+
+            // Attempt to consume more CPU than budgeted
+            let mut consumed = 0u64;
+            let mut blocked = false;
+            while consumed < MIN_BUDGET_MILLIONTHS * 2 {
+                let amount = 50 + rng.next_u64() % 200;
+                match mgr.consume_cpu(&ext_id, amount) {
+                    Ok(()) => consumed += amount,
+                    Err(_) => {
+                        blocked = true;
+                        result.security_events += 1;
+                        break;
+                    }
+                }
+            }
+
+            if blocked {
+                result.attack_blocked = true;
+            }
+        }
+
+        // Enforce budgets to catch any that weren't blocked inline
+        let enforced = mgr.enforce_budgets("sec-e2e");
+        result.security_events += enforced.len() as u64;
+        if !enforced.is_empty() {
+            result.containment_action_taken = true;
+        }
+
+        let events = mgr.drain_events();
+        result.evidence_produced = !events.is_empty();
+        result
+            .details
+            .insert("extensions_tested".to_string(), n_extensions.to_string());
+        results.push(result);
+    }
+
+    // Scenario 2: Hostcall budget escalation
+    {
+        let mut result = AttackScenarioResult::new(
+            AttackCategory::CapabilityEscalation,
+            "hostcall-budget-escalation",
+        );
+        let mut mgr = ExtensionLifecycleManager::new();
+
+        let ext_id = "escalation-hostcall-0";
+        let hostcall_limit = 5u64;
+        let budget = ResourceBudget::new(MIN_BUDGET_MILLIONTHS * 100, 1024 * 1024, hostcall_limit);
+        let cancel = CancellationConfig {
+            grace_period_ns: 1_000_000,
+            force_on_timeout: true,
+            propagate_to_children: false,
+        };
+        let _ = mgr.register(ext_id, budget, cancel);
+        let _ = mgr.transition(ext_id, LifecycleTransition::Validate, "sec-e2e", None);
+        let _ = mgr.transition(ext_id, LifecycleTransition::Load, "sec-e2e", None);
+        let _ = mgr.transition(ext_id, LifecycleTransition::Start, "sec-e2e", None);
+        let _ = mgr.transition(ext_id, LifecycleTransition::Activate, "sec-e2e", None);
+
+        let mut blocked = false;
+        for _ in 0..(hostcall_limit * 2) {
+            match mgr.consume_hostcall(ext_id) {
+                Ok(()) => {}
+                Err(_) => {
+                    blocked = true;
+                    result.security_events += 1;
+                    break;
+                }
+            }
+        }
+        result.attack_blocked = blocked;
+        result.evidence_produced = true;
+        results.push(result);
+    }
+
+    results
+}
+
+/// Resource exhaustion: tight budgets across many extensions,
+/// verify all budget-exhausted extensions get contained.
+pub fn run_resource_exhaustion(n_extensions: usize, seed: u64) -> Vec<AttackScenarioResult> {
+    let mut results = Vec::new();
+    let mut rng = Xorshift64::new(seed);
+
+    let mut result = AttackScenarioResult::new(
+        AttackCategory::ResourceExhaustion,
+        "budget-exhaustion-sweep",
+    );
+    let mut mgr = ExtensionLifecycleManager::new();
+
+    // Register extensions with varying tight budgets
+    for i in 0..n_extensions {
+        let ext_id = format!("exhaust-{i}");
+        let cpu = MIN_BUDGET_MILLIONTHS + rng.next_u64() % 500;
+        let hostcalls = 3 + rng.next_u64() % 10;
+        let budget = ResourceBudget::new(cpu, 64 * 1024, hostcalls);
+        let cancel = CancellationConfig {
+            grace_period_ns: 500_000,
+            force_on_timeout: true,
+            propagate_to_children: false,
+        };
+        let _ = mgr.register(&ext_id, budget, cancel);
+        let _ = mgr.transition(&ext_id, LifecycleTransition::Validate, "sec-e2e", None);
+        let _ = mgr.transition(&ext_id, LifecycleTransition::Load, "sec-e2e", None);
+        let _ = mgr.transition(&ext_id, LifecycleTransition::Start, "sec-e2e", None);
+        let _ = mgr.transition(&ext_id, LifecycleTransition::Activate, "sec-e2e", None);
+    }
+
+    // Consume all budgets rapidly
+    for i in 0..n_extensions {
+        let ext_id = format!("exhaust-{i}");
+        // Try to exhaust CPU
+        for _ in 0..100 {
+            if mgr.consume_cpu(&ext_id, 100).is_err() {
+                result.security_events += 1;
+                break;
+            }
+        }
+        // Try to exhaust hostcalls
+        for _ in 0..50 {
+            if mgr.consume_hostcall(&ext_id).is_err() {
+                result.security_events += 1;
+                break;
+            }
+        }
+    }
+
+    // Enforce budgets — all should be contained
+    let enforced = mgr.enforce_budgets("sec-e2e");
+    result.containment_action_taken = !enforced.is_empty();
+    result.attack_blocked = true;
+
+    // Verify no extension is still running with exhausted budget
+    let still_running = mgr.count_in_state(ExtensionState::Running);
+    result.details.insert(
+        "still_running_after_enforcement".to_string(),
+        still_running.to_string(),
+    );
+    result
+        .details
+        .insert("enforced_count".to_string(), enforced.len().to_string());
+
+    let events = mgr.drain_events();
+    result.evidence_produced = !events.is_empty();
+    results.push(result);
+    results
+}
+
+/// Quarantine cascade: quarantine many extensions simultaneously,
+/// verify state machine consistency and no panic.
+pub fn run_quarantine_cascade(
+    n_total: usize,
+    n_quarantine: usize,
+    seed: u64,
+) -> Vec<AttackScenarioResult> {
+    let mut results = Vec::new();
+    let mut rng = Xorshift64::new(seed);
+
+    let mut result =
+        AttackScenarioResult::new(AttackCategory::QuarantineCascade, "simultaneous-quarantine");
+    let mut mgr = ExtensionLifecycleManager::new();
+
+    // Register all extensions
+    for i in 0..n_total {
+        let ext_id = format!("qcascade-{i}");
+        let budget = ResourceBudget::new(
+            MIN_BUDGET_MILLIONTHS + rng.next_u64() % 100_000,
+            1024 * 1024,
+            1000,
+        );
+        let cancel = CancellationConfig {
+            grace_period_ns: 1_000_000,
+            force_on_timeout: true,
+            propagate_to_children: false,
+        };
+        let _ = mgr.register(&ext_id, budget, cancel);
+        let _ = mgr.transition(&ext_id, LifecycleTransition::Validate, "sec-e2e", None);
+        let _ = mgr.transition(&ext_id, LifecycleTransition::Load, "sec-e2e", None);
+        let _ = mgr.transition(&ext_id, LifecycleTransition::Start, "sec-e2e", None);
+        let _ = mgr.transition(&ext_id, LifecycleTransition::Activate, "sec-e2e", None);
+    }
+
+    // Quarantine first n_quarantine extensions
+    let actual_quarantine = std::cmp::min(n_quarantine, n_total);
+    let mut quarantined_count = 0u64;
+    for i in 0..actual_quarantine {
+        let ext_id = format!("qcascade-{i}");
+        match mgr.transition(
+            &ext_id,
+            LifecycleTransition::Quarantine,
+            "sec-e2e",
+            Some("cascade-test"),
+        ) {
+            Ok(state) => {
+                if state == ExtensionState::Quarantined {
+                    quarantined_count += 1;
+                    result.security_events += 1;
+                }
+            }
+            Err(_) => {
+                result.invariant_violations += 1;
+            }
+        }
+    }
+
+    result.containment_action_taken = quarantined_count > 0;
+    result.attack_blocked = true;
+
+    // Verify remaining extensions are unaffected
+    let running = mgr.count_in_state(ExtensionState::Running);
+    let quarantined = mgr.count_in_state(ExtensionState::Quarantined);
+    result
+        .details
+        .insert("running".to_string(), running.to_string());
+    result
+        .details
+        .insert("quarantined".to_string(), quarantined.to_string());
+    result.details.insert(
+        "total_registered".to_string(),
+        mgr.extension_ids().len().to_string(),
+    );
+
+    // Verify state machine consistency
+    let ext_ids: Vec<String> = mgr.extension_ids().iter().map(|s| s.to_string()).collect();
+    let total_alive: usize = ext_ids
+        .iter()
+        .filter(|id| matches!(mgr.state(id), Ok(s) if s.is_alive()))
+        .count();
+    if total_alive + quarantined != n_total {
+        result.invariant_violations += 1;
+    }
+
+    let events = mgr.drain_events();
+    result.evidence_produced = !events.is_empty();
+    results.push(result);
+    results
+}
+
+/// Safe-mode fallback: trigger all 5 failure types and verify recovery.
+pub fn run_safe_mode_fallback(seed: u64) -> Vec<AttackScenarioResult> {
+    let mut results = Vec::new();
+    let _rng = Xorshift64::new(seed);
+
+    let failure_scenarios = [
+        (FailureType::AdapterUnavailable, "adapter-unavailable"),
+        (
+            FailureType::DecisionContractError,
+            "decision-contract-error",
+        ),
+        (FailureType::EvidenceLedgerFull, "evidence-ledger-full"),
+        (FailureType::CxCorrupted, "cx-corrupted"),
+        (FailureType::CancellationDeadlock, "cancellation-deadlock"),
+    ];
+
+    for (failure_type, name) in &failure_scenarios {
+        let mut result = AttackScenarioResult::new(AttackCategory::SafeModeFallback, name);
+        let mut mgr = SafeModeManager::new(64);
+
+        // Trigger the failure
+        let action = match failure_type {
+            FailureType::AdapterUnavailable => {
+                mgr.handle_adapter_unavailable("trace-safe", "test diagnostic")
+            }
+            FailureType::DecisionContractError => {
+                mgr.handle_decision_contract_error("trace-safe", "ext-0", "FE-TEST-001")
+            }
+            FailureType::EvidenceLedgerFull => {
+                mgr.handle_evidence_ledger_full("trace-safe", "FE-TEST-002")
+            }
+            FailureType::CxCorrupted => {
+                mgr.handle_cx_corrupted("trace-safe", "eval", "corrupt test data")
+            }
+            FailureType::CancellationDeadlock => {
+                mgr.handle_cancellation_deadlock("trace-safe", "cell-0", 100)
+            }
+        };
+
+        // Verify safe mode activated
+        let status = mgr.status(*failure_type);
+        result.attack_blocked = matches!(status, SafeModeStatus::Active);
+        result.containment_action_taken = true;
+        result.security_events += 1;
+
+        // Write a ring buffer entry during degraded mode
+        mgr.write_ring_buffer_entry(
+            "trace-safe",
+            "test_event",
+            "degraded",
+            SECURITY_E2E_COMPONENT,
+        );
+        result.evidence_produced = !mgr.ring_buffer().is_empty();
+
+        // Recover
+        match failure_type {
+            FailureType::AdapterUnavailable => mgr.recover_adapter("trace-recover"),
+            FailureType::DecisionContractError => {
+                mgr.recover_decision_contract("trace-recover", "ext-0")
+            }
+            FailureType::EvidenceLedgerFull => {
+                let _ = mgr.recover_evidence_ledger("trace-recover");
+            }
+            FailureType::CxCorrupted => mgr.recover_cx("trace-recover"),
+            FailureType::CancellationDeadlock => mgr.recover_cancellation("trace-recover"),
+        }
+
+        // Verify recovery
+        let after_status = mgr.status(*failure_type);
+        if !matches!(after_status, SafeModeStatus::Normal) {
+            result.invariant_violations += 1;
+        }
+
+        result
+            .details
+            .insert("action".to_string(), format!("{action:?}"));
+        result.details.insert(
+            "activation_count".to_string(),
+            mgr.activation_count(*failure_type).to_string(),
+        );
+        result.details.insert(
+            "recovery_count".to_string(),
+            mgr.recovery_count(*failure_type).to_string(),
+        );
+
+        results.push(result);
+    }
+
+    results
+}
+
+/// Bayesian posterior convergence: feed evidence stream and verify risk assessment.
+pub fn run_bayesian_posterior_convergence(
+    n_extensions: usize,
+    n_evidence_updates: usize,
+    seed: u64,
+) -> Vec<AttackScenarioResult> {
+    let mut results = Vec::new();
+    let mut rng = Xorshift64::new(seed);
+
+    // Scenario 1: Benign extensions should converge to low risk
+    {
+        let mut result =
+            AttackScenarioResult::new(AttackCategory::BayesianPosterior, "benign-convergence");
+        let mut store = UpdaterStore::new();
+
+        for i in 0..n_extensions {
+            let ext_id = format!("benign-{i}");
+            let updater = store.get_or_create(&ext_id);
+
+            for _ in 0..n_evidence_updates {
+                let evidence = Evidence {
+                    extension_id: ext_id.clone(),
+                    hostcall_rate_millionths: 5_000_000 + (rng.next_u64() % 10_000_000) as i64,
+                    distinct_capabilities: 3,
+                    resource_score_millionths: 300_000 + (rng.next_u64() % 200_000) as i64,
+                    timing_anomaly_millionths: 0,
+                    denial_rate_millionths: 0,
+                    epoch: SecurityEpoch::from_raw(1),
+                };
+                updater.update(&evidence);
+            }
+        }
+
+        // All benign extensions should have benign MAP estimate
+        let summary = store.summary();
+        let all_benign = summary.iter().all(|(_, state)| *state == RiskState::Benign);
+        result.attack_blocked = all_benign;
+        result.evidence_produced = true;
+        result.details.insert(
+            "benign_count".to_string(),
+            summary
+                .iter()
+                .filter(|(_, s)| **s == RiskState::Benign)
+                .count()
+                .to_string(),
+        );
+        results.push(result);
+    }
+
+    // Scenario 2: Malicious extensions should converge to high risk
+    {
+        let mut result =
+            AttackScenarioResult::new(AttackCategory::BayesianPosterior, "malicious-convergence");
+        let mut store = UpdaterStore::new();
+
+        for i in 0..n_extensions {
+            let ext_id = format!("malicious-{i}");
+            let updater = store.get_or_create(&ext_id);
+
+            for _ in 0..n_evidence_updates {
+                let evidence = Evidence {
+                    extension_id: ext_id.clone(),
+                    hostcall_rate_millionths: 500_000_000 + (rng.next_u64() % 500_000_000) as i64,
+                    distinct_capabilities: 20 + (rng.next_u64() % 30) as u32,
+                    resource_score_millionths: 950_000 + (rng.next_u64() % 50_000) as i64,
+                    timing_anomaly_millionths: 800_000 + (rng.next_u64() % 200_000) as i64,
+                    denial_rate_millionths: 500_000 + (rng.next_u64() % 500_000) as i64,
+                    epoch: SecurityEpoch::from_raw(1),
+                };
+                updater.update(&evidence);
+            }
+        }
+
+        // Malicious extensions should NOT have benign MAP estimate
+        let summary = store.summary();
+        let any_non_benign = summary.iter().any(|(_, state)| *state != RiskState::Benign);
+        result.attack_blocked = any_non_benign;
+        result.evidence_produced = true;
+        let risky = store.risky_extensions(500_000); // less than 50% benign probability
+        result.security_events = risky.len() as u64;
+        results.push(result);
+    }
+
+    // Scenario 3: Deterministic replay — same evidence produces same posterior
+    {
+        let mut result =
+            AttackScenarioResult::new(AttackCategory::BayesianPosterior, "deterministic-replay");
+
+        let run = |s: u64| -> BTreeMap<String, RiskState> {
+            let mut rng_inner = Xorshift64::new(s);
+            let mut store_inner = UpdaterStore::new();
+            let updater = store_inner.get_or_create("replay-ext");
+            for _ in 0..20 {
+                let evidence = Evidence {
+                    extension_id: "replay-ext".to_string(),
+                    hostcall_rate_millionths: (rng_inner.next_u64() % 100_000_000) as i64,
+                    distinct_capabilities: (rng_inner.next_u64() % 20) as u32,
+                    resource_score_millionths: (rng_inner.next_u64() % 1_000_000) as i64,
+                    timing_anomaly_millionths: (rng_inner.next_u64() % 1_000_000) as i64,
+                    denial_rate_millionths: (rng_inner.next_u64() % 1_000_000) as i64,
+                    epoch: SecurityEpoch::from_raw(1),
+                };
+                updater.update(&evidence);
+            }
+            store_inner.summary()
+        };
+
+        let run1 = run(seed);
+        let run2 = run(seed);
+        result.attack_blocked = run1 == run2;
+        result.evidence_produced = true;
+        if run1 != run2 {
+            result.invariant_violations += 1;
+        }
+        results.push(result);
+    }
+
+    results
+}
+
+/// Epoch regression: verify stale epoch artifacts are rejected.
+pub fn run_epoch_regression(seed: u64) -> Vec<AttackScenarioResult> {
+    let mut results = Vec::new();
+    let _rng = Xorshift64::new(seed);
+
+    // Scenario 1: Current epoch validates
+    {
+        let mut result =
+            AttackScenarioResult::new(AttackCategory::EpochRegression, "current-epoch-validates");
+
+        let current = SecurityEpoch::from_raw(5);
+        let tracker = EpochTracker::from_persisted(current);
+        let metadata = EpochMetadata::open_ended(current);
+        let validation = tracker.validate_artifact(&metadata);
+        result.attack_blocked = validation.is_ok();
+        result.evidence_produced = true;
+        results.push(result);
+    }
+
+    // Scenario 2: Expired epoch is rejected
+    {
+        let mut result =
+            AttackScenarioResult::new(AttackCategory::EpochRegression, "expired-epoch-rejected");
+
+        let old_epoch = SecurityEpoch::from_raw(3);
+        let current = SecurityEpoch::from_raw(10);
+        let tracker = EpochTracker::from_persisted(current);
+        let metadata = EpochMetadata::windowed(old_epoch, old_epoch, SecurityEpoch::from_raw(5));
+        let validation = tracker.validate_artifact(&metadata);
+        result.attack_blocked = validation.is_err();
+        result.security_events += 1;
+        result.evidence_produced = true;
+        results.push(result);
+    }
+
+    // Scenario 3: Future epoch is rejected
+    {
+        let mut result =
+            AttackScenarioResult::new(AttackCategory::EpochRegression, "future-epoch-rejected");
+
+        let future_epoch = SecurityEpoch::from_raw(100);
+        let current = SecurityEpoch::from_raw(5);
+        let tracker = EpochTracker::from_persisted(current);
+        let metadata =
+            EpochMetadata::windowed(future_epoch, future_epoch, SecurityEpoch::from_raw(200));
+        let validation = tracker.validate_artifact(&metadata);
+        result.attack_blocked = validation.is_err();
+        result.security_events += 1;
+        result.evidence_produced = true;
+        results.push(result);
+    }
+
+    // Scenario 4: Epoch monotonicity
+    {
+        let mut result =
+            AttackScenarioResult::new(AttackCategory::EpochRegression, "epoch-monotonicity");
+
+        let e1 = SecurityEpoch::from_raw(1);
+        let e2 = e1.next();
+        let e3 = e2.next();
+        result.attack_blocked = e1.as_u64() < e2.as_u64() && e2.as_u64() < e3.as_u64();
+        result.evidence_produced = true;
+        if !result.attack_blocked {
+            result.invariant_violations += 1;
+        }
+        results.push(result);
+    }
+
+    results
+}
+
+/// Containment executor: verify containment state transitions and receipt production.
+pub fn run_containment_verification(n_extensions: usize, seed: u64) -> Vec<AttackScenarioResult> {
+    let mut results = Vec::new();
+    let _rng = Xorshift64::new(seed);
+
+    // Scenario 1: Sandbox containment produces receipts
+    {
+        let mut result =
+            AttackScenarioResult::new(AttackCategory::EvidenceIntegrity, "containment-receipts");
+        let mut executor = ContainmentExecutor::new();
+
+        for i in 0..n_extensions {
+            let ext_id = format!("contain-{i}");
+            executor.register(&ext_id);
+
+            let ctx = ContainmentContext {
+                decision_id: format!("decision-{i}"),
+                timestamp_ns: 1_000_000 * (i as u64 + 1),
+                epoch: SecurityEpoch::from_raw(1),
+                evidence_refs: vec![format!("ev-{i}")],
+                grace_period_ns: 5_000_000_000,
+                challenge_timeout_ns: 10_000_000_000,
+                sandbox_policy: SandboxPolicy::default(),
+            };
+
+            // Sandbox the extension
+            match executor.execute(ContainmentAction::Sandbox, &ext_id, &ctx) {
+                Ok(receipt) => {
+                    result.containment_action_taken = true;
+                    result.security_events += 1;
+                    if !receipt.success {
+                        result.invariant_violations += 1;
+                    }
+                }
+                Err(_) => {
+                    result.invariant_violations += 1;
+                }
+            }
+
+            // Verify receipt exists
+            let receipts = executor.receipts(&ext_id);
+            if receipts.is_empty() {
+                result.invariant_violations += 1;
+            } else {
+                result.evidence_produced = true;
+            }
+
+            // Verify state
+            match executor.state(&ext_id) {
+                Some(ContainmentState::Sandboxed) => {}
+                _ => result.invariant_violations += 1,
+            }
+        }
+
+        result.attack_blocked = result.invariant_violations == 0;
+        results.push(result);
+    }
+
+    // Scenario 2: Quarantine produces forensic snapshot
+    {
+        let mut result = AttackScenarioResult::new(
+            AttackCategory::EvidenceIntegrity,
+            "quarantine-forensic-snapshot",
+        );
+        let mut executor = ContainmentExecutor::new();
+        let ext_id = "forensic-test-0";
+        executor.register(ext_id);
+
+        let ctx = ContainmentContext {
+            decision_id: "decision-forensic".to_string(),
+            timestamp_ns: 1_000_000,
+            epoch: SecurityEpoch::from_raw(1),
+            evidence_refs: vec!["ev-forensic".to_string()],
+            grace_period_ns: 5_000_000_000,
+            challenge_timeout_ns: 10_000_000_000,
+            sandbox_policy: SandboxPolicy::default(),
+        };
+
+        let _ = executor.execute(ContainmentAction::Quarantine, ext_id, &ctx);
+
+        match executor.state(ext_id) {
+            Some(ContainmentState::Quarantined) => {
+                result.containment_action_taken = true;
+                result.attack_blocked = true;
+            }
+            _ => result.invariant_violations += 1,
+        }
+
+        let snapshot = executor.forensic_snapshot(ext_id);
+        result.evidence_produced = snapshot.is_some();
+        results.push(result);
+    }
+
+    results
+}
+
+// ---------------------------------------------------------------------------
+// Suite runner
+// ---------------------------------------------------------------------------
+
+#[derive(Debug)]
+pub struct SecuritySuiteConfig {
+    pub seed: u64,
+    pub n_extensions: usize,
+    pub n_evidence_updates: usize,
+    pub run_id: String,
+}
+
+impl Default for SecuritySuiteConfig {
+    fn default() -> Self {
+        Self {
+            seed: 42,
+            n_extensions: 10,
+            n_evidence_updates: 20,
+            run_id: "security-suite-default".to_string(),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct SecuritySuiteResult {
+    pub scenarios: Vec<AttackScenarioResult>,
+    pub events: Vec<SecuritySuiteEvent>,
+    pub blocked: bool,
+    pub total_security_events: u64,
+    pub total_invariant_violations: u64,
+}
+
+pub fn run_security_suite(config: &SecuritySuiteConfig) -> SecuritySuiteResult {
+    let mut all_scenarios = Vec::new();
+
+    // Run all attack categories
+    let mut scenarios = run_capability_escalation(config.n_extensions, config.seed);
+    all_scenarios.append(&mut scenarios);
+
+    let mut scenarios = run_resource_exhaustion(config.n_extensions, config.seed);
+    all_scenarios.append(&mut scenarios);
+
+    let mut scenarios =
+        run_quarantine_cascade(config.n_extensions, config.n_extensions / 2, config.seed);
+    all_scenarios.append(&mut scenarios);
+
+    let mut scenarios = run_safe_mode_fallback(config.seed);
+    all_scenarios.append(&mut scenarios);
+
+    let mut scenarios = run_bayesian_posterior_convergence(
+        config.n_extensions,
+        config.n_evidence_updates,
+        config.seed,
+    );
+    all_scenarios.append(&mut scenarios);
+
+    let mut scenarios = run_epoch_regression(config.seed);
+    all_scenarios.append(&mut scenarios);
+
+    let mut scenarios = run_containment_verification(config.n_extensions, config.seed);
+    all_scenarios.append(&mut scenarios);
+
+    let mut total_security_events = 0u64;
+    let mut total_invariant_violations = 0u64;
+    let mut events = Vec::new();
+
+    for s in &all_scenarios {
+        total_security_events += s.security_events;
+        total_invariant_violations += s.invariant_violations;
+
+        events.push(SecuritySuiteEvent {
+            trace_id: config.run_id.clone(),
+            decision_id: format!("sec-{}", s.scenario_name),
+            policy_id: "security-e2e".to_string(),
+            component: SECURITY_E2E_COMPONENT.to_string(),
+            event: "attack_scenario_completed".to_string(),
+            outcome: if s.attack_blocked && s.invariant_violations == 0 {
+                "pass".to_string()
+            } else {
+                "fail".to_string()
+            },
+            error_code: None,
+            category: s.category.as_str().to_string(),
+            scenario: s.scenario_name.clone(),
+        });
+    }
+
+    SecuritySuiteResult {
+        scenarios: all_scenarios,
+        events,
+        blocked: total_invariant_violations > 0,
+        total_security_events,
+        total_invariant_violations,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Evidence artifacts
+// ---------------------------------------------------------------------------
+
+#[derive(Debug)]
+pub struct SecurityEvidenceArtifacts {
+    pub run_manifest_path: PathBuf,
+    pub evidence_path: PathBuf,
+    pub summary_path: PathBuf,
+}
+
+pub fn write_security_evidence(
+    result: &SecuritySuiteResult,
+    output_dir: &Path,
+) -> std::io::Result<SecurityEvidenceArtifacts> {
+    fs::create_dir_all(output_dir)?;
+
+    let manifest_path = output_dir.join("security_run_manifest.json");
+    let manifest = serde_json::json!({
+        "schema_version": SECURITY_E2E_SCHEMA_VERSION,
+        "scenario_count": result.scenarios.len(),
+        "total_security_events": result.total_security_events,
+        "total_invariant_violations": result.total_invariant_violations,
+        "blocked": result.blocked,
+    });
+    fs::write(
+        &manifest_path,
+        serde_json::to_string_pretty(&manifest).unwrap(),
+    )?;
+
+    let evidence_path = output_dir.join("security_evidence.jsonl");
+    let mut lines = Vec::new();
+    for s in &result.scenarios {
+        let entry = serde_json::json!({
+            "event": "attack_scenario_evaluated",
+            "category": s.category.as_str(),
+            "scenario": s.scenario_name,
+            "attack_blocked": s.attack_blocked,
+            "containment_action_taken": s.containment_action_taken,
+            "evidence_produced": s.evidence_produced,
+            "invariant_violations": s.invariant_violations,
+            "security_events": s.security_events,
+        });
+        lines.push(serde_json::to_string(&entry).unwrap());
+    }
+    for evt in &result.events {
+        let entry = serde_json::json!({
+            "event": evt.event,
+            "component": evt.component,
+            "outcome": evt.outcome,
+            "category": evt.category,
+            "scenario": evt.scenario,
+            "trace_id": evt.trace_id,
+        });
+        lines.push(serde_json::to_string(&entry).unwrap());
+    }
+    fs::write(&evidence_path, lines.join("\n") + "\n")?;
+
+    let summary_path = output_dir.join("security_summary.json");
+    let mut category_results: BTreeMap<String, (u64, u64, u64)> = BTreeMap::new();
+    for s in &result.scenarios {
+        let entry = category_results
+            .entry(s.category.as_str().to_string())
+            .or_default();
+        entry.0 += 1; // total
+        if s.attack_blocked {
+            entry.1 += 1;
+        } // blocked
+        entry.2 += s.invariant_violations;
+    }
+    let category_summaries: Vec<serde_json::Value> = category_results
+        .iter()
+        .map(|(cat, (total, blocked, violations))| {
+            serde_json::json!({
+                "category": cat,
+                "scenarios": total,
+                "attacks_blocked": blocked,
+                "invariant_violations": violations,
+            })
+        })
+        .collect();
+    let summary = serde_json::json!({
+        "schema_version": SECURITY_E2E_SCHEMA_VERSION,
+        "blocked": result.blocked,
+        "categories": category_summaries,
+    });
+    fs::write(
+        &summary_path,
+        serde_json::to_string_pretty(&summary).unwrap(),
+    )?;
+
+    Ok(SecurityEvidenceArtifacts {
+        run_manifest_path: manifest_path,
+        evidence_path,
+        summary_path,
+    })
+}

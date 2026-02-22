@@ -1,0 +1,17 @@
+schema_version = "franken-engine.test262-waiver.v1"
+
+[[waiver]]
+test_id = "language/expressions/optional-chaining/short-circuiting.js"
+reason_code = "not_yet_implemented"
+es2020_clause = "13.3.1"
+tracking_bead = "bd-11p"
+expiry_date = "2026-12-31"
+reviewer = "runtime-conformance"
+
+[[waiver]]
+test_id = "built-ins/Promise/allSettled/reject-late.js"
+reason_code = "host_hook_missing"
+es2020_clause = "27.2.4"
+tracking_bead = "bd-11p"
+expiry_date = "2024-01-01"
+reviewer = "runtime-conformance"

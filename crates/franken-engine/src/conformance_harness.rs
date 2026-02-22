@@ -288,10 +288,9 @@ impl ConformanceAssetRecord {
             });
         }
 
-        let expected_evidence_type = self
-            .expected_evidence_type
-            .as_deref()
-            .ok_or(ConformanceManifestError::MissingField("expected_evidence_type"))?;
+        let expected_evidence_type = self.expected_evidence_type.as_deref().ok_or(
+            ConformanceManifestError::MissingField("expected_evidence_type"),
+        )?;
         if !IFC_EXPECTED_EVIDENCE_TYPES.contains(&expected_evidence_type) {
             return Err(ConformanceManifestError::InvalidFieldValue {
                 field: "expected_evidence_type",
@@ -928,10 +927,10 @@ fn parse_ifc_observed_outcome(payload: &str) -> IfcObservedOutcome {
             }
             continue;
         }
-        if let Some(value) = token.strip_prefix("evidence_id:") {
-            if !value.trim().is_empty() {
-                evidence_id = Some(value.trim().to_string());
-            }
+        if let Some(value) = token.strip_prefix("evidence_id:")
+            && !value.trim().is_empty()
+        {
+            evidence_id = Some(value.trim().to_string());
         }
     }
 
@@ -1141,7 +1140,9 @@ impl ConformanceRunner {
                 )
             };
 
-            let category = ifc_metadata.as_ref().map(|metadata| metadata.category.clone());
+            let category = ifc_metadata
+                .as_ref()
+                .map(|metadata| metadata.category.clone());
             let source_labels = ifc_metadata
                 .as_ref()
                 .map(|metadata| metadata.source_labels.clone())
@@ -1562,9 +1563,14 @@ struct ConformanceMinimizationOutcome {
     summary: ConformanceMinimizationSummary,
 }
 
-fn build_ifc_conformance_summary(run: &ConformanceRunResult) -> Option<IfcConformanceEvidenceSummaryLine> {
-    let ifc_logs: Vec<&ConformanceLogEvent> =
-        run.logs.iter().filter(|event| event.category.is_some()).collect();
+fn build_ifc_conformance_summary(
+    run: &ConformanceRunResult,
+) -> Option<IfcConformanceEvidenceSummaryLine> {
+    let ifc_logs: Vec<&ConformanceLogEvent> = run
+        .logs
+        .iter()
+        .filter(|event| event.category.is_some())
+        .collect();
     if ifc_logs.is_empty() {
         return None;
     }
@@ -2265,4 +2271,1457 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     fs::write(&tmp, bytes)?;
     fs::rename(&tmp, path)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── DeterministicRng ───────────────────────────────────────────────
+
+    #[test]
+    fn deterministic_rng_seeded_zero_uses_fallback_state() {
+        let rng = DeterministicRng::seeded(0);
+        assert_eq!(rng.state, 0x9E37_79B9_7F4A_7C15);
+    }
+
+    #[test]
+    fn deterministic_rng_seeded_nonzero_preserves_seed() {
+        let rng = DeterministicRng::seeded(42);
+        assert_eq!(rng.state, 42);
+    }
+
+    #[test]
+    fn deterministic_rng_same_seed_produces_same_sequence() {
+        let mut a = DeterministicRng::seeded(123);
+        let mut b = DeterministicRng::seeded(123);
+        for _ in 0..100 {
+            assert_eq!(a.next_u64(), b.next_u64());
+        }
+    }
+
+    #[test]
+    fn deterministic_rng_different_seeds_diverge() {
+        let mut a = DeterministicRng::seeded(1);
+        let mut b = DeterministicRng::seeded(2);
+        // At least one of the first 5 values should differ
+        let differ = (0..5).any(|_| a.next_u64() != b.next_u64());
+        assert!(differ);
+    }
+
+    #[test]
+    fn deterministic_rng_serde_round_trip() {
+        let rng = DeterministicRng::seeded(999);
+        let json = serde_json::to_string(&rng).unwrap();
+        let back: DeterministicRng = serde_json::from_str(&json).unwrap();
+        assert_eq!(rng, back);
+    }
+
+    // ── canonicalize_conformance_output ─────────────────────────────────
+
+    #[test]
+    fn canonicalize_strips_empty_lines_and_trims() {
+        let raw = "  hello  \n\n  world  \n\n";
+        let result = canonicalize_conformance_output(raw);
+        assert_eq!(result, "hello\nworld");
+    }
+
+    #[test]
+    fn canonicalize_normalizes_crlf() {
+        let raw = "line1\r\nline2\rline3";
+        let result = canonicalize_conformance_output(raw);
+        assert_eq!(result, "line1\nline2\nline3");
+    }
+
+    #[test]
+    fn canonicalize_sorts_props_fields() {
+        let raw = "props: zebra, alpha, mango";
+        let result = canonicalize_conformance_output(raw);
+        assert_eq!(result, "props:alpha,mango,zebra");
+    }
+
+    #[test]
+    fn canonicalize_normalizes_error_formats() {
+        let raw = "TypeError: is not a function";
+        let result = canonicalize_conformance_output(raw);
+        assert!(result.contains("TypeError|"));
+        assert!(!result.contains("TypeError: "));
+    }
+
+    #[test]
+    fn canonicalize_normalizes_numeric_tokens() {
+        let raw = "value 42 end";
+        let result = canonicalize_conformance_output(raw);
+        assert_eq!(result, "value 42.000000 end");
+    }
+
+    #[test]
+    fn canonicalize_empty_input() {
+        assert_eq!(canonicalize_conformance_output(""), "");
+        assert_eq!(canonicalize_conformance_output("  \n  \n  "), "");
+    }
+
+    // ── normalize_value_line ───────────────────────────────────────────
+
+    #[test]
+    fn normalize_value_line_replaces_all_error_prefixes() {
+        let line = "TypeError: foo ReferenceError: bar SyntaxError: baz";
+        let result = normalize_value_line(line);
+        assert!(result.contains("TypeError|"));
+        assert!(result.contains("ReferenceError|"));
+        assert!(result.contains("SyntaxError|"));
+    }
+
+    #[test]
+    fn normalize_value_line_formats_floats() {
+        let result = normalize_value_line("result 3.14 done");
+        assert_eq!(result, "result 3.140000 done");
+    }
+
+    #[test]
+    fn normalize_value_line_non_numeric_passthrough() {
+        let result = normalize_value_line("hello world");
+        assert_eq!(result, "hello world");
+    }
+
+    // ── parse_ifc_observed_outcome ─────────────────────────────────────
+
+    #[test]
+    fn parse_ifc_observed_outcome_all_fields() {
+        let result = parse_ifc_observed_outcome("outcome:allow evidence:none evidence_id:ev-001");
+        assert_eq!(result.outcome.as_deref(), Some("allow"));
+        assert_eq!(result.evidence_type.as_deref(), Some("none"));
+        assert_eq!(result.evidence_id.as_deref(), Some("ev-001"));
+    }
+
+    #[test]
+    fn parse_ifc_observed_outcome_partial() {
+        let result = parse_ifc_observed_outcome("outcome:block other stuff");
+        assert_eq!(result.outcome.as_deref(), Some("block"));
+        assert!(result.evidence_type.is_none());
+        assert!(result.evidence_id.is_none());
+    }
+
+    #[test]
+    fn parse_ifc_observed_outcome_empty() {
+        let result = parse_ifc_observed_outcome("");
+        assert!(result.outcome.is_none());
+        assert!(result.evidence_type.is_none());
+        assert!(result.evidence_id.is_none());
+    }
+
+    #[test]
+    fn parse_ifc_observed_outcome_empty_value_ignored() {
+        let result = parse_ifc_observed_outcome("outcome: evidence:");
+        assert!(result.outcome.is_none());
+        assert!(result.evidence_type.is_none());
+    }
+
+    // ── WaiverReasonCode::parse ────────────────────────────────────────
+
+    #[test]
+    fn waiver_reason_code_parse_all_variants() {
+        assert_eq!(
+            WaiverReasonCode::parse("harness_gap"),
+            Some(WaiverReasonCode::HarnessGap)
+        );
+        assert_eq!(
+            WaiverReasonCode::parse("host_hook_missing"),
+            Some(WaiverReasonCode::HostHookMissing)
+        );
+        assert_eq!(
+            WaiverReasonCode::parse("intentional_divergence"),
+            Some(WaiverReasonCode::IntentionalDivergence)
+        );
+        assert_eq!(
+            WaiverReasonCode::parse("not_yet_implemented"),
+            Some(WaiverReasonCode::NotYetImplemented)
+        );
+    }
+
+    #[test]
+    fn waiver_reason_code_parse_trims_whitespace() {
+        assert_eq!(
+            WaiverReasonCode::parse("  harness_gap  "),
+            Some(WaiverReasonCode::HarnessGap)
+        );
+    }
+
+    #[test]
+    fn waiver_reason_code_parse_unknown_returns_none() {
+        assert!(WaiverReasonCode::parse("unknown_code").is_none());
+        assert!(WaiverReasonCode::parse("").is_none());
+    }
+
+    #[test]
+    fn waiver_reason_code_serde_round_trip() {
+        let code = WaiverReasonCode::HarnessGap;
+        let json = serde_json::to_string(&code).unwrap();
+        assert_eq!(json, "\"harness_gap\"");
+        let back: WaiverReasonCode = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, code);
+    }
+
+    // ── parse_waiver_toml ──────────────────────────────────────────────
+
+    #[test]
+    fn parse_waiver_toml_single_waiver() {
+        let toml = r#"
+[[waiver]]
+asset_id = "test-001"
+reason_code = "harness_gap"
+tracking_bead = "bd-42"
+expiry_date = "2030-01-01"
+"#;
+        let set = parse_waiver_toml(toml).unwrap();
+        assert_eq!(set.waivers.len(), 1);
+        assert_eq!(set.waivers[0].asset_id, "test-001");
+        assert_eq!(set.waivers[0].reason_code, WaiverReasonCode::HarnessGap);
+        assert_eq!(set.waivers[0].tracking_bead, "bd-42");
+        assert_eq!(set.waivers[0].expiry_date, "2030-01-01");
+    }
+
+    #[test]
+    fn parse_waiver_toml_multiple_waivers() {
+        let toml = r#"
+[[waiver]]
+asset_id = "test-001"
+reason_code = "harness_gap"
+tracking_bead = "bd-1"
+expiry_date = "2030-01-01"
+
+[[waiver]]
+asset_id = "test-002"
+reason_code = "not_yet_implemented"
+tracking_bead = "bd-2"
+expiry_date = "2031-06-15"
+"#;
+        let set = parse_waiver_toml(toml).unwrap();
+        assert_eq!(set.waivers.len(), 2);
+        assert_eq!(set.waivers[1].asset_id, "test-002");
+        assert_eq!(
+            set.waivers[1].reason_code,
+            WaiverReasonCode::NotYetImplemented
+        );
+    }
+
+    #[test]
+    fn parse_waiver_toml_comments_ignored() {
+        let toml = r#"
+# This is a comment
+[[waiver]]
+asset_id = "test-001" # inline comment
+reason_code = "harness_gap"
+tracking_bead = "bd-1"
+expiry_date = "2030-01-01"
+"#;
+        let set = parse_waiver_toml(toml).unwrap();
+        assert_eq!(set.waivers.len(), 1);
+        assert_eq!(set.waivers[0].asset_id, "test-001");
+    }
+
+    #[test]
+    fn parse_waiver_toml_empty_content() {
+        let set = parse_waiver_toml("").unwrap();
+        assert!(set.waivers.is_empty());
+    }
+
+    #[test]
+    fn parse_waiver_toml_missing_field_errors() {
+        let toml = r#"
+[[waiver]]
+asset_id = "test-001"
+reason_code = "harness_gap"
+"#;
+        let result = parse_waiver_toml(toml);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_waiver_toml_unknown_field_errors() {
+        let toml = r#"
+[[waiver]]
+asset_id = "test-001"
+reason_code = "harness_gap"
+tracking_bead = "bd-1"
+expiry_date = "2030-01-01"
+unknown_field = "value"
+"#;
+        let result = parse_waiver_toml(toml);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_waiver_toml_invalid_reason_code_errors() {
+        let toml = r#"
+[[waiver]]
+asset_id = "test-001"
+reason_code = "invalid_code"
+tracking_bead = "bd-1"
+expiry_date = "2030-01-01"
+"#;
+        let result = parse_waiver_toml(toml);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_waiver_toml_kv_before_header_errors() {
+        let toml = "asset_id = \"orphan\"\n";
+        let result = parse_waiver_toml(toml);
+        assert!(result.is_err());
+    }
+
+    // ── ConformanceWaiverSet::find_active ──────────────────────────────
+
+    #[test]
+    fn waiver_set_find_active_match() {
+        let set = ConformanceWaiverSet {
+            waivers: vec![ConformanceWaiver {
+                asset_id: "asset-1".to_string(),
+                reason_code: WaiverReasonCode::HarnessGap,
+                tracking_bead: "bd-1".to_string(),
+                expiry_date: "2030-01-01".to_string(),
+            }],
+        };
+        let found = set.find_active("asset-1", "2025-06-01");
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().asset_id, "asset-1");
+    }
+
+    #[test]
+    fn waiver_set_find_active_expired() {
+        let set = ConformanceWaiverSet {
+            waivers: vec![ConformanceWaiver {
+                asset_id: "asset-1".to_string(),
+                reason_code: WaiverReasonCode::HarnessGap,
+                tracking_bead: "bd-1".to_string(),
+                expiry_date: "2020-01-01".to_string(),
+            }],
+        };
+        let found = set.find_active("asset-1", "2025-06-01");
+        assert!(found.is_none());
+    }
+
+    #[test]
+    fn waiver_set_find_active_wrong_asset() {
+        let set = ConformanceWaiverSet {
+            waivers: vec![ConformanceWaiver {
+                asset_id: "asset-1".to_string(),
+                reason_code: WaiverReasonCode::HarnessGap,
+                tracking_bead: "bd-1".to_string(),
+                expiry_date: "2030-01-01".to_string(),
+            }],
+        };
+        assert!(set.find_active("asset-99", "2025-06-01").is_none());
+    }
+
+    // ── ConformanceAssetRecord::validate ───────────────────────────────
+
+    fn valid_asset_record() -> ConformanceAssetRecord {
+        ConformanceAssetRecord {
+            asset_id: "test-001".to_string(),
+            source_donor: "test262".to_string(),
+            semantic_domain: "evaluation".to_string(),
+            normative_reference: "ECMA-262 §15.1".to_string(),
+            fixture_path: "fixtures/test-001.json".to_string(),
+            fixture_hash: "abc123".to_string(),
+            expected_output_path: "expected/test-001.txt".to_string(),
+            expected_output_hash: "def456".to_string(),
+            import_date: "2025-01-01".to_string(),
+            category: None,
+            source_labels: vec![],
+            sink_clearances: vec![],
+            flow_path_type: None,
+            expected_outcome: None,
+            expected_evidence_type: None,
+        }
+    }
+
+    #[test]
+    fn asset_record_validate_valid() {
+        assert!(valid_asset_record().validate().is_ok());
+    }
+
+    #[test]
+    fn asset_record_validate_empty_asset_id() {
+        let mut rec = valid_asset_record();
+        rec.asset_id = "  ".to_string();
+        let err = rec.validate().unwrap_err();
+        assert!(matches!(
+            err,
+            ConformanceManifestError::MissingField("asset_id")
+        ));
+    }
+
+    #[test]
+    fn asset_record_validate_empty_source_donor() {
+        let mut rec = valid_asset_record();
+        rec.source_donor = "".to_string();
+        let err = rec.validate().unwrap_err();
+        assert!(matches!(
+            err,
+            ConformanceManifestError::MissingField("source_donor")
+        ));
+    }
+
+    #[test]
+    fn asset_record_validate_empty_fixture_hash() {
+        let mut rec = valid_asset_record();
+        rec.fixture_hash = "".to_string();
+        let err = rec.validate().unwrap_err();
+        assert!(matches!(
+            err,
+            ConformanceManifestError::MissingField("fixture_hash")
+        ));
+    }
+
+    #[test]
+    fn asset_record_validate_empty_import_date() {
+        let mut rec = valid_asset_record();
+        rec.import_date = " ".to_string();
+        let err = rec.validate().unwrap_err();
+        assert!(matches!(
+            err,
+            ConformanceManifestError::MissingField("import_date")
+        ));
+    }
+
+    // ── ConformanceAssetRecord::is_ifc_asset ──────────────────────────
+
+    #[test]
+    fn asset_record_is_ifc_by_semantic_domain() {
+        let mut rec = valid_asset_record();
+        rec.semantic_domain = "ifc_corpus/benign".to_string();
+        assert!(rec.is_ifc_asset());
+    }
+
+    #[test]
+    fn asset_record_is_ifc_by_category() {
+        let mut rec = valid_asset_record();
+        rec.category = Some("benign".to_string());
+        assert!(rec.is_ifc_asset());
+    }
+
+    #[test]
+    fn asset_record_is_not_ifc() {
+        let rec = valid_asset_record();
+        assert!(!rec.is_ifc_asset());
+    }
+
+    // ── ConformanceAssetRecord::ifc_metadata ──────────────────────────
+
+    #[test]
+    fn asset_record_ifc_metadata_complete() {
+        let mut rec = valid_asset_record();
+        rec.category = Some("benign".to_string());
+        rec.source_labels = vec!["credential".to_string()];
+        rec.sink_clearances = vec!["network_egress".to_string()];
+        rec.flow_path_type = Some("direct".to_string());
+        rec.expected_outcome = Some("allow".to_string());
+        rec.expected_evidence_type = Some("none".to_string());
+        let meta = rec.ifc_metadata().unwrap();
+        assert_eq!(meta.category, "benign");
+        assert_eq!(meta.flow_path_type, "direct");
+    }
+
+    #[test]
+    fn asset_record_ifc_metadata_missing_category_returns_none() {
+        let rec = valid_asset_record();
+        assert!(rec.ifc_metadata().is_none());
+    }
+
+    // ── validate_ifc_fields ───────────────────────────────────────────
+
+    #[test]
+    fn validate_ifc_fields_non_ifc_passes() {
+        let rec = valid_asset_record();
+        assert!(rec.validate_ifc_fields().is_ok());
+    }
+
+    #[test]
+    fn validate_ifc_fields_valid_benign() {
+        let mut rec = valid_asset_record();
+        rec.category = Some("benign".to_string());
+        rec.source_labels = vec!["credential".to_string()];
+        rec.sink_clearances = vec!["network_egress".to_string()];
+        rec.flow_path_type = Some("direct".to_string());
+        rec.expected_outcome = Some("allow".to_string());
+        rec.expected_evidence_type = Some("none".to_string());
+        assert!(rec.validate_ifc_fields().is_ok());
+    }
+
+    #[test]
+    fn validate_ifc_fields_invalid_category() {
+        let mut rec = valid_asset_record();
+        rec.category = Some("invalid_category".to_string());
+        rec.source_labels = vec!["credential".to_string()];
+        let err = rec.validate_ifc_fields().unwrap_err();
+        assert!(matches!(
+            err,
+            ConformanceManifestError::InvalidFieldValue {
+                field: "category",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn validate_ifc_fields_invalid_source_label() {
+        let mut rec = valid_asset_record();
+        rec.category = Some("benign".to_string());
+        rec.source_labels = vec!["invalid_label".to_string()];
+        let err = rec.validate_ifc_fields().unwrap_err();
+        assert!(matches!(
+            err,
+            ConformanceManifestError::InvalidFieldValue {
+                field: "source_labels",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn validate_ifc_fields_benign_wrong_outcome_errors() {
+        let mut rec = valid_asset_record();
+        rec.category = Some("benign".to_string());
+        rec.source_labels = vec!["credential".to_string()];
+        rec.sink_clearances = vec!["network_egress".to_string()];
+        rec.flow_path_type = Some("direct".to_string());
+        rec.expected_outcome = Some("block".to_string());
+        rec.expected_evidence_type = Some("none".to_string());
+        let err = rec.validate_ifc_fields().unwrap_err();
+        assert!(matches!(
+            err,
+            ConformanceManifestError::InvalidIfcExpectation { .. }
+        ));
+    }
+
+    #[test]
+    fn validate_ifc_fields_exfil_correct() {
+        let mut rec = valid_asset_record();
+        rec.category = Some("exfil".to_string());
+        rec.source_labels = vec!["key_material".to_string()];
+        rec.sink_clearances = vec!["subprocess_ipc".to_string()];
+        rec.flow_path_type = Some("indirect".to_string());
+        rec.expected_outcome = Some("block".to_string());
+        rec.expected_evidence_type = Some("flow_violation".to_string());
+        assert!(rec.validate_ifc_fields().is_ok());
+    }
+
+    #[test]
+    fn validate_ifc_fields_declassify_correct() {
+        let mut rec = valid_asset_record();
+        rec.category = Some("declassify".to_string());
+        rec.source_labels = vec!["policy_protected".to_string()];
+        rec.sink_clearances = vec!["explicit_declassify".to_string()];
+        rec.flow_path_type = Some("direct".to_string());
+        rec.expected_outcome = Some("declassify".to_string());
+        rec.expected_evidence_type = Some("declassification_receipt".to_string());
+        assert!(rec.validate_ifc_fields().is_ok());
+    }
+
+    // ── ConformanceRunnerConfig::validate ──────────────────────────────
+
+    #[test]
+    fn runner_config_default_validates() {
+        assert!(ConformanceRunnerConfig::default().validate().is_ok());
+    }
+
+    #[test]
+    fn runner_config_empty_trace_prefix_errors() {
+        let cfg = ConformanceRunnerConfig {
+            trace_prefix: "  ".to_string(),
+            ..Default::default()
+        };
+        let err = cfg.validate().unwrap_err();
+        assert!(matches!(err, ConformanceRunError::InvalidConfig(_)));
+    }
+
+    #[test]
+    fn runner_config_empty_policy_id_errors() {
+        let cfg = ConformanceRunnerConfig {
+            policy_id: "".to_string(),
+            ..Default::default()
+        };
+        let err = cfg.validate().unwrap_err();
+        assert!(matches!(err, ConformanceRunError::InvalidConfig(_)));
+    }
+
+    #[test]
+    fn runner_config_non_c_locale_errors() {
+        let cfg = ConformanceRunnerConfig {
+            locale: "en_US.UTF-8".to_string(),
+            ..Default::default()
+        };
+        let err = cfg.validate().unwrap_err();
+        if let ConformanceRunError::InvalidConfig(msg) = &err {
+            assert!(msg.contains("locale"));
+        } else {
+            panic!("expected InvalidConfig");
+        }
+    }
+
+    #[test]
+    fn runner_config_non_utc_timezone_errors() {
+        let cfg = ConformanceRunnerConfig {
+            timezone: "America/New_York".to_string(),
+            ..Default::default()
+        };
+        let err = cfg.validate().unwrap_err();
+        if let ConformanceRunError::InvalidConfig(msg) = &err {
+            assert!(msg.contains("timezone"));
+        } else {
+            panic!("expected InvalidConfig");
+        }
+    }
+
+    #[test]
+    fn runner_config_non_deterministic_gc_errors() {
+        let cfg = ConformanceRunnerConfig {
+            gc_schedule: "random".to_string(),
+            ..Default::default()
+        };
+        let err = cfg.validate().unwrap_err();
+        if let ConformanceRunError::InvalidConfig(msg) = &err {
+            assert!(msg.contains("gc_schedule"));
+        } else {
+            panic!("expected InvalidConfig");
+        }
+    }
+
+    #[test]
+    fn runner_config_empty_run_date_errors() {
+        let cfg = ConformanceRunnerConfig {
+            run_date: " ".to_string(),
+            ..Default::default()
+        };
+        assert!(cfg.validate().is_err());
+    }
+
+    // ── classify_conformance_delta ─────────────────────────────────────
+
+    #[test]
+    fn classify_delta_identical_returns_empty() {
+        let deltas = classify_conformance_delta("hello\nworld", "hello\nworld");
+        assert!(deltas.is_empty());
+    }
+
+    #[test]
+    fn classify_delta_props_field_removed() {
+        let expected = "props: alpha, beta, gamma";
+        let actual = "props: alpha, gamma";
+        let deltas = classify_conformance_delta(expected, actual);
+        assert!(!deltas.is_empty());
+        assert!(
+            deltas
+                .iter()
+                .any(|d| d.kind == ConformanceDeltaKind::SchemaFieldRemoved)
+        );
+    }
+
+    #[test]
+    fn classify_delta_props_field_added() {
+        let expected = "props: alpha";
+        let actual = "props: alpha, beta";
+        let deltas = classify_conformance_delta(expected, actual);
+        assert!(
+            deltas
+                .iter()
+                .any(|d| d.kind == ConformanceDeltaKind::SchemaFieldAdded)
+        );
+    }
+
+    #[test]
+    fn classify_delta_error_format_change() {
+        let expected = "TypeError|undefined is not a function";
+        let actual = "ReferenceError|x is not defined";
+        let deltas = classify_conformance_delta(expected, actual);
+        assert!(
+            deltas
+                .iter()
+                .any(|d| d.kind == ConformanceDeltaKind::ErrorFormatChange)
+        );
+    }
+
+    #[test]
+    fn classify_delta_numeric_only_is_timing() {
+        let expected = "latency 100 ms";
+        let actual = "latency 200 ms";
+        let deltas = classify_conformance_delta(expected, actual);
+        assert!(
+            deltas
+                .iter()
+                .any(|d| d.kind == ConformanceDeltaKind::TimingChange)
+        );
+    }
+
+    #[test]
+    fn classify_delta_behavioral_semantic_shift() {
+        let expected = "result: true";
+        let actual = "result: false";
+        let deltas = classify_conformance_delta(expected, actual);
+        assert!(
+            deltas
+                .iter()
+                .any(|d| d.kind == ConformanceDeltaKind::BehavioralSemanticShift)
+        );
+    }
+
+    // ── classify_failure_class ─────────────────────────────────────────
+
+    #[test]
+    fn classify_failure_class_empty_deltas_is_behavioral() {
+        assert_eq!(
+            classify_failure_class(&[]),
+            ConformanceFailureClass::Behavioral
+        );
+    }
+
+    #[test]
+    fn classify_failure_class_breaking_wins() {
+        let deltas = vec![
+            ConformanceDeltaClassification {
+                kind: ConformanceDeltaKind::TimingChange,
+                field: None,
+                expected: None,
+                actual: None,
+                detail: String::new(),
+            },
+            ConformanceDeltaClassification {
+                kind: ConformanceDeltaKind::SchemaFieldRemoved,
+                field: None,
+                expected: None,
+                actual: None,
+                detail: String::new(),
+            },
+        ];
+        assert_eq!(
+            classify_failure_class(&deltas),
+            ConformanceFailureClass::Breaking
+        );
+    }
+
+    #[test]
+    fn classify_failure_class_single_timing() {
+        let deltas = vec![ConformanceDeltaClassification {
+            kind: ConformanceDeltaKind::TimingChange,
+            field: None,
+            expected: None,
+            actual: None,
+            detail: String::new(),
+        }];
+        assert_eq!(
+            classify_failure_class(&deltas),
+            ConformanceFailureClass::Performance
+        );
+    }
+
+    // ── severity_for_failure_class ─────────────────────────────────────
+
+    #[test]
+    fn severity_mapping_exhaustive() {
+        assert_eq!(
+            severity_for_failure_class(ConformanceFailureClass::Breaking),
+            ConformanceFailureSeverity::Critical
+        );
+        assert_eq!(
+            severity_for_failure_class(ConformanceFailureClass::Behavioral),
+            ConformanceFailureSeverity::Error
+        );
+        assert_eq!(
+            severity_for_failure_class(ConformanceFailureClass::Observability),
+            ConformanceFailureSeverity::Warning
+        );
+        assert_eq!(
+            severity_for_failure_class(ConformanceFailureClass::Performance),
+            ConformanceFailureSeverity::Warning
+        );
+    }
+
+    // ── failure_class_priority ─────────────────────────────────────────
+
+    #[test]
+    fn failure_class_priority_ordering() {
+        assert!(
+            failure_class_priority(ConformanceFailureClass::Breaking)
+                > failure_class_priority(ConformanceFailureClass::Behavioral)
+        );
+        assert!(
+            failure_class_priority(ConformanceFailureClass::Behavioral)
+                > failure_class_priority(ConformanceFailureClass::Observability)
+        );
+        assert!(
+            failure_class_priority(ConformanceFailureClass::Observability)
+                > failure_class_priority(ConformanceFailureClass::Performance)
+        );
+    }
+
+    // ── delta_kind_to_failure_class ────────────────────────────────────
+
+    #[test]
+    fn delta_kind_to_failure_class_schema_changes_are_breaking() {
+        assert_eq!(
+            delta_kind_to_failure_class(ConformanceDeltaKind::SchemaFieldAdded),
+            ConformanceFailureClass::Breaking
+        );
+        assert_eq!(
+            delta_kind_to_failure_class(ConformanceDeltaKind::SchemaFieldRemoved),
+            ConformanceFailureClass::Breaking
+        );
+        assert_eq!(
+            delta_kind_to_failure_class(ConformanceDeltaKind::SchemaFieldModified),
+            ConformanceFailureClass::Breaking
+        );
+    }
+
+    #[test]
+    fn delta_kind_to_failure_class_behavioral_and_timing() {
+        assert_eq!(
+            delta_kind_to_failure_class(ConformanceDeltaKind::BehavioralSemanticShift),
+            ConformanceFailureClass::Behavioral
+        );
+        assert_eq!(
+            delta_kind_to_failure_class(ConformanceDeltaKind::TimingChange),
+            ConformanceFailureClass::Performance
+        );
+        assert_eq!(
+            delta_kind_to_failure_class(ConformanceDeltaKind::ErrorFormatChange),
+            ConformanceFailureClass::Observability
+        );
+    }
+
+    // ── numeric_delta_only ─────────────────────────────────────────────
+
+    #[test]
+    fn numeric_delta_only_true_when_only_numbers_differ() {
+        assert!(numeric_delta_only("time 100 ms", "time 200 ms"));
+    }
+
+    #[test]
+    fn numeric_delta_only_false_when_text_differs() {
+        assert!(!numeric_delta_only("hello world", "hello earth"));
+    }
+
+    #[test]
+    fn numeric_delta_only_false_when_lengths_differ() {
+        assert!(!numeric_delta_only("a b", "a b c"));
+    }
+
+    #[test]
+    fn numeric_delta_only_false_when_identical() {
+        assert!(!numeric_delta_only("time 100 ms", "time 100 ms"));
+    }
+
+    #[test]
+    fn numeric_delta_only_false_when_type_mismatch() {
+        assert!(!numeric_delta_only("count 10", "count abc"));
+    }
+
+    // ── parse_props_fields ─────────────────────────────────────────────
+
+    #[test]
+    fn parse_props_fields_basic() {
+        let result = parse_props_fields("props: beta, alpha, gamma").unwrap();
+        assert_eq!(result, vec!["alpha", "beta", "gamma"]);
+    }
+
+    #[test]
+    fn parse_props_fields_deduplicates() {
+        let result = parse_props_fields("props: a, b, a").unwrap();
+        assert_eq!(result, vec!["a", "b"]);
+    }
+
+    #[test]
+    fn parse_props_fields_no_props_line() {
+        assert!(parse_props_fields("no props here").is_none());
+    }
+
+    #[test]
+    fn parse_props_fields_multiline_finds_first() {
+        let payload = "line1\nprops: x, y\nline3";
+        let result = parse_props_fields(payload).unwrap();
+        assert_eq!(result, vec!["x", "y"]);
+    }
+
+    // ── extract_error_signature ────────────────────────────────────────
+
+    #[test]
+    fn extract_error_signature_found() {
+        let payload = "line1\nTypeError|undefined is not a function\nline3";
+        let sig = extract_error_signature(payload).unwrap();
+        assert!(sig.contains("Error|"));
+    }
+
+    #[test]
+    fn extract_error_signature_not_found() {
+        assert!(extract_error_signature("no errors here").is_none());
+    }
+
+    // ── fnv1a64 ────────────────────────────────────────────────────────
+
+    #[test]
+    fn fnv1a64_deterministic() {
+        let a = fnv1a64(b"hello");
+        let b = fnv1a64(b"hello");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn fnv1a64_different_inputs_differ() {
+        assert_ne!(fnv1a64(b"hello"), fnv1a64(b"world"));
+    }
+
+    #[test]
+    fn fnv1a64_empty_is_offset_basis() {
+        let result = fnv1a64(b"");
+        assert_eq!(result, 0xcbf2_9ce4_8422_2325);
+    }
+
+    // ── sha256_hex ─────────────────────────────────────────────────────
+
+    #[test]
+    fn sha256_hex_deterministic() {
+        let a = sha256_hex(b"test");
+        let b = sha256_hex(b"test");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn sha256_hex_is_64_hex_chars() {
+        let result = sha256_hex(b"data");
+        assert_eq!(result.len(), 64);
+        assert!(result.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn sha256_hex_known_empty_hash() {
+        // SHA-256 of empty string is well-known
+        let result = sha256_hex(b"");
+        assert_eq!(
+            result,
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+    }
+
+    // ── digest_hex ─────────────────────────────────────────────────────
+
+    #[test]
+    fn digest_hex_is_16_hex_chars() {
+        let result = digest_hex(b"test");
+        assert_eq!(result.len(), 16);
+        assert!(result.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    // ── split_source_segments ──────────────────────────────────────────
+
+    #[test]
+    fn split_source_segments_by_semicolons() {
+        let segments = split_source_segments("var a = 1; var b = 2;");
+        assert_eq!(segments, vec!["var a = 1", "var b = 2"]);
+    }
+
+    #[test]
+    fn split_source_segments_by_newlines() {
+        let segments = split_source_segments("var a = 1\nvar b = 2");
+        assert_eq!(segments, vec!["var a = 1", "var b = 2"]);
+    }
+
+    #[test]
+    fn split_source_segments_empty_returns_void() {
+        let segments = split_source_segments("");
+        assert_eq!(segments, vec!["void 0"]);
+    }
+
+    #[test]
+    fn split_source_segments_whitespace_only_returns_void() {
+        let segments = split_source_segments("  \n  \n  ");
+        assert_eq!(segments, vec!["void 0"]);
+    }
+
+    #[test]
+    fn split_source_segments_normalizes_crlf() {
+        let segments = split_source_segments("a\r\nb\rc");
+        assert_eq!(segments, vec!["a", "b", "c"]);
+    }
+
+    // ── split_output_lines ─────────────────────────────────────────────
+
+    #[test]
+    fn split_output_lines_basic() {
+        let lines = split_output_lines("line1\nline2");
+        assert_eq!(lines.len(), 2);
+    }
+
+    #[test]
+    fn split_output_lines_empty_returns_empty_marker() {
+        let lines = split_output_lines("");
+        assert_eq!(lines, vec!["<empty>"]);
+    }
+
+    // ── DonorHarnessAdapter ────────────────────────────────────────────
+
+    #[test]
+    fn donor_harness_adapter_replaces_realm() {
+        let adapter = DonorHarnessAdapter;
+        let result = adapter.adapt_source("$262.createRealm()");
+        assert_eq!(result, "__franken_create_realm()");
+    }
+
+    #[test]
+    fn donor_harness_adapter_replaces_done() {
+        let adapter = DonorHarnessAdapter;
+        let result = adapter.adapt_source("$DONE(error)");
+        assert_eq!(result, "__franken_done(error)");
+    }
+
+    #[test]
+    fn donor_harness_adapter_replaces_print() {
+        let adapter = DonorHarnessAdapter;
+        let result = adapter.adapt_source("print(42)");
+        assert_eq!(result, "franken_print(42)");
+    }
+
+    #[test]
+    fn donor_harness_adapter_all_replacements() {
+        let adapter = DonorHarnessAdapter;
+        let result = adapter.adapt_source("$262.createRealm(); print($DONE);");
+        assert!(result.contains("__franken_create_realm()"));
+        assert!(result.contains("franken_print("));
+        assert!(result.contains("__franken_done"));
+    }
+
+    // ── ConformanceReproMetadata default ───────────────────────────────
+
+    #[test]
+    fn repro_metadata_default_has_engine_version() {
+        let meta = ConformanceReproMetadata::default();
+        assert!(meta.version_combination.contains_key("franken_engine"));
+        assert_eq!(meta.issue_tracker_project, "beads");
+        assert_eq!(meta.first_seen_commit, "unknown");
+    }
+
+    // ── ConformanceRunnerConfig default ────────────────────────────────
+
+    #[test]
+    fn runner_config_default_values() {
+        let cfg = ConformanceRunnerConfig::default();
+        assert_eq!(cfg.locale, "C");
+        assert_eq!(cfg.timezone, "UTC");
+        assert_eq!(cfg.gc_schedule, "deterministic");
+        assert_eq!(cfg.seed, 7);
+    }
+
+    // ── ConformanceRunner::env_fingerprint ─────────────────────────────
+
+    #[test]
+    fn env_fingerprint_deterministic() {
+        let runner = ConformanceRunner::default();
+        let a = runner.env_fingerprint();
+        let b = runner.env_fingerprint();
+        assert_eq!(a, b);
+        assert_eq!(a.len(), 64); // SHA-256 hex
+    }
+
+    // ── ConformanceCiGateError ─────────────────────────────────────────
+
+    #[test]
+    fn ci_gate_error_display() {
+        let err = ConformanceCiGateError {
+            failed: 3,
+            errored: 1,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("failed=3"));
+        assert!(msg.contains("errored=1"));
+    }
+
+    #[test]
+    fn enforce_ci_gate_passes_on_zero_failures() {
+        let result = ConformanceRunResult {
+            run_id: "run-1".to_string(),
+            asset_manifest_hash: "hash".to_string(),
+            logs: vec![],
+            summary: ConformanceRunSummary {
+                run_id: "run-1".to_string(),
+                asset_manifest_hash: "hash".to_string(),
+                total_assets: 5,
+                passed: 5,
+                failed: 0,
+                waived: 0,
+                errored: 0,
+                env_fingerprint: "fp".to_string(),
+            },
+            minimized_repros: vec![],
+        };
+        assert!(result.enforce_ci_gate().is_ok());
+    }
+
+    #[test]
+    fn enforce_ci_gate_fails_on_failures() {
+        let result = ConformanceRunResult {
+            run_id: "run-1".to_string(),
+            asset_manifest_hash: "hash".to_string(),
+            logs: vec![],
+            summary: ConformanceRunSummary {
+                run_id: "run-1".to_string(),
+                asset_manifest_hash: "hash".to_string(),
+                total_assets: 5,
+                passed: 3,
+                failed: 2,
+                waived: 0,
+                errored: 0,
+                env_fingerprint: "fp".to_string(),
+            },
+            minimized_repros: vec![],
+        };
+        let err = result.enforce_ci_gate().unwrap_err();
+        assert_eq!(err.failed, 2);
+    }
+
+    #[test]
+    fn enforce_ci_gate_fails_on_errors() {
+        let result = ConformanceRunResult {
+            run_id: "run-1".to_string(),
+            asset_manifest_hash: "hash".to_string(),
+            logs: vec![],
+            summary: ConformanceRunSummary {
+                run_id: "run-1".to_string(),
+                asset_manifest_hash: "hash".to_string(),
+                total_assets: 5,
+                passed: 4,
+                failed: 0,
+                waived: 0,
+                errored: 1,
+                env_fingerprint: "fp".to_string(),
+            },
+            minimized_repros: vec![],
+        };
+        assert!(result.enforce_ci_gate().is_err());
+    }
+
+    // ── ConformanceManifestError Display ───────────────────────────────
+
+    #[test]
+    fn manifest_error_display_unsupported_schema() {
+        let err = ConformanceManifestError::UnsupportedSchema {
+            expected: "v1".to_string(),
+            actual: "v2".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("v1"));
+        assert!(msg.contains("v2"));
+    }
+
+    #[test]
+    fn manifest_error_display_empty_asset_set() {
+        let msg = ConformanceManifestError::EmptyAssetSet.to_string();
+        assert!(msg.contains("no assets"));
+    }
+
+    #[test]
+    fn manifest_error_display_missing_field() {
+        let msg = ConformanceManifestError::MissingField("asset_id").to_string();
+        assert!(msg.contains("asset_id"));
+    }
+
+    // ── ConformanceReplayVerificationError Display ─────────────────────
+
+    #[test]
+    fn replay_error_display_not_reproduced() {
+        let msg = ConformanceReplayVerificationError::FailureNotReproduced.to_string();
+        assert!(msg.contains("outputs are equal"));
+    }
+
+    #[test]
+    fn replay_error_display_class_mismatch() {
+        let err = ConformanceReplayVerificationError::FailureClassMismatch {
+            expected: ConformanceFailureClass::Breaking,
+            actual: ConformanceFailureClass::Performance,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("Breaking"));
+        assert!(msg.contains("Performance"));
+    }
+
+    #[test]
+    fn replay_error_display_delta_drift() {
+        let msg = ConformanceReplayVerificationError::DeltaClassificationDrift.to_string();
+        assert!(msg.contains("drifted"));
+    }
+
+    #[test]
+    fn replay_error_display_digest_mismatch() {
+        let err = ConformanceReplayVerificationError::DigestMismatch {
+            expected: "aaa".to_string(),
+            actual: "bbb".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("aaa"));
+        assert!(msg.contains("bbb"));
+    }
+
+    // ── ConformanceRunError Display ────────────────────────────────────
+
+    #[test]
+    fn run_error_display_invalid_config() {
+        let msg = ConformanceRunError::InvalidConfig("bad field".to_string()).to_string();
+        assert!(msg.contains("bad field"));
+    }
+
+    #[test]
+    fn run_error_display_repro_invariant() {
+        let err = ConformanceRunError::ReproInvariant {
+            asset_id: "asset-1".to_string(),
+            detail: "mismatch".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("asset-1"));
+        assert!(msg.contains("mismatch"));
+    }
+
+    // ── build_failure_id / repro_verification_digest ──────────────────
+
+    #[test]
+    fn build_failure_id_deterministic() {
+        let a = build_failure_id("asset-1", 7, "expected", "actual");
+        let b = build_failure_id("asset-1", 7, "expected", "actual");
+        assert_eq!(a, b);
+        assert!(a.starts_with("cf-"));
+        assert_eq!(a.len(), 3 + 16); // "cf-" + 16 hex chars
+    }
+
+    #[test]
+    fn build_failure_id_changes_with_input() {
+        let a = build_failure_id("asset-1", 7, "expected", "actual");
+        let b = build_failure_id("asset-2", 7, "expected", "actual");
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn repro_verification_digest_deterministic() {
+        let a = repro_verification_digest(7, "exp", "act");
+        let b = repro_verification_digest(7, "exp", "act");
+        assert_eq!(a, b);
+        assert_eq!(a.len(), 16); // digest_hex = 16 chars
+    }
+
+    // ── preserves_failure_class ────────────────────────────────────────
+
+    #[test]
+    fn preserves_failure_class_false_when_equal() {
+        assert!(!preserves_failure_class(
+            "hello",
+            "hello",
+            ConformanceFailureClass::Behavioral
+        ));
+    }
+
+    #[test]
+    fn preserves_failure_class_true_when_class_matches() {
+        // Two outputs that differ only in non-props, non-error, non-numeric content
+        // → BehavioralSemanticShift → Behavioral
+        assert!(preserves_failure_class(
+            "result: true",
+            "result: false",
+            ConformanceFailureClass::Behavioral
+        ));
+    }
+
+    // ── ifc_label_taxonomy_hash ────────────────────────────────────────
+
+    #[test]
+    fn ifc_label_taxonomy_hash_deterministic() {
+        let a = ifc_label_taxonomy_hash();
+        let b = ifc_label_taxonomy_hash();
+        assert_eq!(a, b);
+        assert_eq!(a.len(), 64);
+    }
+
+    // ── ConformanceAssetManifest ───────────────────────────────────────
+
+    #[test]
+    fn manifest_current_schema_is_v1() {
+        assert_eq!(
+            ConformanceAssetManifest::CURRENT_SCHEMA,
+            "franken-engine.conformance-assets.v1"
+        );
+    }
+
+    #[test]
+    fn manifest_validate_wrong_schema_errors() {
+        let manifest = ConformanceAssetManifest {
+            schema_version: "wrong-version".to_string(),
+            generated_at_utc: "2025-01-01T00:00:00Z".to_string(),
+            assets: vec![valid_asset_record()],
+        };
+        let err = manifest
+            .validate_and_resolve(Path::new("/fake/manifest.json"))
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            ConformanceManifestError::UnsupportedSchema { .. }
+        ));
+    }
+
+    #[test]
+    fn manifest_validate_empty_assets_errors() {
+        let manifest = ConformanceAssetManifest {
+            schema_version: ConformanceAssetManifest::CURRENT_SCHEMA.to_string(),
+            generated_at_utc: "2025-01-01T00:00:00Z".to_string(),
+            assets: vec![],
+        };
+        let err = manifest
+            .validate_and_resolve(Path::new("/fake/manifest.json"))
+            .unwrap_err();
+        assert!(matches!(err, ConformanceManifestError::EmptyAssetSet));
+    }
+
+    // ── ConformanceMinimizedReproArtifact ──────────────────────────────
+
+    #[test]
+    fn repro_artifact_current_schema() {
+        assert_eq!(
+            ConformanceMinimizedReproArtifact::CURRENT_SCHEMA,
+            "franken-engine.conformance-min-repro.v1"
+        );
+    }
+
+    // ── serde round-trips ──────────────────────────────────────────────
+
+    #[test]
+    fn conformance_failure_class_serde_round_trip() {
+        for class in [
+            ConformanceFailureClass::Breaking,
+            ConformanceFailureClass::Behavioral,
+            ConformanceFailureClass::Observability,
+            ConformanceFailureClass::Performance,
+        ] {
+            let json = serde_json::to_string(&class).unwrap();
+            let back: ConformanceFailureClass = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, class);
+        }
+    }
+
+    #[test]
+    fn conformance_failure_severity_serde_round_trip() {
+        for sev in [
+            ConformanceFailureSeverity::Info,
+            ConformanceFailureSeverity::Warning,
+            ConformanceFailureSeverity::Error,
+            ConformanceFailureSeverity::Critical,
+        ] {
+            let json = serde_json::to_string(&sev).unwrap();
+            let back: ConformanceFailureSeverity = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, sev);
+        }
+    }
+
+    #[test]
+    fn conformance_delta_kind_serde_round_trip() {
+        for kind in [
+            ConformanceDeltaKind::SchemaFieldAdded,
+            ConformanceDeltaKind::SchemaFieldRemoved,
+            ConformanceDeltaKind::SchemaFieldModified,
+            ConformanceDeltaKind::BehavioralSemanticShift,
+            ConformanceDeltaKind::TimingChange,
+            ConformanceDeltaKind::ErrorFormatChange,
+        ] {
+            let json = serde_json::to_string(&kind).unwrap();
+            let back: ConformanceDeltaKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, kind);
+        }
+    }
+
+    #[test]
+    fn conformance_waiver_serde_round_trip() {
+        let waiver = ConformanceWaiver {
+            asset_id: "test-001".to_string(),
+            reason_code: WaiverReasonCode::HostHookMissing,
+            tracking_bead: "bd-42".to_string(),
+            expiry_date: "2030-12-31".to_string(),
+        };
+        let json = serde_json::to_string(&waiver).unwrap();
+        let back: ConformanceWaiver = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, waiver);
+    }
+
+    #[test]
+    fn conformance_delta_classification_serde_round_trip() {
+        let delta = ConformanceDeltaClassification {
+            kind: ConformanceDeltaKind::SchemaFieldAdded,
+            field: Some("new_field".to_string()),
+            expected: Some("missing".to_string()),
+            actual: Some("present".to_string()),
+            detail: "field added".to_string(),
+        };
+        let json = serde_json::to_string(&delta).unwrap();
+        let back: ConformanceDeltaClassification = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, delta);
+    }
+
+    #[test]
+    fn donor_fixture_serde_round_trip() {
+        let fixture = DonorFixture {
+            donor_harness: "test262".to_string(),
+            source: "var x = 1;".to_string(),
+            observed_output: "1".to_string(),
+        };
+        let json = serde_json::to_string(&fixture).unwrap();
+        let back: DonorFixture = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, fixture);
+    }
+
+    // ── minimize_conformance_case ──────────────────────────────────────
+
+    #[test]
+    fn minimize_conformance_case_preserves_difference() {
+        let source = "var a = 1;\nvar b = 2;\nvar c = 3;";
+        let expected = "result: true";
+        let actual = "result: false";
+        let outcome = minimize_conformance_case(
+            source,
+            expected,
+            actual,
+            ConformanceFailureClass::Behavioral,
+        );
+        // The minimized outputs should still differ
+        assert_ne!(
+            outcome.minimized_expected_output,
+            outcome.minimized_actual_output
+        );
+        assert_eq!(outcome.summary.strategy, "greedy-delta-debugging");
+    }
+
+    // ── reduce_output_lines ────────────────────────────────────────────
+
+    #[test]
+    fn reduce_output_lines_strips_common_prefix_and_suffix() {
+        let expected = vec![
+            "common1".to_string(),
+            "differ_exp".to_string(),
+            "common2".to_string(),
+        ];
+        let actual = vec![
+            "common1".to_string(),
+            "differ_act".to_string(),
+            "common2".to_string(),
+        ];
+        let (red_exp, red_act) =
+            reduce_output_lines(&expected, &actual, ConformanceFailureClass::Behavioral);
+        // Should reduce to just the differing lines (or fallback to full if class not preserved)
+        assert!(!red_exp.is_empty());
+        assert!(!red_act.is_empty());
+    }
+
+    #[test]
+    fn reduce_output_lines_empty_inputs() {
+        let (red_exp, red_act) = reduce_output_lines(&[], &[], ConformanceFailureClass::Behavioral);
+        // When both expected and actual are empty and identical, the reduced
+        // "<empty>" sentinel triggers the preservation check which fails
+        // (equal outputs cannot preserve a failure class), so the original
+        // empty vecs are returned.  This is correct: identical empty outputs
+        // have no divergence to reduce.
+        assert!(red_exp.is_empty());
+        assert!(red_act.is_empty());
+    }
 }

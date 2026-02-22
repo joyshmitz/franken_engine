@@ -232,7 +232,7 @@ fn control_plane_invariants_dashboard_round_trips_with_alerts() {
         1_700_000_000_401,
         AdapterStream::ControlPlaneInvariantsDashboard,
         UpdateKind::Snapshot,
-        FrankentuiViewPayload::ControlPlaneInvariantsDashboard(invariants),
+        FrankentuiViewPayload::ControlPlaneInvariantsDashboard(Box::new(invariants)),
     );
 
     let encoded = envelope.encode_json().expect("encode");

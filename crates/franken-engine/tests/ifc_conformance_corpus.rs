@@ -59,10 +59,7 @@ fn copy_tree(src: &std::path::Path, dst: &std::path::Path) {
 fn parse_manifest_assets() -> Vec<Value> {
     let manifest_bytes = fs::read_to_string(manifest_path()).expect("read manifest");
     let manifest: Value = serde_json::from_str(&manifest_bytes).expect("parse manifest json");
-    manifest["assets"]
-        .as_array()
-        .expect("assets array")
-        .clone()
+    manifest["assets"].as_array().expect("assets array").clone()
 }
 
 #[test]
@@ -199,7 +196,11 @@ fn ifc_manifest_executes_deterministically_and_emits_ifc_evidence() {
 
     let first = runner.run(manifest_path(), &waivers).expect("ifc run #1");
     let repeated_runs = (0..4)
-        .map(|_| runner.run(manifest_path(), &waivers).expect("repeat ifc run"))
+        .map(|_| {
+            runner
+                .run(manifest_path(), &waivers)
+                .expect("repeat ifc run")
+        })
         .collect::<Vec<_>>();
 
     assert!(first.summary.total_assets >= 210);
@@ -210,8 +211,14 @@ fn ifc_manifest_executes_deterministically_and_emits_ifc_evidence() {
         .expect("ifc corpus should satisfy ci gate");
 
     for run in &repeated_runs {
-        assert_eq!(first.logs, run.logs, "runner output should be deterministic");
-        assert_eq!(first.summary, run.summary, "runner summary should be stable");
+        assert_eq!(
+            first.logs, run.logs,
+            "runner output should be deterministic"
+        );
+        assert_eq!(
+            first.summary, run.summary,
+            "runner summary should be stable"
+        );
     }
 
     let semantic_domains: Vec<_> = first
@@ -245,8 +252,8 @@ fn ifc_manifest_executes_deterministically_and_emits_ifc_evidence() {
     assert!(first.logs.iter().all(|log| log.actual_outcome.is_some()));
     assert!(first.logs.iter().all(|log| log.evidence_type.is_some()));
 
-    let collector = ConformanceEvidenceCollector::new(test_temp_dir("ifc-evidence"))
-        .expect("collector init");
+    let collector =
+        ConformanceEvidenceCollector::new(test_temp_dir("ifc-evidence")).expect("collector init");
     let artifacts = collector.collect(&first).expect("collect IFC artifacts");
     let ifc_path = artifacts
         .ifc_conformance_evidence_path
@@ -284,7 +291,8 @@ fn ifc_manifest_executes_deterministically_and_emits_ifc_evidence() {
 
 #[test]
 fn ifc_manifest_integrity_meta_test_detects_tampering() {
-    let source_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/conformance/ifc_corpus");
+    let source_root =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/conformance/ifc_corpus");
     let temp_root = test_temp_dir("ifc-tamper").join("ifc_corpus");
     copy_tree(&source_root, &temp_root);
 

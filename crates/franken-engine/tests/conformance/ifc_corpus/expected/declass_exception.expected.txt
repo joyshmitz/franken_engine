@@ -1,1 +1,1 @@
-outcome:declassify evidence:declassification_receipt
+outcome:declassify evidence:declassification_receipt evidence_id:dr-shared

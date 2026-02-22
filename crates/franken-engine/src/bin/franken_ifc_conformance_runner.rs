@@ -74,18 +74,59 @@ fn load_waivers(path: Option<&PathBuf>) -> Result<ConformanceWaiverSet, Box<dyn 
     }
 }
 
-fn read_ci_blocking_failures(ifc_evidence_path: &PathBuf) -> Result<u64, Box<dyn Error>> {
+#[derive(Debug, Clone)]
+struct IfcSummaryMetrics {
+    ci_blocking_failures: u64,
+    false_positive_count: u64,
+    false_negative_count: u64,
+    false_negative_direct_indirect_count: u64,
+    benign_total: u64,
+    exfil_total: u64,
+    declassify_total: u64,
+}
+
+fn read_ifc_summary_metrics(
+    ifc_evidence_path: &PathBuf,
+) -> Result<IfcSummaryMetrics, Box<dyn Error>> {
     let bytes = fs::read_to_string(ifc_evidence_path)?;
     let first_line = bytes
         .lines()
         .next()
         .ok_or_else(|| "ifc evidence file is empty".to_string())?;
     let summary: Value = serde_json::from_str(first_line)?;
-    Ok(summary["ci_blocking_failures"].as_u64().unwrap_or(0))
+    let category_counts = summary["category_counts"].as_object();
+    let benign_total = category_counts
+        .and_then(|counts| counts.get("benign"))
+        .and_then(|value| value.get("total"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let exfil_total = category_counts
+        .and_then(|counts| counts.get("exfil"))
+        .and_then(|value| value.get("total"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let declassify_total = category_counts
+        .and_then(|counts| counts.get("declassify"))
+        .and_then(|value| value.get("total"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+
+    Ok(IfcSummaryMetrics {
+        ci_blocking_failures: summary["ci_blocking_failures"].as_u64().unwrap_or(0),
+        false_positive_count: summary["false_positive_count"].as_u64().unwrap_or(0),
+        false_negative_count: summary["false_negative_count"].as_u64().unwrap_or(0),
+        false_negative_direct_indirect_count: summary["false_negative_direct_indirect_count"]
+            .as_u64()
+            .unwrap_or(0),
+        benign_total,
+        exfil_total,
+        declassify_total,
+    })
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let args = parse_args().map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+    let args =
+        parse_args().map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
 
     let waivers = load_waivers(args.waiver_path.as_ref())?;
     let runner = ConformanceRunner::default();
@@ -96,14 +137,35 @@ fn main() -> Result<(), Box<dyn Error>> {
     let artifacts = collector.collect(&run)?;
 
     if let Some(ifc_path) = artifacts.ifc_conformance_evidence_path.as_ref() {
-        let ci_blocking_failures = read_ci_blocking_failures(ifc_path)?;
-        if ci_blocking_failures > 0 {
+        let metrics = read_ifc_summary_metrics(ifc_path)?;
+        if metrics.ci_blocking_failures > 0 {
             return Err(format!(
-                "IFC CI gate blocked: ci_blocking_failures={ci_blocking_failures} (see {})",
+                "IFC CI gate blocked: ci_blocking_failures={} (see {})",
+                metrics.ci_blocking_failures,
                 ifc_path.display()
             )
             .into());
         }
+
+        println!(
+            "ifc metric.ci_blocking_failures={}",
+            metrics.ci_blocking_failures
+        );
+        println!(
+            "ifc metric.false_positive_count={}",
+            metrics.false_positive_count
+        );
+        println!(
+            "ifc metric.false_negative_count={}",
+            metrics.false_negative_count
+        );
+        println!(
+            "ifc metric.false_negative_direct_indirect_count={}",
+            metrics.false_negative_direct_indirect_count
+        );
+        println!("ifc metric.benign_total={}", metrics.benign_total);
+        println!("ifc metric.exfil_total={}", metrics.exfil_total);
+        println!("ifc metric.declassify_total={}", metrics.declassify_total);
     } else {
         return Err("collector did not emit ifc_conformance_evidence.jsonl".into());
     }

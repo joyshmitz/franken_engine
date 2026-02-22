@@ -1166,4 +1166,251 @@ mod tests {
         );
         assert_eq!(FrankenErrorCode::from_numeric(9999), None);
     }
+
+    // -----------------------------------------------------------------------
+    // ErrorSubsystem range coverage
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn error_subsystem_ranges_are_non_overlapping_and_contiguous() {
+        let subsystems = [
+            ErrorSubsystem::SerializationEncoding,
+            ErrorSubsystem::IdentityAuthentication,
+            ErrorSubsystem::CapabilityAuthorization,
+            ErrorSubsystem::CheckpointPolicy,
+            ErrorSubsystem::Revocation,
+            ErrorSubsystem::SessionChannel,
+            ErrorSubsystem::ZoneScope,
+            ErrorSubsystem::AuditObservability,
+            ErrorSubsystem::LifecycleMigration,
+            ErrorSubsystem::Reserved,
+        ];
+        let mut prev_end = 0u16;
+        for sub in subsystems {
+            let (start, end) = sub.range();
+            assert_eq!(
+                start,
+                prev_end + 1,
+                "gap between subsystem ranges at {sub:?}"
+            );
+            assert!(end >= start);
+            prev_end = end;
+        }
+    }
+
+    #[test]
+    fn error_subsystem_includes_returns_true_for_boundary_values() {
+        let sub = ErrorSubsystem::CapabilityAuthorization;
+        let (start, end) = sub.range();
+        assert!(sub.includes(start));
+        assert!(sub.includes(end));
+        assert!(!sub.includes(start - 1));
+        assert!(!sub.includes(end + 1));
+    }
+
+    // -----------------------------------------------------------------------
+    // FrankenErrorCode stable_code format
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn stable_code_format_is_fe_four_digits() {
+        for code in ALL_ERROR_CODES {
+            let stable = code.stable_code();
+            assert!(stable.starts_with("FE-"), "{stable} must start with FE-");
+            let digits = &stable[3..];
+            assert_eq!(
+                digits.len(),
+                4,
+                "stable code {stable} must have 4-digit suffix"
+            );
+            assert!(digits.chars().all(|c| c.is_ascii_digit()));
+        }
+    }
+
+    #[test]
+    fn from_numeric_round_trips_all_codes() {
+        for code in ALL_ERROR_CODES {
+            let numeric = code.numeric();
+            let recovered = FrankenErrorCode::from_numeric(numeric);
+            assert_eq!(recovered, Some(*code), "round-trip failed for {code:?}");
+        }
+    }
+
+    #[test]
+    fn from_numeric_returns_none_for_unassigned_values() {
+        assert_eq!(FrankenErrorCode::from_numeric(0), None);
+        assert_eq!(FrankenErrorCode::from_numeric(999), None);
+        assert_eq!(FrankenErrorCode::from_numeric(9999), None);
+        assert_eq!(FrankenErrorCode::from_numeric(u16::MAX), None);
+    }
+
+    // -----------------------------------------------------------------------
+    // Severity assignment
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn critical_severity_codes_are_explicitly_listed() {
+        let critical_codes = [
+            FrankenErrorCode::PolicyCheckpointValidationError,
+            FrankenErrorCode::CheckpointFrontierEnforcementError,
+            FrankenErrorCode::ForkDetectionError,
+            FrankenErrorCode::RevocationChainIntegrityError,
+            FrankenErrorCode::EpochMonotonicityViolation,
+        ];
+        for code in critical_codes {
+            assert_eq!(
+                code.severity(),
+                ErrorSeverity::Critical,
+                "{code:?} must be Critical severity"
+            );
+        }
+    }
+
+    #[test]
+    fn non_critical_codes_have_error_severity() {
+        let non_critical = [
+            FrankenErrorCode::NonCanonicalEncodingError,
+            FrankenErrorCode::CapabilityDeniedError,
+            FrankenErrorCode::EvalRuntimeError,
+        ];
+        for code in non_critical {
+            assert_eq!(
+                code.severity(),
+                ErrorSeverity::Error,
+                "{code:?} should be Error severity"
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Description and operator_action non-empty
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn every_code_has_non_empty_description_and_operator_action() {
+        for code in ALL_ERROR_CODES {
+            assert!(
+                !code.description().is_empty(),
+                "{code:?} has empty description"
+            );
+            assert!(
+                !code.operator_action().is_empty(),
+                "{code:?} has empty operator_action"
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Deprecated flag
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn no_codes_are_currently_deprecated() {
+        for code in ALL_ERROR_CODES {
+            assert!(!code.deprecated(), "{code:?} should not be deprecated yet");
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Registry
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn registry_version_is_current() {
+        let registry = error_code_registry();
+        assert_eq!(registry.version, ERROR_CODE_REGISTRY_VERSION);
+    }
+
+    #[test]
+    fn registry_has_all_codes() {
+        let registry = error_code_registry();
+        assert_eq!(registry.entries.len(), ALL_ERROR_CODES.len());
+    }
+
+    #[test]
+    fn registry_entries_have_consistent_subsystem_mapping() {
+        for code in ALL_ERROR_CODES {
+            let entry = code.to_registry_entry();
+            assert_eq!(entry.numeric, code.numeric());
+            assert_eq!(entry.subsystem, code.subsystem());
+            assert_eq!(entry.severity, code.severity());
+            assert_eq!(entry.code, code.stable_code());
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Display
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn display_matches_stable_code() {
+        for code in ALL_ERROR_CODES {
+            assert_eq!(format!("{code}"), code.stable_code());
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // ErrorSeverity serde
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn error_severity_round_trips_through_serde() {
+        for severity in [
+            ErrorSeverity::Critical,
+            ErrorSeverity::Error,
+            ErrorSeverity::Warning,
+            ErrorSeverity::Info,
+        ] {
+            let json = serde_json::to_string(&severity).expect("serialize");
+            let decoded: ErrorSeverity = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(decoded, severity);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // ErrorSubsystem serde
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn error_subsystem_round_trips_through_serde() {
+        for sub in [
+            ErrorSubsystem::SerializationEncoding,
+            ErrorSubsystem::IdentityAuthentication,
+            ErrorSubsystem::CapabilityAuthorization,
+            ErrorSubsystem::CheckpointPolicy,
+            ErrorSubsystem::Revocation,
+            ErrorSubsystem::SessionChannel,
+            ErrorSubsystem::ZoneScope,
+            ErrorSubsystem::AuditObservability,
+            ErrorSubsystem::LifecycleMigration,
+            ErrorSubsystem::Reserved,
+        ] {
+            let json = serde_json::to_string(&sub).expect("serialize");
+            let decoded: ErrorSubsystem = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(decoded, sub);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Numeric uniqueness (explicit)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn all_numeric_codes_are_strictly_positive() {
+        for code in ALL_ERROR_CODES {
+            assert!(code.numeric() > 0, "{code:?} has zero numeric code");
+        }
+    }
+
+    #[test]
+    fn all_codes_belong_to_their_stated_subsystem() {
+        for code in ALL_ERROR_CODES {
+            let sub = code.subsystem();
+            assert!(
+                sub.includes(code.numeric()),
+                "{code:?} (numeric={}) not in subsystem {sub:?}",
+                code.numeric()
+            );
+        }
+    }
 }

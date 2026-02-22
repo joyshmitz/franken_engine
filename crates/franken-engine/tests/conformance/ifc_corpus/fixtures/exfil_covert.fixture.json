@@ -1,1 +1,1 @@
-{"donor_harness":"franken-ifc","source":"secret = fs.read('/creds'); spin(secret[0] === 'a' ? 1000 : 2000); net.send('timing')","observed_output":"outcome:block evidence:flow_violation evidence_id:fv-covert"}
+{"donor_harness":"franken-ifc","source":"secret = fs.read('/creds'); spin(secret[0] === 'a' ? 1000 : 2000); net.send('timing')","observed_output":"outcome:block evidence:flow_violation evidence_id:fv-shared"}

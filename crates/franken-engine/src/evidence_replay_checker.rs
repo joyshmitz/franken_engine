@@ -1844,9 +1844,11 @@ mod tests {
 
     #[test]
     fn config_new_fields_serde_roundtrip() {
-        let mut config = ReplayConfig::default();
-        config.policy_discontinuity_is_violation = true;
-        config.schema_migration_is_violation = true;
+        let mut config = ReplayConfig {
+            policy_discontinuity_is_violation: true,
+            schema_migration_is_violation: true,
+            ..Default::default()
+        };
         config.allowed_policy_ids.insert("p1".to_string());
         config.allowed_policy_ids.insert("p2".to_string());
         let json = serde_json::to_string(&config).unwrap();

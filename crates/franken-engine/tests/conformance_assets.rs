@@ -244,3 +244,174 @@ fn determinism_meta_test_same_seed_matches_different_seed_changes_output() {
     let run_c = runner_c.run(&manifest_path, &waivers).expect("run_c");
     assert_ne!(run_a.logs, run_c.logs);
 }
+
+#[test]
+fn per_asset_structured_logs_contain_required_fields() {
+    let runner = ConformanceRunner::default();
+    let waivers = ConformanceWaiverSet::load_toml(sample_waiver_path()).expect("waiver load");
+    let run = runner
+        .run(sample_manifest_path(), &waivers)
+        .expect("conformance run");
+
+    assert_eq!(run.logs.len(), 10, "should have one log entry per asset");
+
+    for log in &run.logs {
+        assert!(
+            !log.trace_id.is_empty(),
+            "log for {} missing trace_id",
+            log.asset_id
+        );
+        assert!(
+            !log.asset_id.is_empty(),
+            "log for {} missing asset_id",
+            log.asset_id
+        );
+        assert!(
+            !log.semantic_domain.is_empty(),
+            "log for {} missing semantic_domain",
+            log.asset_id
+        );
+        assert!(
+            ["pass", "fail", "waived", "error"].contains(&log.outcome.as_str()),
+            "log for {} has invalid outcome: {}",
+            log.asset_id,
+            log.outcome
+        );
+        assert!(
+            log.duration_us > 0,
+            "log for {} has zero duration_us",
+            log.asset_id
+        );
+    }
+}
+
+#[test]
+fn evidence_artifact_schema_meta_test_validates_required_fields() {
+    let runner = ConformanceRunner::default();
+    let waivers = ConformanceWaiverSet::load_toml(sample_waiver_path()).expect("waiver load");
+    let run = runner
+        .run(sample_manifest_path(), &waivers)
+        .expect("conformance run");
+
+    let collector =
+        ConformanceEvidenceCollector::new(test_temp_dir("schema-meta")).expect("collector");
+    let artifacts = collector.collect(&run).expect("collect artifacts");
+
+    // Validate run manifest JSON schema.
+    let manifest_json: Value =
+        serde_json::from_str(&fs::read_to_string(&artifacts.run_manifest_path).expect("read"))
+            .expect("parse run manifest");
+    assert!(
+        manifest_json.get("total_assets").is_some(),
+        "run manifest missing total_assets"
+    );
+    assert!(
+        manifest_json.get("passed").is_some(),
+        "run manifest missing passed"
+    );
+    assert!(
+        manifest_json.get("failed").is_some(),
+        "run manifest missing failed"
+    );
+    assert!(
+        manifest_json.get("waived").is_some(),
+        "run manifest missing waived"
+    );
+    assert!(
+        manifest_json.get("asset_manifest_hash").is_some(),
+        "run manifest missing asset_manifest_hash"
+    );
+
+    // Validate each JSONL evidence line.
+    let evidence = fs::read_to_string(&artifacts.conformance_evidence_path).expect("read");
+    let lines: Vec<&str> = evidence.lines().filter(|l| !l.trim().is_empty()).collect();
+    assert!(
+        !lines.is_empty(),
+        "conformance_evidence.jsonl should not be empty"
+    );
+
+    for line in &lines {
+        let val: Value = serde_json::from_str(line).expect("each evidence line must be valid JSON");
+        // Summary line has asset_manifest_hash, per-asset lines have asset_id.
+        let is_summary = val.get("asset_manifest_hash").is_some();
+        let is_asset = val.get("asset_id").is_some();
+        assert!(
+            is_summary || is_asset,
+            "evidence line must be summary or asset record: {line}"
+        );
+    }
+}
+
+#[test]
+fn expanded_manifest_covers_all_semantic_domains_from_spec() {
+    let manifest = conformance_harness::ConformanceAssetManifest::load(sample_manifest_path())
+        .expect("load manifest");
+
+    let domains: std::collections::BTreeSet<String> = manifest
+        .assets
+        .iter()
+        .map(|a| a.semantic_domain.clone())
+        .collect();
+
+    // These are the mandatory ES2020 semantic domains for transplanted conformance.
+    let required = [
+        "promise_resolution",
+        "proxy_trap_ordering",
+        "closure_capture",
+        "destructuring_binding",
+        "iterator_protocol",
+        "generator_lifecycle",
+        "async_await_ordering",
+        "symbol_behavior",
+        "error_handling",
+        "module_namespace_binding",
+    ];
+
+    for domain in &required {
+        assert!(
+            domains.contains(*domain),
+            "manifest missing required semantic domain: {domain}"
+        );
+    }
+    assert_eq!(
+        manifest.assets.len(),
+        10,
+        "manifest should have exactly 10 transplanted assets"
+    );
+}
+
+#[test]
+fn non_determinism_detection_runs_10x_with_identical_output() {
+    let manifest_path = sample_manifest_path();
+    let waivers = ConformanceWaiverSet::load_toml(sample_waiver_path()).expect("waiver load");
+
+    let runner = ConformanceRunner {
+        config: ConformanceRunnerConfig {
+            seed: 42,
+            run_date: "2026-02-22".to_string(),
+            ..ConformanceRunnerConfig::default()
+        },
+        ..ConformanceRunner::default()
+    };
+
+    let baseline = runner
+        .clone()
+        .run(&manifest_path, &waivers)
+        .expect("baseline run");
+
+    // Run 9 more times and verify bitwise-identical log output.
+    for i in 1..10 {
+        let repeat = runner
+            .clone()
+            .run(&manifest_path, &waivers)
+            .unwrap_or_else(|e| panic!("run {i} failed: {e}"));
+        assert_eq!(
+            baseline.logs, repeat.logs,
+            "non-determinism detected on run {i}: logs differ from baseline"
+        );
+        assert_eq!(
+            baseline.summary, repeat.summary,
+            "non-determinism detected on run {i}: summary differs from baseline"
+        );
+    }
+}

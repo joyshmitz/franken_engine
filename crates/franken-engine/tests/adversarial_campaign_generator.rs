@@ -195,14 +195,17 @@ fn suppression_gate_surface_exposes_required_structured_fields() {
                 samples_evaluated: 560,
             },
         ],
-        escalations: vec![ExploitEscalationRecord {
-            campaign_id: "fe-injection".to_string(),
-            attack_category: adversarial_campaign::CampaignAttackCategory::Injection,
-            target_runtime: CampaignRuntime::FrankenEngine,
-            successful_exploit: true,
-            escalation_triggered: true,
-            escalation_latency_seconds: Some(60),
-        }],
+        escalations: adversarial_campaign::CampaignAttackCategory::ALL
+            .iter()
+            .map(|category| ExploitEscalationRecord {
+                campaign_id: format!("fe-{category}"),
+                attack_category: *category,
+                target_runtime: CampaignRuntime::FrankenEngine,
+                successful_exploit: true,
+                escalation_triggered: true,
+                escalation_latency_seconds: Some(60),
+            })
+            .collect(),
     };
 
     let result =

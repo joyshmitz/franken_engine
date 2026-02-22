@@ -1,0 +1,28 @@
+schema_version = "franken-engine.test262-profile.v1"
+profile_name = "es2020-normative"
+es_profile = "ES2020"
+
+[[include]]
+pattern = "language/*"
+rationale = "ES2020 language semantics"
+normative_clause = "ES2020 language"
+
+[[include]]
+pattern = "built-ins/*"
+rationale = "ES2020 built-in semantics"
+normative_clause = "ES2020 built-ins"
+
+[[exclude]]
+pattern = "language/annexB/*"
+rationale = "Annex B behavior is optional"
+normative_clause = "Annex B"
+
+[[exclude]]
+pattern = "built-ins/intl402/*"
+rationale = "ECMA-402 is tracked by a separate conformance gate"
+normative_clause = "ECMA-402"
+
+[[exclude]]
+pattern = "proposals/*"
+rationale = "Post-ES2020 proposals are out of scope"
+normative_clause = "Post-ES2020 proposals"
