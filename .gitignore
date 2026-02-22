@@ -1,5 +1,9 @@
 # Build outputs
 /target
+/fuzz/target
+/fuzz/artifacts
+/fuzz/coverage
+/fuzz/crashes
 
 # Local reference corpora (kept outside tracked source for this repo)
 /legacy_quickjs

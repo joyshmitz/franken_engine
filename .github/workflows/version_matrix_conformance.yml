@@ -34,6 +34,12 @@ jobs:
       - name: Enforce SQLite wrapper policy guard
         run: ./scripts/check_no_local_sqlite_wrappers.sh ci
 
+      - name: Enforce GA core delegate-cell guard
+        run: ./scripts/check_ga_delegate_core_slots.sh ci
+
+      - name: Run control-plane benchmark split gate suite
+        run: ./scripts/run_control_plane_benchmark_split_gate_suite.sh ci
+
       - name: Run version-matrix lane script
         run: ./scripts/run_version_matrix_lane.sh ci
 

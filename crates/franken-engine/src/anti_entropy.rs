@@ -169,21 +169,20 @@ impl Iblt {
         while changed {
             changed = false;
             for i in 0..work.cells.len() {
-                let cell = &work.cells[i];
-                if cell.count == 1 || cell.count == -1 {
-                    let key = cell.key_hash_xor;
+                let cell_count = work.cells[i].count;
+                if cell_count == 1 || cell_count == -1 {
+                    let key = work.cells[i].key_hash_xor;
                     let checksum = compute_checksum(&key);
-                    if checksum == cell.checksum_xor {
-                        if cell.count == 1 {
+                    if checksum == work.cells[i].checksum_xor {
+                        if cell_count == 1 {
                             positive.push(key);
                         } else {
                             negative.push(key);
                         }
                         // Remove this element from the working IBLT.
-                        let count_sign = cell.count;
                         for j in 0..work.num_hashes {
                             let idx = hash_to_index(&key, j, work.cells.len());
-                            work.cells[idx].count -= count_sign;
+                            work.cells[idx].count -= cell_count;
                             xor_into(&mut work.cells[idx].key_hash_xor, &key);
                             work.cells[idx].checksum_xor ^= checksum;
                         }
@@ -221,7 +220,7 @@ fn compute_checksum(key: &[u8; 32]) -> u32 {
 /// Hash a key to a cell index using the hash function index.
 fn hash_to_index(key: &[u8; 32], hash_idx: usize, num_cells: usize) -> usize {
     // Use different 4-byte windows of the key for different hash functions.
-    let offset = (hash_idx * 4) % 28;
+    let offset = (hash_idx * 4) % 32;
     let mut bytes = [0u8; 4];
     bytes.copy_from_slice(&key[offset..offset + 4]);
     let raw = u32::from_le_bytes(bytes);
@@ -929,15 +928,7 @@ impl FallbackRateMonitor {
         self.total_recorded += 1;
 
         let window_size = self.total_recorded.min(self.config.monitoring_window);
-        let fallback_count = self.outcomes[..window_size]
-            .iter()
-            .chain(if self.total_recorded > self.config.monitoring_window {
-                self.outcomes[window_size..].iter()
-            } else {
-                [].iter()
-            })
-            .filter(|&&b| b)
-            .count() as u32;
+        let fallback_count = self.outcomes[..window_size].iter().filter(|&&b| b).count() as u32;
 
         let total = window_size as u32;
         if total == 0 {

@@ -412,6 +412,173 @@ impl AttackerCostModel {
 }
 
 // ---------------------------------------------------------------------------
+// ROI assessment utilities
+// ---------------------------------------------------------------------------
+
+/// Alert level derived from attacker ROI thresholds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RoiAlertLevel {
+    /// ROI < 0.5x; attacks are currently uneconomic.
+    Unprofitable,
+    /// 0.5x <= ROI <= 1.0x; watch, but not yet profitable.
+    Neutral,
+    /// 1.0x < ROI <= 2.0x; profitable attacks.
+    Profitable,
+    /// ROI > 2.0x; highly profitable attacks requiring escalation.
+    HighlyProfitable,
+}
+
+impl fmt::Display for RoiAlertLevel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = match self {
+            Self::Unprofitable => "unprofitable",
+            Self::Neutral => "neutral",
+            Self::Profitable => "profitable",
+            Self::HighlyProfitable => "highly_profitable",
+        };
+        f.write_str(name)
+    }
+}
+
+/// ROI trajectory classification over a deterministic history window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RoiTrend {
+    Rising,
+    Stable,
+    Falling,
+}
+
+impl fmt::Display for RoiTrend {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = match self {
+            Self::Rising => "rising",
+            Self::Stable => "stable",
+            Self::Falling => "falling",
+        };
+        f.write_str(name)
+    }
+}
+
+/// Per-extension attacker ROI assessment used by runtime scoring.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttackerRoiAssessment {
+    pub extension_id: String,
+    pub roi_millionths: i64,
+    pub alert: RoiAlertLevel,
+    pub trend: RoiTrend,
+}
+
+impl AttackerRoiAssessment {
+    /// Build an assessment from current ROI and historical values.
+    pub fn new(
+        extension_id: impl Into<String>,
+        roi_millionths: i64,
+        history_millionths: &[i64],
+    ) -> Self {
+        Self {
+            extension_id: extension_id.into(),
+            roi_millionths,
+            alert: classify_roi_alert_level(roi_millionths),
+            trend: classify_roi_trend(history_millionths),
+        }
+    }
+}
+
+/// Fleet-level ROI summary across extension assessments.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FleetRoiSummary {
+    pub extension_count: usize,
+    pub profitable_extensions: usize,
+    pub highly_profitable_extensions: usize,
+    pub average_roi_millionths: i64,
+    pub min_roi_millionths: i64,
+    pub max_roi_millionths: i64,
+}
+
+/// Classify alert level from ROI thresholds.
+///
+/// Thresholds:
+/// - `roi > 2.0x` => `HighlyProfitable`
+/// - `roi > 1.0x` => `Profitable`
+/// - `roi < 0.5x` => `Unprofitable`
+/// - otherwise => `Neutral`
+pub fn classify_roi_alert_level(roi_millionths: i64) -> RoiAlertLevel {
+    if roi_millionths > 2 * MILLIONTHS {
+        RoiAlertLevel::HighlyProfitable
+    } else if roi_millionths > MILLIONTHS {
+        RoiAlertLevel::Profitable
+    } else if roi_millionths < 500_000 {
+        RoiAlertLevel::Unprofitable
+    } else {
+        RoiAlertLevel::Neutral
+    }
+}
+
+/// Classify ROI trend from a deterministic history window.
+///
+/// Uses the delta between first and last value with a dead-zone threshold
+/// of 50_000 millionths to avoid flapping on tiny changes.
+pub fn classify_roi_trend(history_millionths: &[i64]) -> RoiTrend {
+    if history_millionths.len() < 2 {
+        return RoiTrend::Stable;
+    }
+    let first = history_millionths[0];
+    let last = history_millionths[history_millionths.len() - 1];
+    let delta = last.saturating_sub(first);
+    if delta > 50_000 {
+        RoiTrend::Rising
+    } else if delta < -50_000 {
+        RoiTrend::Falling
+    } else {
+        RoiTrend::Stable
+    }
+}
+
+/// Summarize fleet ROI posture from extension assessments.
+pub fn summarize_fleet_roi(
+    assessments: &BTreeMap<String, AttackerRoiAssessment>,
+) -> FleetRoiSummary {
+    if assessments.is_empty() {
+        return FleetRoiSummary {
+            extension_count: 0,
+            profitable_extensions: 0,
+            highly_profitable_extensions: 0,
+            average_roi_millionths: 0,
+            min_roi_millionths: 0,
+            max_roi_millionths: 0,
+        };
+    }
+
+    let extension_count = assessments.len();
+    let mut profitable_extensions = 0usize;
+    let mut highly_profitable_extensions = 0usize;
+    let mut min_roi_millionths = i64::MAX;
+    let mut max_roi_millionths = i64::MIN;
+    let mut total_roi = 0i128;
+
+    for assessment in assessments.values() {
+        if assessment.alert == RoiAlertLevel::Profitable {
+            profitable_extensions += 1;
+        }
+        if assessment.alert == RoiAlertLevel::HighlyProfitable {
+            highly_profitable_extensions += 1;
+        }
+        min_roi_millionths = min_roi_millionths.min(assessment.roi_millionths);
+        max_roi_millionths = max_roi_millionths.max(assessment.roi_millionths);
+        total_roi += assessment.roi_millionths as i128;
+    }
+
+    FleetRoiSummary {
+        extension_count,
+        profitable_extensions,
+        highly_profitable_extensions,
+        average_roi_millionths: (total_roi / extension_count as i128) as i64,
+        min_roi_millionths,
+        max_roi_millionths,
+    }
+}
+
+// ---------------------------------------------------------------------------
 // ContainmentCostModel — per-action cost structure
 // ---------------------------------------------------------------------------
 
@@ -1254,6 +1421,80 @@ mod tests {
         };
         let roi = m.expected_roi().unwrap();
         assert!(roi < 0, "expected negative ROI, got {roi}");
+    }
+
+    #[test]
+    fn roi_alert_thresholds() {
+        assert_eq!(
+            classify_roi_alert_level(2_000_001),
+            RoiAlertLevel::HighlyProfitable
+        );
+        assert_eq!(
+            classify_roi_alert_level(1_500_000),
+            RoiAlertLevel::Profitable
+        );
+        assert_eq!(
+            classify_roi_alert_level(1_000_000),
+            RoiAlertLevel::Neutral,
+            "threshold equality should remain neutral"
+        );
+        assert_eq!(
+            classify_roi_alert_level(499_999),
+            RoiAlertLevel::Unprofitable
+        );
+    }
+
+    #[test]
+    fn roi_trend_thresholds() {
+        assert_eq!(classify_roi_trend(&[]), RoiTrend::Stable);
+        assert_eq!(classify_roi_trend(&[900_000]), RoiTrend::Stable);
+        assert_eq!(classify_roi_trend(&[900_000, 980_001]), RoiTrend::Rising);
+        assert_eq!(classify_roi_trend(&[980_001, 900_000]), RoiTrend::Falling);
+        assert_eq!(classify_roi_trend(&[900_000, 940_000]), RoiTrend::Stable);
+    }
+
+    #[test]
+    fn attacker_roi_assessment_new() {
+        let assessment = AttackerRoiAssessment::new("ext-a", 2_200_000, &[1_200_000, 2_200_000]);
+        assert_eq!(assessment.extension_id, "ext-a");
+        assert_eq!(assessment.alert, RoiAlertLevel::HighlyProfitable);
+        assert_eq!(assessment.trend, RoiTrend::Rising);
+    }
+
+    #[test]
+    fn fleet_roi_summary_aggregates() {
+        let mut assessments = BTreeMap::new();
+        assessments.insert(
+            "ext-a".to_string(),
+            AttackerRoiAssessment::new("ext-a", 2_500_000, &[2_000_000, 2_500_000]),
+        );
+        assessments.insert(
+            "ext-b".to_string(),
+            AttackerRoiAssessment::new("ext-b", 1_100_000, &[1_300_000, 1_100_000]),
+        );
+        assessments.insert(
+            "ext-c".to_string(),
+            AttackerRoiAssessment::new("ext-c", 400_000, &[420_000, 400_000]),
+        );
+
+        let summary = summarize_fleet_roi(&assessments);
+        assert_eq!(summary.extension_count, 3);
+        assert_eq!(summary.profitable_extensions, 1);
+        assert_eq!(summary.highly_profitable_extensions, 1);
+        assert_eq!(summary.min_roi_millionths, 400_000);
+        assert_eq!(summary.max_roi_millionths, 2_500_000);
+        assert_eq!(summary.average_roi_millionths, 1_333_333);
+    }
+
+    #[test]
+    fn fleet_roi_summary_empty_is_zeroed() {
+        let summary = summarize_fleet_roi(&BTreeMap::new());
+        assert_eq!(summary.extension_count, 0);
+        assert_eq!(summary.profitable_extensions, 0);
+        assert_eq!(summary.highly_profitable_extensions, 0);
+        assert_eq!(summary.average_roi_millionths, 0);
+        assert_eq!(summary.min_roi_millionths, 0);
+        assert_eq!(summary.max_roi_millionths, 0);
     }
 
     #[test]

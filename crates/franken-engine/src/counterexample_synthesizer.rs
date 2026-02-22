@@ -261,6 +261,22 @@ pub struct ControllerInterference {
     pub convergence_steps: Option<u64>,
 }
 
+/// Structured interference event for deterministic logging and evidence checks.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ControllerInterferenceEvent {
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub component: String,
+    pub event: String,
+    pub outcome: String,
+    pub error_code: Option<String>,
+    pub kind: InterferenceKind,
+    pub controller_ids: Vec<String>,
+    pub shared_metrics: Vec<String>,
+    pub timescale_separation_millionths: i64,
+}
+
 // ---------------------------------------------------------------------------
 // ConflictDiagnostic — human-readable diagnostic
 // ---------------------------------------------------------------------------
@@ -819,40 +835,69 @@ impl CounterexampleSynthesizer {
                     continue;
                 }
 
-                // Check timescale separation.
-                let separation = (a.timescale_millionths - b.timescale_millionths).abs();
-                let insufficient_separation = separation < 100_000; // < 0.1x
+                let a_writes: BTreeSet<String> =
+                    a.write_metrics.intersection(&shared).cloned().collect();
+                let b_writes: BTreeSet<String> =
+                    b.write_metrics.intersection(&shared).cloned().collect();
+                let a_reads: BTreeSet<String> =
+                    a.read_metrics.intersection(&shared).cloned().collect();
+                let b_reads: BTreeSet<String> =
+                    b.read_metrics.intersection(&shared).cloned().collect();
 
-                if insufficient_separation {
+                let separation = (a.timescale_millionths - b.timescale_millionths).abs();
+                if !a.has_timescale_statement() || !b.has_timescale_statement() {
                     interferences.push(ControllerInterference {
                         kind: InterferenceKind::TimescaleConflict,
                         controller_ids: vec![a.controller_id.clone(), b.controller_id.clone()],
                         shared_metrics: shared.clone(),
                         timescale_separation_millionths: separation,
                         evidence_description: format!(
-                            "Controllers {} and {} share metrics {:?} with insufficient \
-                             timescale separation ({})",
-                            a.controller_id, b.controller_id, shared, separation
+                            "Controllers {} and {} share metrics {:?} but are missing required \
+                             timescale-separation statements",
+                            a.controller_id, b.controller_id, shared
+                        ),
+                        convergence_steps: None,
+                    });
+                    continue;
+                }
+
+                // Check timescale separation only for concurrent writers.
+                let concurrent_writes: BTreeSet<String> =
+                    a_writes.intersection(&b_writes).cloned().collect();
+                let insufficient_separation = separation < 100_000; // < 0.1x
+                if !concurrent_writes.is_empty() && insufficient_separation {
+                    interferences.push(ControllerInterference {
+                        kind: InterferenceKind::TimescaleConflict,
+                        controller_ids: vec![a.controller_id.clone(), b.controller_id.clone()],
+                        shared_metrics: concurrent_writes.clone(),
+                        timescale_separation_millionths: separation,
+                        evidence_description: format!(
+                            "Controllers {} and {} share writable metrics {:?} with insufficient \
+                             timescale separation ({}) under statements {:?} and {:?}",
+                            a.controller_id,
+                            b.controller_id,
+                            concurrent_writes,
+                            separation,
+                            a.timescale_statement,
+                            b.timescale_statement
                         ),
                         convergence_steps: None,
                     });
                 }
 
-                // Check for potential invariant invalidation.
-                let a_writes: BTreeSet<_> = a.write_metrics.intersection(&shared).collect();
-                let b_reads: BTreeSet<String> =
-                    b.read_metrics.intersection(&shared).cloned().collect();
-
-                let conflicts_ab = a_writes.iter().any(|w| b_reads.contains(w.as_str()));
-
-                if conflicts_ab {
+                // Check for potential snapshot invalidation from read/write overlap in either
+                // direction.
+                let mut read_write_overlap: BTreeSet<String> =
+                    a_writes.intersection(&b_reads).cloned().collect();
+                read_write_overlap.extend(b_writes.intersection(&a_reads).cloned());
+                if !read_write_overlap.is_empty() {
                     interferences.push(ControllerInterference {
                         kind: InterferenceKind::InvariantInvalidation,
                         controller_ids: vec![a.controller_id.clone(), b.controller_id.clone()],
-                        shared_metrics: shared,
+                        shared_metrics: read_write_overlap,
                         timescale_separation_millionths: separation,
                         evidence_description: format!(
-                            "Controller {} writes metrics that controller {} reads",
+                            "Controllers {} and {} have read/write overlap on shared metrics",
                             a.controller_id, b.controller_id
                         ),
                         convergence_steps: None,
@@ -862,6 +907,52 @@ impl CounterexampleSynthesizer {
         }
 
         interferences
+    }
+
+    /// Build deterministic structured events for controller-interference outcomes.
+    pub fn build_interference_events(
+        &self,
+        interferences: &[ControllerInterference],
+        trace_id: &str,
+        policy_id: &str,
+    ) -> Vec<ControllerInterferenceEvent> {
+        interferences
+            .iter()
+            .enumerate()
+            .map(|(idx, interference)| {
+                let (event, outcome, error_code) = match interference.kind {
+                    InterferenceKind::TimescaleConflict => (
+                        "controller_interference_rejected",
+                        "reject",
+                        Some("FE-CX-INTERFERENCE-TIMESCALE".to_string()),
+                    ),
+                    InterferenceKind::InvariantInvalidation => (
+                        "controller_interference_serialized",
+                        "serialize",
+                        Some("FE-CX-INTERFERENCE-INVARIANT".to_string()),
+                    ),
+                    InterferenceKind::Oscillation => (
+                        "controller_interference_rejected",
+                        "reject",
+                        Some("FE-CX-INTERFERENCE-OSCILLATION".to_string()),
+                    ),
+                };
+
+                ControllerInterferenceEvent {
+                    trace_id: trace_id.to_string(),
+                    decision_id: format!("interference-{:06}", idx + 1),
+                    policy_id: policy_id.to_string(),
+                    component: "counterexample_synthesizer".to_string(),
+                    event: event.to_string(),
+                    outcome: outcome.to_string(),
+                    error_code,
+                    kind: interference.kind,
+                    controller_ids: interference.controller_ids.clone(),
+                    shared_metrics: interference.shared_metrics.iter().cloned().collect(),
+                    timescale_separation_millionths: interference.timescale_separation_millionths,
+                }
+            })
+            .collect()
     }
 
     /// Generate a replay-compatible trace fixture from a counterexample.
@@ -1039,6 +1130,15 @@ pub struct ControllerConfig {
     pub affected_metrics: BTreeSet<String>,
     /// Timescale at which this controller operates (millionths; 1_000_000 = 1 second).
     pub timescale_millionths: i64,
+    /// Required declaration describing this controller's metric timescale contract.
+    #[serde(default)]
+    pub timescale_statement: String,
+}
+
+impl ControllerConfig {
+    fn has_timescale_statement(&self) -> bool {
+        !self.timescale_statement.trim().is_empty()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1839,6 +1939,7 @@ mod tests {
                 write_metrics: ["cpu".to_string()].into(),
                 affected_metrics: ["cpu".to_string()].into(),
                 timescale_millionths: 1_000_000,
+                timescale_statement: "reads every 1s; writes every 1s".to_string(),
             },
             ControllerConfig {
                 controller_id: "ctrl-b".to_string(),
@@ -1846,6 +1947,7 @@ mod tests {
                 write_metrics: ["memory".to_string()].into(),
                 affected_metrics: ["memory".to_string()].into(),
                 timescale_millionths: 1_000_000,
+                timescale_statement: "reads every 1s; writes every 1s".to_string(),
             },
         ];
         let interferences = synth.detect_interference(&configs);
@@ -1862,6 +1964,7 @@ mod tests {
                 write_metrics: ["throughput".to_string()].into(),
                 affected_metrics: ["throughput".to_string()].into(),
                 timescale_millionths: 100_000,
+                timescale_statement: "writes every 100ms".to_string(),
             },
             ControllerConfig {
                 controller_id: "also-fast-ctrl".to_string(),
@@ -1869,6 +1972,7 @@ mod tests {
                 write_metrics: ["throughput".to_string()].into(),
                 affected_metrics: ["throughput".to_string()].into(),
                 timescale_millionths: 120_000,
+                timescale_statement: "writes every 120ms".to_string(),
             },
         ];
         let interferences = synth.detect_interference(&configs);
@@ -1890,6 +1994,7 @@ mod tests {
                 write_metrics: ["shared-metric".to_string()].into(),
                 affected_metrics: ["shared-metric".to_string()].into(),
                 timescale_millionths: 1_000_000,
+                timescale_statement: "writes every 1s".to_string(),
             },
             ControllerConfig {
                 controller_id: "reader".to_string(),
@@ -1897,10 +2002,11 @@ mod tests {
                 write_metrics: BTreeSet::new(),
                 affected_metrics: ["shared-metric".to_string()].into(),
                 timescale_millionths: 1_000_000,
+                timescale_statement: "reads every 1s".to_string(),
             },
         ];
         let interferences = synth.detect_interference(&configs);
-        // With same timescale, should detect both timescale conflict and invariant invalidation.
+        // Read/write overlap on the same metric must be reported.
         assert!(
             interferences
                 .iter()
@@ -1919,6 +2025,7 @@ mod tests {
                 write_metrics: ["m1".to_string()].into(),
                 affected_metrics: ["m1".to_string()].into(),
                 timescale_millionths: 500_000,
+                timescale_statement: "writes every 500ms".to_string(),
             },
             ControllerConfig {
                 controller_id: "ctrl-2".to_string(),
@@ -1926,6 +2033,7 @@ mod tests {
                 write_metrics: ["m2".to_string()].into(),
                 affected_metrics: ["m1".to_string(), "m2".to_string()].into(),
                 timescale_millionths: 510_000,
+                timescale_statement: "reads every 500ms; writes every 510ms".to_string(),
             },
             ControllerConfig {
                 controller_id: "ctrl-3".to_string(),
@@ -1933,10 +2041,115 @@ mod tests {
                 write_metrics: ["m2".to_string()].into(),
                 affected_metrics: ["m2".to_string()].into(),
                 timescale_millionths: 520_000,
+                timescale_statement: "writes every 520ms".to_string(),
             },
         ];
         let interferences = synth.detect_interference(&configs);
         assert!(!interferences.is_empty());
+    }
+
+    #[test]
+    fn detect_no_interference_for_shared_read_only_controllers() {
+        let synth = CounterexampleSynthesizer::new(test_config());
+        let configs = vec![
+            ControllerConfig {
+                controller_id: "reader-a".to_string(),
+                read_metrics: ["latency".to_string()].into(),
+                write_metrics: BTreeSet::new(),
+                affected_metrics: ["latency".to_string()].into(),
+                timescale_millionths: 100_000,
+                timescale_statement: "reads every 100ms".to_string(),
+            },
+            ControllerConfig {
+                controller_id: "reader-b".to_string(),
+                read_metrics: ["latency".to_string()].into(),
+                write_metrics: BTreeSet::new(),
+                affected_metrics: ["latency".to_string()].into(),
+                timescale_millionths: 110_000,
+                timescale_statement: "reads every 110ms".to_string(),
+            },
+        ];
+
+        let interferences = synth.detect_interference(&configs);
+        assert!(
+            interferences.is_empty(),
+            "read-only overlap should not create interference: {interferences:?}"
+        );
+    }
+
+    #[test]
+    fn detect_missing_timescale_statement_for_shared_metrics() {
+        let synth = CounterexampleSynthesizer::new(test_config());
+        let configs = vec![
+            ControllerConfig {
+                controller_id: "writer-a".to_string(),
+                read_metrics: BTreeSet::new(),
+                write_metrics: ["latency".to_string()].into(),
+                affected_metrics: ["latency".to_string()].into(),
+                timescale_millionths: 100_000,
+                timescale_statement: String::new(),
+            },
+            ControllerConfig {
+                controller_id: "writer-b".to_string(),
+                read_metrics: BTreeSet::new(),
+                write_metrics: ["latency".to_string()].into(),
+                affected_metrics: ["latency".to_string()].into(),
+                timescale_millionths: 120_000,
+                timescale_statement: "writes every 120ms".to_string(),
+            },
+        ];
+
+        let interferences = synth.detect_interference(&configs);
+        assert!(interferences.iter().any(|i| {
+            i.kind == InterferenceKind::TimescaleConflict
+                && i.evidence_description
+                    .contains("missing required timescale-separation statements")
+        }));
+    }
+
+    #[test]
+    fn build_interference_events_is_deterministic_and_structured() {
+        let synth = CounterexampleSynthesizer::new(test_config());
+        let interferences = vec![
+            ControllerInterference {
+                kind: InterferenceKind::TimescaleConflict,
+                controller_ids: vec!["a".to_string(), "b".to_string()],
+                shared_metrics: ["m1".to_string()].into(),
+                timescale_separation_millionths: 50_000,
+                evidence_description: "timescale conflict".to_string(),
+                convergence_steps: None,
+            },
+            ControllerInterference {
+                kind: InterferenceKind::InvariantInvalidation,
+                controller_ids: vec!["b".to_string(), "c".to_string()],
+                shared_metrics: ["m2".to_string()].into(),
+                timescale_separation_millionths: 500_000,
+                evidence_description: "read/write overlap".to_string(),
+                convergence_steps: None,
+            },
+        ];
+
+        let events = synth.build_interference_events(
+            &interferences,
+            "trace-interference-001",
+            "policy-interference-v1",
+        );
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].decision_id, "interference-000001");
+        assert_eq!(events[1].decision_id, "interference-000002");
+        assert_eq!(events[0].component, "counterexample_synthesizer");
+        assert_eq!(events[0].event, "controller_interference_rejected");
+        assert_eq!(events[0].outcome, "reject");
+        assert_eq!(
+            events[0].error_code.as_deref(),
+            Some("FE-CX-INTERFERENCE-TIMESCALE")
+        );
+        assert_eq!(events[1].event, "controller_interference_serialized");
+        assert_eq!(events[1].outcome, "serialize");
+        assert_eq!(
+            events[1].error_code.as_deref(),
+            Some("FE-CX-INTERFERENCE-INVARIANT")
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -2064,6 +2277,7 @@ mod tests {
             write_metrics: ["m2".to_string()].into(),
             affected_metrics: ["m1".to_string(), "m2".to_string()].into(),
             timescale_millionths: 1_000_000,
+            timescale_statement: "reads every 1s; writes every 1s".to_string(),
         };
         let json = serde_json::to_string(&cfg).unwrap();
         let restored: ControllerConfig = serde_json::from_str(&json).unwrap();

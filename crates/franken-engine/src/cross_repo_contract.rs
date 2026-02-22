@@ -460,6 +460,10 @@ pub fn integration_point_inventory() -> BTreeMap<String, Vec<String>> {
             "IncidentReplayView".to_string(),
             "PolicyExplanationCardView".to_string(),
             "ControlDashboardView".to_string(),
+            "ControlPlaneInvariantsDashboardView".to_string(),
+            "FlowDecisionDashboardView".to_string(),
+            "ReplacementProgressDashboardView".to_string(),
+            "ProofSpecializationLineageDashboardView".to_string(),
         ],
     );
 
@@ -535,9 +539,23 @@ mod tests {
     use super::*;
 
     use crate::frankentui_adapter::{
-        AdapterEnvelope, AdapterStream, ControlDashboardView, DashboardMetricView,
-        ExtensionStatusRow, FrankentuiViewPayload, IncidentReplayView, PolicyExplanationCardView,
-        PolicyExplanationPartial, ReplayEventView, ReplayStatus, UpdateKind,
+        ActiveSpecializationRowView, AdapterEnvelope, AdapterStream, BenchmarkTrendPointView,
+        BlockedFlowView, CancellationEventView, CancellationKind, ConfinementProofView,
+        ConfinementStatus, ControlDashboardView, ControlPlaneInvariantsDashboardView,
+        ControlPlaneInvariantsPartial, DashboardAlertMetric, DashboardAlertRule,
+        DashboardMetricView, DashboardSeverity, DecisionOutcomeKind, DeclassificationDecisionView,
+        DeclassificationOutcome, ExtensionStatusRow, FlowDecisionDashboardView,
+        FlowDecisionPartial, FlowProofCoverageView, FlowSensitivityLevel, FrankentuiViewPayload,
+        IncidentReplayView, LabelMapEdgeView, LabelMapNodeView, LabelMapView, ObligationState,
+        ObligationStatusRowView, PolicyExplanationCardView, PolicyExplanationPartial,
+        ProofInventoryKind, ProofInventoryRowView, ProofSpecializationInvalidationReason,
+        ProofSpecializationLineageDashboardView, ProofSpecializationLineagePartial,
+        ProofValidityStatus, RecoveryStatus, RegionLifecycleRowView, ReplacementOpportunityInput,
+        ReplacementProgressDashboardView, ReplacementProgressPartial, ReplacementRiskLevel,
+        ReplayEventView, ReplayHealthPanelView, ReplayHealthStatus, ReplayStatus,
+        SafeModeActivationView, SchemaCompatibilityStatus, SchemaVersionPanelView,
+        SlotStatusOverviewRow, SpecializationFallbackEventView, SpecializationFallbackReason,
+        SpecializationInvalidationRowView, ThresholdComparator, UpdateKind,
     };
     use crate::policy_controller::service_endpoint_template::{
         AuthContext, ControlAction, EndpointResponse, ErrorEnvelope, HealthStatusResponse,
@@ -624,8 +642,266 @@ mod tests {
             }],
             incident_counts: BTreeMap::new(),
         });
+        let replacement = FrankentuiViewPayload::ReplacementProgressDashboard(
+            ReplacementProgressDashboardView::from_partial(ReplacementProgressPartial {
+                cluster: "prod".to_string(),
+                zone: "us-east".to_string(),
+                security_epoch: Some(5),
+                generated_at_unix_ms: Some(1_700_000_000_111),
+                slot_status_overview: vec![SlotStatusOverviewRow {
+                    slot_id: "parser".to_string(),
+                    slot_kind: "parser".to_string(),
+                    implementation_kind: "delegate".to_string(),
+                    promotion_status: "promotion_candidate".to_string(),
+                    risk_level: ReplacementRiskLevel::High,
+                    last_transition_unix_ms: 1_700_000_000_100,
+                    health: "blocked".to_string(),
+                    lineage_ref: "frankentui://replacement-lineage/parser".to_string(),
+                }],
+                replacement_inputs: vec![ReplacementOpportunityInput {
+                    slot_id: "parser".to_string(),
+                    slot_kind: "parser".to_string(),
+                    performance_uplift_millionths: 400_000,
+                    invocation_frequency_per_minute: 120,
+                    risk_reduction_millionths: 200_000,
+                }],
+                ..Default::default()
+            }),
+        );
+        let invariants = FrankentuiViewPayload::ControlPlaneInvariantsDashboard(
+            ControlPlaneInvariantsDashboardView::from_partial(ControlPlaneInvariantsPartial {
+                cluster: "prod".to_string(),
+                zone: "us-east".to_string(),
+                runtime_mode: "secure".to_string(),
+                generated_at_unix_ms: Some(1_700_000_000_222),
+                evidence_stream: vec![crate::frankentui_adapter::EvidenceStreamEntryView {
+                    trace_id: "trace-inv-1".to_string(),
+                    decision_id: "decision-inv-1".to_string(),
+                    policy_id: "policy-1".to_string(),
+                    action_type: "fallback".to_string(),
+                    decision_outcome: DecisionOutcomeKind::Fallback,
+                    expected_loss_millionths: 100_000,
+                    extension_id: "ext-a".to_string(),
+                    region_id: "region-a".to_string(),
+                    severity: DashboardSeverity::Warning,
+                    component: "guardplane".to_string(),
+                    event: "safe_mode_activated".to_string(),
+                    outcome: "fallback".to_string(),
+                    error_code: Some("FE-SAFE-001".to_string()),
+                    timestamp_unix_ms: 1_700_000_000_200,
+                }],
+                obligation_rows: vec![ObligationStatusRowView {
+                    obligation_id: "obl-1".to_string(),
+                    extension_id: "ext-a".to_string(),
+                    region_id: "region-a".to_string(),
+                    state: ObligationState::Failed,
+                    severity: DashboardSeverity::Critical,
+                    due_at_unix_ms: 1_700_000_001_000,
+                    updated_at_unix_ms: 1_700_000_000_210,
+                    detail: "replay divergence".to_string(),
+                }],
+                region_rows: vec![RegionLifecycleRowView {
+                    region_id: "region-a".to_string(),
+                    is_active: true,
+                    active_extensions: 1,
+                    created_at_unix_ms: 1_700_000_000_000,
+                    closed_at_unix_ms: None,
+                    quiescent_close_time_ms: None,
+                }],
+                cancellation_events: vec![CancellationEventView {
+                    extension_id: "ext-a".to_string(),
+                    region_id: "region-a".to_string(),
+                    cancellation_kind: CancellationKind::Quarantine,
+                    severity: DashboardSeverity::Critical,
+                    detail: "containment escalation".to_string(),
+                    timestamp_unix_ms: 1_700_000_000_205,
+                }],
+                replay_health: Some(ReplayHealthPanelView {
+                    last_run_status: ReplayHealthStatus::Fail,
+                    divergence_count: 1,
+                    last_replay_timestamp_unix_ms: Some(1_700_000_000_190),
+                }),
+                benchmark_points: vec![BenchmarkTrendPointView {
+                    timestamp_unix_ms: 1_700_000_000_180,
+                    throughput_tps: 1_950,
+                    latency_p95_ms: 130,
+                    memory_peak_mb: 760,
+                }],
+                throughput_floor_tps: Some(2_000),
+                latency_p95_ceiling_ms: Some(120),
+                memory_peak_ceiling_mb: Some(750),
+                safe_mode_activations: vec![SafeModeActivationView {
+                    activation_id: "sm-1".to_string(),
+                    activation_type: "replay_divergence".to_string(),
+                    extension_id: "ext-a".to_string(),
+                    region_id: "region-a".to_string(),
+                    severity: DashboardSeverity::Critical,
+                    recovery_status: RecoveryStatus::Recovering,
+                    activated_at_unix_ms: 1_700_000_000_202,
+                    recovered_at_unix_ms: None,
+                }],
+                schema_version: Some(SchemaVersionPanelView {
+                    evidence_schema_version: 4,
+                    last_migration_unix_ms: Some(1_699_999_999_000),
+                    compatibility_status: SchemaCompatibilityStatus::Compatible,
+                }),
+                alert_rules: vec![DashboardAlertRule {
+                    rule_id: "alert-fallback".to_string(),
+                    description: "fallback activations > 0".to_string(),
+                    metric: DashboardAlertMetric::FallbackActivationCount,
+                    comparator: ThresholdComparator::GreaterThan,
+                    threshold: 0,
+                    severity: DashboardSeverity::Critical,
+                }],
+                ..Default::default()
+            }),
+        );
+        let flow = FrankentuiViewPayload::FlowDecisionDashboard(
+            FlowDecisionDashboardView::from_partial(FlowDecisionPartial {
+                cluster: "prod".to_string(),
+                zone: "us-east".to_string(),
+                security_epoch: Some(7),
+                generated_at_unix_ms: Some(1_700_000_000_333),
+                label_map: LabelMapView {
+                    nodes: vec![
+                        LabelMapNodeView {
+                            label_id: "pii".to_string(),
+                            sensitivity: FlowSensitivityLevel::High,
+                            description: "user pii".to_string(),
+                            extension_overlays: vec!["ext-a".to_string()],
+                        },
+                        LabelMapNodeView {
+                            label_id: "public".to_string(),
+                            sensitivity: FlowSensitivityLevel::Low,
+                            description: "public data".to_string(),
+                            extension_overlays: vec!["ext-a".to_string()],
+                        },
+                    ],
+                    edges: vec![LabelMapEdgeView {
+                        source_label: "pii".to_string(),
+                        sink_clearance: "high".to_string(),
+                        route_policy_id: Some("policy-ifc-1".to_string()),
+                        route_enabled: true,
+                    }],
+                },
+                blocked_flows: vec![BlockedFlowView {
+                    flow_id: "flow-1".to_string(),
+                    extension_id: "ext-a".to_string(),
+                    source_label: "pii".to_string(),
+                    sink_clearance: "external".to_string(),
+                    sensitivity: FlowSensitivityLevel::Critical,
+                    blocked_reason: "sink clearance mismatch".to_string(),
+                    attempted_exfiltration: true,
+                    code_path_ref: "src/ext_a/main.ts:90".to_string(),
+                    extension_context_ref: "frankentui://extension/ext-a".to_string(),
+                    trace_id: "trace-flow-1".to_string(),
+                    decision_id: "decision-flow-1".to_string(),
+                    policy_id: "policy-ifc-1".to_string(),
+                    error_code: Some("FE-IFC-BLOCK".to_string()),
+                    occurred_at_unix_ms: 1_700_000_000_320,
+                }],
+                declassification_history: vec![DeclassificationDecisionView {
+                    decision_id: "decl-1".to_string(),
+                    extension_id: "ext-a".to_string(),
+                    source_label: "pii".to_string(),
+                    sink_clearance: "external".to_string(),
+                    sensitivity: FlowSensitivityLevel::Critical,
+                    outcome: DeclassificationOutcome::Denied,
+                    policy_id: "policy-ifc-1".to_string(),
+                    loss_assessment_summary: "expected loss too high".to_string(),
+                    rationale: "deny".to_string(),
+                    receipt_ref: "frankentui://declassification/decl-1".to_string(),
+                    replay_ref: "frankentui://replay/decl-1".to_string(),
+                    decided_at_unix_ms: 1_700_000_000_321,
+                }],
+                confinement_proofs: vec![ConfinementProofView {
+                    extension_id: "ext-a".to_string(),
+                    status: ConfinementStatus::Partial,
+                    covered_flow_count: 5,
+                    uncovered_flow_count: 1,
+                    proof_rows: vec![FlowProofCoverageView {
+                        proof_id: "proof-1".to_string(),
+                        source_label: "pii".to_string(),
+                        sink_clearance: "external".to_string(),
+                        covered: false,
+                        proof_ref: "frankentui://proof/proof-1".to_string(),
+                    }],
+                    uncovered_flow_refs: vec!["frankentui://flow/flow-1".to_string()],
+                }],
+                blocked_flow_alert_threshold: Some(1),
+                ..Default::default()
+            }),
+        );
+        let proof_lineage = FrankentuiViewPayload::ProofSpecializationLineageDashboard(
+            ProofSpecializationLineageDashboardView::from_partial(
+                ProofSpecializationLineagePartial {
+                    cluster: "prod".to_string(),
+                    zone: "us-east".to_string(),
+                    security_epoch: Some(8),
+                    generated_at_unix_ms: Some(1_700_000_000_444),
+                    proof_inventory: vec![ProofInventoryRowView {
+                        proof_id: "proof-cap-1".to_string(),
+                        proof_kind: ProofInventoryKind::CapabilityWitness,
+                        validity_status: ProofValidityStatus::Valid,
+                        epoch_id: 8,
+                        linked_specialization_count: 2,
+                        enabled_specialization_ids: vec![
+                            "spec-a".to_string(),
+                            "spec-b".to_string(),
+                        ],
+                        proof_ref: "frankentui://proof/proof-cap-1".to_string(),
+                    }],
+                    active_specializations: vec![ActiveSpecializationRowView {
+                        specialization_id: "spec-a".to_string(),
+                        target_id: "ext-a".to_string(),
+                        target_kind: "extension".to_string(),
+                        optimization_class: "ifc_check_elision".to_string(),
+                        latency_reduction_millionths: 200_000,
+                        throughput_increase_millionths: 300_000,
+                        proof_input_ids: vec!["proof-cap-1".to_string()],
+                        transformation_ref: "frankentui://transform/spec-a".to_string(),
+                        receipt_ref: "frankentui://receipt/spec-a".to_string(),
+                        activated_at_unix_ms: 1_700_000_000_430,
+                    }],
+                    invalidation_feed: vec![SpecializationInvalidationRowView {
+                        invalidation_id: "inv-1".to_string(),
+                        specialization_id: "spec-a".to_string(),
+                        target_id: "ext-a".to_string(),
+                        reason: ProofSpecializationInvalidationReason::ProofExpired,
+                        reason_detail: "window elapsed".to_string(),
+                        proof_id: Some("proof-cap-1".to_string()),
+                        old_epoch_id: Some(7),
+                        new_epoch_id: Some(8),
+                        fallback_confirmed: true,
+                        fallback_confirmation_ref: "frankentui://fallback/spec-a".to_string(),
+                        occurred_at_unix_ms: 1_700_000_000_431,
+                    }],
+                    fallback_events: vec![SpecializationFallbackEventView {
+                        event_id: "fb-1".to_string(),
+                        specialization_id: Some("spec-a".to_string()),
+                        target_id: "ext-a".to_string(),
+                        reason: SpecializationFallbackReason::ProofExpired,
+                        reason_detail: "fallback activated".to_string(),
+                        unspecialized_path_ref: "frankentui://path/ext-a/unspecialized".to_string(),
+                        compilation_ref: "frankentui://compile/ext-a".to_string(),
+                        occurred_at_unix_ms: 1_700_000_000_432,
+                    }],
+                    bulk_invalidation_alert_threshold: Some(1),
+                    degraded_coverage_alert_threshold_millionths: Some(900_000),
+                    ..Default::default()
+                },
+            ),
+        );
 
-        for payload in [replay, policy, dashboard] {
+        for payload in [
+            replay,
+            policy,
+            dashboard,
+            replacement,
+            invariants,
+            flow,
+            proof_lineage,
+        ] {
             let envelope = AdapterEnvelope::new(
                 "trace-variants",
                 1_700_000_000_000,
@@ -659,8 +935,20 @@ mod tests {
             AdapterStream::IncidentReplay,
             AdapterStream::PolicyExplanation,
             AdapterStream::ControlDashboard,
+            AdapterStream::ControlPlaneInvariantsDashboard,
+            AdapterStream::FlowDecisionDashboard,
+            AdapterStream::ReplacementProgressDashboard,
+            AdapterStream::ProofSpecializationLineageDashboard,
         ];
-        let expected = ["incident_replay", "policy_explanation", "control_dashboard"];
+        let expected = [
+            "incident_replay",
+            "policy_explanation",
+            "control_dashboard",
+            "control_plane_invariants_dashboard",
+            "flow_decision_dashboard",
+            "replacement_progress_dashboard",
+            "proof_specialization_lineage_dashboard",
+        ];
         for (stream, expected_str) in streams.iter().zip(expected.iter()) {
             let json = serde_json::to_value(stream).expect("serialize");
             assert_eq!(json.as_str().unwrap(), *expected_str);

@@ -11,6 +11,13 @@ below is satisfied or an approved, linked exception is present.
 - [ ] `rch exec -- ... cargo clippy --all-targets -- -D warnings`
 - [ ] Reproducibility artifacts recorded per `docs/REPRODUCIBILITY_CONTRACT.md`
 
+## Adversarial Suppression Gate (`bd-3rd`)
+
+- [ ] `./scripts/run_adversarial_campaign_gate.sh ci`
+- [ ] Per-attack-category compromise rate suppression versus `node_lts` and `bun_stable` with `p <= 0.05`.
+- [ ] Continuous-run evidence present (minimum two trend points and current release-candidate run).
+- [ ] Successful FrankenEngine exploit findings trigger escalation workflow inside configured SLA.
+
 ## Reuse Vs Reimplement Decisions
 
 Record every release-scope PR that introduces new infrastructure in one of the

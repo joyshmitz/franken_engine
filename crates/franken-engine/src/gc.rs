@@ -451,6 +451,11 @@ impl GcCollector {
         size_bytes: u64,
         registry: &mut DomainRegistry,
     ) -> Result<(GcObjectId, u64), GcError> {
+        if !self.heaps.contains_key(extension_id) {
+            return Err(GcError::HeapNotFound {
+                extension_id: extension_id.to_string(),
+            });
+        }
         let seq = registry.allocate(AllocationDomain::ExtensionHeap, size_bytes)?;
         let id = self.allocate(extension_id, size_bytes)?;
         Ok((id, seq))

@@ -668,6 +668,11 @@ impl RevocationChain {
     /// Verify the entire chain from genesis to the current head.
     pub fn verify_chain(&self, _trace_id: &str) -> Result<(), ChainError> {
         if self.events.is_empty() {
+            if self.head.is_some() {
+                return Err(ChainError::ChainIntegrity {
+                    detail: "empty chain must not have a head".to_string(),
+                });
+            }
             return Ok(());
         }
 
@@ -875,9 +880,12 @@ impl RevocationChain {
         }
 
         // Verify head matches chain if provided.
-        if let Some(ref h) = head
-            && !events.is_empty()
-        {
+        if let Some(ref h) = head {
+            if events.is_empty() {
+                return Err(ChainError::ChainIntegrity {
+                    detail: "empty chain must not have a head".to_string(),
+                });
+            }
             let last_seq = events.len() as u64 - 1;
             if h.head_seq != last_seq {
                 return Err(ChainError::ChainIntegrity {

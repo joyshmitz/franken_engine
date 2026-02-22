@@ -600,6 +600,7 @@ impl EvidenceAccumulator {
     pub fn summary_hash(&self) -> ContentHash {
         let mut canonical = Vec::new();
         for (ext_id, delta) in &self.accumulated {
+            canonical.extend_from_slice(&(ext_id.len() as u32).to_le_bytes());
             canonical.extend_from_slice(ext_id.as_bytes());
             canonical.extend_from_slice(&delta.to_le_bytes());
             let count = self.evidence_count.get(ext_id).copied().unwrap_or(0);

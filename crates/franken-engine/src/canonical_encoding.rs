@@ -41,8 +41,6 @@ pub enum CanonicalViolation {
     DuplicateKey { key: String },
     /// Trailing bytes after the last value.
     TrailingBytes { count: usize },
-    /// Boolean value encoded with non-standard byte (not 0x00/0x01).
-    NonStandardBoolEncoding { byte: u8, offset: usize },
     /// Leading BOM or whitespace padding before data.
     LeadingPadding { byte_count: usize },
     /// Re-serialization mismatch: the round-tripped bytes differ from
@@ -77,9 +75,6 @@ impl fmt::Display for CanonicalViolation {
             } => write!(f, "non-lexicographic keys: '{prev_key}' >= '{current_key}'"),
             Self::DuplicateKey { key } => write!(f, "duplicate key: '{key}'"),
             Self::TrailingBytes { count } => write!(f, "{count} trailing bytes"),
-            Self::NonStandardBoolEncoding { byte, offset } => {
-                write!(f, "non-standard bool 0x{byte:02x} at offset {offset}")
-            }
             Self::LeadingPadding { byte_count } => {
                 write!(f, "{byte_count} bytes of leading padding")
             }
@@ -504,30 +499,6 @@ fn check_leading_padding(bytes: &[u8]) -> Option<CanonicalViolation> {
         });
     }
 
-    None
-}
-
-/// Check for non-standard bool encoding in raw bytes.
-///
-/// Our canonical bool encoding uses TAG_BOOL (0x03) followed by exactly
-/// 0x00 (false) or 0x01 (true). Any other byte after TAG_BOOL is
-/// non-canonical.
-pub fn check_bool_encoding(bytes: &[u8]) -> Option<CanonicalViolation> {
-    const TAG_BOOL: u8 = 0x03;
-
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == TAG_BOOL && i + 1 < bytes.len() {
-            let val = bytes[i + 1];
-            if val != 0x00 && val != 0x01 {
-                return Some(CanonicalViolation::NonStandardBoolEncoding {
-                    byte: val,
-                    offset: i + 1,
-                });
-            }
-        }
-        i += 1;
-    }
     None
 }
 
@@ -1009,31 +980,6 @@ mod tests {
         }
     }
 
-    // -- Non-standard bool encoding detection --
-
-    #[test]
-    fn non_standard_bool_detected() {
-        // 0x03 is TAG_BOOL; value should be 0x00 or 0x01.
-        let bytes = [0x03, 0x02]; // bool with value 0x02
-        let violation = check_bool_encoding(&bytes);
-        assert!(violation.is_some());
-        assert!(matches!(
-            violation.unwrap(),
-            CanonicalViolation::NonStandardBoolEncoding {
-                byte: 0x02,
-                offset: 1
-            }
-        ));
-    }
-
-    #[test]
-    fn standard_bool_accepted() {
-        let bytes_false = [0x03, 0x00];
-        let bytes_true = [0x03, 0x01];
-        assert!(check_bool_encoding(&bytes_false).is_none());
-        assert!(check_bool_encoding(&bytes_true).is_none());
-    }
-
     // -- Events and counters --
 
     #[test]
@@ -1234,10 +1180,6 @@ mod tests {
                 key: "k".to_string(),
             },
             CanonicalViolation::TrailingBytes { count: 42 },
-            CanonicalViolation::NonStandardBoolEncoding {
-                byte: 0x02,
-                offset: 10,
-            },
             CanonicalViolation::LeadingPadding { byte_count: 3 },
             CanonicalViolation::RoundTripMismatch {
                 first_diff_offset: 5,

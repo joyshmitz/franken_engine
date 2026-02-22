@@ -328,8 +328,10 @@ impl Region {
         if let Some(deadline) = &self.drain_deadline
             && self.drain_elapsed_ticks >= deadline.max_ticks
         {
-            self.drain_timeout_escalated = true;
-            self.emit_event("drain_timeout_escalation");
+            if !self.drain_timeout_escalated {
+                self.drain_timeout_escalated = true;
+                self.emit_event("drain_timeout_escalation");
+            }
             return true;
         }
         false
@@ -346,9 +348,15 @@ impl Region {
         }
 
         // Finalize children first.
+        let mut children_success = true;
         for child in &mut self.children {
             if child.state() == RegionState::Draining {
-                child.finalize()?;
+                let res = child.finalize()?;
+                if !res.success {
+                    children_success = false;
+                }
+            } else if child.state() != RegionState::Closed {
+                children_success = false;
             }
         }
 
@@ -376,7 +384,7 @@ impl Region {
             .filter(|ob| ob.status == ObligationStatus::Aborted)
             .count();
 
-        let success = self.pending_obligations() == 0;
+        let success = self.pending_obligations() == 0 && children_success;
 
         self.state = RegionState::Finalizing;
         self.emit_event(if success {
@@ -405,6 +413,17 @@ impl Region {
     ) -> Result<FinalizeResult, PhaseOrderViolation> {
         self.cancel(reason)?;
         self.drain(deadline)?;
+
+        let max = deadline.max_ticks;
+        for _ in 0..max {
+            if self.pending_obligations() == 0
+                && self.children.iter().all(|c| c.pending_obligations() == 0)
+            {
+                break;
+            }
+            self.drain_tick();
+        }
+
         self.finalize()
     }
 

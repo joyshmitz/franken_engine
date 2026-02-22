@@ -155,6 +155,319 @@ pub struct SafeModeState {
     pub unacknowledged_count: usize,
 }
 
+/// Environment variables that can force startup in safe mode.
+pub const SAFE_MODE_ENV_FLAGS: [&str; 2] = ["FRANKEN_SAFE_MODE", "FRANKENENGINE_SAFE_MODE"];
+
+/// Source that requested safe-mode startup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SafeModeStartupSource {
+    NotRequested,
+    CliFlag,
+    EnvironmentVariable,
+}
+
+impl fmt::Display for SafeModeStartupSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotRequested => f.write_str("not-requested"),
+            Self::CliFlag => f.write_str("cli-flag"),
+            Self::EnvironmentVariable => f.write_str("environment-variable"),
+        }
+    }
+}
+
+/// Conservative runtime restrictions applied in startup safe mode.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SafeModeRestrictions {
+    pub all_extensions_sandboxed: bool,
+    pub auto_promotion_disabled: bool,
+    pub conservative_policy_defaults: bool,
+    pub enhanced_telemetry: bool,
+    pub adaptive_tuning_disabled: bool,
+}
+
+impl SafeModeRestrictions {
+    fn conservative() -> Self {
+        Self {
+            all_extensions_sandboxed: true,
+            auto_promotion_disabled: true,
+            conservative_policy_defaults: true,
+            enhanced_telemetry: true,
+            adaptive_tuning_disabled: true,
+        }
+    }
+
+    fn normal() -> Self {
+        Self {
+            all_extensions_sandboxed: false,
+            auto_promotion_disabled: false,
+            conservative_policy_defaults: false,
+            enhanced_telemetry: false,
+            adaptive_tuning_disabled: false,
+        }
+    }
+}
+
+/// Structured startup-safe-mode event for deterministic diagnostics.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SafeModeStartupEvent {
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub component: String,
+    pub event: String,
+    pub outcome: String,
+    pub error_code: Option<String>,
+}
+
+/// Input for deterministic startup safe-mode evaluation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SafeModeStartupInput {
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub cli_safe_mode: bool,
+    /// Environment snapshot read at startup (`key -> value`).
+    pub environment: BTreeMap<String, String>,
+}
+
+/// Startup artifact describing mode selection and restrictions.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SafeModeStartupArtifact {
+    pub safe_mode_active: bool,
+    pub source: SafeModeStartupSource,
+    pub restrictions: SafeModeRestrictions,
+    pub startup_sequence: Vec<String>,
+    pub restricted_features: Vec<String>,
+    pub exit_procedure: Vec<String>,
+    pub evidence_preserved: bool,
+    pub logs_preserved: bool,
+    pub state_preserved: bool,
+    pub events: Vec<SafeModeStartupEvent>,
+}
+
+/// Input for determining whether it is safe to leave startup safe mode.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SafeModeExitCheckInput {
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub active_incidents: usize,
+    pub pending_quarantines: usize,
+    pub evidence_ledger_flushed: bool,
+}
+
+/// Exit readiness artifact for safe-mode recovery procedures.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SafeModeExitCheckArtifact {
+    pub can_exit: bool,
+    pub blocking_reasons: Vec<String>,
+    pub event: SafeModeStartupEvent,
+}
+
+/// Errors for safe-mode startup/exit evaluation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SafeModeStartupError {
+    MissingField { field: String },
+}
+
+impl fmt::Display for SafeModeStartupError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingField { field } => write!(f, "missing required field: {field}"),
+        }
+    }
+}
+
+impl std::error::Error for SafeModeStartupError {}
+
+fn parse_safe_mode_env_value(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
+}
+
+fn safe_mode_requested_by_env(environment: &BTreeMap<String, String>) -> bool {
+    SAFE_MODE_ENV_FLAGS.iter().any(|key| {
+        environment
+            .get(*key)
+            .is_some_and(|value| parse_safe_mode_env_value(value))
+    })
+}
+
+fn validate_startup_metadata(
+    trace_id: &str,
+    decision_id: &str,
+    policy_id: &str,
+) -> Result<(), SafeModeStartupError> {
+    if trace_id.trim().is_empty() {
+        return Err(SafeModeStartupError::MissingField {
+            field: "trace_id".to_string(),
+        });
+    }
+    if decision_id.trim().is_empty() {
+        return Err(SafeModeStartupError::MissingField {
+            field: "decision_id".to_string(),
+        });
+    }
+    if policy_id.trim().is_empty() {
+        return Err(SafeModeStartupError::MissingField {
+            field: "policy_id".to_string(),
+        });
+    }
+    Ok(())
+}
+
+/// Evaluate startup mode selection with deterministic safe-mode behavior.
+pub fn evaluate_safe_mode_startup(
+    input: &SafeModeStartupInput,
+) -> Result<SafeModeStartupArtifact, SafeModeStartupError> {
+    validate_startup_metadata(&input.trace_id, &input.decision_id, &input.policy_id)?;
+
+    let source = if input.cli_safe_mode {
+        SafeModeStartupSource::CliFlag
+    } else if safe_mode_requested_by_env(&input.environment) {
+        SafeModeStartupSource::EnvironmentVariable
+    } else {
+        SafeModeStartupSource::NotRequested
+    };
+    let safe_mode_active = source != SafeModeStartupSource::NotRequested;
+
+    let mut events = vec![SafeModeStartupEvent {
+        trace_id: input.trace_id.clone(),
+        decision_id: input.decision_id.clone(),
+        policy_id: input.policy_id.clone(),
+        component: "safe_mode_startup".to_string(),
+        event: "safe_mode_flag_evaluated".to_string(),
+        outcome: source.to_string(),
+        error_code: if safe_mode_active {
+            Some("FE-SAFE-MODE-STARTUP".to_string())
+        } else {
+            None
+        },
+    }];
+
+    let (restrictions, startup_sequence, restricted_features, exit_procedure) = if safe_mode_active
+    {
+        events.push(SafeModeStartupEvent {
+            trace_id: input.trace_id.clone(),
+            decision_id: input.decision_id.clone(),
+            policy_id: input.policy_id.clone(),
+            component: "safe_mode_startup".to_string(),
+            event: "safe_mode_restrictions_applied".to_string(),
+            outcome: "conservative".to_string(),
+            error_code: Some("FE-SAFE-MODE-RESTRICTIONS".to_string()),
+        });
+        (
+            SafeModeRestrictions::conservative(),
+            vec![
+                "initialize_runtime_context".to_string(),
+                "force_all_extensions_sandboxed".to_string(),
+                "disable_auto_promotion".to_string(),
+                "apply_conservative_policy_defaults".to_string(),
+                "enable_enhanced_telemetry".to_string(),
+                "disable_adaptive_tuning".to_string(),
+                "persist_safe_mode_entry_evidence".to_string(),
+            ],
+            vec![
+                "extension_auto_promotion".to_string(),
+                "adaptive_policy_tuning".to_string(),
+                "speculative_optimizations".to_string(),
+            ],
+            vec![
+                "verify_no_active_incidents".to_string(),
+                "verify_no_pending_quarantines".to_string(),
+                "verify_evidence_ledger_flushed".to_string(),
+                "emit_safe_mode_exit_receipt".to_string(),
+                "switch_runtime_to_normal_mode".to_string(),
+            ],
+        )
+    } else {
+        events.push(SafeModeStartupEvent {
+            trace_id: input.trace_id.clone(),
+            decision_id: input.decision_id.clone(),
+            policy_id: input.policy_id.clone(),
+            component: "safe_mode_startup".to_string(),
+            event: "safe_mode_not_enabled".to_string(),
+            outcome: "normal".to_string(),
+            error_code: None,
+        });
+        (
+            SafeModeRestrictions::normal(),
+            vec![
+                "initialize_runtime_context".to_string(),
+                "load_policy_frontier".to_string(),
+                "load_extension_catalog".to_string(),
+                "start_normal_execution_lanes".to_string(),
+            ],
+            Vec::new(),
+            vec![
+                "safe_mode_not_active".to_string(),
+                "no_exit_transition_required".to_string(),
+            ],
+        )
+    };
+
+    Ok(SafeModeStartupArtifact {
+        safe_mode_active,
+        source,
+        restrictions,
+        startup_sequence,
+        restricted_features,
+        exit_procedure,
+        evidence_preserved: true,
+        logs_preserved: true,
+        state_preserved: true,
+        events,
+    })
+}
+
+/// Evaluate whether safe-mode exit can proceed with deterministic blocking reasons.
+pub fn evaluate_safe_mode_exit(
+    input: &SafeModeExitCheckInput,
+) -> Result<SafeModeExitCheckArtifact, SafeModeStartupError> {
+    validate_startup_metadata(&input.trace_id, &input.decision_id, &input.policy_id)?;
+
+    let mut blocking_reasons = Vec::new();
+    if input.active_incidents > 0 {
+        blocking_reasons.push(format!(
+            "active_incidents_remaining:{}",
+            input.active_incidents
+        ));
+    }
+    if input.pending_quarantines > 0 {
+        blocking_reasons.push(format!(
+            "pending_quarantines_remaining:{}",
+            input.pending_quarantines
+        ));
+    }
+    if !input.evidence_ledger_flushed {
+        blocking_reasons.push("evidence_ledger_not_flushed".to_string());
+    }
+
+    let can_exit = blocking_reasons.is_empty();
+    let event = SafeModeStartupEvent {
+        trace_id: input.trace_id.clone(),
+        decision_id: input.decision_id.clone(),
+        policy_id: input.policy_id.clone(),
+        component: "safe_mode_startup".to_string(),
+        event: "safe_mode_exit_check".to_string(),
+        outcome: if can_exit { "pass" } else { "fail" }.to_string(),
+        error_code: if can_exit {
+            None
+        } else {
+            Some("FE-SAFE-MODE-EXIT-BLOCKED".to_string())
+        },
+    };
+
+    Ok(SafeModeExitCheckArtifact {
+        can_exit,
+        blocking_reasons,
+        event,
+    })
+}
+
 // ---------------------------------------------------------------------------
 // ForkEvent — structured audit events
 // ---------------------------------------------------------------------------
@@ -1628,5 +1941,126 @@ mod tests {
         assert_eq!(zones.len(), 2);
         assert!(zones.contains(&"zone-a"));
         assert!(zones.contains(&"zone-b"));
+    }
+
+    #[test]
+    fn startup_cli_flag_forces_safe_mode() {
+        let input = SafeModeStartupInput {
+            trace_id: "trace-safe-startup-cli".to_string(),
+            decision_id: "decision-safe-startup-cli".to_string(),
+            policy_id: "policy-safe-startup-v1".to_string(),
+            cli_safe_mode: true,
+            environment: BTreeMap::new(),
+        };
+        let artifact = evaluate_safe_mode_startup(&input).expect("startup artifact");
+        assert!(artifact.safe_mode_active);
+        assert_eq!(artifact.source, SafeModeStartupSource::CliFlag);
+        assert!(artifact.restrictions.all_extensions_sandboxed);
+        assert!(artifact.restrictions.auto_promotion_disabled);
+        assert!(artifact.restrictions.adaptive_tuning_disabled);
+        assert_eq!(
+            artifact.startup_sequence,
+            vec![
+                "initialize_runtime_context",
+                "force_all_extensions_sandboxed",
+                "disable_auto_promotion",
+                "apply_conservative_policy_defaults",
+                "enable_enhanced_telemetry",
+                "disable_adaptive_tuning",
+                "persist_safe_mode_entry_evidence",
+            ]
+        );
+    }
+
+    #[test]
+    fn startup_env_flag_forces_safe_mode() {
+        let mut environment = BTreeMap::new();
+        environment.insert("FRANKEN_SAFE_MODE".to_string(), "1".to_string());
+        let input = SafeModeStartupInput {
+            trace_id: "trace-safe-startup-env".to_string(),
+            decision_id: "decision-safe-startup-env".to_string(),
+            policy_id: "policy-safe-startup-v1".to_string(),
+            cli_safe_mode: false,
+            environment,
+        };
+        let artifact = evaluate_safe_mode_startup(&input).expect("startup artifact");
+        assert!(artifact.safe_mode_active);
+        assert_eq!(artifact.source, SafeModeStartupSource::EnvironmentVariable);
+    }
+
+    #[test]
+    fn startup_sequence_is_deterministic() {
+        let input = SafeModeStartupInput {
+            trace_id: "trace-safe-startup-deterministic".to_string(),
+            decision_id: "decision-safe-startup-deterministic".to_string(),
+            policy_id: "policy-safe-startup-v1".to_string(),
+            cli_safe_mode: true,
+            environment: BTreeMap::new(),
+        };
+        let a = evaluate_safe_mode_startup(&input).expect("artifact a");
+        let b = evaluate_safe_mode_startup(&input).expect("artifact b");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn startup_events_have_required_stable_fields() {
+        let mut environment = BTreeMap::new();
+        environment.insert("FRANKENENGINE_SAFE_MODE".to_string(), "true".to_string());
+        let input = SafeModeStartupInput {
+            trace_id: "trace-safe-startup-events".to_string(),
+            decision_id: "decision-safe-startup-events".to_string(),
+            policy_id: "policy-safe-startup-v1".to_string(),
+            cli_safe_mode: false,
+            environment,
+        };
+        let artifact = evaluate_safe_mode_startup(&input).expect("startup artifact");
+        assert!(artifact.events.iter().all(|event| {
+            event.trace_id == "trace-safe-startup-events"
+                && event.decision_id == "decision-safe-startup-events"
+                && event.policy_id == "policy-safe-startup-v1"
+                && event.component == "safe_mode_startup"
+                && !event.event.is_empty()
+                && !event.outcome.is_empty()
+        }));
+    }
+
+    #[test]
+    fn safe_mode_exit_check_blocks_and_then_passes() {
+        let blocked = evaluate_safe_mode_exit(&SafeModeExitCheckInput {
+            trace_id: "trace-safe-exit".to_string(),
+            decision_id: "decision-safe-exit".to_string(),
+            policy_id: "policy-safe-startup-v1".to_string(),
+            active_incidents: 1,
+            pending_quarantines: 2,
+            evidence_ledger_flushed: false,
+        })
+        .expect("blocked exit check");
+        assert!(!blocked.can_exit);
+        assert_eq!(
+            blocked.event.error_code.as_deref(),
+            Some("FE-SAFE-MODE-EXIT-BLOCKED")
+        );
+        assert_eq!(
+            blocked.blocking_reasons,
+            vec![
+                "active_incidents_remaining:1",
+                "pending_quarantines_remaining:2",
+                "evidence_ledger_not_flushed",
+            ]
+        );
+
+        let pass = evaluate_safe_mode_exit(&SafeModeExitCheckInput {
+            trace_id: "trace-safe-exit".to_string(),
+            decision_id: "decision-safe-exit".to_string(),
+            policy_id: "policy-safe-startup-v1".to_string(),
+            active_incidents: 0,
+            pending_quarantines: 0,
+            evidence_ledger_flushed: true,
+        })
+        .expect("pass exit check");
+        assert!(pass.can_exit);
+        assert!(pass.blocking_reasons.is_empty());
+        assert_eq!(pass.event.outcome, "pass");
+        assert_eq!(pass.event.error_code, None);
     }
 }

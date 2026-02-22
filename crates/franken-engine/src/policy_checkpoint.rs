@@ -135,6 +135,8 @@ pub enum CheckpointError {
     DuplicatePolicyType { policy_type: PolicyType },
     /// ID derivation failed.
     IdDerivationFailed { detail: String },
+    /// Signature or multi-sig construction error.
+    SignatureInvalid { detail: String },
     /// Epoch regression: epoch must not decrease.
     EpochRegression {
         prev_epoch: SecurityEpoch,
@@ -173,6 +175,9 @@ impl fmt::Display for CheckpointError {
             }
             Self::IdDerivationFailed { detail } => {
                 write!(f, "ID derivation failed: {detail}")
+            }
+            Self::SignatureInvalid { detail } => {
+                write!(f, "signature invalid: {detail}")
             }
             Self::EpochRegression {
                 prev_epoch,
@@ -439,7 +444,7 @@ impl CheckpointBuilder {
         for sk in signing_keys {
             let vk = sk.verification_key();
             let sig = crate::signature_preimage::sign_preimage(sk, &preimage).map_err(|e| {
-                CheckpointError::IdDerivationFailed {
+                CheckpointError::SignatureInvalid {
                     detail: format!("signing failed: {e}"),
                 }
             })?;
@@ -447,7 +452,7 @@ impl CheckpointBuilder {
         }
 
         let quorum_signatures = SortedSignatureArray::from_unsorted(entries).map_err(|e| {
-            CheckpointError::IdDerivationFailed {
+            CheckpointError::SignatureInvalid {
                 detail: format!("multi-sig construction failed: {e}"),
             }
         })?;
@@ -575,7 +580,7 @@ pub fn verify_checkpoint_quorum(
             required,
             provided: valid,
         }),
-        Err(e) => Err(CheckpointError::IdDerivationFailed {
+        Err(e) => Err(CheckpointError::SignatureInvalid {
             detail: format!("quorum verification error: {e}"),
         }),
     }

@@ -563,7 +563,10 @@ impl HasErrorCode for SerdeError {
             | SerdeError::InvalidUtf8 { .. }
             | SerdeError::DuplicateKey { .. }
             | SerdeError::NonLexicographicKeys { .. }
-            | SerdeError::TrailingBytes { .. } => FrankenErrorCode::DeterministicSerdeError,
+            | SerdeError::TrailingBytes { .. }
+            | SerdeError::RecursionLimitExceeded { .. } => {
+                FrankenErrorCode::DeterministicSerdeError
+            }
         }
     }
 }
@@ -702,7 +705,8 @@ impl HasErrorCode for CheckpointError {
             | CheckpointError::QuorumNotMet { .. }
             | CheckpointError::DuplicatePolicyType { .. }
             | CheckpointError::IdDerivationFailed { .. }
-            | CheckpointError::EpochRegression { .. } => {
+            | CheckpointError::EpochRegression { .. }
+            | CheckpointError::SignatureInvalid { .. } => {
                 FrankenErrorCode::PolicyCheckpointValidationError
             }
         }

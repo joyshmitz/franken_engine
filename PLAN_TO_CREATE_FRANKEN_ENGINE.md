@@ -955,9 +955,9 @@ These eight additions are intentionally selected as non-trivial upgrades that de
 - [ ] Add runtime charter document that codifies native-only engine policy.
 - [ ] Add claim language policy so marketing claims require evidence artifacts.
 - [ ] Add reproducibility contract (`env.json`, `manifest.json`, `repro.lock`) template.
-- [ ] Add donor-extraction scope document with explicit exclusions for V8/QuickJS semantic harvesting.
-- [ ] Add semantic donor spec document (observable behavior, edge cases, compatibility-critical semantics) as implementation source of truth.
-- [ ] Add FrankenEngine-native architecture synthesis document derived from donor spec (no donor-architecture mirroring).
+- [x] Add donor-extraction scope document with explicit exclusions for V8/QuickJS semantic harvesting (`docs/DONOR_EXTRACTION_SCOPE.md`).
+- [x] Add semantic donor spec document (observable behavior, edge cases, compatibility-critical semantics) as implementation source of truth (`docs/SEMANTIC_DONOR_SPEC.md`).
+- [x] Add FrankenEngine-native architecture synthesis document derived from donor spec (no donor-architecture mirroring) (`docs/architecture/frankenengine_native_synthesis.md`).
 - [ ] Add feature-parity tracker wired to `test262`, lockstep corpora, and waiver governance.
 
 ### 10.2 VM Core

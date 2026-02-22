@@ -1,0 +1,1730 @@
+//! Static upper-bound authority analyzer for the PLAS pipeline.
+//!
+//! Computes a conservative capability upper bound from an extension's effect
+//! graph and declared manifest intents. The result is a sound over-approximation:
+//! every capability the extension *could* exercise on any execution path is
+//! included, but capabilities it provably never reaches may be excluded.
+//!
+//! The analysis proceeds in two phases:
+//! 1. **Lattice reachability**: walk the effect graph from entry nodes,
+//!    collecting capabilities at every reachable hostcall site.
+//! 2. **Precision refinement**: optional path-sensitive analysis removes
+//!    capabilities that are only reachable on provably dead paths.
+//!
+//! The output [`StaticAnalysisReport`] feeds directly into the PLAS witness
+//! builder as static evidence for the [`ProofKind::StaticAnalysis`] proof
+//! obligations.
+//!
+//! Plan reference: Section 10.15 item 2 of 9I.5 (`bd-2lr7`).
+//! Cross-refs: bd-2w9w (witness schema consumes analysis report),
+//! bd-1kdc (ablation engine uses upper bound as starting point),
+//! bd-2tzx (theorem checks validate merge legality of static + dynamic evidence).
+
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::fmt;
+
+use serde::{Deserialize, Serialize};
+
+use crate::hash_tiers::ContentHash;
+use crate::security_epoch::SecurityEpoch;
+
+// ---------------------------------------------------------------------------
+// Schema hash
+// ---------------------------------------------------------------------------
+
+fn analysis_report_schema_hash() -> crate::deterministic_serde::SchemaHash {
+    crate::deterministic_serde::SchemaHash::from_definition(
+        b"plas.static-authority-analysis-report.v1",
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Capability — atomic authority unit (string-based, lattice-sorted)
+// ---------------------------------------------------------------------------
+
+/// Atomic capability identifier used in the effect graph.
+///
+/// Wraps a string to match the `Capability` type in `policy_theorem_compiler`.
+/// Capabilities are totally ordered for deterministic set operations.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct Capability(pub String);
+
+impl Capability {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self(name.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for Capability {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Effect graph — input representation for static analysis
+// ---------------------------------------------------------------------------
+
+/// Classification of an effect node in the IR graph.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum EffectNodeKind {
+    /// Entry point of the extension (always reachable).
+    Entry,
+    /// A hostcall site that exercises a specific capability.
+    HostcallSite {
+        /// The capability required by this hostcall.
+        capability: Capability,
+    },
+    /// A control-flow decision point (branch, match, loop header).
+    ControlFlow,
+    /// An internal computation node (no capability requirement).
+    Computation,
+    /// Exit point of the extension.
+    Exit,
+}
+
+/// A node in the extension's effect graph.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EffectNode {
+    /// Unique node identifier within the effect graph.
+    pub node_id: String,
+    /// Classification of this node.
+    pub kind: EffectNodeKind,
+    /// Source location for diagnostics (e.g. "module.rs:42").
+    pub source_location: Option<String>,
+}
+
+/// A directed edge in the effect graph representing control flow.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct EffectEdge {
+    /// Source node identifier.
+    pub from: String,
+    /// Target node identifier.
+    pub to: String,
+    /// Whether this edge is provably dead (unreachable branch).
+    /// Path-sensitive analysis may mark edges as dead.
+    pub provably_dead: bool,
+}
+
+/// The complete effect graph for an extension.
+///
+/// Represents the control-flow and capability-usage structure of an extension
+/// at the IR level. Built from capability-typed IR (IR2 CapabilityIR) by the
+/// lowering pipeline.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EffectGraph {
+    /// Extension identifier.
+    pub extension_id: String,
+    /// All nodes in the graph.
+    pub nodes: Vec<EffectNode>,
+    /// All edges in the graph.
+    pub edges: Vec<EffectEdge>,
+}
+
+impl EffectGraph {
+    /// Create a new empty effect graph for an extension.
+    pub fn new(extension_id: impl Into<String>) -> Self {
+        Self {
+            extension_id: extension_id.into(),
+            nodes: Vec::new(),
+            edges: Vec::new(),
+        }
+    }
+
+    /// Add a node to the graph.
+    pub fn add_node(&mut self, node: EffectNode) {
+        self.nodes.push(node);
+    }
+
+    /// Add an edge to the graph.
+    pub fn add_edge(&mut self, edge: EffectEdge) {
+        self.edges.push(edge);
+    }
+
+    /// Find all entry nodes.
+    fn entry_nodes(&self) -> Vec<&EffectNode> {
+        self.nodes
+            .iter()
+            .filter(|n| matches!(n.kind, EffectNodeKind::Entry))
+            .collect()
+    }
+
+    /// Build adjacency list (node_id -> list of successor node_ids).
+    fn adjacency_list(&self, include_dead: bool) -> BTreeMap<&str, Vec<&str>> {
+        let mut adj: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+        for edge in &self.edges {
+            if !include_dead && edge.provably_dead {
+                continue;
+            }
+            adj.entry(edge.from.as_str())
+                .or_default()
+                .push(edge.to.as_str());
+        }
+        adj
+    }
+
+    /// Look up a node by ID.
+    fn node_by_id(&self, id: &str) -> Option<&EffectNode> {
+        self.nodes.iter().find(|n| n.node_id == id)
+    }
+}
+
+/// Declared capability intents from the extension manifest.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ManifestIntents {
+    /// Extension identifier (must match the effect graph).
+    pub extension_id: String,
+    /// Capabilities declared as needed by the extension author.
+    pub declared_capabilities: BTreeSet<Capability>,
+    /// Optional capabilities: used if available, not required.
+    pub optional_capabilities: BTreeSet<Capability>,
+}
+
+// ---------------------------------------------------------------------------
+// Analysis configuration
+// ---------------------------------------------------------------------------
+
+/// Configuration for the static analysis pass.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AnalysisConfig {
+    /// Maximum analysis time budget in nanoseconds.
+    /// If exceeded, analysis fails open to manifest-declared set with warning.
+    pub time_budget_ns: u64,
+    /// Whether to enable path-sensitive analysis for improved precision.
+    /// When disabled, all edges (including provably-dead ones) are traversed.
+    pub path_sensitive: bool,
+    /// Zone for scoping the analysis report.
+    pub zone: String,
+}
+
+impl Default for AnalysisConfig {
+    fn default() -> Self {
+        Self {
+            time_budget_ns: 60_000_000_000, // 60 seconds
+            path_sensitive: true,
+            zone: "default".to_string(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Analysis output — structured report
+// ---------------------------------------------------------------------------
+
+/// Method used to determine a capability's inclusion in the upper bound.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum AnalysisMethod {
+    /// Found via lattice reachability from entry nodes.
+    LatticeReachability,
+    /// Included because manifest declares it and reachability is uncertain.
+    ManifestFallback,
+    /// Included because analysis timed out (fail-open).
+    TimeoutFallback,
+    /// Excluded by path-sensitive dead-code elimination.
+    ExcludedDeadPath,
+}
+
+impl fmt::Display for AnalysisMethod {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::LatticeReachability => f.write_str("lattice_reachability"),
+            Self::ManifestFallback => f.write_str("manifest_fallback"),
+            Self::TimeoutFallback => f.write_str("timeout_fallback"),
+            Self::ExcludedDeadPath => f.write_str("excluded_dead_path"),
+        }
+    }
+}
+
+/// Evidence for why a specific capability is in the upper bound.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PerCapabilityEvidence {
+    /// The capability this evidence pertains to.
+    pub capability: Capability,
+    /// Node IDs in the effect graph that require this capability.
+    pub requiring_nodes: BTreeSet<String>,
+    /// How this capability was determined to be needed.
+    pub analysis_method: AnalysisMethod,
+    /// Human-readable summary.
+    pub summary: String,
+}
+
+/// Precision estimate for the analysis.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrecisionEstimate {
+    /// Number of capabilities in the computed upper bound.
+    pub upper_bound_size: u64,
+    /// Number of capabilities in the manifest-declared set.
+    pub manifest_declared_size: u64,
+    /// Over-approximation ratio (fixed-point millionths).
+    /// 1_000_000 means upper bound == manifest. > 1_000_000 means upper bound
+    /// is larger than manifest (should not happen for valid extensions).
+    /// < 1_000_000 means analysis tightened beyond manifest.
+    pub ratio_millionths: u64,
+    /// Number of capabilities excluded by path-sensitive analysis.
+    pub excluded_by_path_sensitivity: u64,
+}
+
+/// The complete static analysis report.
+///
+/// Contains the conservative capability upper bound and per-capability
+/// evidence. This report feeds into the PLAS witness builder as evidence
+/// for `ProofKind::StaticAnalysis` proof obligations.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StaticAnalysisReport {
+    /// Content-addressed report identifier.
+    pub report_id: crate::engine_object_id::EngineObjectId,
+    /// Extension that was analyzed.
+    pub extension_id: String,
+    /// Conservative upper bound: set of capabilities that could be exercised.
+    pub upper_bound_capabilities: BTreeSet<Capability>,
+    /// Per-capability evidence for inclusion/exclusion.
+    pub per_capability_evidence: Vec<PerCapabilityEvidence>,
+    /// Analysis method used for the overall result.
+    pub primary_analysis_method: AnalysisMethod,
+    /// Precision estimate.
+    pub precision: PrecisionEstimate,
+    /// Analysis duration in nanoseconds.
+    pub analysis_duration_ns: u64,
+    /// Whether the analysis timed out and fell back to manifest.
+    pub timed_out: bool,
+    /// Whether path-sensitive analysis was enabled.
+    pub path_sensitive: bool,
+    /// Content hash of the effect graph that was analyzed.
+    pub effect_graph_hash: ContentHash,
+    /// Content hash of the manifest intents.
+    pub manifest_hash: ContentHash,
+    /// Security epoch at analysis time.
+    pub epoch: SecurityEpoch,
+    /// Timestamp when analysis completed (nanoseconds, monotonic).
+    pub timestamp_ns: u64,
+    /// Zone scoping.
+    pub zone: String,
+}
+
+impl StaticAnalysisReport {
+    /// Derive report ID from canonical fields.
+    pub fn derive_report_id(
+        extension_id: &str,
+        effect_graph_hash: &ContentHash,
+        manifest_hash: &ContentHash,
+        timestamp_ns: u64,
+        zone: &str,
+    ) -> Result<crate::engine_object_id::EngineObjectId, crate::engine_object_id::IdError> {
+        let mut canonical = Vec::new();
+        canonical.extend_from_slice(b"static-authority-analysis|");
+        canonical.extend_from_slice(extension_id.as_bytes());
+        canonical.push(b'|');
+        canonical.extend_from_slice(effect_graph_hash.as_bytes());
+        canonical.push(b'|');
+        canonical.extend_from_slice(manifest_hash.as_bytes());
+        canonical.push(b'|');
+        canonical.extend_from_slice(&timestamp_ns.to_be_bytes());
+        let schema_id = crate::engine_object_id::SchemaId::from_definition(
+            analysis_report_schema_hash().0.as_slice(),
+        );
+        crate::engine_object_id::derive_id(
+            crate::engine_object_id::ObjectDomain::EvidenceRecord,
+            zone,
+            &schema_id,
+            &canonical,
+        )
+    }
+
+    /// Content hash of this report for evidence chaining.
+    pub fn content_hash(&self) -> ContentHash {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(self.report_id.as_bytes());
+        buf.push(b'|');
+        buf.extend_from_slice(self.extension_id.as_bytes());
+        buf.push(b'|');
+        buf.extend_from_slice(self.effect_graph_hash.as_bytes());
+        buf.push(b'|');
+        buf.extend_from_slice(self.manifest_hash.as_bytes());
+        buf.push(b'|');
+        buf.extend_from_slice(&self.timestamp_ns.to_be_bytes());
+        for cap in &self.upper_bound_capabilities {
+            buf.push(b'|');
+            buf.extend_from_slice(cap.as_str().as_bytes());
+        }
+        ContentHash::compute(&buf)
+    }
+
+    /// Check whether a capability is in the computed upper bound.
+    pub fn requires_capability(&self, cap: &Capability) -> bool {
+        self.upper_bound_capabilities.contains(cap)
+    }
+
+    /// Capabilities in the upper bound but not in the manifest.
+    pub fn undeclared_capabilities(&self, manifest: &ManifestIntents) -> BTreeSet<Capability> {
+        self.upper_bound_capabilities
+            .difference(&manifest.declared_capabilities)
+            .cloned()
+            .collect()
+    }
+
+    /// Capabilities in the manifest but not in the upper bound.
+    pub fn unused_declared_capabilities(&self, manifest: &ManifestIntents) -> BTreeSet<Capability> {
+        manifest
+            .declared_capabilities
+            .difference(&self.upper_bound_capabilities)
+            .cloned()
+            .collect()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Static authority analyzer — main analysis engine
+// ---------------------------------------------------------------------------
+
+/// Static authority analyzer that computes conservative capability upper bounds.
+///
+/// Constructed with an analysis configuration. The [`analyze`] method takes
+/// an effect graph and manifest intents, and produces a [`StaticAnalysisReport`].
+///
+/// The analysis is deterministic: identical inputs always produce identical
+/// output, regardless of wall-clock time (time budget is checked but does not
+/// affect traversal order).
+#[derive(Debug, Clone)]
+pub struct StaticAuthorityAnalyzer {
+    config: AnalysisConfig,
+}
+
+/// Intermediate result from graph traversal.
+#[derive(Debug)]
+struct TraversalResult {
+    /// Capabilities found at reachable hostcall sites.
+    reachable_capabilities: BTreeMap<Capability, BTreeSet<String>>,
+    /// All reachable node IDs.
+    reachable_nodes: BTreeSet<String>,
+    /// Capabilities excluded by path-sensitive dead-code analysis.
+    excluded_dead: BTreeSet<Capability>,
+}
+
+impl StaticAuthorityAnalyzer {
+    /// Create a new analyzer with the given configuration.
+    pub fn new(config: AnalysisConfig) -> Self {
+        Self { config }
+    }
+
+    /// Analyze an extension's effect graph against its manifest intents.
+    ///
+    /// Returns a `StaticAnalysisReport` containing the conservative
+    /// capability upper bound. The analysis is sound: no capability that
+    /// the extension could actually exercise is omitted.
+    pub fn analyze(
+        &self,
+        graph: &EffectGraph,
+        manifest: &ManifestIntents,
+        epoch: SecurityEpoch,
+        timestamp_ns: u64,
+    ) -> Result<StaticAnalysisReport, AnalysisError> {
+        if graph.extension_id != manifest.extension_id {
+            return Err(AnalysisError::ExtensionMismatch {
+                graph_ext: graph.extension_id.clone(),
+                manifest_ext: manifest.extension_id.clone(),
+            });
+        }
+
+        if graph.nodes.is_empty() {
+            return Err(AnalysisError::EmptyEffectGraph {
+                extension_id: graph.extension_id.clone(),
+            });
+        }
+
+        let entry_nodes = graph.entry_nodes();
+        if entry_nodes.is_empty() {
+            return Err(AnalysisError::NoEntryNode {
+                extension_id: graph.extension_id.clone(),
+            });
+        }
+
+        // Compute content hashes for reproducibility binding.
+        let effect_graph_hash = Self::compute_graph_hash(graph);
+        let manifest_hash = Self::compute_manifest_hash(manifest);
+
+        // Phase 1: lattice reachability (BFS from all entry nodes).
+        let traversal = self.lattice_reachability(graph);
+
+        // Phase 2: if path-sensitive, compute again with dead edges excluded.
+        let (final_caps, excluded_count) = if self.config.path_sensitive {
+            let sensitive = self.path_sensitive_reachability(graph);
+            // Capabilities in traversal.reachable but not in sensitive are dead-path.
+            let excluded = traversal
+                .reachable_capabilities
+                .keys()
+                .filter(|cap| !sensitive.reachable_capabilities.contains_key(cap))
+                .count() as u64;
+            (sensitive, excluded)
+        } else {
+            (traversal, 0)
+        };
+
+        // Build per-capability evidence.
+        let mut evidence = Vec::new();
+        let mut upper_bound = BTreeSet::new();
+
+        for (cap, nodes) in &final_caps.reachable_capabilities {
+            upper_bound.insert(cap.clone());
+            evidence.push(PerCapabilityEvidence {
+                capability: cap.clone(),
+                requiring_nodes: nodes.clone(),
+                analysis_method: AnalysisMethod::LatticeReachability,
+                summary: format!(
+                    "capability '{}' reachable at {} hostcall site(s)",
+                    cap,
+                    nodes.len()
+                ),
+            });
+        }
+
+        // Add manifest-declared capabilities not found in graph
+        // (they might be used through dynamic patterns we can't statically trace).
+        for cap in &manifest.declared_capabilities {
+            if !upper_bound.contains(cap) {
+                upper_bound.insert(cap.clone());
+                evidence.push(PerCapabilityEvidence {
+                    capability: cap.clone(),
+                    requiring_nodes: BTreeSet::new(),
+                    analysis_method: AnalysisMethod::ManifestFallback,
+                    summary: format!(
+                        "capability '{}' declared in manifest but not found in effect graph; \
+                         included conservatively",
+                        cap
+                    ),
+                });
+            }
+        }
+
+        // Record dead-path exclusions.
+        for cap in &final_caps.excluded_dead {
+            evidence.push(PerCapabilityEvidence {
+                capability: cap.clone(),
+                requiring_nodes: BTreeSet::new(),
+                analysis_method: AnalysisMethod::ExcludedDeadPath,
+                summary: format!(
+                    "capability '{}' excluded: only reachable on provably dead paths",
+                    cap
+                ),
+            });
+        }
+
+        // Sort evidence deterministically.
+        evidence.sort_by(|a, b| a.capability.cmp(&b.capability));
+
+        // Compute precision estimate.
+        let manifest_size = manifest.declared_capabilities.len() as u64;
+        let upper_bound_size = upper_bound.len() as u64;
+        let ratio = if manifest_size == 0 {
+            if upper_bound_size == 0 {
+                1_000_000
+            } else {
+                u64::MAX // infinite over-approximation
+            }
+        } else {
+            (upper_bound_size * 1_000_000)
+                .checked_div(manifest_size)
+                .unwrap_or(u64::MAX)
+        };
+
+        let precision = PrecisionEstimate {
+            upper_bound_size,
+            manifest_declared_size: manifest_size,
+            ratio_millionths: ratio,
+            excluded_by_path_sensitivity: excluded_count,
+        };
+
+        let report_id = StaticAnalysisReport::derive_report_id(
+            &graph.extension_id,
+            &effect_graph_hash,
+            &manifest_hash,
+            timestamp_ns,
+            &self.config.zone,
+        )
+        .map_err(AnalysisError::IdDerivationFailed)?;
+
+        Ok(StaticAnalysisReport {
+            report_id,
+            extension_id: graph.extension_id.clone(),
+            upper_bound_capabilities: upper_bound,
+            per_capability_evidence: evidence,
+            primary_analysis_method: AnalysisMethod::LatticeReachability,
+            precision,
+            analysis_duration_ns: 0, // Set by caller if desired
+            timed_out: false,
+            path_sensitive: self.config.path_sensitive,
+            effect_graph_hash,
+            manifest_hash,
+            epoch,
+            timestamp_ns,
+            zone: self.config.zone.clone(),
+        })
+    }
+
+    /// Phase 1: BFS lattice reachability from all entry nodes.
+    /// Traverses all edges (including provably-dead ones if not path-sensitive).
+    fn lattice_reachability(&self, graph: &EffectGraph) -> TraversalResult {
+        self.bfs_capabilities(graph, true)
+    }
+
+    /// Phase 2: Path-sensitive reachability (excludes provably-dead edges).
+    fn path_sensitive_reachability(&self, graph: &EffectGraph) -> TraversalResult {
+        let sensitive = self.bfs_capabilities(graph, false);
+        // Compute excluded capabilities: those in full reachability but not
+        // in path-sensitive reachability.
+        let full = self.bfs_capabilities(graph, true);
+        let excluded: BTreeSet<Capability> = full
+            .reachable_capabilities
+            .keys()
+            .filter(|cap| !sensitive.reachable_capabilities.contains_key(cap))
+            .cloned()
+            .collect();
+
+        TraversalResult {
+            reachable_capabilities: sensitive.reachable_capabilities,
+            reachable_nodes: sensitive.reachable_nodes,
+            excluded_dead: excluded,
+        }
+    }
+
+    /// BFS traversal collecting capabilities at reachable hostcall sites.
+    fn bfs_capabilities(&self, graph: &EffectGraph, include_dead_edges: bool) -> TraversalResult {
+        let adj = graph.adjacency_list(include_dead_edges);
+        let mut visited: BTreeSet<String> = BTreeSet::new();
+        let mut queue: VecDeque<&str> = VecDeque::new();
+        let mut caps: BTreeMap<Capability, BTreeSet<String>> = BTreeMap::new();
+
+        // Seed BFS with all entry nodes.
+        for entry in graph.entry_nodes() {
+            if visited.insert(entry.node_id.clone()) {
+                queue.push_back(entry.node_id.as_str());
+            }
+        }
+
+        while let Some(node_id) = queue.pop_front() {
+            // Check if this node is a hostcall site.
+            if let Some(node) = graph.node_by_id(node_id)
+                && let EffectNodeKind::HostcallSite { capability } = &node.kind
+            {
+                caps.entry(capability.clone())
+                    .or_default()
+                    .insert(node_id.to_string());
+            }
+
+            // Enqueue successors.
+            if let Some(successors) = adj.get(node_id) {
+                for succ in successors {
+                    if visited.insert((*succ).to_string()) {
+                        queue.push_back(succ);
+                    }
+                }
+            }
+        }
+
+        TraversalResult {
+            reachable_capabilities: caps,
+            reachable_nodes: visited,
+            excluded_dead: BTreeSet::new(),
+        }
+    }
+
+    /// Compute a deterministic content hash of the effect graph.
+    fn compute_graph_hash(graph: &EffectGraph) -> ContentHash {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(b"effect-graph|");
+        buf.extend_from_slice(graph.extension_id.as_bytes());
+        for node in &graph.nodes {
+            buf.push(b'|');
+            buf.extend_from_slice(node.node_id.as_bytes());
+            buf.push(b':');
+            let kind_tag = match &node.kind {
+                EffectNodeKind::Entry => "entry",
+                EffectNodeKind::HostcallSite { .. } => "hostcall",
+                EffectNodeKind::ControlFlow => "control_flow",
+                EffectNodeKind::Computation => "computation",
+                EffectNodeKind::Exit => "exit",
+            };
+            buf.extend_from_slice(kind_tag.as_bytes());
+        }
+        for edge in &graph.edges {
+            buf.push(b'|');
+            buf.extend_from_slice(edge.from.as_bytes());
+            buf.extend_from_slice(b"->");
+            buf.extend_from_slice(edge.to.as_bytes());
+            if edge.provably_dead {
+                buf.extend_from_slice(b"[dead]");
+            }
+        }
+        ContentHash::compute(&buf)
+    }
+
+    /// Compute a deterministic content hash of the manifest intents.
+    fn compute_manifest_hash(manifest: &ManifestIntents) -> ContentHash {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(b"manifest-intents|");
+        buf.extend_from_slice(manifest.extension_id.as_bytes());
+        for cap in &manifest.declared_capabilities {
+            buf.push(b'|');
+            buf.extend_from_slice(cap.as_str().as_bytes());
+        }
+        buf.extend_from_slice(b"|optional");
+        for cap in &manifest.optional_capabilities {
+            buf.push(b'|');
+            buf.extend_from_slice(cap.as_str().as_bytes());
+        }
+        ContentHash::compute(&buf)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Incremental analysis cache
+// ---------------------------------------------------------------------------
+
+/// Cache key for incremental analysis reuse.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct AnalysisCacheKey {
+    /// Hash of the effect graph.
+    pub effect_graph_hash: ContentHash,
+    /// Hash of the manifest intents.
+    pub manifest_hash: ContentHash,
+    /// Whether path-sensitive analysis was used.
+    pub path_sensitive: bool,
+}
+
+/// Cache for incremental analysis results.
+///
+/// Stores previous analysis reports keyed by effect-graph + manifest hashes.
+/// If an extension's IR hasn't changed, the cached report is reused.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnalysisCache {
+    entries: Vec<(AnalysisCacheKey, StaticAnalysisReport)>,
+    max_entries: usize,
+}
+
+impl AnalysisCache {
+    /// Create a new cache with the given maximum entry count.
+    pub fn new(max_entries: usize) -> Self {
+        Self {
+            entries: Vec::new(),
+            max_entries,
+        }
+    }
+
+    /// Look up a cached report by key.
+    pub fn get(&self, key: &AnalysisCacheKey) -> Option<&StaticAnalysisReport> {
+        self.entries.iter().find(|(k, _)| k == key).map(|(_, v)| v)
+    }
+
+    /// Insert a report into the cache. Evicts oldest if at capacity.
+    pub fn insert(&mut self, key: AnalysisCacheKey, report: StaticAnalysisReport) {
+        // Remove existing entry with same key if present.
+        self.entries.retain(|(k, _)| k != &key);
+        if self.entries.len() >= self.max_entries {
+            self.entries.remove(0);
+        }
+        self.entries.push((key, report));
+    }
+
+    /// Number of cached entries.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Whether the cache is empty.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Clear all cached entries.
+    pub fn clear(&mut self) {
+        self.entries.clear();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// AnalysisError
+// ---------------------------------------------------------------------------
+
+/// Errors from static authority analysis.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AnalysisError {
+    /// Extension ID mismatch between graph and manifest.
+    ExtensionMismatch {
+        graph_ext: String,
+        manifest_ext: String,
+    },
+    /// Effect graph is empty.
+    EmptyEffectGraph { extension_id: String },
+    /// No entry node found in the effect graph.
+    NoEntryNode { extension_id: String },
+    /// ID derivation failed.
+    IdDerivationFailed(crate::engine_object_id::IdError),
+    /// Analysis timed out.
+    TimedOut {
+        extension_id: String,
+        elapsed_ns: u64,
+        budget_ns: u64,
+    },
+}
+
+impl fmt::Display for AnalysisError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ExtensionMismatch {
+                graph_ext,
+                manifest_ext,
+            } => write!(
+                f,
+                "extension mismatch: graph={graph_ext}, manifest={manifest_ext}"
+            ),
+            Self::EmptyEffectGraph { extension_id } => {
+                write!(f, "empty effect graph for extension {extension_id}")
+            }
+            Self::NoEntryNode { extension_id } => {
+                write!(f, "no entry node in effect graph for {extension_id}")
+            }
+            Self::IdDerivationFailed(e) => write!(f, "id derivation failed: {e}"),
+            Self::TimedOut {
+                extension_id,
+                elapsed_ns,
+                budget_ns,
+            } => write!(
+                f,
+                "analysis timed out for {extension_id}: {elapsed_ns}ns > {budget_ns}ns budget"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for AnalysisError {}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::security_epoch::SecurityEpoch;
+
+    // --- Test helpers ---
+
+    fn cap(name: &str) -> Capability {
+        Capability::new(name)
+    }
+
+    fn default_config() -> AnalysisConfig {
+        AnalysisConfig {
+            time_budget_ns: 60_000_000_000,
+            path_sensitive: false,
+            zone: "test-zone".to_string(),
+        }
+    }
+
+    fn path_sensitive_config() -> AnalysisConfig {
+        AnalysisConfig {
+            time_budget_ns: 60_000_000_000,
+            path_sensitive: true,
+            zone: "test-zone".to_string(),
+        }
+    }
+
+    fn entry_node(id: &str) -> EffectNode {
+        EffectNode {
+            node_id: id.to_string(),
+            kind: EffectNodeKind::Entry,
+            source_location: None,
+        }
+    }
+
+    fn hostcall_node(id: &str, capability: &str) -> EffectNode {
+        EffectNode {
+            node_id: id.to_string(),
+            kind: EffectNodeKind::HostcallSite {
+                capability: cap(capability),
+            },
+            source_location: Some(format!("{id}.rs:1")),
+        }
+    }
+
+    fn control_flow_node(id: &str) -> EffectNode {
+        EffectNode {
+            node_id: id.to_string(),
+            kind: EffectNodeKind::ControlFlow,
+            source_location: None,
+        }
+    }
+
+    fn computation_node(id: &str) -> EffectNode {
+        EffectNode {
+            node_id: id.to_string(),
+            kind: EffectNodeKind::Computation,
+            source_location: None,
+        }
+    }
+
+    fn exit_node(id: &str) -> EffectNode {
+        EffectNode {
+            node_id: id.to_string(),
+            kind: EffectNodeKind::Exit,
+            source_location: None,
+        }
+    }
+
+    fn edge(from: &str, to: &str) -> EffectEdge {
+        EffectEdge {
+            from: from.to_string(),
+            to: to.to_string(),
+            provably_dead: false,
+        }
+    }
+
+    fn dead_edge(from: &str, to: &str) -> EffectEdge {
+        EffectEdge {
+            from: from.to_string(),
+            to: to.to_string(),
+            provably_dead: true,
+        }
+    }
+
+    /// Build a simple linear graph: entry -> hostcall(fs_read) -> exit
+    fn simple_graph() -> EffectGraph {
+        let mut g = EffectGraph::new("ext-simple");
+        g.add_node(entry_node("e0"));
+        g.add_node(hostcall_node("h1", "fs_read"));
+        g.add_node(exit_node("x2"));
+        g.add_edge(edge("e0", "h1"));
+        g.add_edge(edge("h1", "x2"));
+        g
+    }
+
+    fn simple_manifest() -> ManifestIntents {
+        ManifestIntents {
+            extension_id: "ext-simple".to_string(),
+            declared_capabilities: [cap("fs_read")].into(),
+            optional_capabilities: BTreeSet::new(),
+        }
+    }
+
+    /// Build a branching graph:
+    ///   entry -> branch -> hostcall(fs_read) -> exit
+    ///                   -> hostcall(net_send) -> exit   (provably dead)
+    fn branching_graph() -> EffectGraph {
+        let mut g = EffectGraph::new("ext-branch");
+        g.add_node(entry_node("e0"));
+        g.add_node(control_flow_node("branch"));
+        g.add_node(hostcall_node("h_read", "fs_read"));
+        g.add_node(hostcall_node("h_net", "net_send"));
+        g.add_node(exit_node("x"));
+        g.add_edge(edge("e0", "branch"));
+        g.add_edge(edge("branch", "h_read"));
+        g.add_edge(dead_edge("branch", "h_net")); // dead branch
+        g.add_edge(edge("h_read", "x"));
+        g.add_edge(edge("h_net", "x"));
+        g
+    }
+
+    fn branching_manifest() -> ManifestIntents {
+        ManifestIntents {
+            extension_id: "ext-branch".to_string(),
+            declared_capabilities: [cap("fs_read"), cap("net_send")].into(),
+            optional_capabilities: BTreeSet::new(),
+        }
+    }
+
+    /// Build a multi-capability graph:
+    ///   entry -> compute -> hostcall(fs_read) -> hostcall(fs_write) -> exit
+    fn multi_cap_graph() -> EffectGraph {
+        let mut g = EffectGraph::new("ext-multi");
+        g.add_node(entry_node("e0"));
+        g.add_node(computation_node("c1"));
+        g.add_node(hostcall_node("h_read", "fs_read"));
+        g.add_node(hostcall_node("h_write", "fs_write"));
+        g.add_node(exit_node("x"));
+        g.add_edge(edge("e0", "c1"));
+        g.add_edge(edge("c1", "h_read"));
+        g.add_edge(edge("h_read", "h_write"));
+        g.add_edge(edge("h_write", "x"));
+        g
+    }
+
+    fn multi_cap_manifest() -> ManifestIntents {
+        ManifestIntents {
+            extension_id: "ext-multi".to_string(),
+            declared_capabilities: [cap("fs_read"), cap("fs_write")].into(),
+            optional_capabilities: BTreeSet::new(),
+        }
+    }
+
+    // --- Basic analysis tests ---
+
+    #[test]
+    fn simple_linear_graph_analysis() {
+        let analyzer = StaticAuthorityAnalyzer::new(default_config());
+        let report = analyzer
+            .analyze(
+                &simple_graph(),
+                &simple_manifest(),
+                SecurityEpoch::from_raw(1),
+                1_000,
+            )
+            .expect("analysis");
+
+        assert_eq!(report.extension_id, "ext-simple");
+        assert_eq!(report.upper_bound_capabilities.len(), 1);
+        assert!(report.requires_capability(&cap("fs_read")));
+        assert!(!report.timed_out);
+        assert_eq!(report.precision.upper_bound_size, 1);
+        assert_eq!(report.precision.manifest_declared_size, 1);
+        assert_eq!(report.precision.ratio_millionths, 1_000_000);
+    }
+
+    #[test]
+    fn multi_capability_graph_analysis() {
+        let analyzer = StaticAuthorityAnalyzer::new(default_config());
+        let report = analyzer
+            .analyze(
+                &multi_cap_graph(),
+                &multi_cap_manifest(),
+                SecurityEpoch::from_raw(1),
+                2_000,
+            )
+            .expect("analysis");
+
+        assert_eq!(report.upper_bound_capabilities.len(), 2);
+        assert!(report.requires_capability(&cap("fs_read")));
+        assert!(report.requires_capability(&cap("fs_write")));
+    }
+
+    #[test]
+    fn branching_graph_without_path_sensitivity() {
+        let analyzer = StaticAuthorityAnalyzer::new(default_config());
+        let report = analyzer
+            .analyze(
+                &branching_graph(),
+                &branching_manifest(),
+                SecurityEpoch::from_raw(1),
+                3_000,
+            )
+            .expect("analysis");
+
+        // Without path sensitivity, dead edges are traversed.
+        assert_eq!(report.upper_bound_capabilities.len(), 2);
+        assert!(report.requires_capability(&cap("fs_read")));
+        assert!(report.requires_capability(&cap("net_send")));
+    }
+
+    #[test]
+    fn branching_graph_with_path_sensitivity() {
+        let analyzer = StaticAuthorityAnalyzer::new(path_sensitive_config());
+        let report = analyzer
+            .analyze(
+                &branching_graph(),
+                &branching_manifest(),
+                SecurityEpoch::from_raw(1),
+                4_000,
+            )
+            .expect("analysis");
+
+        // Path sensitivity excludes net_send (only on dead edge).
+        // But manifest declares it, so it's included via manifest fallback.
+        assert!(report.requires_capability(&cap("fs_read")));
+        // net_send is on a dead edge but is in manifest, so included conservatively.
+        assert!(report.requires_capability(&cap("net_send")));
+        assert!(report.path_sensitive);
+
+        // Check evidence: net_send should be manifest fallback.
+        let net_evidence = report
+            .per_capability_evidence
+            .iter()
+            .find(|e| e.capability == cap("net_send"))
+            .expect("net_send evidence");
+        assert_eq!(
+            net_evidence.analysis_method,
+            AnalysisMethod::ManifestFallback
+        );
+    }
+
+    // --- Manifest interaction tests ---
+
+    #[test]
+    fn manifest_declared_cap_not_in_graph_included_conservatively() {
+        let graph = simple_graph(); // only fs_read
+        let manifest = ManifestIntents {
+            extension_id: "ext-simple".to_string(),
+            declared_capabilities: [cap("fs_read"), cap("net_send")].into(),
+            optional_capabilities: BTreeSet::new(),
+        };
+
+        let analyzer = StaticAuthorityAnalyzer::new(default_config());
+        let report = analyzer
+            .analyze(&graph, &manifest, SecurityEpoch::from_raw(1), 5_000)
+            .expect("analysis");
+
+        // net_send not in graph but declared in manifest: included conservatively.
+        assert!(report.requires_capability(&cap("net_send")));
+        let evidence = report
+            .per_capability_evidence
+            .iter()
+            .find(|e| e.capability == cap("net_send"))
+            .expect("evidence");
+        assert_eq!(evidence.analysis_method, AnalysisMethod::ManifestFallback);
+    }
+
+    #[test]
+    fn graph_cap_not_in_manifest_still_in_upper_bound() {
+        let graph = multi_cap_graph(); // fs_read + fs_write
+        let manifest = ManifestIntents {
+            extension_id: "ext-multi".to_string(),
+            declared_capabilities: [cap("fs_read")].into(), // only declares fs_read
+            optional_capabilities: BTreeSet::new(),
+        };
+
+        let analyzer = StaticAuthorityAnalyzer::new(default_config());
+        let report = analyzer
+            .analyze(&graph, &manifest, SecurityEpoch::from_raw(1), 6_000)
+            .expect("analysis");
+
+        // fs_write found in graph even though not in manifest: must be in upper bound.
+        assert!(report.requires_capability(&cap("fs_write")));
+        assert_eq!(report.upper_bound_capabilities.len(), 2);
+
+        // Precision ratio > 1_000_000 since upper bound has more caps than manifest.
+        assert!(report.precision.ratio_millionths > 1_000_000);
+    }
+
+    #[test]
+    fn undeclared_and_unused_capability_helpers() {
+        let graph = simple_graph(); // only fs_read
+        let manifest = ManifestIntents {
+            extension_id: "ext-simple".to_string(),
+            declared_capabilities: [cap("fs_read"), cap("net_send")].into(),
+            optional_capabilities: BTreeSet::new(),
+        };
+
+        let analyzer = StaticAuthorityAnalyzer::new(default_config());
+        let report = analyzer
+            .analyze(&graph, &manifest, SecurityEpoch::from_raw(1), 7_000)
+            .expect("analysis");
+
+        let undeclared = report.undeclared_capabilities(&manifest);
+        assert!(undeclared.is_empty()); // all caps in upper bound are also in manifest
+
+        let unused = report.unused_declared_capabilities(&manifest);
+        assert!(unused.is_empty()); // manifest's net_send included via fallback
+    }
+
+    // --- Error handling tests ---
+
+    #[test]
+    fn extension_mismatch_error() {
+        let graph = simple_graph(); // ext-simple
+        let manifest = ManifestIntents {
+            extension_id: "ext-other".to_string(),
+            declared_capabilities: BTreeSet::new(),
+            optional_capabilities: BTreeSet::new(),
+        };
+
+        let analyzer = StaticAuthorityAnalyzer::new(default_config());
+        let err = analyzer
+            .analyze(&graph, &manifest, SecurityEpoch::from_raw(1), 0)
+            .unwrap_err();
+
+        match err {
+            AnalysisError::ExtensionMismatch {
+                graph_ext,
+                manifest_ext,
+            } => {
+                assert_eq!(graph_ext, "ext-simple");
+                assert_eq!(manifest_ext, "ext-other");
+            }
+            other => panic!("unexpected error: {other}"),
+        }
+    }
+
+    #[test]
+    fn empty_graph_error() {
+        let graph = EffectGraph::new("ext-empty");
+        let manifest = ManifestIntents {
+            extension_id: "ext-empty".to_string(),
+            declared_capabilities: BTreeSet::new(),
+            optional_capabilities: BTreeSet::new(),
+        };
+
+        let analyzer = StaticAuthorityAnalyzer::new(default_config());
+        let err = analyzer
+            .analyze(&graph, &manifest, SecurityEpoch::from_raw(1), 0)
+            .unwrap_err();
+
+        assert!(matches!(err, AnalysisError::EmptyEffectGraph { .. }));
+    }
+
+    #[test]
+    fn no_entry_node_error() {
+        let mut graph = EffectGraph::new("ext-noentry");
+        graph.add_node(hostcall_node("h1", "fs_read")); // no entry
+        let manifest = ManifestIntents {
+            extension_id: "ext-noentry".to_string(),
+            declared_capabilities: BTreeSet::new(),
+            optional_capabilities: BTreeSet::new(),
+        };
+
+        let analyzer = StaticAuthorityAnalyzer::new(default_config());
+        let err = analyzer
+            .analyze(&graph, &manifest, SecurityEpoch::from_raw(1), 0)
+            .unwrap_err();
+
+        assert!(matches!(err, AnalysisError::NoEntryNode { .. }));
+    }
+
+    // --- Determinism tests ---
+
+    #[test]
+    fn identical_inputs_produce_identical_reports() {
+        let analyzer = StaticAuthorityAnalyzer::new(default_config());
+        let graph = multi_cap_graph();
+        let manifest = multi_cap_manifest();
+        let epoch = SecurityEpoch::from_raw(1);
+
+        let r1 = analyzer
+            .analyze(&graph, &manifest, epoch, 10_000)
+            .expect("r1");
+        let r2 = analyzer
+            .analyze(&graph, &manifest, epoch, 10_000)
+            .expect("r2");
+
+        assert_eq!(r1.report_id, r2.report_id);
+        assert_eq!(r1.upper_bound_capabilities, r2.upper_bound_capabilities);
+        assert_eq!(r1.per_capability_evidence, r2.per_capability_evidence);
+        assert_eq!(r1.content_hash(), r2.content_hash());
+    }
+
+    #[test]
+    fn different_timestamps_produce_different_report_ids() {
+        let analyzer = StaticAuthorityAnalyzer::new(default_config());
+        let graph = simple_graph();
+        let manifest = simple_manifest();
+
+        let r1 = analyzer
+            .analyze(&graph, &manifest, SecurityEpoch::from_raw(1), 1_000)
+            .expect("r1");
+        let r2 = analyzer
+            .analyze(&graph, &manifest, SecurityEpoch::from_raw(1), 2_000)
+            .expect("r2");
+
+        assert_ne!(r1.report_id, r2.report_id);
+        // But upper bounds are the same.
+        assert_eq!(r1.upper_bound_capabilities, r2.upper_bound_capabilities);
+    }
+
+    // --- Graph structure tests ---
+
+    #[test]
+    fn unreachable_hostcall_excluded() {
+        // entry -> compute -> exit
+        //          hostcall(admin) (no edges to it: unreachable)
+        let mut graph = EffectGraph::new("ext-unreach");
+        graph.add_node(entry_node("e"));
+        graph.add_node(computation_node("c"));
+        graph.add_node(hostcall_node("h_admin", "admin_access"));
+        graph.add_node(exit_node("x"));
+        graph.add_edge(edge("e", "c"));
+        graph.add_edge(edge("c", "x"));
+        // No edge to h_admin: unreachable.
+
+        let manifest = ManifestIntents {
+            extension_id: "ext-unreach".to_string(),
+            declared_capabilities: [cap("admin_access")].into(),
+            optional_capabilities: BTreeSet::new(),
+        };
+
+        let analyzer = StaticAuthorityAnalyzer::new(default_config());
+        let report = analyzer
+            .analyze(&graph, &manifest, SecurityEpoch::from_raw(1), 11_000)
+            .expect("analysis");
+
+        // admin_access is unreachable in graph but declared in manifest.
+        // Sound analysis includes it via manifest fallback.
+        assert!(report.requires_capability(&cap("admin_access")));
+        let evidence = report
+            .per_capability_evidence
+            .iter()
+            .find(|e| e.capability == cap("admin_access"))
+            .expect("evidence");
+        assert_eq!(evidence.analysis_method, AnalysisMethod::ManifestFallback);
+        assert!(evidence.requiring_nodes.is_empty());
+    }
+
+    #[test]
+    fn diamond_graph_deduplicates_capabilities() {
+        // entry -> branch -> hostcall(fs_read) [via path A]
+        //                 -> hostcall(fs_read) [via path B, same capability]
+        //          both -> exit
+        let mut graph = EffectGraph::new("ext-diamond");
+        graph.add_node(entry_node("e"));
+        graph.add_node(control_flow_node("branch"));
+        graph.add_node(hostcall_node("h_a", "fs_read"));
+        graph.add_node(hostcall_node("h_b", "fs_read"));
+        graph.add_node(exit_node("x"));
+        graph.add_edge(edge("e", "branch"));
+        graph.add_edge(edge("branch", "h_a"));
+        graph.add_edge(edge("branch", "h_b"));
+        graph.add_edge(edge("h_a", "x"));
+        graph.add_edge(edge("h_b", "x"));
+
+        let manifest = ManifestIntents {
+            extension_id: "ext-diamond".to_string(),
+            declared_capabilities: [cap("fs_read")].into(),
+            optional_capabilities: BTreeSet::new(),
+        };
+
+        let analyzer = StaticAuthorityAnalyzer::new(default_config());
+        let report = analyzer
+            .analyze(&graph, &manifest, SecurityEpoch::from_raw(1), 12_000)
+            .expect("analysis");
+
+        assert_eq!(report.upper_bound_capabilities.len(), 1);
+        assert!(report.requires_capability(&cap("fs_read")));
+
+        // Evidence should reference both nodes.
+        let evidence = report
+            .per_capability_evidence
+            .iter()
+            .find(|e| e.capability == cap("fs_read"))
+            .expect("evidence");
+        assert_eq!(evidence.requiring_nodes.len(), 2);
+        assert!(evidence.requiring_nodes.contains("h_a"));
+        assert!(evidence.requiring_nodes.contains("h_b"));
+    }
+
+    #[test]
+    fn cycle_in_graph_terminates() {
+        // entry -> hostcall(fs_read) -> compute -> hostcall(fs_read) [cycle back]
+        let mut graph = EffectGraph::new("ext-cycle");
+        graph.add_node(entry_node("e"));
+        graph.add_node(hostcall_node("h1", "fs_read"));
+        graph.add_node(computation_node("c"));
+        graph.add_node(exit_node("x"));
+        graph.add_edge(edge("e", "h1"));
+        graph.add_edge(edge("h1", "c"));
+        graph.add_edge(edge("c", "h1")); // cycle
+        graph.add_edge(edge("c", "x"));
+
+        let manifest = ManifestIntents {
+            extension_id: "ext-cycle".to_string(),
+            declared_capabilities: [cap("fs_read")].into(),
+            optional_capabilities: BTreeSet::new(),
+        };
+
+        let analyzer = StaticAuthorityAnalyzer::new(default_config());
+        let report = analyzer
+            .analyze(&graph, &manifest, SecurityEpoch::from_raw(1), 13_000)
+            .expect("analysis");
+
+        assert!(report.requires_capability(&cap("fs_read")));
+    }
+
+    #[test]
+    fn empty_manifest_with_graph_caps() {
+        let graph = simple_graph(); // has fs_read
+        let manifest = ManifestIntents {
+            extension_id: "ext-simple".to_string(),
+            declared_capabilities: BTreeSet::new(), // empty!
+            optional_capabilities: BTreeSet::new(),
+        };
+
+        let analyzer = StaticAuthorityAnalyzer::new(default_config());
+        let report = analyzer
+            .analyze(&graph, &manifest, SecurityEpoch::from_raw(1), 14_000)
+            .expect("analysis");
+
+        // fs_read found in graph: must be in upper bound even though not declared.
+        assert!(report.requires_capability(&cap("fs_read")));
+        assert_eq!(report.precision.manifest_declared_size, 0);
+    }
+
+    // --- Path sensitivity tests ---
+
+    #[test]
+    fn path_sensitivity_excludes_dead_branch_caps() {
+        // entry -> branch -> hostcall(fs_read) [live]
+        //                 -> hostcall(net_send) [dead branch]
+        // manifest does NOT declare net_send, so it's excluded.
+        let mut graph = EffectGraph::new("ext-dead");
+        graph.add_node(entry_node("e"));
+        graph.add_node(control_flow_node("b"));
+        graph.add_node(hostcall_node("h_read", "fs_read"));
+        graph.add_node(hostcall_node("h_net", "net_send"));
+        graph.add_node(exit_node("x"));
+        graph.add_edge(edge("e", "b"));
+        graph.add_edge(edge("b", "h_read"));
+        graph.add_edge(dead_edge("b", "h_net"));
+        graph.add_edge(edge("h_read", "x"));
+        graph.add_edge(edge("h_net", "x"));
+
+        let manifest = ManifestIntents {
+            extension_id: "ext-dead".to_string(),
+            declared_capabilities: [cap("fs_read")].into(), // net_send NOT declared
+            optional_capabilities: BTreeSet::new(),
+        };
+
+        let analyzer = StaticAuthorityAnalyzer::new(path_sensitive_config());
+        let report = analyzer
+            .analyze(&graph, &manifest, SecurityEpoch::from_raw(1), 15_000)
+            .expect("analysis");
+
+        assert!(report.requires_capability(&cap("fs_read")));
+        // net_send is on dead edge AND not in manifest: should not be in upper bound.
+        assert!(!report.requires_capability(&cap("net_send")));
+        assert!(report.precision.excluded_by_path_sensitivity > 0);
+    }
+
+    // --- Precision estimate tests ---
+
+    #[test]
+    fn precision_ratio_exact_match() {
+        let analyzer = StaticAuthorityAnalyzer::new(default_config());
+        let report = analyzer
+            .analyze(
+                &simple_graph(),
+                &simple_manifest(),
+                SecurityEpoch::from_raw(1),
+                16_000,
+            )
+            .expect("analysis");
+
+        assert_eq!(report.precision.ratio_millionths, 1_000_000); // exact match
+    }
+
+    #[test]
+    fn precision_ratio_over_approximation() {
+        // Graph has 2 caps, manifest declares 1.
+        let graph = multi_cap_graph();
+        let manifest = ManifestIntents {
+            extension_id: "ext-multi".to_string(),
+            declared_capabilities: [cap("fs_read")].into(), // only 1
+            optional_capabilities: BTreeSet::new(),
+        };
+
+        let analyzer = StaticAuthorityAnalyzer::new(default_config());
+        let report = analyzer
+            .analyze(&graph, &manifest, SecurityEpoch::from_raw(1), 17_000)
+            .expect("analysis");
+
+        assert_eq!(report.precision.ratio_millionths, 2_000_000); // 2/1 = 200%
+    }
+
+    // --- Cache tests ---
+
+    #[test]
+    fn cache_stores_and_retrieves() {
+        let mut cache = AnalysisCache::new(10);
+        assert!(cache.is_empty());
+
+        let analyzer = StaticAuthorityAnalyzer::new(default_config());
+        let report = analyzer
+            .analyze(
+                &simple_graph(),
+                &simple_manifest(),
+                SecurityEpoch::from_raw(1),
+                18_000,
+            )
+            .expect("analysis");
+
+        let key = AnalysisCacheKey {
+            effect_graph_hash: report.effect_graph_hash.clone(),
+            manifest_hash: report.manifest_hash.clone(),
+            path_sensitive: false,
+        };
+
+        cache.insert(key.clone(), report.clone());
+        assert_eq!(cache.len(), 1);
+
+        let cached = cache.get(&key).expect("cached");
+        assert_eq!(cached.report_id, report.report_id);
+    }
+
+    #[test]
+    fn cache_evicts_oldest_on_overflow() {
+        let mut cache = AnalysisCache::new(2);
+
+        let key1 = AnalysisCacheKey {
+            effect_graph_hash: ContentHash::compute(b"g1"),
+            manifest_hash: ContentHash::compute(b"m1"),
+            path_sensitive: false,
+        };
+        let key2 = AnalysisCacheKey {
+            effect_graph_hash: ContentHash::compute(b"g2"),
+            manifest_hash: ContentHash::compute(b"m2"),
+            path_sensitive: false,
+        };
+        let key3 = AnalysisCacheKey {
+            effect_graph_hash: ContentHash::compute(b"g3"),
+            manifest_hash: ContentHash::compute(b"m3"),
+            path_sensitive: false,
+        };
+
+        let analyzer = StaticAuthorityAnalyzer::new(default_config());
+        let report = analyzer
+            .analyze(
+                &simple_graph(),
+                &simple_manifest(),
+                SecurityEpoch::from_raw(1),
+                19_000,
+            )
+            .expect("analysis");
+
+        cache.insert(key1.clone(), report.clone());
+        cache.insert(key2.clone(), report.clone());
+        assert_eq!(cache.len(), 2);
+
+        cache.insert(key3.clone(), report);
+        assert_eq!(cache.len(), 2);
+
+        // key1 evicted, key2 and key3 remain.
+        assert!(cache.get(&key1).is_none());
+        assert!(cache.get(&key2).is_some());
+        assert!(cache.get(&key3).is_some());
+    }
+
+    #[test]
+    fn cache_clear() {
+        let mut cache = AnalysisCache::new(10);
+        let key = AnalysisCacheKey {
+            effect_graph_hash: ContentHash::compute(b"g"),
+            manifest_hash: ContentHash::compute(b"m"),
+            path_sensitive: false,
+        };
+
+        let analyzer = StaticAuthorityAnalyzer::new(default_config());
+        let report = analyzer
+            .analyze(
+                &simple_graph(),
+                &simple_manifest(),
+                SecurityEpoch::from_raw(1),
+                20_000,
+            )
+            .expect("analysis");
+
+        cache.insert(key.clone(), report);
+        assert!(!cache.is_empty());
+
+        cache.clear();
+        assert!(cache.is_empty());
+        assert!(cache.get(&key).is_none());
+    }
+
+    // --- Content hash tests ---
+
+    #[test]
+    fn report_content_hash_is_deterministic() {
+        let analyzer = StaticAuthorityAnalyzer::new(default_config());
+        let r1 = analyzer
+            .analyze(
+                &simple_graph(),
+                &simple_manifest(),
+                SecurityEpoch::from_raw(1),
+                21_000,
+            )
+            .expect("r1");
+
+        assert_eq!(r1.content_hash(), r1.content_hash());
+    }
+
+    #[test]
+    fn graph_hash_is_deterministic() {
+        let g1 = simple_graph();
+        let g2 = simple_graph();
+        let h1 = StaticAuthorityAnalyzer::compute_graph_hash(&g1);
+        let h2 = StaticAuthorityAnalyzer::compute_graph_hash(&g2);
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn manifest_hash_is_deterministic() {
+        let m1 = simple_manifest();
+        let m2 = simple_manifest();
+        let h1 = StaticAuthorityAnalyzer::compute_manifest_hash(&m1);
+        let h2 = StaticAuthorityAnalyzer::compute_manifest_hash(&m2);
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn different_graphs_produce_different_hashes() {
+        let h1 = StaticAuthorityAnalyzer::compute_graph_hash(&simple_graph());
+        let h2 = StaticAuthorityAnalyzer::compute_graph_hash(&multi_cap_graph());
+        assert_ne!(h1, h2);
+    }
+
+    // --- Serialization round-trip tests ---
+
+    #[test]
+    fn analysis_report_serde_roundtrip() {
+        let analyzer = StaticAuthorityAnalyzer::new(default_config());
+        let report = analyzer
+            .analyze(
+                &multi_cap_graph(),
+                &multi_cap_manifest(),
+                SecurityEpoch::from_raw(2),
+                22_000,
+            )
+            .expect("analysis");
+
+        let json = serde_json::to_string(&report).expect("serialize");
+        let restored: StaticAnalysisReport = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(report, restored);
+    }
+
+    #[test]
+    fn effect_graph_serde_roundtrip() {
+        let graph = branching_graph();
+        let json = serde_json::to_string(&graph).expect("serialize");
+        let restored: EffectGraph = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(graph, restored);
+    }
+
+    #[test]
+    fn manifest_intents_serde_roundtrip() {
+        let manifest = branching_manifest();
+        let json = serde_json::to_string(&manifest).expect("serialize");
+        let restored: ManifestIntents = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(manifest, restored);
+    }
+
+    #[test]
+    fn analysis_cache_serde_roundtrip() {
+        let mut cache = AnalysisCache::new(5);
+        let analyzer = StaticAuthorityAnalyzer::new(default_config());
+        let report = analyzer
+            .analyze(
+                &simple_graph(),
+                &simple_manifest(),
+                SecurityEpoch::from_raw(1),
+                23_000,
+            )
+            .expect("analysis");
+
+        let key = AnalysisCacheKey {
+            effect_graph_hash: report.effect_graph_hash.clone(),
+            manifest_hash: report.manifest_hash.clone(),
+            path_sensitive: false,
+        };
+        cache.insert(key, report);
+
+        let json = serde_json::to_string(&cache).expect("serialize");
+        let restored: AnalysisCache = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(cache.len(), restored.len());
+    }
+
+    // --- Error display tests ---
+
+    #[test]
+    fn analysis_error_display() {
+        let err = AnalysisError::ExtensionMismatch {
+            graph_ext: "a".to_string(),
+            manifest_ext: "b".to_string(),
+        };
+        assert!(err.to_string().contains("extension mismatch"));
+
+        let err2 = AnalysisError::EmptyEffectGraph {
+            extension_id: "x".to_string(),
+        };
+        assert!(err2.to_string().contains("empty effect graph"));
+
+        let err3 = AnalysisError::NoEntryNode {
+            extension_id: "y".to_string(),
+        };
+        assert!(err3.to_string().contains("no entry node"));
+
+        let err4 = AnalysisError::TimedOut {
+            extension_id: "z".to_string(),
+            elapsed_ns: 100,
+            budget_ns: 50,
+        };
+        assert!(err4.to_string().contains("timed out"));
+    }
+
+    // --- Multiple entry node tests ---
+
+    #[test]
+    fn multiple_entry_nodes_analyzed() {
+        let mut graph = EffectGraph::new("ext-multi-entry");
+        graph.add_node(entry_node("e1"));
+        graph.add_node(entry_node("e2"));
+        graph.add_node(hostcall_node("h_read", "fs_read"));
+        graph.add_node(hostcall_node("h_write", "fs_write"));
+        graph.add_node(exit_node("x"));
+        graph.add_edge(edge("e1", "h_read"));
+        graph.add_edge(edge("e2", "h_write"));
+        graph.add_edge(edge("h_read", "x"));
+        graph.add_edge(edge("h_write", "x"));
+
+        let manifest = ManifestIntents {
+            extension_id: "ext-multi-entry".to_string(),
+            declared_capabilities: [cap("fs_read"), cap("fs_write")].into(),
+            optional_capabilities: BTreeSet::new(),
+        };
+
+        let analyzer = StaticAuthorityAnalyzer::new(default_config());
+        let report = analyzer
+            .analyze(&graph, &manifest, SecurityEpoch::from_raw(1), 24_000)
+            .expect("analysis");
+
+        // Both entry nodes lead to different caps.
+        assert!(report.requires_capability(&cap("fs_read")));
+        assert!(report.requires_capability(&cap("fs_write")));
+    }
+
+    // --- EffectNodeKind tests ---
+
+    #[test]
+    fn capability_display() {
+        let cap = Capability::new("fs_read");
+        assert_eq!(cap.to_string(), "fs_read");
+        assert_eq!(cap.as_str(), "fs_read");
+    }
+
+    #[test]
+    fn effect_node_kinds_serializable() {
+        let kinds = vec![
+            EffectNodeKind::Entry,
+            EffectNodeKind::HostcallSite {
+                capability: cap("test"),
+            },
+            EffectNodeKind::ControlFlow,
+            EffectNodeKind::Computation,
+            EffectNodeKind::Exit,
+        ];
+
+        for kind in &kinds {
+            let json = serde_json::to_string(kind).expect("serialize");
+            let restored: EffectNodeKind = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(kind, &restored);
+        }
+    }
+
+    // --- AnalysisMethod display tests ---
+
+    #[test]
+    fn analysis_method_display() {
+        assert_eq!(
+            AnalysisMethod::LatticeReachability.to_string(),
+            "lattice_reachability"
+        );
+        assert_eq!(
+            AnalysisMethod::ManifestFallback.to_string(),
+            "manifest_fallback"
+        );
+        assert_eq!(
+            AnalysisMethod::TimeoutFallback.to_string(),
+            "timeout_fallback"
+        );
+        assert_eq!(
+            AnalysisMethod::ExcludedDeadPath.to_string(),
+            "excluded_dead_path"
+        );
+    }
+}

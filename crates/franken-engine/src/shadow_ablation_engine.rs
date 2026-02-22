@@ -1,0 +1,1776 @@
+//! Deterministic shadow ablation engine for PLAS capability tightening.
+//!
+//! This module implements the dynamic complement to static authority analysis:
+//! it starts from the static upper-bound capability set and runs deterministic
+//! subtraction experiments in a shadow environment to find a tighter minimal
+//! set that still preserves correctness, policy invariants, and risk budgets.
+//!
+//! Plan reference: Section 10.15 item 3 (`bd-1kdc`).
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
+
+use serde::{Deserialize, Serialize};
+
+use crate::deterministic_serde::{self, CanonicalValue};
+use crate::engine_object_id::EngineObjectId;
+use crate::hash_tiers::ContentHash;
+use crate::signature_preimage::{
+    Signature, SigningKey, VerificationKey, sign_preimage, verify_signature,
+};
+use crate::static_authority_analyzer::{Capability, StaticAnalysisReport};
+use crate::synthesis_budget::{
+    BudgetDimension, BudgetError, BudgetMonitor, ExhaustionReason, FallbackQuality, FallbackResult,
+    PhaseConsumption, SynthesisBudgetContract, SynthesisPhase,
+};
+
+const SHADOW_ABLATION_COMPONENT: &str = "shadow_ablation_engine";
+const SHADOW_ABLATION_TRANSCRIPT_DOMAIN: &[u8] = b"FrankenEngine.ShadowAblationTranscript.v1";
+
+fn to_hex(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push_str(&format!("{byte:02x}"));
+    }
+    out
+}
+
+fn capability_names(capabilities: &BTreeSet<Capability>) -> Vec<String> {
+    capabilities
+        .iter()
+        .map(|cap| cap.as_str().to_string())
+        .collect()
+}
+
+fn capability_set_digest(capabilities: &BTreeSet<Capability>) -> String {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"shadow-ablation-set|");
+    for cap in capabilities {
+        bytes.extend_from_slice(cap.as_str().as_bytes());
+        bytes.push(b'|');
+    }
+    to_hex(ContentHash::compute(&bytes).as_bytes())
+}
+
+fn capability_value(capabilities: &BTreeSet<Capability>) -> CanonicalValue {
+    CanonicalValue::Array(
+        capabilities
+            .iter()
+            .map(|cap| CanonicalValue::String(cap.as_str().to_string()))
+            .collect(),
+    )
+}
+
+fn string_map_value(values: &BTreeMap<String, bool>) -> CanonicalValue {
+    let mut out = BTreeMap::new();
+    for (key, value) in values {
+        out.insert(key.clone(), CanonicalValue::Bool(*value));
+    }
+    CanonicalValue::Map(out)
+}
+
+fn phase_consumption_value(consumed: &PhaseConsumption) -> CanonicalValue {
+    let mut map = BTreeMap::new();
+    map.insert("time_ns".to_string(), CanonicalValue::U64(consumed.time_ns));
+    map.insert("compute".to_string(), CanonicalValue::U64(consumed.compute));
+    map.insert("depth".to_string(), CanonicalValue::U64(consumed.depth));
+    CanonicalValue::Map(map)
+}
+
+fn utilization_value(values: &BTreeMap<BudgetDimension, i64>) -> CanonicalValue {
+    let mut map = BTreeMap::new();
+    for (dimension, value) in values {
+        map.insert(dimension.to_string(), CanonicalValue::I64(*value));
+    }
+    CanonicalValue::Map(map)
+}
+
+fn fallback_value(fallback: &Option<FallbackResult>) -> CanonicalValue {
+    match fallback {
+        None => CanonicalValue::Null,
+        Some(result) => {
+            let mut reason = BTreeMap::new();
+            reason.insert(
+                "exceeded_dimensions".to_string(),
+                CanonicalValue::Array(
+                    result
+                        .exhaustion_reason
+                        .exceeded_dimensions
+                        .iter()
+                        .map(|dimension| CanonicalValue::String(dimension.to_string()))
+                        .collect(),
+                ),
+            );
+            reason.insert(
+                "phase".to_string(),
+                CanonicalValue::String(result.exhaustion_reason.phase.to_string()),
+            );
+            reason.insert(
+                "global_limit_hit".to_string(),
+                CanonicalValue::Bool(result.exhaustion_reason.global_limit_hit),
+            );
+            reason.insert(
+                "limit_value".to_string(),
+                CanonicalValue::U64(result.exhaustion_reason.limit_value),
+            );
+            reason.insert(
+                "consumption".to_string(),
+                phase_consumption_value(&result.exhaustion_reason.consumption),
+            );
+
+            let mut map = BTreeMap::new();
+            map.insert(
+                "quality".to_string(),
+                CanonicalValue::String(result.quality.to_string()),
+            );
+            map.insert(
+                "result_digest".to_string(),
+                CanonicalValue::String(result.result_digest.clone()),
+            );
+            map.insert(
+                "increase_likely_helpful".to_string(),
+                CanonicalValue::Bool(result.increase_likely_helpful),
+            );
+            map.insert(
+                "recommended_multiplier".to_string(),
+                match result.recommended_multiplier {
+                    Some(multiplier) => CanonicalValue::I64(multiplier),
+                    None => CanonicalValue::Null,
+                },
+            );
+            map.insert("exhaustion_reason".to_string(), CanonicalValue::Map(reason));
+            CanonicalValue::Map(map)
+        }
+    }
+}
+
+/// Multi-capability search strategy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum AblationSearchStrategy {
+    /// Deterministic lattice-guided subtraction (single + correlated pairs).
+    LatticeGreedy,
+    /// Lattice-guided subtraction plus deterministic binary-style block removal.
+    BinaryGuided,
+}
+
+impl fmt::Display for AblationSearchStrategy {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::LatticeGreedy => f.write_str("lattice_greedy"),
+            Self::BinaryGuided => f.write_str("binary_guided"),
+        }
+    }
+}
+
+/// Search stage for an ablation candidate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum AblationSearchStage {
+    SingleCapability,
+    CorrelatedPair,
+    BinaryBlock,
+}
+
+impl fmt::Display for AblationSearchStage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::SingleCapability => f.write_str("single_capability"),
+            Self::CorrelatedPair => f.write_str("correlated_pair"),
+            Self::BinaryBlock => f.write_str("binary_block"),
+        }
+    }
+}
+
+/// Candidate-level failure class.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum AblationFailureClass {
+    CorrectnessRegression,
+    InvariantViolation,
+    RiskBudgetExceeded,
+    ExecutionFailure,
+    OracleError,
+    InvalidOracleResult,
+    BudgetExhausted,
+}
+
+impl AblationFailureClass {
+    fn error_code(self) -> &'static str {
+        match self {
+            Self::CorrectnessRegression => "ablation_correctness_regression",
+            Self::InvariantViolation => "ablation_invariant_violation",
+            Self::RiskBudgetExceeded => "ablation_risk_budget_exceeded",
+            Self::ExecutionFailure => "ablation_execution_failure",
+            Self::OracleError => "ablation_oracle_error",
+            Self::InvalidOracleResult => "ablation_invalid_oracle_result",
+            Self::BudgetExhausted => "ablation_budget_exhausted",
+        }
+    }
+}
+
+impl fmt::Display for AblationFailureClass {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.error_code())
+    }
+}
+
+/// Configuration for an ablation run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShadowAblationConfig {
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub extension_id: String,
+    pub replay_corpus_id: String,
+    pub randomness_snapshot_id: String,
+    pub deterministic_seed: u64,
+    pub strategy: AblationSearchStrategy,
+    pub required_invariants: BTreeSet<String>,
+    pub max_pair_trials: u64,
+    pub max_block_trials: u64,
+    pub zone: String,
+}
+
+impl Default for ShadowAblationConfig {
+    fn default() -> Self {
+        Self {
+            trace_id: "trace-shadow-ablation-default".to_string(),
+            decision_id: "decision-shadow-ablation-default".to_string(),
+            policy_id: "policy-shadow-ablation-default".to_string(),
+            extension_id: "extension-shadow-ablation-default".to_string(),
+            replay_corpus_id: "replay-corpus-default".to_string(),
+            randomness_snapshot_id: "rng-snapshot-default".to_string(),
+            deterministic_seed: 0x5EED_AB1A_7100u64,
+            strategy: AblationSearchStrategy::LatticeGreedy,
+            required_invariants: BTreeSet::new(),
+            max_pair_trials: 256,
+            max_block_trials: 128,
+            zone: "default".to_string(),
+        }
+    }
+}
+
+impl ShadowAblationConfig {
+    fn validate(&self) -> Result<(), ShadowAblationError> {
+        if self.trace_id.trim().is_empty() {
+            return Err(ShadowAblationError::InvalidConfig {
+                detail: "trace_id must not be empty".to_string(),
+            });
+        }
+        if self.decision_id.trim().is_empty() {
+            return Err(ShadowAblationError::InvalidConfig {
+                detail: "decision_id must not be empty".to_string(),
+            });
+        }
+        if self.policy_id.trim().is_empty() {
+            return Err(ShadowAblationError::InvalidConfig {
+                detail: "policy_id must not be empty".to_string(),
+            });
+        }
+        if self.extension_id.trim().is_empty() {
+            return Err(ShadowAblationError::InvalidConfig {
+                detail: "extension_id must not be empty".to_string(),
+            });
+        }
+        if self.replay_corpus_id.trim().is_empty() {
+            return Err(ShadowAblationError::InvalidConfig {
+                detail: "replay_corpus_id must not be empty".to_string(),
+            });
+        }
+        if self.randomness_snapshot_id.trim().is_empty() {
+            return Err(ShadowAblationError::InvalidConfig {
+                detail: "randomness_snapshot_id must not be empty".to_string(),
+            });
+        }
+        if self.zone.trim().is_empty() {
+            return Err(ShadowAblationError::InvalidConfig {
+                detail: "zone must not be empty".to_string(),
+            });
+        }
+        Ok(())
+    }
+}
+
+/// Candidate request provided to the shadow execution oracle.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShadowAblationCandidateRequest {
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub extension_id: String,
+    pub search_stage: AblationSearchStage,
+    pub sequence: u64,
+    pub candidate_id: String,
+    pub removed_capabilities: BTreeSet<Capability>,
+    pub candidate_capabilities: BTreeSet<Capability>,
+    pub replay_corpus_id: String,
+    pub randomness_snapshot_id: String,
+    pub deterministic_seed: u64,
+}
+
+/// Oracle observation from a shadow candidate evaluation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShadowAblationObservation {
+    pub correctness_score_millionths: i64,
+    pub correctness_threshold_millionths: i64,
+    pub invariants: BTreeMap<String, bool>,
+    pub risk_score_millionths: i64,
+    pub risk_threshold_millionths: i64,
+    pub consumed: PhaseConsumption,
+    pub replay_pointer: String,
+    pub evidence_pointer: String,
+    pub execution_trace_hash: ContentHash,
+    pub failure_detail: Option<String>,
+}
+
+impl ShadowAblationObservation {
+    fn validate(&self) -> Result<(), ShadowAblationError> {
+        if self.correctness_threshold_millionths < 0 {
+            return Err(ShadowAblationError::InvalidOracleResult {
+                detail: "correctness_threshold_millionths must be >= 0".to_string(),
+            });
+        }
+        if self.risk_threshold_millionths < 0 {
+            return Err(ShadowAblationError::InvalidOracleResult {
+                detail: "risk_threshold_millionths must be >= 0".to_string(),
+            });
+        }
+        if self.replay_pointer.trim().is_empty() {
+            return Err(ShadowAblationError::InvalidOracleResult {
+                detail: "replay_pointer must not be empty".to_string(),
+            });
+        }
+        if self.evidence_pointer.trim().is_empty() {
+            return Err(ShadowAblationError::InvalidOracleResult {
+                detail: "evidence_pointer must not be empty".to_string(),
+            });
+        }
+        if *self.execution_trace_hash.as_bytes() == [0u8; 32] {
+            return Err(ShadowAblationError::InvalidOracleResult {
+                detail: "execution_trace_hash must not be all zeros".to_string(),
+            });
+        }
+        Ok(())
+    }
+}
+
+/// Structured per-candidate evaluation record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShadowAblationEvaluationRecord {
+    pub sequence: u64,
+    pub candidate_id: String,
+    pub search_stage: AblationSearchStage,
+    pub removed_capabilities: BTreeSet<Capability>,
+    pub candidate_capabilities: BTreeSet<Capability>,
+    pub pass: bool,
+    pub correctness_score_millionths: i64,
+    pub correctness_threshold_millionths: i64,
+    pub invariants: BTreeMap<String, bool>,
+    pub invariant_failures: Vec<String>,
+    pub risk_score_millionths: i64,
+    pub risk_threshold_millionths: i64,
+    pub consumed: PhaseConsumption,
+    pub replay_pointer: String,
+    pub evidence_pointer: String,
+    pub execution_trace_hash: ContentHash,
+    pub failure_class: Option<AblationFailureClass>,
+    pub failure_detail: Option<String>,
+}
+
+impl ShadowAblationEvaluationRecord {
+    fn canonical_value(&self) -> CanonicalValue {
+        let mut map = BTreeMap::new();
+        map.insert("sequence".to_string(), CanonicalValue::U64(self.sequence));
+        map.insert(
+            "candidate_id".to_string(),
+            CanonicalValue::String(self.candidate_id.clone()),
+        );
+        map.insert(
+            "search_stage".to_string(),
+            CanonicalValue::String(self.search_stage.to_string()),
+        );
+        map.insert(
+            "removed_capabilities".to_string(),
+            capability_value(&self.removed_capabilities),
+        );
+        map.insert(
+            "candidate_capabilities".to_string(),
+            capability_value(&self.candidate_capabilities),
+        );
+        map.insert("pass".to_string(), CanonicalValue::Bool(self.pass));
+        map.insert(
+            "correctness_score_millionths".to_string(),
+            CanonicalValue::I64(self.correctness_score_millionths),
+        );
+        map.insert(
+            "correctness_threshold_millionths".to_string(),
+            CanonicalValue::I64(self.correctness_threshold_millionths),
+        );
+        map.insert("invariants".to_string(), string_map_value(&self.invariants));
+        map.insert(
+            "invariant_failures".to_string(),
+            CanonicalValue::Array(
+                self.invariant_failures
+                    .iter()
+                    .map(|name| CanonicalValue::String(name.clone()))
+                    .collect(),
+            ),
+        );
+        map.insert(
+            "risk_score_millionths".to_string(),
+            CanonicalValue::I64(self.risk_score_millionths),
+        );
+        map.insert(
+            "risk_threshold_millionths".to_string(),
+            CanonicalValue::I64(self.risk_threshold_millionths),
+        );
+        map.insert(
+            "consumed".to_string(),
+            phase_consumption_value(&self.consumed),
+        );
+        map.insert(
+            "replay_pointer".to_string(),
+            CanonicalValue::String(self.replay_pointer.clone()),
+        );
+        map.insert(
+            "evidence_pointer".to_string(),
+            CanonicalValue::String(self.evidence_pointer.clone()),
+        );
+        map.insert(
+            "execution_trace_hash".to_string(),
+            CanonicalValue::Bytes(self.execution_trace_hash.as_bytes().to_vec()),
+        );
+        map.insert(
+            "failure_class".to_string(),
+            match self.failure_class {
+                Some(class) => CanonicalValue::String(class.to_string()),
+                None => CanonicalValue::Null,
+            },
+        );
+        map.insert(
+            "failure_detail".to_string(),
+            match &self.failure_detail {
+                Some(detail) => CanonicalValue::String(detail.clone()),
+                None => CanonicalValue::Null,
+            },
+        );
+        CanonicalValue::Map(map)
+    }
+}
+
+/// Structured log event for shadow ablation decisions.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShadowAblationLogEvent {
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub component: String,
+    pub event: String,
+    pub outcome: String,
+    pub error_code: Option<String>,
+    pub search_stage: Option<String>,
+    pub candidate_id: Option<String>,
+    pub removed_capabilities: Vec<String>,
+    pub remaining_capability_count: Option<u64>,
+}
+
+/// Final result of an ablation run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShadowAblationRunResult {
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub extension_id: String,
+    pub static_report_id: EngineObjectId,
+    pub search_strategy: AblationSearchStrategy,
+    pub initial_capabilities: BTreeSet<Capability>,
+    pub minimal_capabilities: BTreeSet<Capability>,
+    pub evaluations: Vec<ShadowAblationEvaluationRecord>,
+    pub logs: Vec<ShadowAblationLogEvent>,
+    pub budget_exhausted: bool,
+    pub fallback: Option<FallbackResult>,
+    pub budget_utilization: BTreeMap<BudgetDimension, i64>,
+    pub transcript: SignedShadowAblationTranscript,
+}
+
+/// Unsigned transcript material produced by a run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShadowAblationTranscriptInput {
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub extension_id: String,
+    pub static_report_id: EngineObjectId,
+    pub replay_corpus_id: String,
+    pub randomness_snapshot_id: String,
+    pub deterministic_seed: u64,
+    pub search_strategy: AblationSearchStrategy,
+    pub initial_capabilities: BTreeSet<Capability>,
+    pub final_capabilities: BTreeSet<Capability>,
+    pub evaluations: Vec<ShadowAblationEvaluationRecord>,
+    pub fallback: Option<FallbackResult>,
+    pub budget_utilization: BTreeMap<BudgetDimension, i64>,
+}
+
+/// Signed transcript artifact for audit and replay.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SignedShadowAblationTranscript {
+    pub transcript_id: String,
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub extension_id: String,
+    pub static_report_id: EngineObjectId,
+    pub replay_corpus_id: String,
+    pub randomness_snapshot_id: String,
+    pub deterministic_seed: u64,
+    pub search_strategy: AblationSearchStrategy,
+    pub initial_capabilities: BTreeSet<Capability>,
+    pub final_capabilities: BTreeSet<Capability>,
+    pub evaluations: Vec<ShadowAblationEvaluationRecord>,
+    pub fallback: Option<FallbackResult>,
+    pub budget_utilization: BTreeMap<BudgetDimension, i64>,
+    pub transcript_hash: ContentHash,
+    pub signer: VerificationKey,
+    pub signature: Signature,
+}
+
+impl SignedShadowAblationTranscript {
+    pub fn create_signed(
+        input: ShadowAblationTranscriptInput,
+        signing_key: &SigningKey,
+    ) -> Result<Self, ShadowAblationError> {
+        let signer = signing_key.verification_key();
+        let unsigned = transcript_unsigned_bytes(&input, &signer);
+        let transcript_hash = ContentHash::compute(&unsigned);
+        let signature = sign_preimage(signing_key, &unsigned).map_err(|error| {
+            ShadowAblationError::SignatureFailed {
+                detail: error.to_string(),
+            }
+        })?;
+        let transcript_id = format!(
+            "shadow-ablation-{}",
+            to_hex(&transcript_hash.as_bytes()[..16])
+        );
+
+        Ok(Self {
+            transcript_id,
+            trace_id: input.trace_id,
+            decision_id: input.decision_id,
+            policy_id: input.policy_id,
+            extension_id: input.extension_id,
+            static_report_id: input.static_report_id,
+            replay_corpus_id: input.replay_corpus_id,
+            randomness_snapshot_id: input.randomness_snapshot_id,
+            deterministic_seed: input.deterministic_seed,
+            search_strategy: input.search_strategy,
+            initial_capabilities: input.initial_capabilities,
+            final_capabilities: input.final_capabilities,
+            evaluations: input.evaluations,
+            fallback: input.fallback,
+            budget_utilization: input.budget_utilization,
+            transcript_hash,
+            signer,
+            signature,
+        })
+    }
+
+    pub fn verify_signature(&self) -> Result<(), ShadowAblationError> {
+        let input = self.as_unsigned_input();
+        let unsigned = transcript_unsigned_bytes(&input, &self.signer);
+        verify_signature(&self.signer, &unsigned, &self.signature).map_err(|error| {
+            ShadowAblationError::SignatureInvalid {
+                detail: error.to_string(),
+            }
+        })?;
+
+        let actual_hash = ContentHash::compute(&unsigned);
+        if actual_hash != self.transcript_hash {
+            return Err(ShadowAblationError::IntegrityFailure {
+                expected: to_hex(self.transcript_hash.as_bytes()),
+                actual: to_hex(actual_hash.as_bytes()),
+            });
+        }
+
+        Ok(())
+    }
+
+    pub fn unsigned_bytes(&self) -> Vec<u8> {
+        let input = self.as_unsigned_input();
+        transcript_unsigned_bytes(&input, &self.signer)
+    }
+
+    fn as_unsigned_input(&self) -> ShadowAblationTranscriptInput {
+        ShadowAblationTranscriptInput {
+            trace_id: self.trace_id.clone(),
+            decision_id: self.decision_id.clone(),
+            policy_id: self.policy_id.clone(),
+            extension_id: self.extension_id.clone(),
+            static_report_id: self.static_report_id.clone(),
+            replay_corpus_id: self.replay_corpus_id.clone(),
+            randomness_snapshot_id: self.randomness_snapshot_id.clone(),
+            deterministic_seed: self.deterministic_seed,
+            search_strategy: self.search_strategy,
+            initial_capabilities: self.initial_capabilities.clone(),
+            final_capabilities: self.final_capabilities.clone(),
+            evaluations: self.evaluations.clone(),
+            fallback: self.fallback.clone(),
+            budget_utilization: self.budget_utilization.clone(),
+        }
+    }
+}
+
+fn transcript_unsigned_bytes(
+    input: &ShadowAblationTranscriptInput,
+    signer: &VerificationKey,
+) -> Vec<u8> {
+    let mut map = BTreeMap::new();
+    map.insert(
+        "trace_id".to_string(),
+        CanonicalValue::String(input.trace_id.clone()),
+    );
+    map.insert(
+        "decision_id".to_string(),
+        CanonicalValue::String(input.decision_id.clone()),
+    );
+    map.insert(
+        "policy_id".to_string(),
+        CanonicalValue::String(input.policy_id.clone()),
+    );
+    map.insert(
+        "extension_id".to_string(),
+        CanonicalValue::String(input.extension_id.clone()),
+    );
+    map.insert(
+        "static_report_id".to_string(),
+        CanonicalValue::Bytes(input.static_report_id.as_bytes().to_vec()),
+    );
+    map.insert(
+        "replay_corpus_id".to_string(),
+        CanonicalValue::String(input.replay_corpus_id.clone()),
+    );
+    map.insert(
+        "randomness_snapshot_id".to_string(),
+        CanonicalValue::String(input.randomness_snapshot_id.clone()),
+    );
+    map.insert(
+        "deterministic_seed".to_string(),
+        CanonicalValue::U64(input.deterministic_seed),
+    );
+    map.insert(
+        "search_strategy".to_string(),
+        CanonicalValue::String(input.search_strategy.to_string()),
+    );
+    map.insert(
+        "initial_capabilities".to_string(),
+        capability_value(&input.initial_capabilities),
+    );
+    map.insert(
+        "final_capabilities".to_string(),
+        capability_value(&input.final_capabilities),
+    );
+    map.insert(
+        "evaluations".to_string(),
+        CanonicalValue::Array(
+            input
+                .evaluations
+                .iter()
+                .map(ShadowAblationEvaluationRecord::canonical_value)
+                .collect(),
+        ),
+    );
+    map.insert("fallback".to_string(), fallback_value(&input.fallback));
+    map.insert(
+        "budget_utilization".to_string(),
+        utilization_value(&input.budget_utilization),
+    );
+    map.insert(
+        "signer".to_string(),
+        CanonicalValue::Bytes(signer.as_bytes().to_vec()),
+    );
+
+    let payload = deterministic_serde::encode_value(&CanonicalValue::Map(map));
+    let mut preimage =
+        Vec::with_capacity(SHADOW_ABLATION_TRANSCRIPT_DOMAIN.len() + 1 + payload.len());
+    preimage.extend_from_slice(SHADOW_ABLATION_TRANSCRIPT_DOMAIN);
+    preimage.push(b'|');
+    preimage.extend_from_slice(&payload);
+    preimage
+}
+
+/// Run-time ablation errors.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ShadowAblationError {
+    EmptyStaticUpperBound { extension_id: String },
+    ExtensionMismatch { expected: String, found: String },
+    InvalidConfig { detail: String },
+    InvalidOracleResult { detail: String },
+    Budget { detail: String },
+    SignatureFailed { detail: String },
+    SignatureInvalid { detail: String },
+    IntegrityFailure { expected: String, actual: String },
+}
+
+impl fmt::Display for ShadowAblationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyStaticUpperBound { extension_id } => {
+                write!(
+                    f,
+                    "static upper bound is empty for extension `{extension_id}`"
+                )
+            }
+            Self::ExtensionMismatch { expected, found } => write!(
+                f,
+                "extension mismatch: expected `{expected}` but static report is `{found}`"
+            ),
+            Self::InvalidConfig { detail } => write!(f, "invalid shadow ablation config: {detail}"),
+            Self::InvalidOracleResult { detail } => {
+                write!(f, "invalid shadow oracle result: {detail}")
+            }
+            Self::Budget { detail } => write!(f, "budget monitor error: {detail}"),
+            Self::SignatureFailed { detail } => {
+                write!(f, "failed to sign shadow ablation transcript: {detail}")
+            }
+            Self::SignatureInvalid { detail } => {
+                write!(f, "invalid shadow ablation transcript signature: {detail}")
+            }
+            Self::IntegrityFailure { expected, actual } => write!(
+                f,
+                "shadow ablation transcript hash mismatch: expected={expected}, actual={actual}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ShadowAblationError {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CandidateEvaluationOutcome {
+    Accepted,
+    Rejected,
+    BudgetExhausted(ExhaustionReason),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SearchStepOutcome {
+    Removed(BTreeSet<Capability>),
+    Stable,
+    BudgetExhausted(ExhaustionReason),
+}
+
+/// Deterministic shadow ablation engine.
+#[derive(Debug, Clone)]
+pub struct ShadowAblationEngine {
+    config: ShadowAblationConfig,
+    budget_contract: SynthesisBudgetContract,
+}
+
+impl ShadowAblationEngine {
+    pub fn new(
+        config: ShadowAblationConfig,
+        budget_contract: SynthesisBudgetContract,
+    ) -> Result<Self, ShadowAblationError> {
+        config.validate()?;
+        Ok(Self {
+            config,
+            budget_contract,
+        })
+    }
+
+    pub fn config(&self) -> &ShadowAblationConfig {
+        &self.config
+    }
+
+    pub fn run<F>(
+        &self,
+        static_report: &StaticAnalysisReport,
+        signing_key: &SigningKey,
+        mut oracle: F,
+    ) -> Result<ShadowAblationRunResult, ShadowAblationError>
+    where
+        F: FnMut(
+            &ShadowAblationCandidateRequest,
+        ) -> Result<ShadowAblationObservation, ShadowAblationError>,
+    {
+        if static_report.extension_id != self.config.extension_id {
+            return Err(ShadowAblationError::ExtensionMismatch {
+                expected: self.config.extension_id.clone(),
+                found: static_report.extension_id.clone(),
+            });
+        }
+        if static_report.upper_bound_capabilities.is_empty() {
+            return Err(ShadowAblationError::EmptyStaticUpperBound {
+                extension_id: static_report.extension_id.clone(),
+            });
+        }
+
+        let initial_capabilities = static_report.upper_bound_capabilities.clone();
+        let mut current_capabilities = initial_capabilities.clone();
+        let mut evaluations = Vec::new();
+        let mut logs = Vec::new();
+        let mut sequence = 0u64;
+        let mut monitor = BudgetMonitor::new(self.budget_contract.clone());
+        monitor
+            .begin_phase(SynthesisPhase::Ablation)
+            .map_err(|error| ShadowAblationError::Budget {
+                detail: error.to_string(),
+            })?;
+
+        logs.push(log_event(
+            &self.config,
+            "shadow_ablation_started",
+            "start",
+            None,
+            None,
+            None,
+            &BTreeSet::new(),
+            Some(current_capabilities.len() as u64),
+        ));
+
+        let mut exhaustion: Option<ExhaustionReason> = None;
+        let mut single_round = 0u64;
+
+        loop {
+            match try_single_removal(
+                &self.config,
+                &mut sequence,
+                &current_capabilities,
+                &mut monitor,
+                single_round,
+                &mut oracle,
+                &mut evaluations,
+                &mut logs,
+            )? {
+                SearchStepOutcome::Removed(removed) => {
+                    for capability in &removed {
+                        current_capabilities.remove(capability);
+                    }
+                    single_round = single_round.wrapping_add(1);
+                }
+                SearchStepOutcome::Stable => break,
+                SearchStepOutcome::BudgetExhausted(reason) => {
+                    exhaustion = Some(reason);
+                    break;
+                }
+            }
+        }
+
+        if exhaustion.is_none() && self.config.strategy == AblationSearchStrategy::BinaryGuided {
+            let mut block_trials = 0u64;
+            let mut block_size = highest_power_of_two_leq(current_capabilities.len() / 2);
+            let mut block_round = 0u64;
+            while block_size >= 2 {
+                match try_block_removal(
+                    &self.config,
+                    &mut sequence,
+                    &current_capabilities,
+                    &mut monitor,
+                    block_size,
+                    &mut block_trials,
+                    block_round,
+                    &mut oracle,
+                    &mut evaluations,
+                    &mut logs,
+                )? {
+                    SearchStepOutcome::Removed(removed) => {
+                        for capability in &removed {
+                            current_capabilities.remove(capability);
+                        }
+                        loop {
+                            match try_single_removal(
+                                &self.config,
+                                &mut sequence,
+                                &current_capabilities,
+                                &mut monitor,
+                                single_round,
+                                &mut oracle,
+                                &mut evaluations,
+                                &mut logs,
+                            )? {
+                                SearchStepOutcome::Removed(single_removed) => {
+                                    for capability in &single_removed {
+                                        current_capabilities.remove(capability);
+                                    }
+                                    single_round = single_round.wrapping_add(1);
+                                }
+                                SearchStepOutcome::Stable => break,
+                                SearchStepOutcome::BudgetExhausted(reason) => {
+                                    exhaustion = Some(reason);
+                                    break;
+                                }
+                            }
+                        }
+                        if exhaustion.is_some() {
+                            break;
+                        }
+                        block_round = block_round.wrapping_add(1);
+                    }
+                    SearchStepOutcome::Stable => {
+                        block_size /= 2;
+                    }
+                    SearchStepOutcome::BudgetExhausted(reason) => {
+                        exhaustion = Some(reason);
+                        break;
+                    }
+                }
+                if block_trials >= self.config.max_block_trials {
+                    break;
+                }
+            }
+        }
+
+        if exhaustion.is_none() {
+            let mut pair_trials = 0u64;
+            let mut pair_round = 0u64;
+            loop {
+                match try_pair_removal(
+                    &self.config,
+                    &mut sequence,
+                    &current_capabilities,
+                    &mut monitor,
+                    &mut pair_trials,
+                    pair_round,
+                    &mut oracle,
+                    &mut evaluations,
+                    &mut logs,
+                )? {
+                    SearchStepOutcome::Removed(removed) => {
+                        for capability in &removed {
+                            current_capabilities.remove(capability);
+                        }
+                        loop {
+                            match try_single_removal(
+                                &self.config,
+                                &mut sequence,
+                                &current_capabilities,
+                                &mut monitor,
+                                single_round,
+                                &mut oracle,
+                                &mut evaluations,
+                                &mut logs,
+                            )? {
+                                SearchStepOutcome::Removed(single_removed) => {
+                                    for capability in &single_removed {
+                                        current_capabilities.remove(capability);
+                                    }
+                                    single_round = single_round.wrapping_add(1);
+                                }
+                                SearchStepOutcome::Stable => break,
+                                SearchStepOutcome::BudgetExhausted(reason) => {
+                                    exhaustion = Some(reason);
+                                    break;
+                                }
+                            }
+                        }
+                        if exhaustion.is_some() {
+                            break;
+                        }
+                        pair_round = pair_round.wrapping_add(1);
+                    }
+                    SearchStepOutcome::Stable => break,
+                    SearchStepOutcome::BudgetExhausted(reason) => {
+                        exhaustion = Some(reason);
+                        break;
+                    }
+                }
+                if pair_trials >= self.config.max_pair_trials {
+                    break;
+                }
+            }
+        }
+
+        let fallback = exhaustion
+            .as_ref()
+            .map(|reason| fallback_for(reason, &initial_capabilities, &current_capabilities));
+        let budget_exhausted = fallback.is_some();
+        let budget_utilization = monitor.utilization();
+
+        logs.push(log_event(
+            &self.config,
+            "shadow_ablation_completed",
+            if budget_exhausted { "fallback" } else { "pass" },
+            fallback.as_ref().map(|result| result.quality.to_string()),
+            None,
+            None,
+            &BTreeSet::new(),
+            Some(current_capabilities.len() as u64),
+        ));
+
+        let transcript_input = ShadowAblationTranscriptInput {
+            trace_id: self.config.trace_id.clone(),
+            decision_id: self.config.decision_id.clone(),
+            policy_id: self.config.policy_id.clone(),
+            extension_id: self.config.extension_id.clone(),
+            static_report_id: static_report.report_id.clone(),
+            replay_corpus_id: self.config.replay_corpus_id.clone(),
+            randomness_snapshot_id: self.config.randomness_snapshot_id.clone(),
+            deterministic_seed: self.config.deterministic_seed,
+            search_strategy: self.config.strategy,
+            initial_capabilities: initial_capabilities.clone(),
+            final_capabilities: current_capabilities.clone(),
+            evaluations: evaluations.clone(),
+            fallback: fallback.clone(),
+            budget_utilization: budget_utilization.clone(),
+        };
+        let transcript =
+            SignedShadowAblationTranscript::create_signed(transcript_input, signing_key)?;
+
+        Ok(ShadowAblationRunResult {
+            trace_id: self.config.trace_id.clone(),
+            decision_id: self.config.decision_id.clone(),
+            policy_id: self.config.policy_id.clone(),
+            extension_id: self.config.extension_id.clone(),
+            static_report_id: static_report.report_id.clone(),
+            search_strategy: self.config.strategy,
+            initial_capabilities,
+            minimal_capabilities: current_capabilities,
+            evaluations,
+            logs,
+            budget_exhausted,
+            fallback,
+            budget_utilization,
+            transcript,
+        })
+    }
+}
+
+fn fallback_for(
+    reason: &ExhaustionReason,
+    initial_capabilities: &BTreeSet<Capability>,
+    current_capabilities: &BTreeSet<Capability>,
+) -> FallbackResult {
+    let quality = if current_capabilities == initial_capabilities {
+        FallbackQuality::StaticBound
+    } else {
+        FallbackQuality::PartialAblation
+    };
+
+    let increase_likely_helpful = reason.exceeded_dimensions.iter().any(|dimension| {
+        matches!(
+            dimension,
+            BudgetDimension::Time | BudgetDimension::Compute | BudgetDimension::Depth
+        )
+    });
+
+    FallbackResult {
+        quality,
+        result_digest: capability_set_digest(current_capabilities),
+        exhaustion_reason: reason.clone(),
+        increase_likely_helpful,
+        recommended_multiplier: if increase_likely_helpful {
+            Some(1_500_000)
+        } else {
+            None
+        },
+    }
+}
+
+fn highest_power_of_two_leq(n: usize) -> usize {
+    if n == 0 {
+        return 0;
+    }
+    let mut power = 1usize;
+    while power.saturating_mul(2) <= n {
+        power = power.saturating_mul(2);
+    }
+    power
+}
+
+fn seeded_capability_order(capabilities: &BTreeSet<Capability>, seed: u64) -> Vec<Capability> {
+    let mut weighted = capabilities
+        .iter()
+        .map(|capability| {
+            let mut bytes = Vec::new();
+            bytes.extend_from_slice(&seed.to_be_bytes());
+            bytes.extend_from_slice(capability.as_str().as_bytes());
+            let weight = ContentHash::compute(&bytes);
+            (weight, capability.clone())
+        })
+        .collect::<Vec<_>>();
+
+    weighted.sort_by(|(left_weight, left_cap), (right_weight, right_cap)| {
+        left_weight
+            .as_bytes()
+            .cmp(right_weight.as_bytes())
+            .then_with(|| left_cap.cmp(right_cap))
+    });
+
+    weighted
+        .into_iter()
+        .map(|(_, capability)| capability)
+        .collect()
+}
+
+fn candidate_id(
+    config: &ShadowAblationConfig,
+    stage: AblationSearchStage,
+    sequence: u64,
+    removed_capabilities: &BTreeSet<Capability>,
+    candidate_capabilities: &BTreeSet<Capability>,
+) -> String {
+    let mut map = BTreeMap::new();
+    map.insert(
+        "trace_id".to_string(),
+        CanonicalValue::String(config.trace_id.clone()),
+    );
+    map.insert(
+        "decision_id".to_string(),
+        CanonicalValue::String(config.decision_id.clone()),
+    );
+    map.insert(
+        "policy_id".to_string(),
+        CanonicalValue::String(config.policy_id.clone()),
+    );
+    map.insert(
+        "search_stage".to_string(),
+        CanonicalValue::String(stage.to_string()),
+    );
+    map.insert("sequence".to_string(), CanonicalValue::U64(sequence));
+    map.insert(
+        "deterministic_seed".to_string(),
+        CanonicalValue::U64(config.deterministic_seed),
+    );
+    map.insert(
+        "removed_capabilities".to_string(),
+        capability_value(removed_capabilities),
+    );
+    map.insert(
+        "candidate_capabilities".to_string(),
+        capability_value(candidate_capabilities),
+    );
+
+    let encoded = deterministic_serde::encode_value(&CanonicalValue::Map(map));
+    let digest = ContentHash::compute(&encoded);
+    format!("ablate-{}", to_hex(&digest.as_bytes()[..12]))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn log_event(
+    config: &ShadowAblationConfig,
+    event: &str,
+    outcome: &str,
+    error_code: Option<String>,
+    search_stage: Option<AblationSearchStage>,
+    candidate_id: Option<String>,
+    removed_capabilities: &BTreeSet<Capability>,
+    remaining_capability_count: Option<u64>,
+) -> ShadowAblationLogEvent {
+    ShadowAblationLogEvent {
+        trace_id: config.trace_id.clone(),
+        decision_id: config.decision_id.clone(),
+        policy_id: config.policy_id.clone(),
+        component: SHADOW_ABLATION_COMPONENT.to_string(),
+        event: event.to_string(),
+        outcome: outcome.to_string(),
+        error_code,
+        search_stage: search_stage.map(|stage| stage.to_string()),
+        candidate_id,
+        removed_capabilities: capability_names(removed_capabilities),
+        remaining_capability_count,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn evaluate_candidate<F>(
+    config: &ShadowAblationConfig,
+    stage: AblationSearchStage,
+    sequence: &mut u64,
+    current_capabilities: &BTreeSet<Capability>,
+    removed_capabilities: &BTreeSet<Capability>,
+    monitor: &mut BudgetMonitor,
+    oracle: &mut F,
+    evaluations: &mut Vec<ShadowAblationEvaluationRecord>,
+    logs: &mut Vec<ShadowAblationLogEvent>,
+) -> Result<CandidateEvaluationOutcome, ShadowAblationError>
+where
+    F: FnMut(
+        &ShadowAblationCandidateRequest,
+    ) -> Result<ShadowAblationObservation, ShadowAblationError>,
+{
+    let candidate_capabilities = current_capabilities
+        .difference(removed_capabilities)
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    *sequence = sequence.saturating_add(1);
+    let sequence_number = *sequence;
+    let candidate_id = candidate_id(
+        config,
+        stage,
+        sequence_number,
+        removed_capabilities,
+        &candidate_capabilities,
+    );
+    let request = ShadowAblationCandidateRequest {
+        trace_id: config.trace_id.clone(),
+        decision_id: config.decision_id.clone(),
+        policy_id: config.policy_id.clone(),
+        extension_id: config.extension_id.clone(),
+        search_stage: stage,
+        sequence: sequence_number,
+        candidate_id: candidate_id.clone(),
+        removed_capabilities: removed_capabilities.clone(),
+        candidate_capabilities: candidate_capabilities.clone(),
+        replay_corpus_id: config.replay_corpus_id.clone(),
+        randomness_snapshot_id: config.randomness_snapshot_id.clone(),
+        deterministic_seed: config.deterministic_seed,
+    };
+
+    let observation = match oracle(&request) {
+        Ok(observation) => observation,
+        Err(error) => {
+            let detail = error.to_string();
+            let record = ShadowAblationEvaluationRecord {
+                sequence: sequence_number,
+                candidate_id: candidate_id.clone(),
+                search_stage: stage,
+                removed_capabilities: removed_capabilities.clone(),
+                candidate_capabilities,
+                pass: false,
+                correctness_score_millionths: 0,
+                correctness_threshold_millionths: 0,
+                invariants: BTreeMap::new(),
+                invariant_failures: Vec::new(),
+                risk_score_millionths: 0,
+                risk_threshold_millionths: 0,
+                consumed: PhaseConsumption::zero(),
+                replay_pointer: String::new(),
+                evidence_pointer: String::new(),
+                execution_trace_hash: ContentHash::compute(candidate_id.as_bytes()),
+                failure_class: Some(AblationFailureClass::OracleError),
+                failure_detail: Some(detail),
+            };
+            evaluations.push(record);
+            logs.push(log_event(
+                config,
+                "shadow_ablation_candidate_evaluated",
+                "fail",
+                Some(AblationFailureClass::OracleError.error_code().to_string()),
+                Some(stage),
+                Some(candidate_id),
+                removed_capabilities,
+                Some(current_capabilities.len() as u64),
+            ));
+            return Ok(CandidateEvaluationOutcome::Rejected);
+        }
+    };
+
+    if let Err(error) = observation.validate() {
+        let record = ShadowAblationEvaluationRecord {
+            sequence: sequence_number,
+            candidate_id: candidate_id.clone(),
+            search_stage: stage,
+            removed_capabilities: removed_capabilities.clone(),
+            candidate_capabilities,
+            pass: false,
+            correctness_score_millionths: observation.correctness_score_millionths,
+            correctness_threshold_millionths: observation.correctness_threshold_millionths,
+            invariants: observation.invariants.clone(),
+            invariant_failures: Vec::new(),
+            risk_score_millionths: observation.risk_score_millionths,
+            risk_threshold_millionths: observation.risk_threshold_millionths,
+            consumed: observation.consumed.clone(),
+            replay_pointer: observation.replay_pointer.clone(),
+            evidence_pointer: observation.evidence_pointer.clone(),
+            execution_trace_hash: observation.execution_trace_hash,
+            failure_class: Some(AblationFailureClass::InvalidOracleResult),
+            failure_detail: Some(error.to_string()),
+        };
+        evaluations.push(record);
+        logs.push(log_event(
+            config,
+            "shadow_ablation_candidate_evaluated",
+            "fail",
+            Some(
+                AblationFailureClass::InvalidOracleResult
+                    .error_code()
+                    .to_string(),
+            ),
+            Some(stage),
+            Some(candidate_id),
+            removed_capabilities,
+            Some(current_capabilities.len() as u64),
+        ));
+        return Ok(CandidateEvaluationOutcome::Rejected);
+    }
+
+    match monitor.record_consumption(
+        observation.consumed.time_ns,
+        observation.consumed.compute,
+        observation.consumed.depth,
+    ) {
+        Ok(()) => {}
+        Err(BudgetError::Exhausted(reason)) => {
+            let record = ShadowAblationEvaluationRecord {
+                sequence: sequence_number,
+                candidate_id: candidate_id.clone(),
+                search_stage: stage,
+                removed_capabilities: removed_capabilities.clone(),
+                candidate_capabilities,
+                pass: false,
+                correctness_score_millionths: observation.correctness_score_millionths,
+                correctness_threshold_millionths: observation.correctness_threshold_millionths,
+                invariants: observation.invariants.clone(),
+                invariant_failures: Vec::new(),
+                risk_score_millionths: observation.risk_score_millionths,
+                risk_threshold_millionths: observation.risk_threshold_millionths,
+                consumed: observation.consumed.clone(),
+                replay_pointer: observation.replay_pointer.clone(),
+                evidence_pointer: observation.evidence_pointer.clone(),
+                execution_trace_hash: observation.execution_trace_hash,
+                failure_class: Some(AblationFailureClass::BudgetExhausted),
+                failure_detail: Some(reason.to_string()),
+            };
+            evaluations.push(record);
+            logs.push(log_event(
+                config,
+                "shadow_ablation_candidate_evaluated",
+                "fail",
+                Some(
+                    AblationFailureClass::BudgetExhausted
+                        .error_code()
+                        .to_string(),
+                ),
+                Some(stage),
+                Some(candidate_id),
+                removed_capabilities,
+                Some(current_capabilities.len() as u64),
+            ));
+            return Ok(CandidateEvaluationOutcome::BudgetExhausted(reason));
+        }
+        Err(other) => {
+            return Err(ShadowAblationError::Budget {
+                detail: other.to_string(),
+            });
+        }
+    }
+
+    let mut invariant_failures = Vec::new();
+    if config.required_invariants.is_empty() {
+        for (invariant, passed) in &observation.invariants {
+            if !passed {
+                invariant_failures.push(invariant.clone());
+            }
+        }
+    } else {
+        for invariant in &config.required_invariants {
+            if !observation
+                .invariants
+                .get(invariant)
+                .copied()
+                .unwrap_or(false)
+            {
+                invariant_failures.push(invariant.clone());
+            }
+        }
+    }
+    invariant_failures.sort();
+
+    let correctness_pass =
+        observation.correctness_score_millionths >= observation.correctness_threshold_millionths;
+    let risk_pass = observation.risk_score_millionths <= observation.risk_threshold_millionths;
+    let execution_failure = observation
+        .failure_detail
+        .as_ref()
+        .map(|detail| !detail.trim().is_empty())
+        .unwrap_or(false);
+    let pass = correctness_pass && invariant_failures.is_empty() && risk_pass && !execution_failure;
+
+    let failure_class = if pass {
+        None
+    } else if !correctness_pass {
+        Some(AblationFailureClass::CorrectnessRegression)
+    } else if !invariant_failures.is_empty() {
+        Some(AblationFailureClass::InvariantViolation)
+    } else if !risk_pass {
+        Some(AblationFailureClass::RiskBudgetExceeded)
+    } else {
+        Some(AblationFailureClass::ExecutionFailure)
+    };
+
+    let failure_detail = if pass {
+        None
+    } else if let Some(detail) = observation.failure_detail.clone() {
+        Some(detail)
+    } else if !correctness_pass {
+        Some(format!(
+            "correctness {} below threshold {}",
+            observation.correctness_score_millionths, observation.correctness_threshold_millionths
+        ))
+    } else if !invariant_failures.is_empty() {
+        Some(format!(
+            "invariants failed: {}",
+            invariant_failures.join(",")
+        ))
+    } else if !risk_pass {
+        Some(format!(
+            "risk {} above threshold {}",
+            observation.risk_score_millionths, observation.risk_threshold_millionths
+        ))
+    } else {
+        Some("candidate failed shadow execution".to_string())
+    };
+
+    let record = ShadowAblationEvaluationRecord {
+        sequence: sequence_number,
+        candidate_id: candidate_id.clone(),
+        search_stage: stage,
+        removed_capabilities: removed_capabilities.clone(),
+        candidate_capabilities,
+        pass,
+        correctness_score_millionths: observation.correctness_score_millionths,
+        correctness_threshold_millionths: observation.correctness_threshold_millionths,
+        invariants: observation.invariants.clone(),
+        invariant_failures,
+        risk_score_millionths: observation.risk_score_millionths,
+        risk_threshold_millionths: observation.risk_threshold_millionths,
+        consumed: observation.consumed,
+        replay_pointer: observation.replay_pointer,
+        evidence_pointer: observation.evidence_pointer,
+        execution_trace_hash: observation.execution_trace_hash,
+        failure_class,
+        failure_detail,
+    };
+    evaluations.push(record);
+    logs.push(log_event(
+        config,
+        "shadow_ablation_candidate_evaluated",
+        if pass { "pass" } else { "fail" },
+        failure_class.map(|class| class.error_code().to_string()),
+        Some(stage),
+        Some(candidate_id),
+        removed_capabilities,
+        Some(current_capabilities.len() as u64),
+    ));
+
+    if pass {
+        Ok(CandidateEvaluationOutcome::Accepted)
+    } else {
+        Ok(CandidateEvaluationOutcome::Rejected)
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn try_single_removal<F>(
+    config: &ShadowAblationConfig,
+    sequence: &mut u64,
+    current_capabilities: &BTreeSet<Capability>,
+    monitor: &mut BudgetMonitor,
+    round: u64,
+    oracle: &mut F,
+    evaluations: &mut Vec<ShadowAblationEvaluationRecord>,
+    logs: &mut Vec<ShadowAblationLogEvent>,
+) -> Result<SearchStepOutcome, ShadowAblationError>
+where
+    F: FnMut(
+        &ShadowAblationCandidateRequest,
+    ) -> Result<ShadowAblationObservation, ShadowAblationError>,
+{
+    let seed = config
+        .deterministic_seed
+        .wrapping_add(0x9E37_79B9_7F4A_7C15u64)
+        .wrapping_add(round);
+    for capability in seeded_capability_order(current_capabilities, seed) {
+        let mut removed = BTreeSet::new();
+        removed.insert(capability);
+        match evaluate_candidate(
+            config,
+            AblationSearchStage::SingleCapability,
+            sequence,
+            current_capabilities,
+            &removed,
+            monitor,
+            oracle,
+            evaluations,
+            logs,
+        )? {
+            CandidateEvaluationOutcome::Accepted => {
+                return Ok(SearchStepOutcome::Removed(removed));
+            }
+            CandidateEvaluationOutcome::Rejected => {}
+            CandidateEvaluationOutcome::BudgetExhausted(reason) => {
+                return Ok(SearchStepOutcome::BudgetExhausted(reason));
+            }
+        }
+    }
+    Ok(SearchStepOutcome::Stable)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn try_pair_removal<F>(
+    config: &ShadowAblationConfig,
+    sequence: &mut u64,
+    current_capabilities: &BTreeSet<Capability>,
+    monitor: &mut BudgetMonitor,
+    trials_used: &mut u64,
+    round: u64,
+    oracle: &mut F,
+    evaluations: &mut Vec<ShadowAblationEvaluationRecord>,
+    logs: &mut Vec<ShadowAblationLogEvent>,
+) -> Result<SearchStepOutcome, ShadowAblationError>
+where
+    F: FnMut(
+        &ShadowAblationCandidateRequest,
+    ) -> Result<ShadowAblationObservation, ShadowAblationError>,
+{
+    if current_capabilities.len() < 2 || *trials_used >= config.max_pair_trials {
+        return Ok(SearchStepOutcome::Stable);
+    }
+    let seed = config
+        .deterministic_seed
+        .wrapping_add(0xD1CE_11ED_F00D_4444u64)
+        .wrapping_add(round);
+    let ordered = seeded_capability_order(current_capabilities, seed);
+    for i in 0..ordered.len() {
+        for j in (i + 1)..ordered.len() {
+            if *trials_used >= config.max_pair_trials {
+                return Ok(SearchStepOutcome::Stable);
+            }
+            *trials_used = trials_used.saturating_add(1);
+
+            let mut removed = BTreeSet::new();
+            removed.insert(ordered[i].clone());
+            removed.insert(ordered[j].clone());
+
+            match evaluate_candidate(
+                config,
+                AblationSearchStage::CorrelatedPair,
+                sequence,
+                current_capabilities,
+                &removed,
+                monitor,
+                oracle,
+                evaluations,
+                logs,
+            )? {
+                CandidateEvaluationOutcome::Accepted => {
+                    return Ok(SearchStepOutcome::Removed(removed));
+                }
+                CandidateEvaluationOutcome::Rejected => {}
+                CandidateEvaluationOutcome::BudgetExhausted(reason) => {
+                    return Ok(SearchStepOutcome::BudgetExhausted(reason));
+                }
+            }
+        }
+    }
+
+    Ok(SearchStepOutcome::Stable)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn try_block_removal<F>(
+    config: &ShadowAblationConfig,
+    sequence: &mut u64,
+    current_capabilities: &BTreeSet<Capability>,
+    monitor: &mut BudgetMonitor,
+    block_size: usize,
+    trials_used: &mut u64,
+    round: u64,
+    oracle: &mut F,
+    evaluations: &mut Vec<ShadowAblationEvaluationRecord>,
+    logs: &mut Vec<ShadowAblationLogEvent>,
+) -> Result<SearchStepOutcome, ShadowAblationError>
+where
+    F: FnMut(
+        &ShadowAblationCandidateRequest,
+    ) -> Result<ShadowAblationObservation, ShadowAblationError>,
+{
+    if block_size < 2
+        || current_capabilities.len() < block_size
+        || *trials_used >= config.max_block_trials
+    {
+        return Ok(SearchStepOutcome::Stable);
+    }
+
+    let seed = config
+        .deterministic_seed
+        .wrapping_add(0xB10C_0000_0000_0000u64)
+        .wrapping_add(round)
+        .wrapping_add(block_size as u64);
+    let ordered = seeded_capability_order(current_capabilities, seed);
+    let mut start = 0usize;
+
+    while start + block_size <= ordered.len() {
+        if *trials_used >= config.max_block_trials {
+            return Ok(SearchStepOutcome::Stable);
+        }
+        *trials_used = trials_used.saturating_add(1);
+
+        let removed = ordered[start..start + block_size]
+            .iter()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        match evaluate_candidate(
+            config,
+            AblationSearchStage::BinaryBlock,
+            sequence,
+            current_capabilities,
+            &removed,
+            monitor,
+            oracle,
+            evaluations,
+            logs,
+        )? {
+            CandidateEvaluationOutcome::Accepted => {
+                return Ok(SearchStepOutcome::Removed(removed));
+            }
+            CandidateEvaluationOutcome::Rejected => {}
+            CandidateEvaluationOutcome::BudgetExhausted(reason) => {
+                return Ok(SearchStepOutcome::BudgetExhausted(reason));
+            }
+        }
+        start = start.saturating_add(block_size);
+    }
+
+    Ok(SearchStepOutcome::Stable)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cap(name: &str) -> Capability {
+        Capability::new(name)
+    }
+
+    fn config_with_seed(seed: u64) -> ShadowAblationConfig {
+        ShadowAblationConfig {
+            trace_id: "trace-seeded-order".to_string(),
+            decision_id: "decision-seeded-order".to_string(),
+            policy_id: "policy-seeded-order".to_string(),
+            extension_id: "ext-seeded-order".to_string(),
+            replay_corpus_id: "corpus-seeded-order".to_string(),
+            randomness_snapshot_id: "rng-seeded-order".to_string(),
+            deterministic_seed: seed,
+            strategy: AblationSearchStrategy::LatticeGreedy,
+            required_invariants: BTreeSet::new(),
+            max_pair_trials: 0,
+            max_block_trials: 0,
+            zone: "test-zone".to_string(),
+        }
+    }
+
+    fn sample_evaluation(candidate_id: &str) -> ShadowAblationEvaluationRecord {
+        let mut removed = BTreeSet::new();
+        removed.insert(cap("fs_read"));
+        let mut remaining = BTreeSet::new();
+        remaining.insert(cap("net_outbound"));
+        ShadowAblationEvaluationRecord {
+            sequence: 1,
+            candidate_id: candidate_id.to_string(),
+            search_stage: AblationSearchStage::SingleCapability,
+            removed_capabilities: removed,
+            candidate_capabilities: remaining,
+            pass: true,
+            correctness_score_millionths: 995_000,
+            correctness_threshold_millionths: 900_000,
+            invariants: BTreeMap::from([("no_exfiltration".to_string(), true)]),
+            invariant_failures: Vec::new(),
+            risk_score_millionths: 100_000,
+            risk_threshold_millionths: 300_000,
+            consumed: PhaseConsumption {
+                time_ns: 10_000,
+                compute: 10,
+                depth: 1,
+            },
+            replay_pointer: "replay://candidate-1".to_string(),
+            evidence_pointer: "evidence://candidate-1".to_string(),
+            execution_trace_hash: ContentHash::compute(b"trace-1"),
+            failure_class: None,
+            failure_detail: None,
+        }
+    }
+
+    #[test]
+    fn seeded_order_deterministic_for_same_seed() {
+        let mut capabilities = BTreeSet::new();
+        capabilities.insert(cap("clock"));
+        capabilities.insert(cap("env"));
+        capabilities.insert(cap("fs_read"));
+        capabilities.insert(cap("net_outbound"));
+        capabilities.insert(cap("telemetry_emit"));
+
+        let order_a = seeded_capability_order(&capabilities, 7);
+        let order_b = seeded_capability_order(&capabilities, 7);
+        assert_eq!(order_a, order_b);
+    }
+
+    #[test]
+    fn seeded_order_changes_with_different_seed() {
+        let mut capabilities = BTreeSet::new();
+        capabilities.insert(cap("clock"));
+        capabilities.insert(cap("env"));
+        capabilities.insert(cap("fs_read"));
+        capabilities.insert(cap("net_outbound"));
+        capabilities.insert(cap("telemetry_emit"));
+
+        let order_a = seeded_capability_order(&capabilities, 7);
+        let order_b = seeded_capability_order(&capabilities, 11);
+        assert_ne!(order_a, order_b);
+    }
+
+    #[test]
+    fn transcript_sign_verify_roundtrip() {
+        let signing_key = SigningKey::from_bytes([0x41; 32]);
+        let report_id = EngineObjectId([0xAA; 32]);
+        let mut initial = BTreeSet::new();
+        initial.insert(cap("clock"));
+        initial.insert(cap("net_outbound"));
+        let final_set = initial.clone();
+
+        let input = ShadowAblationTranscriptInput {
+            trace_id: "trace-transcript".to_string(),
+            decision_id: "decision-transcript".to_string(),
+            policy_id: "policy-transcript".to_string(),
+            extension_id: "ext-transcript".to_string(),
+            static_report_id: report_id,
+            replay_corpus_id: "corpus-transcript".to_string(),
+            randomness_snapshot_id: "rng-transcript".to_string(),
+            deterministic_seed: 42,
+            search_strategy: AblationSearchStrategy::LatticeGreedy,
+            initial_capabilities: initial,
+            final_capabilities: final_set,
+            evaluations: vec![sample_evaluation("candidate-1")],
+            fallback: None,
+            budget_utilization: BTreeMap::new(),
+        };
+
+        let transcript =
+            SignedShadowAblationTranscript::create_signed(input, &signing_key).expect("sign");
+        transcript.verify_signature().expect("verify");
+    }
+
+    #[test]
+    fn fallback_quality_static_vs_partial() {
+        let reason = ExhaustionReason {
+            exceeded_dimensions: vec![BudgetDimension::Compute],
+            phase: SynthesisPhase::Ablation,
+            global_limit_hit: false,
+            consumption: PhaseConsumption {
+                time_ns: 0,
+                compute: 101,
+                depth: 3,
+            },
+            limit_value: 100,
+        };
+
+        let mut initial = BTreeSet::new();
+        initial.insert(cap("clock"));
+        initial.insert(cap("net_outbound"));
+
+        let static_fallback = fallback_for(&reason, &initial, &initial);
+        assert_eq!(static_fallback.quality, FallbackQuality::StaticBound);
+
+        let mut partial = initial.clone();
+        partial.remove(&cap("clock"));
+        let partial_fallback = fallback_for(&reason, &initial, &partial);
+        assert_eq!(partial_fallback.quality, FallbackQuality::PartialAblation);
+    }
+
+    #[test]
+    fn config_validation_rejects_empty_ids() {
+        let mut config = config_with_seed(1);
+        config.trace_id.clear();
+        let err = ShadowAblationEngine::new(config, SynthesisBudgetContract::default())
+            .expect_err("trace_id must be rejected");
+        assert!(err.to_string().contains("trace_id"));
+    }
+}

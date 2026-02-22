@@ -1,0 +1,36 @@
+[package]
+name = "frankenengine-engine-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+frankenengine-engine = { path = "../crates/franken-engine" }
+libfuzzer-sys = "0.4"
+serde_json = "1.0"
+
+[[bin]]
+name = "decode_dos"
+path = "fuzz_targets/decode_dos.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "handshake_replay"
+path = "fuzz_targets/handshake_replay.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "token_verification"
+path = "fuzz_targets/token_verification.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]

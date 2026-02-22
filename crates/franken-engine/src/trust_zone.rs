@@ -15,9 +15,8 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::engine_object_id::{derive_id, EngineObjectId, IdError, ObjectDomain, SchemaId};
-
-use super::RuntimeCapability;
+use crate::capability::{CapabilityProfile, RuntimeCapability};
+use crate::engine_object_id::{EngineObjectId, IdError, ObjectDomain, SchemaId, derive_id};
 
 const ZONE_SCHEMA: &[u8] = b"frankenengine.trust-zone.v1";
 const FE_ZONE_CEILING_EXCEEDED: &str = "FE-6001";
@@ -49,7 +48,7 @@ impl TrustZoneClass {
         use RuntimeCapability::*;
 
         match self {
-            Self::Owner => super::CapabilityProfile::full().capabilities,
+            Self::Owner => CapabilityProfile::full().capabilities,
             Self::Private => BTreeSet::from([
                 VmDispatch,
                 GcInvoke,
@@ -401,8 +400,13 @@ impl ZoneHierarchy {
             created_by,
         ))?;
         hierarchy.add_zone(
-            ZoneCreateRequest::new("private", TrustZoneClass::Private, policy_version, created_by)
-                .with_parent("owner"),
+            ZoneCreateRequest::new(
+                "private",
+                TrustZoneClass::Private,
+                policy_version,
+                created_by,
+            )
+            .with_parent("owner"),
         )?;
         hierarchy.add_zone(
             ZoneCreateRequest::new("team", TrustZoneClass::Team, policy_version, created_by)
@@ -420,7 +424,10 @@ impl ZoneHierarchy {
         Ok(hierarchy)
     }
 
-    pub fn add_zone(&mut self, request: ZoneCreateRequest) -> Result<EngineObjectId, TrustZoneError> {
+    pub fn add_zone(
+        &mut self,
+        request: ZoneCreateRequest,
+    ) -> Result<EngineObjectId, TrustZoneError> {
         if self.zones.contains_key(&request.zone_name) {
             return Err(TrustZoneError::ZoneAlreadyExists {
                 zone_name: request.zone_name,
@@ -428,14 +435,12 @@ impl ZoneHierarchy {
         }
 
         let parent = match request.parent_zone_name.as_ref() {
-            Some(parent_zone_name) => {
-                Some(self.zones.get(parent_zone_name).ok_or_else(|| {
-                    TrustZoneError::ParentZoneMissing {
-                        zone_name: request.zone_name.clone(),
-                        parent_zone: parent_zone_name.clone(),
-                    }
-                })?)
-            }
+            Some(parent_zone_name) => Some(self.zones.get(parent_zone_name).ok_or_else(|| {
+                TrustZoneError::ParentZoneMissing {
+                    zone_name: request.zone_name.clone(),
+                    parent_zone: parent_zone_name.clone(),
+                }
+            })?),
             None => None,
         };
 
@@ -455,9 +460,10 @@ impl ZoneHierarchy {
             .assignments
             .get(entity_id)
             .map_or(self.default_zone.as_str(), String::as_str);
-        self.zone(zone_name).ok_or_else(|| TrustZoneError::ZoneMissing {
-            zone_name: zone_name.to_string(),
-        })
+        self.zone(zone_name)
+            .ok_or_else(|| TrustZoneError::ZoneMissing {
+                zone_name: zone_name.to_string(),
+            })
     }
 
     pub fn assign_entity(
@@ -497,7 +503,10 @@ impl ZoneHierarchy {
                 zone_name: zone_name.to_string(),
             })?;
 
-        if zone.allows(requested) {
+        let allows = zone.allows(requested);
+        let ceiling = zone.effective_ceiling.clone();
+
+        if allows {
             let mut event = ZoneEvent::base(
                 trace_id,
                 ZoneEventType::CeilingCheck,
@@ -520,7 +529,7 @@ impl ZoneHierarchy {
         Err(TrustZoneError::CapabilityCeilingExceeded {
             zone_name: zone_name.to_string(),
             requested: requested.clone(),
-            ceiling: zone.effective_ceiling.clone(),
+            ceiling,
         })
     }
 
@@ -653,7 +662,12 @@ mod tests {
     fn child_effective_ceiling_uses_intersection_with_parent() {
         let mut hierarchy = ZoneHierarchy::new("community");
         hierarchy
-            .add_zone(ZoneCreateRequest::new("owner", TrustZoneClass::Owner, 7, "root"))
+            .add_zone(ZoneCreateRequest::new(
+                "owner",
+                TrustZoneClass::Owner,
+                7,
+                "root",
+            ))
             .expect("owner");
         hierarchy
             .add_zone(
@@ -689,9 +703,17 @@ mod tests {
         let private = hierarchy.zone("private").expect("private");
         let team = hierarchy.zone("team").expect("team");
         let community = hierarchy.zone("community").expect("community");
-        assert!(private.effective_ceiling.is_subset(&hierarchy.zone("owner").expect("owner").effective_ceiling));
+        assert!(
+            private
+                .effective_ceiling
+                .is_subset(&hierarchy.zone("owner").expect("owner").effective_ceiling)
+        );
         assert!(team.effective_ceiling.is_subset(&private.effective_ceiling));
-        assert!(community.effective_ceiling.is_subset(&team.effective_ceiling));
+        assert!(
+            community
+                .effective_ceiling
+                .is_subset(&team.effective_ceiling)
+        );
     }
 
     #[test]
@@ -703,10 +725,7 @@ mod tests {
                     .with_parent("private"),
             )
             .expect_err("missing parent");
-        assert!(matches!(
-            err,
-            TrustZoneError::ParentZoneMissing { .. }
-        ));
+        assert!(matches!(err, TrustZoneError::ParentZoneMissing { .. }));
     }
 
     #[test]
@@ -756,7 +775,10 @@ mod tests {
         let event = hierarchy.events().last().expect("event");
         assert_eq!(event.event, ZoneEventType::ZoneTransition);
         assert_eq!(event.outcome, ZoneEventOutcome::Denied);
-        assert_eq!(event.error_code.as_deref(), Some(FE_ZONE_POLICY_GATE_DENIED));
+        assert_eq!(
+            event.error_code.as_deref(),
+            Some(FE_ZONE_POLICY_GATE_DENIED)
+        );
     }
 
     #[test]

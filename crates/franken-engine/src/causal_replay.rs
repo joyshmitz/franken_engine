@@ -119,6 +119,12 @@ impl NondeterminismLog {
             buf.extend_from_slice(&(entry.value.len() as u32).to_be_bytes());
             buf.extend_from_slice(&entry.value);
             buf.extend_from_slice(&entry.tick.to_be_bytes());
+            if let Some(ext_id) = &entry.extension_id {
+                buf.push(1);
+                buf.extend_from_slice(ext_id.as_bytes());
+            } else {
+                buf.push(0);
+            }
         }
         ContentHash::compute(&buf)
     }
@@ -194,9 +200,18 @@ impl DecisionSnapshot {
         buf.extend_from_slice(&self.epoch.as_u64().to_be_bytes());
         buf.extend_from_slice(&self.tick.to_be_bytes());
         buf.extend_from_slice(&self.threshold_millionths.to_be_bytes());
+        for (action, cost) in &self.loss_matrix {
+            buf.extend_from_slice(action.as_bytes());
+            buf.extend_from_slice(&cost.to_be_bytes());
+        }
+        for hash in &self.evidence_hashes {
+            buf.extend_from_slice(hash.as_bytes());
+        }
         buf.extend_from_slice(self.chosen_action.as_bytes());
         buf.extend_from_slice(&self.outcome_millionths.to_be_bytes());
         buf.extend_from_slice(self.extension_id.as_bytes());
+        buf.extend_from_slice(&self.nondeterminism_range.0.to_be_bytes());
+        buf.extend_from_slice(&self.nondeterminism_range.1.to_be_bytes());
         ContentHash::compute(&buf)
     }
 }
@@ -317,6 +332,13 @@ impl TraceRecord {
             return Err(ReplayError::ChainIntegrity {
                 entry_index: genesis.entry_index,
                 detail: "genesis entry must have index 0".into(),
+            });
+        }
+        let expected_prev_genesis = ContentHash::compute(b"genesis");
+        if genesis.prev_entry_hash != expected_prev_genesis {
+            return Err(ReplayError::ChainIntegrity {
+                entry_index: 0,
+                detail: "genesis prev_entry_hash mismatch".into(),
             });
         }
         let expected_genesis =

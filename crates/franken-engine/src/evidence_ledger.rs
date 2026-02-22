@@ -305,25 +305,9 @@ impl EvidenceEntryBuilder {
     pub fn build(self) -> Result<EvidenceEntry, LedgerError> {
         let chosen_action = self.chosen_action.ok_or(LedgerError::MissingChosenAction)?;
 
-        // Compute a deterministic content hash (simple for now — production
-        // would use SHA-256 or similar over canonical bytes).
-        let hash_input = format!(
-            "{}|{}|{}|{}|{}|{}|{}|{}",
-            self.trace_id,
-            self.decision_id,
-            self.policy_id,
-            self.epoch_id.as_u64(),
-            self.timestamp_ns,
-            self.decision_type,
-            chosen_action.action_name,
-            self.candidates.len(),
-        );
-        let evidence_hash = deterministic_hash(&hash_input);
-        let entry_id = format!("ev-{}", &evidence_hash[..16]);
-
-        Ok(EvidenceEntry {
+        let mut temp_entry = EvidenceEntry {
             schema_version: SchemaVersion::CURRENT,
-            entry_id,
+            entry_id: String::new(),
             trace_id: self.trace_id,
             decision_id: self.decision_id,
             policy_id: self.policy_id,
@@ -334,9 +318,19 @@ impl EvidenceEntryBuilder {
             constraints: self.constraints,
             chosen_action,
             witnesses: self.witnesses,
-            evidence_hash,
+            evidence_hash: String::new(),
             metadata: self.metadata,
-        })
+        };
+        // Serialize the entry with empty hash fields to form the canonical hash input.
+        // This ensures all metadata, constraints, candidates, and witnesses are cryptographically bound.
+        let hash_input = serde_json::to_string(&temp_entry).unwrap_or_default();
+        let evidence_hash = deterministic_hash(&hash_input);
+        let entry_id = format!("ev-{}", &evidence_hash[..16]);
+
+        temp_entry.entry_id = entry_id;
+        temp_entry.evidence_hash = evidence_hash;
+
+        Ok(temp_entry)
     }
 }
 

@@ -9,10 +9,12 @@
 //! Plan references: Section 10.2 item 7, Section 9I.6 (Verified Self-Replacement
 //! Architecture), Section 8.8 (cell model and constitutional rules).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
+
+use crate::security_epoch::SecurityEpoch;
 
 // ---------------------------------------------------------------------------
 // SlotId — unique, deterministic identifier for a replaceable runtime slot
@@ -338,6 +340,334 @@ impl fmt::Display for SlotRegistryError {
 impl std::error::Error for SlotRegistryError {}
 
 // ---------------------------------------------------------------------------
+// GA release guard (bd-2y5d)
+// ---------------------------------------------------------------------------
+
+/// Per-slot classification used by the GA delegate-cell release guard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ReleaseSlotClass {
+    Core,
+    NonCore,
+}
+
+impl fmt::Display for ReleaseSlotClass {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Core => f.write_str("core"),
+            Self::NonCore => f.write_str("non_core"),
+        }
+    }
+}
+
+/// Governance exemption allowing a temporary core-slot GA bypass.
+///
+/// Exemptions are only valid when:
+/// - signed risk acknowledgement is present
+/// - remediation plan is present
+/// - approval is present
+/// - expiry epoch is strictly greater than the current epoch
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CoreSlotExemption {
+    pub exemption_id: String,
+    pub slot_id: SlotId,
+    pub approved_by: String,
+    pub signed_risk_acknowledgement: String,
+    pub remediation_plan: String,
+    pub remediation_deadline_epoch: u64,
+    pub expires_at_epoch: u64,
+}
+
+impl CoreSlotExemption {
+    fn validate(
+        &self,
+        current_epoch: SecurityEpoch,
+        core_slots: &BTreeSet<SlotId>,
+    ) -> Result<(), GaReleaseGuardError> {
+        if self.exemption_id.trim().is_empty() {
+            return Err(GaReleaseGuardError::InvalidExemption {
+                exemption_id: self.exemption_id.clone(),
+                detail: "exemption_id must not be empty".to_string(),
+            });
+        }
+        if self.approved_by.trim().is_empty() {
+            return Err(GaReleaseGuardError::InvalidExemption {
+                exemption_id: self.exemption_id.clone(),
+                detail: "approved_by must not be empty".to_string(),
+            });
+        }
+        if self.signed_risk_acknowledgement.trim().is_empty() {
+            return Err(GaReleaseGuardError::InvalidExemption {
+                exemption_id: self.exemption_id.clone(),
+                detail: "signed_risk_acknowledgement must not be empty".to_string(),
+            });
+        }
+        if self.remediation_plan.trim().is_empty() {
+            return Err(GaReleaseGuardError::InvalidExemption {
+                exemption_id: self.exemption_id.clone(),
+                detail: "remediation_plan must not be empty".to_string(),
+            });
+        }
+        if self.remediation_deadline_epoch <= current_epoch.as_u64() {
+            return Err(GaReleaseGuardError::InvalidExemption {
+                exemption_id: self.exemption_id.clone(),
+                detail: "remediation_deadline_epoch must be in the future".to_string(),
+            });
+        }
+        if self.expires_at_epoch <= current_epoch.as_u64() {
+            return Err(GaReleaseGuardError::InvalidExemption {
+                exemption_id: self.exemption_id.clone(),
+                detail: "expires_at_epoch must be in the future".to_string(),
+            });
+        }
+        if !core_slots.contains(&self.slot_id) {
+            return Err(GaReleaseGuardError::InvalidExemption {
+                exemption_id: self.exemption_id.clone(),
+                detail: format!(
+                    "slot `{}` is not configured as a core slot",
+                    self.slot_id.as_str()
+                ),
+            });
+        }
+        Ok(())
+    }
+}
+
+/// Guard configuration for evaluating GA readiness under delegate constraints.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GaReleaseGuardConfig {
+    /// Explicit core-slot list that must not depend on delegates at GA.
+    pub core_slots: BTreeSet<SlotId>,
+    /// Optional threshold for non-core delegate-backed slots.
+    pub non_core_delegate_limit: Option<usize>,
+    /// Dashboard reference for replacement lineage and slot progression.
+    pub lineage_dashboard_ref: String,
+}
+
+impl Default for GaReleaseGuardConfig {
+    fn default() -> Self {
+        Self {
+            core_slots: BTreeSet::new(),
+            non_core_delegate_limit: None,
+            lineage_dashboard_ref: "frankentui://replacement-lineage".to_string(),
+        }
+    }
+}
+
+/// Signed lineage artifact for a core-slot replacement.
+///
+/// This is produced by replacement-lineage tooling and consumed by the GA
+/// release guard to verify that a native core slot has auditable provenance.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GaSignedLineageArtifact {
+    pub slot_id: SlotId,
+    pub former_delegate_digest: String,
+    pub replacement_component_digest: String,
+    pub replacement_author: String,
+    pub replacement_timestamp: String,
+    pub lineage_signature: String,
+    pub trust_anchor_ref: String,
+    pub signature_verified: bool,
+    pub equivalence_suite_ref: String,
+    pub equivalence_passed: bool,
+    pub delegate_fallback_reachable: bool,
+}
+
+impl GaSignedLineageArtifact {
+    fn validate(&self, core_slots: &BTreeSet<SlotId>) -> Result<(), GaReleaseGuardError> {
+        if !core_slots.contains(&self.slot_id) {
+            return Err(GaReleaseGuardError::InvalidLineageArtifact {
+                slot_id: self.slot_id.as_str().to_string(),
+                detail: "lineage artifact references a non-core slot".to_string(),
+            });
+        }
+        if self.former_delegate_digest.trim().is_empty() {
+            return Err(GaReleaseGuardError::InvalidLineageArtifact {
+                slot_id: self.slot_id.as_str().to_string(),
+                detail: "former_delegate_digest must not be empty".to_string(),
+            });
+        }
+        if self.replacement_component_digest.trim().is_empty() {
+            return Err(GaReleaseGuardError::InvalidLineageArtifact {
+                slot_id: self.slot_id.as_str().to_string(),
+                detail: "replacement_component_digest must not be empty".to_string(),
+            });
+        }
+        if self.replacement_author.trim().is_empty() {
+            return Err(GaReleaseGuardError::InvalidLineageArtifact {
+                slot_id: self.slot_id.as_str().to_string(),
+                detail: "replacement_author must not be empty".to_string(),
+            });
+        }
+        if self.replacement_timestamp.trim().is_empty() {
+            return Err(GaReleaseGuardError::InvalidLineageArtifact {
+                slot_id: self.slot_id.as_str().to_string(),
+                detail: "replacement_timestamp must not be empty".to_string(),
+            });
+        }
+        if self.lineage_signature.trim().is_empty() {
+            return Err(GaReleaseGuardError::InvalidLineageArtifact {
+                slot_id: self.slot_id.as_str().to_string(),
+                detail: "lineage_signature must not be empty".to_string(),
+            });
+        }
+        if self.trust_anchor_ref.trim().is_empty() {
+            return Err(GaReleaseGuardError::InvalidLineageArtifact {
+                slot_id: self.slot_id.as_str().to_string(),
+                detail: "trust_anchor_ref must not be empty".to_string(),
+            });
+        }
+        if self.equivalence_suite_ref.trim().is_empty() {
+            return Err(GaReleaseGuardError::InvalidLineageArtifact {
+                slot_id: self.slot_id.as_str().to_string(),
+                detail: "equivalence_suite_ref must not be empty".to_string(),
+            });
+        }
+        Ok(())
+    }
+}
+
+/// Input contract for GA delegate-cell release guard evaluation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GaReleaseGuardInput {
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub current_epoch: SecurityEpoch,
+    pub config: GaReleaseGuardConfig,
+    pub exemptions: Vec<CoreSlotExemption>,
+    pub lineage_artifacts: Vec<GaSignedLineageArtifact>,
+    /// Optional estimated remediation timeline per slot id.
+    pub remediation_estimates: BTreeMap<SlotId, String>,
+}
+
+/// Gate verdict for GA delegate-cell guard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GaReleaseGuardVerdict {
+    Pass,
+    Blocked,
+}
+
+impl fmt::Display for GaReleaseGuardVerdict {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Pass => f.write_str("pass"),
+            Self::Blocked => f.write_str("blocked"),
+        }
+    }
+}
+
+/// Per-slot status snapshot emitted in GA guard artifact.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GaReleaseSlotStatus {
+    pub slot_id: SlotId,
+    pub slot_kind: SlotKind,
+    pub slot_class: ReleaseSlotClass,
+    pub promotion_status: String,
+    pub delegate_backed: bool,
+    pub blocking: bool,
+    pub exemption_id: Option<String>,
+    pub lineage_signature_verified: Option<bool>,
+    pub equivalence_passed: Option<bool>,
+    pub delegate_fallback_reachable: Option<bool>,
+    pub estimated_remediation: String,
+}
+
+/// Structured guard event for audit and reproducibility.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GaReleaseGuardEvent {
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub component: String,
+    pub event: String,
+    pub outcome: String,
+    pub error_code: Option<String>,
+    pub slot_id: Option<String>,
+    pub detail: String,
+}
+
+/// Deterministic guard artifact produced by GA delegate-cell policy check.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GaReleaseGuardArtifact {
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub component: String,
+    pub verdict: GaReleaseGuardVerdict,
+    pub total_slots: usize,
+    pub core_slot_count: usize,
+    pub core_delegate_count: usize,
+    pub non_core_delegate_count: usize,
+    pub native_coverage_millionths: u64,
+    pub lineage_dashboard_ref: String,
+    pub exemptions_applied: Vec<String>,
+    pub core_slots_missing_lineage: Vec<SlotId>,
+    pub core_slots_lineage_mismatch: Vec<SlotId>,
+    pub core_slots_invalid_signature: Vec<SlotId>,
+    pub core_slots_equivalence_failed: Vec<SlotId>,
+    pub core_slots_delegate_fallback_reachable: Vec<SlotId>,
+    pub slot_statuses: Vec<GaReleaseSlotStatus>,
+    pub blocking_slots: Vec<GaReleaseSlotStatus>,
+    pub events: Vec<GaReleaseGuardEvent>,
+}
+
+/// Errors emitted by GA delegate-cell guard evaluation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GaReleaseGuardError {
+    InvalidInput {
+        field: String,
+        detail: String,
+    },
+    UnknownCoreSlot {
+        slot_id: String,
+    },
+    InvalidExemption {
+        exemption_id: String,
+        detail: String,
+    },
+    DuplicateExemption {
+        slot_id: String,
+    },
+    InvalidLineageArtifact {
+        slot_id: String,
+        detail: String,
+    },
+    DuplicateLineageArtifact {
+        slot_id: String,
+    },
+}
+
+impl fmt::Display for GaReleaseGuardError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidInput { field, detail } => {
+                write!(f, "invalid input for `{field}`: {detail}")
+            }
+            Self::UnknownCoreSlot { slot_id } => {
+                write!(f, "core slot `{slot_id}` is not registered")
+            }
+            Self::InvalidExemption {
+                exemption_id,
+                detail,
+            } => {
+                write!(f, "invalid exemption `{exemption_id}`: {detail}")
+            }
+            Self::DuplicateExemption { slot_id } => {
+                write!(f, "duplicate exemption for slot `{slot_id}`")
+            }
+            Self::InvalidLineageArtifact { slot_id, detail } => {
+                write!(f, "invalid lineage artifact for slot `{slot_id}`: {detail}")
+            }
+            Self::DuplicateLineageArtifact { slot_id } => {
+                write!(f, "duplicate lineage artifact for slot `{slot_id}`")
+            }
+        }
+    }
+}
+
+impl std::error::Error for GaReleaseGuardError {}
+
+// ---------------------------------------------------------------------------
 // SlotRegistry — the registry itself
 // ---------------------------------------------------------------------------
 
@@ -560,6 +890,332 @@ impl SlotRegistry {
         Ok(self.slots.get(id).expect("slot exists"))
     }
 
+    /// Evaluate the hard GA delegate-cell guard for core slots.
+    ///
+    /// Core slots must be native unless a valid governance exemption is present.
+    /// Exemptions are time-bounded and require signed risk acknowledgement plus
+    /// a remediation plan. Non-core slots may be constrained by an optional
+    /// delegate threshold.
+    pub fn evaluate_ga_release_guard(
+        &self,
+        input: &GaReleaseGuardInput,
+    ) -> Result<GaReleaseGuardArtifact, GaReleaseGuardError> {
+        if input.trace_id.trim().is_empty() {
+            return Err(GaReleaseGuardError::InvalidInput {
+                field: "trace_id".to_string(),
+                detail: "must not be empty".to_string(),
+            });
+        }
+        if input.decision_id.trim().is_empty() {
+            return Err(GaReleaseGuardError::InvalidInput {
+                field: "decision_id".to_string(),
+                detail: "must not be empty".to_string(),
+            });
+        }
+        if input.policy_id.trim().is_empty() {
+            return Err(GaReleaseGuardError::InvalidInput {
+                field: "policy_id".to_string(),
+                detail: "must not be empty".to_string(),
+            });
+        }
+        if input.config.lineage_dashboard_ref.trim().is_empty() {
+            return Err(GaReleaseGuardError::InvalidInput {
+                field: "lineage_dashboard_ref".to_string(),
+                detail: "must not be empty".to_string(),
+            });
+        }
+
+        for core_slot in &input.config.core_slots {
+            if !self.slots.contains_key(core_slot) {
+                return Err(GaReleaseGuardError::UnknownCoreSlot {
+                    slot_id: core_slot.as_str().to_string(),
+                });
+            }
+        }
+
+        let mut exemptions_by_slot: BTreeMap<SlotId, CoreSlotExemption> = BTreeMap::new();
+        for exemption in &input.exemptions {
+            exemption.validate(input.current_epoch, &input.config.core_slots)?;
+            if exemptions_by_slot
+                .insert(exemption.slot_id.clone(), exemption.clone())
+                .is_some()
+            {
+                return Err(GaReleaseGuardError::DuplicateExemption {
+                    slot_id: exemption.slot_id.as_str().to_string(),
+                });
+            }
+        }
+
+        let mut lineage_by_slot: BTreeMap<SlotId, GaSignedLineageArtifact> = BTreeMap::new();
+        for lineage in &input.lineage_artifacts {
+            lineage.validate(&input.config.core_slots)?;
+            if lineage_by_slot
+                .insert(lineage.slot_id.clone(), lineage.clone())
+                .is_some()
+            {
+                return Err(GaReleaseGuardError::DuplicateLineageArtifact {
+                    slot_id: lineage.slot_id.as_str().to_string(),
+                });
+            }
+        }
+
+        let mut slot_statuses = Vec::with_capacity(self.slots.len());
+        let mut events = Vec::with_capacity(self.slots.len().saturating_add(2));
+        let mut core_delegate_count = 0usize;
+        let mut non_core_delegate_count = 0usize;
+        let mut core_slots_missing_lineage = BTreeSet::new();
+        let mut core_slots_lineage_mismatch = BTreeSet::new();
+        let mut core_slots_invalid_signature = BTreeSet::new();
+        let mut core_slots_equivalence_failed = BTreeSet::new();
+        let mut core_slots_delegate_fallback_reachable = BTreeSet::new();
+
+        for (slot_id, entry) in &self.slots {
+            let slot_class = if input.config.core_slots.contains(slot_id) {
+                ReleaseSlotClass::Core
+            } else {
+                ReleaseSlotClass::NonCore
+            };
+            let delegate_backed = !entry.status.is_native();
+
+            if delegate_backed {
+                match slot_class {
+                    ReleaseSlotClass::Core => core_delegate_count += 1,
+                    ReleaseSlotClass::NonCore => non_core_delegate_count += 1,
+                }
+            }
+
+            let exemption = exemptions_by_slot.get(slot_id);
+            let mut blocking = false;
+            let mut error_code = None;
+            let mut lineage_signature_verified = None;
+            let mut equivalence_passed = None;
+            let mut delegate_fallback_reachable = None;
+            let detail = match slot_class {
+                ReleaseSlotClass::Core => {
+                    if delegate_backed {
+                        if let Some(exemption) = exemption {
+                            format!(
+                                "core slot delegate-backed, temporary exemption `{}` active until epoch {}",
+                                exemption.exemption_id, exemption.expires_at_epoch
+                            )
+                        } else {
+                            blocking = true;
+                            error_code = Some("FE-GA-CORE-DELEGATE-BLOCK".to_string());
+                            "core slot delegate-backed without governance exemption".to_string()
+                        }
+                    } else {
+                        match lineage_by_slot.get(slot_id) {
+                            None => {
+                                blocking = true;
+                                core_slots_missing_lineage.insert(slot_id.clone());
+                                error_code = Some("FE-GA-LINEAGE-MISSING".to_string());
+                                "core slot is native but missing signed lineage artifact"
+                                    .to_string()
+                            }
+                            Some(lineage) => {
+                                lineage_signature_verified = Some(lineage.signature_verified);
+                                equivalence_passed = Some(lineage.equivalence_passed);
+                                delegate_fallback_reachable =
+                                    Some(lineage.delegate_fallback_reachable);
+
+                                if lineage.replacement_component_digest
+                                    != entry.implementation_digest
+                                {
+                                    blocking = true;
+                                    core_slots_lineage_mismatch.insert(slot_id.clone());
+                                    error_code = Some("FE-GA-LINEAGE-DIGEST-MISMATCH".to_string());
+                                    format!(
+                                        "lineage digest `{}` does not match active digest `{}`",
+                                        lineage.replacement_component_digest,
+                                        entry.implementation_digest
+                                    )
+                                } else if !lineage.signature_verified {
+                                    blocking = true;
+                                    core_slots_invalid_signature.insert(slot_id.clone());
+                                    error_code =
+                                        Some("FE-GA-LINEAGE-SIGNATURE-INVALID".to_string());
+                                    "signed lineage artifact failed trust-anchor verification"
+                                        .to_string()
+                                } else if !lineage.equivalence_passed {
+                                    blocking = true;
+                                    core_slots_equivalence_failed.insert(slot_id.clone());
+                                    error_code = Some("FE-GA-EQUIVALENCE-FAILED".to_string());
+                                    format!(
+                                        "behavioral equivalence suite `{}` did not pass",
+                                        lineage.equivalence_suite_ref
+                                    )
+                                } else if lineage.delegate_fallback_reachable {
+                                    blocking = true;
+                                    core_slots_delegate_fallback_reachable.insert(slot_id.clone());
+                                    error_code =
+                                        Some("FE-GA-DELEGATE-FALLBACK-REACHABLE".to_string());
+                                    "delegate fallback path remains reachable in GA lane"
+                                        .to_string()
+                                } else {
+                                    "core slot is native with verified signed lineage and unreachable delegate fallback".to_string()
+                                }
+                            }
+                        }
+                    }
+                }
+                ReleaseSlotClass::NonCore => {
+                    if delegate_backed {
+                        "non-core slot delegate-backed".to_string()
+                    } else {
+                        "non-core slot is native".to_string()
+                    }
+                }
+            };
+
+            let estimated_remediation = input
+                .remediation_estimates
+                .get(slot_id)
+                .cloned()
+                .unwrap_or_else(|| "unknown".to_string());
+            slot_statuses.push(GaReleaseSlotStatus {
+                slot_id: slot_id.clone(),
+                slot_kind: entry.kind,
+                slot_class,
+                promotion_status: entry.status.to_string(),
+                delegate_backed,
+                blocking,
+                exemption_id: exemption.map(|ex| ex.exemption_id.clone()),
+                lineage_signature_verified,
+                equivalence_passed,
+                delegate_fallback_reachable,
+                estimated_remediation,
+            });
+            events.push(GaReleaseGuardEvent {
+                trace_id: input.trace_id.clone(),
+                decision_id: input.decision_id.clone(),
+                policy_id: input.policy_id.clone(),
+                component: "ga_release_delegate_guard".to_string(),
+                event: "slot_status_evaluated".to_string(),
+                outcome: if blocking { "fail" } else { "pass" }.to_string(),
+                error_code,
+                slot_id: Some(slot_id.as_str().to_string()),
+                detail,
+            });
+        }
+
+        let non_core_limit_breached = input
+            .config
+            .non_core_delegate_limit
+            .map(|limit| non_core_delegate_count > limit)
+            .unwrap_or(false);
+
+        if non_core_limit_breached {
+            for status in &mut slot_statuses {
+                if status.slot_class == ReleaseSlotClass::NonCore && status.delegate_backed {
+                    status.blocking = true;
+                }
+            }
+            events.push(GaReleaseGuardEvent {
+                trace_id: input.trace_id.clone(),
+                decision_id: input.decision_id.clone(),
+                policy_id: input.policy_id.clone(),
+                component: "ga_release_delegate_guard".to_string(),
+                event: "non_core_delegate_limit_breached".to_string(),
+                outcome: "fail".to_string(),
+                error_code: Some("FE-GA-NONCORE-DELEGATE-LIMIT".to_string()),
+                slot_id: None,
+                detail: format!(
+                    "non-core delegate slots {} exceeds configured limit {}",
+                    non_core_delegate_count,
+                    input.config.non_core_delegate_limit.unwrap_or(0)
+                ),
+            });
+        }
+
+        let mut blocking_slots: Vec<GaReleaseSlotStatus> = slot_statuses
+            .iter()
+            .filter(|status| status.blocking)
+            .cloned()
+            .collect();
+        blocking_slots.sort_by(|a, b| a.slot_id.cmp(&b.slot_id));
+
+        let verdict = if blocking_slots.is_empty() {
+            GaReleaseGuardVerdict::Pass
+        } else {
+            GaReleaseGuardVerdict::Blocked
+        };
+
+        let mut exemptions_applied = slot_statuses
+            .iter()
+            .filter_map(|status| status.exemption_id.clone())
+            .collect::<Vec<_>>();
+        exemptions_applied.sort();
+
+        let core_slots_missing_lineage = core_slots_missing_lineage.into_iter().collect::<Vec<_>>();
+        let core_slots_lineage_mismatch =
+            core_slots_lineage_mismatch.into_iter().collect::<Vec<_>>();
+        let core_slots_invalid_signature =
+            core_slots_invalid_signature.into_iter().collect::<Vec<_>>();
+        let core_slots_equivalence_failed = core_slots_equivalence_failed
+            .into_iter()
+            .collect::<Vec<_>>();
+        let core_slots_delegate_fallback_reachable = core_slots_delegate_fallback_reachable
+            .into_iter()
+            .collect::<Vec<_>>();
+
+        let core_slot_count = input.config.core_slots.len();
+        let total_slots = self.slots.len();
+        let native_coverage_millionths = if total_slots == 0 {
+            0
+        } else {
+            (self.native_count() as u64).saturating_mul(1_000_000) / total_slots as u64
+        };
+
+        events.push(GaReleaseGuardEvent {
+            trace_id: input.trace_id.clone(),
+            decision_id: input.decision_id.clone(),
+            policy_id: input.policy_id.clone(),
+            component: "ga_release_delegate_guard".to_string(),
+            event: "ga_release_guard_verdict".to_string(),
+            outcome: verdict.to_string(),
+            error_code: if verdict == GaReleaseGuardVerdict::Pass {
+                None
+            } else {
+                Some("FE-GA-GATE-BLOCKED".to_string())
+            },
+            slot_id: None,
+            detail: format!(
+                "core_delegate_count={}, non_core_delegate_count={}, blocking_slots={}, missing_lineage={}, lineage_mismatch={}, invalid_signature={}, equivalence_failed={}, delegate_fallback_reachable={}",
+                core_delegate_count,
+                non_core_delegate_count,
+                blocking_slots.len(),
+                core_slots_missing_lineage.len(),
+                core_slots_lineage_mismatch.len(),
+                core_slots_invalid_signature.len(),
+                core_slots_equivalence_failed.len(),
+                core_slots_delegate_fallback_reachable.len()
+            ),
+        });
+
+        Ok(GaReleaseGuardArtifact {
+            trace_id: input.trace_id.clone(),
+            decision_id: input.decision_id.clone(),
+            policy_id: input.policy_id.clone(),
+            component: "ga_release_delegate_guard".to_string(),
+            verdict,
+            total_slots,
+            core_slot_count,
+            core_delegate_count,
+            non_core_delegate_count,
+            native_coverage_millionths,
+            lineage_dashboard_ref: input.config.lineage_dashboard_ref.clone(),
+            exemptions_applied,
+            core_slots_missing_lineage,
+            core_slots_lineage_mismatch,
+            core_slots_invalid_signature,
+            core_slots_equivalence_failed,
+            core_slots_delegate_fallback_reachable,
+            slot_statuses,
+            blocking_slots,
+            events,
+        })
+    }
+
     /// Check whether all slots are native (GA readiness gate per
     /// Section 8.8 rule 5).
     pub fn is_ga_ready(&self) -> bool {
@@ -608,6 +1264,96 @@ mod tests {
                 SlotCapability::HeapAlloc,
                 SlotCapability::InvokeHostcall,
             ],
+        }
+    }
+
+    fn register_slot(
+        registry: &mut SlotRegistry,
+        id: &str,
+        kind: SlotKind,
+        digest: &str,
+    ) -> SlotId {
+        let slot_id = SlotId::new(id).expect("valid slot id");
+        registry
+            .register_delegate(
+                slot_id.clone(),
+                kind,
+                test_authority(),
+                digest.to_string(),
+                "2026-02-21T00:00:00Z".to_string(),
+            )
+            .expect("register delegate");
+        slot_id
+    }
+
+    fn promote_slot(registry: &mut SlotRegistry, id: &SlotId, digest: &str) {
+        registry
+            .begin_candidacy(
+                id,
+                format!("{digest}-candidate"),
+                "2026-02-21T00:00:01Z".to_string(),
+            )
+            .expect("begin candidacy");
+        registry
+            .promote(
+                id,
+                digest.to_string(),
+                &narrower_authority(),
+                format!("receipt-{digest}"),
+                "2026-02-21T00:00:02Z".to_string(),
+            )
+            .expect("promote");
+    }
+
+    fn guard_input(
+        core_slots: BTreeSet<SlotId>,
+        non_core_delegate_limit: Option<usize>,
+    ) -> GaReleaseGuardInput {
+        GaReleaseGuardInput {
+            trace_id: "trace-ga-guard-001".to_string(),
+            decision_id: "decision-ga-guard-001".to_string(),
+            policy_id: "policy-ga-zero-delegate-core-v1".to_string(),
+            current_epoch: SecurityEpoch::from_raw(42),
+            config: GaReleaseGuardConfig {
+                core_slots,
+                non_core_delegate_limit,
+                lineage_dashboard_ref: "frankentui://replacement-lineage/ga-readiness".to_string(),
+            },
+            exemptions: Vec::new(),
+            lineage_artifacts: Vec::new(),
+            remediation_estimates: BTreeMap::new(),
+        }
+    }
+
+    fn lineage_artifact(
+        slot_id: &SlotId,
+        former_delegate_digest: &str,
+        replacement_component_digest: &str,
+    ) -> GaSignedLineageArtifact {
+        GaSignedLineageArtifact {
+            slot_id: slot_id.clone(),
+            former_delegate_digest: former_delegate_digest.to_string(),
+            replacement_component_digest: replacement_component_digest.to_string(),
+            replacement_author: "native-team".to_string(),
+            replacement_timestamp: "2026-02-21T00:00:03Z".to_string(),
+            lineage_signature: "sig:lineage-proof".to_string(),
+            trust_anchor_ref: "trust-anchor://ga-lineage-v1".to_string(),
+            signature_verified: true,
+            equivalence_suite_ref: "suite://ga-core-equivalence-v1".to_string(),
+            equivalence_passed: true,
+            delegate_fallback_reachable: false,
+        }
+    }
+
+    fn exemption_for(slot_id: SlotId) -> CoreSlotExemption {
+        CoreSlotExemption {
+            exemption_id: format!("exemption-{}", slot_id.as_str()),
+            slot_id,
+            approved_by: "gov-council".to_string(),
+            signed_risk_acknowledgement: "sig:risk-ack-001".to_string(),
+            remediation_plan: "finish native replacement within one sprint".to_string(),
+            remediation_deadline_epoch: 50,
+            expires_at_epoch: 48,
         }
     }
 
@@ -937,6 +1683,308 @@ mod tests {
         )
         .unwrap();
         assert!((reg.native_coverage() - 0.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn ga_guard_passes_when_core_slots_native_and_non_core_within_limit() {
+        let mut reg = SlotRegistry::new();
+        let parser = register_slot(
+            &mut reg,
+            "parser",
+            SlotKind::Parser,
+            "sha256:delegate-parser",
+        );
+        let interp = register_slot(
+            &mut reg,
+            "interpreter",
+            SlotKind::Interpreter,
+            "sha256:delegate-interpreter",
+        );
+        register_slot(
+            &mut reg,
+            "builtins",
+            SlotKind::Builtins,
+            "sha256:delegate-builtins",
+        );
+
+        promote_slot(&mut reg, &parser, "sha256:native-parser");
+        promote_slot(&mut reg, &interp, "sha256:native-interpreter");
+
+        let core_slots = BTreeSet::from([parser.clone(), interp.clone()]);
+        let mut input = guard_input(core_slots, Some(1));
+        input.remediation_estimates.insert(
+            SlotId::new("builtins").expect("valid"),
+            "2 weeks".to_string(),
+        );
+        input.lineage_artifacts = vec![
+            lineage_artifact(&parser, "sha256:delegate-parser", "sha256:native-parser"),
+            lineage_artifact(
+                &interp,
+                "sha256:delegate-interpreter",
+                "sha256:native-interpreter",
+            ),
+        ];
+
+        let artifact = reg
+            .evaluate_ga_release_guard(&input)
+            .expect("guard should pass");
+
+        assert_eq!(artifact.verdict, GaReleaseGuardVerdict::Pass);
+        assert_eq!(artifact.core_delegate_count, 0);
+        assert_eq!(artifact.non_core_delegate_count, 1);
+        assert!(artifact.blocking_slots.is_empty());
+        assert!(
+            artifact
+                .events
+                .iter()
+                .any(|event| event.event == "ga_release_guard_verdict" && event.outcome == "pass")
+        );
+    }
+
+    #[test]
+    fn ga_guard_blocks_delegate_backed_core_slot_without_exemption() {
+        let mut reg = SlotRegistry::new();
+        let parser = register_slot(
+            &mut reg,
+            "parser",
+            SlotKind::Parser,
+            "sha256:delegate-parser",
+        );
+        let interpreter = register_slot(
+            &mut reg,
+            "interpreter",
+            SlotKind::Interpreter,
+            "sha256:delegate-interpreter",
+        );
+        promote_slot(&mut reg, &interpreter, "sha256:native-interpreter");
+
+        let core_slots = BTreeSet::from([parser.clone(), interpreter.clone()]);
+        let mut input = guard_input(core_slots, Some(2));
+        input
+            .remediation_estimates
+            .insert(parser.clone(), "5 days".to_string());
+        input.lineage_artifacts = vec![lineage_artifact(
+            &interpreter,
+            "sha256:delegate-interpreter",
+            "sha256:native-interpreter",
+        )];
+
+        let artifact = reg
+            .evaluate_ga_release_guard(&input)
+            .expect("guard evaluation should complete");
+
+        assert_eq!(artifact.verdict, GaReleaseGuardVerdict::Blocked);
+        assert_eq!(artifact.core_delegate_count, 1);
+        assert_eq!(artifact.blocking_slots.len(), 1);
+        assert_eq!(artifact.blocking_slots[0].slot_id, parser);
+        assert!(artifact.events.iter().any(|event| {
+            event.event == "slot_status_evaluated"
+                && event.slot_id.as_deref() == Some("parser")
+                && event.error_code.as_deref() == Some("FE-GA-CORE-DELEGATE-BLOCK")
+        }));
+    }
+
+    #[test]
+    fn ga_guard_accepts_valid_core_exemption() {
+        let mut reg = SlotRegistry::new();
+        let parser = register_slot(
+            &mut reg,
+            "parser",
+            SlotKind::Parser,
+            "sha256:delegate-parser",
+        );
+        let core_slots = BTreeSet::from([parser.clone()]);
+        let mut input = guard_input(core_slots, None);
+        input.exemptions = vec![exemption_for(parser.clone())];
+
+        let artifact = reg
+            .evaluate_ga_release_guard(&input)
+            .expect("exemption should allow pass");
+
+        assert_eq!(artifact.verdict, GaReleaseGuardVerdict::Pass);
+        assert_eq!(
+            artifact.exemptions_applied,
+            vec!["exemption-parser".to_string()]
+        );
+        let parser_status = artifact
+            .slot_statuses
+            .iter()
+            .find(|status| status.slot_id == parser)
+            .expect("parser status present");
+        assert!(!parser_status.blocking);
+        assert_eq!(
+            parser_status.exemption_id.as_deref(),
+            Some("exemption-parser")
+        );
+    }
+
+    #[test]
+    fn ga_guard_rejects_expired_exemption() {
+        let mut reg = SlotRegistry::new();
+        let parser = register_slot(
+            &mut reg,
+            "parser",
+            SlotKind::Parser,
+            "sha256:delegate-parser",
+        );
+        let core_slots = BTreeSet::from([parser.clone()]);
+        let mut input = guard_input(core_slots, None);
+        let mut exemption = exemption_for(parser);
+        exemption.expires_at_epoch = 42;
+        input.exemptions = vec![exemption];
+
+        let error = reg
+            .evaluate_ga_release_guard(&input)
+            .expect_err("expired exemption must fail");
+        assert!(matches!(
+            error,
+            GaReleaseGuardError::InvalidExemption { detail, .. }
+            if detail == "expires_at_epoch must be in the future"
+        ));
+    }
+
+    #[test]
+    fn ga_guard_blocks_when_non_core_delegate_limit_is_exceeded() {
+        let mut reg = SlotRegistry::new();
+        let parser = register_slot(
+            &mut reg,
+            "parser",
+            SlotKind::Parser,
+            "sha256:delegate-parser",
+        );
+        promote_slot(&mut reg, &parser, "sha256:native-parser");
+
+        let builtins = register_slot(
+            &mut reg,
+            "builtins",
+            SlotKind::Builtins,
+            "sha256:delegate-builtins",
+        );
+        let module_loader = register_slot(
+            &mut reg,
+            "module-loader",
+            SlotKind::ModuleLoader,
+            "sha256:delegate-module-loader",
+        );
+
+        let core_slots = BTreeSet::from([parser]);
+        let mut input = guard_input(core_slots.clone(), Some(1));
+        input.lineage_artifacts = vec![lineage_artifact(
+            core_slots.iter().next().expect("core slot"),
+            "sha256:delegate-parser",
+            "sha256:native-parser",
+        )];
+
+        let artifact = reg
+            .evaluate_ga_release_guard(&input)
+            .expect("guard evaluation should complete");
+
+        assert_eq!(artifact.verdict, GaReleaseGuardVerdict::Blocked);
+        assert_eq!(artifact.non_core_delegate_count, 2);
+        assert_eq!(artifact.blocking_slots.len(), 2);
+        assert_eq!(artifact.blocking_slots[0].slot_id, builtins);
+        assert_eq!(artifact.blocking_slots[1].slot_id, module_loader);
+        assert!(artifact.events.iter().any(|event| {
+            event.event == "non_core_delegate_limit_breached"
+                && event.error_code.as_deref() == Some("FE-GA-NONCORE-DELEGATE-LIMIT")
+        }));
+    }
+
+    #[test]
+    fn ga_guard_blocks_native_core_slot_without_lineage_artifact() {
+        let mut reg = SlotRegistry::new();
+        let parser = register_slot(
+            &mut reg,
+            "parser",
+            SlotKind::Parser,
+            "sha256:delegate-parser",
+        );
+        promote_slot(&mut reg, &parser, "sha256:native-parser");
+
+        let core_slots = BTreeSet::from([parser.clone()]);
+        let input = guard_input(core_slots, None);
+
+        let artifact = reg
+            .evaluate_ga_release_guard(&input)
+            .expect("guard evaluation should complete");
+
+        assert_eq!(artifact.verdict, GaReleaseGuardVerdict::Blocked);
+        assert_eq!(artifact.core_slots_missing_lineage, vec![parser]);
+        assert!(artifact.events.iter().any(|event| {
+            event.slot_id.as_deref() == Some("parser")
+                && event.error_code.as_deref() == Some("FE-GA-LINEAGE-MISSING")
+        }));
+    }
+
+    #[test]
+    fn ga_guard_blocks_on_invalid_signature_and_reachable_delegate_fallback() {
+        let mut reg = SlotRegistry::new();
+        let parser = register_slot(
+            &mut reg,
+            "parser",
+            SlotKind::Parser,
+            "sha256:delegate-parser",
+        );
+        promote_slot(&mut reg, &parser, "sha256:native-parser");
+
+        let core_slots = BTreeSet::from([parser.clone()]);
+        let mut input = guard_input(core_slots, None);
+        let mut bad_lineage =
+            lineage_artifact(&parser, "sha256:delegate-parser", "sha256:native-parser");
+        bad_lineage.signature_verified = false;
+        bad_lineage.delegate_fallback_reachable = true;
+        input.lineage_artifacts = vec![bad_lineage];
+
+        let artifact = reg
+            .evaluate_ga_release_guard(&input)
+            .expect("guard evaluation should complete");
+
+        assert_eq!(artifact.verdict, GaReleaseGuardVerdict::Blocked);
+        assert_eq!(artifact.core_slots_invalid_signature, vec![parser.clone()]);
+        assert!(
+            artifact
+                .core_slots_delegate_fallback_reachable
+                .iter()
+                .all(|slot| slot != &parser),
+            "signature failure should fail before fallback check for deterministic ordering"
+        );
+        assert!(artifact.events.iter().any(|event| {
+            event.slot_id.as_deref() == Some("parser")
+                && event.error_code.as_deref() == Some("FE-GA-LINEAGE-SIGNATURE-INVALID")
+        }));
+    }
+
+    #[test]
+    fn ga_guard_blocks_when_delegate_fallback_path_is_reachable() {
+        let mut reg = SlotRegistry::new();
+        let parser = register_slot(
+            &mut reg,
+            "parser",
+            SlotKind::Parser,
+            "sha256:delegate-parser",
+        );
+        promote_slot(&mut reg, &parser, "sha256:native-parser");
+
+        let core_slots = BTreeSet::from([parser.clone()]);
+        let mut input = guard_input(core_slots, None);
+        let mut lineage =
+            lineage_artifact(&parser, "sha256:delegate-parser", "sha256:native-parser");
+        lineage.delegate_fallback_reachable = true;
+        input.lineage_artifacts = vec![lineage];
+
+        let artifact = reg
+            .evaluate_ga_release_guard(&input)
+            .expect("guard evaluation should complete");
+
+        assert_eq!(artifact.verdict, GaReleaseGuardVerdict::Blocked);
+        assert_eq!(
+            artifact.core_slots_delegate_fallback_reachable,
+            vec![parser.clone()]
+        );
+        assert!(artifact.events.iter().any(|event| {
+            event.slot_id.as_deref() == Some("parser")
+                && event.error_code.as_deref() == Some("FE-GA-DELEGATE-FALLBACK-REACHABLE")
+        }));
     }
 
     // -- Deterministic iteration order --

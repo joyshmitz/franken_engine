@@ -11,15 +11,16 @@
 //! Cross-refs: bd-7rwi (ReplacementReceipt schema), bd-1g5c (promotion gate
 //! runner produces the receipts), bd-1ilz (frankensqlite-backed index).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
 use crate::hash_tiers::ContentHash;
 use crate::security_epoch::SecurityEpoch;
-use crate::self_replacement::ReplacementReceipt;
+use crate::self_replacement::{ReplacementReceipt, ValidationArtifactKind};
 use crate::slot_registry::SlotId;
+use crate::storage_adapter::{EventContext, StorageAdapter, StorageError, StoreKind, StoreQuery};
 
 // ---------------------------------------------------------------------------
 // Replacement types
@@ -1030,6 +1031,1054 @@ impl ReplacementLineageLog {
             error_code: error_code.map(|s| s.to_string()),
         });
     }
+}
+
+// ---------------------------------------------------------------------------
+// frankensqlite-backed lineage/evidence index (bd-1ilz)
+// ---------------------------------------------------------------------------
+
+const TABLE_REPLACEMENT_RECEIPTS: &str = "replacement_receipts";
+const TABLE_DEMOTION_RECEIPTS: &str = "demotion_receipts";
+const TABLE_LINEAGE_CHAIN: &str = "lineage_chain";
+const TABLE_REPLACEMENT_BY_HASH: &str = "replacement_by_hash";
+const TABLE_DEMOTION_BY_HASH: &str = "demotion_by_hash";
+const TABLE_EVIDENCE_INDEX: &str = "evidence_index";
+
+/// Stable evidence categories used by replay-join queries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum EvidenceCategory {
+    GateResult,
+    PerformanceBenchmark,
+    SentinelRiskScore,
+    DifferentialExecutionLog,
+    Additional,
+}
+
+impl EvidenceCategory {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::GateResult => "gate_result",
+            Self::PerformanceBenchmark => "performance_benchmark",
+            Self::SentinelRiskScore => "sentinel_risk_score",
+            Self::DifferentialExecutionLog => "differential_execution_log",
+            Self::Additional => "additional",
+        }
+    }
+}
+
+impl fmt::Display for EvidenceCategory {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Input evidence pointer attached while indexing a receipt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EvidencePointerInput {
+    pub category: EvidenceCategory,
+    pub artifact_digest: String,
+    pub passed: Option<bool>,
+    pub summary: String,
+}
+
+/// Evidence pointer persisted in the evidence index.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EvidencePointer {
+    pub receipt_id: String,
+    pub category: EvidenceCategory,
+    pub artifact_digest: String,
+    pub passed: Option<bool>,
+    pub summary: String,
+}
+
+impl EvidencePointer {
+    fn from_input(receipt_id: &str, input: EvidencePointerInput) -> Self {
+        Self {
+            receipt_id: receipt_id.to_string(),
+            category: input.category,
+            artifact_digest: input.artifact_digest,
+            passed: input.passed,
+            summary: input.summary,
+        }
+    }
+}
+
+fn category_from_validation_kind(kind: ValidationArtifactKind) -> EvidenceCategory {
+    match kind {
+        ValidationArtifactKind::EquivalenceResult => EvidenceCategory::DifferentialExecutionLog,
+        ValidationArtifactKind::CapabilityPreservation => EvidenceCategory::GateResult,
+        ValidationArtifactKind::PerformanceBenchmark => EvidenceCategory::PerformanceBenchmark,
+        ValidationArtifactKind::AdversarialSurvival => EvidenceCategory::GateResult,
+    }
+}
+
+/// Canonical replacement receipt record persisted in the lineage index.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReplacementReceiptRecord {
+    pub receipt_id: String,
+    pub slot_id: SlotId,
+    pub replacement_kind: ReplacementKind,
+    pub old_cell_digest: String,
+    pub new_cell_digest: String,
+    pub promotion_timestamp_ns: u64,
+    pub epoch: SecurityEpoch,
+    pub receipt_content_hash: String,
+    pub receipt: ReplacementReceipt,
+}
+
+/// Input for indexing a demotion receipt artifact.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DemotionReceiptInput {
+    pub receipt_id: String,
+    pub slot_id: SlotId,
+    pub demoted_cell_digest: String,
+    pub restored_cell_digest: String,
+    pub demotion_reason: String,
+    pub timestamp_ns: u64,
+    pub rollback_token_used: String,
+    pub linked_replacement_receipt_id: Option<String>,
+    pub evidence: Vec<EvidencePointerInput>,
+}
+
+/// Canonical demotion receipt record persisted in the lineage index.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DemotionReceiptRecord {
+    pub receipt_id: String,
+    pub slot_id: SlotId,
+    pub demoted_cell_digest: String,
+    pub restored_cell_digest: String,
+    pub demotion_reason: String,
+    pub timestamp_ns: u64,
+    pub rollback_token_used: String,
+    pub linked_replacement_receipt_id: Option<String>,
+    pub receipt_content_hash: String,
+}
+
+/// Entry in the ordered lineage-chain index.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LineageChainEntry {
+    pub slot_id: SlotId,
+    pub timestamp_ns: u64,
+    pub receipt_id: String,
+    pub kind: ReplacementKind,
+    pub from_cell_digest: String,
+    pub to_cell_digest: String,
+    pub receipt_content_hash: String,
+}
+
+/// Time-range query over a slot's lineage.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct SlotLineageQuery {
+    pub min_timestamp_ns: Option<u64>,
+    pub max_timestamp_ns: Option<u64>,
+    pub limit: Option<usize>,
+}
+
+impl SlotLineageQuery {
+    fn matches(&self, entry: &LineageChainEntry) -> bool {
+        if let Some(min_ts) = self.min_timestamp_ns
+            && entry.timestamp_ns < min_ts
+        {
+            return false;
+        }
+        if let Some(max_ts) = self.max_timestamp_ns
+            && entry.timestamp_ns > max_ts
+        {
+            return false;
+        }
+        true
+    }
+}
+
+/// Query for deterministic replay joins.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ReplayJoinQuery {
+    pub slot_id: Option<SlotId>,
+    pub min_timestamp_ns: Option<u64>,
+    pub max_timestamp_ns: Option<u64>,
+    pub limit: Option<usize>,
+}
+
+/// Joined view for replay/audit/operator flows.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReplayJoinRow {
+    pub slot_id: SlotId,
+    pub replacement_receipt_id: String,
+    pub replacement_kind: ReplacementKind,
+    pub old_cell_digest: String,
+    pub new_cell_digest: String,
+    pub promotion_timestamp_ns: u64,
+    pub replacement_content_hash: String,
+    pub demotion_receipt_id: Option<String>,
+    pub demotion_reason: Option<String>,
+    pub demotion_timestamp_ns: Option<u64>,
+    pub gate_results: Vec<EvidencePointer>,
+    pub performance_benchmarks: Vec<EvidencePointer>,
+    pub sentinel_risk_scores: Vec<EvidencePointer>,
+    pub differential_execution_logs: Vec<EvidencePointer>,
+    pub additional_evidence: Vec<EvidencePointer>,
+}
+
+/// Structured index event emitted by lineage-index operations.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LineageIndexEvent {
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub component: String,
+    pub event: String,
+    pub outcome: String,
+    pub error_code: Option<String>,
+}
+
+/// Stable error taxonomy for lineage-index operations.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LineageIndexError {
+    Storage(StorageError),
+    Serialization { operation: String, detail: String },
+    CorruptRecord { key: String, detail: String },
+    InvalidInput { detail: String },
+}
+
+impl LineageIndexError {
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::Storage(_) => "FE-LIDX-0001",
+            Self::Serialization { .. } => "FE-LIDX-0002",
+            Self::CorruptRecord { .. } => "FE-LIDX-0003",
+            Self::InvalidInput { .. } => "FE-LIDX-0004",
+        }
+    }
+}
+
+impl fmt::Display for LineageIndexError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Storage(err) => write!(f, "storage error: {err}"),
+            Self::Serialization { operation, detail } => {
+                write!(f, "serialization error ({operation}): {detail}")
+            }
+            Self::CorruptRecord { key, detail } => {
+                write!(f, "corrupt record `{key}`: {detail}")
+            }
+            Self::InvalidInput { detail } => write!(f, "invalid input: {detail}"),
+        }
+    }
+}
+
+impl std::error::Error for LineageIndexError {}
+
+impl From<StorageError> for LineageIndexError {
+    fn from(value: StorageError) -> Self {
+        Self::Storage(value)
+    }
+}
+
+/// Typed lineage/evidence index backed by the storage-adapter contract.
+///
+/// Schema coverage:
+/// - replacement receipts table
+/// - demotion receipts table
+/// - lineage chain table
+/// - evidence index table
+/// - content-address lookup tables (replacement/demotion by content hash)
+#[derive(Debug)]
+pub struct ReplacementLineageEvidenceIndex<A: StorageAdapter> {
+    adapter: A,
+    events: Vec<LineageIndexEvent>,
+}
+
+impl<A: StorageAdapter> ReplacementLineageEvidenceIndex<A> {
+    pub fn new(adapter: A) -> Self {
+        Self {
+            adapter,
+            events: Vec::new(),
+        }
+    }
+
+    pub fn into_inner(self) -> A {
+        self.adapter
+    }
+
+    pub fn events(&self) -> &[LineageIndexEvent] {
+        &self.events
+    }
+
+    fn emit_event(
+        &mut self,
+        context: &EventContext,
+        event: &str,
+        outcome: &str,
+        error: Option<&LineageIndexError>,
+    ) {
+        self.events.push(LineageIndexEvent {
+            trace_id: context.trace_id.clone(),
+            decision_id: context.decision_id.clone(),
+            policy_id: context.policy_id.clone(),
+            component: "replacement_lineage_index".to_string(),
+            event: event.to_string(),
+            outcome: outcome.to_string(),
+            error_code: error.map(|err| err.code().to_string()),
+        });
+    }
+
+    /// Index a replacement receipt and its validation evidence.
+    pub fn index_replacement_receipt(
+        &mut self,
+        receipt: &ReplacementReceipt,
+        replacement_kind: ReplacementKind,
+        supplemental_evidence: &[EvidencePointerInput],
+        context: &EventContext,
+    ) -> Result<ReplacementReceiptRecord, LineageIndexError> {
+        let result = (|| {
+            let receipt_id = hex::encode(receipt.receipt_id.as_bytes());
+            let receipt_bytes =
+                serde_json::to_vec(receipt).map_err(|err| LineageIndexError::Serialization {
+                    operation: "serialize replacement receipt".to_string(),
+                    detail: err.to_string(),
+                })?;
+            let receipt_content_hash = hex::encode(ContentHash::compute(&receipt_bytes).as_bytes());
+
+            let record = ReplacementReceiptRecord {
+                receipt_id: receipt_id.clone(),
+                slot_id: receipt.slot_id.clone(),
+                replacement_kind,
+                old_cell_digest: receipt.old_cell_digest.clone(),
+                new_cell_digest: receipt.new_cell_digest.clone(),
+                promotion_timestamp_ns: receipt.timestamp_ns,
+                epoch: receipt.epoch,
+                receipt_content_hash: receipt_content_hash.clone(),
+                receipt: receipt.clone(),
+            };
+
+            let key = replacement_receipt_key(
+                &record.slot_id,
+                record.promotion_timestamp_ns,
+                &record.receipt_id,
+            );
+            let mut metadata = table_metadata(TABLE_REPLACEMENT_RECEIPTS);
+            metadata.insert("slot_id".to_string(), record.slot_id.as_str().to_string());
+            metadata.insert(
+                "old_cell_digest".to_string(),
+                record.old_cell_digest.clone(),
+            );
+            metadata.insert(
+                "new_cell_digest".to_string(),
+                record.new_cell_digest.clone(),
+            );
+            metadata.insert(
+                "promotion_timestamp_ns".to_string(),
+                record.promotion_timestamp_ns.to_string(),
+            );
+            metadata.insert(
+                "replacement_kind".to_string(),
+                record.replacement_kind.as_str().to_string(),
+            );
+            metadata.insert(
+                "receipt_content_hash".to_string(),
+                record.receipt_content_hash.clone(),
+            );
+
+            let value =
+                serde_json::to_vec(&record).map_err(|err| LineageIndexError::Serialization {
+                    operation: "serialize replacement record".to_string(),
+                    detail: err.to_string(),
+                })?;
+            self.adapter.put(
+                StoreKind::ReplacementLineage,
+                key.clone(),
+                value,
+                metadata,
+                context,
+            )?;
+
+            self.adapter.put(
+                StoreKind::ReplacementLineage,
+                replacement_by_hash_key(&record.receipt_content_hash),
+                key.as_bytes().to_vec(),
+                table_metadata(TABLE_REPLACEMENT_BY_HASH),
+                context,
+            )?;
+
+            let chain_entry = LineageChainEntry {
+                slot_id: record.slot_id.clone(),
+                timestamp_ns: record.promotion_timestamp_ns,
+                receipt_id: record.receipt_id.clone(),
+                kind: record.replacement_kind,
+                from_cell_digest: record.old_cell_digest.clone(),
+                to_cell_digest: record.new_cell_digest.clone(),
+                receipt_content_hash: record.receipt_content_hash.clone(),
+            };
+            let chain_key = lineage_chain_key(
+                &chain_entry.slot_id,
+                chain_entry.timestamp_ns,
+                &chain_entry.receipt_id,
+            );
+            let mut chain_meta = table_metadata(TABLE_LINEAGE_CHAIN);
+            chain_meta.insert(
+                "slot_id".to_string(),
+                chain_entry.slot_id.as_str().to_string(),
+            );
+            chain_meta.insert("receipt_id".to_string(), chain_entry.receipt_id.clone());
+            let chain_value = serde_json::to_vec(&chain_entry).map_err(|err| {
+                LineageIndexError::Serialization {
+                    operation: "serialize lineage chain entry".to_string(),
+                    detail: err.to_string(),
+                }
+            })?;
+            self.adapter.put(
+                StoreKind::ReplacementLineage,
+                chain_key,
+                chain_value,
+                chain_meta,
+                context,
+            )?;
+
+            let mut evidence_inputs = Vec::with_capacity(
+                receipt
+                    .validation_artifacts
+                    .len()
+                    .saturating_add(supplemental_evidence.len()),
+            );
+            for artifact in &receipt.validation_artifacts {
+                evidence_inputs.push(EvidencePointerInput {
+                    category: category_from_validation_kind(artifact.kind),
+                    artifact_digest: artifact.artifact_digest.clone(),
+                    passed: Some(artifact.passed),
+                    summary: artifact.summary.clone(),
+                });
+            }
+            evidence_inputs.extend_from_slice(supplemental_evidence);
+            self.store_evidence(&record.receipt_id, evidence_inputs, context)?;
+
+            Ok(record)
+        })();
+
+        self.emit_event(
+            context,
+            "index_replacement_receipt",
+            if result.is_ok() { "ok" } else { "error" },
+            result.as_ref().err(),
+        );
+        result
+    }
+
+    /// Index a demotion receipt and associated evidence.
+    pub fn index_demotion_receipt(
+        &mut self,
+        input: DemotionReceiptInput,
+        context: &EventContext,
+    ) -> Result<DemotionReceiptRecord, LineageIndexError> {
+        let result = (|| {
+            if input.receipt_id.trim().is_empty() {
+                return Err(LineageIndexError::InvalidInput {
+                    detail: "demotion receipt_id cannot be empty".to_string(),
+                });
+            }
+            if input.slot_id.as_str().trim().is_empty() {
+                return Err(LineageIndexError::InvalidInput {
+                    detail: "demotion slot_id cannot be empty".to_string(),
+                });
+            }
+
+            let canonical =
+                serde_json::to_vec(&input).map_err(|err| LineageIndexError::Serialization {
+                    operation: "serialize demotion input".to_string(),
+                    detail: err.to_string(),
+                })?;
+            let receipt_content_hash = hex::encode(ContentHash::compute(&canonical).as_bytes());
+
+            let record = DemotionReceiptRecord {
+                receipt_id: input.receipt_id.clone(),
+                slot_id: input.slot_id.clone(),
+                demoted_cell_digest: input.demoted_cell_digest.clone(),
+                restored_cell_digest: input.restored_cell_digest.clone(),
+                demotion_reason: input.demotion_reason.clone(),
+                timestamp_ns: input.timestamp_ns,
+                rollback_token_used: input.rollback_token_used.clone(),
+                linked_replacement_receipt_id: input.linked_replacement_receipt_id.clone(),
+                receipt_content_hash: receipt_content_hash.clone(),
+            };
+
+            let key =
+                demotion_receipt_key(&record.slot_id, record.timestamp_ns, &record.receipt_id);
+            let mut metadata = table_metadata(TABLE_DEMOTION_RECEIPTS);
+            metadata.insert("slot_id".to_string(), record.slot_id.as_str().to_string());
+            metadata.insert(
+                "demoted_cell_digest".to_string(),
+                record.demoted_cell_digest.clone(),
+            );
+            metadata.insert(
+                "restored_cell_digest".to_string(),
+                record.restored_cell_digest.clone(),
+            );
+            metadata.insert(
+                "demotion_reason".to_string(),
+                record.demotion_reason.clone(),
+            );
+            metadata.insert(
+                "demotion_timestamp_ns".to_string(),
+                record.timestamp_ns.to_string(),
+            );
+            if let Some(linked) = &record.linked_replacement_receipt_id {
+                metadata.insert("linked_replacement_receipt_id".to_string(), linked.clone());
+            }
+            metadata.insert(
+                "receipt_content_hash".to_string(),
+                record.receipt_content_hash.clone(),
+            );
+            let value =
+                serde_json::to_vec(&record).map_err(|err| LineageIndexError::Serialization {
+                    operation: "serialize demotion record".to_string(),
+                    detail: err.to_string(),
+                })?;
+            self.adapter.put(
+                StoreKind::ReplacementLineage,
+                key.clone(),
+                value,
+                metadata,
+                context,
+            )?;
+
+            self.adapter.put(
+                StoreKind::ReplacementLineage,
+                demotion_by_hash_key(&record.receipt_content_hash),
+                key.as_bytes().to_vec(),
+                table_metadata(TABLE_DEMOTION_BY_HASH),
+                context,
+            )?;
+
+            let chain_entry = LineageChainEntry {
+                slot_id: record.slot_id.clone(),
+                timestamp_ns: record.timestamp_ns,
+                receipt_id: record.receipt_id.clone(),
+                kind: ReplacementKind::Demotion,
+                from_cell_digest: record.demoted_cell_digest.clone(),
+                to_cell_digest: record.restored_cell_digest.clone(),
+                receipt_content_hash: record.receipt_content_hash.clone(),
+            };
+            let mut chain_meta = table_metadata(TABLE_LINEAGE_CHAIN);
+            chain_meta.insert(
+                "slot_id".to_string(),
+                chain_entry.slot_id.as_str().to_string(),
+            );
+            chain_meta.insert("receipt_id".to_string(), chain_entry.receipt_id.clone());
+            let chain_value = serde_json::to_vec(&chain_entry).map_err(|err| {
+                LineageIndexError::Serialization {
+                    operation: "serialize demotion lineage chain entry".to_string(),
+                    detail: err.to_string(),
+                }
+            })?;
+            self.adapter.put(
+                StoreKind::ReplacementLineage,
+                lineage_chain_key(
+                    &chain_entry.slot_id,
+                    chain_entry.timestamp_ns,
+                    &chain_entry.receipt_id,
+                ),
+                chain_value,
+                chain_meta,
+                context,
+            )?;
+
+            self.store_evidence(&record.receipt_id, input.evidence, context)?;
+            Ok(record)
+        })();
+
+        self.emit_event(
+            context,
+            "index_demotion_receipt",
+            if result.is_ok() { "ok" } else { "error" },
+            result.as_ref().err(),
+        );
+        result
+    }
+
+    /// Lookup a replacement receipt by content hash.
+    pub fn replacement_by_content_hash(
+        &mut self,
+        receipt_content_hash: &str,
+        context: &EventContext,
+    ) -> Result<Option<ReplacementReceiptRecord>, LineageIndexError> {
+        let result =
+            (|| {
+                let Some(pointer_record) = self.adapter.get(
+                    StoreKind::ReplacementLineage,
+                    &replacement_by_hash_key(receipt_content_hash),
+                    context,
+                )?
+                else {
+                    return Ok(None);
+                };
+
+                let pointed_key = String::from_utf8(pointer_record.value).map_err(|err| {
+                    LineageIndexError::CorruptRecord {
+                        key: pointer_record.key,
+                        detail: err.to_string(),
+                    }
+                })?;
+
+                let Some(record) =
+                    self.adapter
+                        .get(StoreKind::ReplacementLineage, &pointed_key, context)?
+                else {
+                    return Ok(None);
+                };
+                let decoded: ReplacementReceiptRecord = serde_json::from_slice(&record.value)
+                    .map_err(|err| LineageIndexError::CorruptRecord {
+                        key: record.key,
+                        detail: err.to_string(),
+                    })?;
+                Ok(Some(decoded))
+            })();
+
+        self.emit_event(
+            context,
+            "replacement_by_content_hash",
+            if result.is_ok() { "ok" } else { "error" },
+            result.as_ref().err(),
+        );
+        result
+    }
+
+    /// Lookup a demotion receipt by content hash.
+    pub fn demotion_by_content_hash(
+        &mut self,
+        receipt_content_hash: &str,
+        context: &EventContext,
+    ) -> Result<Option<DemotionReceiptRecord>, LineageIndexError> {
+        let result =
+            (|| {
+                let Some(pointer_record) = self.adapter.get(
+                    StoreKind::ReplacementLineage,
+                    &demotion_by_hash_key(receipt_content_hash),
+                    context,
+                )?
+                else {
+                    return Ok(None);
+                };
+
+                let pointed_key = String::from_utf8(pointer_record.value).map_err(|err| {
+                    LineageIndexError::CorruptRecord {
+                        key: pointer_record.key,
+                        detail: err.to_string(),
+                    }
+                })?;
+
+                let Some(record) =
+                    self.adapter
+                        .get(StoreKind::ReplacementLineage, &pointed_key, context)?
+                else {
+                    return Ok(None);
+                };
+                let decoded: DemotionReceiptRecord = serde_json::from_slice(&record.value)
+                    .map_err(|err| LineageIndexError::CorruptRecord {
+                        key: record.key,
+                        detail: err.to_string(),
+                    })?;
+                Ok(Some(decoded))
+            })();
+
+        self.emit_event(
+            context,
+            "demotion_by_content_hash",
+            if result.is_ok() { "ok" } else { "error" },
+            result.as_ref().err(),
+        );
+        result
+    }
+
+    /// Deterministic lineage-chain query for a single slot.
+    pub fn slot_lineage(
+        &mut self,
+        slot_id: &SlotId,
+        query: &SlotLineageQuery,
+        context: &EventContext,
+    ) -> Result<Vec<LineageChainEntry>, LineageIndexError> {
+        let result = (|| {
+            let rows = self.adapter.query(
+                StoreKind::ReplacementLineage,
+                &StoreQuery {
+                    key_prefix: Some(format!("lineage_chain/{}/", slot_id.as_str())),
+                    metadata_filters: table_metadata(TABLE_LINEAGE_CHAIN),
+                    limit: None,
+                },
+                context,
+            )?;
+            let mut decoded = decode_chain_entries(rows)?;
+            decoded.retain(|entry| query.matches(entry));
+            decoded.sort_by(|a, b| {
+                a.timestamp_ns
+                    .cmp(&b.timestamp_ns)
+                    .then(a.receipt_id.cmp(&b.receipt_id))
+                    .then(a.kind.as_str().cmp(b.kind.as_str()))
+            });
+            if let Some(limit) = query.limit {
+                decoded.truncate(limit);
+            }
+            Ok(decoded)
+        })();
+
+        self.emit_event(
+            context,
+            "slot_lineage",
+            if result.is_ok() { "ok" } else { "error" },
+            result.as_ref().err(),
+        );
+        result
+    }
+
+    /// Deterministic replay join across receipts + evidence pointers.
+    pub fn replay_join(
+        &mut self,
+        query: &ReplayJoinQuery,
+        context: &EventContext,
+    ) -> Result<Vec<ReplayJoinRow>, LineageIndexError> {
+        let result = (|| {
+            let mut replacements = decode_replacement_records(self.adapter.query(
+                StoreKind::ReplacementLineage,
+                &StoreQuery {
+                    key_prefix: Some("replacement_receipts/".to_string()),
+                    metadata_filters: table_metadata(TABLE_REPLACEMENT_RECEIPTS),
+                    limit: None,
+                },
+                context,
+            )?)?;
+            replacements.retain(|record| {
+                replay_query_matches(query, &record.slot_id, record.promotion_timestamp_ns)
+            });
+            replacements.sort_by(|a, b| {
+                a.promotion_timestamp_ns
+                    .cmp(&b.promotion_timestamp_ns)
+                    .then(a.receipt_id.cmp(&b.receipt_id))
+            });
+
+            let mut demotions = decode_demotion_records(self.adapter.query(
+                StoreKind::ReplacementLineage,
+                &StoreQuery {
+                    key_prefix: Some("demotion_receipts/".to_string()),
+                    metadata_filters: table_metadata(TABLE_DEMOTION_RECEIPTS),
+                    limit: None,
+                },
+                context,
+            )?)?;
+            demotions.sort_by(|a, b| {
+                a.timestamp_ns
+                    .cmp(&b.timestamp_ns)
+                    .then(a.receipt_id.cmp(&b.receipt_id))
+            });
+
+            let mut relevant_receipt_ids: BTreeSet<String> = replacements
+                .iter()
+                .map(|record| record.receipt_id.clone())
+                .collect();
+            for demotion in &demotions {
+                relevant_receipt_ids.insert(demotion.receipt_id.clone());
+            }
+            let evidence = self.evidence_by_receipt_ids(&relevant_receipt_ids, context)?;
+
+            let mut rows = Vec::new();
+            for replacement in replacements {
+                let demotion = demotions
+                    .iter()
+                    .filter(|demotion| demotion.slot_id == replacement.slot_id)
+                    .filter(|demotion| demotion.timestamp_ns >= replacement.promotion_timestamp_ns)
+                    .filter(|demotion| {
+                        if let Some(linked) = &demotion.linked_replacement_receipt_id {
+                            linked == &replacement.receipt_id
+                        } else {
+                            demotion.demoted_cell_digest == replacement.new_cell_digest
+                                && demotion.restored_cell_digest == replacement.old_cell_digest
+                        }
+                    })
+                    .min_by(|a, b| {
+                        a.timestamp_ns
+                            .cmp(&b.timestamp_ns)
+                            .then(a.receipt_id.cmp(&b.receipt_id))
+                    })
+                    .cloned();
+
+                let mut joined_evidence = evidence
+                    .get(&replacement.receipt_id)
+                    .cloned()
+                    .unwrap_or_default();
+                if let Some(ref demotion_record) = demotion {
+                    joined_evidence.extend(
+                        evidence
+                            .get(&demotion_record.receipt_id)
+                            .cloned()
+                            .unwrap_or_default(),
+                    );
+                }
+                joined_evidence.sort_by(|a, b| {
+                    a.category
+                        .as_str()
+                        .cmp(b.category.as_str())
+                        .then(a.artifact_digest.cmp(&b.artifact_digest))
+                        .then(a.summary.cmp(&b.summary))
+                });
+
+                let mut gate_results = Vec::new();
+                let mut performance_benchmarks = Vec::new();
+                let mut sentinel_risk_scores = Vec::new();
+                let mut differential_execution_logs = Vec::new();
+                let mut additional_evidence = Vec::new();
+
+                for item in joined_evidence {
+                    match item.category {
+                        EvidenceCategory::GateResult => gate_results.push(item),
+                        EvidenceCategory::PerformanceBenchmark => performance_benchmarks.push(item),
+                        EvidenceCategory::SentinelRiskScore => sentinel_risk_scores.push(item),
+                        EvidenceCategory::DifferentialExecutionLog => {
+                            differential_execution_logs.push(item)
+                        }
+                        EvidenceCategory::Additional => additional_evidence.push(item),
+                    }
+                }
+
+                rows.push(ReplayJoinRow {
+                    slot_id: replacement.slot_id.clone(),
+                    replacement_receipt_id: replacement.receipt_id.clone(),
+                    replacement_kind: replacement.replacement_kind,
+                    old_cell_digest: replacement.old_cell_digest.clone(),
+                    new_cell_digest: replacement.new_cell_digest.clone(),
+                    promotion_timestamp_ns: replacement.promotion_timestamp_ns,
+                    replacement_content_hash: replacement.receipt_content_hash.clone(),
+                    demotion_receipt_id: demotion.as_ref().map(|record| record.receipt_id.clone()),
+                    demotion_reason: demotion
+                        .as_ref()
+                        .map(|record| record.demotion_reason.clone()),
+                    demotion_timestamp_ns: demotion.as_ref().map(|record| record.timestamp_ns),
+                    gate_results,
+                    performance_benchmarks,
+                    sentinel_risk_scores,
+                    differential_execution_logs,
+                    additional_evidence,
+                });
+            }
+
+            rows.sort_by(|a, b| {
+                a.promotion_timestamp_ns
+                    .cmp(&b.promotion_timestamp_ns)
+                    .then(a.replacement_receipt_id.cmp(&b.replacement_receipt_id))
+            });
+            if let Some(limit) = query.limit {
+                rows.truncate(limit);
+            }
+            Ok(rows)
+        })();
+
+        self.emit_event(
+            context,
+            "replay_join",
+            if result.is_ok() { "ok" } else { "error" },
+            result.as_ref().err(),
+        );
+        result
+    }
+
+    fn store_evidence(
+        &mut self,
+        receipt_id: &str,
+        evidence: Vec<EvidencePointerInput>,
+        context: &EventContext,
+    ) -> Result<(), LineageIndexError> {
+        for (idx, input) in evidence.into_iter().enumerate() {
+            let pointer = EvidencePointer::from_input(receipt_id, input);
+            if pointer.artifact_digest.trim().is_empty() {
+                return Err(LineageIndexError::InvalidInput {
+                    detail: format!("evidence pointer at index {idx} has empty artifact_digest"),
+                });
+            }
+            let key = evidence_key(
+                &pointer.receipt_id,
+                pointer.category,
+                idx,
+                &pointer.artifact_digest,
+            );
+            let mut metadata = table_metadata(TABLE_EVIDENCE_INDEX);
+            metadata.insert("receipt_id".to_string(), pointer.receipt_id.clone());
+            metadata.insert(
+                "category".to_string(),
+                pointer.category.as_str().to_string(),
+            );
+            metadata.insert(
+                "artifact_digest".to_string(),
+                pointer.artifact_digest.clone(),
+            );
+
+            let value =
+                serde_json::to_vec(&pointer).map_err(|err| LineageIndexError::Serialization {
+                    operation: "serialize evidence pointer".to_string(),
+                    detail: err.to_string(),
+                })?;
+            self.adapter
+                .put(StoreKind::EvidenceIndex, key, value, metadata, context)?;
+        }
+        Ok(())
+    }
+
+    fn evidence_by_receipt_ids(
+        &mut self,
+        receipt_ids: &BTreeSet<String>,
+        context: &EventContext,
+    ) -> Result<BTreeMap<String, Vec<EvidencePointer>>, LineageIndexError> {
+        let rows = self.adapter.query(
+            StoreKind::EvidenceIndex,
+            &StoreQuery {
+                key_prefix: Some("evidence/".to_string()),
+                metadata_filters: table_metadata(TABLE_EVIDENCE_INDEX),
+                limit: None,
+            },
+            context,
+        )?;
+
+        let mut out: BTreeMap<String, Vec<EvidencePointer>> = BTreeMap::new();
+        for row in rows {
+            let pointer: EvidencePointer = serde_json::from_slice(&row.value).map_err(|err| {
+                LineageIndexError::CorruptRecord {
+                    key: row.key,
+                    detail: err.to_string(),
+                }
+            })?;
+            if receipt_ids.contains(&pointer.receipt_id) {
+                out.entry(pointer.receipt_id.clone())
+                    .or_default()
+                    .push(pointer);
+            }
+        }
+
+        for pointers in out.values_mut() {
+            pointers.sort_by(|a, b| {
+                a.category
+                    .as_str()
+                    .cmp(b.category.as_str())
+                    .then(a.artifact_digest.cmp(&b.artifact_digest))
+                    .then(a.summary.cmp(&b.summary))
+            });
+        }
+        Ok(out)
+    }
+}
+
+fn replay_query_matches(query: &ReplayJoinQuery, slot_id: &SlotId, timestamp_ns: u64) -> bool {
+    if let Some(expected_slot) = &query.slot_id
+        && slot_id != expected_slot
+    {
+        return false;
+    }
+    if let Some(min_ts) = query.min_timestamp_ns
+        && timestamp_ns < min_ts
+    {
+        return false;
+    }
+    if let Some(max_ts) = query.max_timestamp_ns
+        && timestamp_ns > max_ts
+    {
+        return false;
+    }
+    true
+}
+
+fn table_metadata(table: &str) -> BTreeMap<String, String> {
+    let mut metadata = BTreeMap::new();
+    metadata.insert("table".to_string(), table.to_string());
+    metadata
+}
+
+fn replacement_receipt_key(slot_id: &SlotId, timestamp_ns: u64, receipt_id: &str) -> String {
+    format!(
+        "replacement_receipts/{}/{:020}/{}",
+        slot_id.as_str(),
+        timestamp_ns,
+        receipt_id
+    )
+}
+
+fn demotion_receipt_key(slot_id: &SlotId, timestamp_ns: u64, receipt_id: &str) -> String {
+    format!(
+        "demotion_receipts/{}/{:020}/{}",
+        slot_id.as_str(),
+        timestamp_ns,
+        receipt_id
+    )
+}
+
+fn lineage_chain_key(slot_id: &SlotId, timestamp_ns: u64, receipt_id: &str) -> String {
+    format!(
+        "lineage_chain/{}/{:020}/{}",
+        slot_id.as_str(),
+        timestamp_ns,
+        receipt_id
+    )
+}
+
+fn replacement_by_hash_key(content_hash: &str) -> String {
+    format!("replacement_by_hash/{content_hash}")
+}
+
+fn demotion_by_hash_key(content_hash: &str) -> String {
+    format!("demotion_by_hash/{content_hash}")
+}
+
+fn evidence_key(
+    receipt_id: &str,
+    category: EvidenceCategory,
+    ordinal: usize,
+    artifact_digest: &str,
+) -> String {
+    format!(
+        "evidence/{}/{}/{:04}/{}",
+        receipt_id,
+        category.as_str(),
+        ordinal,
+        artifact_digest
+    )
+}
+
+fn decode_replacement_records(
+    rows: Vec<crate::storage_adapter::StoreRecord>,
+) -> Result<Vec<ReplacementReceiptRecord>, LineageIndexError> {
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        let record: ReplacementReceiptRecord =
+            serde_json::from_slice(&row.value).map_err(|err| LineageIndexError::CorruptRecord {
+                key: row.key,
+                detail: err.to_string(),
+            })?;
+        out.push(record);
+    }
+    Ok(out)
+}
+
+fn decode_demotion_records(
+    rows: Vec<crate::storage_adapter::StoreRecord>,
+) -> Result<Vec<DemotionReceiptRecord>, LineageIndexError> {
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        let record: DemotionReceiptRecord =
+            serde_json::from_slice(&row.value).map_err(|err| LineageIndexError::CorruptRecord {
+                key: row.key,
+                detail: err.to_string(),
+            })?;
+        out.push(record);
+    }
+    Ok(out)
+}
+
+fn decode_chain_entries(
+    rows: Vec<crate::storage_adapter::StoreRecord>,
+) -> Result<Vec<LineageChainEntry>, LineageIndexError> {
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        let record: LineageChainEntry =
+            serde_json::from_slice(&row.value).map_err(|err| LineageIndexError::CorruptRecord {
+                key: row.key,
+                detail: err.to_string(),
+            })?;
+        out.push(record);
+    }
+    Ok(out)
 }
 
 // ---------------------------------------------------------------------------

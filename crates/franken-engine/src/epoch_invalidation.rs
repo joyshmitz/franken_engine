@@ -898,6 +898,7 @@ pub fn create_specialization(
     }
     canonical.extend_from_slice(input.linked_policy_id.as_bytes());
     canonical.extend_from_slice(input.rollback_token_hash.as_bytes());
+    canonical.extend_from_slice(input.baseline_ir_hash.as_bytes());
 
     let specialization_id = engine_object_id::derive_id(
         ObjectDomain::PolicyObject,

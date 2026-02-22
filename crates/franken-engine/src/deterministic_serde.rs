@@ -118,6 +118,8 @@ pub enum SerdeError {
         prev_key: String,
         current_key: String,
     },
+    /// Recursion limit exceeded (stack overflow protection).
+    RecursionLimitExceeded { offset: usize },
     /// Trailing bytes after deserialization.
     TrailingBytes { count: usize },
 }
@@ -143,6 +145,9 @@ impl fmt::Display for SerdeError {
                 prev_key,
                 current_key,
             } => write!(f, "non-lexicographic keys: {prev_key} > {current_key}"),
+            Self::RecursionLimitExceeded { offset } => {
+                write!(f, "recursion limit exceeded at offset {offset}")
+            }
             Self::TrailingBytes { count } => write!(f, "{count} trailing bytes"),
         }
     }
@@ -214,7 +219,7 @@ fn encode_into(buf: &mut Vec<u8>, value: &CanonicalValue) {
 
 /// Deserialize a `CanonicalValue` from deterministic bytes (without schema prefix).
 pub fn decode_value(data: &[u8]) -> Result<CanonicalValue, SerdeError> {
-    let (value, consumed) = decode_at(data, 0)?;
+    let (value, consumed) = decode_at(data, 0, 0)?;
     if consumed < data.len() {
         return Err(SerdeError::TrailingBytes {
             count: data.len() - consumed,
@@ -223,7 +228,15 @@ pub fn decode_value(data: &[u8]) -> Result<CanonicalValue, SerdeError> {
     Ok(value)
 }
 
-fn decode_at(data: &[u8], offset: usize) -> Result<(CanonicalValue, usize), SerdeError> {
+fn decode_at(
+    data: &[u8],
+    offset: usize,
+    depth: usize,
+) -> Result<(CanonicalValue, usize), SerdeError> {
+    if depth > 128 {
+        return Err(SerdeError::RecursionLimitExceeded { offset });
+    }
+
     if offset >= data.len() {
         return Err(SerdeError::BufferTooShort {
             expected: offset + 1,
@@ -271,9 +284,13 @@ fn decode_at(data: &[u8], offset: usize) -> Result<(CanonicalValue, usize), Serd
             need_bytes(data, pos, 4)?;
             let count = u32::from_be_bytes(data[pos..pos + 4].try_into().unwrap()) as usize;
             let mut cur = pos + 4;
-            let mut items = Vec::with_capacity(count);
+
+            // Mitigate OOM: each element requires at least 1 byte (the tag).
+            need_bytes(data, cur, count)?;
+
+            let mut items = Vec::with_capacity(std::cmp::min(count, 4096));
             for _ in 0..count {
-                let (val, next) = decode_at(data, cur)?;
+                let (val, next) = decode_at(data, cur, depth + 1)?;
                 items.push(val);
                 cur = next;
             }
@@ -309,7 +326,7 @@ fn decode_at(data: &[u8], offset: usize) -> Result<(CanonicalValue, usize), Serd
                 }
                 prev_key = Some(key.clone());
 
-                let (val, next) = decode_at(data, cur)?;
+                let (val, next) = decode_at(data, cur, depth + 1)?;
                 map.insert(key, val);
                 cur = next;
             }
@@ -362,7 +379,7 @@ pub fn deserialize_with_schema(
         });
     }
 
-    let (value, consumed) = decode_at(data, 32)?;
+    let (value, consumed) = decode_at(data, 32, 0)?;
     if consumed < data.len() {
         return Err(SerdeError::TrailingBytes {
             count: data.len() - consumed,
@@ -455,7 +472,7 @@ impl SchemaRegistry {
             })?
             .clone();
 
-        let (value, consumed) = decode_at(data, 32)?;
+        let (value, consumed) = decode_at(data, 32, 0)?;
         if consumed < data.len() {
             return Err(SerdeError::TrailingBytes {
                 count: data.len() - consumed,
@@ -779,6 +796,21 @@ mod tests {
         assert!(matches!(
             decode_value(&bytes),
             Err(SerdeError::InvalidUtf8 { .. })
+        ));
+    }
+
+    #[test]
+    fn recursion_limit_exceeded_rejected() {
+        // Construct an array nested 129 times to trigger recursion limit (limit is 128).
+        let mut bytes = Vec::new();
+        for _ in 0..129 {
+            bytes.push(TAG_ARRAY);
+            bytes.extend_from_slice(&1u32.to_be_bytes());
+        }
+        bytes.push(TAG_NULL);
+        assert!(matches!(
+            decode_value(&bytes),
+            Err(SerdeError::RecursionLimitExceeded { .. })
         ));
     }
 

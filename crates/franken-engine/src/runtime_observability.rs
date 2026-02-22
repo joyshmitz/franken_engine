@@ -1,0 +1,821 @@
+//! Mandatory runtime security observability surface.
+//!
+//! This module defines the required counters/gauge and structured log schema
+//! for security-critical runtime failures:
+//! - authentication failures
+//! - capability denials
+//! - replay drops
+//! - checkpoint violations
+//! - revocation freshness/revocation checks
+//! - cross-zone reference decisions
+//!
+//! Plan reference: Section 10.10 item 22 (`bd-3s6`).
+
+use std::collections::BTreeMap;
+use std::fmt;
+
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+
+use crate::error_code::FrankenErrorCode;
+
+pub const AUTH_FAILURE_TOTAL: &str = "auth_failure_total";
+pub const CAPABILITY_DENIAL_TOTAL: &str = "capability_denial_total";
+pub const REPLAY_DROP_TOTAL: &str = "replay_drop_total";
+pub const CHECKPOINT_VIOLATION_TOTAL: &str = "checkpoint_violation_total";
+pub const REVOCATION_FRESHNESS_DEGRADED_SECONDS: &str = "revocation_freshness_degraded_seconds";
+pub const REVOCATION_CHECK_TOTAL: &str = "revocation_check_total";
+pub const CROSS_ZONE_REFERENCE_TOTAL: &str = "cross_zone_reference_total";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthFailureType {
+    SignatureInvalid,
+    KeyExpired,
+    KeyRevoked,
+    AttestationInvalid,
+}
+
+impl AuthFailureType {
+    pub const ALL: [Self; 4] = [
+        Self::SignatureInvalid,
+        Self::KeyExpired,
+        Self::KeyRevoked,
+        Self::AttestationInvalid,
+    ];
+
+    pub const fn as_label(self) -> &'static str {
+        match self {
+            Self::SignatureInvalid => "signature_invalid",
+            Self::KeyExpired => "key_expired",
+            Self::KeyRevoked => "key_revoked",
+            Self::AttestationInvalid => "attestation_invalid",
+        }
+    }
+}
+
+impl fmt::Display for AuthFailureType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_label())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CapabilityDenialReason {
+    InsufficientAuthority,
+    CeilingExceeded,
+    AttenuationViolation,
+    AudienceMismatch,
+    Expired,
+    NotYetValid,
+}
+
+impl CapabilityDenialReason {
+    pub const ALL: [Self; 6] = [
+        Self::InsufficientAuthority,
+        Self::CeilingExceeded,
+        Self::AttenuationViolation,
+        Self::AudienceMismatch,
+        Self::Expired,
+        Self::NotYetValid,
+    ];
+
+    pub const fn as_label(self) -> &'static str {
+        match self {
+            Self::InsufficientAuthority => "insufficient_authority",
+            Self::CeilingExceeded => "ceiling_exceeded",
+            Self::AttenuationViolation => "attenuation_violation",
+            Self::AudienceMismatch => "audience_mismatch",
+            Self::Expired => "expired",
+            Self::NotYetValid => "not_yet_valid",
+        }
+    }
+}
+
+impl fmt::Display for CapabilityDenialReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_label())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReplayDropReason {
+    DuplicateSeq,
+    StaleSeq,
+    CrossSession,
+}
+
+impl ReplayDropReason {
+    pub const ALL: [Self; 3] = [Self::DuplicateSeq, Self::StaleSeq, Self::CrossSession];
+
+    pub const fn as_label(self) -> &'static str {
+        match self {
+            Self::DuplicateSeq => "duplicate_seq",
+            Self::StaleSeq => "stale_seq",
+            Self::CrossSession => "cross_session",
+        }
+    }
+}
+
+impl fmt::Display for ReplayDropReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_label())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckpointViolationType {
+    RollbackAttempt,
+    ForkDetected,
+    QuorumInsufficient,
+}
+
+impl CheckpointViolationType {
+    pub const ALL: [Self; 3] = [
+        Self::RollbackAttempt,
+        Self::ForkDetected,
+        Self::QuorumInsufficient,
+    ];
+
+    pub const fn as_label(self) -> &'static str {
+        match self {
+            Self::RollbackAttempt => "rollback_attempt",
+            Self::ForkDetected => "fork_detected",
+            Self::QuorumInsufficient => "quorum_insufficient",
+        }
+    }
+}
+
+impl fmt::Display for CheckpointViolationType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_label())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RevocationCheckOutcome {
+    Pass,
+    Revoked,
+    Stale,
+}
+
+impl RevocationCheckOutcome {
+    pub const ALL: [Self; 3] = [Self::Pass, Self::Revoked, Self::Stale];
+
+    pub const fn as_label(self) -> &'static str {
+        match self {
+            Self::Pass => "pass",
+            Self::Revoked => "revoked",
+            Self::Stale => "stale",
+        }
+    }
+}
+
+impl fmt::Display for RevocationCheckOutcome {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_label())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CrossZoneReferenceType {
+    ProvenanceAllowed,
+    AuthorityDenied,
+}
+
+impl CrossZoneReferenceType {
+    pub const ALL: [Self; 2] = [Self::ProvenanceAllowed, Self::AuthorityDenied];
+
+    pub const fn as_label(self) -> &'static str {
+        match self {
+            Self::ProvenanceAllowed => "provenance_allowed",
+            Self::AuthorityDenied => "authority_denied",
+        }
+    }
+}
+
+impl fmt::Display for CrossZoneReferenceType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_label())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SecurityEventType {
+    AuthFailure,
+    CapabilityDenial,
+    ReplayDrop,
+    CheckpointViolation,
+    RevocationCheck,
+    CrossZoneReference,
+}
+
+impl SecurityEventType {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::AuthFailure => "auth_failure",
+            Self::CapabilityDenial => "capability_denial",
+            Self::ReplayDrop => "replay_drop",
+            Self::CheckpointViolation => "checkpoint_violation",
+            Self::RevocationCheck => "revocation_check",
+            Self::CrossZoneReference => "cross_zone_reference",
+        }
+    }
+}
+
+impl fmt::Display for SecurityEventType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SecurityOutcome {
+    Pass,
+    Allowed,
+    Denied,
+    Dropped,
+    Rejected,
+    Degraded,
+}
+
+impl SecurityOutcome {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Pass => "pass",
+            Self::Allowed => "allowed",
+            Self::Denied => "denied",
+            Self::Dropped => "dropped",
+            Self::Rejected => "rejected",
+            Self::Degraded => "degraded",
+        }
+    }
+}
+
+impl fmt::Display for SecurityOutcome {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SecurityEventContext {
+    pub timestamp_ns: u64,
+    pub trace_id: String,
+    pub principal_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub zone_id: String,
+    pub component: String,
+}
+
+impl SecurityEventContext {
+    fn sanitized(self) -> Self {
+        Self {
+            timestamp_ns: self.timestamp_ns,
+            trace_id: sanitize_required(&self.trace_id, "trace-missing"),
+            principal_id: sanitize_required(&self.principal_id, "principal-missing"),
+            decision_id: sanitize_required(&self.decision_id, "decision-missing"),
+            policy_id: sanitize_required(&self.policy_id, "policy-missing"),
+            zone_id: sanitize_required(&self.zone_id, "zone-missing"),
+            component: sanitize_required(&self.component, "runtime_observability"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StructuredSecurityLogEvent {
+    pub timestamp_ns: u64,
+    pub trace_id: String,
+    pub component: String,
+    pub event_type: String,
+    pub outcome: String,
+    pub error_code: Option<String>,
+    pub principal_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub zone_id: String,
+    pub metadata: BTreeMap<String, String>,
+}
+
+impl StructuredSecurityLogEvent {
+    pub fn required_fields_present(&self) -> bool {
+        !self.trace_id.is_empty()
+            && !self.component.is_empty()
+            && !self.event_type.is_empty()
+            && !self.outcome.is_empty()
+            && !self.principal_id.is_empty()
+            && !self.decision_id.is_empty()
+            && !self.policy_id.is_empty()
+            && !self.zone_id.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeSecurityMetrics {
+    pub auth_failure_total: BTreeMap<AuthFailureType, u64>,
+    pub capability_denial_total: BTreeMap<CapabilityDenialReason, u64>,
+    pub replay_drop_total: BTreeMap<ReplayDropReason, u64>,
+    pub checkpoint_violation_total: BTreeMap<CheckpointViolationType, u64>,
+    pub revocation_freshness_degraded_seconds: u64,
+    pub revocation_check_total: BTreeMap<RevocationCheckOutcome, u64>,
+    pub cross_zone_reference_total: BTreeMap<CrossZoneReferenceType, u64>,
+}
+
+impl Default for RuntimeSecurityMetrics {
+    fn default() -> Self {
+        Self {
+            auth_failure_total: zeroed_metric_map(&AuthFailureType::ALL),
+            capability_denial_total: zeroed_metric_map(&CapabilityDenialReason::ALL),
+            replay_drop_total: zeroed_metric_map(&ReplayDropReason::ALL),
+            checkpoint_violation_total: zeroed_metric_map(&CheckpointViolationType::ALL),
+            revocation_freshness_degraded_seconds: 0,
+            revocation_check_total: zeroed_metric_map(&RevocationCheckOutcome::ALL),
+            cross_zone_reference_total: zeroed_metric_map(&CrossZoneReferenceType::ALL),
+        }
+    }
+}
+
+impl RuntimeSecurityMetrics {
+    pub fn to_prometheus(&self) -> String {
+        let mut lines = Vec::new();
+        lines.push("# HELP auth_failure_total Authentication failures by type.".to_string());
+        lines.push("# TYPE auth_failure_total counter".to_string());
+        for label in AuthFailureType::ALL {
+            let value = self.auth_failure_total.get(&label).copied().unwrap_or(0);
+            lines.push(format!(
+                "auth_failure_total{{type=\"{}\"}} {}",
+                label.as_label(),
+                value
+            ));
+        }
+
+        lines.push("# HELP capability_denial_total Capability denials by reason.".to_string());
+        lines.push("# TYPE capability_denial_total counter".to_string());
+        for label in CapabilityDenialReason::ALL {
+            let value = self
+                .capability_denial_total
+                .get(&label)
+                .copied()
+                .unwrap_or(0);
+            lines.push(format!(
+                "capability_denial_total{{reason=\"{}\"}} {}",
+                label.as_label(),
+                value
+            ));
+        }
+
+        lines.push("# HELP replay_drop_total Replay drops by reason.".to_string());
+        lines.push("# TYPE replay_drop_total counter".to_string());
+        for label in ReplayDropReason::ALL {
+            let value = self.replay_drop_total.get(&label).copied().unwrap_or(0);
+            lines.push(format!(
+                "replay_drop_total{{reason=\"{}\"}} {}",
+                label.as_label(),
+                value
+            ));
+        }
+
+        lines.push("# HELP checkpoint_violation_total Checkpoint violations by type.".to_string());
+        lines.push("# TYPE checkpoint_violation_total counter".to_string());
+        for label in CheckpointViolationType::ALL {
+            let value = self
+                .checkpoint_violation_total
+                .get(&label)
+                .copied()
+                .unwrap_or(0);
+            lines.push(format!(
+                "checkpoint_violation_total{{type=\"{}\"}} {}",
+                label.as_label(),
+                value
+            ));
+        }
+
+        lines.push(
+            "# HELP revocation_freshness_degraded_seconds Time spent in revocation-degraded mode."
+                .to_string(),
+        );
+        lines.push("# TYPE revocation_freshness_degraded_seconds gauge".to_string());
+        lines.push(format!(
+            "revocation_freshness_degraded_seconds {}",
+            self.revocation_freshness_degraded_seconds
+        ));
+
+        lines.push("# HELP revocation_check_total Revocation checks by outcome.".to_string());
+        lines.push("# TYPE revocation_check_total counter".to_string());
+        for label in RevocationCheckOutcome::ALL {
+            let value = self
+                .revocation_check_total
+                .get(&label)
+                .copied()
+                .unwrap_or(0);
+            lines.push(format!(
+                "revocation_check_total{{outcome=\"{}\"}} {}",
+                label.as_label(),
+                value
+            ));
+        }
+
+        lines.push("# HELP cross_zone_reference_total Cross-zone references by type.".to_string());
+        lines.push("# TYPE cross_zone_reference_total counter".to_string());
+        for label in CrossZoneReferenceType::ALL {
+            let value = self
+                .cross_zone_reference_total
+                .get(&label)
+                .copied()
+                .unwrap_or(0);
+            lines.push(format!(
+                "cross_zone_reference_total{{type=\"{}\"}} {}",
+                label.as_label(),
+                value
+            ));
+        }
+
+        lines.join("\n")
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct RuntimeSecurityObservability {
+    pub metrics: RuntimeSecurityMetrics,
+    pub logs: Vec<StructuredSecurityLogEvent>,
+}
+
+impl RuntimeSecurityObservability {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn metrics(&self) -> &RuntimeSecurityMetrics {
+        &self.metrics
+    }
+
+    pub fn logs(&self) -> &[StructuredSecurityLogEvent] {
+        &self.logs
+    }
+
+    pub fn export_prometheus_metrics(&self) -> String {
+        self.metrics.to_prometheus()
+    }
+
+    pub fn export_logs_jsonl(&self) -> String {
+        render_security_logs_jsonl(&self.logs)
+    }
+
+    pub fn record_auth_failure(
+        &mut self,
+        context: SecurityEventContext,
+        failure_type: AuthFailureType,
+        key_material: Option<&str>,
+        token_content: Option<&str>,
+    ) -> StructuredSecurityLogEvent {
+        let mut metadata = BTreeMap::new();
+        metadata.insert("failure_type".to_string(), failure_type.to_string());
+        if let Some(value) = key_material {
+            metadata.insert(
+                "key_material_hash".to_string(),
+                redact_sensitive_value(value),
+            );
+        }
+        if let Some(value) = token_content {
+            metadata.insert(
+                "token_content_hash".to_string(),
+                redact_sensitive_value(value),
+            );
+        }
+
+        let event = build_event(
+            context,
+            SecurityEventType::AuthFailure,
+            SecurityOutcome::Denied,
+            Some(auth_error_code(failure_type).stable_code()),
+            metadata,
+        );
+        self.record_event(event, |metrics| {
+            increment_enum_counter(&mut metrics.auth_failure_total, failure_type)
+        })
+    }
+
+    pub fn record_capability_denial(
+        &mut self,
+        context: SecurityEventContext,
+        reason: CapabilityDenialReason,
+        requested_capability: &str,
+    ) -> StructuredSecurityLogEvent {
+        let mut metadata = BTreeMap::new();
+        metadata.insert("denial_reason".to_string(), reason.to_string());
+        metadata.insert(
+            "requested_capability".to_string(),
+            sanitize_required(requested_capability, "unspecified"),
+        );
+
+        let event = build_event(
+            context,
+            SecurityEventType::CapabilityDenial,
+            SecurityOutcome::Denied,
+            Some(capability_error_code(reason).stable_code()),
+            metadata,
+        );
+        self.record_event(event, |metrics| {
+            increment_enum_counter(&mut metrics.capability_denial_total, reason);
+        })
+    }
+
+    pub fn record_replay_drop(
+        &mut self,
+        context: SecurityEventContext,
+        reason: ReplayDropReason,
+        received_seq: u64,
+        expected_seq: u64,
+        session_id: &str,
+    ) -> StructuredSecurityLogEvent {
+        let mut metadata = BTreeMap::new();
+        metadata.insert("drop_reason".to_string(), reason.to_string());
+        metadata.insert("received_seq".to_string(), received_seq.to_string());
+        metadata.insert("expected_seq".to_string(), expected_seq.to_string());
+        metadata.insert(
+            "session_id_hash".to_string(),
+            redact_sensitive_value(session_id),
+        );
+
+        let event = build_event(
+            context,
+            SecurityEventType::ReplayDrop,
+            SecurityOutcome::Dropped,
+            Some(replay_error_code(reason).stable_code()),
+            metadata,
+        );
+        self.record_event(event, |metrics| {
+            increment_enum_counter(&mut metrics.replay_drop_total, reason)
+        })
+    }
+
+    pub fn record_checkpoint_violation(
+        &mut self,
+        context: SecurityEventContext,
+        violation: CheckpointViolationType,
+        attempted_seq: u64,
+        current_seq: u64,
+    ) -> StructuredSecurityLogEvent {
+        let mut metadata = BTreeMap::new();
+        metadata.insert("violation_type".to_string(), violation.to_string());
+        metadata.insert("attempted_seq".to_string(), attempted_seq.to_string());
+        metadata.insert("current_seq".to_string(), current_seq.to_string());
+
+        let event = build_event(
+            context,
+            SecurityEventType::CheckpointViolation,
+            SecurityOutcome::Rejected,
+            Some(checkpoint_error_code(violation).stable_code()),
+            metadata,
+        );
+        self.record_event(event, |metrics| {
+            increment_enum_counter(&mut metrics.checkpoint_violation_total, violation);
+        })
+    }
+
+    pub fn record_revocation_check(
+        &mut self,
+        context: SecurityEventContext,
+        outcome: RevocationCheckOutcome,
+        local_head_seq: u64,
+        expected_head_seq: u64,
+        threshold: u64,
+        degraded_seconds: Option<u64>,
+    ) -> StructuredSecurityLogEvent {
+        let staleness_gap = expected_head_seq.saturating_sub(local_head_seq);
+        let mut metadata = BTreeMap::new();
+        metadata.insert("revocation_outcome".to_string(), outcome.to_string());
+        metadata.insert("local_head_seq".to_string(), local_head_seq.to_string());
+        metadata.insert(
+            "expected_head_seq".to_string(),
+            expected_head_seq.to_string(),
+        );
+        metadata.insert("staleness_gap".to_string(), staleness_gap.to_string());
+        metadata.insert("threshold".to_string(), threshold.to_string());
+
+        let security_outcome = match outcome {
+            RevocationCheckOutcome::Pass => SecurityOutcome::Pass,
+            RevocationCheckOutcome::Revoked => SecurityOutcome::Denied,
+            RevocationCheckOutcome::Stale => SecurityOutcome::Degraded,
+        };
+
+        let error_code = match outcome {
+            RevocationCheckOutcome::Pass => None,
+            RevocationCheckOutcome::Revoked | RevocationCheckOutcome::Stale => {
+                Some(revocation_error_code(outcome).stable_code())
+            }
+        };
+
+        if let Some(seconds) = degraded_seconds {
+            metadata.insert("degraded_seconds".to_string(), seconds.to_string());
+        }
+
+        let event = build_event(
+            context,
+            SecurityEventType::RevocationCheck,
+            security_outcome,
+            error_code,
+            metadata,
+        );
+
+        self.record_event(event, |metrics| {
+            increment_enum_counter(&mut metrics.revocation_check_total, outcome);
+            if outcome == RevocationCheckOutcome::Stale {
+                metrics.revocation_freshness_degraded_seconds = degraded_seconds.unwrap_or(0);
+            }
+        })
+    }
+
+    pub fn record_cross_zone_reference(
+        &mut self,
+        context: SecurityEventContext,
+        reference_type: CrossZoneReferenceType,
+        source_zone: &str,
+        target_zone: &str,
+    ) -> StructuredSecurityLogEvent {
+        let mut metadata = BTreeMap::new();
+        metadata.insert("reference_type".to_string(), reference_type.to_string());
+        metadata.insert(
+            "source_zone".to_string(),
+            sanitize_required(source_zone, "source-zone-missing"),
+        );
+        metadata.insert(
+            "target_zone".to_string(),
+            sanitize_required(target_zone, "target-zone-missing"),
+        );
+
+        let (outcome, error_code) = match reference_type {
+            CrossZoneReferenceType::ProvenanceAllowed => (SecurityOutcome::Allowed, None),
+            CrossZoneReferenceType::AuthorityDenied => (
+                SecurityOutcome::Denied,
+                Some(cross_zone_error_code(reference_type).stable_code()),
+            ),
+        };
+
+        let event = build_event(
+            context,
+            SecurityEventType::CrossZoneReference,
+            outcome,
+            error_code,
+            metadata,
+        );
+        self.record_event(event, |metrics| {
+            increment_enum_counter(&mut metrics.cross_zone_reference_total, reference_type);
+        })
+    }
+
+    fn record_event<F>(
+        &mut self,
+        event: StructuredSecurityLogEvent,
+        mutate_metrics: F,
+    ) -> StructuredSecurityLogEvent
+    where
+        F: FnOnce(&mut RuntimeSecurityMetrics),
+    {
+        mutate_metrics(&mut self.metrics);
+        self.logs.push(event.clone());
+        event
+    }
+}
+
+pub fn render_security_logs_jsonl(events: &[StructuredSecurityLogEvent]) -> String {
+    let mut lines = Vec::with_capacity(events.len());
+    for event in events {
+        lines.push(
+            serde_json::to_string(event)
+                .expect("security event should serialize to deterministic JSON"),
+        );
+    }
+    lines.join("\n")
+}
+
+pub fn parse_security_logs_jsonl(input: &str) -> Result<Vec<StructuredSecurityLogEvent>, String> {
+    let mut events = Vec::new();
+    for (idx, line) in input.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let event = serde_json::from_str::<StructuredSecurityLogEvent>(line)
+            .map_err(|error| format!("failed to parse JSONL line {}: {error}", idx + 1))?;
+        events.push(event);
+    }
+    Ok(events)
+}
+
+pub fn redact_sensitive_value(raw: &str) -> String {
+    let digest = Sha256::digest(raw.as_bytes());
+    format!("sha256:{}", hex::encode(digest))
+}
+
+fn build_event(
+    context: SecurityEventContext,
+    event_type: SecurityEventType,
+    outcome: SecurityOutcome,
+    error_code: Option<String>,
+    metadata: BTreeMap<String, String>,
+) -> StructuredSecurityLogEvent {
+    let context = context.sanitized();
+    StructuredSecurityLogEvent {
+        timestamp_ns: context.timestamp_ns,
+        trace_id: context.trace_id,
+        component: context.component,
+        event_type: event_type.to_string(),
+        outcome: outcome.to_string(),
+        error_code,
+        principal_id: context.principal_id,
+        decision_id: context.decision_id,
+        policy_id: context.policy_id,
+        zone_id: context.zone_id,
+        metadata,
+    }
+}
+
+fn sanitize_required(value: &str, fallback: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        fallback.to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn zeroed_metric_map<K>(values: &[K]) -> BTreeMap<K, u64>
+where
+    K: Copy + Ord,
+{
+    values.iter().copied().map(|value| (value, 0)).collect()
+}
+
+fn increment_enum_counter<K>(counter: &mut BTreeMap<K, u64>, key: K)
+where
+    K: Copy + Ord,
+{
+    *counter.entry(key).or_insert(0) += 1;
+}
+
+fn auth_error_code(reason: AuthFailureType) -> FrankenErrorCode {
+    match reason {
+        AuthFailureType::SignatureInvalid => FrankenErrorCode::SignatureVerificationError,
+        AuthFailureType::KeyExpired => FrankenErrorCode::EpochWindowValidationError,
+        AuthFailureType::KeyRevoked => FrankenErrorCode::RevocationChainIntegrityError,
+        AuthFailureType::AttestationInvalid => FrankenErrorCode::MultiSigVerificationError,
+    }
+}
+
+fn capability_error_code(reason: CapabilityDenialReason) -> FrankenErrorCode {
+    match reason {
+        CapabilityDenialReason::InsufficientAuthority => FrankenErrorCode::CapabilityDeniedError,
+        CapabilityDenialReason::CeilingExceeded => FrankenErrorCode::CapabilityDeniedError,
+        CapabilityDenialReason::AttenuationViolation => {
+            FrankenErrorCode::CapabilityTokenValidationError
+        }
+        CapabilityDenialReason::AudienceMismatch => {
+            FrankenErrorCode::CapabilityTokenValidationError
+        }
+        CapabilityDenialReason::Expired => FrankenErrorCode::CapabilityTokenValidationError,
+        CapabilityDenialReason::NotYetValid => FrankenErrorCode::CapabilityTokenValidationError,
+    }
+}
+
+fn replay_error_code(reason: ReplayDropReason) -> FrankenErrorCode {
+    match reason {
+        ReplayDropReason::DuplicateSeq
+        | ReplayDropReason::StaleSeq
+        | ReplayDropReason::CrossSession => FrankenErrorCode::IdempotencyWorkflowError,
+    }
+}
+
+fn checkpoint_error_code(violation: CheckpointViolationType) -> FrankenErrorCode {
+    match violation {
+        CheckpointViolationType::RollbackAttempt => {
+            FrankenErrorCode::CheckpointFrontierEnforcementError
+        }
+        CheckpointViolationType::ForkDetected => FrankenErrorCode::ForkDetectionError,
+        CheckpointViolationType::QuorumInsufficient => {
+            FrankenErrorCode::PolicyCheckpointValidationError
+        }
+    }
+}
+
+fn revocation_error_code(outcome: RevocationCheckOutcome) -> FrankenErrorCode {
+    match outcome {
+        RevocationCheckOutcome::Pass => FrankenErrorCode::RevocationChainIntegrityError,
+        RevocationCheckOutcome::Revoked => FrankenErrorCode::RevocationChainIntegrityError,
+        RevocationCheckOutcome::Stale => FrankenErrorCode::RevocationChainIntegrityError,
+    }
+}
+
+fn cross_zone_error_code(reference_type: CrossZoneReferenceType) -> FrankenErrorCode {
+    match reference_type {
+        CrossZoneReferenceType::ProvenanceAllowed => FrankenErrorCode::SlotRegistryAuthorityError,
+        CrossZoneReferenceType::AuthorityDenied => FrankenErrorCode::SlotRegistryAuthorityError,
+    }
+}

@@ -1,0 +1,2 @@
+donor scope document structure checks
+donor scope policy fixtures

@@ -1,0 +1,2 @@
+semantic donor spec structure checks
+semantic donor schema fixtures

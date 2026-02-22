@@ -3,8 +3,10 @@ mod adversarial_campaign;
 
 use adversarial_campaign::{
     AdversarialCampaign, AttackGrammar, CampaignComplexity, CampaignExecutionResult,
-    CampaignGenerator, CampaignGeneratorConfig, ContainmentDifficulty, ExploitObjectiveScore,
-    MutationEngine, MutationOperator, MutationRequest,
+    CampaignGenerator, CampaignGeneratorConfig, CampaignRuntime, CampaignSuppressionSample,
+    CampaignTrendPoint, ContainmentDifficulty, ExploitEscalationRecord, ExploitObjectiveScore,
+    MutationEngine, MutationOperator, MutationRequest, SuppressionGateConfig, SuppressionGateInput,
+    evaluate_compromise_suppression_gate,
 };
 
 #[test]
@@ -133,4 +135,101 @@ fn exploit_objective_scoring_is_replay_deterministic() {
     let score_a = ExploitObjectiveScore::from_result(&baseline).expect("score a");
     let score_b = ExploitObjectiveScore::from_result(&baseline).expect("score b");
     assert_eq!(score_a, score_b);
+}
+
+#[test]
+fn suppression_gate_surface_exposes_required_structured_fields() {
+    let sample = |campaign_id: &str,
+                  category: adversarial_campaign::CampaignAttackCategory,
+                  runtime: CampaignRuntime,
+                  attempts: u64,
+                  successes: u64| CampaignSuppressionSample {
+        campaign_id: campaign_id.to_string(),
+        attack_category: category,
+        target_runtime: runtime,
+        attempt_count: attempts,
+        success_count: successes,
+        raw_log_ref: format!("artifacts/raw/{campaign_id}.jsonl"),
+        repro_script_ref: format!("artifacts/repro/{campaign_id}.sh"),
+    };
+
+    let categories = adversarial_campaign::CampaignAttackCategory::ALL;
+    let mut samples = Vec::new();
+    for category in categories {
+        samples.push(sample(
+            &format!("fe-{category}"),
+            category,
+            CampaignRuntime::FrankenEngine,
+            180,
+            1,
+        ));
+        samples.push(sample(
+            &format!("node-{category}"),
+            category,
+            CampaignRuntime::NodeLts,
+            180,
+            28,
+        ));
+        samples.push(sample(
+            &format!("bun-{category}"),
+            category,
+            CampaignRuntime::BunStable,
+            180,
+            23,
+        ));
+    }
+
+    let gate_input = SuppressionGateInput {
+        release_candidate_id: "rc-structured-fields".to_string(),
+        continuous_run: true,
+        samples,
+        trend_points: vec![
+            CampaignTrendPoint {
+                release_candidate_id: "rc-prev-1".to_string(),
+                timestamp_ns: 1_700_000_300_000,
+                samples_evaluated: 540,
+            },
+            CampaignTrendPoint {
+                release_candidate_id: "rc-prev-2".to_string(),
+                timestamp_ns: 1_700_000_400_000,
+                samples_evaluated: 560,
+            },
+        ],
+        escalations: vec![ExploitEscalationRecord {
+            campaign_id: "fe-injection".to_string(),
+            attack_category: adversarial_campaign::CampaignAttackCategory::Injection,
+            target_runtime: CampaignRuntime::FrankenEngine,
+            successful_exploit: true,
+            escalation_triggered: true,
+            escalation_latency_seconds: Some(60),
+        }],
+    };
+
+    let result =
+        evaluate_compromise_suppression_gate(&gate_input, &SuppressionGateConfig::default())
+            .expect("suppression gate evaluation");
+
+    assert!(result.passed);
+    let summary = result
+        .events
+        .iter()
+        .find(|event| event.event == "suppression_gate_evaluated")
+        .expect("summary event");
+    assert!(!summary.trace_id.is_empty());
+    assert!(!summary.decision_id.is_empty());
+    assert!(!summary.policy_id.is_empty());
+    assert!(!summary.component.is_empty());
+    assert!(!summary.event.is_empty());
+    assert!(!summary.outcome.is_empty());
+
+    let comparison = result
+        .events
+        .iter()
+        .find(|event| event.event == "suppression_comparison")
+        .expect("comparison event");
+    assert!(!comparison.attack_category.is_empty());
+    assert!(!comparison.target_runtime.is_empty());
+    assert!(comparison.attempt_count > 0);
+    assert!(comparison.p_value_millionths.is_some());
+    assert!(!comparison.confidence_interval.is_empty());
 }

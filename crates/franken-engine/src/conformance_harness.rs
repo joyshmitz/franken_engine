@@ -1830,7 +1830,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
 
 fn fnv1a64(bytes: &[u8]) -> u64 {
     const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
-    const PRIME: u64 = 0x0000_0001_0000_01b3;
+    const PRIME: u64 = 0x0100_0000_01b3;
 
     let mut hash = OFFSET;
     for byte in bytes {
@@ -1846,7 +1846,9 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no parent"))?;
     fs::create_dir_all(parent)?;
 
-    let tmp = path.with_extension("tmp");
+    let mut tmp_name = path.file_name().unwrap_or_default().to_owned();
+    tmp_name.push(".tmp");
+    let tmp = parent.join(tmp_name);
     fs::write(&tmp, bytes)?;
     fs::rename(&tmp, path)?;
     Ok(())
