@@ -44,6 +44,9 @@ jobs:
       - name: Run control-plane benchmark split gate suite
         run: ./scripts/run_control_plane_benchmark_split_gate_suite.sh ci
 
+      - name: Run test262 ES2020 release-blocker suite
+        run: ./scripts/run_test262_es2020_gate.sh ci
+
       - name: Run version-matrix lane script
         run: ./scripts/run_version_matrix_lane.sh ci
 
