@@ -426,6 +426,18 @@ pub fn verify_merkle_proof(
     &current == expected_root
 }
 
+fn serialized_content_hash<T: Serialize>(value: &T) -> Result<ContentHash, serde_json::Error> {
+    let json = serde_json::to_vec(value)?;
+    Ok(ContentHash::compute(&json))
+}
+
+fn serialized_content_hash_and_size<T: Serialize>(
+    value: &T,
+) -> Result<(ContentHash, u64), serde_json::Error> {
+    let json = serde_json::to_vec(value)?;
+    Ok((ContentHash::compute(&json), json.len() as u64))
+}
+
 // ---------------------------------------------------------------------------
 // VerificationCheck — individual check result
 // ---------------------------------------------------------------------------
@@ -721,8 +733,8 @@ impl BundleBuilder {
         // Collect all artifact entries with composite keys ("{kind}:{id}") to
         // prevent collisions across artifact types sharing the same user-id.
         for (id, trace) in &self.traces {
-            let hash = trace.content_hash();
-            let json = serde_json::to_vec(trace).unwrap_or_default();
+            let (hash, size_bytes) = serialized_content_hash_and_size(trace)
+                .map_err(|e| BundleError::IdDerivation(format!("serialize trace {id}: {e}")))?;
             let key = format!("{}:{id}", BundleArtifactKind::Trace);
             artifact_entries.insert(
                 key,
@@ -731,14 +743,15 @@ impl BundleBuilder {
                     kind: BundleArtifactKind::Trace,
                     content_hash: hash,
                     redacted: false,
-                    size_bytes: json.len() as u64,
+                    size_bytes,
                 },
             );
         }
 
         for (id, entry) in &self.evidence_entries {
-            let json = serde_json::to_vec(entry).unwrap_or_default();
-            let hash = ContentHash::compute(&json);
+            let (hash, size_bytes) = serialized_content_hash_and_size(entry).map_err(|e| {
+                BundleError::IdDerivation(format!("serialize evidence entry {id}: {e}"))
+            })?;
             let key = format!("{}:{id}", BundleArtifactKind::Evidence);
             artifact_entries.insert(
                 key,
@@ -747,14 +760,15 @@ impl BundleBuilder {
                     kind: BundleArtifactKind::Evidence,
                     content_hash: hash,
                     redacted: false,
-                    size_bytes: json.len() as u64,
+                    size_bytes,
                 },
             );
         }
 
         for (id, receipt) in &self.opt_receipts {
-            let json = serde_json::to_vec(receipt).unwrap_or_default();
-            let hash = ContentHash::compute(&json);
+            let (hash, size_bytes) = serialized_content_hash_and_size(receipt).map_err(|e| {
+                BundleError::IdDerivation(format!("serialize optimization receipt {id}: {e}"))
+            })?;
             let key = format!("{}:{id}", BundleArtifactKind::OptReceipt);
             artifact_entries.insert(
                 key,
@@ -763,14 +777,15 @@ impl BundleBuilder {
                     kind: BundleArtifactKind::OptReceipt,
                     content_hash: hash,
                     redacted: false,
-                    size_bytes: json.len() as u64,
+                    size_bytes,
                 },
             );
         }
 
         for (id, cp) in &self.quorum_checkpoints {
-            let json = serde_json::to_vec(cp).unwrap_or_default();
-            let hash = ContentHash::compute(&json);
+            let (hash, size_bytes) = serialized_content_hash_and_size(cp).map_err(|e| {
+                BundleError::IdDerivation(format!("serialize quorum checkpoint {id}: {e}"))
+            })?;
             let key = format!("{}:{id}", BundleArtifactKind::QuorumCheckpoint);
             artifact_entries.insert(
                 key,
@@ -779,14 +794,15 @@ impl BundleBuilder {
                     kind: BundleArtifactKind::QuorumCheckpoint,
                     content_hash: hash,
                     redacted: false,
-                    size_bytes: json.len() as u64,
+                    size_bytes,
                 },
             );
         }
 
         for (id, log) in &self.nondeterminism_logs {
-            let hash = log.content_hash();
-            let json = serde_json::to_vec(log).unwrap_or_default();
+            let (hash, size_bytes) = serialized_content_hash_and_size(log).map_err(|e| {
+                BundleError::IdDerivation(format!("serialize nondeterminism log {id}: {e}"))
+            })?;
             let key = format!("{}:{id}", BundleArtifactKind::NondeterminismLog);
             artifact_entries.insert(
                 key,
@@ -795,14 +811,15 @@ impl BundleBuilder {
                     kind: BundleArtifactKind::NondeterminismLog,
                     content_hash: hash,
                     redacted: false,
-                    size_bytes: json.len() as u64,
+                    size_bytes,
                 },
             );
         }
 
         for (id, cf) in &self.counterfactual_results {
-            let json = serde_json::to_vec(cf).unwrap_or_default();
-            let hash = ContentHash::compute(&json);
+            let (hash, size_bytes) = serialized_content_hash_and_size(cf).map_err(|e| {
+                BundleError::IdDerivation(format!("serialize counterfactual result {id}: {e}"))
+            })?;
             let key = format!("{}:{id}", BundleArtifactKind::CounterfactualResult);
             artifact_entries.insert(
                 key,
@@ -811,14 +828,15 @@ impl BundleBuilder {
                     kind: BundleArtifactKind::CounterfactualResult,
                     content_hash: hash,
                     redacted: false,
-                    size_bytes: json.len() as u64,
+                    size_bytes,
                 },
             );
         }
 
         for (id, snap) in &self.policy_snapshots {
-            let json = serde_json::to_vec(snap).unwrap_or_default();
-            let hash = ContentHash::compute(&json);
+            let (hash, size_bytes) = serialized_content_hash_and_size(snap).map_err(|e| {
+                BundleError::IdDerivation(format!("serialize policy snapshot {id}: {e}"))
+            })?;
             let key = format!("{}:{id}", BundleArtifactKind::PolicySnapshot);
             artifact_entries.insert(
                 key,
@@ -827,7 +845,7 @@ impl BundleBuilder {
                     kind: BundleArtifactKind::PolicySnapshot,
                     content_hash: hash,
                     redacted: false,
-                    size_bytes: json.len() as u64,
+                    size_bytes,
                 },
             );
         }
@@ -1336,38 +1354,76 @@ impl BundleVerifier {
     ) {
         for entry in bundle.manifest.artifacts.values() {
             let aid = &entry.artifact_id;
-            let computed_hash = match entry.kind {
-                BundleArtifactKind::Trace => bundle.traces.get(aid).map(|t| t.content_hash()),
+            let check_name = format!("artifact-hash:{}:{aid}", entry.kind);
+            let computed_hash: Result<Option<ContentHash>, String> = match entry.kind {
+                BundleArtifactKind::Trace => bundle
+                    .traces
+                    .get(aid)
+                    .map(|t| {
+                        serialized_content_hash(t)
+                            .map_err(|e| format!("failed to serialize trace artifact {aid}: {e}"))
+                    })
+                    .transpose(),
                 BundleArtifactKind::Evidence => bundle
                     .evidence_entries
                     .get(aid)
-                    .map(|e| ContentHash::compute(&serde_json::to_vec(e).unwrap_or_default())),
+                    .map(|e| {
+                        serialized_content_hash(e).map_err(|err| {
+                            format!("failed to serialize evidence artifact {aid}: {err}")
+                        })
+                    })
+                    .transpose(),
                 BundleArtifactKind::OptReceipt => bundle
                     .opt_receipts
                     .get(aid)
-                    .map(|r| ContentHash::compute(&serde_json::to_vec(r).unwrap_or_default())),
+                    .map(|r| {
+                        serialized_content_hash(r).map_err(|err| {
+                            format!("failed to serialize receipt artifact {aid}: {err}")
+                        })
+                    })
+                    .transpose(),
                 BundleArtifactKind::QuorumCheckpoint => bundle
                     .quorum_checkpoints
                     .get(aid)
-                    .map(|c| ContentHash::compute(&serde_json::to_vec(c).unwrap_or_default())),
+                    .map(|c| {
+                        serialized_content_hash(c).map_err(|err| {
+                            format!("failed to serialize quorum artifact {aid}: {err}")
+                        })
+                    })
+                    .transpose(),
                 BundleArtifactKind::NondeterminismLog => bundle
                     .nondeterminism_logs
                     .get(aid)
-                    .map(|l| l.content_hash()),
+                    .map(|l| {
+                        serialized_content_hash(l).map_err(|err| {
+                            format!("failed to serialize nondeterminism artifact {aid}: {err}")
+                        })
+                    })
+                    .transpose(),
                 BundleArtifactKind::CounterfactualResult => bundle
                     .counterfactual_results
                     .get(aid)
-                    .map(|r| ContentHash::compute(&serde_json::to_vec(r).unwrap_or_default())),
+                    .map(|r| {
+                        serialized_content_hash(r).map_err(|err| {
+                            format!("failed to serialize counterfactual artifact {aid}: {err}")
+                        })
+                    })
+                    .transpose(),
                 BundleArtifactKind::PolicySnapshot => bundle
                     .policy_snapshots
                     .get(aid)
-                    .map(|s| ContentHash::compute(&serde_json::to_vec(s).unwrap_or_default())),
+                    .map(|s| {
+                        serialized_content_hash(s).map_err(|err| {
+                            format!("failed to serialize policy artifact {aid}: {err}")
+                        })
+                    })
+                    .transpose(),
             };
 
             match computed_hash {
-                Some(hash) => {
+                Ok(Some(hash)) => {
                     report.add_check(VerificationCheck {
-                        name: format!("artifact-hash:{aid}"),
+                        name: check_name.clone(),
                         category: VerificationCategory::ArtifactHash,
                         outcome: if hash == entry.content_hash {
                             CheckOutcome::Pass
@@ -1382,9 +1438,9 @@ impl BundleVerifier {
                         },
                     });
                 }
-                None => {
+                Ok(None) => {
                     report.add_check(VerificationCheck {
-                        name: format!("artifact-hash:{aid}"),
+                        name: check_name.clone(),
                         category: VerificationCategory::ArtifactHash,
                         outcome: if entry.redacted {
                             CheckOutcome::Skipped {
@@ -1395,6 +1451,13 @@ impl BundleVerifier {
                                 reason: "artifact missing from bundle data".to_string(),
                             }
                         },
+                    });
+                }
+                Err(reason) => {
+                    report.add_check(VerificationCheck {
+                        name: check_name,
+                        category: VerificationCategory::ArtifactHash,
+                        outcome: CheckOutcome::Fail { reason },
                     });
                 }
             }
@@ -1805,6 +1868,28 @@ mod tests {
             .filter(|c| c.category == VerificationCategory::ArtifactHash && c.outcome.is_fail())
             .collect();
         assert!(!hash_failures.is_empty());
+    }
+
+    #[test]
+    fn verify_integrity_detects_trace_metadata_tampering() {
+        let mut bundle = build_test_bundle();
+        bundle
+            .traces
+            .get_mut("trace-001")
+            .unwrap()
+            .metadata
+            .insert("tampered".to_string(), "true".to_string());
+
+        let verifier = BundleVerifier::new();
+        let report = verifier.verify_integrity(&bundle, 6000);
+
+        assert!(!report.passed);
+        let trace_hash_check = report
+            .checks
+            .iter()
+            .find(|c| c.name == "artifact-hash:trace:trace-001")
+            .unwrap();
+        assert!(trace_hash_check.outcome.is_fail());
     }
 
     #[test]

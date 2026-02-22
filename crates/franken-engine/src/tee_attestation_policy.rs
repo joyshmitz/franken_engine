@@ -1865,4 +1865,1025 @@ mod tests {
         assert_eq!(TeePlatform::ArmCca.to_string(), "arm_cca");
         assert_eq!(TeePlatform::AmdSev.to_string(), "amd_sev");
     }
+
+    // -----------------------------------------------------------------------
+    // TeePlatform serde round-trip
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn tee_platform_serde_round_trip() {
+        for platform in TeePlatform::ALL {
+            let json = serde_json::to_string(&platform).unwrap();
+            let parsed: TeePlatform = serde_json::from_str(&json).unwrap();
+            assert_eq!(platform, parsed);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // MeasurementAlgorithm
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn measurement_algorithm_display() {
+        assert_eq!(MeasurementAlgorithm::Sha256.to_string(), "sha256");
+        assert_eq!(MeasurementAlgorithm::Sha384.to_string(), "sha384");
+        assert_eq!(MeasurementAlgorithm::Sha512.to_string(), "sha512");
+    }
+
+    #[test]
+    fn measurement_algorithm_digest_len_bytes() {
+        assert_eq!(MeasurementAlgorithm::Sha256.digest_len_bytes(), 32);
+        assert_eq!(MeasurementAlgorithm::Sha384.digest_len_bytes(), 48);
+        assert_eq!(MeasurementAlgorithm::Sha512.digest_len_bytes(), 64);
+    }
+
+    #[test]
+    fn measurement_algorithm_serde_round_trip() {
+        for alg in [
+            MeasurementAlgorithm::Sha256,
+            MeasurementAlgorithm::Sha384,
+            MeasurementAlgorithm::Sha512,
+        ] {
+            let json = serde_json::to_string(&alg).unwrap();
+            let parsed: MeasurementAlgorithm = serde_json::from_str(&json).unwrap();
+            assert_eq!(alg, parsed);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // MeasurementDigest validation
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn measurement_digest_canonicalize_lowercases() {
+        let mut digest = MeasurementDigest {
+            algorithm: MeasurementAlgorithm::Sha256,
+            digest_hex: "AABBCCDD".to_string(),
+        };
+        digest.canonicalize();
+        assert_eq!(digest.digest_hex, "aabbccdd");
+    }
+
+    #[test]
+    fn measurement_digest_validate_wrong_length() {
+        let digest = MeasurementDigest {
+            algorithm: MeasurementAlgorithm::Sha256,
+            digest_hex: "aabb".to_string(), // too short for sha256 (needs 64 hex chars)
+        };
+        let err = digest
+            .validate_for_platform(TeePlatform::IntelSgx)
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            TeeAttestationPolicyError::InvalidMeasurementDigest { .. }
+        ));
+    }
+
+    #[test]
+    fn measurement_digest_validate_non_hex_chars() {
+        let digest = MeasurementDigest {
+            algorithm: MeasurementAlgorithm::Sha256,
+            digest_hex: "zz".repeat(32), // 64 chars but not hex
+        };
+        let err = digest
+            .validate_for_platform(TeePlatform::AmdSev)
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            TeeAttestationPolicyError::InvalidMeasurementDigest { .. }
+        ));
+    }
+
+    #[test]
+    fn measurement_digest_validate_correct_sha512() {
+        let digest = MeasurementDigest {
+            algorithm: MeasurementAlgorithm::Sha512,
+            digest_hex: digest_hex(0xaa, 64),
+        };
+        digest.validate_for_platform(TeePlatform::ArmCca).unwrap();
+    }
+
+    // -----------------------------------------------------------------------
+    // AttestationFreshnessWindow
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn freshness_window_zero_standard_rejected() {
+        let window = AttestationFreshnessWindow {
+            standard_max_age_secs: 0,
+            high_impact_max_age_secs: 0,
+        };
+        let err = window.validate().unwrap_err();
+        assert!(matches!(
+            err,
+            TeeAttestationPolicyError::InvalidFreshnessWindow { .. }
+        ));
+    }
+
+    #[test]
+    fn freshness_window_max_age_for_standard() {
+        let window = AttestationFreshnessWindow {
+            standard_max_age_secs: 300,
+            high_impact_max_age_secs: 60,
+        };
+        assert_eq!(window.max_age_for(DecisionImpact::Standard), 300);
+        assert_eq!(window.max_age_for(DecisionImpact::HighImpact), 60);
+    }
+
+    #[test]
+    fn freshness_window_equal_values_valid() {
+        let window = AttestationFreshnessWindow {
+            standard_max_age_secs: 100,
+            high_impact_max_age_secs: 100,
+        };
+        window.validate().unwrap();
+    }
+
+    // -----------------------------------------------------------------------
+    // RevocationSource validation
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn revocation_source_empty_source_id_rejected() {
+        let source = RevocationSource {
+            source_id: "  ".to_string(),
+            source_type: RevocationSourceType::IntelPcs,
+            endpoint: "https://example.com".to_string(),
+            on_unavailable: RevocationFallback::FailClosed,
+        };
+        let err = source.validate().unwrap_err();
+        assert!(matches!(
+            err,
+            TeeAttestationPolicyError::InvalidRevocationSource { .. }
+        ));
+    }
+
+    #[test]
+    fn revocation_source_empty_endpoint_rejected() {
+        let source = RevocationSource {
+            source_id: "src-1".to_string(),
+            source_type: RevocationSourceType::IntelPcs,
+            endpoint: "".to_string(),
+            on_unavailable: RevocationFallback::FailClosed,
+        };
+        let err = source.validate().unwrap_err();
+        assert!(matches!(
+            err,
+            TeeAttestationPolicyError::InvalidRevocationSource { .. }
+        ));
+    }
+
+    #[test]
+    fn revocation_source_other_empty_name_rejected() {
+        let source = RevocationSource {
+            source_id: "src-1".to_string(),
+            source_type: RevocationSourceType::Other("".to_string()),
+            endpoint: "https://example.com".to_string(),
+            on_unavailable: RevocationFallback::FailClosed,
+        };
+        let err = source.validate().unwrap_err();
+        assert!(matches!(
+            err,
+            TeeAttestationPolicyError::InvalidRevocationSource { .. }
+        ));
+    }
+
+    #[test]
+    fn revocation_source_type_serde_round_trip() {
+        for st in [
+            RevocationSourceType::IntelPcs,
+            RevocationSourceType::ManufacturerCrl,
+            RevocationSourceType::InternalLedger,
+            RevocationSourceType::Other("custom".to_string()),
+        ] {
+            let json = serde_json::to_string(&st).unwrap();
+            let parsed: RevocationSourceType = serde_json::from_str(&json).unwrap();
+            assert_eq!(st, parsed);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // PlatformTrustRoot validation
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn trust_root_empty_root_id_rejected() {
+        let root = PlatformTrustRoot {
+            root_id: "".to_string(),
+            platform: TeePlatform::IntelSgx,
+            trust_anchor_pem: "-----BEGIN CERT-----".to_string(),
+            valid_from_epoch: SecurityEpoch::from_raw(0),
+            valid_until_epoch: None,
+            pinning: TrustRootPinning::Pinned,
+            source: TrustRootSource::Policy,
+        };
+        let err = root.validate().unwrap_err();
+        assert!(matches!(
+            err,
+            TeeAttestationPolicyError::InvalidTrustRoot { .. }
+        ));
+    }
+
+    #[test]
+    fn trust_root_empty_pem_rejected() {
+        let root = PlatformTrustRoot {
+            root_id: "root-1".to_string(),
+            platform: TeePlatform::IntelSgx,
+            trust_anchor_pem: "".to_string(),
+            valid_from_epoch: SecurityEpoch::from_raw(0),
+            valid_until_epoch: None,
+            pinning: TrustRootPinning::Pinned,
+            source: TrustRootSource::Policy,
+        };
+        let err = root.validate().unwrap_err();
+        assert!(matches!(
+            err,
+            TeeAttestationPolicyError::InvalidTrustRoot { .. }
+        ));
+    }
+
+    #[test]
+    fn trust_root_inverted_epochs_rejected() {
+        let root = PlatformTrustRoot {
+            root_id: "root-1".to_string(),
+            platform: TeePlatform::IntelSgx,
+            trust_anchor_pem: "PEM".to_string(),
+            valid_from_epoch: SecurityEpoch::from_raw(10),
+            valid_until_epoch: Some(SecurityEpoch::from_raw(5)),
+            pinning: TrustRootPinning::Pinned,
+            source: TrustRootSource::Policy,
+        };
+        let err = root.validate().unwrap_err();
+        assert!(matches!(
+            err,
+            TeeAttestationPolicyError::InvalidTrustRoot { .. }
+        ));
+    }
+
+    #[test]
+    fn trust_root_rotating_empty_group_rejected() {
+        let root = PlatformTrustRoot {
+            root_id: "root-1".to_string(),
+            platform: TeePlatform::IntelSgx,
+            trust_anchor_pem: "PEM".to_string(),
+            valid_from_epoch: SecurityEpoch::from_raw(0),
+            valid_until_epoch: Some(SecurityEpoch::from_raw(10)),
+            pinning: TrustRootPinning::Rotating {
+                rotation_group: "".to_string(),
+            },
+            source: TrustRootSource::Policy,
+        };
+        let err = root.validate().unwrap_err();
+        assert!(matches!(
+            err,
+            TeeAttestationPolicyError::InvalidTrustRoot { .. }
+        ));
+    }
+
+    #[test]
+    fn trust_root_rotating_without_until_rejected() {
+        let root = PlatformTrustRoot {
+            root_id: "root-1".to_string(),
+            platform: TeePlatform::IntelSgx,
+            trust_anchor_pem: "PEM".to_string(),
+            valid_from_epoch: SecurityEpoch::from_raw(0),
+            valid_until_epoch: None,
+            pinning: TrustRootPinning::Rotating {
+                rotation_group: "grp".to_string(),
+            },
+            source: TrustRootSource::Policy,
+        };
+        let err = root.validate().unwrap_err();
+        assert!(matches!(
+            err,
+            TeeAttestationPolicyError::InvalidTrustRoot { .. }
+        ));
+    }
+
+    #[test]
+    fn trust_root_temp_override_empty_ids_rejected() {
+        let root = PlatformTrustRoot {
+            root_id: "root-1".to_string(),
+            platform: TeePlatform::IntelSgx,
+            trust_anchor_pem: "PEM".to_string(),
+            valid_from_epoch: SecurityEpoch::from_raw(0),
+            valid_until_epoch: Some(SecurityEpoch::from_raw(10)),
+            pinning: TrustRootPinning::Pinned,
+            source: TrustRootSource::TemporaryOverride {
+                override_id: "".to_string(),
+                justification_artifact_id: "art-1".to_string(),
+            },
+        };
+        let err = root.validate().unwrap_err();
+        assert!(matches!(
+            err,
+            TeeAttestationPolicyError::InvalidTrustRoot { .. }
+        ));
+    }
+
+    #[test]
+    fn trust_root_temp_override_without_until_rejected() {
+        let root = PlatformTrustRoot {
+            root_id: "root-1".to_string(),
+            platform: TeePlatform::IntelSgx,
+            trust_anchor_pem: "PEM".to_string(),
+            valid_from_epoch: SecurityEpoch::from_raw(0),
+            valid_until_epoch: None,
+            pinning: TrustRootPinning::Pinned,
+            source: TrustRootSource::TemporaryOverride {
+                override_id: "ovr-1".to_string(),
+                justification_artifact_id: "art-1".to_string(),
+            },
+        };
+        let err = root.validate().unwrap_err();
+        assert!(matches!(
+            err,
+            TeeAttestationPolicyError::InvalidTrustRoot { .. }
+        ));
+    }
+
+    // -----------------------------------------------------------------------
+    // PlatformTrustRoot active_at_epoch
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn trust_root_active_at_epoch_before_valid_from() {
+        let root = PlatformTrustRoot {
+            root_id: "r".to_string(),
+            platform: TeePlatform::IntelSgx,
+            trust_anchor_pem: "PEM".to_string(),
+            valid_from_epoch: SecurityEpoch::from_raw(5),
+            valid_until_epoch: Some(SecurityEpoch::from_raw(10)),
+            pinning: TrustRootPinning::Pinned,
+            source: TrustRootSource::Policy,
+        };
+        assert!(!root.active_at_epoch(SecurityEpoch::from_raw(4)));
+        assert!(root.active_at_epoch(SecurityEpoch::from_raw(5)));
+        assert!(root.active_at_epoch(SecurityEpoch::from_raw(10)));
+        assert!(!root.active_at_epoch(SecurityEpoch::from_raw(11)));
+    }
+
+    #[test]
+    fn trust_root_active_at_epoch_no_until_always_active() {
+        let root = PlatformTrustRoot {
+            root_id: "r".to_string(),
+            platform: TeePlatform::IntelSgx,
+            trust_anchor_pem: "PEM".to_string(),
+            valid_from_epoch: SecurityEpoch::from_raw(3),
+            valid_until_epoch: None,
+            pinning: TrustRootPinning::Pinned,
+            source: TrustRootSource::Policy,
+        };
+        assert!(root.active_at_epoch(SecurityEpoch::from_raw(3)));
+        assert!(root.active_at_epoch(SecurityEpoch::from_raw(u64::MAX)));
+    }
+
+    // -----------------------------------------------------------------------
+    // Policy validation edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn policy_empty_measurements_list_rejected() {
+        let mut policy = sample_policy(1);
+        policy
+            .approved_measurements
+            .insert(TeePlatform::IntelSgx, vec![]);
+        let err = policy.validate().unwrap_err();
+        assert!(matches!(
+            err,
+            TeeAttestationPolicyError::MissingMeasurementsForPlatform {
+                platform: TeePlatform::IntelSgx
+            }
+        ));
+    }
+
+    #[test]
+    fn policy_duplicate_measurements_rejected() {
+        let mut policy = sample_policy(1);
+        let dup_digest = MeasurementDigest {
+            algorithm: MeasurementAlgorithm::Sha384,
+            digest_hex: digest_hex(0x11, 48),
+        };
+        policy
+            .approved_measurements
+            .insert(TeePlatform::IntelSgx, vec![dup_digest.clone(), dup_digest]);
+        let err = policy.validate().unwrap_err();
+        assert!(matches!(
+            err,
+            TeeAttestationPolicyError::DuplicateMeasurementDigest { .. }
+        ));
+    }
+
+    #[test]
+    fn policy_empty_revocation_sources_rejected() {
+        let mut policy = sample_policy(1);
+        policy.revocation_sources.clear();
+        let err = policy.validate().unwrap_err();
+        assert!(matches!(
+            err,
+            TeeAttestationPolicyError::EmptyRevocationSources
+        ));
+    }
+
+    #[test]
+    fn policy_duplicate_revocation_source_rejected() {
+        let mut policy = sample_policy(1);
+        let dup = policy.revocation_sources[0].clone();
+        policy.revocation_sources.push(dup);
+        let err = policy.validate().unwrap_err();
+        assert!(matches!(
+            err,
+            TeeAttestationPolicyError::DuplicateRevocationSource { .. }
+        ));
+    }
+
+    #[test]
+    fn policy_no_fail_closed_revocation_rejected() {
+        let mut policy = sample_policy(1);
+        for source in &mut policy.revocation_sources {
+            source.on_unavailable = RevocationFallback::TryNextSource;
+        }
+        let err = policy.validate().unwrap_err();
+        assert!(matches!(
+            err,
+            TeeAttestationPolicyError::RevocationFallbackBypass
+        ));
+    }
+
+    #[test]
+    fn policy_empty_trust_roots_rejected() {
+        let mut policy = sample_policy(1);
+        policy.platform_trust_roots.clear();
+        let err = policy.validate().unwrap_err();
+        assert!(matches!(err, TeeAttestationPolicyError::MissingTrustRoots));
+    }
+
+    #[test]
+    fn policy_duplicate_trust_root_rejected() {
+        let mut policy = sample_policy(1);
+        let dup = policy.platform_trust_roots[0].clone();
+        policy.platform_trust_roots.push(dup);
+        let err = policy.validate().unwrap_err();
+        assert!(matches!(
+            err,
+            TeeAttestationPolicyError::DuplicateTrustRoot { .. }
+        ));
+    }
+
+    // -----------------------------------------------------------------------
+    // evaluate_quote edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn evaluate_quote_revoked_by_source() {
+        let policy = sample_policy(1);
+        let mut quote = quote_for_sgx();
+        quote
+            .revocation_observations
+            .insert("intel_pcs".to_string(), RevocationProbeStatus::Revoked);
+        let err = policy
+            .evaluate_quote(&quote, DecisionImpact::Standard, SecurityEpoch::from_raw(1))
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            TeeAttestationPolicyError::RevokedBySource { .. }
+        ));
+    }
+
+    #[test]
+    fn evaluate_quote_standard_at_max_age_passes() {
+        let policy = sample_policy(1);
+        let mut quote = quote_for_sgx();
+        quote.quote_age_secs = 300; // exactly at standard max
+        policy
+            .evaluate_quote(&quote, DecisionImpact::Standard, SecurityEpoch::from_raw(1))
+            .unwrap();
+    }
+
+    #[test]
+    fn evaluate_quote_standard_over_max_age_fails() {
+        let policy = sample_policy(1);
+        let mut quote = quote_for_sgx();
+        quote.quote_age_secs = 301;
+        let err = policy
+            .evaluate_quote(&quote, DecisionImpact::Standard, SecurityEpoch::from_raw(1))
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            TeeAttestationPolicyError::AttestationStale { .. }
+        ));
+    }
+
+    #[test]
+    fn evaluate_quote_unknown_trust_root() {
+        let policy = sample_policy(1);
+        let mut quote = quote_for_sgx();
+        quote.trust_root_id = "nonexistent-root".to_string();
+        let err = policy
+            .evaluate_quote(&quote, DecisionImpact::Standard, SecurityEpoch::from_raw(1))
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            TeeAttestationPolicyError::UnknownTrustRoot { .. }
+        ));
+    }
+
+    // -----------------------------------------------------------------------
+    // TeeAttestationPolicyStore
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn store_default_halts_emission() {
+        let store = TeeAttestationPolicyStore::default();
+        assert!(store.receipt_emission_halted());
+        assert_eq!(store.last_error_code(), Some("policy_not_loaded"));
+        assert!(store.active_policy().is_none());
+        assert!(store.governance_ledger().is_empty());
+    }
+
+    #[test]
+    fn store_load_policy_epoch_regression_rejected() {
+        let mut store = TeeAttestationPolicyStore::default();
+        store.load_policy(sample_policy(10), "t-1", "d-1").unwrap();
+        let err = store
+            .load_policy(sample_policy(5), "t-2", "d-2")
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            TeeAttestationPolicyError::PolicyEpochRegression { .. }
+        ));
+        assert!(store.receipt_emission_halted());
+    }
+
+    #[test]
+    fn store_evaluate_quote_when_halted() {
+        let mut store = TeeAttestationPolicyStore::default();
+        let quote = quote_for_sgx();
+        let err = store
+            .evaluate_quote(
+                &quote,
+                DecisionImpact::Standard,
+                SecurityEpoch::from_raw(1),
+                "t-1",
+                "d-1",
+            )
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            TeeAttestationPolicyError::ReceiptEmissionHalted
+        ));
+    }
+
+    #[test]
+    fn store_evaluate_quote_success_emits_event() {
+        let mut store = TeeAttestationPolicyStore::default();
+        store
+            .load_policy(sample_policy(5), "t-load", "d-load")
+            .unwrap();
+        let quote = quote_for_sgx();
+        store
+            .evaluate_quote(
+                &quote,
+                DecisionImpact::Standard,
+                SecurityEpoch::from_raw(5),
+                "t-eval",
+                "d-eval",
+            )
+            .unwrap();
+        let last = store.governance_ledger().last().unwrap();
+        assert_eq!(last.event, "quote_accepted");
+        assert_eq!(last.outcome, "allow");
+    }
+
+    #[test]
+    fn store_evaluate_quote_rejection_emits_event() {
+        let mut store = TeeAttestationPolicyStore::default();
+        store
+            .load_policy(sample_policy(5), "t-load", "d-load")
+            .unwrap();
+        let mut quote = quote_for_sgx();
+        quote.quote_age_secs = 999; // too old for standard
+        let err = store
+            .evaluate_quote(
+                &quote,
+                DecisionImpact::Standard,
+                SecurityEpoch::from_raw(5),
+                "t-eval",
+                "d-eval",
+            )
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            TeeAttestationPolicyError::AttestationStale { .. }
+        ));
+        let last = store.governance_ledger().last().unwrap();
+        assert_eq!(last.event, "quote_rejected");
+        assert_eq!(last.outcome, "deny");
+    }
+
+    // -----------------------------------------------------------------------
+    // DecisionReceiptEmitter
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn emitter_new_has_no_synced_epoch() {
+        let emitter = DecisionReceiptEmitter::new("emitter-1");
+        assert_eq!(emitter.emitter_id, "emitter-1");
+        assert!(emitter.last_synced_policy_epoch.is_none());
+    }
+
+    #[test]
+    fn emitter_sync_when_halted_fails() {
+        let mut emitter = DecisionReceiptEmitter::new("e-1");
+        let store = TeeAttestationPolicyStore::default();
+        let err = emitter.sync_policy(&store).unwrap_err();
+        assert!(matches!(
+            err,
+            TeeAttestationPolicyError::ReceiptEmissionHalted
+        ));
+    }
+
+    #[test]
+    fn emitter_sync_sets_epoch() {
+        let mut emitter = DecisionReceiptEmitter::new("e-1");
+        let mut store = TeeAttestationPolicyStore::default();
+        store.load_policy(sample_policy(7), "t-1", "d-1").unwrap();
+        let epoch = emitter.sync_policy(&store).unwrap();
+        assert_eq!(epoch, SecurityEpoch::from_raw(7));
+        assert_eq!(
+            emitter.last_synced_policy_epoch,
+            Some(SecurityEpoch::from_raw(7))
+        );
+    }
+
+    #[test]
+    fn emitter_can_emit_not_synced_fails() {
+        let emitter = DecisionReceiptEmitter::new("e-1");
+        let mut store = TeeAttestationPolicyStore::default();
+        store.load_policy(sample_policy(5), "t-1", "d-1").unwrap();
+        let err = emitter
+            .can_emit(SecurityEpoch::from_raw(5), &store)
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            TeeAttestationPolicyError::EmitterNotSynced { .. }
+        ));
+    }
+
+    #[test]
+    fn emitter_can_emit_stale_fails() {
+        let mut emitter = DecisionReceiptEmitter::new("e-1");
+        let mut store = TeeAttestationPolicyStore::default();
+        store.load_policy(sample_policy(5), "t-1", "d-1").unwrap();
+        emitter.sync_policy(&store).unwrap();
+        // Load a much newer policy
+        store.load_policy(sample_policy(10), "t-2", "d-2").unwrap();
+        let err = emitter
+            .can_emit(SecurityEpoch::from_raw(10), &store)
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            TeeAttestationPolicyError::EmitterPolicyStale { .. }
+        ));
+    }
+
+    #[test]
+    fn emitter_can_emit_one_behind_ok() {
+        let mut emitter = DecisionReceiptEmitter::new("e-1");
+        let mut store = TeeAttestationPolicyStore::default();
+        store.load_policy(sample_policy(5), "t-1", "d-1").unwrap();
+        emitter.sync_policy(&store).unwrap();
+        store.load_policy(sample_policy(6), "t-2", "d-2").unwrap();
+        // Synced at 5, active is 6 — one epoch behind is OK
+        emitter
+            .can_emit(SecurityEpoch::from_raw(6), &store)
+            .unwrap();
+    }
+
+    // -----------------------------------------------------------------------
+    // TeeAttestationPolicyError error_code coverage
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn error_code_coverage_all_variants() {
+        let variants: Vec<TeeAttestationPolicyError> = vec![
+            TeeAttestationPolicyError::ParseFailed {
+                detail: "bad".to_string(),
+            },
+            TeeAttestationPolicyError::SerializationFailed {
+                detail: "err".to_string(),
+            },
+            TeeAttestationPolicyError::MissingMeasurementsForPlatform {
+                platform: TeePlatform::IntelSgx,
+            },
+            TeeAttestationPolicyError::InvalidMeasurementDigest {
+                platform: TeePlatform::ArmCca,
+                digest: "abc".to_string(),
+                expected_hex_len: 64,
+            },
+            TeeAttestationPolicyError::DuplicateMeasurementDigest {
+                platform: TeePlatform::AmdSev,
+                digest: "dd".to_string(),
+            },
+            TeeAttestationPolicyError::InvalidFreshnessWindow {
+                standard_max_age_secs: 0,
+                high_impact_max_age_secs: 0,
+            },
+            TeeAttestationPolicyError::EmptyRevocationSources,
+            TeeAttestationPolicyError::InvalidRevocationSource {
+                reason: "test".to_string(),
+            },
+            TeeAttestationPolicyError::DuplicateRevocationSource {
+                source_id: "s".to_string(),
+            },
+            TeeAttestationPolicyError::RevocationFallbackBypass,
+            TeeAttestationPolicyError::MissingTrustRoots,
+            TeeAttestationPolicyError::InvalidTrustRoot {
+                root_id: "r".to_string(),
+                reason: "bad".to_string(),
+            },
+            TeeAttestationPolicyError::DuplicateTrustRoot {
+                platform: TeePlatform::IntelSgx,
+                root_id: "r".to_string(),
+            },
+            TeeAttestationPolicyError::MissingPinnedTrustRoot {
+                platform: TeePlatform::IntelSgx,
+            },
+            TeeAttestationPolicyError::PolicyEpochRegression {
+                current: SecurityEpoch::from_raw(5),
+                attempted: SecurityEpoch::from_raw(3),
+            },
+            TeeAttestationPolicyError::IdDerivationFailed {
+                detail: "fail".to_string(),
+            },
+            TeeAttestationPolicyError::ReceiptEmissionHalted,
+            TeeAttestationPolicyError::NoActivePolicy,
+            TeeAttestationPolicyError::UnknownMeasurementDigest {
+                platform: TeePlatform::IntelSgx,
+                digest: "dd".to_string(),
+            },
+            TeeAttestationPolicyError::AttestationStale {
+                quote_age_secs: 500,
+                max_age_secs: 300,
+            },
+            TeeAttestationPolicyError::UnknownTrustRoot {
+                platform: TeePlatform::IntelSgx,
+                root_id: "r".to_string(),
+            },
+            TeeAttestationPolicyError::ExpiredTrustRoot {
+                root_id: "r".to_string(),
+                runtime_epoch: SecurityEpoch::from_raw(10),
+                valid_until_epoch: Some(SecurityEpoch::from_raw(5)),
+            },
+            TeeAttestationPolicyError::RevokedBySource {
+                source_id: "s".to_string(),
+            },
+            TeeAttestationPolicyError::RevocationSourceUnavailable {
+                source_id: "s".to_string(),
+            },
+            TeeAttestationPolicyError::RevocationEvidenceUnavailable,
+            TeeAttestationPolicyError::InvalidOverrideArtifact {
+                reason: "bad".to_string(),
+            },
+            TeeAttestationPolicyError::OverrideJustificationMissing,
+            TeeAttestationPolicyError::OverrideExpired {
+                current_epoch: SecurityEpoch::from_raw(10),
+                expires_epoch: SecurityEpoch::from_raw(5),
+            },
+            TeeAttestationPolicyError::OverrideSignatureInvalid {
+                detail: "bad".to_string(),
+            },
+            TeeAttestationPolicyError::OverrideTargetMismatch {
+                expected_platform: TeePlatform::IntelSgx,
+                expected_root_id: "r1".to_string(),
+                actual_platform: TeePlatform::AmdSev,
+                actual_root_id: "r2".to_string(),
+            },
+            TeeAttestationPolicyError::EmitterNotSynced {
+                emitter_id: "e".to_string(),
+            },
+            TeeAttestationPolicyError::EmitterPolicyStale {
+                emitter_id: "e".to_string(),
+                synced_epoch: SecurityEpoch::from_raw(3),
+                required_epoch: SecurityEpoch::from_raw(5),
+            },
+        ];
+        for variant in &variants {
+            let code = variant.error_code();
+            assert!(!code.is_empty(), "error_code empty for {variant}");
+            let display = variant.to_string();
+            assert!(!display.is_empty(), "Display empty for error_code {code}");
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // is_hex_ascii edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn is_hex_ascii_valid() {
+        assert!(is_hex_ascii("0123456789abcdefABCDEF"));
+    }
+
+    #[test]
+    fn is_hex_ascii_empty() {
+        assert!(is_hex_ascii(""));
+    }
+
+    #[test]
+    fn is_hex_ascii_invalid_chars() {
+        assert!(!is_hex_ascii("zz"));
+        assert!(!is_hex_ascii("0g"));
+    }
+
+    // -----------------------------------------------------------------------
+    // SignedTrustRootOverrideArtifact validation edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn override_artifact_empty_actor_rejected() {
+        let signing_key = SigningKey::from_bytes([7u8; 32]);
+        let err = SignedTrustRootOverrideArtifact::create_signed(
+            &signing_key,
+            TrustRootOverrideArtifactInput {
+                actor: "".to_string(),
+                justification: "test".to_string(),
+                evidence_refs: vec![],
+                target_platform: TeePlatform::IntelSgx,
+                target_root_id: "root-1".to_string(),
+                issued_epoch: SecurityEpoch::from_raw(1),
+                expires_epoch: SecurityEpoch::from_raw(5),
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            TeeAttestationPolicyError::InvalidOverrideArtifact { .. }
+        ));
+    }
+
+    #[test]
+    fn override_artifact_empty_justification_rejected() {
+        let signing_key = SigningKey::from_bytes([7u8; 32]);
+        let err = SignedTrustRootOverrideArtifact::create_signed(
+            &signing_key,
+            TrustRootOverrideArtifactInput {
+                actor: "operator".to_string(),
+                justification: "".to_string(),
+                evidence_refs: vec![],
+                target_platform: TeePlatform::IntelSgx,
+                target_root_id: "root-1".to_string(),
+                issued_epoch: SecurityEpoch::from_raw(1),
+                expires_epoch: SecurityEpoch::from_raw(5),
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            TeeAttestationPolicyError::OverrideJustificationMissing
+        ));
+    }
+
+    #[test]
+    fn override_artifact_expires_before_issued_rejected() {
+        let signing_key = SigningKey::from_bytes([7u8; 32]);
+        let err = SignedTrustRootOverrideArtifact::create_signed(
+            &signing_key,
+            TrustRootOverrideArtifactInput {
+                actor: "operator".to_string(),
+                justification: "fix".to_string(),
+                evidence_refs: vec![],
+                target_platform: TeePlatform::IntelSgx,
+                target_root_id: "root-1".to_string(),
+                issued_epoch: SecurityEpoch::from_raw(10),
+                expires_epoch: SecurityEpoch::from_raw(5),
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            TeeAttestationPolicyError::InvalidOverrideArtifact { .. }
+        ));
+    }
+
+    #[test]
+    fn override_artifact_verify_expired_rejected() {
+        let signing_key = SigningKey::from_bytes([7u8; 32]);
+        let verifier = signing_key.verification_key();
+        let artifact = SignedTrustRootOverrideArtifact::create_signed(
+            &signing_key,
+            TrustRootOverrideArtifactInput {
+                actor: "operator".to_string(),
+                justification: "fix".to_string(),
+                evidence_refs: vec![],
+                target_platform: TeePlatform::IntelSgx,
+                target_root_id: "root-1".to_string(),
+                issued_epoch: SecurityEpoch::from_raw(1),
+                expires_epoch: SecurityEpoch::from_raw(5),
+            },
+        )
+        .unwrap();
+        let err = artifact
+            .verify(&verifier, SecurityEpoch::from_raw(6))
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            TeeAttestationPolicyError::OverrideExpired { .. }
+        ));
+    }
+
+    // -----------------------------------------------------------------------
+    // TrustRootPinning serde round-trip
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn trust_root_pinning_serde_round_trip() {
+        for pinning in [
+            TrustRootPinning::Pinned,
+            TrustRootPinning::Rotating {
+                rotation_group: "grp-1".to_string(),
+            },
+        ] {
+            let json = serde_json::to_string(&pinning).unwrap();
+            let parsed: TrustRootPinning = serde_json::from_str(&json).unwrap();
+            assert_eq!(pinning, parsed);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // DecisionImpact and RevocationProbeStatus serde
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn decision_impact_serde_round_trip() {
+        for impact in [DecisionImpact::Standard, DecisionImpact::HighImpact] {
+            let json = serde_json::to_string(&impact).unwrap();
+            let parsed: DecisionImpact = serde_json::from_str(&json).unwrap();
+            assert_eq!(impact, parsed);
+        }
+    }
+
+    #[test]
+    fn revocation_probe_status_serde_round_trip() {
+        for status in [
+            RevocationProbeStatus::Good,
+            RevocationProbeStatus::Revoked,
+            RevocationProbeStatus::Unavailable,
+        ] {
+            let json = serde_json::to_string(&status).unwrap();
+            let parsed: RevocationProbeStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(status, parsed);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // RevocationFallback serde
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn revocation_fallback_serde_round_trip() {
+        for fb in [
+            RevocationFallback::TryNextSource,
+            RevocationFallback::FailClosed,
+        ] {
+            let json = serde_json::to_string(&fb).unwrap();
+            let parsed: RevocationFallback = serde_json::from_str(&json).unwrap();
+            assert_eq!(fb, parsed);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Policy ID changes with epoch
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn policy_id_differs_for_different_epochs() {
+        let p1 = sample_policy(1);
+        let p2 = sample_policy(2);
+        assert_ne!(
+            p1.derive_policy_id().unwrap(),
+            p2.derive_policy_id().unwrap()
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // PolicyGovernanceEvent serde
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn policy_governance_event_serde_round_trip() {
+        let event = PolicyGovernanceEvent {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            component: COMPONENT_NAME.to_string(),
+            event: "policy_loaded".to_string(),
+            outcome: "allow".to_string(),
+            error_code: "ok".to_string(),
+            metadata: BTreeMap::new(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let parsed: PolicyGovernanceEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, parsed);
+    }
 }

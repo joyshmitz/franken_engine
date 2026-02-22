@@ -1170,4 +1170,999 @@ mod tests {
         let adapter = FrankensqliteStorageAdapter::new(backend).expect("adapter init");
         assert_eq!(adapter.current_schema_version(), STORAGE_SCHEMA_VERSION);
     }
+
+    // ── EventContext validation ──────────────────────────────────────────
+
+    #[test]
+    fn event_context_valid() {
+        let ctx = EventContext::new("t", "d", "p").unwrap();
+        assert_eq!(ctx.trace_id, "t");
+        assert_eq!(ctx.decision_id, "d");
+        assert_eq!(ctx.policy_id, "p");
+    }
+
+    #[test]
+    fn event_context_empty_trace_id_errors() {
+        let err = EventContext::new("", "d", "p").unwrap_err();
+        assert!(matches!(err, StorageError::InvalidContext { field } if field == "trace_id"));
+    }
+
+    #[test]
+    fn event_context_empty_decision_id_errors() {
+        let err = EventContext::new("t", "  ", "p").unwrap_err();
+        assert!(matches!(err, StorageError::InvalidContext { field } if field == "decision_id"));
+    }
+
+    #[test]
+    fn event_context_empty_policy_id_errors() {
+        let err = EventContext::new("t", "d", "").unwrap_err();
+        assert!(matches!(err, StorageError::InvalidContext { field } if field == "policy_id"));
+    }
+
+    // ── StoreKind ────────────────────────────────────────────────────────
+
+    #[test]
+    fn store_kind_as_str_exhaustive() {
+        let cases = [
+            (StoreKind::ReplayIndex, "replay_index"),
+            (StoreKind::EvidenceIndex, "evidence_index"),
+            (StoreKind::BenchmarkLedger, "benchmark_ledger"),
+            (StoreKind::PolicyCache, "policy_cache"),
+            (StoreKind::PlasWitness, "plas_witness"),
+            (StoreKind::ReplacementLineage, "replacement_lineage"),
+            (StoreKind::IfcProvenance, "ifc_provenance"),
+            (StoreKind::SpecializationIndex, "specialization_index"),
+        ];
+        for (kind, expected) in cases {
+            assert_eq!(kind.as_str(), expected, "StoreKind::{kind:?}");
+        }
+    }
+
+    #[test]
+    fn store_kind_integration_point_exhaustive() {
+        let cases = [
+            (
+                StoreKind::ReplayIndex,
+                "frankensqlite::control_plane::replay_index",
+            ),
+            (
+                StoreKind::EvidenceIndex,
+                "frankensqlite::control_plane::evidence_index",
+            ),
+            (
+                StoreKind::BenchmarkLedger,
+                "frankensqlite::benchmark::ledger",
+            ),
+            (
+                StoreKind::PolicyCache,
+                "frankensqlite::control_plane::policy_cache",
+            ),
+            (
+                StoreKind::PlasWitness,
+                "frankensqlite::analysis::plas_witness",
+            ),
+            (
+                StoreKind::ReplacementLineage,
+                "frankensqlite::replacement::lineage_log",
+            ),
+            (
+                StoreKind::IfcProvenance,
+                "frankensqlite::control_plane::ifc_provenance",
+            ),
+            (
+                StoreKind::SpecializationIndex,
+                "frankensqlite::control_plane::specialization_index",
+            ),
+        ];
+        for (kind, expected) in cases {
+            assert_eq!(kind.integration_point(), expected, "StoreKind::{kind:?}");
+        }
+    }
+
+    #[test]
+    fn store_kind_display_matches_as_str() {
+        for kind in [
+            StoreKind::ReplayIndex,
+            StoreKind::EvidenceIndex,
+            StoreKind::BenchmarkLedger,
+            StoreKind::PolicyCache,
+            StoreKind::PlasWitness,
+            StoreKind::ReplacementLineage,
+            StoreKind::IfcProvenance,
+            StoreKind::SpecializationIndex,
+        ] {
+            assert_eq!(format!("{kind}"), kind.as_str());
+        }
+    }
+
+    #[test]
+    fn store_kind_serde_round_trip() {
+        let kind = StoreKind::PlasWitness;
+        let json = serde_json::to_string(&kind).unwrap();
+        let back: StoreKind = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, kind);
+    }
+
+    // ── StorageError ─────────────────────────────────────────────────────
+
+    #[test]
+    fn storage_error_code_exhaustive() {
+        let cases: Vec<(StorageError, &str)> = vec![
+            (
+                StorageError::InvalidContext { field: "x".into() },
+                "FE-STOR-0001",
+            ),
+            (StorageError::InvalidKey { key: "k".into() }, "FE-STOR-0002"),
+            (
+                StorageError::InvalidQuery { detail: "d".into() },
+                "FE-STOR-0003",
+            ),
+            (
+                StorageError::NotFound {
+                    store: StoreKind::PolicyCache,
+                    key: "k".into(),
+                },
+                "FE-STOR-0004",
+            ),
+            (
+                StorageError::SchemaVersionMismatch {
+                    expected: 1,
+                    actual: 2,
+                },
+                "FE-STOR-0005",
+            ),
+            (
+                StorageError::MigrationFailed {
+                    from: 1,
+                    to: 2,
+                    reason: "r".into(),
+                },
+                "FE-STOR-0006",
+            ),
+            (
+                StorageError::IntegrityViolation {
+                    store: StoreKind::ReplayIndex,
+                    detail: "d".into(),
+                },
+                "FE-STOR-0007",
+            ),
+            (
+                StorageError::BackendUnavailable {
+                    backend: "b".into(),
+                    detail: "d".into(),
+                },
+                "FE-STOR-0008",
+            ),
+            (
+                StorageError::WriteRejected { detail: "d".into() },
+                "FE-STOR-0009",
+            ),
+        ];
+        for (err, code) in cases {
+            assert_eq!(err.code(), code, "{err}");
+        }
+    }
+
+    #[test]
+    fn storage_error_display_all_variants() {
+        let err = StorageError::InvalidContext {
+            field: "trace_id".into(),
+        };
+        assert!(err.to_string().contains("trace_id"));
+
+        let err = StorageError::InvalidKey { key: "bad".into() };
+        assert!(err.to_string().contains("bad"));
+
+        let err = StorageError::InvalidQuery {
+            detail: "oops".into(),
+        };
+        assert!(err.to_string().contains("oops"));
+
+        let err = StorageError::NotFound {
+            store: StoreKind::PolicyCache,
+            key: "missing".into(),
+        };
+        assert!(err.to_string().contains("missing"));
+
+        let err = StorageError::SchemaVersionMismatch {
+            expected: 1,
+            actual: 2,
+        };
+        assert!(err.to_string().contains("1") && err.to_string().contains("2"));
+
+        let err = StorageError::MigrationFailed {
+            from: 1,
+            to: 2,
+            reason: "test".into(),
+        };
+        assert!(err.to_string().contains("test"));
+
+        let err = StorageError::IntegrityViolation {
+            store: StoreKind::ReplayIndex,
+            detail: "corrupt".into(),
+        };
+        assert!(err.to_string().contains("corrupt"));
+
+        let err = StorageError::BackendUnavailable {
+            backend: "sqlite".into(),
+            detail: "down".into(),
+        };
+        assert!(err.to_string().contains("sqlite") && err.to_string().contains("down"));
+
+        let err = StorageError::WriteRejected {
+            detail: "full".into(),
+        };
+        assert!(err.to_string().contains("full"));
+    }
+
+    #[test]
+    fn storage_error_is_std_error() {
+        let err = StorageError::NotFound {
+            store: StoreKind::ReplayIndex,
+            key: "k".into(),
+        };
+        let _: &dyn std::error::Error = &err;
+    }
+
+    // ── InMemoryStorageAdapter ───────────────────────────────────────────
+
+    #[test]
+    fn in_memory_ensure_schema_version_match() {
+        let adapter = InMemoryStorageAdapter::new();
+        assert!(
+            adapter
+                .ensure_schema_version(STORAGE_SCHEMA_VERSION)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn in_memory_ensure_schema_version_mismatch() {
+        let adapter = InMemoryStorageAdapter::new();
+        let err = adapter.ensure_schema_version(999).unwrap_err();
+        assert!(
+            matches!(err, StorageError::SchemaVersionMismatch { expected: 999, actual } if actual == STORAGE_SCHEMA_VERSION)
+        );
+    }
+
+    #[test]
+    fn in_memory_migrate_downgrade_rejected() {
+        let mut adapter = InMemoryStorageAdapter::new();
+        adapter.migrate_to(STORAGE_SCHEMA_VERSION + 1).unwrap();
+        let err = adapter.migrate_to(STORAGE_SCHEMA_VERSION).unwrap_err();
+        assert!(matches!(err, StorageError::MigrationFailed { .. }));
+        assert!(err.to_string().contains("downgrade"));
+    }
+
+    #[test]
+    fn in_memory_migrate_skip_version_rejected() {
+        let mut adapter = InMemoryStorageAdapter::new();
+        let err = adapter.migrate_to(STORAGE_SCHEMA_VERSION + 5).unwrap_err();
+        assert!(matches!(err, StorageError::MigrationFailed { .. }));
+        assert!(err.to_string().contains("single-step"));
+    }
+
+    #[test]
+    fn in_memory_fail_writes_put_rejected() {
+        let mut adapter = InMemoryStorageAdapter::new().with_fail_writes(true);
+        let err = adapter
+            .put(
+                StoreKind::ReplayIndex,
+                "k".to_string(),
+                vec![1],
+                BTreeMap::new(),
+                &ctx(),
+            )
+            .unwrap_err();
+        assert!(matches!(err, StorageError::WriteRejected { .. }));
+    }
+
+    #[test]
+    fn in_memory_fail_writes_delete_rejected() {
+        let mut adapter = InMemoryStorageAdapter::new().with_fail_writes(true);
+        let err = adapter
+            .delete(StoreKind::ReplayIndex, "k", &ctx())
+            .unwrap_err();
+        assert!(matches!(err, StorageError::WriteRejected { .. }));
+    }
+
+    #[test]
+    fn in_memory_fail_writes_batch_rejected() {
+        let mut adapter = InMemoryStorageAdapter::new().with_fail_writes(true);
+        let entries = vec![BatchPutEntry {
+            key: "k".to_string(),
+            value: vec![1],
+            metadata: BTreeMap::new(),
+        }];
+        let err = adapter
+            .put_batch(StoreKind::ReplayIndex, entries, &ctx())
+            .unwrap_err();
+        assert!(matches!(err, StorageError::WriteRejected { .. }));
+    }
+
+    #[test]
+    fn in_memory_query_limit_zero_errors() {
+        let mut adapter = InMemoryStorageAdapter::new();
+        let query = StoreQuery {
+            limit: Some(0),
+            ..Default::default()
+        };
+        let err = adapter
+            .query(StoreKind::ReplayIndex, &query, &ctx())
+            .unwrap_err();
+        assert!(matches!(err, StorageError::InvalidQuery { .. }));
+    }
+
+    #[test]
+    fn in_memory_query_with_key_prefix() {
+        let mut adapter = InMemoryStorageAdapter::new();
+        let context = ctx();
+        adapter
+            .put(
+                StoreKind::ReplayIndex,
+                "run/1".into(),
+                vec![1],
+                BTreeMap::new(),
+                &context,
+            )
+            .unwrap();
+        adapter
+            .put(
+                StoreKind::ReplayIndex,
+                "run/2".into(),
+                vec![2],
+                BTreeMap::new(),
+                &context,
+            )
+            .unwrap();
+        adapter
+            .put(
+                StoreKind::ReplayIndex,
+                "other/x".into(),
+                vec![3],
+                BTreeMap::new(),
+                &context,
+            )
+            .unwrap();
+
+        let query = StoreQuery {
+            key_prefix: Some("run/".to_string()),
+            ..Default::default()
+        };
+        let rows = adapter
+            .query(StoreKind::ReplayIndex, &query, &context)
+            .unwrap();
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|r| r.key.starts_with("run/")));
+    }
+
+    #[test]
+    fn in_memory_query_with_metadata_filter() {
+        let mut adapter = InMemoryStorageAdapter::new();
+        let context = ctx();
+        let mut meta = BTreeMap::new();
+        meta.insert("env".to_string(), "prod".to_string());
+        adapter
+            .put(
+                StoreKind::EvidenceIndex,
+                "a".into(),
+                vec![1],
+                meta,
+                &context,
+            )
+            .unwrap();
+        adapter
+            .put(
+                StoreKind::EvidenceIndex,
+                "b".into(),
+                vec![2],
+                BTreeMap::new(),
+                &context,
+            )
+            .unwrap();
+
+        let mut filters = BTreeMap::new();
+        filters.insert("env".to_string(), "prod".to_string());
+        let query = StoreQuery {
+            metadata_filters: filters,
+            ..Default::default()
+        };
+        let rows = adapter
+            .query(StoreKind::EvidenceIndex, &query, &context)
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].key, "a");
+    }
+
+    #[test]
+    fn in_memory_query_with_limit() {
+        let mut adapter = InMemoryStorageAdapter::new();
+        let context = ctx();
+        for i in 0..5 {
+            adapter
+                .put(
+                    StoreKind::ReplayIndex,
+                    format!("k/{i:03}"),
+                    vec![i as u8],
+                    BTreeMap::new(),
+                    &context,
+                )
+                .unwrap();
+        }
+        let query = StoreQuery {
+            limit: Some(2),
+            ..Default::default()
+        };
+        let rows = adapter
+            .query(StoreKind::ReplayIndex, &query, &context)
+            .unwrap();
+        assert_eq!(rows.len(), 2);
+    }
+
+    #[test]
+    fn in_memory_get_nonexistent_returns_none() {
+        let mut adapter = InMemoryStorageAdapter::new();
+        let result = adapter
+            .get(StoreKind::PolicyCache, "no-such-key", &ctx())
+            .unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn in_memory_delete_nonexistent_returns_false() {
+        let mut adapter = InMemoryStorageAdapter::new();
+        let deleted = adapter
+            .delete(StoreKind::PolicyCache, "no-such-key", &ctx())
+            .unwrap();
+        assert!(!deleted);
+    }
+
+    #[test]
+    fn in_memory_query_empty_store_returns_empty() {
+        let mut adapter = InMemoryStorageAdapter::new();
+        let rows = adapter
+            .query(StoreKind::PlasWitness, &StoreQuery::default(), &ctx())
+            .unwrap();
+        assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn in_memory_put_updates_revision() {
+        let mut adapter = InMemoryStorageAdapter::new();
+        let context = ctx();
+        let r1 = adapter
+            .put(
+                StoreKind::PolicyCache,
+                "k".into(),
+                vec![1],
+                BTreeMap::new(),
+                &context,
+            )
+            .unwrap();
+        let r2 = adapter
+            .put(
+                StoreKind::PolicyCache,
+                "k".into(),
+                vec![2],
+                BTreeMap::new(),
+                &context,
+            )
+            .unwrap();
+        assert!(r2.revision > r1.revision);
+        assert_eq!(r2.value, vec![2]);
+    }
+
+    #[test]
+    fn in_memory_backend_name() {
+        let adapter = InMemoryStorageAdapter::new();
+        assert_eq!(adapter.backend_name(), "in_memory");
+    }
+
+    // ── FrankensqliteStorageAdapter ──────────────────────────────────────
+
+    #[derive(Debug, Default)]
+    struct FailingBackend {
+        fail_wal: bool,
+        fail_pragma: bool,
+        fail_schema_version: bool,
+        fail_migrate: bool,
+        fail_put: bool,
+        fail_get: bool,
+        fail_query: bool,
+        fail_delete: bool,
+        fail_batch: bool,
+        inner: MockFrankenSqlite,
+    }
+
+    impl FrankensqliteBackend for FailingBackend {
+        fn apply_wal_profile(&mut self) -> Result<(), String> {
+            if self.fail_wal {
+                Err("wal failure".into())
+            } else {
+                self.inner.apply_wal_profile()
+            }
+        }
+        fn set_pragma(&mut self, key: &str, value: &str) -> Result<(), String> {
+            if self.fail_pragma {
+                Err("pragma failure".into())
+            } else {
+                self.inner.set_pragma(key, value)
+            }
+        }
+        fn current_schema_version(&self) -> Result<u32, String> {
+            if self.fail_schema_version {
+                Err("schema version failure".into())
+            } else {
+                self.inner.current_schema_version()
+            }
+        }
+        fn migrate_to(&mut self, target_version: u32) -> Result<(), String> {
+            if self.fail_migrate {
+                Err("migration failure".into())
+            } else {
+                self.inner.migrate_to(target_version)
+            }
+        }
+        fn put_record(
+            &mut self,
+            store: StoreKind,
+            key: &str,
+            value: &[u8],
+            metadata: &BTreeMap<String, String>,
+        ) -> Result<StoreRecord, String> {
+            if self.fail_put {
+                Err("put failure".into())
+            } else {
+                self.inner.put_record(store, key, value, metadata)
+            }
+        }
+        fn get_record(&self, store: StoreKind, key: &str) -> Result<Option<StoreRecord>, String> {
+            if self.fail_get {
+                Err("get failure".into())
+            } else {
+                self.inner.get_record(store, key)
+            }
+        }
+        fn query_records(
+            &self,
+            store: StoreKind,
+            query: &StoreQuery,
+        ) -> Result<Vec<StoreRecord>, String> {
+            if self.fail_query {
+                Err("query failure".into())
+            } else {
+                self.inner.query_records(store, query)
+            }
+        }
+        fn delete_record(&mut self, store: StoreKind, key: &str) -> Result<bool, String> {
+            if self.fail_delete {
+                Err("delete failure".into())
+            } else {
+                self.inner.delete_record(store, key)
+            }
+        }
+        fn put_batch(
+            &mut self,
+            store: StoreKind,
+            entries: &[BatchPutEntry],
+        ) -> Result<Vec<StoreRecord>, String> {
+            if self.fail_batch {
+                Err("batch failure".into())
+            } else {
+                self.inner.put_batch(store, entries)
+            }
+        }
+    }
+
+    #[test]
+    fn frankensqlite_new_wal_failure() {
+        let backend = FailingBackend {
+            fail_wal: true,
+            ..Default::default()
+        };
+        let err = FrankensqliteStorageAdapter::new(backend).unwrap_err();
+        assert!(matches!(err, StorageError::BackendUnavailable { .. }));
+    }
+
+    #[test]
+    fn frankensqlite_new_pragma_failure() {
+        let backend = FailingBackend {
+            fail_pragma: true,
+            ..Default::default()
+        };
+        let err = FrankensqliteStorageAdapter::new(backend).unwrap_err();
+        assert!(matches!(err, StorageError::BackendUnavailable { .. }));
+    }
+
+    #[test]
+    fn frankensqlite_new_schema_version_failure() {
+        let backend = FailingBackend {
+            fail_schema_version: true,
+            ..Default::default()
+        };
+        let err = FrankensqliteStorageAdapter::new(backend).unwrap_err();
+        assert!(matches!(err, StorageError::BackendUnavailable { .. }));
+    }
+
+    #[test]
+    fn frankensqlite_crud_operations() {
+        let backend = MockFrankenSqlite::default();
+        let mut adapter = FrankensqliteStorageAdapter::new(backend).unwrap();
+        let context = ctx();
+
+        let record = adapter
+            .put(
+                StoreKind::ReplayIndex,
+                "k1".into(),
+                vec![1, 2],
+                BTreeMap::new(),
+                &context,
+            )
+            .unwrap();
+        assert_eq!(record.key, "k1");
+        assert_eq!(record.value, vec![1, 2]);
+
+        let got = adapter.get(StoreKind::ReplayIndex, "k1", &context).unwrap();
+        assert!(got.is_some());
+        assert_eq!(got.unwrap().value, vec![1, 2]);
+
+        let deleted = adapter
+            .delete(StoreKind::ReplayIndex, "k1", &context)
+            .unwrap();
+        assert!(deleted);
+
+        let got = adapter.get(StoreKind::ReplayIndex, "k1", &context).unwrap();
+        assert!(got.is_none());
+    }
+
+    #[test]
+    fn frankensqlite_query_limit_zero_errors() {
+        let backend = MockFrankenSqlite::default();
+        let mut adapter = FrankensqliteStorageAdapter::new(backend).unwrap();
+        let query = StoreQuery {
+            limit: Some(0),
+            ..Default::default()
+        };
+        let err = adapter
+            .query(StoreKind::ReplayIndex, &query, &ctx())
+            .unwrap_err();
+        assert!(matches!(err, StorageError::InvalidQuery { .. }));
+    }
+
+    #[test]
+    fn frankensqlite_put_failure_emits_error_event() {
+        let backend = FailingBackend {
+            fail_put: true,
+            ..Default::default()
+        };
+        let mut adapter = FrankensqliteStorageAdapter::new(backend).unwrap();
+        let _ = adapter.put(
+            StoreKind::ReplayIndex,
+            "k".into(),
+            vec![1],
+            BTreeMap::new(),
+            &ctx(),
+        );
+        let event = adapter.events().last().unwrap();
+        assert_eq!(event.outcome, "error");
+        assert!(event.error_code.is_some());
+    }
+
+    #[test]
+    fn frankensqlite_get_failure() {
+        let backend = FailingBackend {
+            fail_get: true,
+            ..Default::default()
+        };
+        let mut adapter = FrankensqliteStorageAdapter::new(backend).unwrap();
+        let err = adapter
+            .get(StoreKind::ReplayIndex, "k", &ctx())
+            .unwrap_err();
+        assert!(matches!(err, StorageError::BackendUnavailable { .. }));
+    }
+
+    #[test]
+    fn frankensqlite_query_failure() {
+        let backend = FailingBackend {
+            fail_query: true,
+            ..Default::default()
+        };
+        let mut adapter = FrankensqliteStorageAdapter::new(backend).unwrap();
+        let err = adapter
+            .query(StoreKind::ReplayIndex, &StoreQuery::default(), &ctx())
+            .unwrap_err();
+        assert!(matches!(err, StorageError::BackendUnavailable { .. }));
+    }
+
+    #[test]
+    fn frankensqlite_delete_failure() {
+        let backend = FailingBackend {
+            fail_delete: true,
+            ..Default::default()
+        };
+        let mut adapter = FrankensqliteStorageAdapter::new(backend).unwrap();
+        let err = adapter
+            .delete(StoreKind::ReplayIndex, "k", &ctx())
+            .unwrap_err();
+        assert!(matches!(err, StorageError::BackendUnavailable { .. }));
+    }
+
+    #[test]
+    fn frankensqlite_batch_failure() {
+        let backend = FailingBackend {
+            fail_batch: true,
+            ..Default::default()
+        };
+        let mut adapter = FrankensqliteStorageAdapter::new(backend).unwrap();
+        let entries = vec![BatchPutEntry {
+            key: "k".into(),
+            value: vec![1],
+            metadata: BTreeMap::new(),
+        }];
+        let err = adapter
+            .put_batch(StoreKind::ReplayIndex, entries, &ctx())
+            .unwrap_err();
+        assert!(matches!(err, StorageError::BackendUnavailable { .. }));
+    }
+
+    #[test]
+    fn frankensqlite_migrate_downgrade_rejected() {
+        let backend = MockFrankenSqlite::default();
+        let mut adapter = FrankensqliteStorageAdapter::new(backend).unwrap();
+        adapter.migrate_to(STORAGE_SCHEMA_VERSION + 1).unwrap();
+        let err = adapter.migrate_to(STORAGE_SCHEMA_VERSION).unwrap_err();
+        assert!(matches!(err, StorageError::MigrationFailed { .. }));
+    }
+
+    #[test]
+    fn frankensqlite_migrate_skip_rejected() {
+        let backend = MockFrankenSqlite::default();
+        let mut adapter = FrankensqliteStorageAdapter::new(backend).unwrap();
+        let err = adapter.migrate_to(STORAGE_SCHEMA_VERSION + 5).unwrap_err();
+        assert!(matches!(err, StorageError::MigrationFailed { .. }));
+    }
+
+    #[test]
+    fn frankensqlite_migrate_backend_failure() {
+        let backend = FailingBackend {
+            fail_migrate: true,
+            ..Default::default()
+        };
+        let mut adapter = FrankensqliteStorageAdapter::new(backend).unwrap();
+        let err = adapter.migrate_to(STORAGE_SCHEMA_VERSION + 1).unwrap_err();
+        assert!(matches!(err, StorageError::BackendUnavailable { .. }));
+    }
+
+    #[test]
+    fn frankensqlite_ensure_schema_version() {
+        let backend = MockFrankenSqlite::default();
+        let adapter = FrankensqliteStorageAdapter::new(backend).unwrap();
+        assert!(
+            adapter
+                .ensure_schema_version(STORAGE_SCHEMA_VERSION)
+                .is_ok()
+        );
+        let err = adapter.ensure_schema_version(999).unwrap_err();
+        assert!(matches!(err, StorageError::SchemaVersionMismatch { .. }));
+    }
+
+    #[test]
+    fn frankensqlite_backend_name() {
+        let backend = MockFrankenSqlite::default();
+        let adapter = FrankensqliteStorageAdapter::new(backend).unwrap();
+        assert_eq!(adapter.backend_name(), "frankensqlite");
+    }
+
+    #[test]
+    fn frankensqlite_batch_put_success() {
+        let backend = MockFrankenSqlite::default();
+        let mut adapter = FrankensqliteStorageAdapter::new(backend).unwrap();
+        let entries = vec![
+            BatchPutEntry {
+                key: "a".into(),
+                value: vec![1],
+                metadata: BTreeMap::new(),
+            },
+            BatchPutEntry {
+                key: "b".into(),
+                value: vec![2],
+                metadata: BTreeMap::new(),
+            },
+        ];
+        let records = adapter
+            .put_batch(StoreKind::ReplayIndex, entries, &ctx())
+            .unwrap();
+        assert_eq!(records.len(), 2);
+    }
+
+    #[test]
+    fn frankensqlite_invalid_key_on_put() {
+        let backend = MockFrankenSqlite::default();
+        let mut adapter = FrankensqliteStorageAdapter::new(backend).unwrap();
+        let err = adapter
+            .put(
+                StoreKind::ReplayIndex,
+                "  ".into(),
+                vec![1],
+                BTreeMap::new(),
+                &ctx(),
+            )
+            .unwrap_err();
+        assert!(matches!(err, StorageError::InvalidKey { .. }));
+    }
+
+    #[test]
+    fn frankensqlite_invalid_key_on_batch() {
+        let backend = MockFrankenSqlite::default();
+        let mut adapter = FrankensqliteStorageAdapter::new(backend).unwrap();
+        let entries = vec![
+            BatchPutEntry {
+                key: "ok".into(),
+                value: vec![1],
+                metadata: BTreeMap::new(),
+            },
+            BatchPutEntry {
+                key: "".into(),
+                value: vec![2],
+                metadata: BTreeMap::new(),
+            },
+        ];
+        let err = adapter
+            .put_batch(StoreKind::ReplayIndex, entries, &ctx())
+            .unwrap_err();
+        assert!(matches!(err, StorageError::InvalidKey { .. }));
+    }
+
+    // ── Utility functions ────────────────────────────────────────────────
+
+    #[test]
+    fn digest_hex_deterministic() {
+        let a = digest_hex(b"hello");
+        let b = digest_hex(b"hello");
+        assert_eq!(a, b);
+        assert_ne!(a, digest_hex(b"world"));
+    }
+
+    #[test]
+    fn fnv1a64_deterministic() {
+        let a = fnv1a64(b"test");
+        let b = fnv1a64(b"test");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn fnv1a64_empty_is_offset_basis() {
+        assert_eq!(fnv1a64(b""), 0xcbf2_9ce4_8422_2325);
+    }
+
+    #[test]
+    fn canonicalize_records_sorts_by_key() {
+        let r1 = StoreRecord {
+            store: StoreKind::ReplayIndex,
+            key: "z".into(),
+            value: vec![1],
+            metadata: BTreeMap::new(),
+            revision: 1,
+        };
+        let r2 = StoreRecord {
+            store: StoreKind::ReplayIndex,
+            key: "a".into(),
+            value: vec![2],
+            metadata: BTreeMap::new(),
+            revision: 2,
+        };
+        let sorted = canonicalize_records(vec![r1, r2], None);
+        assert_eq!(sorted[0].key, "a");
+        assert_eq!(sorted[1].key, "z");
+    }
+
+    #[test]
+    fn canonicalize_records_with_limit() {
+        let records: Vec<StoreRecord> = (0..5)
+            .map(|i| StoreRecord {
+                store: StoreKind::ReplayIndex,
+                key: format!("k{i}"),
+                value: vec![i as u8],
+                metadata: BTreeMap::new(),
+                revision: i as u64,
+            })
+            .collect();
+        let truncated = canonicalize_records(records, Some(3));
+        assert_eq!(truncated.len(), 3);
+    }
+
+    // ── Serde round-trips ────────────────────────────────────────────────
+
+    #[test]
+    fn store_record_serde_round_trip() {
+        let record = StoreRecord {
+            store: StoreKind::EvidenceIndex,
+            key: "test".into(),
+            value: vec![1, 2, 3],
+            metadata: BTreeMap::new(),
+            revision: 42,
+        };
+        let json = serde_json::to_string(&record).unwrap();
+        let back: StoreRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, record);
+    }
+
+    #[test]
+    fn storage_event_serde_round_trip() {
+        let event = StorageEvent {
+            trace_id: "t".into(),
+            decision_id: "d".into(),
+            policy_id: "p".into(),
+            component: "c".into(),
+            event: "put".into(),
+            outcome: "ok".into(),
+            error_code: None,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: StorageEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, event);
+    }
+
+    #[test]
+    fn migration_receipt_serde_round_trip() {
+        let receipt = MigrationReceipt {
+            backend: "in_memory".into(),
+            from_version: 1,
+            to_version: 2,
+            stores_touched: vec![StoreKind::ReplayIndex],
+            records_touched: 10,
+            state_hash_before: "aabb".into(),
+            state_hash_after: "ccdd".into(),
+        };
+        let json = serde_json::to_string(&receipt).unwrap();
+        let back: MigrationReceipt = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, receipt);
+    }
+
+    #[test]
+    fn batch_put_entry_serde_round_trip() {
+        let entry = BatchPutEntry {
+            key: "k".into(),
+            value: vec![1],
+            metadata: BTreeMap::new(),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let back: BatchPutEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, entry);
+    }
+
+    #[test]
+    fn store_query_default() {
+        let q = StoreQuery::default();
+        assert!(q.key_prefix.is_none());
+        assert!(q.metadata_filters.is_empty());
+        assert!(q.limit.is_none());
+    }
+
+    #[test]
+    fn in_memory_events_record_success_and_failure() {
+        let mut adapter = InMemoryStorageAdapter::new();
+        let context = ctx();
+        adapter
+            .put(
+                StoreKind::ReplayIndex,
+                "valid".into(),
+                vec![1],
+                BTreeMap::new(),
+                &context,
+            )
+            .unwrap();
+        let _ = adapter.put(
+            StoreKind::ReplayIndex,
+            "".into(),
+            vec![1],
+            BTreeMap::new(),
+            &context,
+        );
+
+        let events = adapter.events();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].outcome, "ok");
+        assert_eq!(events[1].outcome, "error");
+    }
 }

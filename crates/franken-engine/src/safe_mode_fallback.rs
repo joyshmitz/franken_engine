@@ -2291,4 +2291,899 @@ mod tests {
             assert_eq!(r, first, "cascading all-five must be deterministic");
         }
     }
+
+    // ================================================================
+    // Attestation-aware fallback policy tests (bd-1gcu)
+    // ================================================================
+
+    use crate::receipt_verifier_pipeline::LayerResult;
+
+    fn make_signing_key() -> SigningKey {
+        SigningKey::from_bytes([42u8; 32])
+    }
+
+    fn attestation_request(
+        action: AutonomousAction,
+        timestamp_ns: u64,
+    ) -> AttestationActionRequest {
+        AttestationActionRequest::new("trace-a", "decision-a", "policy-a", action, timestamp_ns)
+    }
+
+    fn passing_verdict() -> UnifiedReceiptVerificationVerdict {
+        UnifiedReceiptVerificationVerdict {
+            receipt_id: "r-1".to_string(),
+            trace_id: "t-1".to_string(),
+            decision_id: "d-1".to_string(),
+            policy_id: "p-1".to_string(),
+            verification_timestamp_ns: 100,
+            passed: true,
+            failure_class: None,
+            exit_code: 0,
+            signature: LayerResult {
+                passed: true,
+                error_code: None,
+                checks: vec![],
+            },
+            transparency: LayerResult {
+                passed: true,
+                error_code: None,
+                checks: vec![],
+            },
+            attestation: LayerResult {
+                passed: true,
+                error_code: None,
+                checks: vec![],
+            },
+            warnings: vec![],
+            logs: vec![],
+        }
+    }
+
+    // -- AttestationHealth --
+
+    #[test]
+    fn attestation_health_display_all_variants() {
+        assert_eq!(AttestationHealth::Valid.to_string(), "valid");
+        assert_eq!(
+            AttestationHealth::VerificationFailed.to_string(),
+            "verification_failed"
+        );
+        assert_eq!(AttestationHealth::EvidenceExpired.to_string(), "expired");
+        assert_eq!(
+            AttestationHealth::EvidenceUnavailable.to_string(),
+            "unavailable"
+        );
+    }
+
+    #[test]
+    fn attestation_health_is_healthy() {
+        assert!(AttestationHealth::Valid.is_healthy());
+        assert!(!AttestationHealth::VerificationFailed.is_healthy());
+        assert!(!AttestationHealth::EvidenceExpired.is_healthy());
+        assert!(!AttestationHealth::EvidenceUnavailable.is_healthy());
+    }
+
+    #[test]
+    fn attestation_health_error_code() {
+        assert_eq!(AttestationHealth::Valid.error_code(), None);
+        assert_eq!(
+            AttestationHealth::VerificationFailed.error_code(),
+            Some("attestation_verification_failed")
+        );
+        assert_eq!(
+            AttestationHealth::EvidenceExpired.error_code(),
+            Some("attestation_expired")
+        );
+        assert_eq!(
+            AttestationHealth::EvidenceUnavailable.error_code(),
+            Some("attestation_unavailable")
+        );
+    }
+
+    #[test]
+    fn attestation_health_serde_roundtrip() {
+        for h in [
+            AttestationHealth::Valid,
+            AttestationHealth::VerificationFailed,
+            AttestationHealth::EvidenceExpired,
+            AttestationHealth::EvidenceUnavailable,
+        ] {
+            let json = serde_json::to_string(&h).unwrap();
+            let parsed: AttestationHealth = serde_json::from_str(&json).unwrap();
+            assert_eq!(h, parsed);
+        }
+    }
+
+    // -- ActionTier --
+
+    #[test]
+    fn action_tier_display() {
+        assert_eq!(ActionTier::HighImpact.to_string(), "high_impact");
+        assert_eq!(ActionTier::Standard.to_string(), "standard");
+        assert_eq!(ActionTier::LowImpact.to_string(), "low_impact");
+    }
+
+    #[test]
+    fn action_tier_ordering() {
+        assert!(ActionTier::HighImpact < ActionTier::Standard);
+        assert!(ActionTier::Standard < ActionTier::LowImpact);
+    }
+
+    #[test]
+    fn action_tier_serde_roundtrip() {
+        for tier in [
+            ActionTier::HighImpact,
+            ActionTier::Standard,
+            ActionTier::LowImpact,
+        ] {
+            let json = serde_json::to_string(&tier).unwrap();
+            let parsed: ActionTier = serde_json::from_str(&json).unwrap();
+            assert_eq!(tier, parsed);
+        }
+    }
+
+    // -- AutonomousAction --
+
+    #[test]
+    fn autonomous_action_default_tiers() {
+        assert_eq!(
+            AutonomousAction::Quarantine.default_tier(),
+            ActionTier::HighImpact
+        );
+        assert_eq!(
+            AutonomousAction::Terminate.default_tier(),
+            ActionTier::HighImpact
+        );
+        assert_eq!(
+            AutonomousAction::EmergencyGrant.default_tier(),
+            ActionTier::HighImpact
+        );
+        assert_eq!(
+            AutonomousAction::PolicyPromotion.default_tier(),
+            ActionTier::HighImpact
+        );
+        assert_eq!(
+            AutonomousAction::CapabilityEscalation.default_tier(),
+            ActionTier::HighImpact
+        );
+        assert_eq!(
+            AutonomousAction::RoutineMonitoring.default_tier(),
+            ActionTier::Standard
+        );
+        assert_eq!(
+            AutonomousAction::EvidenceCollection.default_tier(),
+            ActionTier::Standard
+        );
+        assert_eq!(
+            AutonomousAction::MetricsEmission.default_tier(),
+            ActionTier::LowImpact
+        );
+    }
+
+    #[test]
+    fn autonomous_action_display_all_variants() {
+        assert_eq!(AutonomousAction::Quarantine.to_string(), "quarantine");
+        assert_eq!(AutonomousAction::Terminate.to_string(), "terminate");
+        assert_eq!(
+            AutonomousAction::EmergencyGrant.to_string(),
+            "emergency_grant"
+        );
+        assert_eq!(
+            AutonomousAction::PolicyPromotion.to_string(),
+            "policy_promotion"
+        );
+        assert_eq!(
+            AutonomousAction::CapabilityEscalation.to_string(),
+            "capability_escalation"
+        );
+        assert_eq!(
+            AutonomousAction::RoutineMonitoring.to_string(),
+            "routine_monitoring"
+        );
+        assert_eq!(
+            AutonomousAction::EvidenceCollection.to_string(),
+            "evidence_collection"
+        );
+        assert_eq!(
+            AutonomousAction::MetricsEmission.to_string(),
+            "metrics_emission"
+        );
+    }
+
+    #[test]
+    fn autonomous_action_serde_roundtrip() {
+        for action in [
+            AutonomousAction::Quarantine,
+            AutonomousAction::Terminate,
+            AutonomousAction::EmergencyGrant,
+            AutonomousAction::PolicyPromotion,
+            AutonomousAction::CapabilityEscalation,
+            AutonomousAction::RoutineMonitoring,
+            AutonomousAction::EvidenceCollection,
+            AutonomousAction::MetricsEmission,
+        ] {
+            let json = serde_json::to_string(&action).unwrap();
+            let parsed: AutonomousAction = serde_json::from_str(&json).unwrap();
+            assert_eq!(action, parsed);
+        }
+    }
+
+    // -- AttestationActionRequest --
+
+    #[test]
+    fn attestation_action_request_new_uses_default_tier() {
+        let req = AttestationActionRequest::new(
+            "trace-1",
+            "decision-1",
+            "policy-1",
+            AutonomousAction::Quarantine,
+            1000,
+        );
+        assert_eq!(req.tier, ActionTier::HighImpact);
+        assert_eq!(req.trace_id, "trace-1");
+        assert_eq!(req.decision_id, "decision-1");
+        assert_eq!(req.policy_id, "policy-1");
+        assert_eq!(req.timestamp_ns, 1000);
+
+        let req2 =
+            AttestationActionRequest::new("t", "d", "p", AutonomousAction::MetricsEmission, 500);
+        assert_eq!(req2.tier, ActionTier::LowImpact);
+    }
+
+    #[test]
+    fn attestation_action_request_serde_roundtrip() {
+        let req = attestation_request(AutonomousAction::Terminate, 42);
+        let json = serde_json::to_string(&req).unwrap();
+        let parsed: AttestationActionRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(req, parsed);
+    }
+
+    // -- AttestationFallbackState --
+
+    #[test]
+    fn attestation_fallback_state_default_is_normal() {
+        assert_eq!(
+            AttestationFallbackState::default(),
+            AttestationFallbackState::Normal
+        );
+    }
+
+    #[test]
+    fn attestation_fallback_state_display() {
+        assert_eq!(AttestationFallbackState::Normal.to_string(), "normal");
+        assert_eq!(AttestationFallbackState::Degraded.to_string(), "degraded");
+        assert_eq!(AttestationFallbackState::Restoring.to_string(), "restoring");
+    }
+
+    #[test]
+    fn attestation_fallback_state_serde_roundtrip() {
+        for state in [
+            AttestationFallbackState::Normal,
+            AttestationFallbackState::Degraded,
+            AttestationFallbackState::Restoring,
+        ] {
+            let json = serde_json::to_string(&state).unwrap();
+            let parsed: AttestationFallbackState = serde_json::from_str(&json).unwrap();
+            assert_eq!(state, parsed);
+        }
+    }
+
+    // -- AttestationFallbackConfig --
+
+    #[test]
+    fn attestation_fallback_config_default() {
+        let config = AttestationFallbackConfig::default();
+        assert_eq!(config.unavailable_timeout_ns, 300_000_000_000);
+        assert!(config.challenge_on_fallback);
+        assert!(config.sandbox_on_fallback);
+    }
+
+    #[test]
+    fn attestation_fallback_config_serde_roundtrip() {
+        let config = AttestationFallbackConfig::default();
+        let json = serde_json::to_string(&config).unwrap();
+        let parsed: AttestationFallbackConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config, parsed);
+    }
+
+    // -- AttestationFallbackError --
+
+    #[test]
+    fn attestation_fallback_error_display() {
+        let err = AttestationFallbackError::SignatureFailure {
+            detail: "bad key".to_string(),
+        };
+        assert!(err.to_string().contains("bad key"));
+        assert!(err.to_string().contains("signature failure"));
+    }
+
+    #[test]
+    fn attestation_fallback_error_from_signature_error() {
+        let sig_err = SignatureError::PreimageError {
+            detail: "test".to_string(),
+        };
+        let fallback_err: AttestationFallbackError = sig_err.into();
+        assert!(matches!(
+            fallback_err,
+            AttestationFallbackError::SignatureFailure { .. }
+        ));
+    }
+
+    // -- AttestationFallbackManager: low-impact actions --
+
+    #[test]
+    fn low_impact_always_allowed_when_healthy() {
+        let mut mgr = AttestationFallbackManager::with_default_signing_key(Default::default());
+        let req = attestation_request(AutonomousAction::MetricsEmission, 100);
+        let decision = mgr.evaluate_action(req, AttestationHealth::Valid).unwrap();
+        assert!(matches!(
+            decision,
+            AttestationFallbackDecision::Execute { ref attestation_status, warning: None }
+            if attestation_status == "valid"
+        ));
+    }
+
+    #[test]
+    fn low_impact_allowed_when_unhealthy() {
+        let mut mgr = AttestationFallbackManager::with_default_signing_key(Default::default());
+        let req = attestation_request(AutonomousAction::MetricsEmission, 100);
+        let decision = mgr
+            .evaluate_action(req, AttestationHealth::VerificationFailed)
+            .unwrap();
+        // Low-impact: allowed regardless of health
+        assert!(matches!(
+            decision,
+            AttestationFallbackDecision::Execute { .. }
+        ));
+    }
+
+    // -- AttestationFallbackManager: standard actions --
+
+    #[test]
+    fn standard_action_healthy_passes_without_warning() {
+        let mut mgr = AttestationFallbackManager::with_default_signing_key(Default::default());
+        let req = attestation_request(AutonomousAction::RoutineMonitoring, 100);
+        let decision = mgr.evaluate_action(req, AttestationHealth::Valid).unwrap();
+        assert!(matches!(
+            decision,
+            AttestationFallbackDecision::Execute { ref attestation_status, warning: None }
+            if attestation_status == "valid"
+        ));
+    }
+
+    #[test]
+    fn standard_action_unhealthy_executes_with_warning() {
+        let mut mgr = AttestationFallbackManager::with_default_signing_key(Default::default());
+        let req = attestation_request(AutonomousAction::EvidenceCollection, 100);
+        let decision = mgr
+            .evaluate_action(req, AttestationHealth::EvidenceExpired)
+            .unwrap();
+        match decision {
+            AttestationFallbackDecision::Execute {
+                attestation_status,
+                warning,
+            } => {
+                assert_eq!(attestation_status, "degraded");
+                assert!(warning.is_some());
+                assert!(warning.unwrap().contains("expired"));
+            }
+            other => panic!("expected Execute, got {other:?}"),
+        }
+    }
+
+    // -- AttestationFallbackManager: high-impact actions --
+
+    #[test]
+    fn high_impact_healthy_normal_executes() {
+        let mut mgr = AttestationFallbackManager::with_default_signing_key(Default::default());
+        let req = attestation_request(AutonomousAction::Quarantine, 100);
+        let decision = mgr.evaluate_action(req, AttestationHealth::Valid).unwrap();
+        assert!(matches!(
+            decision,
+            AttestationFallbackDecision::Execute { ref attestation_status, warning: None }
+            if attestation_status == "valid"
+        ));
+    }
+
+    #[test]
+    fn high_impact_unhealthy_defers() {
+        let mut mgr = AttestationFallbackManager::with_default_signing_key(Default::default());
+        let req = attestation_request(AutonomousAction::Terminate, 100);
+        let decision = mgr
+            .evaluate_action(req, AttestationHealth::VerificationFailed)
+            .unwrap();
+        match decision {
+            AttestationFallbackDecision::Deferred {
+                queue_id,
+                attestation_status,
+                status,
+                challenge_required,
+                sandbox_required,
+            } => {
+                assert_eq!(queue_id, 0);
+                assert_eq!(attestation_status, "degraded");
+                assert_eq!(status, "attestation-pending");
+                assert!(challenge_required);
+                assert!(sandbox_required);
+            }
+            other => panic!("expected Deferred, got {other:?}"),
+        }
+        assert_eq!(mgr.pending_decisions().len(), 1);
+        assert_eq!(mgr.state(), AttestationFallbackState::Degraded);
+    }
+
+    #[test]
+    fn high_impact_deferred_while_degraded_increments_queue_id() {
+        let mut mgr = AttestationFallbackManager::with_default_signing_key(Default::default());
+        // First defer
+        let req1 = attestation_request(AutonomousAction::Quarantine, 100);
+        mgr.evaluate_action(req1, AttestationHealth::EvidenceUnavailable)
+            .unwrap();
+        // Second defer
+        let req2 = attestation_request(AutonomousAction::Terminate, 200);
+        let decision = mgr
+            .evaluate_action(req2, AttestationHealth::EvidenceUnavailable)
+            .unwrap();
+        match decision {
+            AttestationFallbackDecision::Deferred { queue_id, .. } => {
+                assert_eq!(queue_id, 1);
+            }
+            other => panic!("expected Deferred, got {other:?}"),
+        }
+        assert_eq!(mgr.pending_decisions().len(), 2);
+    }
+
+    // -- State transitions --
+
+    #[test]
+    fn state_transitions_normal_to_degraded_to_normal() {
+        let mut mgr = AttestationFallbackManager::with_default_signing_key(Default::default());
+        assert_eq!(mgr.state(), AttestationFallbackState::Normal);
+
+        // Degrade
+        let req1 = attestation_request(AutonomousAction::Quarantine, 100);
+        mgr.evaluate_action(req1, AttestationHealth::VerificationFailed)
+            .unwrap();
+        assert_eq!(mgr.state(), AttestationFallbackState::Degraded);
+
+        // Restore (healthy again, with a high-impact request)
+        let req2 = attestation_request(AutonomousAction::Quarantine, 200);
+        mgr.evaluate_action(req2, AttestationHealth::Valid).unwrap();
+        assert_eq!(mgr.state(), AttestationFallbackState::Normal);
+    }
+
+    #[test]
+    fn transition_receipts_generated_for_state_changes() {
+        let mut mgr = AttestationFallbackManager::with_default_signing_key(Default::default());
+
+        // Normal → Degraded
+        let req1 = attestation_request(AutonomousAction::Quarantine, 100);
+        mgr.evaluate_action(req1, AttestationHealth::VerificationFailed)
+            .unwrap();
+        assert!(!mgr.transition_receipts().is_empty());
+
+        // Degraded → Restoring → Normal (two transitions)
+        let req2 = attestation_request(AutonomousAction::MetricsEmission, 200);
+        mgr.evaluate_action(req2, AttestationHealth::Valid).unwrap();
+        // Normal→Degraded (1) + Degraded→Restoring (2) + Restoring→Normal (3) = 3
+        assert_eq!(mgr.transition_receipts().len(), 3);
+    }
+
+    #[test]
+    fn transition_receipts_verify_signature() {
+        let mut mgr = AttestationFallbackManager::with_default_signing_key(Default::default());
+        let req = attestation_request(AutonomousAction::Quarantine, 100);
+        mgr.evaluate_action(req, AttestationHealth::VerificationFailed)
+            .unwrap();
+
+        for receipt in mgr.transition_receipts() {
+            receipt.verify().expect("receipt signature should be valid");
+        }
+    }
+
+    // -- Recovery backlog --
+
+    #[test]
+    fn recovery_moves_pending_to_backlog() {
+        let mut mgr = AttestationFallbackManager::with_default_signing_key(Default::default());
+
+        // Degrade and defer
+        let req1 = attestation_request(AutonomousAction::Quarantine, 100);
+        mgr.evaluate_action(req1, AttestationHealth::EvidenceExpired)
+            .unwrap();
+        assert_eq!(mgr.pending_decisions().len(), 1);
+
+        // Restore
+        let req2 = attestation_request(AutonomousAction::MetricsEmission, 200);
+        mgr.evaluate_action(req2, AttestationHealth::Valid).unwrap();
+
+        assert!(mgr.pending_decisions().is_empty());
+        let backlog = mgr.take_recovery_backlog();
+        assert_eq!(backlog.len(), 1);
+        assert_eq!(backlog[0].status, "attestation-pending");
+    }
+
+    // -- Operator review escalation --
+
+    #[test]
+    fn operator_review_not_required_before_timeout() {
+        let config = AttestationFallbackConfig {
+            unavailable_timeout_ns: 1000,
+            ..Default::default()
+        };
+        let mut mgr = AttestationFallbackManager::with_default_signing_key(config);
+
+        // First request sets degraded_since_ns = 100
+        let req1 = attestation_request(AutonomousAction::Quarantine, 100);
+        mgr.evaluate_action(req1, AttestationHealth::EvidenceUnavailable)
+            .unwrap();
+        assert!(!mgr.operator_review_required());
+
+        // 500ns later: still under timeout
+        let req2 = attestation_request(AutonomousAction::Quarantine, 600);
+        mgr.evaluate_action(req2, AttestationHealth::EvidenceUnavailable)
+            .unwrap();
+        assert!(!mgr.operator_review_required());
+    }
+
+    #[test]
+    fn operator_review_required_after_timeout() {
+        let config = AttestationFallbackConfig {
+            unavailable_timeout_ns: 1000,
+            ..Default::default()
+        };
+        let mut mgr = AttestationFallbackManager::with_default_signing_key(config);
+
+        let req1 = attestation_request(AutonomousAction::Quarantine, 100);
+        mgr.evaluate_action(req1, AttestationHealth::EvidenceUnavailable)
+            .unwrap();
+
+        // 1100ns later: past timeout
+        let req2 = attestation_request(AutonomousAction::Quarantine, 1200);
+        mgr.evaluate_action(req2, AttestationHealth::EvidenceUnavailable)
+            .unwrap();
+        assert!(mgr.operator_review_required());
+    }
+
+    #[test]
+    fn operator_review_cleared_on_recovery() {
+        let config = AttestationFallbackConfig {
+            unavailable_timeout_ns: 100,
+            ..Default::default()
+        };
+        let mut mgr = AttestationFallbackManager::with_default_signing_key(config);
+
+        let req1 = attestation_request(AutonomousAction::Quarantine, 0);
+        mgr.evaluate_action(req1, AttestationHealth::EvidenceUnavailable)
+            .unwrap();
+        let req2 = attestation_request(AutonomousAction::Quarantine, 200);
+        mgr.evaluate_action(req2, AttestationHealth::EvidenceUnavailable)
+            .unwrap();
+        assert!(mgr.operator_review_required());
+
+        // Recover
+        let req3 = attestation_request(AutonomousAction::MetricsEmission, 300);
+        mgr.evaluate_action(req3, AttestationHealth::Valid).unwrap();
+        assert!(!mgr.operator_review_required());
+    }
+
+    // -- Operator review only triggers for EvidenceUnavailable --
+
+    #[test]
+    fn operator_review_only_for_evidence_unavailable() {
+        let config = AttestationFallbackConfig {
+            unavailable_timeout_ns: 100,
+            ..Default::default()
+        };
+        let mut mgr = AttestationFallbackManager::with_default_signing_key(config);
+
+        // VerificationFailed past timeout does NOT trigger operator review
+        let req1 = attestation_request(AutonomousAction::Quarantine, 0);
+        mgr.evaluate_action(req1, AttestationHealth::VerificationFailed)
+            .unwrap();
+        let req2 = attestation_request(AutonomousAction::Quarantine, 500);
+        mgr.evaluate_action(req2, AttestationHealth::VerificationFailed)
+            .unwrap();
+        assert!(!mgr.operator_review_required());
+    }
+
+    // -- Events --
+
+    #[test]
+    fn attestation_fallback_emits_structured_events() {
+        let mut mgr = AttestationFallbackManager::with_default_signing_key(Default::default());
+        let req = attestation_request(AutonomousAction::MetricsEmission, 100);
+        mgr.evaluate_action(req, AttestationHealth::Valid).unwrap();
+
+        assert!(!mgr.events().is_empty());
+        let event = &mgr.events()[0];
+        assert_eq!(event.component, "attestation_safe_mode");
+        assert_eq!(event.trace_id, "trace-a");
+        assert!(!event.event.is_empty());
+    }
+
+    #[test]
+    fn attestation_fallback_event_serde_roundtrip() {
+        let event = AttestationFallbackEvent {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            component: "attestation_safe_mode".to_string(),
+            event: "test_event".to_string(),
+            outcome: "pass".to_string(),
+            error_code: None,
+            detail: "detail".to_string(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let parsed: AttestationFallbackEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, parsed);
+    }
+
+    // -- QueuedAttestationDecision --
+
+    #[test]
+    fn queued_attestation_decision_serde_roundtrip() {
+        let queued = QueuedAttestationDecision {
+            queue_id: 5,
+            trace_id: "t-1".to_string(),
+            decision_id: "d-1".to_string(),
+            policy_id: "p-1".to_string(),
+            action: AutonomousAction::Quarantine,
+            queued_at_ns: 12345,
+            status: "attestation-pending".to_string(),
+        };
+        let json = serde_json::to_string(&queued).unwrap();
+        let parsed: QueuedAttestationDecision = serde_json::from_str(&json).unwrap();
+        assert_eq!(queued, parsed);
+    }
+
+    // -- AttestationFallbackDecision serde --
+
+    #[test]
+    fn attestation_fallback_decision_execute_serde() {
+        let decision = AttestationFallbackDecision::Execute {
+            attestation_status: "valid".to_string(),
+            warning: Some("test warning".to_string()),
+        };
+        let json = serde_json::to_string(&decision).unwrap();
+        let parsed: AttestationFallbackDecision = serde_json::from_str(&json).unwrap();
+        assert_eq!(decision, parsed);
+    }
+
+    #[test]
+    fn attestation_fallback_decision_deferred_serde() {
+        let decision = AttestationFallbackDecision::Deferred {
+            queue_id: 3,
+            attestation_status: "degraded".to_string(),
+            status: "attestation-pending".to_string(),
+            challenge_required: true,
+            sandbox_required: false,
+        };
+        let json = serde_json::to_string(&decision).unwrap();
+        let parsed: AttestationFallbackDecision = serde_json::from_str(&json).unwrap();
+        assert_eq!(decision, parsed);
+    }
+
+    // -- AttestationTransitionReceipt --
+
+    #[test]
+    fn attestation_transition_receipt_serde_roundtrip() {
+        let mut mgr = AttestationFallbackManager::with_default_signing_key(Default::default());
+        let req = attestation_request(AutonomousAction::Quarantine, 100);
+        mgr.evaluate_action(req, AttestationHealth::VerificationFailed)
+            .unwrap();
+
+        let receipt = &mgr.transition_receipts()[0];
+        let json = serde_json::to_string(receipt).unwrap();
+        let parsed: AttestationTransitionReceipt = serde_json::from_str(&json).unwrap();
+        assert_eq!(receipt, &parsed);
+        parsed.verify().expect("deserialized receipt should verify");
+    }
+
+    // -- attestation_health_from_verdict --
+
+    #[test]
+    fn health_from_verdict_valid() {
+        let verdict = passing_verdict();
+        assert_eq!(
+            attestation_health_from_verdict(&verdict),
+            AttestationHealth::Valid
+        );
+    }
+
+    #[test]
+    fn health_from_verdict_stale_warning() {
+        let mut verdict = passing_verdict();
+        verdict.warnings.push("attestation_data_stale".to_string());
+        assert_eq!(
+            attestation_health_from_verdict(&verdict),
+            AttestationHealth::EvidenceExpired
+        );
+    }
+
+    #[test]
+    fn health_from_verdict_quote_age_mismatch() {
+        let mut verdict = passing_verdict();
+        verdict.attestation.passed = false;
+        verdict.attestation.error_code = Some("attestation_policy_quote_age_mismatch".to_string());
+        assert_eq!(
+            attestation_health_from_verdict(&verdict),
+            AttestationHealth::EvidenceExpired
+        );
+    }
+
+    #[test]
+    fn health_from_verdict_trust_root_missing() {
+        let mut verdict = passing_verdict();
+        verdict.attestation.passed = false;
+        verdict.attestation.error_code = Some("attestation_trust_root_missing".to_string());
+        assert_eq!(
+            attestation_health_from_verdict(&verdict),
+            AttestationHealth::EvidenceUnavailable
+        );
+    }
+
+    #[test]
+    fn health_from_verdict_quote_digest_unavailable() {
+        let mut verdict = passing_verdict();
+        verdict.attestation.passed = false;
+        verdict.attestation.error_code = Some("attestation_quote_digest_unavailable".to_string());
+        assert_eq!(
+            attestation_health_from_verdict(&verdict),
+            AttestationHealth::EvidenceUnavailable
+        );
+    }
+
+    #[test]
+    fn health_from_verdict_measurement_id_derivation_failed() {
+        let mut verdict = passing_verdict();
+        verdict.attestation.passed = false;
+        verdict.attestation.error_code =
+            Some("attestation_measurement_id_derivation_failed".to_string());
+        assert_eq!(
+            attestation_health_from_verdict(&verdict),
+            AttestationHealth::EvidenceUnavailable
+        );
+    }
+
+    #[test]
+    fn health_from_verdict_stale_data_failure_class() {
+        let mut verdict = passing_verdict();
+        verdict.passed = false;
+        verdict.failure_class = Some(VerificationFailureClass::StaleData);
+        verdict.attestation.passed = false;
+        assert_eq!(
+            attestation_health_from_verdict(&verdict),
+            AttestationHealth::EvidenceUnavailable
+        );
+    }
+
+    #[test]
+    fn health_from_verdict_generic_failure() {
+        let mut verdict = passing_verdict();
+        verdict.attestation.passed = false;
+        verdict.attestation.error_code = Some("some_other_error".to_string());
+        assert_eq!(
+            attestation_health_from_verdict(&verdict),
+            AttestationHealth::VerificationFailed
+        );
+    }
+
+    // -- Determinism --
+
+    #[test]
+    fn attestation_fallback_deterministic_100_times() {
+        let mut results = Vec::new();
+        for _ in 0..100 {
+            let mut mgr = AttestationFallbackManager::with_default_signing_key(Default::default());
+            let req = attestation_request(AutonomousAction::Quarantine, 100);
+            let decision = mgr
+                .evaluate_action(req, AttestationHealth::VerificationFailed)
+                .unwrap();
+            results.push((mgr.state(), decision));
+        }
+        for r in &results[1..] {
+            assert_eq!(r, &results[0], "attestation fallback must be deterministic");
+        }
+    }
+
+    // -- Manager with custom signing key --
+
+    #[test]
+    fn manager_with_custom_signing_key() {
+        let key = make_signing_key();
+        let mgr = AttestationFallbackManager::new(Default::default(), key);
+        assert_eq!(mgr.state(), AttestationFallbackState::Normal);
+        assert_eq!(mgr.health(), AttestationHealth::Valid);
+        assert!(!mgr.operator_review_required());
+        assert!(mgr.pending_decisions().is_empty());
+        assert!(mgr.transition_receipts().is_empty());
+        assert!(mgr.events().is_empty());
+    }
+
+    // -- Config with challenge/sandbox disabled --
+
+    #[test]
+    fn config_no_challenge_no_sandbox() {
+        let config = AttestationFallbackConfig {
+            unavailable_timeout_ns: 1_000_000,
+            challenge_on_fallback: false,
+            sandbox_on_fallback: false,
+        };
+        let mut mgr = AttestationFallbackManager::with_default_signing_key(config);
+        let req = attestation_request(AutonomousAction::Quarantine, 100);
+        let decision = mgr
+            .evaluate_action(req, AttestationHealth::EvidenceExpired)
+            .unwrap();
+        match decision {
+            AttestationFallbackDecision::Deferred {
+                challenge_required,
+                sandbox_required,
+                ..
+            } => {
+                assert!(!challenge_required);
+                assert!(!sandbox_required);
+            }
+            other => panic!("expected Deferred, got {other:?}"),
+        }
+    }
+
+    // -- Full lifecycle --
+
+    #[test]
+    fn full_attestation_lifecycle() {
+        let config = AttestationFallbackConfig {
+            unavailable_timeout_ns: 500,
+            ..Default::default()
+        };
+        let mut mgr = AttestationFallbackManager::with_default_signing_key(config);
+
+        // 1. Normal: high-impact passes
+        let req1 = attestation_request(AutonomousAction::Quarantine, 100);
+        let d1 = mgr.evaluate_action(req1, AttestationHealth::Valid).unwrap();
+        assert!(matches!(d1, AttestationFallbackDecision::Execute { .. }));
+        assert_eq!(mgr.state(), AttestationFallbackState::Normal);
+
+        // 2. Health degrades: high-impact deferred
+        let req2 = attestation_request(AutonomousAction::Terminate, 200);
+        let d2 = mgr
+            .evaluate_action(req2, AttestationHealth::EvidenceUnavailable)
+            .unwrap();
+        assert!(matches!(d2, AttestationFallbackDecision::Deferred { .. }));
+        assert_eq!(mgr.state(), AttestationFallbackState::Degraded);
+
+        // 3. Standard action still executes with warning
+        let req3 = attestation_request(AutonomousAction::RoutineMonitoring, 300);
+        let d3 = mgr
+            .evaluate_action(req3, AttestationHealth::EvidenceUnavailable)
+            .unwrap();
+        assert!(matches!(
+            d3,
+            AttestationFallbackDecision::Execute {
+                warning: Some(_),
+                ..
+            }
+        ));
+
+        // 4. Timeout triggers operator review
+        let req4 = attestation_request(AutonomousAction::Quarantine, 700);
+        mgr.evaluate_action(req4, AttestationHealth::EvidenceUnavailable)
+            .unwrap();
+        assert!(mgr.operator_review_required());
+
+        // 5. Recovery: restoring → normal
+        let req5 = attestation_request(AutonomousAction::MetricsEmission, 800);
+        mgr.evaluate_action(req5, AttestationHealth::Valid).unwrap();
+        assert_eq!(mgr.state(), AttestationFallbackState::Normal);
+        assert!(!mgr.operator_review_required());
+
+        // 6. Recovery backlog available
+        let backlog = mgr.take_recovery_backlog();
+        assert!(!backlog.is_empty());
+
+        // 7. All receipts verify
+        for receipt in mgr.transition_receipts() {
+            receipt.verify().expect("receipt should verify");
+        }
+    }
 }

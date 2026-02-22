@@ -1304,4 +1304,661 @@ mod tests {
         );
         assert_eq!(map_platform(PlatformKind::Software), None);
     }
+
+    // --- ReceiptVerifierPipelineError ---
+
+    #[test]
+    fn pipeline_error_display() {
+        let e = ReceiptVerifierPipelineError::ReceiptNotFound {
+            receipt_id: "rcpt-x".to_string(),
+        };
+        assert_eq!(
+            e.to_string(),
+            "receipt 'rcpt-x' not found in verifier input"
+        );
+    }
+
+    #[test]
+    fn pipeline_error_is_std_error() {
+        let e: &dyn std::error::Error = &ReceiptVerifierPipelineError::ReceiptNotFound {
+            receipt_id: "x".to_string(),
+        };
+        assert!(!e.to_string().is_empty());
+    }
+
+    // --- VerificationFailureClass ---
+
+    #[test]
+    fn failure_class_display_all_variants() {
+        assert_eq!(VerificationFailureClass::Signature.to_string(), "signature");
+        assert_eq!(
+            VerificationFailureClass::Transparency.to_string(),
+            "transparency"
+        );
+        assert_eq!(
+            VerificationFailureClass::Attestation.to_string(),
+            "attestation"
+        );
+        assert_eq!(
+            VerificationFailureClass::StaleData.to_string(),
+            "stale_data"
+        );
+    }
+
+    #[test]
+    fn failure_class_serde_round_trip() {
+        let classes = [
+            VerificationFailureClass::Signature,
+            VerificationFailureClass::Transparency,
+            VerificationFailureClass::Attestation,
+            VerificationFailureClass::StaleData,
+        ];
+        for class in &classes {
+            let json = serde_json::to_string(class).unwrap();
+            let back: VerificationFailureClass = serde_json::from_str(&json).unwrap();
+            assert_eq!(*class, back);
+        }
+    }
+
+    #[test]
+    fn failure_class_ordering() {
+        assert!(VerificationFailureClass::Signature < VerificationFailureClass::Transparency);
+        assert!(VerificationFailureClass::Transparency < VerificationFailureClass::Attestation);
+        assert!(VerificationFailureClass::Attestation < VerificationFailureClass::StaleData);
+    }
+
+    // --- failure_class_exit_code ---
+
+    #[test]
+    fn exit_code_for_each_class() {
+        assert_eq!(failure_class_exit_code(None), EXIT_CODE_SUCCESS);
+        assert_eq!(
+            failure_class_exit_code(Some(VerificationFailureClass::Signature)),
+            EXIT_CODE_SIGNATURE_FAILURE
+        );
+        assert_eq!(
+            failure_class_exit_code(Some(VerificationFailureClass::Transparency)),
+            EXIT_CODE_TRANSPARENCY_FAILURE
+        );
+        assert_eq!(
+            failure_class_exit_code(Some(VerificationFailureClass::Attestation)),
+            EXIT_CODE_ATTESTATION_FAILURE
+        );
+        assert_eq!(
+            failure_class_exit_code(Some(VerificationFailureClass::StaleData)),
+            EXIT_CODE_STALE_DATA
+        );
+    }
+
+    // --- LayerResult ---
+
+    #[test]
+    fn layer_result_pass_is_true() {
+        let r = LayerResult::pass();
+        assert!(r.passed);
+        assert!(r.error_code.is_none());
+        assert!(r.checks.is_empty());
+    }
+
+    #[test]
+    fn layer_result_record_pass_stays_passed() {
+        let mut r = LayerResult::pass();
+        r.record_pass("check-1", "detail-1");
+        assert!(r.passed);
+        assert_eq!(r.checks.len(), 1);
+        assert_eq!(r.checks[0].check, "check-1");
+        assert_eq!(r.checks[0].outcome, "pass");
+        assert!(r.checks[0].error_code.is_none());
+    }
+
+    #[test]
+    fn layer_result_record_fail_marks_failed() {
+        let mut r = LayerResult::pass();
+        r.record_fail("check-1", "err-code-1", "detail-1");
+        assert!(!r.passed);
+        assert_eq!(r.error_code.as_deref(), Some("err-code-1"));
+        assert_eq!(r.checks[0].outcome, "fail");
+    }
+
+    #[test]
+    fn layer_result_first_error_code_wins() {
+        let mut r = LayerResult::pass();
+        r.record_fail("c1", "first_error", "d1");
+        r.record_fail("c2", "second_error", "d2");
+        assert_eq!(r.error_code.as_deref(), Some("first_error"));
+        assert_eq!(r.checks.len(), 2);
+    }
+
+    #[test]
+    fn layer_check_serde_round_trip() {
+        let check = LayerCheck {
+            check: "test_check".to_string(),
+            outcome: "pass".to_string(),
+            error_code: None,
+            detail: "detail".to_string(),
+        };
+        let json = serde_json::to_string(&check).unwrap();
+        let back: LayerCheck = serde_json::from_str(&json).unwrap();
+        assert_eq!(check, back);
+    }
+
+    #[test]
+    fn layer_result_serde_round_trip() {
+        let mut r = LayerResult::pass();
+        r.record_pass("c1", "d1");
+        let json = serde_json::to_string(&r).unwrap();
+        let back: LayerResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(r, back);
+    }
+
+    // --- render_verdict_summary ---
+
+    #[test]
+    fn render_verdict_summary_passing() {
+        let (receipt_id, request) = build_valid_fixture();
+        let verdict = verify_receipt_request(&receipt_id, &request);
+        let summary = render_verdict_summary(&verdict);
+        assert!(summary.contains("passed=true"));
+        assert!(summary.contains("exit_code=0"));
+        assert!(summary.contains("failure_class=none"));
+        assert!(summary.contains("warnings=0"));
+    }
+
+    #[test]
+    fn render_verdict_summary_failing() {
+        let (receipt_id, mut request) = build_valid_fixture();
+        request.signature.signing_key_bytes = vec![1u8; 32];
+        let verdict = verify_receipt_request(&receipt_id, &request);
+        let summary = render_verdict_summary(&verdict);
+        assert!(summary.contains("passed=false"));
+        assert!(summary.contains("failure_class=signature"));
+    }
+
+    // --- verify_receipt_by_id success ---
+
+    #[test]
+    fn by_id_lookup_returns_verdict_when_present() {
+        let (receipt_id, request) = build_valid_fixture();
+        let mut input = ReceiptVerifierCliInput::default();
+        input.receipts.insert(receipt_id.clone(), request);
+        let verdict = verify_receipt_by_id(&input, &receipt_id).unwrap();
+        assert!(verdict.passed);
+        assert_eq!(verdict.receipt_id, receipt_id);
+    }
+
+    // --- Signature layer failure modes ---
+
+    #[test]
+    fn signature_revoked_signer_blocks() {
+        let (receipt_id, mut request) = build_valid_fixture();
+        request.signature.signer_revocation.is_revoked = true;
+        let verdict = verify_receipt_request(&receipt_id, &request);
+        assert!(!verdict.passed);
+        assert_eq!(
+            verdict.failure_class,
+            Some(VerificationFailureClass::Signature)
+        );
+        assert!(verdict
+            .signature
+            .checks
+            .iter()
+            .any(|c| c.check == "signer_not_revoked" && c.outcome == "fail"));
+    }
+
+    #[test]
+    fn signature_empty_revocation_source_blocks() {
+        let (receipt_id, mut request) = build_valid_fixture();
+        request.signature.signer_revocation.source = "".to_string();
+        let verdict = verify_receipt_request(&receipt_id, &request);
+        assert!(!verdict.passed);
+        assert!(verdict
+            .signature
+            .checks
+            .iter()
+            .any(|c| c.check == "revocation_source_present" && c.outcome == "fail"));
+    }
+
+    #[test]
+    fn signature_signer_key_id_mismatch_blocks() {
+        let (receipt_id, mut request) = build_valid_fixture();
+        request.signature.signer_revocation.signer_key_id = EngineObjectId([0xAA; 32]);
+        let verdict = verify_receipt_request(&receipt_id, &request);
+        assert!(!verdict.passed);
+        assert!(verdict
+            .signature
+            .checks
+            .iter()
+            .any(|c| c.check == "signer_key_id_matches_receipt" && c.outcome == "fail"));
+    }
+
+    #[test]
+    fn signature_preimage_hash_mismatch_blocks() {
+        let (receipt_id, mut request) = build_valid_fixture();
+        request.signature.expected_preimage_hash = ContentHash::compute(b"wrong");
+        let verdict = verify_receipt_request(&receipt_id, &request);
+        assert!(!verdict.passed);
+        assert!(verdict
+            .signature
+            .checks
+            .iter()
+            .any(|c| c.check == "canonical_preimage_hash_matches" && c.outcome == "fail"));
+    }
+
+    // --- Transparency layer failure modes ---
+
+    #[test]
+    fn transparency_operator_key_revoked_blocks() {
+        let (receipt_id, mut request) = build_valid_fixture();
+        request.transparency.operator_keys[0].revoked = true;
+        let verdict = verify_receipt_request(&receipt_id, &request);
+        assert!(!verdict.passed);
+        assert!(verdict
+            .transparency
+            .checks
+            .iter()
+            .any(|c| c.check == "checkpoint_operator_key_not_revoked" && c.outcome == "fail"));
+    }
+
+    #[test]
+    fn transparency_operator_key_missing_blocks() {
+        let (receipt_id, mut request) = build_valid_fixture();
+        request.transparency.operator_keys.clear();
+        let verdict = verify_receipt_request(&receipt_id, &request);
+        assert!(!verdict.passed);
+        assert!(verdict
+            .transparency
+            .checks
+            .iter()
+            .any(|c| c.check == "checkpoint_operator_key_found" && c.outcome == "fail"));
+    }
+
+    #[test]
+    fn transparency_root_mismatch_blocks() {
+        let (receipt_id, mut request) = build_valid_fixture();
+        request.transparency.inclusion_proof.root_hash = ContentHash::compute(b"wrong-root");
+        let verdict = verify_receipt_request(&receipt_id, &request);
+        assert!(!verdict.passed);
+        assert!(verdict
+            .transparency
+            .checks
+            .iter()
+            .any(|c| c.check == "inclusion_root_matches_checkpoint_root"
+                && c.outcome == "fail"));
+    }
+
+    #[test]
+    fn transparency_log_length_mismatch_blocks() {
+        let (receipt_id, mut request) = build_valid_fixture();
+        request.transparency.inclusion_proof.stream_length = 999;
+        let verdict = verify_receipt_request(&receipt_id, &request);
+        assert!(!verdict.passed);
+        assert!(verdict
+            .transparency
+            .checks
+            .iter()
+            .any(|c| c.check
+                == "checkpoint_log_length_matches_inclusion_stream_length"
+                && c.outcome == "fail"));
+    }
+
+    // --- Attestation layer failure modes ---
+
+    #[test]
+    fn attestation_missing_bindings_blocks() {
+        let (receipt_id, mut request) = build_valid_fixture();
+        request.receipt.attestation_bindings = None;
+        // Re-sign the receipt since bindings changed
+        let signed = request
+            .receipt
+            .sign(&request.signature.signing_key_bytes);
+        request.signature.expected_preimage_hash =
+            ContentHash::compute(&signed.signing_preimage());
+        request.receipt = signed;
+        let verdict = verify_receipt_request(&receipt_id, &request);
+        assert!(!verdict.passed);
+        assert!(verdict
+            .attestation
+            .checks
+            .iter()
+            .any(|c| c.check == "receipt_has_attestation_bindings" && c.outcome == "fail"));
+    }
+
+    #[test]
+    fn attestation_signer_mismatch_blocks() {
+        let (receipt_id, mut request) = build_valid_fixture();
+        if let Some(ref mut bindings) = request.receipt.attestation_bindings {
+            bindings.attested_signer_key_id = EngineObjectId([0xBB; 32]);
+        }
+        let verdict = verify_receipt_request(&receipt_id, &request);
+        assert!(!verdict.passed);
+        assert!(verdict
+            .attestation
+            .checks
+            .iter()
+            .any(|c| c.check == "attested_signer_matches_receipt_signer"
+                && c.outcome == "fail"));
+    }
+
+    #[test]
+    fn attestation_nonce_mismatch_blocks() {
+        let (receipt_id, mut request) = build_valid_fixture();
+        if let Some(ref mut bindings) = request.receipt.attestation_bindings {
+            bindings.nonce = [0xFF; 32];
+        }
+        let verdict = verify_receipt_request(&receipt_id, &request);
+        assert!(!verdict.passed);
+        assert!(verdict
+            .attestation
+            .checks
+            .iter()
+            .any(|c| c.check == "quote_nonce_matches_binding" && c.outcome == "fail"));
+    }
+
+    #[test]
+    fn attestation_trust_root_missing_blocks() {
+        let (receipt_id, mut request) = build_valid_fixture();
+        request.attestation.trust_roots.clear();
+        let verdict = verify_receipt_request(&receipt_id, &request);
+        assert!(!verdict.passed);
+        assert!(verdict
+            .attestation
+            .checks
+            .iter()
+            .any(|c| c.check == "quote_trust_root_available" && c.outcome == "fail"));
+    }
+
+    #[test]
+    fn attestation_policy_trust_root_mismatch_blocks() {
+        let (receipt_id, mut request) = build_valid_fixture();
+        request.attestation.policy_quote.trust_root_id = "wrong-root".to_string();
+        let verdict = verify_receipt_request(&receipt_id, &request);
+        assert!(!verdict.passed);
+        assert!(verdict
+            .attestation
+            .checks
+            .iter()
+            .any(|c| c.check == "policy_quote_trust_root_matches_attested_signer"
+                && c.outcome == "fail"));
+    }
+
+    #[test]
+    fn attestation_measurement_mismatch_blocks() {
+        let (receipt_id, mut request) = build_valid_fixture();
+        request.attestation.policy_quote.measurement.digest_hex = "aa".repeat(32);
+        let verdict = verify_receipt_request(&receipt_id, &request);
+        assert!(!verdict.passed);
+        assert!(verdict
+            .attestation
+            .checks
+            .iter()
+            .any(|c| c.check == "policy_quote_measurement_matches_attested_measurement"
+                && c.outcome == "fail"));
+    }
+
+    // --- Stale cache warnings ---
+
+    #[test]
+    fn signature_revocation_cache_stale_warning() {
+        let (receipt_id, mut request) = build_valid_fixture();
+        request.signature.signer_revocation.cache_stale = true;
+        let verdict = verify_receipt_request(&receipt_id, &request);
+        assert!(!verdict.passed);
+        assert_eq!(
+            verdict.failure_class,
+            Some(VerificationFailureClass::StaleData)
+        );
+        assert!(verdict
+            .warnings
+            .contains(&"signature_revocation_cache_stale".to_string()));
+    }
+
+    #[test]
+    fn transparency_cache_stale_warning() {
+        let (receipt_id, mut request) = build_valid_fixture();
+        request.transparency.cache_stale = true;
+        let verdict = verify_receipt_request(&receipt_id, &request);
+        assert!(!verdict.passed);
+        assert!(verdict
+            .warnings
+            .contains(&"transparency_cache_stale".to_string()));
+    }
+
+    #[test]
+    fn attestation_revocation_cache_stale_warning() {
+        let (receipt_id, mut request) = build_valid_fixture();
+        request.attestation.revocation_cache_stale = true;
+        let verdict = verify_receipt_request(&receipt_id, &request);
+        assert!(!verdict.passed);
+        assert!(verdict
+            .warnings
+            .contains(&"attestation_revocation_cache_stale".to_string()));
+    }
+
+    #[test]
+    fn multiple_stale_caches_accumulate() {
+        let (receipt_id, mut request) = build_valid_fixture();
+        request.signature.signer_revocation.cache_stale = true;
+        request.transparency.cache_stale = true;
+        request.attestation.policy_cache_stale = true;
+        request.attestation.revocation_cache_stale = true;
+        let verdict = verify_receipt_request(&receipt_id, &request);
+        assert_eq!(verdict.warnings.len(), 4);
+    }
+
+    // --- Serde round-trips ---
+
+    #[test]
+    fn verifier_log_event_serde_round_trip() {
+        let e = VerifierLogEvent {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            component: "c".to_string(),
+            event: "e".to_string(),
+            outcome: "pass".to_string(),
+            error_code: None,
+        };
+        let json = serde_json::to_string(&e).unwrap();
+        let back: VerifierLogEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(e, back);
+    }
+
+    #[test]
+    fn verifier_log_event_with_error_code_serde_round_trip() {
+        let e = VerifierLogEvent {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            component: "c".to_string(),
+            event: "e".to_string(),
+            outcome: "fail".to_string(),
+            error_code: Some("err-1".to_string()),
+        };
+        let json = serde_json::to_string(&e).unwrap();
+        let back: VerifierLogEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(e, back);
+    }
+
+    #[test]
+    fn pipeline_error_serde_round_trip() {
+        let e = ReceiptVerifierPipelineError::ReceiptNotFound {
+            receipt_id: "x".to_string(),
+        };
+        let json = serde_json::to_string(&e).unwrap();
+        let back: ReceiptVerifierPipelineError = serde_json::from_str(&json).unwrap();
+        assert_eq!(e, back);
+    }
+
+    // --- Verdict structure ---
+
+    #[test]
+    fn verdict_logs_have_correct_component() {
+        let (receipt_id, request) = build_valid_fixture();
+        let verdict = verify_receipt_request(&receipt_id, &request);
+        assert!(verdict.logs.iter().all(|log| log.component == COMPONENT));
+    }
+
+    #[test]
+    fn verdict_logs_include_completion_event() {
+        let (receipt_id, request) = build_valid_fixture();
+        let verdict = verify_receipt_request(&receipt_id, &request);
+        assert!(verdict
+            .logs
+            .iter()
+            .any(|log| log.event == "receipt_verification_complete"));
+    }
+
+    #[test]
+    fn verdict_passing_has_pass_completion_outcome() {
+        let (receipt_id, request) = build_valid_fixture();
+        let verdict = verify_receipt_request(&receipt_id, &request);
+        let complete = verdict
+            .logs
+            .iter()
+            .find(|log| log.event == "receipt_verification_complete")
+            .unwrap();
+        assert_eq!(complete.outcome, "pass");
+        assert!(complete.error_code.is_none());
+    }
+
+    #[test]
+    fn verdict_stale_has_warn_completion_outcome() {
+        let (receipt_id, mut request) = build_valid_fixture();
+        request.attestation.policy_cache_stale = true;
+        let verdict = verify_receipt_request(&receipt_id, &request);
+        let complete = verdict
+            .logs
+            .iter()
+            .find(|log| log.event == "receipt_verification_complete")
+            .unwrap();
+        assert_eq!(complete.outcome, "warn");
+        assert_eq!(complete.error_code.as_deref(), Some("stale_data"));
+    }
+
+    #[test]
+    fn verdict_hard_failure_has_fail_completion_outcome() {
+        let (receipt_id, mut request) = build_valid_fixture();
+        request.signature.signing_key_bytes = vec![1u8; 32];
+        let verdict = verify_receipt_request(&receipt_id, &request);
+        let complete = verdict
+            .logs
+            .iter()
+            .find(|log| log.event == "receipt_verification_complete")
+            .unwrap();
+        assert_eq!(complete.outcome, "fail");
+        assert_eq!(complete.error_code.as_deref(), Some("signature"));
+    }
+
+    // --- Constants ---
+
+    #[test]
+    fn exit_code_constants_are_distinct() {
+        let codes = [
+            EXIT_CODE_SUCCESS,
+            EXIT_CODE_SIGNATURE_FAILURE,
+            EXIT_CODE_TRANSPARENCY_FAILURE,
+            EXIT_CODE_ATTESTATION_FAILURE,
+            EXIT_CODE_STALE_DATA,
+        ];
+        for (i, a) in codes.iter().enumerate() {
+            for (j, b) in codes.iter().enumerate() {
+                if i != j {
+                    assert_ne!(a, b);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn component_constant_not_empty() {
+        assert!(!COMPONENT.is_empty());
+    }
+
+    #[test]
+    fn checkpoint_signature_domain_not_empty() {
+        assert!(!CHECKPOINT_SIGNATURE_DOMAIN.is_empty());
+    }
+
+    // --- checkpoint_preimage ---
+
+    #[test]
+    fn checkpoint_preimage_deterministic() {
+        let checkpoint = SignedLogCheckpoint {
+            checkpoint_seq: 1,
+            log_length: 10,
+            root_hash: ContentHash::compute(b"root"),
+            timestamp_ns: 1000,
+            operator_key_id: "op-1".to_string(),
+            signature: Signature::from_bytes([0u8; 64]),
+        };
+        let a = checkpoint_preimage(&checkpoint);
+        let b = checkpoint_preimage(&checkpoint);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn checkpoint_preimage_changes_with_fields() {
+        let base = SignedLogCheckpoint {
+            checkpoint_seq: 1,
+            log_length: 10,
+            root_hash: ContentHash::compute(b"root"),
+            timestamp_ns: 1000,
+            operator_key_id: "op-1".to_string(),
+            signature: Signature::from_bytes([0u8; 64]),
+        };
+        let mut modified = base.clone();
+        modified.checkpoint_seq = 2;
+        assert_ne!(checkpoint_preimage(&base), checkpoint_preimage(&modified));
+    }
+
+    // --- attestation_quote_digest ---
+
+    #[test]
+    fn attestation_quote_digest_deterministic() {
+        let software_root = SoftwareTrustRoot::new("root-1", 7);
+        let measurement = software_root.measure(b"a", b"b", b"c", b"d", "e");
+        let quote = software_root.attest(&measurement, [0u8; 32], 1000);
+        let a = attestation_quote_digest(&quote).unwrap();
+        let b = attestation_quote_digest(&quote).unwrap();
+        assert_eq!(a, b);
+    }
+
+    // --- Verdict fields propagation ---
+
+    #[test]
+    fn verdict_propagates_request_ids() {
+        let (receipt_id, request) = build_valid_fixture();
+        let verdict = verify_receipt_request(&receipt_id, &request);
+        assert_eq!(verdict.receipt_id, receipt_id);
+        assert_eq!(verdict.trace_id, request.trace_id);
+        assert_eq!(verdict.decision_id, request.decision_id);
+        assert_eq!(verdict.policy_id, request.policy_id);
+        assert_eq!(
+            verdict.verification_timestamp_ns,
+            request.verification_timestamp_ns
+        );
+    }
+
+    #[test]
+    fn verdict_serde_round_trip() {
+        let (receipt_id, request) = build_valid_fixture();
+        let verdict = verify_receipt_request(&receipt_id, &request);
+        let json = serde_json::to_string(&verdict).unwrap();
+        let back: UnifiedReceiptVerificationVerdict = serde_json::from_str(&json).unwrap();
+        assert_eq!(verdict, back);
+    }
+
+    // --- Priority of failure classes ---
+
+    #[test]
+    fn signature_failure_takes_priority_over_stale() {
+        let (receipt_id, mut request) = build_valid_fixture();
+        request.signature.signing_key_bytes = vec![1u8; 32];
+        request.attestation.policy_cache_stale = true;
+        let verdict = verify_receipt_request(&receipt_id, &request);
+        assert_eq!(
+            verdict.failure_class,
+            Some(VerificationFailureClass::Signature)
+        );
+    }
 }

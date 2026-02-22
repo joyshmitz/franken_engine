@@ -2104,4 +2104,1010 @@ reason_code = "harness_gap"
         let back: Test262RunnerConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(back, cfg);
     }
+
+    // ── Test262GateRunner::run ─────────────────────────────────────────
+
+    fn make_observed(
+        test_id: &str,
+        clause: &str,
+        outcome: Test262ObservedOutcome,
+    ) -> Test262ObservedResult {
+        Test262ObservedResult {
+            test_id: test_id.to_string(),
+            es2020_clause: clause.to_string(),
+            outcome,
+            duration_us: 100,
+            error_code: None,
+            error_detail: None,
+        }
+    }
+
+    #[test]
+    fn gate_runner_all_pass() {
+        let runner = Test262GateRunner {
+            config: valid_runner_config(),
+        };
+        let observed = vec![
+            make_observed(
+                "test/language/expr-1",
+                "§15.1",
+                Test262ObservedOutcome::Pass,
+            ),
+            make_observed(
+                "test/language/expr-2",
+                "§15.2",
+                Test262ObservedOutcome::Pass,
+            ),
+        ];
+        let result = runner
+            .run(
+                &valid_pin(),
+                &valid_profile(),
+                &valid_waiver_set(),
+                &observed,
+                None,
+            )
+            .unwrap();
+        assert!(!result.blocked);
+        assert_eq!(result.summary.passed, 2);
+        assert_eq!(result.summary.failed, 0);
+        assert_eq!(result.summary.waived, 0);
+        assert_eq!(result.summary.blocked_failures, 0);
+        assert_eq!(result.logs.len(), 2);
+    }
+
+    #[test]
+    fn gate_runner_fail_unwaived_blocks() {
+        let runner = Test262GateRunner {
+            config: valid_runner_config(),
+        };
+        let observed = vec![
+            make_observed(
+                "test/language/expr-1",
+                "§15.1",
+                Test262ObservedOutcome::Pass,
+            ),
+            make_observed(
+                "test/language/fail-1",
+                "§15.2",
+                Test262ObservedOutcome::Fail,
+            ),
+        ];
+        let result = runner
+            .run(
+                &valid_pin(),
+                &valid_profile(),
+                &valid_waiver_set(),
+                &observed,
+                None,
+            )
+            .unwrap();
+        assert!(result.blocked);
+        assert_eq!(result.summary.passed, 1);
+        assert_eq!(result.summary.failed, 1);
+        assert_eq!(result.summary.blocked_failures, 1);
+    }
+
+    #[test]
+    fn gate_runner_fail_waived_does_not_block() {
+        let mut ws = valid_waiver_set();
+        ws.waivers.push(Test262Waiver {
+            test_id: "test/language/fail-1".to_string(),
+            reason_code: Test262WaiverReason::HarnessGap,
+            es2020_clause: "§15.2".to_string(),
+            tracking_bead: "bd-99".to_string(),
+            expiry_date: "2030-01-01".to_string(),
+            reviewer: "admin".to_string(),
+        });
+        let runner = Test262GateRunner {
+            config: valid_runner_config(),
+        };
+        let observed = vec![make_observed(
+            "test/language/fail-1",
+            "§15.2",
+            Test262ObservedOutcome::Fail,
+        )];
+        let result = runner
+            .run(&valid_pin(), &valid_profile(), &ws, &observed, None)
+            .unwrap();
+        assert!(!result.blocked);
+        assert_eq!(result.summary.waived, 1);
+        assert_eq!(result.summary.failed, 0);
+    }
+
+    #[test]
+    fn gate_runner_timeout_unwaived_blocks() {
+        let runner = Test262GateRunner {
+            config: valid_runner_config(),
+        };
+        let observed = vec![make_observed(
+            "test/language/timeout-1",
+            "§15.1",
+            Test262ObservedOutcome::Timeout,
+        )];
+        let result = runner
+            .run(
+                &valid_pin(),
+                &valid_profile(),
+                &valid_waiver_set(),
+                &observed,
+                None,
+            )
+            .unwrap();
+        assert!(result.blocked);
+        assert_eq!(result.summary.timed_out, 1);
+    }
+
+    #[test]
+    fn gate_runner_timeout_waived_does_not_block() {
+        let mut ws = valid_waiver_set();
+        ws.waivers.push(Test262Waiver {
+            test_id: "test/language/timeout-1".to_string(),
+            reason_code: Test262WaiverReason::NotYetImplemented,
+            es2020_clause: "§15.1".to_string(),
+            tracking_bead: "bd-100".to_string(),
+            expiry_date: "2030-01-01".to_string(),
+            reviewer: "admin".to_string(),
+        });
+        let runner = Test262GateRunner {
+            config: valid_runner_config(),
+        };
+        let observed = vec![make_observed(
+            "test/language/timeout-1",
+            "§15.1",
+            Test262ObservedOutcome::Timeout,
+        )];
+        let result = runner
+            .run(&valid_pin(), &valid_profile(), &ws, &observed, None)
+            .unwrap();
+        assert!(!result.blocked);
+        assert_eq!(result.summary.waived, 1);
+        assert_eq!(result.summary.timed_out, 0);
+    }
+
+    #[test]
+    fn gate_runner_crash_unwaived_blocks() {
+        let runner = Test262GateRunner {
+            config: valid_runner_config(),
+        };
+        let observed = vec![make_observed(
+            "test/language/crash-1",
+            "§15.1",
+            Test262ObservedOutcome::Crash,
+        )];
+        let result = runner
+            .run(
+                &valid_pin(),
+                &valid_profile(),
+                &valid_waiver_set(),
+                &observed,
+                None,
+            )
+            .unwrap();
+        assert!(result.blocked);
+        assert_eq!(result.summary.crashed, 1);
+    }
+
+    #[test]
+    fn gate_runner_crash_waived_does_not_block() {
+        let mut ws = valid_waiver_set();
+        ws.waivers.push(Test262Waiver {
+            test_id: "test/language/crash-1".to_string(),
+            reason_code: Test262WaiverReason::HostHookMissing,
+            es2020_clause: "§15.1".to_string(),
+            tracking_bead: "bd-101".to_string(),
+            expiry_date: "2030-01-01".to_string(),
+            reviewer: "admin".to_string(),
+        });
+        let runner = Test262GateRunner {
+            config: valid_runner_config(),
+        };
+        let observed = vec![make_observed(
+            "test/language/crash-1",
+            "§15.1",
+            Test262ObservedOutcome::Crash,
+        )];
+        let result = runner
+            .run(&valid_pin(), &valid_profile(), &ws, &observed, None)
+            .unwrap();
+        assert!(!result.blocked);
+        assert_eq!(result.summary.waived, 1);
+    }
+
+    #[test]
+    fn gate_runner_duplicate_test_id_error() {
+        let runner = Test262GateRunner {
+            config: valid_runner_config(),
+        };
+        let observed = vec![
+            make_observed(
+                "test/language/expr-1",
+                "§15.1",
+                Test262ObservedOutcome::Pass,
+            ),
+            make_observed(
+                "test/language/expr-1",
+                "§15.1",
+                Test262ObservedOutcome::Pass,
+            ),
+        ];
+        let err = runner
+            .run(
+                &valid_pin(),
+                &valid_profile(),
+                &valid_waiver_set(),
+                &observed,
+                None,
+            )
+            .unwrap_err();
+        let info = err.stable();
+        assert_eq!(info.code, FE_T262_DUPLICATE_RESULT);
+    }
+
+    #[test]
+    fn gate_runner_empty_test_id_error() {
+        let runner = Test262GateRunner {
+            config: valid_runner_config(),
+        };
+        let observed = vec![make_observed("", "§15.1", Test262ObservedOutcome::Pass)];
+        let err = runner
+            .run(
+                &valid_pin(),
+                &valid_profile(),
+                &valid_waiver_set(),
+                &observed,
+                None,
+            )
+            .unwrap_err();
+        let info = err.stable();
+        assert_eq!(info.code, FE_T262_MISSING_FIELD);
+    }
+
+    #[test]
+    fn gate_runner_empty_clause_error() {
+        let runner = Test262GateRunner {
+            config: valid_runner_config(),
+        };
+        let observed = vec![make_observed(
+            "test/language/expr-1",
+            "",
+            Test262ObservedOutcome::Pass,
+        )];
+        let err = runner
+            .run(
+                &valid_pin(),
+                &valid_profile(),
+                &valid_waiver_set(),
+                &observed,
+                None,
+            )
+            .unwrap_err();
+        let info = err.stable();
+        assert_eq!(info.code, FE_T262_MISSING_FIELD);
+    }
+
+    #[test]
+    fn gate_runner_non_selected_tests_excluded() {
+        let runner = Test262GateRunner {
+            config: valid_runner_config(),
+        };
+        // This test ID doesn't match the profile include pattern "test/language/*"
+        let observed = vec![make_observed(
+            "test/intl402/collation",
+            "§10.1",
+            Test262ObservedOutcome::Pass,
+        )];
+        let result = runner
+            .run(
+                &valid_pin(),
+                &valid_profile(),
+                &valid_waiver_set(),
+                &observed,
+                None,
+            )
+            .unwrap();
+        assert_eq!(result.summary.total_profile_tests, 0);
+        assert_eq!(result.summary.passed, 0);
+        assert!(!result.blocked);
+    }
+
+    #[test]
+    fn gate_runner_run_id_deterministic() {
+        let runner = Test262GateRunner {
+            config: valid_runner_config(),
+        };
+        let observed = vec![make_observed(
+            "test/language/expr-1",
+            "§15.1",
+            Test262ObservedOutcome::Pass,
+        )];
+        let r1 = runner
+            .run(
+                &valid_pin(),
+                &valid_profile(),
+                &valid_waiver_set(),
+                &observed,
+                None,
+            )
+            .unwrap();
+        let r2 = runner
+            .run(
+                &valid_pin(),
+                &valid_profile(),
+                &valid_waiver_set(),
+                &observed,
+                None,
+            )
+            .unwrap();
+        assert_eq!(r1.run_id, r2.run_id);
+    }
+
+    #[test]
+    fn gate_runner_log_events_have_trace_ids() {
+        let runner = Test262GateRunner {
+            config: valid_runner_config(),
+        };
+        let observed = vec![make_observed(
+            "test/language/expr-1",
+            "§15.1",
+            Test262ObservedOutcome::Pass,
+        )];
+        let result = runner
+            .run(
+                &valid_pin(),
+                &valid_profile(),
+                &valid_waiver_set(),
+                &observed,
+                None,
+            )
+            .unwrap();
+        assert!(!result.logs.is_empty());
+        let log = &result.logs[0];
+        assert!(!log.trace_id.is_empty());
+        assert!(!log.decision_id.is_empty());
+        assert_eq!(log.component, TEST262_COMPONENT);
+        assert_eq!(log.event, "test262_case_evaluated");
+    }
+
+    #[test]
+    fn gate_runner_with_error_code_on_observed() {
+        let runner = Test262GateRunner {
+            config: valid_runner_config(),
+        };
+        let mut obs = make_observed(
+            "test/language/expr-1",
+            "§15.1",
+            Test262ObservedOutcome::Pass,
+        );
+        obs.error_code = Some("ERR-CUSTOM".to_string());
+        let result = runner
+            .run(
+                &valid_pin(),
+                &valid_profile(),
+                &valid_waiver_set(),
+                &[obs],
+                None,
+            )
+            .unwrap();
+        // Pass outcome has no error_code from the gate logic, so the observed error_code is used
+        assert_eq!(result.logs[0].error_code.as_deref(), Some("ERR-CUSTOM"));
+    }
+
+    // ── Pass regression warning ───────────────────────────────────────
+
+    #[test]
+    fn gate_runner_pass_regression_blocks_without_ack() {
+        let runner = Test262GateRunner {
+            config: valid_runner_config(),
+        };
+        let observed = vec![make_observed(
+            "test/language/expr-1",
+            "§15.1",
+            Test262ObservedOutcome::Pass,
+        )];
+        let previous_hwm = Test262HighWaterMark {
+            schema_version: TEST262_HWM_SCHEMA.to_string(),
+            profile_hash: "ph".to_string(),
+            pass_count: 10, // previous had 10 passes, now only 1
+            recorded_at_utc: "2025-01-01T00:00:00Z".to_string(),
+        };
+        let result = runner
+            .run(
+                &valid_pin(),
+                &valid_profile(),
+                &valid_waiver_set(),
+                &observed,
+                Some(&previous_hwm),
+            )
+            .unwrap();
+        assert!(result.blocked);
+        let warning = result.summary.pass_regression_warning.as_ref().unwrap();
+        assert_eq!(warning.previous_high_water_mark, 10);
+        assert_eq!(warning.current_pass_count, 1);
+        assert!(warning.acknowledgement_required);
+        assert!(!warning.acknowledged);
+    }
+
+    #[test]
+    fn gate_runner_pass_regression_not_blocked_with_ack() {
+        let mut config = valid_runner_config();
+        config.acknowledge_pass_regression = true;
+        let runner = Test262GateRunner { config };
+        let observed = vec![make_observed(
+            "test/language/expr-1",
+            "§15.1",
+            Test262ObservedOutcome::Pass,
+        )];
+        let previous_hwm = Test262HighWaterMark {
+            schema_version: TEST262_HWM_SCHEMA.to_string(),
+            profile_hash: "ph".to_string(),
+            pass_count: 10,
+            recorded_at_utc: "2025-01-01T00:00:00Z".to_string(),
+        };
+        let result = runner
+            .run(
+                &valid_pin(),
+                &valid_profile(),
+                &valid_waiver_set(),
+                &observed,
+                Some(&previous_hwm),
+            )
+            .unwrap();
+        // Acknowledged, so not blocked from regression
+        assert!(!result.blocked);
+    }
+
+    #[test]
+    fn gate_runner_no_regression_when_pass_count_increases() {
+        let runner = Test262GateRunner {
+            config: valid_runner_config(),
+        };
+        let observed = vec![
+            make_observed(
+                "test/language/expr-1",
+                "§15.1",
+                Test262ObservedOutcome::Pass,
+            ),
+            make_observed(
+                "test/language/expr-2",
+                "§15.2",
+                Test262ObservedOutcome::Pass,
+            ),
+        ];
+        let previous_hwm = Test262HighWaterMark {
+            schema_version: TEST262_HWM_SCHEMA.to_string(),
+            profile_hash: "ph".to_string(),
+            pass_count: 1, // previous was 1, now 2
+            recorded_at_utc: "2025-01-01T00:00:00Z".to_string(),
+        };
+        let result = runner
+            .run(
+                &valid_pin(),
+                &valid_profile(),
+                &valid_waiver_set(),
+                &observed,
+                Some(&previous_hwm),
+            )
+            .unwrap();
+        assert!(!result.blocked);
+        assert!(result.summary.pass_regression_warning.is_none());
+    }
+
+    // ── Test262HighWaterMark file I/O ──────────────────────────────────
+
+    #[test]
+    fn hwm_write_and_load_round_trip() {
+        let hwm = Test262HighWaterMark {
+            schema_version: TEST262_HWM_SCHEMA.to_string(),
+            profile_hash: "abc123".to_string(),
+            pass_count: 42,
+            recorded_at_utc: "2025-01-01T00:00:00Z".to_string(),
+        };
+        let dir = std::env::temp_dir().join("franken_t262_hwm_test");
+        let _ = fs::create_dir_all(&dir);
+        let path = dir.join("hwm.json");
+        hwm.write_json(&path).unwrap();
+        let loaded = Test262HighWaterMark::load_json(&path).unwrap().unwrap();
+        assert_eq!(loaded, hwm);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn hwm_load_nonexistent_returns_none() {
+        let path = std::env::temp_dir().join("franken_t262_hwm_nonexistent.json");
+        let _ = fs::remove_file(&path);
+        let loaded = Test262HighWaterMark::load_json(&path).unwrap();
+        assert!(loaded.is_none());
+    }
+
+    // ── Test262EvidenceCollector ───────────────────────────────────────
+
+    #[test]
+    fn evidence_collector_creates_artifacts() {
+        let runner = Test262GateRunner {
+            config: valid_runner_config(),
+        };
+        let observed = vec![make_observed(
+            "test/language/expr-1",
+            "§15.1",
+            Test262ObservedOutcome::Pass,
+        )];
+        let result = runner
+            .run(
+                &valid_pin(),
+                &valid_profile(),
+                &valid_waiver_set(),
+                &observed,
+                None,
+            )
+            .unwrap();
+        let hwm = next_high_water_mark(&result, None);
+
+        let dir = std::env::temp_dir().join("franken_t262_evidence_test");
+        let _ = fs::remove_dir_all(&dir);
+        let collector = Test262EvidenceCollector::new(&dir).unwrap();
+        let artifacts = collector.collect(&result, &hwm).unwrap();
+
+        assert!(artifacts.run_manifest_path.exists());
+        assert!(artifacts.evidence_path.exists());
+        assert!(artifacts.high_water_mark_path.exists());
+
+        // Evidence JSONL should have summary + log lines
+        let evidence = fs::read_to_string(&artifacts.evidence_path).unwrap();
+        let lines: Vec<&str> = evidence.lines().collect();
+        assert!(lines.len() >= 2); // summary + at least 1 log
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ── Test262GateError additional coverage ───────────────────────────
+
+    #[test]
+    fn gate_error_io_variant() {
+        let io_err = io::Error::new(io::ErrorKind::NotFound, "file not found");
+        let gate_err = Test262GateError::from(io_err);
+        let info = gate_err.stable();
+        assert_eq!(info.code, FE_T262_INVALID_CONFIG);
+        assert!(info.detail.contains("file not found"));
+    }
+
+    #[test]
+    fn gate_error_io_source() {
+        let io_err = io::Error::new(io::ErrorKind::NotFound, "oops");
+        let gate_err = Test262GateError::Io(io_err);
+        assert!(gate_err.source().is_some());
+    }
+
+    #[test]
+    fn gate_error_non_io_source_is_none() {
+        let err = Test262GateError::InvalidConfig("test".to_string());
+        assert!(err.source().is_none());
+        let err = Test262GateError::DuplicateObservedResult {
+            test_id: "t".to_string(),
+        };
+        assert!(err.source().is_none());
+    }
+
+    // ── WaiverSet validate additional edge cases ──────────────────────
+
+    #[test]
+    fn waiver_set_validate_missing_es2020_clause() {
+        let mut ws = valid_waiver_set();
+        ws.waivers.push(Test262Waiver {
+            test_id: "test-001".to_string(),
+            reason_code: Test262WaiverReason::HarnessGap,
+            es2020_clause: "  ".to_string(),
+            tracking_bead: "bd-1".to_string(),
+            expiry_date: "2030-01-01".to_string(),
+            reviewer: "admin".to_string(),
+        });
+        assert!(ws.validate().is_err());
+    }
+
+    #[test]
+    fn waiver_set_validate_missing_tracking_bead() {
+        let mut ws = valid_waiver_set();
+        ws.waivers.push(Test262Waiver {
+            test_id: "test-001".to_string(),
+            reason_code: Test262WaiverReason::HarnessGap,
+            es2020_clause: "§15".to_string(),
+            tracking_bead: "  ".to_string(),
+            expiry_date: "2030-01-01".to_string(),
+            reviewer: "admin".to_string(),
+        });
+        assert!(ws.validate().is_err());
+    }
+
+    #[test]
+    fn waiver_set_validate_missing_reviewer() {
+        let mut ws = valid_waiver_set();
+        ws.waivers.push(Test262Waiver {
+            test_id: "test-001".to_string(),
+            reason_code: Test262WaiverReason::HarnessGap,
+            es2020_clause: "§15".to_string(),
+            tracking_bead: "bd-1".to_string(),
+            expiry_date: "2030-01-01".to_string(),
+            reviewer: "  ".to_string(),
+        });
+        assert!(ws.validate().is_err());
+    }
+
+    // ── Profile::classify with exclude rationale ──────────────────────
+
+    #[test]
+    fn profile_classify_excluded_includes_rationale() {
+        let mut p = valid_profile();
+        p.excludes.push(Test262ProfileExclude {
+            pattern: "test/language/expressions*".to_string(),
+            rationale: "WIP feature".to_string(),
+            normative_clause: "N/A".to_string(),
+        });
+        match p.classify("test/language/expressions/arrow") {
+            ProfileDecision::Excluded { rationale } => {
+                assert_eq!(rationale, "WIP feature");
+            }
+            other => panic!("expected Excluded, got {:?}", other),
+        }
+    }
+
+    // ── parse_quoted edge cases ───────────────────────────────────────
+
+    #[test]
+    fn parse_quoted_valid() {
+        assert_eq!(parse_quoted(1, "\"hello\"").unwrap(), "hello");
+    }
+
+    #[test]
+    fn parse_quoted_with_whitespace() {
+        assert_eq!(parse_quoted(1, "  \"hello\"  ").unwrap(), "hello");
+    }
+
+    #[test]
+    fn parse_quoted_unquoted_fails() {
+        assert!(parse_quoted(1, "hello").is_err());
+    }
+
+    #[test]
+    fn parse_quoted_single_quote_fails() {
+        assert!(parse_quoted(1, "'hello'").is_err());
+    }
+
+    #[test]
+    fn parse_quoted_empty_string_ok() {
+        assert_eq!(parse_quoted(1, "\"\"").unwrap(), "");
+    }
+
+    #[test]
+    fn parse_quoted_single_char_fails() {
+        assert!(parse_quoted(1, "\"").is_err());
+    }
+
+    // ── parse_key_value ──────────────────────────────────────────────
+
+    #[test]
+    fn parse_key_value_valid() {
+        let (k, v) = parse_key_value(1, "name = \"value\"").unwrap();
+        assert_eq!(k, "name");
+        assert_eq!(v, "value");
+    }
+
+    #[test]
+    fn parse_key_value_no_equals_fails() {
+        assert!(parse_key_value(1, "no_equals_here").is_err());
+    }
+
+    // ── write_atomic ─────────────────────────────────────────────────
+
+    #[test]
+    fn write_atomic_creates_file() {
+        let dir = std::env::temp_dir().join("franken_t262_write_atomic");
+        let _ = fs::create_dir_all(&dir);
+        let path = dir.join("test_atomic.txt");
+        write_atomic(&path, b"hello world").unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "hello world");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ── digest_hex / sha256_hex / fnv1a64 ────────────────────────────
+
+    #[test]
+    fn digest_hex_deterministic() {
+        let a = digest_hex(b"hello");
+        let b = digest_hex(b"hello");
+        assert_eq!(a, b);
+        assert_ne!(digest_hex(b"hello"), digest_hex(b"world"));
+    }
+
+    #[test]
+    fn sha256_hex_length() {
+        let hash = sha256_hex(b"test");
+        assert_eq!(hash.len(), 64);
+        assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn sha256_hex_deterministic() {
+        assert_eq!(sha256_hex(b"hello"), sha256_hex(b"hello"));
+        assert_ne!(sha256_hex(b"hello"), sha256_hex(b"world"));
+    }
+
+    #[test]
+    fn fnv1a64_deterministic() {
+        assert_eq!(fnv1a64(b"hello"), fnv1a64(b"hello"));
+        assert_ne!(fnv1a64(b"hello"), fnv1a64(b"world"));
+    }
+
+    #[test]
+    fn fnv1a64_empty() {
+        // Empty input should return the FNV offset basis
+        let result = fnv1a64(b"");
+        assert_eq!(result, 0xcbf2_9ce4_8422_2325);
+    }
+
+    // ── Profile validate: exclude with empty rationale ────────────────
+
+    #[test]
+    fn profile_validate_empty_exclude_rationale() {
+        let mut p = valid_profile();
+        p.excludes.push(Test262ProfileExclude {
+            pattern: "test/*".to_string(),
+            rationale: "".to_string(),
+            normative_clause: "clause".to_string(),
+        });
+        assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn profile_validate_empty_include_normative_clause() {
+        let mut p = valid_profile();
+        p.includes[0].normative_clause = "  ".to_string();
+        assert!(p.validate().is_err());
+    }
+
+    // ── parse_profile_toml: multiple includes ─────────────────────────
+
+    #[test]
+    fn parse_profile_toml_multiple_includes() {
+        let toml = r#"
+schema_version = "franken-engine.test262-profile.v1"
+profile_name = "multi"
+es_profile = "ES2020"
+
+[[include]]
+pattern = "test/language/*"
+rationale = "lang tests"
+normative_clause = "§15"
+
+[[include]]
+pattern = "test/built-ins/*"
+rationale = "built-in tests"
+normative_clause = "§18"
+"#;
+        let profile = parse_profile_toml(toml).unwrap();
+        assert_eq!(profile.includes.len(), 2);
+        assert_eq!(profile.includes[1].pattern, "test/built-ins/*");
+    }
+
+    // ── parse_waiver_toml: multiple waivers ───────────────────────────
+
+    #[test]
+    fn parse_waiver_toml_multiple_waivers() {
+        let toml = r#"
+schema_version = "franken-engine.test262-waiver.v1"
+
+[[waiver]]
+test_id = "test-001"
+reason_code = "harness_gap"
+es2020_clause = "§15.1"
+tracking_bead = "bd-1"
+expiry_date = "2030-01-01"
+reviewer = "admin"
+
+[[waiver]]
+test_id = "test-002"
+reason_code = "not_yet_implemented"
+es2020_clause = "§16.1"
+tracking_bead = "bd-2"
+expiry_date = "2030-06-01"
+reviewer = "dev"
+"#;
+        let ws = parse_waiver_toml(toml).unwrap();
+        assert_eq!(ws.waivers.len(), 2);
+        assert_eq!(
+            ws.waivers[1].reason_code,
+            Test262WaiverReason::NotYetImplemented
+        );
+    }
+
+    // ── parse_waiver_toml: unknown reason_code ────────────────────────
+
+    #[test]
+    fn parse_waiver_toml_unknown_reason_code() {
+        let toml = r#"
+schema_version = "franken-engine.test262-waiver.v1"
+
+[[waiver]]
+test_id = "test-001"
+reason_code = "unknown_reason"
+es2020_clause = "§15.1"
+tracking_bead = "bd-1"
+expiry_date = "2030-01-01"
+reviewer = "admin"
+"#;
+        assert!(parse_waiver_toml(toml).is_err());
+    }
+
+    // ── parse_profile_toml: unknown field ─────────────────────────────
+
+    #[test]
+    fn parse_profile_toml_unknown_root_field() {
+        let toml = r#"
+schema_version = "franken-engine.test262-profile.v1"
+profile_name = "test"
+es_profile = "ES2020"
+unknown_field = "value"
+"#;
+        assert!(parse_profile_toml(toml).is_err());
+    }
+
+    // ── canonical_json_bytes ──────────────────────────────────────────
+
+    #[test]
+    fn canonical_json_bytes_round_trip() {
+        let pin = valid_pin();
+        let bytes = canonical_json_bytes(&pin).unwrap();
+        let back: Test262PinSet = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(back, pin);
+    }
+
+    // ── Test262LogEvent serde ─────────────────────────────────────────
+
+    #[test]
+    fn log_event_serde_round_trip() {
+        let event = Test262LogEvent {
+            trace_id: "tr-1".to_string(),
+            decision_id: "d-1".to_string(),
+            policy_id: "p-1".to_string(),
+            component: TEST262_COMPONENT.to_string(),
+            event: "test262_case_evaluated".to_string(),
+            test_id: "test-001".to_string(),
+            es2020_clause: "§15".to_string(),
+            outcome: Test262Outcome::Pass,
+            duration_us: 42,
+            error_code: None,
+            error_detail: None,
+            worker_index: 0,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: Test262LogEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, event);
+    }
+
+    // ── Test262RunSummary serde ───────────────────────────────────────
+
+    #[test]
+    fn run_summary_serde_round_trip() {
+        let summary = Test262RunSummary {
+            run_id: "run-1".to_string(),
+            total_profile_tests: 10,
+            passed: 8,
+            failed: 1,
+            waived: 1,
+            timed_out: 0,
+            crashed: 0,
+            blocked_failures: 1,
+            profile_hash: "ph".to_string(),
+            waiver_hash: "wh".to_string(),
+            pin_hash: "pinh".to_string(),
+            env_fingerprint: "ef".to_string(),
+            pass_regression_warning: None,
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        let back: Test262RunSummary = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, summary);
+    }
+
+    // ── Test262PassRegressionWarning serde ────────────────────────────
+
+    #[test]
+    fn pass_regression_warning_serde_round_trip() {
+        let warning = Test262PassRegressionWarning {
+            previous_high_water_mark: 100,
+            current_pass_count: 90,
+            acknowledgement_required: true,
+            acknowledged: false,
+        };
+        let json = serde_json::to_string(&warning).unwrap();
+        let back: Test262PassRegressionWarning = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, warning);
+    }
+
+    // ── Test262CollectedArtifacts serde ───────────────────────────────
+
+    #[test]
+    fn collected_artifacts_serde_round_trip() {
+        let arts = Test262CollectedArtifacts {
+            run_manifest_path: PathBuf::from("/tmp/manifest.json"),
+            evidence_path: PathBuf::from("/tmp/evidence.jsonl"),
+            high_water_mark_path: PathBuf::from("/tmp/hwm.json"),
+        };
+        let json = serde_json::to_string(&arts).unwrap();
+        let back: Test262CollectedArtifacts = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, arts);
+    }
+
+    // ── wildcard_match: double star ──────────────────────────────────
+
+    #[test]
+    fn wildcard_double_star() {
+        assert!(wildcard_match("**", "any/path/here"));
+    }
+
+    #[test]
+    fn wildcard_no_match_partial() {
+        assert!(!wildcard_match("abc", "ab"));
+        assert!(!wildcard_match("ab", "abc"));
+    }
+
+    // ── Worker assignments: zero workers clamped to 1 ────────────────
+
+    #[test]
+    fn worker_assignments_zero_workers_clamped() {
+        let ids = vec!["a".to_string(), "b".to_string()];
+        let assignments = deterministic_worker_assignments(&ids, 0);
+        assert_eq!(assignments.len(), 2);
+        // All go to worker 0 since max(0,1)=1
+        assert!(assignments.iter().all(|a| a.worker_index == 0));
+    }
+
+    // ── Constants ────────────────────────────────────────────────────
+
+    #[test]
+    fn test262_constants_not_empty() {
+        assert!(!TEST262_PIN_SCHEMA.is_empty());
+        assert!(!TEST262_PROFILE_SCHEMA.is_empty());
+        assert!(!TEST262_WAIVER_SCHEMA.is_empty());
+        assert!(!TEST262_HWM_SCHEMA.is_empty());
+        assert!(!TEST262_COMPONENT.is_empty());
+        assert!(!FE_T262_INVALID_CONFIG.is_empty());
+        assert!(!FE_T262_INVALID_PROFILE.is_empty());
+        assert!(!FE_T262_DUPLICATE_RESULT.is_empty());
+        assert!(!FE_T262_UNWAIVED_FAILURE.is_empty());
+        assert!(!FE_T262_MISSING_FIELD.is_empty());
+        assert!(!FE_T262_REGRESSION_ACK_REQUIRED.is_empty());
+        assert!(!FE_T262_TIMEOUT.is_empty());
+        assert!(!FE_T262_CRASH.is_empty());
+        assert!(!FE_T262_WAIVED.is_empty());
+    }
+
+    // ── ObservedResult serde ─────────────────────────────────────────
+
+    #[test]
+    fn observed_result_serde_round_trip() {
+        let obs = Test262ObservedResult {
+            test_id: "test-001".to_string(),
+            es2020_clause: "§15".to_string(),
+            outcome: Test262ObservedOutcome::Pass,
+            duration_us: 42,
+            error_code: Some("ERR-1".to_string()),
+            error_detail: Some("detail".to_string()),
+        };
+        let json = serde_json::to_string(&obs).unwrap();
+        let back: Test262ObservedResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, obs);
+    }
+
+    // ── DeterministicWorkerAssignment serde ───────────────────────────
+
+    #[test]
+    fn worker_assignment_serde_round_trip() {
+        let wa = DeterministicWorkerAssignment {
+            test_id: "test-001".to_string(),
+            worker_index: 3,
+            queue_index: 7,
+        };
+        let json = serde_json::to_string(&wa).unwrap();
+        let back: DeterministicWorkerAssignment = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, wa);
+    }
 }

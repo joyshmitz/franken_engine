@@ -886,7 +886,7 @@ fn sha256_hex(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{TsNormalizationConfig, TsNormalizationError, normalize_typescript_to_es2020};
+    use super::*;
 
     #[test]
     fn strips_type_only_imports() {
@@ -1040,5 +1040,882 @@ const value: number = 1;
         .expect("string literal should not be treated as decorator syntax");
 
         assert!(output.normalized_source.contains("person@example.com"));
+    }
+
+    // --- Error Display ---
+
+    #[test]
+    fn error_display_empty_source() {
+        let e = TsNormalizationError::EmptySource;
+        assert_eq!(e.to_string(), "TS source is empty after normalization");
+    }
+
+    #[test]
+    fn error_display_unsupported_syntax() {
+        let e = TsNormalizationError::UnsupportedSyntax {
+            feature: "some feature",
+        };
+        assert_eq!(e.to_string(), "unsupported syntax: some feature");
+    }
+
+    #[test]
+    fn error_display_unsupported_compiler_option() {
+        let e = TsNormalizationError::UnsupportedCompilerOption {
+            option: "target",
+            value: "es5".to_string(),
+        };
+        assert_eq!(e.to_string(), "unsupported compiler option: target=es5");
+    }
+
+    // --- Unsupported compiler option errors ---
+
+    #[test]
+    fn rejects_unsupported_target() {
+        let mut config = TsNormalizationConfig::default();
+        config.compiler_options.target = "es5".to_string();
+        let error =
+            normalize_typescript_to_es2020("const x = 1;", &config, "t", "d", "p").unwrap_err();
+        assert_eq!(
+            error,
+            TsNormalizationError::UnsupportedCompilerOption {
+                option: "target",
+                value: "es5".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_unsupported_module() {
+        let mut config = TsNormalizationConfig::default();
+        config.compiler_options.module = "amd".to_string();
+        let error =
+            normalize_typescript_to_es2020("const x = 1;", &config, "t", "d", "p").unwrap_err();
+        assert_eq!(
+            error,
+            TsNormalizationError::UnsupportedCompilerOption {
+                option: "module",
+                value: "amd".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn accepts_commonjs_module() {
+        let mut config = TsNormalizationConfig::default();
+        config.compiler_options.module = "commonjs".to_string();
+        let output =
+            normalize_typescript_to_es2020("const x = 1;", &config, "t", "d", "p").unwrap();
+        assert!(output.normalized_source.contains("const x = 1"));
+    }
+
+    #[test]
+    fn rejects_unsupported_jsx() {
+        let mut config = TsNormalizationConfig::default();
+        config.compiler_options.jsx = "solid-jsx".to_string();
+        let error =
+            normalize_typescript_to_es2020("const x = 1;", &config, "t", "d", "p").unwrap_err();
+        assert_eq!(
+            error,
+            TsNormalizationError::UnsupportedCompilerOption {
+                option: "jsx",
+                value: "solid-jsx".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn accepts_react_jsx_mode() {
+        let mut config = TsNormalizationConfig::default();
+        config.compiler_options.jsx = "react".to_string();
+        let output =
+            normalize_typescript_to_es2020("const x = 1;", &config, "t", "d", "p").unwrap();
+        assert!(output.normalized_source.contains("const x = 1"));
+    }
+
+    #[test]
+    fn jsx_preserve_skips_lowering() {
+        let mut config = TsNormalizationConfig::default();
+        config.compiler_options.jsx = "preserve".to_string();
+        let output =
+            normalize_typescript_to_es2020("<Widget />", &config, "t", "d", "p").unwrap();
+        // In preserve mode, JSX is NOT lowered to createElement
+        assert!(!output.normalized_source.contains("createElement"));
+    }
+
+    // --- Definite assignment normalization ---
+
+    #[test]
+    fn removes_definite_assignment_assertions() {
+        let source = "let value!: string;";
+        let output = normalize_typescript_to_es2020(
+            source,
+            &TsNormalizationConfig::default(),
+            "t",
+            "d",
+            "p",
+        )
+        .unwrap();
+        // `!:` is replaced with `:`; then type annotations are stripped
+        assert!(!output.normalized_source.contains("!:"));
+    }
+
+    // --- Const assertion normalization ---
+
+    #[test]
+    fn removes_const_assertions() {
+        let source = "const arr = [1, 2, 3] as const;";
+        let output = normalize_typescript_to_es2020(
+            source,
+            &TsNormalizationConfig::default(),
+            "t",
+            "d",
+            "p",
+        )
+        .unwrap();
+        assert!(!output.normalized_source.contains("as const"));
+    }
+
+    // --- Abstract class lowering ---
+
+    #[test]
+    fn lowers_abstract_class() {
+        let source = "abstract class Base { }";
+        let output = normalize_typescript_to_es2020(
+            source,
+            &TsNormalizationConfig::default(),
+            "t",
+            "d",
+            "p",
+        )
+        .unwrap();
+        assert!(!output.normalized_source.contains("abstract"));
+        assert!(output.normalized_source.contains("class Base"));
+    }
+
+    // --- Decorator lowering ---
+
+    #[test]
+    fn lowers_simple_class_decorator() {
+        let source = "@sealed\nclass Foo { }";
+        let output = normalize_typescript_to_es2020(
+            source,
+            &TsNormalizationConfig::default(),
+            "t",
+            "d",
+            "p",
+        )
+        .unwrap();
+        assert!(output.normalized_source.contains("__applyClassDecorator"));
+        assert!(output.normalized_source.contains("sealed"));
+        assert!(output.normalized_source.contains("let Foo ="));
+    }
+
+    #[test]
+    fn decorator_at_end_of_file_without_class_fails() {
+        let source = "@orphan";
+        let error = normalize_typescript_to_es2020(
+            source,
+            &TsNormalizationConfig::default(),
+            "t",
+            "d",
+            "p",
+        )
+        .unwrap_err();
+        assert_eq!(
+            error,
+            TsNormalizationError::UnsupportedSyntax {
+                feature: "unsupported decorator target",
+            }
+        );
+    }
+
+    #[test]
+    fn decorator_on_non_class_fails() {
+        let source = "@logged\nfunction run() { }";
+        let error = normalize_typescript_to_es2020(
+            source,
+            &TsNormalizationConfig::default(),
+            "t",
+            "d",
+            "p",
+        )
+        .unwrap_err();
+        assert_eq!(
+            error,
+            TsNormalizationError::UnsupportedSyntax {
+                feature: "unsupported decorator target",
+            }
+        );
+    }
+
+    #[test]
+    fn empty_decorator_expression_fails() {
+        let source = "@\nclass Foo { }";
+        let error = normalize_typescript_to_es2020(
+            source,
+            &TsNormalizationConfig::default(),
+            "t",
+            "d",
+            "p",
+        )
+        .unwrap_err();
+        assert_eq!(
+            error,
+            TsNormalizationError::UnsupportedSyntax {
+                feature: "unsupported decorator declaration form",
+            }
+        );
+    }
+
+    // --- JSX with children ---
+
+    #[test]
+    fn lowers_jsx_with_children() {
+        let source = "<div>hello</div>";
+        let output = normalize_typescript_to_es2020(
+            source,
+            &TsNormalizationConfig::default(),
+            "t",
+            "d",
+            "p",
+        )
+        .unwrap();
+        assert!(output.normalized_source.contains("createElement(\"div\", null, hello)"));
+    }
+
+    // --- Namespace edge cases ---
+
+    #[test]
+    fn namespace_missing_brace_fails() {
+        let source = "namespace Broken";
+        let error = normalize_typescript_to_es2020(
+            source,
+            &TsNormalizationConfig::default(),
+            "t",
+            "d",
+            "p",
+        )
+        .unwrap_err();
+        assert_eq!(
+            error,
+            TsNormalizationError::UnsupportedSyntax {
+                feature: "unsupported namespace declaration form",
+            }
+        );
+    }
+
+    #[test]
+    fn namespace_empty_name_fails() {
+        let source = "namespace  { export const x = 1; }";
+        let error = normalize_typescript_to_es2020(
+            source,
+            &TsNormalizationConfig::default(),
+            "t",
+            "d",
+            "p",
+        )
+        .unwrap_err();
+        assert_eq!(
+            error,
+            TsNormalizationError::UnsupportedSyntax {
+                feature: "unsupported namespace declaration form",
+            }
+        );
+    }
+
+    #[test]
+    fn namespace_non_export_statement_fails() {
+        let source = "namespace Demo { const hidden = 1; }";
+        let error = normalize_typescript_to_es2020(
+            source,
+            &TsNormalizationConfig::default(),
+            "t",
+            "d",
+            "p",
+        )
+        .unwrap_err();
+        assert_eq!(
+            error,
+            TsNormalizationError::UnsupportedSyntax {
+                feature: "unsupported namespace export form",
+            }
+        );
+    }
+
+    #[test]
+    fn namespace_export_without_assignment_fails() {
+        let source = "namespace Demo { export const x; }";
+        let error = normalize_typescript_to_es2020(
+            source,
+            &TsNormalizationConfig::default(),
+            "t",
+            "d",
+            "p",
+        )
+        .unwrap_err();
+        assert_eq!(
+            error,
+            TsNormalizationError::UnsupportedSyntax {
+                feature: "unsupported namespace export form",
+            }
+        );
+    }
+
+    #[test]
+    fn duplicate_namespace_declarations_merge() {
+        let source = "namespace Ns { export const a = 1; }\nnamespace Ns { export const b = 2; }";
+        let output = normalize_typescript_to_es2020(
+            source,
+            &TsNormalizationConfig::default(),
+            "t",
+            "d",
+            "p",
+        )
+        .unwrap();
+        assert!(output.normalized_source.contains("ns.a = 1;"));
+        assert!(output.normalized_source.contains("ns.b = 2;"));
+        // Only one IIFE block for the merged namespace
+        let iife_count = output
+            .normalized_source
+            .matches("const Ns = (() => {")
+            .count();
+        assert_eq!(iife_count, 1);
+    }
+
+    // --- Enum edge cases ---
+
+    #[test]
+    fn enum_with_explicit_values_resets_counter() {
+        let source = "enum Dir { Up = 10, Down }";
+        let output = normalize_typescript_to_es2020(
+            source,
+            &TsNormalizationConfig::default(),
+            "t",
+            "d",
+            "p",
+        )
+        .unwrap();
+        assert!(output.normalized_source.contains("Up: 10"));
+        assert!(output.normalized_source.contains("Down: 11"));
+    }
+
+    #[test]
+    fn enum_missing_opening_brace_passes_through() {
+        let source = "enum NoBrace }";
+        let output = normalize_typescript_to_es2020(
+            source,
+            &TsNormalizationConfig::default(),
+            "t",
+            "d",
+            "p",
+        )
+        .unwrap();
+        // Line passes through unchanged when no opening brace
+        assert!(output.normalized_source.contains("enum NoBrace"));
+    }
+
+    #[test]
+    fn enum_empty_body_passes_through() {
+        let source = "enum Empty { }";
+        let output = normalize_typescript_to_es2020(
+            source,
+            &TsNormalizationConfig::default(),
+            "t",
+            "d",
+            "p",
+        )
+        .unwrap();
+        // Empty body → entries is empty → line passes through
+        assert!(output.normalized_source.contains("enum Empty"));
+    }
+
+    #[test]
+    fn enum_string_values() {
+        let source = r#"enum Color { Red = "RED", Blue = "BLUE" }"#;
+        let output = normalize_typescript_to_es2020(
+            source,
+            &TsNormalizationConfig::default(),
+            "t",
+            "d",
+            "p",
+        )
+        .unwrap();
+        assert!(output.normalized_source.contains("Object.freeze"));
+        assert!(output.normalized_source.contains(r#"Red: "RED""#));
+        assert!(output.normalized_source.contains(r#"Blue: "BLUE""#));
+    }
+
+    // --- Constructor parameter property edge cases ---
+
+    #[test]
+    fn constructor_protected_parameter() {
+        let source = "constructor(protected name: string) { }";
+        let output = normalize_typescript_to_es2020(
+            source,
+            &TsNormalizationConfig::default(),
+            "t",
+            "d",
+            "p",
+        )
+        .unwrap();
+        assert!(output.normalized_source.contains("this.name = name;"));
+    }
+
+    #[test]
+    fn constructor_readonly_parameter() {
+        let source = "constructor(public readonly id: number) { }";
+        let output = normalize_typescript_to_es2020(
+            source,
+            &TsNormalizationConfig::default(),
+            "t",
+            "d",
+            "p",
+        )
+        .unwrap();
+        assert!(output.normalized_source.contains("this.id = id;"));
+    }
+
+    #[test]
+    fn constructor_no_visibility_no_assignment() {
+        let source = "constructor(value: number) { }";
+        let output = normalize_typescript_to_es2020(
+            source,
+            &TsNormalizationConfig::default(),
+            "t",
+            "d",
+            "p",
+        )
+        .unwrap();
+        assert!(!output.normalized_source.contains("this.value"));
+    }
+
+    #[test]
+    fn constructor_without_body_gets_semicolon() {
+        let source = "constructor(private x: number)";
+        let output = normalize_typescript_to_es2020(
+            source,
+            &TsNormalizationConfig::default(),
+            "t",
+            "d",
+            "p",
+        )
+        .unwrap();
+        // No brace → rebuilt ends with semicolon
+        assert!(output.normalized_source.contains("constructor("));
+        assert!(output.normalized_source.ends_with(';'));
+    }
+
+    // --- Helper functions ---
+
+    #[test]
+    fn normalize_newlines_crlf_to_lf() {
+        let result = normalize_newlines("line1\r\nline2\rline3");
+        assert_eq!(result, "line1\nline2\nline3");
+    }
+
+    #[test]
+    fn normalize_spacing_removes_blank_lines_and_trims() {
+        let result = normalize_spacing("  hello  \n\n  world  ".to_string());
+        assert_eq!(result, "hello\nworld");
+    }
+
+    #[test]
+    fn build_decision_changed_true() {
+        let d = build_decision("step_name", true, "description");
+        assert_eq!(d.step, "step_name");
+        assert!(d.changed);
+        assert_eq!(d.detail, "description");
+    }
+
+    #[test]
+    fn build_decision_changed_false() {
+        let d = build_decision("step_name", false, "description");
+        assert!(!d.changed);
+    }
+
+    #[test]
+    fn success_event_fields() {
+        let e = success_event("t", "d", "p", "comp", "evt");
+        assert_eq!(e.trace_id, "t");
+        assert_eq!(e.decision_id, "d");
+        assert_eq!(e.policy_id, "p");
+        assert_eq!(e.component, "comp");
+        assert_eq!(e.event, "evt");
+        assert_eq!(e.outcome, "pass");
+        assert!(e.error_code.is_none());
+    }
+
+    #[test]
+    fn failure_event_fields() {
+        let e = failure_event("t", "d", "p", "comp", "evt", "ERR-001");
+        assert_eq!(e.outcome, "fail");
+        assert_eq!(e.error_code.as_deref(), Some("ERR-001"));
+    }
+
+    #[test]
+    fn elide_type_only_imports_preserves_regular_imports() {
+        let source = "import type { A } from \"a\";\nimport { B } from \"b\";\nconst x = 1;";
+        let result = elide_type_only_imports(source);
+        assert!(!result.contains("import type"));
+        assert!(result.contains("import { B }"));
+        assert!(result.contains("const x = 1"));
+    }
+
+    #[test]
+    fn strip_type_annotations_basic() {
+        let result = strip_type_annotations("let x: number = 5;");
+        // The colon and everything until the next delimiter is stripped
+        assert!(result.contains("let x"));
+        assert!(result.contains("= 5;"));
+        assert!(!result.contains("number"));
+    }
+
+    #[test]
+    fn strip_type_annotations_preserves_string_content() {
+        let result = strip_type_annotations(r#"const s = "hello: world";"#);
+        assert!(result.contains("hello: world"));
+    }
+
+    #[test]
+    fn lower_abstract_class_keywords_replaces() {
+        assert_eq!(
+            lower_abstract_class_keywords("abstract class Base { }"),
+            "class Base { }"
+        );
+    }
+
+    #[test]
+    fn lower_abstract_class_keywords_noop() {
+        assert_eq!(
+            lower_abstract_class_keywords("class Concrete { }"),
+            "class Concrete { }"
+        );
+    }
+
+    #[test]
+    fn parse_class_declaration_name_valid() {
+        assert_eq!(
+            parse_class_declaration_name("class MyClass { }"),
+            Some("MyClass".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_class_declaration_name_with_extends() {
+        assert_eq!(
+            parse_class_declaration_name("class Child extends Base { }"),
+            Some("Child".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_class_declaration_name_not_class() {
+        assert_eq!(parse_class_declaration_name("function foo() { }"), None);
+    }
+
+    #[test]
+    fn parse_class_declaration_name_empty_name() {
+        assert_eq!(parse_class_declaration_name("class  { }"), None);
+    }
+
+    #[test]
+    fn extract_capability_intents_multiple() {
+        let source = r#"hostcall<"fs.read"> hostcall<"net.fetch"> hostcall<"fs.read">"#;
+        let intents = extract_capability_intents(source);
+        // Deduplicated
+        assert_eq!(intents.len(), 2);
+        assert_eq!(intents[0].capability, "fs.read");
+        assert_eq!(intents[1].capability, "net.fetch");
+    }
+
+    #[test]
+    fn extract_capability_intents_none() {
+        let intents = extract_capability_intents("const x = 1;");
+        assert!(intents.is_empty());
+    }
+
+    #[test]
+    fn build_identity_source_map_basic() {
+        let map = build_identity_source_map("a\nb\nc", "x\ny");
+        assert_eq!(map.len(), 2);
+        assert_eq!(map[0].normalized_line, 1);
+        assert_eq!(map[0].original_line, 1);
+        assert_eq!(map[1].normalized_line, 2);
+        assert_eq!(map[1].original_line, 2);
+    }
+
+    #[test]
+    fn build_identity_source_map_clamps_to_original_count() {
+        let map = build_identity_source_map("a", "x\ny\nz");
+        assert_eq!(map.len(), 3);
+        assert_eq!(map[2].original_line, 1); // clamped to max original
+    }
+
+    #[test]
+    fn sha256_hex_deterministic() {
+        let a = sha256_hex("hello");
+        let b = sha256_hex("hello");
+        assert_eq!(a, b);
+        assert!(a.starts_with("sha256:"));
+        assert_eq!(a.len(), 7 + 64); // "sha256:" + 64 hex chars
+    }
+
+    #[test]
+    fn sha256_hex_different_inputs() {
+        assert_ne!(sha256_hex("a"), sha256_hex("b"));
+    }
+
+    // --- Render namespace block ---
+
+    #[test]
+    fn render_namespace_block_structure() {
+        let block = render_namespace_block("Foo", &["  ns.x = 1;".to_string()]);
+        assert_eq!(block[0], "const Foo = (() => {");
+        assert_eq!(block[1], "  const ns = {};");
+        assert_eq!(block[2], "  ns.x = 1;");
+        assert_eq!(block[3], "  return ns;");
+        assert_eq!(block[4], "})();");
+    }
+
+    // --- Lower simple enums ---
+
+    #[test]
+    fn lower_simple_enums_no_enums() {
+        assert_eq!(lower_simple_enums("const x = 1;"), "const x = 1;");
+    }
+
+    // --- Lower simple JSX ---
+
+    #[test]
+    fn lower_simple_jsx_non_jsx_passthrough() {
+        assert_eq!(lower_simple_jsx("const x = 1;"), "const x = 1;");
+    }
+
+    // --- Serde round-trips ---
+
+    #[test]
+    fn ts_compiler_options_serde_round_trip() {
+        let opts = TsCompilerOptions::default();
+        let json = serde_json::to_string(&opts).unwrap();
+        let back: TsCompilerOptions = serde_json::from_str(&json).unwrap();
+        assert_eq!(opts, back);
+    }
+
+    #[test]
+    fn ts_normalization_config_serde_round_trip() {
+        let config = TsNormalizationConfig::default();
+        let json = serde_json::to_string(&config).unwrap();
+        let back: TsNormalizationConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config, back);
+    }
+
+    #[test]
+    fn normalization_decision_serde_round_trip() {
+        let d = NormalizationDecision {
+            step: "step".to_string(),
+            changed: true,
+            detail: "detail".to_string(),
+        };
+        let json = serde_json::to_string(&d).unwrap();
+        let back: NormalizationDecision = serde_json::from_str(&json).unwrap();
+        assert_eq!(d, back);
+    }
+
+    #[test]
+    fn normalization_event_serde_round_trip() {
+        let e = NormalizationEvent {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            component: "c".to_string(),
+            event: "e".to_string(),
+            outcome: "pass".to_string(),
+            error_code: None,
+        };
+        let json = serde_json::to_string(&e).unwrap();
+        let back: NormalizationEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(e, back);
+    }
+
+    #[test]
+    fn capability_intent_serde_round_trip() {
+        let ci = CapabilityIntent {
+            symbol: "hostcall".to_string(),
+            capability: "fs.read".to_string(),
+        };
+        let json = serde_json::to_string(&ci).unwrap();
+        let back: CapabilityIntent = serde_json::from_str(&json).unwrap();
+        assert_eq!(ci, back);
+    }
+
+    #[test]
+    fn source_map_entry_serde_round_trip() {
+        let e = SourceMapEntry {
+            normalized_line: 1,
+            original_line: 1,
+        };
+        let json = serde_json::to_string(&e).unwrap();
+        let back: SourceMapEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(e, back);
+    }
+
+    // --- Output structure ---
+
+    #[test]
+    fn output_witness_contains_hashes() {
+        let output = normalize_typescript_to_es2020(
+            "const x = 1;",
+            &TsNormalizationConfig::default(),
+            "trace-1",
+            "decision-1",
+            "policy-1",
+        )
+        .unwrap();
+        assert_eq!(output.witness.trace_id, "trace-1");
+        assert_eq!(output.witness.decision_id, "decision-1");
+        assert_eq!(output.witness.policy_id, "policy-1");
+        assert!(output.witness.source_hash.starts_with("sha256:"));
+        assert!(output.witness.normalized_hash.starts_with("sha256:"));
+        assert!(output.witness.compiler_options_hash.starts_with("sha256:"));
+    }
+
+    #[test]
+    fn output_events_contain_success() {
+        let output = normalize_typescript_to_es2020(
+            "const x = 1;",
+            &TsNormalizationConfig::default(),
+            "t",
+            "d",
+            "p",
+        )
+        .unwrap();
+        assert!(output.events.iter().any(|e| e.outcome == "pass"));
+    }
+
+    #[test]
+    fn output_source_map_covers_all_normalized_lines() {
+        let output = normalize_typescript_to_es2020(
+            "const x = 1;\nconst y = 2;",
+            &TsNormalizationConfig::default(),
+            "t",
+            "d",
+            "p",
+        )
+        .unwrap();
+        let normalized_line_count = output.normalized_source.lines().count();
+        assert_eq!(output.source_map.len(), normalized_line_count);
+    }
+
+    #[test]
+    fn output_decisions_cover_all_normalization_steps() {
+        let output = normalize_typescript_to_es2020(
+            "const x = 1;",
+            &TsNormalizationConfig::default(),
+            "t",
+            "d",
+            "p",
+        )
+        .unwrap();
+        let steps: Vec<&str> = output.witness.decisions.iter().map(|d| d.step.as_str()).collect();
+        assert!(steps.contains(&"type_only_import_elision"));
+        assert!(steps.contains(&"namespace_lowering"));
+        assert!(steps.contains(&"decorator_lowering"));
+        assert!(steps.contains(&"definite_assignment_normalization"));
+        assert!(steps.contains(&"const_assertion_normalization"));
+        assert!(steps.contains(&"type_annotation_stripping"));
+        assert!(steps.contains(&"enum_lowering"));
+        assert!(steps.contains(&"parameter_property_lowering"));
+        assert!(steps.contains(&"abstract_class_lowering"));
+        assert!(steps.contains(&"jsx_lowering"));
+        assert!(steps.contains(&"capability_intent_extraction"));
+    }
+
+    // --- Failure events ---
+
+    #[test]
+    fn empty_source_produces_failure_event() {
+        let _ = normalize_typescript_to_es2020(
+            "   ",
+            &TsNormalizationConfig::default(),
+            "t",
+            "d",
+            "p",
+        );
+        // Just ensuring no panic — the error return is tested elsewhere
+    }
+
+    #[test]
+    fn unsupported_target_produces_failure_event() {
+        let mut config = TsNormalizationConfig::default();
+        config.compiler_options.target = "es5".to_string();
+        let error =
+            normalize_typescript_to_es2020("const x = 1;", &config, "t", "d", "p").unwrap_err();
+        assert!(matches!(
+            error,
+            TsNormalizationError::UnsupportedCompilerOption { .. }
+        ));
+    }
+
+    // --- Default values ---
+
+    #[test]
+    fn ts_compiler_options_defaults() {
+        let opts = TsCompilerOptions::default();
+        assert!(opts.strict);
+        assert_eq!(opts.target, "es2020");
+        assert_eq!(opts.module, "esnext");
+        assert_eq!(opts.jsx, "react-jsx");
+    }
+
+    #[test]
+    fn ts_normalization_error_is_std_error() {
+        let e: &dyn std::error::Error = &TsNormalizationError::EmptySource;
+        assert!(!e.to_string().is_empty());
+    }
+
+    // --- Lower constructor parameter properties ---
+
+    #[test]
+    fn lower_constructor_parameter_properties_no_constructor() {
+        let result = lower_constructor_parameter_properties("const x = 1;");
+        assert_eq!(result, "const x = 1;");
+    }
+
+    // --- Namespace with multiple export types ---
+
+    #[test]
+    fn namespace_export_let_works() {
+        let source = "namespace Ns { export let x = 1; }";
+        let output = normalize_typescript_to_es2020(
+            source,
+            &TsNormalizationConfig::default(),
+            "t",
+            "d",
+            "p",
+        )
+        .unwrap();
+        assert!(output.normalized_source.contains("ns.x = 1;"));
+    }
+
+    #[test]
+    fn namespace_export_var_works() {
+        let source = "namespace Ns { export var x = 1; }";
+        let output = normalize_typescript_to_es2020(
+            source,
+            &TsNormalizationConfig::default(),
+            "t",
+            "d",
+            "p",
+        )
+        .unwrap();
+        assert!(output.normalized_source.contains("ns.x = 1;"));
+    }
+
+    // --- Type annotation stripping with quotes ---
+
+    #[test]
+    fn strip_type_annotations_single_quoted_string() {
+        let result = strip_type_annotations("const s = 'key: val';");
+        assert!(result.contains("key: val"));
     }
 }

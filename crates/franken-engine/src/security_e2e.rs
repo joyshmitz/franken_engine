@@ -995,3 +995,443 @@ pub fn write_security_evidence(
         summary_path,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── Constants ────────────────────────────────────────────────────
+    #[test]
+    fn security_e2e_constants() {
+        assert_eq!(SECURITY_E2E_COMPONENT, "security_e2e");
+        assert!(!SECURITY_E2E_SCHEMA_VERSION.is_empty());
+        const { assert!(MIN_BUDGET_MILLIONTHS > 0) };
+    }
+
+    // ── AttackCategory ──────────────────────────────────────────────
+    #[test]
+    fn attack_category_as_str_exhaustive() {
+        assert_eq!(
+            AttackCategory::CapabilityEscalation.as_str(),
+            "capability-escalation"
+        );
+        assert_eq!(
+            AttackCategory::ResourceExhaustion.as_str(),
+            "resource-exhaustion"
+        );
+        assert_eq!(
+            AttackCategory::QuarantineCascade.as_str(),
+            "quarantine-cascade"
+        );
+        assert_eq!(
+            AttackCategory::SafeModeFallback.as_str(),
+            "safe-mode-fallback"
+        );
+        assert_eq!(
+            AttackCategory::BayesianPosterior.as_str(),
+            "bayesian-posterior"
+        );
+        assert_eq!(AttackCategory::ForkDetection.as_str(), "fork-detection");
+        assert_eq!(AttackCategory::EpochRegression.as_str(), "epoch-regression");
+        assert_eq!(
+            AttackCategory::EvidenceIntegrity.as_str(),
+            "evidence-integrity"
+        );
+    }
+
+    #[test]
+    fn attack_category_all_returns_eight() {
+        assert_eq!(AttackCategory::all().len(), 8);
+    }
+
+    #[test]
+    fn attack_category_all_unique() {
+        let names: std::collections::BTreeSet<&str> =
+            AttackCategory::all().iter().map(|c| c.as_str()).collect();
+        assert_eq!(names.len(), 8);
+    }
+
+    // ── Xorshift64 ─────────────────────────────────────────────────
+    #[test]
+    fn xorshift64_deterministic() {
+        let mut a = Xorshift64::new(42);
+        let mut b = Xorshift64::new(42);
+        for _ in 0..100 {
+            assert_eq!(a.next_u64(), b.next_u64());
+        }
+    }
+
+    #[test]
+    fn xorshift64_zero_seed_becomes_one() {
+        let mut zero = Xorshift64::new(0);
+        let mut one = Xorshift64::new(1);
+        assert_eq!(zero.next_u64(), one.next_u64());
+    }
+
+    #[test]
+    fn xorshift64_next_usize_bounded() {
+        let mut rng = Xorshift64::new(42);
+        for _ in 0..1000 {
+            assert!(rng.next_usize(7) < 7);
+        }
+    }
+
+    #[test]
+    fn xorshift64_next_bool_boundaries() {
+        let mut rng = Xorshift64::new(42);
+        for _ in 0..100 {
+            assert!(!rng.next_bool(0));
+        }
+        let mut rng = Xorshift64::new(42);
+        for _ in 0..100 {
+            assert!(rng.next_bool(100));
+        }
+    }
+
+    // ── AttackScenarioResult ────────────────────────────────────────
+    #[test]
+    fn attack_scenario_result_new_defaults() {
+        let r = AttackScenarioResult::new(AttackCategory::ForkDetection, "test-scenario");
+        assert_eq!(r.category, AttackCategory::ForkDetection);
+        assert_eq!(r.scenario_name, "test-scenario");
+        assert!(!r.attack_blocked);
+        assert!(!r.containment_action_taken);
+        assert!(!r.evidence_produced);
+        assert_eq!(r.invariant_violations, 0);
+        assert_eq!(r.security_events, 0);
+        assert!(r.details.is_empty());
+    }
+
+    // ── SecuritySuiteConfig ─────────────────────────────────────────
+    #[test]
+    fn security_suite_config_default() {
+        let cfg = SecuritySuiteConfig::default();
+        assert_eq!(cfg.seed, 42);
+        assert_eq!(cfg.n_extensions, 10);
+        assert_eq!(cfg.n_evidence_updates, 20);
+        assert!(!cfg.run_id.is_empty());
+    }
+
+    // ── SecuritySuiteEvent ──────────────────────────────────────────
+    #[test]
+    fn security_suite_event_fields() {
+        let evt = SecuritySuiteEvent {
+            trace_id: "tr-1".to_string(),
+            decision_id: "d-1".to_string(),
+            policy_id: "security-e2e".to_string(),
+            component: SECURITY_E2E_COMPONENT.to_string(),
+            event: "test".to_string(),
+            outcome: "pass".to_string(),
+            error_code: None,
+            category: "capability-escalation".to_string(),
+            scenario: "cpu-budget-escalation".to_string(),
+        };
+        assert_eq!(evt.component, SECURITY_E2E_COMPONENT);
+        assert!(evt.error_code.is_none());
+    }
+
+    // ── run_capability_escalation ───────────────────────────────────
+    #[test]
+    fn capability_escalation_blocks_overconsumption() {
+        let results = run_capability_escalation(3, 42);
+        assert_eq!(results.len(), 2); // CPU + hostcall scenarios
+        // CPU escalation
+        let cpu = &results[0];
+        assert_eq!(cpu.category, AttackCategory::CapabilityEscalation);
+        assert_eq!(cpu.scenario_name, "cpu-budget-escalation");
+        assert!(cpu.attack_blocked);
+        assert!(cpu.security_events > 0);
+        assert!(cpu.evidence_produced);
+        // Hostcall escalation
+        let hc = &results[1];
+        assert_eq!(hc.scenario_name, "hostcall-budget-escalation");
+        assert!(hc.attack_blocked);
+        assert!(hc.security_events > 0);
+    }
+
+    #[test]
+    fn capability_escalation_deterministic() {
+        let r1 = run_capability_escalation(5, 42);
+        let r2 = run_capability_escalation(5, 42);
+        assert_eq!(r1.len(), r2.len());
+        for (a, b) in r1.iter().zip(r2.iter()) {
+            assert_eq!(a.security_events, b.security_events);
+            assert_eq!(a.attack_blocked, b.attack_blocked);
+        }
+    }
+
+    // ── run_resource_exhaustion ─────────────────────────────────────
+    #[test]
+    fn resource_exhaustion_contains_all() {
+        let results = run_resource_exhaustion(5, 42);
+        assert_eq!(results.len(), 1);
+        let r = &results[0];
+        assert_eq!(r.category, AttackCategory::ResourceExhaustion);
+        assert!(r.attack_blocked);
+        assert!(r.security_events > 0);
+        assert!(r.evidence_produced);
+    }
+
+    #[test]
+    fn resource_exhaustion_deterministic() {
+        let r1 = run_resource_exhaustion(5, 99);
+        let r2 = run_resource_exhaustion(5, 99);
+        assert_eq!(r1[0].security_events, r2[0].security_events);
+    }
+
+    // ── run_quarantine_cascade ──────────────────────────────────────
+    #[test]
+    fn quarantine_cascade_isolates_subset() {
+        let results = run_quarantine_cascade(10, 5, 42);
+        assert_eq!(results.len(), 1);
+        let r = &results[0];
+        assert_eq!(r.category, AttackCategory::QuarantineCascade);
+        assert!(r.containment_action_taken);
+        assert!(r.attack_blocked);
+        assert_eq!(r.invariant_violations, 0);
+        // Should have quarantined 5 and kept 5 running
+        assert_eq!(r.details["quarantined"], "5");
+        assert_eq!(r.details["running"], "5");
+    }
+
+    #[test]
+    fn quarantine_cascade_all_quarantined() {
+        let results = run_quarantine_cascade(5, 5, 42);
+        let r = &results[0];
+        assert_eq!(r.details["quarantined"], "5");
+        assert_eq!(r.details["running"], "0");
+    }
+
+    #[test]
+    fn quarantine_cascade_none_quarantined() {
+        let results = run_quarantine_cascade(5, 0, 42);
+        let r = &results[0];
+        assert_eq!(r.details["quarantined"], "0");
+        assert_eq!(r.details["running"], "5");
+    }
+
+    // ── run_safe_mode_fallback ──────────────────────────────────────
+    #[test]
+    fn safe_mode_fallback_all_five_failure_types() {
+        let results = run_safe_mode_fallback(42);
+        assert_eq!(results.len(), 5);
+        for r in &results {
+            assert_eq!(r.category, AttackCategory::SafeModeFallback);
+            assert!(
+                r.attack_blocked,
+                "scenario {} should activate safe mode",
+                r.scenario_name
+            );
+            assert!(r.containment_action_taken);
+            assert!(r.evidence_produced);
+            assert_eq!(
+                r.invariant_violations, 0,
+                "scenario {} should recover",
+                r.scenario_name
+            );
+        }
+    }
+
+    #[test]
+    fn safe_mode_fallback_scenario_names() {
+        let results = run_safe_mode_fallback(42);
+        let names: Vec<&str> = results.iter().map(|r| r.scenario_name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec![
+                "adapter-unavailable",
+                "decision-contract-error",
+                "evidence-ledger-full",
+                "cx-corrupted",
+                "cancellation-deadlock",
+            ]
+        );
+    }
+
+    // ── run_bayesian_posterior_convergence ───────────────────────────
+    #[test]
+    fn bayesian_posterior_convergence_three_scenarios() {
+        let results = run_bayesian_posterior_convergence(3, 10, 42);
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].scenario_name, "benign-convergence");
+        assert_eq!(results[1].scenario_name, "malicious-convergence");
+        assert_eq!(results[2].scenario_name, "deterministic-replay");
+    }
+
+    #[test]
+    fn bayesian_posterior_benign_converges() {
+        let results = run_bayesian_posterior_convergence(5, 30, 42);
+        let benign = &results[0];
+        assert!(
+            benign.attack_blocked,
+            "benign extensions should converge to Benign risk state"
+        );
+        assert!(benign.evidence_produced);
+    }
+
+    #[test]
+    fn bayesian_posterior_deterministic_replay() {
+        let results = run_bayesian_posterior_convergence(1, 20, 42);
+        let replay = &results[2];
+        assert!(
+            replay.attack_blocked,
+            "deterministic replay should produce identical posteriors"
+        );
+        assert_eq!(replay.invariant_violations, 0);
+    }
+
+    // ── run_epoch_regression ────────────────────────────────────────
+    #[test]
+    fn epoch_regression_four_scenarios() {
+        let results = run_epoch_regression(42);
+        assert_eq!(results.len(), 4);
+    }
+
+    #[test]
+    fn epoch_regression_current_validates() {
+        let results = run_epoch_regression(42);
+        let current = &results[0];
+        assert_eq!(current.scenario_name, "current-epoch-validates");
+        assert!(current.attack_blocked);
+    }
+
+    #[test]
+    fn epoch_regression_expired_rejected() {
+        let results = run_epoch_regression(42);
+        let expired = &results[1];
+        assert_eq!(expired.scenario_name, "expired-epoch-rejected");
+        assert!(expired.attack_blocked);
+        assert!(expired.security_events > 0);
+    }
+
+    #[test]
+    fn epoch_regression_future_rejected() {
+        let results = run_epoch_regression(42);
+        let future = &results[2];
+        assert_eq!(future.scenario_name, "future-epoch-rejected");
+        assert!(future.attack_blocked);
+    }
+
+    #[test]
+    fn epoch_regression_monotonicity() {
+        let results = run_epoch_regression(42);
+        let mono = &results[3];
+        assert_eq!(mono.scenario_name, "epoch-monotonicity");
+        assert!(mono.attack_blocked);
+        assert_eq!(mono.invariant_violations, 0);
+    }
+
+    // ── run_containment_verification ────────────────────────────────
+    #[test]
+    fn containment_verification_two_scenarios() {
+        let results = run_containment_verification(3, 42);
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn containment_verification_sandbox_receipts() {
+        let results = run_containment_verification(3, 42);
+        let sandbox = &results[0];
+        assert_eq!(sandbox.scenario_name, "containment-receipts");
+        assert!(sandbox.containment_action_taken);
+        assert!(sandbox.evidence_produced);
+        assert!(sandbox.attack_blocked);
+        assert_eq!(sandbox.invariant_violations, 0);
+    }
+
+    #[test]
+    fn containment_verification_quarantine_forensic() {
+        let results = run_containment_verification(1, 42);
+        let forensic = &results[1];
+        assert_eq!(forensic.scenario_name, "quarantine-forensic-snapshot");
+        assert!(forensic.containment_action_taken);
+        assert!(forensic.attack_blocked);
+        assert!(forensic.evidence_produced);
+    }
+
+    // ── run_security_suite ──────────────────────────────────────────
+    #[test]
+    fn security_suite_runs_all_categories() {
+        let config = SecuritySuiteConfig {
+            seed: 42,
+            n_extensions: 3,
+            n_evidence_updates: 10,
+            run_id: "test-suite".to_string(),
+        };
+        let result = run_security_suite(&config);
+        // Should have scenarios from all 7 attack runner functions
+        // (fork_detection is not called directly by run_security_suite)
+        assert!(!result.scenarios.is_empty());
+        assert!(!result.events.is_empty());
+        assert!(result.total_security_events > 0);
+    }
+
+    #[test]
+    fn security_suite_events_have_correct_component() {
+        let config = SecuritySuiteConfig {
+            seed: 42,
+            n_extensions: 2,
+            n_evidence_updates: 5,
+            run_id: "test-events".to_string(),
+        };
+        let result = run_security_suite(&config);
+        for evt in &result.events {
+            assert_eq!(evt.component, SECURITY_E2E_COMPONENT);
+            assert_eq!(evt.event, "attack_scenario_completed");
+            assert!(evt.outcome == "pass" || evt.outcome == "fail");
+        }
+    }
+
+    #[test]
+    fn security_suite_scenario_count_matches_events() {
+        let config = SecuritySuiteConfig {
+            seed: 42,
+            n_extensions: 2,
+            n_evidence_updates: 5,
+            run_id: "test-count".to_string(),
+        };
+        let result = run_security_suite(&config);
+        assert_eq!(result.scenarios.len(), result.events.len());
+    }
+
+    // ── write_security_evidence ─────────────────────────────────────
+    #[test]
+    fn write_security_evidence_creates_files() {
+        let config = SecuritySuiteConfig {
+            seed: 42,
+            n_extensions: 2,
+            n_evidence_updates: 5,
+            run_id: "test-evidence".to_string(),
+        };
+        let result = run_security_suite(&config);
+        let dir = std::env::temp_dir().join("franken_sec_e2e_test_evidence");
+        let _ = fs::remove_dir_all(&dir);
+        let artifacts = write_security_evidence(&result, &dir).unwrap();
+
+        assert!(artifacts.run_manifest_path.exists());
+        assert!(artifacts.evidence_path.exists());
+        assert!(artifacts.summary_path.exists());
+
+        // Verify manifest
+        let manifest: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&artifacts.run_manifest_path).unwrap())
+                .unwrap();
+        assert_eq!(manifest["schema_version"], SECURITY_E2E_SCHEMA_VERSION);
+
+        // Verify evidence JSONL
+        let evidence = fs::read_to_string(&artifacts.evidence_path).unwrap();
+        let lines: Vec<&str> = evidence.lines().collect();
+        assert!(!lines.is_empty());
+        for line in &lines {
+            let _: serde_json::Value = serde_json::from_str(line).unwrap();
+        }
+
+        // Verify summary
+        let summary: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&artifacts.summary_path).unwrap()).unwrap();
+        assert_eq!(summary["schema_version"], SECURITY_E2E_SCHEMA_VERSION);
+        assert!(summary["categories"].is_array());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+}

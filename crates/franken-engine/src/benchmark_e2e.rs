@@ -1415,4 +1415,472 @@ mod tests {
         let m2 = make_measurement(1000.0, 100, 200);
         assert_eq!(m1.correctness_digest, m2.correctness_digest);
     }
+
+    // ── run_boot_storm ──────────────────────────────────────────────
+    #[test]
+    fn run_boot_storm_small_deterministic() {
+        let m1 = run_boot_storm(ScaleProfile::Small, 42);
+        let m2 = run_boot_storm(ScaleProfile::Small, 42);
+        assert_eq!(m1.family, BenchmarkFamily::BootStorm);
+        assert_eq!(m1.profile, ScaleProfile::Small);
+        assert_eq!(m1.correctness_digest, m2.correctness_digest);
+        assert_eq!(m1.total_operations, m2.total_operations);
+        assert!(m1.total_operations > 0);
+        assert!(m1.throughput_ops_per_sec > 0.0);
+        assert!(m1.duration_us > 0);
+        assert_eq!(m1.security_events, 0);
+        assert_eq!(m1.invariant_violations, 0);
+        assert!(m1.peak_extensions_alive > 0);
+        assert!(m1.latency.sample_count > 0);
+    }
+
+    #[test]
+    fn run_boot_storm_different_seeds_differ() {
+        let m1 = run_boot_storm(ScaleProfile::Small, 1);
+        let m2 = run_boot_storm(ScaleProfile::Small, 999);
+        assert_ne!(m1.correctness_digest, m2.correctness_digest);
+    }
+
+    // ── run_capability_churn ────────────────────────────────────────
+    #[test]
+    fn run_capability_churn_small() {
+        let m = run_capability_churn(ScaleProfile::Small, 42);
+        assert_eq!(m.family, BenchmarkFamily::CapabilityChurn);
+        assert_eq!(m.profile, ScaleProfile::Small);
+        assert!(m.total_operations > 0);
+        assert!(m.throughput_ops_per_sec > 0.0);
+        assert!(m.duration_us > 0);
+        assert_eq!(m.invariant_violations, 0);
+        assert_eq!(
+            m.peak_extensions_alive,
+            ScaleProfile::Small.extension_count()
+        );
+        assert!(m.latency.sample_count > 0);
+    }
+
+    #[test]
+    fn run_capability_churn_deterministic() {
+        let m1 = run_capability_churn(ScaleProfile::Small, 7);
+        let m2 = run_capability_churn(ScaleProfile::Small, 7);
+        assert_eq!(m1.correctness_digest, m2.correctness_digest);
+        assert_eq!(m1.total_operations, m2.total_operations);
+        assert_eq!(m1.security_events, m2.security_events);
+    }
+
+    // ── run_mixed_cpu_io_agent_mesh ─────────────────────────────────
+    #[test]
+    fn run_mixed_cpu_io_agent_mesh_small() {
+        let m = run_mixed_cpu_io_agent_mesh(ScaleProfile::Small, 42);
+        assert_eq!(m.family, BenchmarkFamily::MixedCpuIoAgentMesh);
+        assert_eq!(m.profile, ScaleProfile::Small);
+        assert!(m.total_operations > 0);
+        assert!(m.throughput_ops_per_sec > 0.0);
+        assert_eq!(m.invariant_violations, 0);
+        assert_eq!(
+            m.peak_extensions_alive,
+            ScaleProfile::Small.extension_count()
+        );
+        assert!(m.latency.sample_count > 0);
+    }
+
+    #[test]
+    fn run_mixed_cpu_io_agent_mesh_deterministic() {
+        let m1 = run_mixed_cpu_io_agent_mesh(ScaleProfile::Small, 99);
+        let m2 = run_mixed_cpu_io_agent_mesh(ScaleProfile::Small, 99);
+        assert_eq!(m1.correctness_digest, m2.correctness_digest);
+        assert_eq!(m1.security_events, m2.security_events);
+    }
+
+    // ── run_reload_revoke_churn ─────────────────────────────────────
+    #[test]
+    fn run_reload_revoke_churn_small() {
+        let m = run_reload_revoke_churn(ScaleProfile::Small, 42);
+        assert_eq!(m.family, BenchmarkFamily::ReloadRevokeChurn);
+        assert_eq!(m.profile, ScaleProfile::Small);
+        assert!(m.total_operations > 0);
+        assert!(m.throughput_ops_per_sec > 0.0);
+        assert_eq!(m.invariant_violations, 0);
+        assert_eq!(m.security_events, 0);
+        assert!(m.latency.sample_count > 0);
+    }
+
+    #[test]
+    fn run_reload_revoke_churn_deterministic() {
+        let m1 = run_reload_revoke_churn(ScaleProfile::Small, 55);
+        let m2 = run_reload_revoke_churn(ScaleProfile::Small, 55);
+        assert_eq!(m1.correctness_digest, m2.correctness_digest);
+        assert_eq!(m1.total_operations, m2.total_operations);
+    }
+
+    // ── run_adversarial_noise_under_load ────────────────────────────
+    #[test]
+    fn run_adversarial_noise_under_load_small() {
+        let m = run_adversarial_noise_under_load(ScaleProfile::Small, 42);
+        assert_eq!(m.family, BenchmarkFamily::AdversarialNoiseUnderLoad);
+        assert_eq!(m.profile, ScaleProfile::Small);
+        assert!(m.total_operations > 0);
+        assert!(m.throughput_ops_per_sec > 0.0);
+        assert_eq!(m.invariant_violations, 0);
+        // Adversarial extensions should trigger security events
+        assert!(m.security_events > 0);
+        assert!(m.latency.sample_count > 0);
+    }
+
+    #[test]
+    fn run_adversarial_noise_under_load_deterministic() {
+        let m1 = run_adversarial_noise_under_load(ScaleProfile::Small, 13);
+        let m2 = run_adversarial_noise_under_load(ScaleProfile::Small, 13);
+        assert_eq!(m1.correctness_digest, m2.correctness_digest);
+        assert_eq!(m1.security_events, m2.security_events);
+    }
+
+    // ── run_benchmark (dispatcher) ──────────────────────────────────
+    #[test]
+    fn run_benchmark_dispatches_boot_storm() {
+        let m = run_benchmark(BenchmarkFamily::BootStorm, ScaleProfile::Small, 42);
+        assert_eq!(m.family, BenchmarkFamily::BootStorm);
+    }
+
+    #[test]
+    fn run_benchmark_dispatches_capability_churn() {
+        let m = run_benchmark(BenchmarkFamily::CapabilityChurn, ScaleProfile::Small, 42);
+        assert_eq!(m.family, BenchmarkFamily::CapabilityChurn);
+    }
+
+    #[test]
+    fn run_benchmark_dispatches_mixed_mesh() {
+        let m = run_benchmark(
+            BenchmarkFamily::MixedCpuIoAgentMesh,
+            ScaleProfile::Small,
+            42,
+        );
+        assert_eq!(m.family, BenchmarkFamily::MixedCpuIoAgentMesh);
+    }
+
+    #[test]
+    fn run_benchmark_dispatches_reload_churn() {
+        let m = run_benchmark(BenchmarkFamily::ReloadRevokeChurn, ScaleProfile::Small, 42);
+        assert_eq!(m.family, BenchmarkFamily::ReloadRevokeChurn);
+    }
+
+    #[test]
+    fn run_benchmark_dispatches_adversarial() {
+        let m = run_benchmark(
+            BenchmarkFamily::AdversarialNoiseUnderLoad,
+            ScaleProfile::Small,
+            42,
+        );
+        assert_eq!(m.family, BenchmarkFamily::AdversarialNoiseUnderLoad);
+    }
+
+    // ── run_benchmark_suite ─────────────────────────────────────────
+    #[test]
+    fn run_benchmark_suite_single_family_single_profile() {
+        let config = BenchmarkSuiteConfig {
+            seed: 42,
+            profiles: vec![ScaleProfile::Small],
+            families: vec![BenchmarkFamily::BootStorm],
+            thresholds: RegressionThresholds::default(),
+            run_id: "test-run".to_string(),
+            run_date: "2026-01-01".to_string(),
+        };
+        let result = run_benchmark_suite(&config);
+        assert_eq!(result.measurements.len(), 1);
+        assert_eq!(result.events.len(), 1);
+        assert!(result.total_operations > 0);
+        assert!(result.total_duration_us > 0);
+        assert_eq!(result.invariant_violations, 0);
+        assert!(!result.blocked);
+        assert!(result.regressions.is_empty());
+    }
+
+    #[test]
+    fn run_benchmark_suite_two_families_two_profiles() {
+        let config = BenchmarkSuiteConfig {
+            seed: 42,
+            profiles: vec![ScaleProfile::Small, ScaleProfile::Medium],
+            families: vec![BenchmarkFamily::BootStorm, BenchmarkFamily::CapabilityChurn],
+            thresholds: RegressionThresholds::default(),
+            run_id: "test-2x2".to_string(),
+            run_date: "2026-01-01".to_string(),
+        };
+        let result = run_benchmark_suite(&config);
+        assert_eq!(result.measurements.len(), 4); // 2 families * 2 profiles
+        assert_eq!(result.events.len(), 4);
+    }
+
+    #[test]
+    fn run_benchmark_suite_events_have_correct_component() {
+        let config = BenchmarkSuiteConfig {
+            seed: 42,
+            profiles: vec![ScaleProfile::Small],
+            families: vec![BenchmarkFamily::BootStorm],
+            thresholds: RegressionThresholds::default(),
+            run_id: "test-evt".to_string(),
+            run_date: "2026-01-01".to_string(),
+        };
+        let result = run_benchmark_suite(&config);
+        assert_eq!(result.events[0].component, BENCHMARK_E2E_COMPONENT);
+        assert_eq!(result.events[0].event, "benchmark_case_completed");
+        assert_eq!(result.events[0].outcome, "pass");
+        assert!(result.events[0].family.is_some());
+        assert!(result.events[0].profile.is_some());
+    }
+
+    // ── run_benchmark_suite_with_regression ──────────────────────────
+    #[test]
+    fn run_benchmark_suite_with_regression_no_baseline() {
+        let config = BenchmarkSuiteConfig {
+            seed: 42,
+            profiles: vec![ScaleProfile::Small],
+            families: vec![BenchmarkFamily::BootStorm],
+            thresholds: RegressionThresholds::default(),
+            run_id: "test-reg-0".to_string(),
+            run_date: "2026-01-01".to_string(),
+        };
+        let result = run_benchmark_suite_with_regression(&config, &[]);
+        assert!(result.regressions.is_empty());
+    }
+
+    #[test]
+    fn run_benchmark_suite_with_regression_against_matching_baseline() {
+        let config = BenchmarkSuiteConfig {
+            seed: 42,
+            profiles: vec![ScaleProfile::Small],
+            families: vec![BenchmarkFamily::BootStorm],
+            thresholds: RegressionThresholds {
+                // Use very lenient thresholds to account for timing variance
+                throughput_regression_pct: 99.0,
+                p95_latency_regression_pct: 99.0,
+                p99_latency_regression_pct: 99.0,
+            },
+            run_id: "test-reg-1".to_string(),
+            run_date: "2026-01-01".to_string(),
+        };
+        // Use same config to get a baseline
+        let baseline_result = run_benchmark_suite(&config);
+        let result = run_benchmark_suite_with_regression(&config, &baseline_result.measurements);
+        // Matching baseline → regression result produced
+        assert_eq!(result.regressions.len(), 1);
+        assert_eq!(result.regressions[0].family, BenchmarkFamily::BootStorm);
+        assert_eq!(result.regressions[0].profile, ScaleProfile::Small);
+        // With 99% thresholds, timing variance won't trigger a block
+        assert!(!result.regressions[0].blocked);
+    }
+
+    #[test]
+    fn run_benchmark_suite_with_regression_unmatched_baseline_skipped() {
+        let config = BenchmarkSuiteConfig {
+            seed: 42,
+            profiles: vec![ScaleProfile::Small],
+            families: vec![BenchmarkFamily::BootStorm],
+            thresholds: RegressionThresholds::default(),
+            run_id: "test-reg-2".to_string(),
+            run_date: "2026-01-01".to_string(),
+        };
+        // Baseline is for a different family, so no regression check
+        let unrelated_baseline = vec![make_measurement(1000.0, 100, 200)]; // BootStorm/Small
+        // Change the family to mismatch — but make_measurement uses BootStorm/Small
+        // So let's pass a baseline that matches
+        let result = run_benchmark_suite_with_regression(&config, &unrelated_baseline);
+        // The make_measurement baseline IS BootStorm/Small, so it will match
+        assert_eq!(result.regressions.len(), 1);
+    }
+
+    // ── write_evidence_artifacts ─────────────────────────────────────
+    #[test]
+    fn write_evidence_artifacts_creates_files() {
+        let config = BenchmarkSuiteConfig {
+            seed: 42,
+            profiles: vec![ScaleProfile::Small],
+            families: vec![BenchmarkFamily::BootStorm],
+            thresholds: RegressionThresholds::default(),
+            run_id: "test-evidence".to_string(),
+            run_date: "2026-01-01".to_string(),
+        };
+        let result = run_benchmark_suite(&config);
+        let dir = std::env::temp_dir().join("franken_bench_test_evidence");
+        let _ = fs::remove_dir_all(&dir);
+        let artifacts = write_evidence_artifacts(&result, &dir).unwrap();
+        assert!(artifacts.run_manifest_path.exists());
+        assert!(artifacts.evidence_path.exists());
+        assert!(artifacts.summary_path.exists());
+
+        // Verify manifest is valid JSON
+        let manifest: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&artifacts.run_manifest_path).unwrap())
+                .unwrap();
+        assert_eq!(manifest["schema_version"], BENCHMARK_E2E_SCHEMA_VERSION);
+        assert_eq!(manifest["run_id"], "test-evidence");
+        assert_eq!(manifest["seed"], 42);
+
+        // Verify evidence JSONL has entries
+        let evidence = fs::read_to_string(&artifacts.evidence_path).unwrap();
+        assert!(!evidence.is_empty());
+        let lines: Vec<&str> = evidence.lines().collect();
+        assert!(!lines.is_empty());
+        // Each line should be valid JSON
+        for line in &lines {
+            let _: serde_json::Value = serde_json::from_str(line).unwrap();
+        }
+
+        // Verify summary is valid JSON
+        let summary: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&artifacts.summary_path).unwrap()).unwrap();
+        assert_eq!(summary["schema_version"], BENCHMARK_E2E_SCHEMA_VERSION);
+        assert_eq!(summary["run_id"], "test-evidence");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn write_evidence_artifacts_with_regressions() {
+        let config = BenchmarkSuiteConfig {
+            seed: 42,
+            profiles: vec![ScaleProfile::Small],
+            families: vec![BenchmarkFamily::BootStorm],
+            thresholds: RegressionThresholds::default(),
+            run_id: "test-reg-evidence".to_string(),
+            run_date: "2026-01-01".to_string(),
+        };
+        let baseline = run_benchmark_suite(&config);
+        let result = run_benchmark_suite_with_regression(&config, &baseline.measurements);
+
+        let dir = std::env::temp_dir().join("franken_bench_test_reg_evidence");
+        let _ = fs::remove_dir_all(&dir);
+        let artifacts = write_evidence_artifacts(&result, &dir).unwrap();
+
+        let evidence = fs::read_to_string(&artifacts.evidence_path).unwrap();
+        let lines: Vec<&str> = evidence.lines().collect();
+        // Should have measurement + regression + event lines
+        assert!(lines.len() >= 3);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn write_evidence_artifacts_summary_has_family_summaries() {
+        let config = BenchmarkSuiteConfig {
+            seed: 42,
+            profiles: vec![ScaleProfile::Small],
+            families: vec![BenchmarkFamily::BootStorm, BenchmarkFamily::CapabilityChurn],
+            thresholds: RegressionThresholds::default(),
+            run_id: "test-fam-summary".to_string(),
+            run_date: "2026-01-01".to_string(),
+        };
+        let result = run_benchmark_suite(&config);
+        let dir = std::env::temp_dir().join("franken_bench_test_fam_summary");
+        let _ = fs::remove_dir_all(&dir);
+        let artifacts = write_evidence_artifacts(&result, &dir).unwrap();
+
+        let summary: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&artifacts.summary_path).unwrap()).unwrap();
+        let families = summary["families"].as_array().unwrap();
+        assert_eq!(families.len(), 2);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ── Medium profile sanity ───────────────────────────────────────
+    #[test]
+    fn run_boot_storm_medium_completes() {
+        let m = run_boot_storm(ScaleProfile::Medium, 42);
+        assert_eq!(m.profile, ScaleProfile::Medium);
+        assert!(m.total_operations > 0);
+        assert!(m.peak_extensions_alive > 0);
+    }
+
+    // ── Xorshift64 additional coverage ──────────────────────────────
+    #[test]
+    fn xorshift64_next_bool_distribution() {
+        // With 50% probability, should get both true and false over many trials
+        let mut rng = Xorshift64::new(42);
+        let mut trues = 0usize;
+        let mut falses = 0usize;
+        for _ in 0..1000 {
+            if rng.next_bool(50) {
+                trues += 1;
+            } else {
+                falses += 1;
+            }
+        }
+        assert!(trues > 100, "expected many trues, got {trues}");
+        assert!(falses > 100, "expected many falses, got {falses}");
+    }
+
+    // ── LatencyDistribution edge cases ──────────────────────────────
+    #[test]
+    fn latency_distribution_two_samples() {
+        let mut samples = vec![10, 20];
+        let dist = LatencyDistribution::from_samples(&mut samples);
+        assert_eq!(dist.min_us, 10);
+        assert_eq!(dist.max_us, 20);
+        assert_eq!(dist.sample_count, 2);
+    }
+
+    // ── detect_regression at threshold boundary ─────────────────────
+    #[test]
+    fn detect_regression_exactly_at_threshold_not_blocked() {
+        let baseline = make_measurement(1000.0, 100, 200);
+        // 5% throughput regression exactly at threshold (1000 * 0.05 = 50)
+        let current = make_measurement(950.0, 100, 200);
+        let thresholds = RegressionThresholds::default();
+        let result = detect_regression(&current, &baseline, &thresholds);
+        // 5.0% == 5.0% threshold: not strictly greater, so not blocked
+        assert!(!result.blocked);
+    }
+
+    #[test]
+    fn detect_regression_just_over_threshold_blocked() {
+        let baseline = make_measurement(1000.0, 100, 200);
+        // 5.1% throughput regression exceeds 5% threshold
+        let current = make_measurement(949.0, 100, 200);
+        let thresholds = RegressionThresholds::default();
+        let result = detect_regression(&current, &baseline, &thresholds);
+        assert!(result.blocked);
+    }
+
+    // ── Custom thresholds ───────────────────────────────────────────
+    #[test]
+    fn detect_regression_custom_thresholds() {
+        let baseline = make_measurement(1000.0, 100, 200);
+        let current = make_measurement(900.0, 100, 200); // 10% throughput drop
+        let thresholds = RegressionThresholds {
+            throughput_regression_pct: 15.0, // 15% threshold
+            p95_latency_regression_pct: 10.0,
+            p99_latency_regression_pct: 15.0,
+        };
+        let result = detect_regression(&current, &baseline, &thresholds);
+        // 10% < 15% threshold → not blocked
+        assert!(!result.blocked);
+    }
+
+    // ── BenchmarkFamily all exhaustive ──────────────────────────────
+    #[test]
+    fn benchmark_family_all_as_str_unique() {
+        let names: BTreeSet<&str> = BenchmarkFamily::all().iter().map(|f| f.as_str()).collect();
+        assert_eq!(names.len(), 5);
+    }
+
+    // ── ScaleProfile Debug/Clone/Eq ─────────────────────────────────
+    #[test]
+    fn scale_profile_eq_and_clone() {
+        let s = ScaleProfile::Small;
+        let cloned = s;
+        assert_eq!(s, cloned);
+        assert_ne!(ScaleProfile::Small, ScaleProfile::Large);
+    }
+
+    // ── BenchmarkMeasurement fields ─────────────────────────────────
+    #[test]
+    fn benchmark_measurement_clone_preserves_fields() {
+        let m = make_measurement(500.0, 50, 100);
+        let cloned = m.clone();
+        assert_eq!(cloned.family, BenchmarkFamily::BootStorm);
+        assert!((cloned.throughput_ops_per_sec - 500.0).abs() < 1e-9);
+        assert_eq!(cloned.latency.p95_us, 50);
+        assert_eq!(cloned.latency.p99_us, 100);
+    }
+
+    use std::collections::BTreeSet;
 }

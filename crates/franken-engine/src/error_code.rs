@@ -1413,4 +1413,457 @@ mod tests {
             );
         }
     }
+
+    // -----------------------------------------------------------------------
+    // FrankenErrorCode serde round-trip
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn franken_error_code_serde_round_trip_all() {
+        for code in ALL_ERROR_CODES {
+            let json = serde_json::to_string(code).expect("serialize");
+            let decoded: FrankenErrorCode = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(decoded, *code, "serde round-trip failed for {code:?}");
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // ErrorSubsystem includes() midpoint values
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn error_subsystem_includes_midpoint_of_each_range() {
+        let subsystems = [
+            (ErrorSubsystem::SerializationEncoding, 500),
+            (ErrorSubsystem::IdentityAuthentication, 1500),
+            (ErrorSubsystem::CapabilityAuthorization, 2500),
+            (ErrorSubsystem::CheckpointPolicy, 3500),
+            (ErrorSubsystem::Revocation, 4500),
+            (ErrorSubsystem::SessionChannel, 5500),
+            (ErrorSubsystem::ZoneScope, 6500),
+            (ErrorSubsystem::AuditObservability, 7500),
+            (ErrorSubsystem::LifecycleMigration, 8500),
+            (ErrorSubsystem::Reserved, 9500),
+        ];
+        for (sub, mid) in subsystems {
+            assert!(sub.includes(mid), "{sub:?} should include midpoint {mid}");
+        }
+    }
+
+    #[test]
+    fn error_subsystem_excludes_cross_boundary_values() {
+        // IdentityAuthentication range is 1000-1999; 999 and 2000 should not be included
+        let sub = ErrorSubsystem::IdentityAuthentication;
+        assert!(!sub.includes(999));
+        assert!(sub.includes(1000));
+        assert!(sub.includes(1999));
+        assert!(!sub.includes(2000));
+    }
+
+    // -----------------------------------------------------------------------
+    // Concrete HasErrorCode invocations
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn has_error_code_non_canonical_error() {
+        use crate::canonical_encoding::CanonicalViolation;
+        use crate::engine_object_id::ObjectDomain;
+        let err = NonCanonicalError {
+            object_class: ObjectDomain::PolicyObject,
+            input_hash: [0u8; 32],
+            violation: CanonicalViolation::DuplicateKey {
+                key: "k".to_string(),
+            },
+            trace_id: "t-1".to_string(),
+        };
+        assert_eq!(
+            err.error_code(),
+            FrankenErrorCode::NonCanonicalEncodingError
+        );
+    }
+
+    #[test]
+    fn has_error_code_serde_error() {
+        let err = SerdeError::BufferTooShort {
+            expected: 8,
+            actual: 2,
+        };
+        assert_eq!(err.error_code(), FrankenErrorCode::DeterministicSerdeError);
+    }
+
+    #[test]
+    fn has_error_code_id_error() {
+        let err = IdError::EmptyCanonicalBytes;
+        assert_eq!(err.error_code(), FrankenErrorCode::EngineObjectIdError);
+    }
+
+    #[test]
+    fn has_error_code_signature_error() {
+        let err = SignatureError::InvalidSigningKey;
+        assert_eq!(
+            err.error_code(),
+            FrankenErrorCode::SignatureVerificationError
+        );
+    }
+
+    #[test]
+    fn has_error_code_multi_sig_error() {
+        let err = MultiSigError::EmptyArray;
+        assert_eq!(
+            err.error_code(),
+            FrankenErrorCode::MultiSigVerificationError
+        );
+    }
+
+    #[test]
+    fn has_error_code_key_derivation_error() {
+        let err = KeyDerivationError::EmptyMasterKey;
+        assert_eq!(err.error_code(), FrankenErrorCode::KeyDerivationFailure);
+    }
+
+    #[test]
+    fn has_error_code_capability_denied() {
+        use crate::capability::{ProfileKind, RuntimeCapability};
+        let err = CapabilityDenied {
+            required: RuntimeCapability::VmDispatch,
+            held_profile: ProfileKind::Policy,
+            component: "test".to_string(),
+        };
+        assert_eq!(err.error_code(), FrankenErrorCode::CapabilityDeniedError);
+    }
+
+    #[test]
+    fn has_error_code_token_error() {
+        let err = TokenError::EmptyCapabilities;
+        assert_eq!(
+            err.error_code(),
+            FrankenErrorCode::CapabilityTokenValidationError
+        );
+    }
+
+    #[test]
+    fn has_error_code_mask_error() {
+        let err = MaskError::NestingDenied;
+        assert_eq!(err.error_code(), FrankenErrorCode::CancelMaskPolicyError);
+    }
+
+    #[test]
+    fn has_error_code_mask_error_already_released() {
+        let err = MaskError::AlreadyReleased;
+        assert_eq!(err.error_code(), FrankenErrorCode::CancelMaskPolicyError);
+    }
+
+    #[test]
+    fn has_error_code_checkpoint_error() {
+        let err = CheckpointError::EmptyPolicyHeads;
+        assert_eq!(
+            err.error_code(),
+            FrankenErrorCode::PolicyCheckpointValidationError
+        );
+    }
+
+    #[test]
+    fn has_error_code_fork_error() {
+        let err = ForkError::PersistenceFailed {
+            detail: "disk full".to_string(),
+        };
+        assert_eq!(err.error_code(), FrankenErrorCode::ForkDetectionError);
+    }
+
+    #[test]
+    fn has_error_code_barrier_error() {
+        let err = BarrierError::NoTransitionInProgress;
+        assert_eq!(
+            err.error_code(),
+            FrankenErrorCode::EpochBarrierTransitionError
+        );
+    }
+
+    #[test]
+    fn has_error_code_policy_controller_error() {
+        let err = PolicyControllerError::EmptyActionSet;
+        assert_eq!(
+            err.error_code(),
+            FrankenErrorCode::PolicyControllerDecisionError
+        );
+    }
+
+    #[test]
+    fn has_error_code_reconcile_error() {
+        let err = ReconcileError::EmptyObjectSet;
+        assert_eq!(
+            err.error_code(),
+            FrankenErrorCode::AntiEntropyReconciliationError
+        );
+    }
+
+    #[test]
+    fn has_error_code_chain_integrity_error() {
+        let err = ChainIntegrityError::EmptyStream;
+        assert_eq!(
+            err.error_code(),
+            FrankenErrorCode::MarkerStreamIntegrityError
+        );
+    }
+
+    #[test]
+    fn has_error_code_lease_error() {
+        let err = LeaseError::ZeroTtl;
+        assert_eq!(err.error_code(), FrankenErrorCode::LeaseLifecycleError);
+    }
+
+    #[test]
+    fn has_error_code_obligation_error() {
+        let err = ObligationError::NotFound { obligation_id: 1 };
+        assert_eq!(err.error_code(), FrankenErrorCode::ObligationChannelError);
+    }
+
+    #[test]
+    fn has_error_code_lane_error() {
+        let err = LaneError::EmptyTraceId;
+        assert_eq!(
+            err.error_code(),
+            FrankenErrorCode::SchedulerLaneAdmissionError
+        );
+    }
+
+    #[test]
+    fn has_error_code_saga_error() {
+        let err = SagaError::EmptySteps;
+        assert_eq!(err.error_code(), FrankenErrorCode::SagaExecutionError);
+    }
+
+    #[test]
+    fn has_error_code_alloc_domain_error() {
+        let err = AllocDomainError::BudgetOverflow;
+        assert_eq!(
+            err.error_code(),
+            FrankenErrorCode::AllocationDomainBudgetError
+        );
+    }
+
+    #[test]
+    fn has_error_code_phase_order_violation() {
+        use crate::region_lifecycle::RegionState;
+        let err = PhaseOrderViolation {
+            current_state: RegionState::Running,
+            attempted_transition: "close".to_string(),
+            region_id: "r-1".to_string(),
+        };
+        assert_eq!(err.error_code(), FrankenErrorCode::RegionPhaseOrderError);
+    }
+
+    #[test]
+    fn has_error_code_gc_error() {
+        let err = GcError::HeapNotFound {
+            extension_id: "ext-1".to_string(),
+        };
+        assert_eq!(err.error_code(), FrankenErrorCode::GarbageCollectionError);
+    }
+
+    #[test]
+    fn has_error_code_proof_error() {
+        let err = ProofError::EmptyStream;
+        assert_eq!(
+            err.error_code(),
+            FrankenErrorCode::MerkleProofVerificationError
+        );
+    }
+
+    #[test]
+    fn has_error_code_detector_error() {
+        let err = DetectorError::UnknownMetricStream {
+            stream: "s-1".to_string(),
+        };
+        assert_eq!(err.error_code(), FrankenErrorCode::RegimeDetectionError);
+    }
+
+    #[test]
+    fn has_error_code_monotonicity_violation() {
+        let err = MonotonicityViolation {
+            current: crate::security_epoch::SecurityEpoch::from_raw(5),
+            attempted: crate::security_epoch::SecurityEpoch::from_raw(3),
+        };
+        assert_eq!(
+            err.error_code(),
+            FrankenErrorCode::EpochMonotonicityViolation
+        );
+    }
+
+    #[test]
+    fn has_error_code_eval_error_all_variants() {
+        let codes = [
+            EvalErrorCode::EmptySource,
+            EvalErrorCode::ParseFailure,
+            EvalErrorCode::ResolutionFailure,
+            EvalErrorCode::PolicyDenied,
+            EvalErrorCode::CapabilityDenied,
+            EvalErrorCode::RuntimeFault,
+            EvalErrorCode::HostcallFault,
+            EvalErrorCode::InvariantViolation,
+        ];
+        for code in codes {
+            let err = EvalError {
+                code,
+                message: "test".to_string(),
+            };
+            assert_eq!(err.error_code(), FrankenErrorCode::EvalRuntimeError);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // from_numeric boundary values per subsystem
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn from_numeric_first_code_in_each_subsystem() {
+        assert_eq!(
+            FrankenErrorCode::from_numeric(1),
+            Some(FrankenErrorCode::NonCanonicalEncodingError)
+        );
+        assert_eq!(
+            FrankenErrorCode::from_numeric(1000),
+            Some(FrankenErrorCode::EngineObjectIdError)
+        );
+        assert_eq!(
+            FrankenErrorCode::from_numeric(2000),
+            Some(FrankenErrorCode::CapabilityDeniedError)
+        );
+        assert_eq!(
+            FrankenErrorCode::from_numeric(3000),
+            Some(FrankenErrorCode::PolicyCheckpointValidationError)
+        );
+        assert_eq!(
+            FrankenErrorCode::from_numeric(4000),
+            Some(FrankenErrorCode::RevocationChainIntegrityError)
+        );
+        assert_eq!(
+            FrankenErrorCode::from_numeric(5000),
+            Some(FrankenErrorCode::LeaseLifecycleError)
+        );
+        assert_eq!(
+            FrankenErrorCode::from_numeric(6000),
+            Some(FrankenErrorCode::AllocationDomainBudgetError)
+        );
+        assert_eq!(
+            FrankenErrorCode::from_numeric(7000),
+            Some(FrankenErrorCode::EvidenceContractError)
+        );
+        assert_eq!(
+            FrankenErrorCode::from_numeric(8000),
+            Some(FrankenErrorCode::EpochMonotonicityViolation)
+        );
+    }
+
+    #[test]
+    fn from_numeric_gap_values_return_none() {
+        // Values in between assigned codes
+        assert_eq!(FrankenErrorCode::from_numeric(3), None);
+        assert_eq!(FrankenErrorCode::from_numeric(500), None);
+        assert_eq!(FrankenErrorCode::from_numeric(1500), None);
+        assert_eq!(FrankenErrorCode::from_numeric(4001), None);
+    }
+
+    // -----------------------------------------------------------------------
+    // to_registry_entry round-trip
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn to_registry_entry_preserves_all_fields() {
+        for code in ALL_ERROR_CODES {
+            let entry = code.to_registry_entry();
+            assert_eq!(entry.code, code.stable_code());
+            assert_eq!(entry.numeric, code.numeric());
+            assert_eq!(entry.subsystem, code.subsystem());
+            assert_eq!(entry.severity, code.severity());
+            assert_eq!(entry.description, code.description());
+            assert_eq!(entry.operator_action, code.operator_action());
+            assert_eq!(entry.deprecated, code.deprecated());
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // ErrorCodeEntry serde
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn error_code_entry_serde_round_trip() {
+        let entry = FrankenErrorCode::CapabilityDeniedError.to_registry_entry();
+        let json = serde_json::to_string(&entry).expect("serialize");
+        let decoded: ErrorCodeEntry = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(decoded, entry);
+    }
+
+    // -----------------------------------------------------------------------
+    // Constants
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn error_code_registry_version_is_one() {
+        assert_eq!(ERROR_CODE_REGISTRY_VERSION, 1);
+    }
+
+    #[test]
+    fn error_code_compatibility_policy_contains_append_only() {
+        assert!(ERROR_CODE_COMPATIBILITY_POLICY.contains("append-only"));
+    }
+
+    // -----------------------------------------------------------------------
+    // ALL_ERROR_CODES length matches variant count
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn all_error_codes_has_42_entries() {
+        assert_eq!(ALL_ERROR_CODES.len(), 42);
+    }
+
+    // -----------------------------------------------------------------------
+    // Subsystem range returns correct values
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn error_subsystem_serialization_encoding_range() {
+        let (start, end) = ErrorSubsystem::SerializationEncoding.range();
+        assert_eq!(start, 1);
+        assert_eq!(end, 999);
+    }
+
+    #[test]
+    fn error_subsystem_reserved_range() {
+        let (start, end) = ErrorSubsystem::Reserved.range();
+        assert_eq!(start, 9000);
+        assert_eq!(end, 9999);
+    }
+
+    // -----------------------------------------------------------------------
+    // Description and operator_action content verification
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn description_is_distinct_per_code() {
+        let descriptions: BTreeSet<_> = ALL_ERROR_CODES.iter().map(|c| c.description()).collect();
+        assert_eq!(descriptions.len(), ALL_ERROR_CODES.len());
+    }
+
+    #[test]
+    fn operator_action_is_distinct_per_code() {
+        let actions: BTreeSet<_> = ALL_ERROR_CODES
+            .iter()
+            .map(|c| c.operator_action())
+            .collect();
+        assert_eq!(actions.len(), ALL_ERROR_CODES.len());
+    }
+
+    // -----------------------------------------------------------------------
+    // Registry compatibility_policy field
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn registry_compatibility_policy_matches_constant() {
+        let registry = error_code_registry();
+        assert_eq!(
+            registry.compatibility_policy,
+            ERROR_CODE_COMPATIBILITY_POLICY
+        );
+    }
 }

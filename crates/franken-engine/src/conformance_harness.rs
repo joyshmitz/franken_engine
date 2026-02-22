@@ -3724,4 +3724,1164 @@ expiry_date = "2030-01-01"
         assert!(red_exp.is_empty());
         assert!(red_act.is_empty());
     }
+
+    // ── ConformanceManifestError Display (remaining variants) ────────
+
+    #[test]
+    fn manifest_error_display_manifest_has_no_parent() {
+        let msg = ConformanceManifestError::ManifestHasNoParent.to_string();
+        assert!(msg.contains("no parent"));
+    }
+
+    #[test]
+    fn manifest_error_display_invalid_field_value() {
+        let err = ConformanceManifestError::InvalidFieldValue {
+            field: "category",
+            value: "unknown".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("category"));
+        assert!(msg.contains("unknown"));
+    }
+
+    #[test]
+    fn manifest_error_display_invalid_ifc_expectation() {
+        let err = ConformanceManifestError::InvalidIfcExpectation {
+            asset_id: "asset-1".to_string(),
+            category: "benign".to_string(),
+            expected_outcome: "block".to_string(),
+            expected_evidence_type: "flow_violation".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("asset-1"));
+        assert!(msg.contains("benign"));
+    }
+
+    #[test]
+    fn manifest_error_display_asset_io() {
+        let err = ConformanceManifestError::AssetIo {
+            asset_id: "asset-1".to_string(),
+            path: PathBuf::from("/tmp/missing.json"),
+            source: io::Error::new(io::ErrorKind::NotFound, "file not found"),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("asset-1"));
+        assert!(msg.contains("missing.json"));
+    }
+
+    #[test]
+    fn manifest_error_display_fixture_hash_mismatch() {
+        let err = ConformanceManifestError::FixtureHashMismatch {
+            asset_id: "asset-1".to_string(),
+            expected: "aaa".to_string(),
+            actual: "bbb".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("fixture hash mismatch"));
+        assert!(msg.contains("aaa"));
+        assert!(msg.contains("bbb"));
+    }
+
+    #[test]
+    fn manifest_error_display_expected_output_hash_mismatch() {
+        let err = ConformanceManifestError::ExpectedOutputHashMismatch {
+            asset_id: "asset-1".to_string(),
+            expected: "xxx".to_string(),
+            actual: "yyy".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("expected output hash mismatch"));
+        assert!(msg.contains("xxx"));
+    }
+
+    // ── ConformanceManifestError::source ────────────────────────────
+
+    #[test]
+    fn manifest_error_source_asset_io_returns_some() {
+        let err = ConformanceManifestError::AssetIo {
+            asset_id: "a".to_string(),
+            path: PathBuf::from("/tmp"),
+            source: io::Error::new(io::ErrorKind::NotFound, "nf"),
+        };
+        assert!(err.source().is_some());
+    }
+
+    #[test]
+    fn manifest_error_source_non_io_returns_none() {
+        let err = ConformanceManifestError::EmptyAssetSet;
+        assert!(err.source().is_none());
+        let err2 = ConformanceManifestError::MissingField("x");
+        assert!(err2.source().is_none());
+    }
+
+    // ── ConformanceRunError Display (remaining variants) ────────────
+
+    #[test]
+    fn run_error_display_manifest() {
+        let inner = ConformanceManifestError::EmptyAssetSet;
+        let err = ConformanceRunError::Manifest(inner);
+        let msg = err.to_string();
+        assert!(msg.contains("no assets"));
+    }
+
+    #[test]
+    fn run_error_display_fixture_io() {
+        let err = ConformanceRunError::FixtureIo {
+            asset_id: "fix-1".to_string(),
+            path: PathBuf::from("/tmp/fixture.json"),
+            source: io::Error::new(io::ErrorKind::NotFound, "missing"),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("fix-1"));
+        assert!(msg.contains("fixture"));
+    }
+
+    #[test]
+    fn run_error_display_invalid_fixture() {
+        let err = ConformanceRunError::InvalidFixture {
+            asset_id: "bad-1".to_string(),
+            source: io::Error::new(io::ErrorKind::InvalidData, "parse error"),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("bad-1"));
+        assert!(msg.contains("invalid donor fixture"));
+    }
+
+    #[test]
+    fn run_error_display_expected_output_io() {
+        let err = ConformanceRunError::ExpectedOutputIo {
+            asset_id: "exp-1".to_string(),
+            path: PathBuf::from("/tmp/expected.txt"),
+            source: io::Error::new(io::ErrorKind::NotFound, "not found"),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("exp-1"));
+        assert!(msg.contains("expected output"));
+    }
+
+    #[test]
+    fn run_error_display_io() {
+        let err = ConformanceRunError::Io(io::Error::other("oops"));
+        let msg = err.to_string();
+        assert!(msg.contains("oops"));
+    }
+
+    // ── ConformanceRunError::source ─────────────────────────────────
+
+    #[test]
+    fn run_error_source_manifest_returns_some() {
+        let err = ConformanceRunError::Manifest(ConformanceManifestError::EmptyAssetSet);
+        assert!(err.source().is_some());
+    }
+
+    #[test]
+    fn run_error_source_fixture_io_returns_some() {
+        let err = ConformanceRunError::FixtureIo {
+            asset_id: "a".to_string(),
+            path: PathBuf::from("/tmp"),
+            source: io::Error::new(io::ErrorKind::NotFound, "nf"),
+        };
+        assert!(err.source().is_some());
+    }
+
+    #[test]
+    fn run_error_source_invalid_fixture_returns_some() {
+        let err = ConformanceRunError::InvalidFixture {
+            asset_id: "a".to_string(),
+            source: io::Error::new(io::ErrorKind::InvalidData, "bad"),
+        };
+        assert!(err.source().is_some());
+    }
+
+    #[test]
+    fn run_error_source_expected_output_io_returns_some() {
+        let err = ConformanceRunError::ExpectedOutputIo {
+            asset_id: "a".to_string(),
+            path: PathBuf::from("/tmp"),
+            source: io::Error::new(io::ErrorKind::NotFound, "nf"),
+        };
+        assert!(err.source().is_some());
+    }
+
+    #[test]
+    fn run_error_source_io_returns_some() {
+        let err = ConformanceRunError::Io(io::Error::other("x"));
+        assert!(err.source().is_some());
+    }
+
+    #[test]
+    fn run_error_source_invalid_config_returns_none() {
+        let err = ConformanceRunError::InvalidConfig("bad".to_string());
+        assert!(err.source().is_none());
+    }
+
+    #[test]
+    fn run_error_source_repro_invariant_returns_none() {
+        let err = ConformanceRunError::ReproInvariant {
+            asset_id: "a".to_string(),
+            detail: "d".to_string(),
+        };
+        assert!(err.source().is_none());
+    }
+
+    // ── ConformanceRunError From<ConformanceManifestError> ──────────
+
+    #[test]
+    fn run_error_from_manifest_error() {
+        let inner = ConformanceManifestError::EmptyAssetSet;
+        let err: ConformanceRunError = inner.into();
+        assert!(matches!(err, ConformanceRunError::Manifest(_)));
+    }
+
+    // ── ConformanceAssetRecord validate remaining fields ────────────
+
+    #[test]
+    fn asset_record_validate_empty_semantic_domain() {
+        let mut rec = valid_asset_record();
+        rec.semantic_domain = "".to_string();
+        assert!(matches!(
+            rec.validate().unwrap_err(),
+            ConformanceManifestError::MissingField("semantic_domain")
+        ));
+    }
+
+    #[test]
+    fn asset_record_validate_empty_normative_reference() {
+        let mut rec = valid_asset_record();
+        rec.normative_reference = " ".to_string();
+        assert!(matches!(
+            rec.validate().unwrap_err(),
+            ConformanceManifestError::MissingField("normative_reference")
+        ));
+    }
+
+    #[test]
+    fn asset_record_validate_empty_fixture_path() {
+        let mut rec = valid_asset_record();
+        rec.fixture_path = "".to_string();
+        assert!(matches!(
+            rec.validate().unwrap_err(),
+            ConformanceManifestError::MissingField("fixture_path")
+        ));
+    }
+
+    #[test]
+    fn asset_record_validate_empty_expected_output_path() {
+        let mut rec = valid_asset_record();
+        rec.expected_output_path = " ".to_string();
+        assert!(matches!(
+            rec.validate().unwrap_err(),
+            ConformanceManifestError::MissingField("expected_output_path")
+        ));
+    }
+
+    #[test]
+    fn asset_record_validate_empty_expected_output_hash() {
+        let mut rec = valid_asset_record();
+        rec.expected_output_hash = "".to_string();
+        assert!(matches!(
+            rec.validate().unwrap_err(),
+            ConformanceManifestError::MissingField("expected_output_hash")
+        ));
+    }
+
+    // ── validate_ifc_fields edge cases ──────────────────────────────
+
+    #[test]
+    fn validate_ifc_fields_empty_source_labels_errors() {
+        let mut rec = valid_asset_record();
+        rec.category = Some("benign".to_string());
+        // source_labels is empty → triggers error
+        let err = rec.validate_ifc_fields().unwrap_err();
+        assert!(matches!(
+            err,
+            ConformanceManifestError::MissingField("source_labels")
+        ));
+    }
+
+    #[test]
+    fn validate_ifc_fields_empty_sink_clearances_errors() {
+        let mut rec = valid_asset_record();
+        rec.category = Some("benign".to_string());
+        rec.source_labels = vec!["credential".to_string()];
+        // sink_clearances is empty → triggers error
+        let err = rec.validate_ifc_fields().unwrap_err();
+        assert!(matches!(
+            err,
+            ConformanceManifestError::MissingField("sink_clearances")
+        ));
+    }
+
+    #[test]
+    fn validate_ifc_fields_invalid_sink_clearance() {
+        let mut rec = valid_asset_record();
+        rec.category = Some("benign".to_string());
+        rec.source_labels = vec!["credential".to_string()];
+        rec.sink_clearances = vec!["bad_clearance".to_string()];
+        let err = rec.validate_ifc_fields().unwrap_err();
+        assert!(matches!(
+            err,
+            ConformanceManifestError::InvalidFieldValue {
+                field: "sink_clearances",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn validate_ifc_fields_missing_flow_path_type() {
+        let mut rec = valid_asset_record();
+        rec.category = Some("benign".to_string());
+        rec.source_labels = vec!["credential".to_string()];
+        rec.sink_clearances = vec!["network_egress".to_string()];
+        // flow_path_type is None
+        let err = rec.validate_ifc_fields().unwrap_err();
+        assert!(matches!(
+            err,
+            ConformanceManifestError::MissingField("flow_path_type")
+        ));
+    }
+
+    #[test]
+    fn validate_ifc_fields_invalid_flow_path_type() {
+        let mut rec = valid_asset_record();
+        rec.category = Some("benign".to_string());
+        rec.source_labels = vec!["credential".to_string()];
+        rec.sink_clearances = vec!["network_egress".to_string()];
+        rec.flow_path_type = Some("invalid_flow".to_string());
+        let err = rec.validate_ifc_fields().unwrap_err();
+        assert!(matches!(
+            err,
+            ConformanceManifestError::InvalidFieldValue {
+                field: "flow_path_type",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn validate_ifc_fields_missing_expected_outcome() {
+        let mut rec = valid_asset_record();
+        rec.category = Some("benign".to_string());
+        rec.source_labels = vec!["credential".to_string()];
+        rec.sink_clearances = vec!["network_egress".to_string()];
+        rec.flow_path_type = Some("direct".to_string());
+        // expected_outcome is None
+        let err = rec.validate_ifc_fields().unwrap_err();
+        assert!(matches!(
+            err,
+            ConformanceManifestError::MissingField("expected_outcome")
+        ));
+    }
+
+    #[test]
+    fn validate_ifc_fields_invalid_expected_outcome() {
+        let mut rec = valid_asset_record();
+        rec.category = Some("benign".to_string());
+        rec.source_labels = vec!["credential".to_string()];
+        rec.sink_clearances = vec!["network_egress".to_string()];
+        rec.flow_path_type = Some("direct".to_string());
+        rec.expected_outcome = Some("invalid_outcome".to_string());
+        let err = rec.validate_ifc_fields().unwrap_err();
+        assert!(matches!(
+            err,
+            ConformanceManifestError::InvalidFieldValue {
+                field: "expected_outcome",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn validate_ifc_fields_missing_expected_evidence_type() {
+        let mut rec = valid_asset_record();
+        rec.category = Some("benign".to_string());
+        rec.source_labels = vec!["credential".to_string()];
+        rec.sink_clearances = vec!["network_egress".to_string()];
+        rec.flow_path_type = Some("direct".to_string());
+        rec.expected_outcome = Some("allow".to_string());
+        // expected_evidence_type is None
+        let err = rec.validate_ifc_fields().unwrap_err();
+        assert!(matches!(
+            err,
+            ConformanceManifestError::MissingField("expected_evidence_type")
+        ));
+    }
+
+    #[test]
+    fn validate_ifc_fields_invalid_expected_evidence_type() {
+        let mut rec = valid_asset_record();
+        rec.category = Some("benign".to_string());
+        rec.source_labels = vec!["credential".to_string()];
+        rec.sink_clearances = vec!["network_egress".to_string()];
+        rec.flow_path_type = Some("direct".to_string());
+        rec.expected_outcome = Some("allow".to_string());
+        rec.expected_evidence_type = Some("bad_evidence".to_string());
+        let err = rec.validate_ifc_fields().unwrap_err();
+        assert!(matches!(
+            err,
+            ConformanceManifestError::InvalidFieldValue {
+                field: "expected_evidence_type",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn validate_ifc_fields_exfil_wrong_outcome() {
+        let mut rec = valid_asset_record();
+        rec.category = Some("exfil".to_string());
+        rec.source_labels = vec!["key_material".to_string()];
+        rec.sink_clearances = vec!["subprocess_ipc".to_string()];
+        rec.flow_path_type = Some("indirect".to_string());
+        rec.expected_outcome = Some("allow".to_string()); // should be block
+        rec.expected_evidence_type = Some("flow_violation".to_string());
+        let err = rec.validate_ifc_fields().unwrap_err();
+        assert!(matches!(
+            err,
+            ConformanceManifestError::InvalidIfcExpectation { .. }
+        ));
+    }
+
+    #[test]
+    fn validate_ifc_fields_declassify_wrong_evidence() {
+        let mut rec = valid_asset_record();
+        rec.category = Some("declassify".to_string());
+        rec.source_labels = vec!["policy_protected".to_string()];
+        rec.sink_clearances = vec!["explicit_declassify".to_string()];
+        rec.flow_path_type = Some("direct".to_string());
+        rec.expected_outcome = Some("declassify".to_string());
+        rec.expected_evidence_type = Some("none".to_string()); // should be declassification_receipt
+        let err = rec.validate_ifc_fields().unwrap_err();
+        assert!(matches!(
+            err,
+            ConformanceManifestError::InvalidIfcExpectation { .. }
+        ));
+    }
+
+    // ── is_ifc_asset additional triggers ────────────────────────────
+
+    #[test]
+    fn asset_record_is_ifc_by_source_labels() {
+        let mut rec = valid_asset_record();
+        rec.source_labels = vec!["credential".to_string()];
+        assert!(rec.is_ifc_asset());
+    }
+
+    #[test]
+    fn asset_record_is_ifc_by_sink_clearances() {
+        let mut rec = valid_asset_record();
+        rec.sink_clearances = vec!["network_egress".to_string()];
+        assert!(rec.is_ifc_asset());
+    }
+
+    #[test]
+    fn asset_record_is_ifc_by_flow_path_type() {
+        let mut rec = valid_asset_record();
+        rec.flow_path_type = Some("direct".to_string());
+        assert!(rec.is_ifc_asset());
+    }
+
+    #[test]
+    fn asset_record_is_ifc_by_expected_outcome() {
+        let mut rec = valid_asset_record();
+        rec.expected_outcome = Some("allow".to_string());
+        assert!(rec.is_ifc_asset());
+    }
+
+    #[test]
+    fn asset_record_is_ifc_by_expected_evidence_type() {
+        let mut rec = valid_asset_record();
+        rec.expected_evidence_type = Some("none".to_string());
+        assert!(rec.is_ifc_asset());
+    }
+
+    // ── ConformanceRunnerConfig validate remaining branches ─────────
+
+    #[test]
+    fn runner_config_empty_first_seen_commit_errors() {
+        let mut cfg = ConformanceRunnerConfig::default();
+        cfg.repro_metadata.first_seen_commit = " ".to_string();
+        let err = cfg.validate().unwrap_err();
+        if let ConformanceRunError::InvalidConfig(msg) = &err {
+            assert!(msg.contains("first_seen_commit"));
+        } else {
+            panic!("expected InvalidConfig");
+        }
+    }
+
+    #[test]
+    fn runner_config_empty_issue_tracker_project_errors() {
+        let mut cfg = ConformanceRunnerConfig::default();
+        cfg.repro_metadata.issue_tracker_project = "".to_string();
+        let err = cfg.validate().unwrap_err();
+        if let ConformanceRunError::InvalidConfig(msg) = &err {
+            assert!(msg.contains("issue_tracker_project"));
+        } else {
+            panic!("expected InvalidConfig");
+        }
+    }
+
+    // ── build_ifc_conformance_summary ───────────────────────────────
+
+    #[test]
+    fn build_ifc_conformance_summary_no_ifc_logs_returns_none() {
+        let run = ConformanceRunResult {
+            run_id: "run-1".to_string(),
+            asset_manifest_hash: "hash".to_string(),
+            logs: vec![ConformanceLogEvent {
+                trace_id: "t".to_string(),
+                decision_id: "d".to_string(),
+                policy_id: "p".to_string(),
+                component: "c".to_string(),
+                event: "e".to_string(),
+                outcome: "pass".to_string(),
+                error_code: None,
+                asset_id: "a".to_string(),
+                workload_id: "w".to_string(),
+                semantic_domain: "eval".to_string(),
+                category: None, // not IFC
+                source_labels: vec![],
+                sink_clearances: vec![],
+                flow_path_type: None,
+                expected_outcome: None,
+                actual_outcome: None,
+                evidence_type: None,
+                evidence_id: None,
+                duration_us: 100,
+                error_detail: None,
+            }],
+            summary: ConformanceRunSummary {
+                run_id: "run-1".to_string(),
+                asset_manifest_hash: "hash".to_string(),
+                total_assets: 1,
+                passed: 1,
+                failed: 0,
+                waived: 0,
+                errored: 0,
+                env_fingerprint: "fp".to_string(),
+            },
+            minimized_repros: vec![],
+        };
+        assert!(build_ifc_conformance_summary(&run).is_none());
+    }
+
+    #[test]
+    fn build_ifc_conformance_summary_with_ifc_logs() {
+        let run = ConformanceRunResult {
+            run_id: "run-1".to_string(),
+            asset_manifest_hash: "hash".to_string(),
+            logs: vec![
+                ConformanceLogEvent {
+                    trace_id: "t1".to_string(),
+                    decision_id: "d1".to_string(),
+                    policy_id: "policy-v1".to_string(),
+                    component: "c".to_string(),
+                    event: "e".to_string(),
+                    outcome: "pass".to_string(),
+                    error_code: None,
+                    asset_id: "a1".to_string(),
+                    workload_id: "w1".to_string(),
+                    semantic_domain: "ifc_corpus/benign".to_string(),
+                    category: Some("benign".to_string()),
+                    source_labels: vec!["credential".to_string()],
+                    sink_clearances: vec!["network_egress".to_string()],
+                    flow_path_type: Some("direct".to_string()),
+                    expected_outcome: Some("allow".to_string()),
+                    actual_outcome: Some("allow".to_string()),
+                    evidence_type: None,
+                    evidence_id: None,
+                    duration_us: 100,
+                    error_detail: None,
+                },
+                ConformanceLogEvent {
+                    trace_id: "t2".to_string(),
+                    decision_id: "d2".to_string(),
+                    policy_id: "policy-v1".to_string(),
+                    component: "c".to_string(),
+                    event: "e".to_string(),
+                    outcome: "fail".to_string(),
+                    error_code: None,
+                    asset_id: "a2".to_string(),
+                    workload_id: "w2".to_string(),
+                    semantic_domain: "ifc_corpus/exfil".to_string(),
+                    category: Some("exfil".to_string()),
+                    source_labels: vec!["key_material".to_string()],
+                    sink_clearances: vec!["subprocess_ipc".to_string()],
+                    flow_path_type: Some("direct".to_string()),
+                    expected_outcome: Some("block".to_string()),
+                    actual_outcome: Some("allow".to_string()), // false negative
+                    evidence_type: None,
+                    evidence_id: None,
+                    duration_us: 200,
+                    error_detail: None,
+                },
+            ],
+            summary: ConformanceRunSummary {
+                run_id: "run-1".to_string(),
+                asset_manifest_hash: "hash".to_string(),
+                total_assets: 2,
+                passed: 1,
+                failed: 1,
+                waived: 0,
+                errored: 0,
+                env_fingerprint: "fp".to_string(),
+            },
+            minimized_repros: vec![],
+        };
+        let summary = build_ifc_conformance_summary(&run).unwrap();
+        assert_eq!(summary.run_id, "run-1");
+        assert!(summary.category_counts.contains_key("benign"));
+        assert!(summary.category_counts.contains_key("exfil"));
+        assert_eq!(summary.false_negative_count, 1);
+        assert_eq!(summary.false_negative_direct_indirect_count, 1);
+        assert_eq!(summary.false_positive_count, 0);
+        assert_eq!(summary.ci_blocking_failures, 1);
+    }
+
+    #[test]
+    fn build_ifc_summary_false_positive_detection() {
+        let run = ConformanceRunResult {
+            run_id: "run-1".to_string(),
+            asset_manifest_hash: "hash".to_string(),
+            logs: vec![ConformanceLogEvent {
+                trace_id: "t".to_string(),
+                decision_id: "d".to_string(),
+                policy_id: "p".to_string(),
+                component: "c".to_string(),
+                event: "e".to_string(),
+                outcome: "fail".to_string(),
+                error_code: None,
+                asset_id: "a".to_string(),
+                workload_id: "w".to_string(),
+                semantic_domain: "ifc_corpus/benign".to_string(),
+                category: Some("benign".to_string()),
+                source_labels: vec!["credential".to_string()],
+                sink_clearances: vec!["network_egress".to_string()],
+                flow_path_type: Some("direct".to_string()),
+                expected_outcome: Some("allow".to_string()),
+                actual_outcome: Some("block".to_string()), // false positive
+                evidence_type: None,
+                evidence_id: None,
+                duration_us: 50,
+                error_detail: None,
+            }],
+            summary: ConformanceRunSummary {
+                run_id: "run-1".to_string(),
+                asset_manifest_hash: "hash".to_string(),
+                total_assets: 1,
+                passed: 0,
+                failed: 1,
+                waived: 0,
+                errored: 0,
+                env_fingerprint: "fp".to_string(),
+            },
+            minimized_repros: vec![],
+        };
+        let summary = build_ifc_conformance_summary(&run).unwrap();
+        assert_eq!(summary.false_positive_count, 1);
+        assert_eq!(summary.ci_blocking_failures, 1);
+    }
+
+    #[test]
+    fn build_ifc_summary_waived_outcome_counted() {
+        let run = ConformanceRunResult {
+            run_id: "run-1".to_string(),
+            asset_manifest_hash: "hash".to_string(),
+            logs: vec![ConformanceLogEvent {
+                trace_id: "t".to_string(),
+                decision_id: "d".to_string(),
+                policy_id: "p".to_string(),
+                component: "c".to_string(),
+                event: "e".to_string(),
+                outcome: "waived".to_string(),
+                error_code: None,
+                asset_id: "a".to_string(),
+                workload_id: "w".to_string(),
+                semantic_domain: "ifc".to_string(),
+                category: Some("benign".to_string()),
+                source_labels: vec![],
+                sink_clearances: vec![],
+                flow_path_type: None,
+                expected_outcome: None,
+                actual_outcome: None,
+                evidence_type: None,
+                evidence_id: None,
+                duration_us: 50,
+                error_detail: None,
+            }],
+            summary: ConformanceRunSummary {
+                run_id: "run-1".to_string(),
+                asset_manifest_hash: "hash".to_string(),
+                total_assets: 1,
+                passed: 0,
+                failed: 0,
+                waived: 1,
+                errored: 0,
+                env_fingerprint: "fp".to_string(),
+            },
+            minimized_repros: vec![],
+        };
+        let summary = build_ifc_conformance_summary(&run).unwrap();
+        let benign = &summary.category_counts["benign"];
+        assert_eq!(benign.waived, 1);
+        assert_eq!(benign.total, 1);
+    }
+
+    #[test]
+    fn build_ifc_summary_errored_outcome_counted() {
+        let run = ConformanceRunResult {
+            run_id: "run-1".to_string(),
+            asset_manifest_hash: "hash".to_string(),
+            logs: vec![ConformanceLogEvent {
+                trace_id: "t".to_string(),
+                decision_id: "d".to_string(),
+                policy_id: "p".to_string(),
+                component: "c".to_string(),
+                event: "e".to_string(),
+                outcome: "error".to_string(), // not pass/fail/waived
+                error_code: None,
+                asset_id: "a".to_string(),
+                workload_id: "w".to_string(),
+                semantic_domain: "ifc".to_string(),
+                category: Some("exfil".to_string()),
+                source_labels: vec![],
+                sink_clearances: vec![],
+                flow_path_type: None,
+                expected_outcome: None,
+                actual_outcome: None,
+                evidence_type: None,
+                evidence_id: None,
+                duration_us: 50,
+                error_detail: None,
+            }],
+            summary: ConformanceRunSummary {
+                run_id: "run-1".to_string(),
+                asset_manifest_hash: "hash".to_string(),
+                total_assets: 1,
+                passed: 0,
+                failed: 0,
+                waived: 0,
+                errored: 1,
+                env_fingerprint: "fp".to_string(),
+            },
+            minimized_repros: vec![],
+        };
+        let summary = build_ifc_conformance_summary(&run).unwrap();
+        let exfil = &summary.category_counts["exfil"];
+        assert_eq!(exfil.errored, 1);
+    }
+
+    // ── serde round-trips (remaining types) ─────────────────────────
+
+    #[test]
+    fn conformance_waiver_set_serde_round_trip() {
+        let set = ConformanceWaiverSet {
+            waivers: vec![ConformanceWaiver {
+                asset_id: "a".to_string(),
+                reason_code: WaiverReasonCode::IntentionalDivergence,
+                tracking_bead: "bd-1".to_string(),
+                expiry_date: "2030-01-01".to_string(),
+            }],
+        };
+        let json = serde_json::to_string(&set).unwrap();
+        let back: ConformanceWaiverSet = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, set);
+    }
+
+    #[test]
+    fn conformance_log_event_serde_round_trip() {
+        let event = ConformanceLogEvent {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            component: "c".to_string(),
+            event: "e".to_string(),
+            outcome: "pass".to_string(),
+            error_code: None,
+            asset_id: "a".to_string(),
+            workload_id: "w".to_string(),
+            semantic_domain: "eval".to_string(),
+            category: Some("benign".to_string()),
+            source_labels: vec!["credential".to_string()],
+            sink_clearances: vec!["network_egress".to_string()],
+            flow_path_type: Some("direct".to_string()),
+            expected_outcome: Some("allow".to_string()),
+            actual_outcome: Some("allow".to_string()),
+            evidence_type: Some("none".to_string()),
+            evidence_id: Some("ev-1".to_string()),
+            duration_us: 42,
+            error_detail: Some("detail".to_string()),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: ConformanceLogEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, event);
+    }
+
+    #[test]
+    fn conformance_run_summary_serde_round_trip() {
+        let summary = ConformanceRunSummary {
+            run_id: "run-1".to_string(),
+            asset_manifest_hash: "hash".to_string(),
+            total_assets: 10,
+            passed: 7,
+            failed: 2,
+            waived: 1,
+            errored: 0,
+            env_fingerprint: "fp".to_string(),
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        let back: ConformanceRunSummary = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, summary);
+    }
+
+    #[test]
+    fn conformance_repro_metadata_serde_round_trip() {
+        let meta = ConformanceReproMetadata::default();
+        let json = serde_json::to_string(&meta).unwrap();
+        let back: ConformanceReproMetadata = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, meta);
+    }
+
+    #[test]
+    fn conformance_runner_config_serde_round_trip() {
+        let cfg = ConformanceRunnerConfig::default();
+        let json = serde_json::to_string(&cfg).unwrap();
+        let back: ConformanceRunnerConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, cfg);
+    }
+
+    #[test]
+    fn conformance_repro_environment_serde_round_trip() {
+        let env = ConformanceReproEnvironment {
+            locale: "C".to_string(),
+            timezone: "UTC".to_string(),
+            gc_schedule: "deterministic".to_string(),
+            rust_toolchain: "stable".to_string(),
+            os: "linux".to_string(),
+            arch: "x86_64".to_string(),
+        };
+        let json = serde_json::to_string(&env).unwrap();
+        let back: ConformanceReproEnvironment = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, env);
+    }
+
+    #[test]
+    fn conformance_replay_contract_serde_round_trip() {
+        let contract = ConformanceReplayContract {
+            deterministic_seed: 42,
+            replay_command: "cmd".to_string(),
+            verification_command: "verify".to_string(),
+            verification_digest: "digest".to_string(),
+        };
+        let json = serde_json::to_string(&contract).unwrap();
+        let back: ConformanceReplayContract = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, contract);
+    }
+
+    #[test]
+    fn conformance_issue_link_serde_round_trip() {
+        let link = ConformanceIssueLink {
+            tracker: "beads".to_string(),
+            issue_id: "bd-42".to_string(),
+        };
+        let json = serde_json::to_string(&link).unwrap();
+        let back: ConformanceIssueLink = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, link);
+    }
+
+    #[test]
+    fn conformance_run_linkage_serde_round_trip() {
+        let linkage = ConformanceRunLinkage {
+            run_id: "r".to_string(),
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            ci_run_id: Some("ci-1".to_string()),
+        };
+        let json = serde_json::to_string(&linkage).unwrap();
+        let back: ConformanceRunLinkage = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, linkage);
+    }
+
+    #[test]
+    fn conformance_minimization_summary_serde_round_trip() {
+        let summary = ConformanceMinimizationSummary {
+            strategy: "greedy".to_string(),
+            original_source_lines: 10,
+            minimized_source_lines: 3,
+            original_expected_lines: 5,
+            minimized_expected_lines: 2,
+            original_actual_lines: 5,
+            minimized_actual_lines: 2,
+            preserved_failure_class: true,
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        let back: ConformanceMinimizationSummary = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, summary);
+    }
+
+    #[test]
+    fn conformance_minimized_failing_vector_serde_round_trip() {
+        let vector = ConformanceMinimizedFailingVector {
+            asset_id: "a".to_string(),
+            source_donor: "d".to_string(),
+            semantic_domain: "s".to_string(),
+            normative_reference: "n".to_string(),
+            fixture: DonorFixture {
+                donor_harness: "h".to_string(),
+                source: "src".to_string(),
+                observed_output: "out".to_string(),
+            },
+            expected_output: "exp".to_string(),
+        };
+        let json = serde_json::to_string(&vector).unwrap();
+        let back: ConformanceMinimizedFailingVector = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, vector);
+    }
+
+    #[test]
+    fn conformance_asset_record_serde_round_trip() {
+        let rec = valid_asset_record();
+        let json = serde_json::to_string(&rec).unwrap();
+        let back: ConformanceAssetRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, rec);
+    }
+
+    #[test]
+    fn conformance_asset_manifest_serde_round_trip() {
+        let manifest = ConformanceAssetManifest {
+            schema_version: ConformanceAssetManifest::CURRENT_SCHEMA.to_string(),
+            generated_at_utc: "2025-01-01T00:00:00Z".to_string(),
+            assets: vec![valid_asset_record()],
+        };
+        let json = serde_json::to_string(&manifest).unwrap();
+        let back: ConformanceAssetManifest = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, manifest);
+    }
+
+    // ── ConformanceReplayVerificationError ──────────────────────────
+
+    #[test]
+    fn replay_verification_error_is_std_error() {
+        let err = ConformanceReplayVerificationError::FailureNotReproduced;
+        // Verify it implements std::error::Error
+        let _: &dyn Error = &err;
+    }
+
+    // ── canonical_json_bytes ────────────────────────────────────────
+
+    #[test]
+    fn canonical_json_bytes_round_trip() {
+        let value = serde_json::json!({"key": "value"});
+        let bytes = canonical_json_bytes(&value).unwrap();
+        let back: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(back, value);
+    }
+
+    // ── write_atomic ───────────────────────────────────────────────
+
+    #[test]
+    fn write_atomic_creates_file() {
+        let dir = std::env::temp_dir().join("franken_test_write_atomic");
+        let _ = fs::remove_dir_all(&dir);
+        let path = dir.join("sub/test.txt");
+        write_atomic(&path, b"hello world").unwrap();
+        let content = fs::read_to_string(&path).unwrap();
+        assert_eq!(content, "hello world");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn write_atomic_overwrites_existing() {
+        let dir = std::env::temp_dir().join("franken_test_write_atomic_overwrite");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("file.txt");
+        write_atomic(&path, b"first").unwrap();
+        write_atomic(&path, b"second").unwrap();
+        let content = fs::read_to_string(&path).unwrap();
+        assert_eq!(content, "second");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ── ConformanceWaiverSet default ────────────────────────────────
+
+    #[test]
+    fn conformance_waiver_set_default_is_empty() {
+        let set = ConformanceWaiverSet::default();
+        assert!(set.waivers.is_empty());
+    }
+
+    // ── classify_conformance_delta: props field modified ────────────
+
+    #[test]
+    fn classify_delta_props_modified_same_fields_different_count() {
+        // Same sorted fields, but values differ → SchemaFieldModified
+        let expected = "props: alpha, beta";
+        let actual = "props: alpha, beta, gamma";
+        let deltas = classify_conformance_delta(expected, actual);
+        // gamma added → SchemaFieldAdded
+        assert!(
+            deltas
+                .iter()
+                .any(|d| d.kind == ConformanceDeltaKind::SchemaFieldAdded)
+        );
+    }
+
+    // ── join_source_segments / join_output_lines ────────────────────
+
+    #[test]
+    fn join_source_segments_basic() {
+        let segments = vec!["var a = 1".to_string(), "var b = 2".to_string()];
+        let result = join_source_segments(&segments);
+        assert_eq!(result, "var a = 1;\nvar b = 2");
+    }
+
+    #[test]
+    fn join_output_lines_basic() {
+        let lines = vec!["line1".to_string(), "line2".to_string()];
+        let result = join_output_lines(&lines);
+        assert_eq!(result, "line1\nline2");
+    }
+
+    // ── IFC flow path types coverage ────────────────────────────────
+
+    #[test]
+    fn validate_ifc_all_flow_path_types_valid() {
+        for flow_type in IFC_FLOW_PATH_TYPES {
+            let mut rec = valid_asset_record();
+            rec.category = Some("benign".to_string());
+            rec.source_labels = vec!["credential".to_string()];
+            rec.sink_clearances = vec!["network_egress".to_string()];
+            rec.flow_path_type = Some(flow_type.to_string());
+            rec.expected_outcome = Some("allow".to_string());
+            rec.expected_evidence_type = Some("none".to_string());
+            assert!(
+                rec.validate_ifc_fields().is_ok(),
+                "flow_path_type '{flow_type}' should be valid"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_ifc_all_source_labels_valid() {
+        for label in IFC_SOURCE_LABELS {
+            let mut rec = valid_asset_record();
+            rec.category = Some("benign".to_string());
+            rec.source_labels = vec![label.to_string()];
+            rec.sink_clearances = vec!["network_egress".to_string()];
+            rec.flow_path_type = Some("direct".to_string());
+            rec.expected_outcome = Some("allow".to_string());
+            rec.expected_evidence_type = Some("none".to_string());
+            assert!(
+                rec.validate_ifc_fields().is_ok(),
+                "source_label '{label}' should be valid"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_ifc_all_sink_clearances_valid() {
+        for clearance in IFC_SINK_CLEARANCES {
+            let mut rec = valid_asset_record();
+            rec.category = Some("benign".to_string());
+            rec.source_labels = vec!["credential".to_string()];
+            rec.sink_clearances = vec![clearance.to_string()];
+            rec.flow_path_type = Some("direct".to_string());
+            rec.expected_outcome = Some("allow".to_string());
+            rec.expected_evidence_type = Some("none".to_string());
+            assert!(
+                rec.validate_ifc_fields().is_ok(),
+                "sink_clearance '{clearance}' should be valid"
+            );
+        }
+    }
+
+    // ── DonorHarnessAdapter no-op ──────────────────────────────────
+
+    #[test]
+    fn donor_harness_adapter_no_match_passthrough() {
+        let adapter = DonorHarnessAdapter;
+        let result = adapter.adapt_source("some plain code");
+        assert_eq!(result, "some plain code");
+    }
+
+    // ── ConformanceAssetRecord serde with IFC fields ────────────────
+
+    #[test]
+    fn asset_record_with_ifc_fields_serde_round_trip() {
+        let mut rec = valid_asset_record();
+        rec.category = Some("benign".to_string());
+        rec.source_labels = vec!["credential".to_string(), "key_material".to_string()];
+        rec.sink_clearances = vec!["network_egress".to_string()];
+        rec.flow_path_type = Some("direct".to_string());
+        rec.expected_outcome = Some("allow".to_string());
+        rec.expected_evidence_type = Some("none".to_string());
+        let json = serde_json::to_string(&rec).unwrap();
+        let back: ConformanceAssetRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, rec);
+    }
+
+    // ── IfcCategoryCounts ──────────────────────────────────────────
+
+    #[test]
+    fn ifc_category_counts_default_all_zero() {
+        let counts = IfcCategoryCounts::default();
+        assert_eq!(counts.total, 0);
+        assert_eq!(counts.passed, 0);
+        assert_eq!(counts.failed, 0);
+        assert_eq!(counts.waived, 0);
+        assert_eq!(counts.errored, 0);
+    }
+
+    #[test]
+    fn ifc_category_counts_serde_round_trip() {
+        let counts = IfcCategoryCounts {
+            total: 10,
+            passed: 7,
+            failed: 2,
+            waived: 1,
+            errored: 0,
+        };
+        let json = serde_json::to_string(&counts).unwrap();
+        let back: IfcCategoryCounts = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, counts);
+    }
+
+    // ── ConformanceRunner env_fingerprint changes with config ───────
+
+    #[test]
+    fn env_fingerprint_changes_with_seed() {
+        let a = ConformanceRunner {
+            config: ConformanceRunnerConfig {
+                seed: 1,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let b = ConformanceRunner {
+            config: ConformanceRunnerConfig {
+                seed: 2,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_ne!(a.env_fingerprint(), b.env_fingerprint());
+    }
+
+    // ── parse_ifc_observed_outcome edge cases ──────────────────────
+
+    #[test]
+    fn parse_ifc_observed_outcome_evidence_id_only() {
+        let result = parse_ifc_observed_outcome("evidence_id:ev-42");
+        assert!(result.outcome.is_none());
+        assert!(result.evidence_type.is_none());
+        assert_eq!(result.evidence_id.as_deref(), Some("ev-42"));
+    }
+
+    #[test]
+    fn parse_ifc_observed_outcome_empty_evidence_id_ignored() {
+        let result = parse_ifc_observed_outcome("evidence_id:");
+        assert!(result.evidence_id.is_none());
+    }
 }

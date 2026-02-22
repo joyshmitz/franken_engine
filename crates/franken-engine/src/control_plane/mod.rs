@@ -279,9 +279,8 @@ fn action_to_verdict(action: &str) -> Option<DecisionVerdict> {
     }
 }
 
-/// Test-only mock types used to unit test extension-host integration without
-/// reaching into upstream control-plane crates directly.
-#[cfg(test)]
+/// Test helper mock types used by integration suites without reaching into
+/// upstream control-plane crates directly.
 pub mod mocks {
     use std::collections::VecDeque;
     use std::thread;

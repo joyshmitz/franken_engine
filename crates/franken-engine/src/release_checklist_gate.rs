@@ -1180,4 +1180,714 @@ mod tests {
         let back: ReleaseChecklistGateEvent = serde_json::from_str(&json).unwrap();
         assert_eq!(back, event);
     }
+
+    // ── ChecklistItemStatus::Display ──────────────────────────────────
+
+    #[test]
+    fn item_status_display() {
+        assert_eq!(ChecklistItemStatus::Pass.to_string(), "pass");
+        assert_eq!(ChecklistItemStatus::Fail.to_string(), "fail");
+        assert_eq!(ChecklistItemStatus::NotRun.to_string(), "not_run");
+        assert_eq!(ChecklistItemStatus::Waived.to_string(), "waived");
+    }
+
+    // ── ChecklistCategory ordering ────────────────────────────────────
+
+    #[test]
+    fn checklist_category_ordering() {
+        assert!(ChecklistCategory::Security < ChecklistCategory::Performance);
+        assert!(ChecklistCategory::Performance < ChecklistCategory::Reproducibility);
+        assert!(ChecklistCategory::Reproducibility < ChecklistCategory::Operational);
+    }
+
+    #[test]
+    fn checklist_category_display_all_variants() {
+        assert_eq!(ChecklistCategory::Performance.to_string(), "performance");
+        assert_eq!(
+            ChecklistCategory::Reproducibility.to_string(),
+            "reproducibility"
+        );
+        assert_eq!(ChecklistCategory::Operational.to_string(), "operational");
+    }
+
+    // ── ChecklistItemStatus ordering ──────────────────────────────────
+
+    #[test]
+    fn item_status_ordering() {
+        assert!(ChecklistItemStatus::Pass < ChecklistItemStatus::Fail);
+        assert!(ChecklistItemStatus::Fail < ChecklistItemStatus::NotRun);
+        assert!(ChecklistItemStatus::NotRun < ChecklistItemStatus::Waived);
+    }
+
+    // ── ReleaseChecklistError stable codes (remaining variants) ──────
+
+    #[test]
+    fn error_stable_code_storage_failure() {
+        let err = ReleaseChecklistError::StorageFailure(StorageError::WriteRejected {
+            detail: "test".to_string(),
+        });
+        assert_eq!(err.stable_code(), ERROR_STORAGE);
+    }
+
+    #[test]
+    fn error_requires_rollback_storage_failure() {
+        let err = ReleaseChecklistError::StorageFailure(StorageError::WriteRejected {
+            detail: "test".to_string(),
+        });
+        assert!(err.requires_rollback());
+    }
+
+    #[test]
+    fn error_requires_rollback_non_storage_variants() {
+        assert!(!ReleaseChecklistError::InvalidTimestamp {
+            value: "bad".to_string()
+        }
+        .requires_rollback());
+        assert!(!ReleaseChecklistError::InvalidItem {
+            item_id: "x".to_string(),
+            detail: "d".to_string()
+        }
+        .requires_rollback());
+        assert!(!ReleaseChecklistError::SerializationFailure {
+            detail: "d".to_string()
+        }
+        .requires_rollback());
+    }
+
+    // ── ReleaseChecklistError Display (remaining variants) ────────────
+
+    #[test]
+    fn error_display_invalid_timestamp() {
+        let err = ReleaseChecklistError::InvalidTimestamp {
+            value: "not-a-time".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("not-a-time"));
+        assert!(msg.contains("RFC3339"));
+    }
+
+    #[test]
+    fn error_display_invalid_item() {
+        let err = ReleaseChecklistError::InvalidItem {
+            item_id: "security.test".to_string(),
+            detail: "duplicate item_id".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("security.test"));
+        assert!(msg.contains("duplicate"));
+    }
+
+    #[test]
+    fn error_display_serialization_failure() {
+        let err = ReleaseChecklistError::SerializationFailure {
+            detail: "parse error".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("parse error"));
+    }
+
+    #[test]
+    fn error_display_storage_failure() {
+        let err = ReleaseChecklistError::StorageFailure(StorageError::WriteRejected {
+            detail: "write rejected".to_string(),
+        });
+        let msg = err.to_string();
+        assert!(msg.contains("storage failure"));
+    }
+
+    // ── ArtifactRef serde round-trip ──────────────────────────────────
+
+    #[test]
+    fn artifact_ref_serde_round_trip() {
+        let art = ArtifactRef {
+            artifact_id: "art-1".to_string(),
+            path: "artifacts/art-1.json".to_string(),
+            sha256: Some("a".repeat(64)),
+        };
+        let json = serde_json::to_string(&art).unwrap();
+        let back: ArtifactRef = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, art);
+    }
+
+    #[test]
+    fn artifact_ref_serde_without_sha256() {
+        let art = ArtifactRef {
+            artifact_id: "art-2".to_string(),
+            path: "artifacts/art-2.json".to_string(),
+            sha256: None,
+        };
+        let json = serde_json::to_string(&art).unwrap();
+        let back: ArtifactRef = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, art);
+    }
+
+    // ── ChecklistWaiver serde round-trip ──────────────────────────────
+
+    #[test]
+    fn checklist_waiver_serde_round_trip() {
+        let waiver = ChecklistWaiver {
+            reason: "known issue".to_string(),
+            approver: "admin".to_string(),
+            exception_artifact_link: "bd-99".to_string(),
+        };
+        let json = serde_json::to_string(&waiver).unwrap();
+        let back: ChecklistWaiver = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, waiver);
+    }
+
+    // ── ChecklistItem serde round-trip ────────────────────────────────
+
+    #[test]
+    fn checklist_item_serde_round_trip() {
+        let item = make_passing_item("security.conformance_suite", ChecklistCategory::Security);
+        let json = serde_json::to_string(&item).unwrap();
+        let back: ChecklistItem = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, item);
+    }
+
+    #[test]
+    fn checklist_item_waived_serde_round_trip() {
+        let item = ChecklistItem {
+            item_id: "security.conformance_suite".to_string(),
+            category: ChecklistCategory::Security,
+            required: true,
+            status: ChecklistItemStatus::Waived,
+            artifact_refs: vec![make_artifact_ref("art-1")],
+            waiver: Some(ChecklistWaiver {
+                reason: "known gap".to_string(),
+                approver: "eng-lead".to_string(),
+                exception_artifact_link: "bd-100".to_string(),
+            }),
+        };
+        let json = serde_json::to_string(&item).unwrap();
+        let back: ChecklistItem = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, item);
+    }
+
+    // ── ReleaseChecklistGateDecision serde round-trip ─────────────────
+
+    #[test]
+    fn gate_decision_serde_round_trip() {
+        let decision = ReleaseChecklistGateDecision {
+            checklist_id: Some("rchk_abc".to_string()),
+            release_tag: "v1.0.0".to_string(),
+            outcome: "allow".to_string(),
+            blocked: false,
+            blockers: vec![],
+            error_code: None,
+            rollback_required: false,
+            storage_backend: "in_memory".to_string(),
+            storage_integration_point: RELEASE_CHECKLIST_STORAGE_INTEGRATION_POINT.to_string(),
+            store_key: Some("release_checklist/v1.0.0/rchk_abc".to_string()),
+            events: vec![],
+        };
+        let json = serde_json::to_string(&decision).unwrap();
+        let back: ReleaseChecklistGateDecision = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, decision);
+    }
+
+    // ── evaluate_checklist edge cases ─────────────────────────────────
+
+    #[test]
+    fn evaluate_not_run_required_item_is_blocked() {
+        let mut cl = make_full_checklist();
+        cl.items[0].status = ChecklistItemStatus::NotRun;
+        let result = evaluate_checklist(&cl).unwrap();
+        assert!(result.blocked);
+        assert!(result.blockers.iter().any(|b| b.contains("not_run")));
+    }
+
+    #[test]
+    fn evaluate_wrong_category_is_blocked() {
+        let mut cl = make_full_checklist();
+        // Change a security item to performance category
+        cl.items[0].category = ChecklistCategory::Performance;
+        let result = evaluate_checklist(&cl).unwrap();
+        assert!(result.blocked);
+        assert!(result.blockers.iter().any(|b| b.contains("category")));
+    }
+
+    #[test]
+    fn evaluate_waived_with_valid_waiver_passes() {
+        let mut cl = make_full_checklist();
+        cl.items[0].status = ChecklistItemStatus::Waived;
+        cl.items[0].waiver = Some(ChecklistWaiver {
+            reason: "known issue".to_string(),
+            approver: "admin".to_string(),
+            exception_artifact_link: "bd-99".to_string(),
+        });
+        let result = evaluate_checklist(&cl).unwrap();
+        // Waived items don't block release
+        assert!(!result.blocked);
+    }
+
+    #[test]
+    fn evaluate_waived_without_artifacts_is_blocked() {
+        let mut cl = make_full_checklist();
+        cl.items[0].status = ChecklistItemStatus::Waived;
+        cl.items[0].waiver = Some(ChecklistWaiver {
+            reason: "known issue".to_string(),
+            approver: "admin".to_string(),
+            exception_artifact_link: "bd-99".to_string(),
+        });
+        cl.items[0].artifact_refs.clear();
+        let result = evaluate_checklist(&cl).unwrap();
+        assert!(result.blocked);
+        assert!(
+            result
+                .blockers
+                .iter()
+                .any(|b| b.contains("no artifact_refs"))
+        );
+    }
+
+    // ── normalize_checklist edge cases ────────────────────────────────
+
+    #[test]
+    fn validate_empty_decision_id() {
+        let mut cl = make_full_checklist();
+        cl.decision_id = "".to_string();
+        assert!(validate_release_checklist(&cl).is_err());
+    }
+
+    #[test]
+    fn validate_empty_policy_id() {
+        let mut cl = make_full_checklist();
+        cl.policy_id = " ".to_string();
+        assert!(validate_release_checklist(&cl).is_err());
+    }
+
+    #[test]
+    fn validate_empty_item_id_errors() {
+        let mut cl = make_full_checklist();
+        cl.items.push(ChecklistItem {
+            item_id: " ".to_string(),
+            category: ChecklistCategory::Security,
+            required: false,
+            status: ChecklistItemStatus::Pass,
+            artifact_refs: vec![],
+            waiver: None,
+        });
+        let err = validate_release_checklist(&cl).unwrap_err();
+        assert!(matches!(err, ReleaseChecklistError::InvalidItem { .. }));
+    }
+
+    #[test]
+    fn validate_unknown_required_item_id_errors() {
+        let mut cl = make_full_checklist();
+        cl.items.push(ChecklistItem {
+            item_id: "unknown.item".to_string(),
+            category: ChecklistCategory::Security,
+            required: true,
+            status: ChecklistItemStatus::Pass,
+            artifact_refs: vec![make_artifact_ref("art-1")],
+            waiver: None,
+        });
+        let err = validate_release_checklist(&cl).unwrap_err();
+        assert!(matches!(err, ReleaseChecklistError::InvalidItem { .. }));
+    }
+
+    #[test]
+    fn validate_waiver_empty_reason_errors() {
+        let mut cl = make_full_checklist();
+        cl.items[0].status = ChecklistItemStatus::Waived;
+        cl.items[0].waiver = Some(ChecklistWaiver {
+            reason: " ".to_string(),
+            approver: "admin".to_string(),
+            exception_artifact_link: "link".to_string(),
+        });
+        let err = validate_release_checklist(&cl).unwrap_err();
+        assert!(matches!(err, ReleaseChecklistError::InvalidItem { .. }));
+    }
+
+    #[test]
+    fn validate_waiver_empty_approver_errors() {
+        let mut cl = make_full_checklist();
+        cl.items[0].status = ChecklistItemStatus::Waived;
+        cl.items[0].waiver = Some(ChecklistWaiver {
+            reason: "reason".to_string(),
+            approver: "".to_string(),
+            exception_artifact_link: "link".to_string(),
+        });
+        let err = validate_release_checklist(&cl).unwrap_err();
+        assert!(matches!(err, ReleaseChecklistError::InvalidItem { .. }));
+    }
+
+    #[test]
+    fn validate_waiver_empty_exception_link_errors() {
+        let mut cl = make_full_checklist();
+        cl.items[0].status = ChecklistItemStatus::Waived;
+        cl.items[0].waiver = Some(ChecklistWaiver {
+            reason: "reason".to_string(),
+            approver: "admin".to_string(),
+            exception_artifact_link: " ".to_string(),
+        });
+        let err = validate_release_checklist(&cl).unwrap_err();
+        assert!(matches!(err, ReleaseChecklistError::InvalidItem { .. }));
+    }
+
+    #[test]
+    fn validate_empty_artifact_path_errors() {
+        let mut cl = make_full_checklist();
+        cl.items[0].artifact_refs[0].path = " ".to_string();
+        assert!(validate_release_checklist(&cl).is_err());
+    }
+
+    #[test]
+    fn validate_empty_sha256_trimmed_to_none() {
+        let mut cl = make_full_checklist();
+        cl.items[0].artifact_refs[0].sha256 = Some("  ".to_string());
+        // Should succeed — empty sha256 is trimmed to None
+        assert!(validate_release_checklist(&cl).is_ok());
+    }
+
+    // ── normalize_utc_timestamp additional cases ──────────────────────
+
+    #[test]
+    fn normalize_utc_timestamp_fractional_seconds() {
+        let result = normalize_utc_timestamp("2025-01-15T12:00:00.123Z").unwrap();
+        assert!(result.contains("12:00:00"));
+    }
+
+    // ── build_checklist_id edge cases ─────────────────────────────────
+
+    #[test]
+    fn build_checklist_id_includes_waiver_content() {
+        let mut cl = make_full_checklist();
+        let id_without_waiver = build_checklist_id(&cl);
+
+        cl.items[0].status = ChecklistItemStatus::Waived;
+        cl.items[0].waiver = Some(ChecklistWaiver {
+            reason: "reason".to_string(),
+            approver: "admin".to_string(),
+            exception_artifact_link: "link".to_string(),
+        });
+        let id_with_waiver = build_checklist_id(&cl);
+        assert_ne!(id_without_waiver, id_with_waiver);
+    }
+
+    #[test]
+    fn build_checklist_id_changes_with_artifact_refs() {
+        let mut cl = make_full_checklist();
+        let id_before = build_checklist_id(&cl);
+        cl.items[0]
+            .artifact_refs
+            .push(make_artifact_ref("extra-art"));
+        let id_after = build_checklist_id(&cl);
+        assert_ne!(id_before, id_after);
+    }
+
+    // ── make_event ───────────────────────────────────────────────────
+
+    #[test]
+    fn make_event_populates_fields() {
+        let cl = make_full_checklist();
+        let event = make_event(
+            &cl,
+            "test_event",
+            "pass",
+            Some("FE-ERR".to_string()),
+            Some("rchk_123".to_string()),
+            Some("item-1".to_string()),
+        );
+        assert_eq!(event.trace_id, "trace-001");
+        assert_eq!(event.decision_id, "decision-001");
+        assert_eq!(event.policy_id, "policy-001");
+        assert_eq!(event.component, RELEASE_CHECKLIST_COMPONENT);
+        assert_eq!(event.event, "test_event");
+        assert_eq!(event.outcome, "pass");
+        assert_eq!(event.error_code.as_deref(), Some("FE-ERR"));
+        assert_eq!(event.checklist_id.as_deref(), Some("rchk_123"));
+        assert_eq!(event.item_id.as_deref(), Some("item-1"));
+    }
+
+    #[test]
+    fn make_event_none_optionals() {
+        let cl = make_full_checklist();
+        let event = make_event(&cl, "started", "pass", None, None, None);
+        assert!(event.error_code.is_none());
+        assert!(event.checklist_id.is_none());
+        assert!(event.item_id.is_none());
+    }
+
+    // ── hash_update ──────────────────────────────────────────────────
+
+    #[test]
+    fn hash_update_affects_digest() {
+        let mut h1 = Sha256::new();
+        hash_update(&mut h1, "hello");
+        let d1 = hex::encode(h1.finalize());
+
+        let mut h2 = Sha256::new();
+        hash_update(&mut h2, "world");
+        let d2 = hex::encode(h2.finalize());
+
+        assert_ne!(d1, d2);
+    }
+
+    #[test]
+    fn hash_update_separator_prevents_collision() {
+        // "ab" + "c" vs "a" + "bc" should produce different hashes
+        let mut h1 = Sha256::new();
+        hash_update(&mut h1, "ab");
+        hash_update(&mut h1, "c");
+        let d1 = hex::encode(h1.finalize());
+
+        let mut h2 = Sha256::new();
+        hash_update(&mut h2, "a");
+        hash_update(&mut h2, "bc");
+        let d2 = hex::encode(h2.finalize());
+
+        assert_ne!(d1, d2);
+    }
+
+    // ── required_checklist_items: unique ids ──────────────────────────
+
+    #[test]
+    fn required_items_unique_ids() {
+        let ids: BTreeSet<&str> = required_checklist_items()
+            .iter()
+            .map(|item| item.item_id)
+            .collect();
+        assert_eq!(ids.len(), required_checklist_items().len());
+    }
+
+    // ── run_release_checklist_gate with InMemoryStorageAdapter ──────
+
+    #[test]
+    fn run_gate_passing_checklist() {
+        use crate::storage_adapter::InMemoryStorageAdapter;
+        let mut adapter = InMemoryStorageAdapter::default();
+        let cl = make_full_checklist();
+        let decision = run_release_checklist_gate(&mut adapter, &cl);
+        assert!(decision.allows_release());
+        assert!(!decision.blocked);
+        assert!(decision.blockers.is_empty());
+        assert_eq!(decision.outcome, "allow");
+        assert!(decision.checklist_id.is_some());
+        assert!(decision.store_key.is_some());
+        assert!(decision.error_code.is_none());
+        assert!(!decision.rollback_required);
+        // Should have events: started, evaluated, stored, completed
+        assert!(decision.events.len() >= 3);
+    }
+
+    #[test]
+    fn run_gate_failing_checklist() {
+        use crate::storage_adapter::InMemoryStorageAdapter;
+        let mut adapter = InMemoryStorageAdapter::default();
+        let mut cl = make_full_checklist();
+        cl.items[0].status = ChecklistItemStatus::Fail;
+        let decision = run_release_checklist_gate(&mut adapter, &cl);
+        assert!(!decision.allows_release());
+        assert!(decision.blocked);
+        assert!(!decision.blockers.is_empty());
+        assert_eq!(decision.outcome, "deny");
+        assert_eq!(
+            decision.error_code.as_deref(),
+            Some(ERROR_RELEASE_BLOCKED)
+        );
+    }
+
+    #[test]
+    fn run_gate_invalid_schema_fails() {
+        use crate::storage_adapter::InMemoryStorageAdapter;
+        let mut adapter = InMemoryStorageAdapter::default();
+        let mut cl = make_full_checklist();
+        cl.schema_version = "wrong".to_string();
+        let decision = run_release_checklist_gate(&mut adapter, &cl);
+        assert!(!decision.allows_release());
+        assert!(decision.blocked);
+        assert_eq!(decision.outcome, "fail");
+        assert!(decision.checklist_id.is_none());
+    }
+
+    #[test]
+    fn run_gate_stores_checklist_and_queryable() {
+        use crate::storage_adapter::InMemoryStorageAdapter;
+        let mut adapter = InMemoryStorageAdapter::default();
+        let cl = make_full_checklist();
+        let decision = run_release_checklist_gate(&mut adapter, &cl);
+        assert!(decision.allows_release());
+
+        // Query back
+        let results = query_release_checklists_by_tag(
+            &mut adapter,
+            "v0.1.0",
+            "trace-q",
+            "decision-q",
+            "policy-q",
+        )
+        .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].release_tag, "v0.1.0");
+    }
+
+    // ── query_release_checklists_by_tag ──────────────────────────────
+
+    #[test]
+    fn query_empty_release_tag_errors() {
+        use crate::storage_adapter::InMemoryStorageAdapter;
+        let mut adapter = InMemoryStorageAdapter::default();
+        let err =
+            query_release_checklists_by_tag(&mut adapter, "", "t", "d", "p").unwrap_err();
+        assert!(matches!(
+            err,
+            ReleaseChecklistError::InvalidRequest { .. }
+        ));
+    }
+
+    #[test]
+    fn query_empty_trace_id_errors() {
+        use crate::storage_adapter::InMemoryStorageAdapter;
+        let mut adapter = InMemoryStorageAdapter::default();
+        let err =
+            query_release_checklists_by_tag(&mut adapter, "v1", "", "d", "p").unwrap_err();
+        assert!(matches!(
+            err,
+            ReleaseChecklistError::InvalidRequest { .. }
+        ));
+    }
+
+    #[test]
+    fn query_nonexistent_tag_returns_empty() {
+        use crate::storage_adapter::InMemoryStorageAdapter;
+        let mut adapter = InMemoryStorageAdapter::default();
+        let results = query_release_checklists_by_tag(
+            &mut adapter,
+            "nonexistent",
+            "t",
+            "d",
+            "p",
+        )
+        .unwrap();
+        assert!(results.is_empty());
+    }
+
+    // ── normalize_checklist items are sorted ──────────────────────────
+
+    #[test]
+    fn normalize_sorts_items_by_id() {
+        let mut cl = make_full_checklist();
+        // Reverse the items
+        cl.items.reverse();
+        let first_id_before = cl.items[0].item_id.clone();
+        assert!(validate_release_checklist(&cl).is_ok());
+        // After normalization via evaluate, items should be sorted
+        let result = evaluate_checklist(&cl).unwrap();
+        let first_id_after = result.normalized.items[0].item_id.clone();
+        // The items are sorted alphabetically
+        assert!(first_id_after <= result.normalized.items[1].item_id);
+        // Should be different from the reversed order (unless already sorted)
+        let _ = first_id_before;
+    }
+
+    // ── normalize_checklist artifact_refs sorted ──────────────────────
+
+    #[test]
+    fn normalize_sorts_artifact_refs() {
+        let mut cl = make_full_checklist();
+        let target_id = cl.items[0].item_id.clone();
+        cl.items[0].artifact_refs = vec![
+            ArtifactRef {
+                artifact_id: "z-art".to_string(),
+                path: "z.json".to_string(),
+                sha256: None,
+            },
+            ArtifactRef {
+                artifact_id: "a-art".to_string(),
+                path: "a.json".to_string(),
+                sha256: None,
+            },
+        ];
+        let result = evaluate_checklist(&cl).unwrap();
+        let item = result
+            .normalized
+            .items
+            .iter()
+            .find(|i| i.item_id == target_id)
+            .unwrap();
+        assert_eq!(item.artifact_refs[0].artifact_id, "a-art");
+        assert_eq!(item.artifact_refs[1].artifact_id, "z-art");
+    }
+
+    // ── constants ────────────────────────────────────────────────────
+
+    #[test]
+    fn release_checklist_constants_not_empty() {
+        assert!(!RELEASE_CHECKLIST_COMPONENT.is_empty());
+        assert!(!RELEASE_CHECKLIST_SCHEMA_VERSION.is_empty());
+        assert!(!RELEASE_CHECKLIST_STORAGE_INTEGRATION_POINT.is_empty());
+    }
+
+    #[test]
+    fn error_constants_not_empty() {
+        assert!(!ERROR_INVALID_REQUEST.is_empty());
+        assert!(!ERROR_INVALID_TIMESTAMP.is_empty());
+        assert!(!ERROR_INVALID_ITEM.is_empty());
+        assert!(!ERROR_SERIALIZATION.is_empty());
+        assert!(!ERROR_RELEASE_BLOCKED.is_empty());
+        assert!(!ERROR_STORAGE.is_empty());
+    }
+
+    // ── run_release_checklist_gate events structure ──────────────────
+
+    #[test]
+    fn run_gate_events_have_correct_structure() {
+        use crate::storage_adapter::InMemoryStorageAdapter;
+        let mut adapter = InMemoryStorageAdapter::default();
+        let cl = make_full_checklist();
+        let decision = run_release_checklist_gate(&mut adapter, &cl);
+        // First event should be "started"
+        assert_eq!(decision.events[0].event, "release_checklist_gate_started");
+        // Last event should be "completed"
+        let last = decision.events.last().unwrap();
+        assert_eq!(last.event, "release_checklist_gate_completed");
+        // All events should have matching trace/decision/policy
+        for event in &decision.events {
+            assert_eq!(event.component, RELEASE_CHECKLIST_COMPONENT);
+        }
+    }
+
+    // ── ReleaseChecklistError From<StorageError> ─────────────────────
+
+    #[test]
+    fn error_from_storage_error() {
+        let storage_err = StorageError::WriteRejected {
+            detail: "disk full".to_string(),
+        };
+        let err: ReleaseChecklistError = storage_err.into();
+        assert!(matches!(err, ReleaseChecklistError::StorageFailure(_)));
+        assert!(err.requires_rollback());
+    }
+
+    // ── Multiple run_gate calls store separately ─────────────────────
+
+    #[test]
+    fn multiple_gate_runs_stored_separately() {
+        use crate::storage_adapter::InMemoryStorageAdapter;
+        let mut adapter = InMemoryStorageAdapter::default();
+
+        let cl1 = make_full_checklist();
+        let decision1 = run_release_checklist_gate(&mut adapter, &cl1);
+        assert!(decision1.allows_release());
+
+        let mut cl2 = make_full_checklist();
+        cl2.generated_at_utc = "2025-02-20T15:00:00Z".to_string();
+        cl2.trace_id = "trace-002".to_string();
+        cl2.decision_id = "decision-002".to_string();
+        let decision2 = run_release_checklist_gate(&mut adapter, &cl2);
+        assert!(decision2.allows_release());
+
+        // Both should be queryable
+        let results = query_release_checklists_by_tag(
+            &mut adapter,
+            "v0.1.0",
+            "trace-q",
+            "decision-q",
+            "policy-q",
+        )
+        .unwrap();
+        assert_eq!(results.len(), 2);
+    }
 }
