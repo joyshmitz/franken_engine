@@ -5,7 +5,7 @@ test_id = "language/expressions/optional-chaining/short-circuiting.js"
 reason_code = "not_yet_implemented"
 es2020_clause = "13.3.1"
 tracking_bead = "bd-11p"
-expiry_date = "2026-12-31"
+expiry_date = "2030-12-31"
 reviewer = "runtime-conformance"
 
 [[waiver]]

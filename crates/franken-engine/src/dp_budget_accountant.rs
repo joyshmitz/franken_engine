@@ -227,6 +227,11 @@ impl BudgetAccountant {
                 reason: "lifetime_epsilon_budget must be positive".into(),
             });
         }
+        if cfg.lifetime_delta_budget_millionths <= 0 {
+            return Err(AccountantError::InvalidConfiguration {
+                reason: "lifetime_delta_budget must be positive".into(),
+            });
+        }
 
         let current_budget = EpochBudget {
             epoch: cfg.epoch,
@@ -652,6 +657,16 @@ mod tests {
     fn new_rejects_zero_lifetime() {
         let err = BudgetAccountant::new(AccountantConfig {
             lifetime_epsilon_budget_millionths: 0,
+            ..test_config()
+        })
+        .unwrap_err();
+        assert!(matches!(err, AccountantError::InvalidConfiguration { .. }));
+    }
+
+    #[test]
+    fn new_rejects_zero_lifetime_delta() {
+        let err = BudgetAccountant::new(AccountantConfig {
+            lifetime_delta_budget_millionths: 0,
             ..test_config()
         })
         .unwrap_err();

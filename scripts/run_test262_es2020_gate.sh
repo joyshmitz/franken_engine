@@ -20,6 +20,13 @@ decision_id="decision-test262-gate-${timestamp}"
 policy_id="policy-test262-es2020"
 component="test262_es2020_gate_runner"
 bead_id="bd-11p"
+run_date="$(date -u +%Y-%m-%d)"
+pins_path="crates/franken-engine/tests/test262_conformance_pins.toml"
+profile_path="crates/franken-engine/tests/test262_es2020_profile.toml"
+waivers_path="crates/franken-engine/tests/test262_conformance_waivers.toml"
+observed_results_path="crates/franken-engine/tests/test262_observed_results.jsonl"
+runner_output_root="${run_dir}/test262_runner"
+canonical_hwm_path="${run_dir}/test262_hwm.json"
 
 mkdir -p "$logs_dir"
 
@@ -39,6 +46,9 @@ declare -a commands_run=()
 declare -a command_logs=()
 failed_command=""
 failed_log_path=""
+runner_manifest_path=""
+runner_evidence_path=""
+runner_hwm_path=""
 
 run_step() {
   local command_text="$1"
@@ -59,16 +69,40 @@ run_step() {
 run_check() {
   run_step "cargo check -p frankenengine-engine --test test262_release_gate" \
     run_rch cargo check -p frankenengine-engine --test test262_release_gate
+  run_step "cargo check -p frankenengine-engine --bin franken_test262_runner" \
+    run_rch cargo check -p frankenengine-engine --bin franken_test262_runner
 }
 
 run_test() {
   run_step "cargo test -p frankenengine-engine --test test262_release_gate" \
     run_rch cargo test -p frankenengine-engine --test test262_release_gate
+  run_step "cargo test -p frankenengine-engine --bin franken_test262_runner" \
+    run_rch cargo test -p frankenengine-engine --bin franken_test262_runner
+  run_step "cargo run -p frankenengine-engine --bin franken_test262_runner -- --pins ${pins_path} --profile ${profile_path} --waivers ${waivers_path} --observed-results ${observed_results_path} --output-root ${runner_output_root} --high-water-mark ${canonical_hwm_path} --run-date ${run_date}" \
+    run_rch cargo run -p frankenengine-engine --bin franken_test262_runner -- \
+      --pins "${pins_path}" \
+      --profile "${profile_path}" \
+      --waivers "${waivers_path}" \
+      --observed-results "${observed_results_path}" \
+      --output-root "${runner_output_root}" \
+      --high-water-mark "${canonical_hwm_path}" \
+      --run-date "${run_date}"
+
+  runner_manifest_path="$(find "$runner_output_root" -name run_manifest.json | sort | tail -n 1 || true)"
+  runner_evidence_path="$(find "$runner_output_root" -name test262_evidence.jsonl | sort | tail -n 1 || true)"
+  runner_hwm_path="$(find "$runner_output_root" -name test262_hwm.json | sort | tail -n 1 || true)"
+
+  if [[ -z "$runner_manifest_path" || -z "$runner_evidence_path" || -z "$runner_hwm_path" ]]; then
+    echo "runner artifact discovery failed in ${runner_output_root}" >&2
+    return 1
+  fi
 }
 
 run_clippy() {
   run_step "cargo clippy -p frankenengine-engine --test test262_release_gate -- -D warnings" \
     run_rch cargo clippy -p frankenengine-engine --test test262_release_gate -- -D warnings
+  run_step "cargo clippy -p frankenengine-engine --bin franken_test262_runner -- -D warnings" \
+    run_rch cargo clippy -p frankenengine-engine --bin franken_test262_runner -- -D warnings
 }
 
 run_mode() {
@@ -96,7 +130,8 @@ run_mode() {
 
 write_manifest() {
   local exit_code="${1:-0}"
-  local outcome error_code failed_log_json idx comma
+  local outcome error_code failed_log_json runner_manifest_json runner_evidence_json
+  local runner_hwm_json canonical_hwm_json idx comma
 
   if [[ "$exit_code" -eq 0 ]]; then
     outcome="pass"
@@ -114,24 +149,61 @@ write_manifest() {
     failed_log_json="null"
   fi
 
+  if [[ -n "$runner_manifest_path" ]]; then
+    runner_manifest_json="\"$(json_escape "$runner_manifest_path")\""
+  else
+    runner_manifest_json="null"
+  fi
+
+  if [[ -n "$runner_evidence_path" ]]; then
+    runner_evidence_json="\"$(json_escape "$runner_evidence_path")\""
+  else
+    runner_evidence_json="null"
+  fi
+
+  if [[ -n "$runner_hwm_path" ]]; then
+    runner_hwm_json="\"$(json_escape "$runner_hwm_path")\""
+  else
+    runner_hwm_json="null"
+  fi
+
+  if [[ -f "$canonical_hwm_path" ]]; then
+    canonical_hwm_json="\"$(json_escape "$canonical_hwm_path")\""
+  else
+    canonical_hwm_json="null"
+  fi
+
   cat >"$events_path" <<JSONL
 {"trace_id":"${trace_id}","decision_id":"${decision_id}","policy_id":"${policy_id}","component":"${component}","event":"suite_completed","outcome":"${outcome}","error_code":${error_code}}
 JSONL
 
   {
     echo "{";
-    echo '  "schema_version": "franken-engine.test262-gate.run-manifest.v1",';
+    echo '  "schema_version": "franken-engine.test262-gate.run-manifest.v2",';
     echo "  \"bead_id\": \"${bead_id}\",";
     echo "  \"timestamp_utc\": \"$(json_escape "$timestamp")\",";
     echo "  \"mode\": \"$(json_escape "$mode")\",";
     echo "  \"toolchain\": \"$(json_escape "$toolchain")\",";
     echo "  \"cargo_target_dir\": \"$(json_escape "$target_dir")\",";
+    echo "  \"run_date\": \"$(json_escape "$run_date")\",";
     echo "  \"trace_id\": \"$(json_escape "$trace_id")\",";
     echo "  \"decision_id\": \"$(json_escape "$decision_id")\",";
     echo "  \"policy_id\": \"$(json_escape "$policy_id")\",";
     echo "  \"outcome\": \"$(json_escape "$outcome")\",";
     echo "  \"failed_command\": \"$(json_escape "$failed_command")\",";
     echo "  \"failed_log\": ${failed_log_json},";
+    echo '  "fixture_inputs": {';
+    echo "    \"pins\": \"$(json_escape "$pins_path")\",";
+    echo "    \"profile\": \"$(json_escape "$profile_path")\",";
+    echo "    \"waivers\": \"$(json_escape "$waivers_path")\",";
+    echo "    \"observed_results\": \"$(json_escape "$observed_results_path")\"";
+    echo '  },';
+    echo '  "runner_artifacts": {';
+    echo "    \"runner_manifest\": ${runner_manifest_json},";
+    echo "    \"runner_evidence\": ${runner_evidence_json},";
+    echo "    \"runner_high_water_mark\": ${runner_hwm_json},";
+    echo "    \"canonical_high_water_mark\": ${canonical_hwm_json}";
+    echo '  },';
     echo '  "commands": [';
     for idx in "${!commands_run[@]}"; do
       comma=","
@@ -151,12 +223,15 @@ JSONL
     done
     echo '  ],';
     echo '  "targets": [';
-    echo '    "test262_release_gate"';
+    echo '    "test262_release_gate",';
+    echo '    "franken_test262_runner"';
     echo '  ],';
     echo '  "operator_verification": [';
     echo "    \"cat $(json_escape "$manifest_path")\",";
     echo "    \"cat $(json_escape "$events_path")\",";
     echo "    \"cat $(json_escape "$commands_path")\",";
+    echo "    \"find $(json_escape "$runner_output_root") -maxdepth 2 -type f | sort\",";
+    echo "    \"cat $(json_escape "$canonical_hwm_path")\",";
     echo "    \"${0} ci\"";
     echo '  ]';
     echo "}";

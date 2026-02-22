@@ -416,10 +416,14 @@ impl LaneScheduler {
 
     /// Schedule the next batch of tasks respecting lane priorities.
     ///
-    /// Returns up to `batch_size` tasks in priority order:
+    /// Returns scheduled tasks in priority order:
     /// 1. All cancel-lane tasks.
     /// 2. Timed-lane tasks with deadline <= current_ticks (sorted by deadline).
     /// 3. Ready-lane tasks (FIFO), with anti-starvation guarantee.
+    ///
+    /// `batch_size` bounds cancel/timed pulls. When `batch_size > 0`, ready-lane
+    /// anti-starvation may schedule additional ready tasks to ensure minimum
+    /// throughput. A zero batch size schedules no tasks.
     pub fn schedule_batch(&mut self, batch_size: usize, current_ticks: u64) -> Vec<ScheduledTask> {
         let mut batch = Vec::with_capacity(batch_size);
 
@@ -452,7 +456,9 @@ impl LaneScheduler {
         }
 
         // 3. Ready lane: FIFO, with anti-starvation.
-        let ready_slots = if batch.len() < batch_size {
+        let ready_slots = if batch_size == 0 {
+            0
+        } else if batch.len() < batch_size {
             let remaining = batch_size - batch.len();
             remaining.max(self.config.ready_min_throughput)
         } else {
@@ -812,6 +818,22 @@ mod tests {
             .filter(|t| t.label.lane == SchedulerLane::Ready)
             .count();
         assert!(ready_count >= 2);
+    }
+
+    #[test]
+    fn zero_batch_size_schedules_no_tasks() {
+        let config = LaneConfig {
+            ready_min_throughput: 2,
+            ..Default::default()
+        };
+        let mut sched = LaneScheduler::new(config);
+        sched.submit(cancel_label("cancel-1"), 0, "c1", 0).unwrap();
+        sched.submit(ready_label("ready-1"), 0, "r1", 0).unwrap();
+
+        let batch = sched.schedule_batch(0, 0);
+        assert!(batch.is_empty());
+        assert_eq!(sched.queue_depth(SchedulerLane::Cancel), 1);
+        assert_eq!(sched.queue_depth(SchedulerLane::Ready), 1);
     }
 
     // -- Ready lane FIFO --
