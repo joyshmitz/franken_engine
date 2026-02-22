@@ -8,6 +8,7 @@ pub mod anti_entropy;
 pub mod ast;
 pub mod attestation_handshake;
 pub mod attested_execution_cell;
+pub mod baseline_interpreter;
 pub mod bayesian_posterior;
 pub mod bulkhead;
 pub mod cancel_mask;
@@ -56,6 +57,7 @@ pub mod feature_parity_tracker;
 pub mod fleet_convergence;
 pub mod fleet_immune_protocol;
 pub mod flow_envelope;
+pub mod flow_lattice;
 pub mod forensic_replayer;
 pub mod fork_detection;
 pub mod frankenlab_extension_lifecycle;
@@ -72,19 +74,25 @@ pub mod ifc_artifacts;
 pub mod ifc_provenance_index;
 pub mod incident_replay_bundle;
 pub mod interleaving_explorer;
+pub mod ir_contract;
 pub mod key_attestation;
 pub mod key_derivation;
 pub mod lab_runtime;
 pub mod lease_tracker;
+pub mod lowering_pipeline;
 pub mod marker_stream;
 pub mod migration_compatibility;
 pub mod migration_contract;
 pub mod mmr_proof;
+pub mod module_cache;
+pub mod module_compatibility_matrix;
+pub mod module_resolver;
 pub mod monitor_scheduler;
 pub mod moonshot_contract;
 pub mod obligation_channel;
 pub mod obligation_integration;
 pub mod obligation_leak_policy;
+pub mod object_model;
 pub mod parser;
 pub mod phase_gate;
 pub mod policy_checkpoint;
@@ -97,6 +105,7 @@ pub mod promotion_gate_runner;
 pub mod proof_ingestion;
 pub mod proof_release_gate;
 pub mod proof_schema;
+pub mod proof_specialization_linkage;
 pub mod proof_specialization_receipt;
 pub mod quarantine_mesh_gate;
 pub mod recovery_artifact;
@@ -135,15 +144,107 @@ pub mod translation_validation;
 pub mod trust_card;
 pub mod trust_economics;
 pub mod trust_zone;
+pub mod ts_normalization;
 pub mod version_matrix_lane;
 
-use std::{error::Error, fmt};
+use std::{cmp::Ordering, error::Error, fmt};
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// Canonical error classes for deterministic VM semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum EvalErrorClass {
+    Parse,
+    Resolution,
+    Policy,
+    Capability,
+    Runtime,
+    Hostcall,
+    Invariant,
+}
+
+impl EvalErrorClass {
+    const fn sort_rank(self) -> u8 {
+        match self {
+            Self::Parse => 0,
+            Self::Resolution => 1,
+            Self::Policy => 2,
+            Self::Capability => 3,
+            Self::Runtime => 4,
+            Self::Hostcall => 5,
+            Self::Invariant => 6,
+        }
+    }
+
+    pub const fn stable_label(self) -> &'static str {
+        match self {
+            Self::Parse => "parse",
+            Self::Resolution => "resolution",
+            Self::Policy => "policy",
+            Self::Capability => "capability",
+            Self::Runtime => "runtime",
+            Self::Hostcall => "hostcall",
+            Self::Invariant => "invariant",
+        }
+    }
+}
+
+impl fmt::Display for EvalErrorClass {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.stable_label())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum EvalErrorCode {
     EmptySource,
+    ParseFailure,
+    ResolutionFailure,
+    PolicyDenied,
+    CapabilityDenied,
+    RuntimeFault,
+    HostcallFault,
+    InvariantViolation,
+}
+
+impl EvalErrorCode {
+    const fn sort_rank(self) -> u8 {
+        match self {
+            Self::EmptySource => 0,
+            Self::ParseFailure => 1,
+            Self::ResolutionFailure => 2,
+            Self::PolicyDenied => 3,
+            Self::CapabilityDenied => 4,
+            Self::RuntimeFault => 5,
+            Self::HostcallFault => 6,
+            Self::InvariantViolation => 7,
+        }
+    }
+
+    pub const fn class(self) -> EvalErrorClass {
+        match self {
+            Self::EmptySource | Self::ParseFailure => EvalErrorClass::Parse,
+            Self::ResolutionFailure => EvalErrorClass::Resolution,
+            Self::PolicyDenied => EvalErrorClass::Policy,
+            Self::CapabilityDenied => EvalErrorClass::Capability,
+            Self::RuntimeFault => EvalErrorClass::Runtime,
+            Self::HostcallFault => EvalErrorClass::Hostcall,
+            Self::InvariantViolation => EvalErrorClass::Invariant,
+        }
+    }
+
+    pub const fn stable_namespace(self) -> &'static str {
+        match self {
+            Self::EmptySource => "eval.parse.empty_source",
+            Self::ParseFailure => "eval.parse.failure",
+            Self::ResolutionFailure => "eval.resolution.failure",
+            Self::PolicyDenied => "eval.policy.denied",
+            Self::CapabilityDenied => "eval.capability.denied",
+            Self::RuntimeFault => "eval.runtime.fault",
+            Self::HostcallFault => "eval.hostcall.fault",
+            Self::InvariantViolation => "eval.invariant.violation",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -153,23 +254,166 @@ pub struct EvalError {
 }
 
 impl EvalError {
-    fn empty_source() -> Self {
+    pub fn new(code: EvalErrorCode, message: impl Into<String>) -> Self {
         Self {
-            code: EvalErrorCode::EmptySource,
-            message: "source is empty".to_string(),
+            code,
+            message: message.into(),
         }
+    }
+
+    fn empty_source() -> Self {
+        Self::new(EvalErrorCode::EmptySource, "source is empty")
+    }
+
+    pub fn parse_failure(message: impl Into<String>) -> Self {
+        Self::new(EvalErrorCode::ParseFailure, message)
+    }
+
+    pub fn resolution_failure(message: impl Into<String>) -> Self {
+        Self::new(EvalErrorCode::ResolutionFailure, message)
+    }
+
+    pub fn policy_denied(message: impl Into<String>) -> Self {
+        Self::new(EvalErrorCode::PolicyDenied, message)
+    }
+
+    pub fn capability_denied(message: impl Into<String>) -> Self {
+        Self::new(EvalErrorCode::CapabilityDenied, message)
+    }
+
+    pub fn runtime_fault(message: impl Into<String>) -> Self {
+        Self::new(EvalErrorCode::RuntimeFault, message)
+    }
+
+    pub fn hostcall_fault(message: impl Into<String>) -> Self {
+        Self::new(EvalErrorCode::HostcallFault, message)
+    }
+
+    pub fn invariant_violation(message: impl Into<String>) -> Self {
+        Self::new(EvalErrorCode::InvariantViolation, message)
+    }
+
+    pub fn class(&self) -> EvalErrorClass {
+        self.code.class()
+    }
+
+    pub fn stable_namespace(&self) -> &'static str {
+        self.code.stable_namespace()
     }
 }
 
 impl fmt::Display for EvalError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}: {}", self.code, self.message)
+        write!(
+            f,
+            "{} [{}]: {}",
+            self.stable_namespace(),
+            self.class(),
+            self.message
+        )
     }
 }
 
 impl Error for EvalError {}
 
 pub type EvalResult<T> = std::result::Result<T, EvalError>;
+
+/// Migration note for deterministic error semantics in bd-2tx.
+pub const EVAL_ERROR_MIGRATION_NOTES: &str = "Migrated from ad-hoc eval string failures to a \
+typed deterministic taxonomy (`EvalErrorClass` + `EvalErrorCode`) with stable namespace codes, \
+stable sorting for multi-error contexts, and explicit propagation helpers for sync/async/hostcall \
+boundaries.";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ExceptionBoundary {
+    SyncCallframe,
+    AsyncJob,
+    Hostcall,
+}
+
+impl ExceptionBoundary {
+    pub const fn stable_label(self) -> &'static str {
+        match self {
+            Self::SyncCallframe => "sync_callframe",
+            Self::AsyncJob => "async_job",
+            Self::Hostcall => "hostcall",
+        }
+    }
+}
+
+impl fmt::Display for ExceptionBoundary {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.stable_label())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExceptionTransitionEvent {
+    pub trace_id: String,
+    pub decision_id: Option<String>,
+    pub policy_id: Option<String>,
+    pub component: String,
+    pub event: String,
+    pub outcome: String,
+    pub error_code: String,
+    pub boundary: ExceptionBoundary,
+    pub message: String,
+}
+
+pub fn emit_exception_transition_event(
+    trace_id: impl Into<String>,
+    decision_id: Option<String>,
+    policy_id: Option<String>,
+    component: impl Into<String>,
+    boundary: ExceptionBoundary,
+    error: &EvalError,
+) -> ExceptionTransitionEvent {
+    ExceptionTransitionEvent {
+        trace_id: trace_id.into(),
+        decision_id,
+        policy_id,
+        component: component.into(),
+        event: "exception_transition".to_string(),
+        outcome: "error".to_string(),
+        error_code: error.stable_namespace().to_string(),
+        boundary,
+        message: error.message.clone(),
+    }
+}
+
+fn compare_eval_errors(lhs: &EvalError, rhs: &EvalError) -> Ordering {
+    lhs.class()
+        .sort_rank()
+        .cmp(&rhs.class().sort_rank())
+        .then(lhs.code.sort_rank().cmp(&rhs.code.sort_rank()))
+        .then(lhs.message.as_bytes().cmp(rhs.message.as_bytes()))
+}
+
+pub fn stable_sort_eval_errors(errors: &mut [EvalError]) {
+    errors.sort_by(compare_eval_errors);
+}
+
+pub fn sorted_eval_errors(mut errors: Vec<EvalError>) -> Vec<EvalError> {
+    stable_sort_eval_errors(&mut errors);
+    errors
+}
+
+pub fn propagate_error_across_boundary(error: EvalError, boundary: ExceptionBoundary) -> EvalError {
+    let mut message = error.message;
+    if !message.is_empty() {
+        message.push_str(" | ");
+    }
+    message.push_str("boundary=");
+    message.push_str(boundary.stable_label());
+    EvalError::new(error.code, message)
+}
+
+pub fn propagate_result_across_boundary<T>(
+    result: EvalResult<T>,
+    boundary: ExceptionBoundary,
+) -> EvalResult<T> {
+    result.map_err(|error| propagate_error_across_boundary(error, boundary))
+}
 
 /// Execution lanes are de novo native Rust implementations inspired by
 /// proven ideas from QuickJS and V8, not FFI wrappers over external engines.
@@ -316,29 +560,154 @@ mod tests {
         let mut quickjs = QuickJsInspiredNativeEngine;
         let mut v8 = V8InspiredNativeEngine;
 
-        assert_eq!(
-            quickjs
-                .eval(" ")
-                .expect_err("expected empty source error")
-                .code,
-            EvalErrorCode::EmptySource
-        );
-        assert_eq!(
-            v8.eval("\t").expect_err("expected empty source error").code,
-            EvalErrorCode::EmptySource
-        );
+        let quickjs_err = quickjs.eval(" ").expect_err("expected empty source error");
+        let v8_err = v8.eval("\t").expect_err("expected empty source error");
+
+        assert_eq!(quickjs_err.code, EvalErrorCode::EmptySource);
+        assert_eq!(v8_err.code, EvalErrorCode::EmptySource);
+        assert_eq!(quickjs_err.class(), EvalErrorClass::Parse);
+        assert_eq!(v8_err.class(), EvalErrorClass::Parse);
+        assert_eq!(quickjs_err.stable_namespace(), "eval.parse.empty_source");
+        assert_eq!(v8_err.stable_namespace(), "eval.parse.empty_source");
     }
 
     #[test]
     fn hybrid_rejects_empty_source_with_stable_error_code() {
         let mut router = HybridRouter::default();
-        assert_eq!(
-            router
-                .eval(" ")
-                .expect_err("expected empty source error")
-                .code,
-            EvalErrorCode::EmptySource
+        let err = router.eval(" ").expect_err("expected empty source error");
+        assert_eq!(err.code, EvalErrorCode::EmptySource);
+        assert_eq!(err.class(), EvalErrorClass::Parse);
+        assert_eq!(err.stable_namespace(), "eval.parse.empty_source");
+    }
+
+    #[test]
+    fn equivalent_empty_source_failures_are_identical_across_lanes() {
+        let mut quickjs = QuickJsInspiredNativeEngine;
+        let mut v8 = V8InspiredNativeEngine;
+        let mut hybrid = HybridRouter::default();
+
+        let quickjs_err = quickjs
+            .eval("")
+            .expect_err("quickjs must reject empty source");
+        let v8_err = v8.eval(" ").expect_err("v8 must reject empty source");
+        let hybrid_err = hybrid
+            .eval("\n\t")
+            .expect_err("hybrid must reject empty source");
+
+        let quickjs_shape = (
+            quickjs_err.code,
+            quickjs_err.class(),
+            quickjs_err.stable_namespace(),
+            quickjs_err.message,
         );
+        let v8_shape = (
+            v8_err.code,
+            v8_err.class(),
+            v8_err.stable_namespace(),
+            v8_err.message,
+        );
+        let hybrid_shape = (
+            hybrid_err.code,
+            hybrid_err.class(),
+            hybrid_err.stable_namespace(),
+            hybrid_err.message,
+        );
+
+        assert_eq!(quickjs_shape, v8_shape);
+        assert_eq!(v8_shape, hybrid_shape);
+    }
+
+    #[test]
+    fn eval_error_code_class_mappings_are_deterministic() {
+        let expected = [
+            (EvalErrorCode::EmptySource, EvalErrorClass::Parse),
+            (EvalErrorCode::ParseFailure, EvalErrorClass::Parse),
+            (EvalErrorCode::ResolutionFailure, EvalErrorClass::Resolution),
+            (EvalErrorCode::PolicyDenied, EvalErrorClass::Policy),
+            (EvalErrorCode::CapabilityDenied, EvalErrorClass::Capability),
+            (EvalErrorCode::RuntimeFault, EvalErrorClass::Runtime),
+            (EvalErrorCode::HostcallFault, EvalErrorClass::Hostcall),
+            (EvalErrorCode::InvariantViolation, EvalErrorClass::Invariant),
+        ];
+
+        for (code, class) in expected {
+            assert_eq!(code.class(), class);
+            assert!(
+                code.stable_namespace().starts_with("eval."),
+                "stable namespace must be in eval.* namespace"
+            );
+        }
+    }
+
+    #[test]
+    fn stable_sort_for_multi_error_context_is_deterministic() {
+        let mut errors = vec![
+            EvalError::runtime_fault("panic in optimizer"),
+            EvalError::capability_denied("fs_write not granted"),
+            EvalError::parse_failure("unexpected token `}`"),
+            EvalError::empty_source(),
+            EvalError::hostcall_fault("bridge timeout"),
+            EvalError::policy_denied("policy denied extension"),
+        ];
+
+        stable_sort_eval_errors(&mut errors);
+
+        let namespaces: Vec<&str> = errors.iter().map(EvalError::stable_namespace).collect();
+        assert_eq!(
+            namespaces,
+            vec![
+                "eval.parse.empty_source",
+                "eval.parse.failure",
+                "eval.policy.denied",
+                "eval.capability.denied",
+                "eval.runtime.fault",
+                "eval.hostcall.fault"
+            ]
+        );
+    }
+
+    #[test]
+    fn propagation_across_sync_async_hostcall_boundaries_is_stable() {
+        let parse_error = EvalError::parse_failure("unexpected token");
+
+        let propagated =
+            propagate_error_across_boundary(parse_error, ExceptionBoundary::SyncCallframe);
+        let propagated = propagate_error_across_boundary(propagated, ExceptionBoundary::AsyncJob);
+        let propagated = propagate_error_across_boundary(propagated, ExceptionBoundary::Hostcall);
+
+        assert_eq!(propagated.code, EvalErrorCode::ParseFailure);
+        assert_eq!(
+            propagated.message,
+            "unexpected token | boundary=sync_callframe | boundary=async_job | boundary=hostcall"
+        );
+    }
+
+    #[test]
+    fn exception_transition_event_emits_structured_deterministic_fields() {
+        let err = EvalError::policy_denied("policy denied extension");
+        let event = emit_exception_transition_event(
+            "trace-01",
+            Some("decision-17".to_string()),
+            Some("policy-main".to_string()),
+            "hybrid_router",
+            ExceptionBoundary::SyncCallframe,
+            &err,
+        );
+
+        assert_eq!(event.trace_id, "trace-01");
+        assert_eq!(event.decision_id.as_deref(), Some("decision-17"));
+        assert_eq!(event.policy_id.as_deref(), Some("policy-main"));
+        assert_eq!(event.component, "hybrid_router");
+        assert_eq!(event.event, "exception_transition");
+        assert_eq!(event.outcome, "error");
+        assert_eq!(event.error_code, "eval.policy.denied");
+        assert_eq!(event.boundary, ExceptionBoundary::SyncCallframe);
+        assert_eq!(event.message, "policy denied extension");
+
+        let encoded = serde_json::to_string(&event).expect("serialize event");
+        let decoded: ExceptionTransitionEvent =
+            serde_json::from_str(&encoded).expect("deserialize event");
+        assert_eq!(decoded, event);
     }
 
     #[test]

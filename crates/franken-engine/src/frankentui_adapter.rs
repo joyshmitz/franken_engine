@@ -1603,10 +1603,10 @@ impl ProofSpecializationLineageDashboardView {
         for proof in &mut proof_inventory {
             proof.proof_id = normalize_non_empty(std::mem::take(&mut proof.proof_id));
             proof.proof_ref = normalize_non_empty(std::mem::take(&mut proof.proof_ref));
-            proof.enabled_specialization_ids.sort();
             for specialization_id in &mut proof.enabled_specialization_ids {
                 *specialization_id = normalize_non_empty(std::mem::take(specialization_id));
             }
+            proof.enabled_specialization_ids.sort();
         }
 
         let mut active_specializations = input.active_specializations;
@@ -1628,10 +1628,10 @@ impl ProofSpecializationLineageDashboardView {
                 normalize_non_empty(std::mem::take(&mut specialization.transformation_ref));
             specialization.receipt_ref =
                 normalize_non_empty(std::mem::take(&mut specialization.receipt_ref));
-            specialization.proof_input_ids.sort();
             for proof_id in &mut specialization.proof_input_ids {
                 *proof_id = normalize_non_empty(std::mem::take(proof_id));
             }
+            specialization.proof_input_ids.sort();
         }
 
         let mut invalidation_feed = input.invalidation_feed;

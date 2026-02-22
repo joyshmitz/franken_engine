@@ -1,0 +1,16 @@
+[package]
+name = "frankenengine-metamorphic"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+hex = "0.4"
+sha2 = "0.10"
+toml = "0.8"
+
+[dev-dependencies]
+anyhow = { workspace = true }

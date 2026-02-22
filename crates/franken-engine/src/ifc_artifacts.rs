@@ -84,7 +84,7 @@ impl fmt::Display for IfcSchemaVersion {
 
 /// A sensitivity label in the IFC lattice.
 ///
-/// Labels are ordered: `Public < Internal < Confidential < Secret`.
+/// Labels are ordered: `Public < Internal < Confidential < Secret < TopSecret`.
 /// Custom labels use the `Custom` variant with explicit level for ordering.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum Label {
@@ -94,8 +94,10 @@ pub enum Label {
     Internal,
     /// Confidential data — restricted access.
     Confidential,
-    /// Secret data — highest built-in sensitivity.
+    /// Secret data — credentials, API keys, auth tokens.
     Secret,
+    /// TopSecret data — key material, signing keys, policy secrets.
+    TopSecret,
     /// Custom label with explicit lattice level (0 = lowest).
     Custom { name: String, level: u32 },
 }
@@ -108,6 +110,7 @@ impl Label {
             Self::Internal => 1,
             Self::Confidential => 2,
             Self::Secret => 3,
+            Self::TopSecret => 4,
             Self::Custom { level, .. } => *level,
         }
     }
@@ -134,6 +137,31 @@ impl Label {
     pub fn can_flow_to(&self, clearance: &Label) -> bool {
         self.level() <= clearance.level()
     }
+
+    /// Join (least upper bound) of an iterator of labels.
+    ///
+    /// Returns `None` if the iterator is empty.
+    pub fn join_all(labels: impl IntoIterator<Item = Label>) -> Option<Label> {
+        labels.into_iter().reduce(|acc, l| acc.join(&l))
+    }
+
+    /// Meet (greatest lower bound) of an iterator of labels.
+    ///
+    /// Returns `None` if the iterator is empty.
+    pub fn meet_all(labels: impl IntoIterator<Item = Label>) -> Option<Label> {
+        labels.into_iter().reduce(|acc, l| acc.meet(&l))
+    }
+
+    /// All built-in labels in ascending order.
+    pub fn all_builtin() -> [Label; 5] {
+        [
+            Label::Public,
+            Label::Internal,
+            Label::Confidential,
+            Label::Secret,
+            Label::TopSecret,
+        ]
+    }
 }
 
 impl fmt::Display for Label {
@@ -143,8 +171,256 @@ impl fmt::Display for Label {
             Self::Internal => write!(f, "internal"),
             Self::Confidential => write!(f, "confidential"),
             Self::Secret => write!(f, "secret"),
+            Self::TopSecret => write!(f, "top_secret"),
             Self::Custom { name, level } => write!(f, "custom({name}, level={level})"),
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ClearanceClass — sink permission levels
+// ---------------------------------------------------------------------------
+
+/// Clearance classification for data sinks.
+///
+/// Ordered by restrictiveness: `OpenSink < RestrictedSink < AuditedSink < SealedSink < NeverSink`.
+/// Higher clearance classes are *more restrictive* about what data they accept.
+///
+/// - `OpenSink` can receive data up to `TopSecret` (with redaction applied).
+/// - `RestrictedSink` can receive data up to `Internal`.
+/// - `AuditedSink` can receive data up to `Confidential` with audit trail.
+/// - `SealedSink` can receive data up to `Secret` with explicit declassification.
+/// - `NeverSink` cannot receive any labeled data without declassification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum ClearanceClass {
+    /// Can receive any data (e.g., stdout logging with redaction).
+    OpenSink,
+    /// Can receive up to Internal (e.g., metrics export).
+    RestrictedSink,
+    /// Can receive up to Confidential with audit trail (e.g., authorized API calls).
+    AuditedSink,
+    /// Can receive up to Secret with explicit declassification (e.g., key derivation output).
+    SealedSink,
+    /// Cannot receive any labeled data (e.g., raw network egress without declassification).
+    NeverSink,
+}
+
+impl ClearanceClass {
+    /// Ordinal level for this clearance (0 = least restrictive).
+    pub fn level(&self) -> u32 {
+        match self {
+            Self::OpenSink => 0,
+            Self::RestrictedSink => 1,
+            Self::AuditedSink => 2,
+            Self::SealedSink => 3,
+            Self::NeverSink => 4,
+        }
+    }
+
+    /// Maximum label level this clearance can receive without declassification.
+    ///
+    /// Returns `None` for `NeverSink` (cannot receive any labeled data).
+    pub fn max_receivable_label_level(&self) -> Option<u32> {
+        match self {
+            Self::OpenSink => Some(4),       // up to TopSecret
+            Self::RestrictedSink => Some(1), // up to Internal
+            Self::AuditedSink => Some(2),    // up to Confidential
+            Self::SealedSink => Some(3),     // up to Secret
+            Self::NeverSink => None,         // nothing without declassification
+        }
+    }
+
+    /// Whether this clearance class can receive data with the given label.
+    pub fn can_receive(&self, label: &Label) -> bool {
+        match self.max_receivable_label_level() {
+            Some(max_level) => label.level() <= max_level,
+            None => false,
+        }
+    }
+
+    /// All clearance classes in ascending order (least to most restrictive).
+    pub fn all() -> [ClearanceClass; 5] {
+        [
+            ClearanceClass::OpenSink,
+            ClearanceClass::RestrictedSink,
+            ClearanceClass::AuditedSink,
+            ClearanceClass::SealedSink,
+            ClearanceClass::NeverSink,
+        ]
+    }
+
+    /// Stable string identifier for serialization.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::OpenSink => "open_sink",
+            Self::RestrictedSink => "restricted_sink",
+            Self::AuditedSink => "audited_sink",
+            Self::SealedSink => "sealed_sink",
+            Self::NeverSink => "never_sink",
+        }
+    }
+}
+
+impl fmt::Display for ClearanceClass {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// DeclassificationObligation — structured cross-label flow authorization
+// ---------------------------------------------------------------------------
+
+/// A structured obligation that must be fulfilled for a cross-label data flow
+/// to be authorized via declassification.
+///
+/// Unlike `DeclassificationRoute` (which defines *possible* routes), an obligation
+/// represents the concrete requirements that must be satisfied before data at
+/// `source_label` can flow to a sink with `target_clearance`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeclassificationObligation {
+    /// Unique obligation identifier.
+    pub obligation_id: String,
+    /// Source label of the data requiring declassification.
+    pub source_label: Label,
+    /// Target clearance class the data must be declassified to.
+    pub target_clearance: ClearanceClass,
+    /// Conditions that must be met (e.g., "audit_approval", "ciso_sign_off").
+    pub required_conditions: Vec<String>,
+    /// Maximum acceptable expected loss (millionths, 1_000_000 = 1.0).
+    pub max_loss_milli: u64,
+    /// Whether an audit trail entry is required for this declassification.
+    pub audit_trail_required: bool,
+    /// Identifier of the authority that must approve this declassification.
+    pub approval_authority: String,
+    /// Epoch after which this obligation expires (None = no expiry).
+    pub expiry_epoch: Option<u64>,
+}
+
+impl DeclassificationObligation {
+    /// Check whether all required conditions are satisfied by the given condition set.
+    pub fn conditions_satisfied(&self, satisfied: &BTreeSet<String>) -> bool {
+        self.required_conditions
+            .iter()
+            .all(|c| satisfied.contains(c))
+    }
+
+    /// Whether this obligation has expired at the given epoch.
+    pub fn is_expired(&self, current_epoch: u64) -> bool {
+        self.expiry_epoch
+            .is_some_and(|expiry| current_epoch > expiry)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// IR2 Label Assignment — rules for assigning labels to IR2 nodes
+// ---------------------------------------------------------------------------
+
+/// Source classification for IR2 label assignment.
+///
+/// Each IR2 node's data label is determined by its source:
+/// - Literal values → `Public`
+/// - Environment variable reads → `Secret`
+/// - Credential path reads → `Secret` or `TopSecret` based on policy
+/// - Hostcall return values → label from hostcall clearance declaration
+/// - Computed values → `join` of all input labels (taint propagation)
+/// - Declassified values → label explicitly lowered by declassification receipt
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Ir2LabelSource {
+    /// Literal value (string, number, boolean) — always `Public`.
+    Literal,
+    /// Environment variable read — defaults to `Secret`.
+    EnvironmentVariable,
+    /// File read from a credential path — `Secret` or `TopSecret`.
+    CredentialPath {
+        /// Whether this path contains key material (TopSecret) vs credentials (Secret).
+        is_key_material: bool,
+    },
+    /// Return value from a hostcall — labeled by the hostcall's clearance.
+    HostcallReturn {
+        /// The label assigned by the hostcall's clearance declaration.
+        clearance_label: Label,
+    },
+    /// Computed value — taint-propagated from inputs.
+    Computed {
+        /// Labels of all inputs to this computation.
+        input_labels: Vec<Label>,
+    },
+    /// Value whose label was explicitly lowered by a declassification receipt.
+    Declassified {
+        /// Reference to the authorizing declassification receipt.
+        receipt_ref: String,
+        /// The effective label after declassification.
+        effective_label: Label,
+    },
+}
+
+impl Ir2LabelSource {
+    /// Assign a label based on this source classification.
+    pub fn assign_label(&self) -> Label {
+        match self {
+            Self::Literal => Label::Public,
+            Self::EnvironmentVariable => Label::Secret,
+            Self::CredentialPath { is_key_material } => {
+                if *is_key_material {
+                    Label::TopSecret
+                } else {
+                    Label::Secret
+                }
+            }
+            Self::HostcallReturn { clearance_label } => clearance_label.clone(),
+            Self::Computed { input_labels } => {
+                Label::join_all(input_labels.iter().cloned()).unwrap_or(Label::Public)
+            }
+            Self::Declassified {
+                effective_label, ..
+            } => effective_label.clone(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// FlowEnvelope — PLAS integration for flow constraints
+// ---------------------------------------------------------------------------
+
+/// Flow envelope synthesized by PLAS, specifying the IFC constraints for an
+/// extension.
+///
+/// Extends capability envelopes (Section 9I.5) with flow-specific constraints:
+/// which labels the extension may produce, which clearance levels it may access,
+/// and which declassification paths are authorized.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FlowEnvelope {
+    /// Content-addressable envelope identifier.
+    pub envelope_id: String,
+    /// Extension this envelope applies to.
+    pub extension_id: String,
+    /// Labels the extension is authorized to produce (data sources).
+    pub producible_labels: BTreeSet<Label>,
+    /// Clearance classes the extension may access (data sinks).
+    pub accessible_clearances: BTreeSet<ClearanceClass>,
+    /// Obligation IDs for authorized declassification paths.
+    pub authorized_declassifications: Vec<String>,
+    /// Reference to the governing flow policy.
+    pub policy_ref: String,
+    /// Security epoch this envelope is valid for.
+    pub epoch_id: u64,
+    /// Schema version.
+    pub schema_version: IfcSchemaVersion,
+}
+
+impl FlowEnvelope {
+    /// Check whether this envelope authorizes a flow from `source` to `sink_clearance`.
+    pub fn is_flow_authorized(&self, source: &Label, sink_clearance: &ClearanceClass) -> bool {
+        self.producible_labels.contains(source)
+            && self.accessible_clearances.contains(sink_clearance)
+            && sink_clearance.can_receive(source)
+    }
+
+    /// Content-addressable identity.
+    pub fn content_hash(&self) -> ContentHash {
+        let bytes = serde_json::to_vec(self).unwrap_or_default();
+        ContentHash::compute(&bytes)
     }
 }
 
@@ -803,6 +1079,7 @@ mod tests {
         assert!(Label::Public.level() < Label::Internal.level());
         assert!(Label::Internal.level() < Label::Confidential.level());
         assert!(Label::Confidential.level() < Label::Secret.level());
+        assert!(Label::Secret.level() < Label::TopSecret.level());
     }
 
     #[test]
@@ -811,6 +1088,12 @@ mod tests {
         assert!(Label::Public.can_flow_to(&Label::Public));
         assert!(!Label::Secret.can_flow_to(&Label::Public));
         assert!(!Label::Confidential.can_flow_to(&Label::Internal));
+        // TopSecret tests
+        assert!(Label::Public.can_flow_to(&Label::TopSecret));
+        assert!(Label::Secret.can_flow_to(&Label::TopSecret));
+        assert!(Label::TopSecret.can_flow_to(&Label::TopSecret));
+        assert!(!Label::TopSecret.can_flow_to(&Label::Secret));
+        assert!(!Label::TopSecret.can_flow_to(&Label::Public));
     }
 
     #[test]
@@ -830,11 +1113,11 @@ mod tests {
     #[test]
     fn custom_label_level() {
         let custom = Label::Custom {
-            name: "top_secret".to_string(),
+            name: "ultra_secret".to_string(),
             level: 10,
         };
-        assert!(custom.level() > Label::Secret.level());
-        assert!(!Label::Secret.can_flow_to(&Label::Public));
+        assert!(custom.level() > Label::TopSecret.level());
+        assert!(!Label::TopSecret.can_flow_to(&Label::Secret));
         assert!(Label::Public.can_flow_to(&custom));
     }
 
@@ -842,6 +1125,7 @@ mod tests {
     fn label_display() {
         assert_eq!(Label::Public.to_string(), "public");
         assert_eq!(Label::Secret.to_string(), "secret");
+        assert_eq!(Label::TopSecret.to_string(), "top_secret");
         let custom = Label::Custom {
             name: "ts".to_string(),
             level: 5,
@@ -856,6 +1140,7 @@ mod tests {
             Label::Internal,
             Label::Confidential,
             Label::Secret,
+            Label::TopSecret,
             Label::Custom {
                 name: "test".to_string(),
                 level: 7,
@@ -1300,5 +1585,589 @@ mod tests {
             let c2 = make_claim(ClaimStrength::Full);
             assert_eq!(c1.content_hash(), c2.content_hash());
         }
+    }
+
+    // -- TopSecret label tests --
+
+    #[test]
+    fn top_secret_label_level() {
+        assert_eq!(Label::TopSecret.level(), 4);
+        assert!(Label::TopSecret.level() > Label::Secret.level());
+    }
+
+    #[test]
+    fn top_secret_join() {
+        assert_eq!(Label::Secret.join(&Label::TopSecret), Label::TopSecret);
+        assert_eq!(Label::TopSecret.join(&Label::Public), Label::TopSecret);
+        assert_eq!(Label::TopSecret.join(&Label::TopSecret), Label::TopSecret);
+    }
+
+    #[test]
+    fn top_secret_meet() {
+        assert_eq!(Label::Secret.meet(&Label::TopSecret), Label::Secret);
+        assert_eq!(Label::TopSecret.meet(&Label::Public), Label::Public);
+        assert_eq!(Label::TopSecret.meet(&Label::TopSecret), Label::TopSecret);
+    }
+
+    #[test]
+    fn top_secret_all_builtin() {
+        let all = Label::all_builtin();
+        assert_eq!(all.len(), 5);
+        assert_eq!(all[0], Label::Public);
+        assert_eq!(all[4], Label::TopSecret);
+        for i in 0..all.len() - 1 {
+            assert!(all[i].level() < all[i + 1].level());
+        }
+    }
+
+    // -- Lattice algebraic property tests --
+
+    #[test]
+    fn lattice_join_commutativity() {
+        let labels = Label::all_builtin();
+        for a in &labels {
+            for b in &labels {
+                assert_eq!(
+                    a.join(b),
+                    b.join(a),
+                    "join must be commutative: {a} join {b}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn lattice_meet_commutativity() {
+        let labels = Label::all_builtin();
+        for a in &labels {
+            for b in &labels {
+                assert_eq!(
+                    a.meet(b),
+                    b.meet(a),
+                    "meet must be commutative: {a} meet {b}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn lattice_join_associativity() {
+        let labels = Label::all_builtin();
+        for a in &labels {
+            for b in &labels {
+                for c in &labels {
+                    assert_eq!(
+                        a.join(b).join(c),
+                        a.join(&b.join(c)),
+                        "join must be associative: ({a} join {b}) join {c}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn lattice_meet_associativity() {
+        let labels = Label::all_builtin();
+        for a in &labels {
+            for b in &labels {
+                for c in &labels {
+                    assert_eq!(
+                        a.meet(b).meet(c),
+                        a.meet(&b.meet(c)),
+                        "meet must be associative: ({a} meet {b}) meet {c}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn lattice_join_idempotency() {
+        let labels = Label::all_builtin();
+        for a in &labels {
+            assert_eq!(a.join(a), *a, "join must be idempotent: {a} join {a}");
+        }
+    }
+
+    #[test]
+    fn lattice_meet_idempotency() {
+        let labels = Label::all_builtin();
+        for a in &labels {
+            assert_eq!(a.meet(a), *a, "meet must be idempotent: {a} meet {a}");
+        }
+    }
+
+    #[test]
+    fn lattice_absorption() {
+        let labels = Label::all_builtin();
+        for a in &labels {
+            for b in &labels {
+                // a join (a meet b) = a
+                assert_eq!(
+                    a.join(&a.meet(b)),
+                    *a,
+                    "absorption: {a} join ({a} meet {b})"
+                );
+                // a meet (a join b) = a
+                assert_eq!(
+                    a.meet(&a.join(b)),
+                    *a,
+                    "absorption: {a} meet ({a} join {b})"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn lattice_join_all_empty() {
+        assert_eq!(Label::join_all(std::iter::empty()), None);
+    }
+
+    #[test]
+    fn lattice_join_all_single() {
+        assert_eq!(Label::join_all([Label::Internal]), Some(Label::Internal));
+    }
+
+    #[test]
+    fn lattice_join_all_multiple() {
+        assert_eq!(
+            Label::join_all([Label::Public, Label::Secret, Label::Internal]),
+            Some(Label::Secret)
+        );
+        assert_eq!(
+            Label::join_all([Label::Confidential, Label::TopSecret, Label::Public]),
+            Some(Label::TopSecret)
+        );
+    }
+
+    #[test]
+    fn lattice_meet_all_empty() {
+        assert_eq!(Label::meet_all(std::iter::empty()), None);
+    }
+
+    #[test]
+    fn lattice_meet_all_multiple() {
+        assert_eq!(
+            Label::meet_all([Label::Secret, Label::Internal, Label::TopSecret]),
+            Some(Label::Internal)
+        );
+        assert_eq!(
+            Label::meet_all([Label::TopSecret, Label::Confidential, Label::Public]),
+            Some(Label::Public)
+        );
+    }
+
+    // -- ClearanceClass tests --
+
+    #[test]
+    fn clearance_class_ordering() {
+        assert!(ClearanceClass::OpenSink.level() < ClearanceClass::RestrictedSink.level());
+        assert!(ClearanceClass::RestrictedSink.level() < ClearanceClass::AuditedSink.level());
+        assert!(ClearanceClass::AuditedSink.level() < ClearanceClass::SealedSink.level());
+        assert!(ClearanceClass::SealedSink.level() < ClearanceClass::NeverSink.level());
+    }
+
+    #[test]
+    fn clearance_class_can_receive() {
+        // OpenSink accepts everything
+        assert!(ClearanceClass::OpenSink.can_receive(&Label::Public));
+        assert!(ClearanceClass::OpenSink.can_receive(&Label::TopSecret));
+
+        // RestrictedSink accepts up to Internal
+        assert!(ClearanceClass::RestrictedSink.can_receive(&Label::Public));
+        assert!(ClearanceClass::RestrictedSink.can_receive(&Label::Internal));
+        assert!(!ClearanceClass::RestrictedSink.can_receive(&Label::Confidential));
+        assert!(!ClearanceClass::RestrictedSink.can_receive(&Label::Secret));
+
+        // AuditedSink accepts up to Confidential
+        assert!(ClearanceClass::AuditedSink.can_receive(&Label::Confidential));
+        assert!(!ClearanceClass::AuditedSink.can_receive(&Label::Secret));
+
+        // SealedSink accepts up to Secret
+        assert!(ClearanceClass::SealedSink.can_receive(&Label::Secret));
+        assert!(!ClearanceClass::SealedSink.can_receive(&Label::TopSecret));
+
+        // NeverSink accepts nothing
+        assert!(!ClearanceClass::NeverSink.can_receive(&Label::Public));
+        assert!(!ClearanceClass::NeverSink.can_receive(&Label::TopSecret));
+    }
+
+    #[test]
+    fn clearance_class_display() {
+        assert_eq!(ClearanceClass::OpenSink.to_string(), "open_sink");
+        assert_eq!(
+            ClearanceClass::RestrictedSink.to_string(),
+            "restricted_sink"
+        );
+        assert_eq!(ClearanceClass::AuditedSink.to_string(), "audited_sink");
+        assert_eq!(ClearanceClass::SealedSink.to_string(), "sealed_sink");
+        assert_eq!(ClearanceClass::NeverSink.to_string(), "never_sink");
+    }
+
+    #[test]
+    fn clearance_class_serde_roundtrip() {
+        for cc in ClearanceClass::all() {
+            let json = serde_json::to_string(&cc).unwrap();
+            let parsed: ClearanceClass = serde_json::from_str(&json).unwrap();
+            assert_eq!(cc, parsed);
+        }
+    }
+
+    #[test]
+    fn clearance_class_all_ascending() {
+        let all = ClearanceClass::all();
+        for i in 0..all.len() - 1 {
+            assert!(all[i].level() < all[i + 1].level());
+        }
+    }
+
+    #[test]
+    fn clearance_max_receivable_levels() {
+        assert_eq!(
+            ClearanceClass::OpenSink.max_receivable_label_level(),
+            Some(4)
+        );
+        assert_eq!(
+            ClearanceClass::RestrictedSink.max_receivable_label_level(),
+            Some(1)
+        );
+        assert_eq!(
+            ClearanceClass::AuditedSink.max_receivable_label_level(),
+            Some(2)
+        );
+        assert_eq!(
+            ClearanceClass::SealedSink.max_receivable_label_level(),
+            Some(3)
+        );
+        assert_eq!(ClearanceClass::NeverSink.max_receivable_label_level(), None);
+    }
+
+    // -- DeclassificationObligation tests --
+
+    fn make_obligation() -> DeclassificationObligation {
+        DeclassificationObligation {
+            obligation_id: "obl-001".to_string(),
+            source_label: Label::TopSecret,
+            target_clearance: ClearanceClass::SealedSink,
+            required_conditions: vec!["ciso_sign_off".to_string(), "audit_approval".to_string()],
+            max_loss_milli: 10_000,
+            audit_trail_required: true,
+            approval_authority: "security_team".to_string(),
+            expiry_epoch: Some(100),
+        }
+    }
+
+    #[test]
+    fn obligation_serde_roundtrip() {
+        let obl = make_obligation();
+        let json = serde_json::to_string(&obl).unwrap();
+        let parsed: DeclassificationObligation = serde_json::from_str(&json).unwrap();
+        assert_eq!(obl, parsed);
+    }
+
+    #[test]
+    fn obligation_conditions_satisfied() {
+        let obl = make_obligation();
+        let mut satisfied = BTreeSet::new();
+        assert!(!obl.conditions_satisfied(&satisfied));
+
+        satisfied.insert("ciso_sign_off".to_string());
+        assert!(!obl.conditions_satisfied(&satisfied));
+
+        satisfied.insert("audit_approval".to_string());
+        assert!(obl.conditions_satisfied(&satisfied));
+
+        // Extra conditions don't matter
+        satisfied.insert("extra_condition".to_string());
+        assert!(obl.conditions_satisfied(&satisfied));
+    }
+
+    #[test]
+    fn obligation_conditions_empty() {
+        let obl = DeclassificationObligation {
+            obligation_id: "obl-empty".to_string(),
+            source_label: Label::Internal,
+            target_clearance: ClearanceClass::OpenSink,
+            required_conditions: vec![],
+            max_loss_milli: 0,
+            audit_trail_required: false,
+            approval_authority: "auto".to_string(),
+            expiry_epoch: None,
+        };
+        assert!(obl.conditions_satisfied(&BTreeSet::new()));
+    }
+
+    #[test]
+    fn obligation_expiry() {
+        let obl = make_obligation();
+        assert!(!obl.is_expired(50));
+        assert!(!obl.is_expired(100));
+        assert!(obl.is_expired(101));
+    }
+
+    #[test]
+    fn obligation_no_expiry() {
+        let obl = DeclassificationObligation {
+            expiry_epoch: None,
+            ..make_obligation()
+        };
+        assert!(!obl.is_expired(u64::MAX));
+    }
+
+    // -- Ir2LabelSource tests --
+
+    #[test]
+    fn ir2_label_literal() {
+        assert_eq!(Ir2LabelSource::Literal.assign_label(), Label::Public);
+    }
+
+    #[test]
+    fn ir2_label_env_var() {
+        assert_eq!(
+            Ir2LabelSource::EnvironmentVariable.assign_label(),
+            Label::Secret
+        );
+    }
+
+    #[test]
+    fn ir2_label_credential_path() {
+        assert_eq!(
+            Ir2LabelSource::CredentialPath {
+                is_key_material: false
+            }
+            .assign_label(),
+            Label::Secret
+        );
+        assert_eq!(
+            Ir2LabelSource::CredentialPath {
+                is_key_material: true
+            }
+            .assign_label(),
+            Label::TopSecret
+        );
+    }
+
+    #[test]
+    fn ir2_label_hostcall_return() {
+        assert_eq!(
+            Ir2LabelSource::HostcallReturn {
+                clearance_label: Label::Confidential
+            }
+            .assign_label(),
+            Label::Confidential
+        );
+    }
+
+    #[test]
+    fn ir2_label_computed_taint_propagation() {
+        // join(Public, Secret) = Secret
+        assert_eq!(
+            Ir2LabelSource::Computed {
+                input_labels: vec![Label::Public, Label::Secret]
+            }
+            .assign_label(),
+            Label::Secret
+        );
+        // join(Confidential, TopSecret) = TopSecret
+        assert_eq!(
+            Ir2LabelSource::Computed {
+                input_labels: vec![Label::Confidential, Label::TopSecret]
+            }
+            .assign_label(),
+            Label::TopSecret
+        );
+        // Empty inputs → Public
+        assert_eq!(
+            Ir2LabelSource::Computed {
+                input_labels: vec![]
+            }
+            .assign_label(),
+            Label::Public
+        );
+    }
+
+    #[test]
+    fn ir2_label_declassified() {
+        assert_eq!(
+            Ir2LabelSource::Declassified {
+                receipt_ref: "receipt-001".to_string(),
+                effective_label: Label::Internal
+            }
+            .assign_label(),
+            Label::Internal
+        );
+    }
+
+    #[test]
+    fn ir2_label_source_serde_roundtrip() {
+        let sources = vec![
+            Ir2LabelSource::Literal,
+            Ir2LabelSource::EnvironmentVariable,
+            Ir2LabelSource::CredentialPath {
+                is_key_material: true,
+            },
+            Ir2LabelSource::HostcallReturn {
+                clearance_label: Label::Secret,
+            },
+            Ir2LabelSource::Computed {
+                input_labels: vec![Label::Public, Label::Internal],
+            },
+            Ir2LabelSource::Declassified {
+                receipt_ref: "r1".to_string(),
+                effective_label: Label::Public,
+            },
+        ];
+        for source in sources {
+            let json = serde_json::to_string(&source).unwrap();
+            let parsed: Ir2LabelSource = serde_json::from_str(&json).unwrap();
+            assert_eq!(source, parsed);
+        }
+    }
+
+    // -- FlowEnvelope tests --
+
+    fn make_flow_envelope() -> FlowEnvelope {
+        FlowEnvelope {
+            envelope_id: "env-001".to_string(),
+            extension_id: "ext-abc".to_string(),
+            producible_labels: [Label::Public, Label::Internal].into_iter().collect(),
+            accessible_clearances: [ClearanceClass::OpenSink, ClearanceClass::RestrictedSink]
+                .into_iter()
+                .collect(),
+            authorized_declassifications: vec!["obl-001".to_string()],
+            policy_ref: "pol-001".to_string(),
+            epoch_id: 1,
+            schema_version: IfcSchemaVersion::CURRENT,
+        }
+    }
+
+    #[test]
+    fn flow_envelope_serde_roundtrip() {
+        let env = make_flow_envelope();
+        let json = serde_json::to_string(&env).unwrap();
+        let parsed: FlowEnvelope = serde_json::from_str(&json).unwrap();
+        assert_eq!(env, parsed);
+    }
+
+    #[test]
+    fn flow_envelope_content_hash_deterministic() {
+        let e1 = make_flow_envelope();
+        let e2 = make_flow_envelope();
+        assert_eq!(e1.content_hash(), e2.content_hash());
+    }
+
+    #[test]
+    fn flow_envelope_authorized_flow() {
+        let env = make_flow_envelope();
+        // Public -> OpenSink: authorized (label in producible, clearance in accessible, can receive)
+        assert!(env.is_flow_authorized(&Label::Public, &ClearanceClass::OpenSink));
+        // Internal -> RestrictedSink: authorized (Internal level=1 <= RestrictedSink max=1)
+        assert!(env.is_flow_authorized(&Label::Internal, &ClearanceClass::RestrictedSink));
+    }
+
+    #[test]
+    fn flow_envelope_unauthorized_label() {
+        let env = make_flow_envelope();
+        // Secret not in producible_labels
+        assert!(!env.is_flow_authorized(&Label::Secret, &ClearanceClass::OpenSink));
+    }
+
+    #[test]
+    fn flow_envelope_unauthorized_clearance() {
+        let env = make_flow_envelope();
+        // AuditedSink not in accessible_clearances
+        assert!(!env.is_flow_authorized(&Label::Public, &ClearanceClass::AuditedSink));
+    }
+
+    #[test]
+    fn flow_envelope_clearance_rejects_too_sensitive() {
+        // Even if labels and clearances are in the sets, the clearance must be able to receive
+        let env = FlowEnvelope {
+            envelope_id: "env-002".to_string(),
+            extension_id: "ext-xyz".to_string(),
+            producible_labels: [Label::Secret].into_iter().collect(),
+            accessible_clearances: [ClearanceClass::RestrictedSink].into_iter().collect(),
+            authorized_declassifications: vec![],
+            policy_ref: "pol-002".to_string(),
+            epoch_id: 1,
+            schema_version: IfcSchemaVersion::CURRENT,
+        };
+        // Secret (level=3) cannot flow to RestrictedSink (max=1)
+        assert!(!env.is_flow_authorized(&Label::Secret, &ClearanceClass::RestrictedSink));
+    }
+
+    // -- Exfiltration scenario test --
+
+    #[test]
+    fn exfiltration_scenario_blocked() {
+        // Simulates: env var read (Secret) combined with literal ("Bearer ") → sent to network
+        let api_key_label = Ir2LabelSource::EnvironmentVariable.assign_label();
+        let prefix_label = Ir2LabelSource::Literal.assign_label();
+        let header_label = Ir2LabelSource::Computed {
+            input_labels: vec![prefix_label, api_key_label],
+        }
+        .assign_label();
+
+        // header_label should be Secret (join of Public and Secret)
+        assert_eq!(header_label, Label::Secret);
+
+        // NeverSink (raw network egress) cannot receive Secret
+        assert!(!ClearanceClass::NeverSink.can_receive(&header_label));
+
+        // Even SealedSink can receive Secret, but the extension would need
+        // explicit authorization
+        assert!(ClearanceClass::SealedSink.can_receive(&header_label));
+    }
+
+    #[test]
+    fn exfiltration_scenario_with_declassification() {
+        // TopSecret key material being sent through an audited declassification
+        let key_label = Ir2LabelSource::CredentialPath {
+            is_key_material: true,
+        }
+        .assign_label();
+        assert_eq!(key_label, Label::TopSecret);
+
+        // Cannot flow to any sink except OpenSink without declassification
+        assert!(!ClearanceClass::SealedSink.can_receive(&key_label));
+        assert!(ClearanceClass::OpenSink.can_receive(&key_label));
+
+        // A declassification obligation would be needed for SealedSink
+        let obl = DeclassificationObligation {
+            obligation_id: "obl-key-export".to_string(),
+            source_label: Label::TopSecret,
+            target_clearance: ClearanceClass::SealedSink,
+            required_conditions: vec!["key_export_audit".to_string()],
+            max_loss_milli: 100_000,
+            audit_trail_required: true,
+            approval_authority: "key_management_authority".to_string(),
+            expiry_epoch: Some(50),
+        };
+
+        let mut satisfied = BTreeSet::new();
+        satisfied.insert("key_export_audit".to_string());
+        assert!(obl.conditions_satisfied(&satisfied));
+        assert!(!obl.is_expired(50));
+    }
+
+    // -- Cross-type integration --
+
+    #[test]
+    fn flow_policy_with_top_secret() {
+        let mut policy = make_flow_policy();
+        policy.label_classes.insert(Label::TopSecret);
+        policy.clearance_classes.insert(Label::TopSecret);
+
+        // TopSecret -> TopSecret is lattice-legal
+        assert_eq!(
+            policy.is_flow_allowed(&Label::TopSecret, &Label::TopSecret),
+            FlowCheckResult::LatticeAllowed
+        );
+        // TopSecret -> Public is denied (no declassification route)
+        assert_eq!(
+            policy.is_flow_allowed(&Label::TopSecret, &Label::Public),
+            FlowCheckResult::Denied
+        );
     }
 }

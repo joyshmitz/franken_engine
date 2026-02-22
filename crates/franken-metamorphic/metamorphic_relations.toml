@@ -1,0 +1,129 @@
+schema_version = 2
+
+[[relations]]
+id = "parser_whitespace_invariance"
+subsystem = "parser"
+description = "Insertion or expansion of parser-safe whitespace preserves parsed semantics."
+oracle = "ast_equality"
+budget_pairs = 1000
+enabled = true
+
+[[relations]]
+id = "parser_comment_invariance"
+subsystem = "parser"
+description = "Insertion of parser-safe comments preserves parsed semantics."
+oracle = "ast_equality"
+budget_pairs = 1000
+enabled = true
+
+[[relations]]
+id = "parser_parenthesization_invariance"
+subsystem = "parser"
+description = "Redundant parenthesization of already-correctly-precedenced expressions preserves semantics."
+oracle = "ast_equality"
+budget_pairs = 1000
+enabled = true
+
+[[relations]]
+id = "parser_asi_equivalence"
+subsystem = "parser"
+description = "ASI-safe semicolon insertion/removal forms parse to equivalent semantics."
+oracle = "ast_equality"
+budget_pairs = 1000
+enabled = true
+
+[[relations]]
+id = "parser_unicode_escape_equivalence"
+subsystem = "parser"
+description = "Unicode escaped identifiers remain semantically equivalent to plain identifiers."
+oracle = "ast_equality"
+budget_pairs = 1000
+enabled = true
+
+[[relations]]
+id = "parser_source_position_independence"
+subsystem = "parser"
+description = "Semantic meaning is independent of line/column position shifts."
+oracle = "ast_equality"
+budget_pairs = 1000
+enabled = true
+
+[[relations]]
+id = "ir_lowering_determinism"
+subsystem = "ir"
+description = "Equivalent inputs lower deterministically across IR stages."
+oracle = "ir_equality"
+budget_pairs = 1000
+enabled = true
+
+[[relations]]
+id = "ir_optimization_idempotence"
+subsystem = "ir"
+description = "Optimizer fixed-point behavior is idempotent."
+oracle = "ir_equality"
+budget_pairs = 1000
+enabled = true
+
+[[relations]]
+id = "ir_capability_preservation"
+subsystem = "ir"
+description = "Capability sets are preserved monotonically through IR lowering stages."
+oracle = "ir_equality"
+budget_pairs = 1000
+enabled = true
+
+[[relations]]
+id = "ir_dead_code_insertion_invariance"
+subsystem = "ir"
+description = "Unreachable dead-code insertion does not change observable lowered output."
+oracle = "canonical_output_equality"
+budget_pairs = 1000
+enabled = true
+
+[[relations]]
+id = "ir_constant_folding_equivalence"
+subsystem = "ir"
+description = "Folded constants remain semantically equivalent to unfurled expressions."
+oracle = "canonical_output_equality"
+budget_pairs = 1000
+enabled = true
+
+[[relations]]
+id = "execution_evaluation_order_determinism"
+subsystem = "execution"
+description = "Evaluation order produces deterministic side-effect traces."
+oracle = "side_effect_trace_equality"
+budget_pairs = 1000
+enabled = true
+
+[[relations]]
+id = "execution_gc_timing_independence"
+subsystem = "execution"
+description = "GC scheduling changes do not alter observable execution output."
+oracle = "canonical_output_equality"
+budget_pairs = 1000
+enabled = true
+
+[[relations]]
+id = "execution_stack_depth_independence"
+subsystem = "execution"
+description = "Programs within both stack limits produce identical results."
+oracle = "canonical_output_equality"
+budget_pairs = 1000
+enabled = true
+
+[[relations]]
+id = "execution_prototype_chain_equivalence"
+subsystem = "execution"
+description = "Equivalent prototype setups yield identical property-resolution outcomes."
+oracle = "canonical_output_equality"
+budget_pairs = 1000
+enabled = true
+
+[[relations]]
+id = "execution_promise_resolution_order_stability"
+subsystem = "execution"
+description = "Promise resolution ordering remains stable across scheduling chunking."
+oracle = "side_effect_trace_equality"
+budget_pairs = 1000
+enabled = true

@@ -474,8 +474,8 @@ impl<S: StorageAdapter> SpecializationIndex<S> {
         for r in &records {
             let entry: InvalidationEntry = serde_json::from_slice(&r.value)
                 .map_err(|e| SpecializationIndexError::SerializationFailed(e.to_string()))?;
-            let in_range = from_ns.map_or(true, |f| entry.timestamp_ns >= f)
-                && to_ns.map_or(true, |t| entry.timestamp_ns <= t);
+            let in_range = from_ns.is_none_or(|f| entry.timestamp_ns >= f)
+                && to_ns.is_none_or(|t| entry.timestamp_ns <= t);
             if in_range {
                 results.push(entry);
             }
@@ -584,11 +584,9 @@ impl<S: StorageAdapter> SpecializationIndex<S> {
                 total_latency_reduction += bm.latency_reduction_millionths;
             }
         }
-        let avg_latency = if total_benchmarks > 0 {
-            total_latency_reduction / total_benchmarks
-        } else {
-            0
-        };
+        let avg_latency = total_latency_reduction
+            .checked_div(total_benchmarks)
+            .unwrap_or(0);
 
         Ok(ExtensionSpecializationSummary {
             extension_id: extension_id.to_string(),

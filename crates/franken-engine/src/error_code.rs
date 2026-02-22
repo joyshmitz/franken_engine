@@ -1042,7 +1042,14 @@ impl HasErrorCode for DetectorError {
 impl HasErrorCode for EvalError {
     fn error_code(&self) -> FrankenErrorCode {
         match self.code {
-            EvalErrorCode::EmptySource => FrankenErrorCode::EvalRuntimeError,
+            EvalErrorCode::EmptySource
+            | EvalErrorCode::ParseFailure
+            | EvalErrorCode::ResolutionFailure
+            | EvalErrorCode::PolicyDenied
+            | EvalErrorCode::CapabilityDenied
+            | EvalErrorCode::RuntimeFault
+            | EvalErrorCode::HostcallFault
+            | EvalErrorCode::InvariantViolation => FrankenErrorCode::EvalRuntimeError,
         }
     }
 }

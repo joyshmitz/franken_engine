@@ -2,6 +2,7 @@
 members = [
   "crates/franken-engine",
   "crates/franken-extension-host",
+  "crates/franken-metamorphic",
 ]
 resolver = "2"
 
