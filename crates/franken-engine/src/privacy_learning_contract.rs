@@ -1751,6 +1751,107 @@ impl ShadowReplayReference {
     }
 }
 
+/// Extension risk class used to select burn-in thresholds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ShadowExtensionClass {
+    LowRisk,
+    #[default]
+    Standard,
+    HighRisk,
+    Critical,
+}
+
+impl ShadowExtensionClass {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::LowRisk => "low_risk",
+            Self::Standard => "standard",
+            Self::HighRisk => "high_risk",
+            Self::Critical => "critical",
+        }
+    }
+}
+
+impl fmt::Display for ShadowExtensionClass {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Burn-in thresholds required before automatic enforcement.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShadowBurnInThresholdProfile {
+    pub min_shadow_success_rate_millionths: u64,
+    pub max_false_deny_rate_millionths: u64,
+    pub min_burn_in_duration_ns: u64,
+    pub require_verified_rollback_artifacts: bool,
+}
+
+impl ShadowBurnInThresholdProfile {
+    fn validate(&self) -> Result<(), ContractError> {
+        if self.min_shadow_success_rate_millionths == 0
+            || self.min_shadow_success_rate_millionths > 1_000_000
+        {
+            return Err(ContractError::InvalidShadowEvaluation {
+                detail: "min_shadow_success_rate_millionths must be in 1..=1_000_000"
+                    .to_string(),
+            });
+        }
+        if self.max_false_deny_rate_millionths > 1_000_000 {
+            return Err(ContractError::InvalidShadowEvaluation {
+                detail: "max_false_deny_rate_millionths must be <= 1_000_000".to_string(),
+            });
+        }
+        if self.min_burn_in_duration_ns == 0 {
+            return Err(ContractError::InvalidShadowEvaluation {
+                detail: "min_burn_in_duration_ns must be > 0".to_string(),
+            });
+        }
+        Ok(())
+    }
+}
+
+impl Default for ShadowBurnInThresholdProfile {
+    fn default() -> Self {
+        Self {
+            min_shadow_success_rate_millionths: 995_000,
+            max_false_deny_rate_millionths: 5_000,
+            min_burn_in_duration_ns: 3_600_000_000_000,
+            require_verified_rollback_artifacts: true,
+        }
+    }
+}
+
+/// Rollback artifacts that must exist before auto-enforcement is allowed.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct ShadowRollbackReadinessArtifacts {
+    pub rollback_command_tested: bool,
+    pub previous_policy_snapshot_id: String,
+    pub transition_receipt_signed: bool,
+    pub rollback_playbook_ref: String,
+}
+
+impl ShadowRollbackReadinessArtifacts {
+    fn validate(&self) -> Result<(), ContractError> {
+        if self.previous_policy_snapshot_id.trim().is_empty() {
+            return Err(ContractError::InvalidShadowEvaluation {
+                detail: "previous_policy_snapshot_id must not be empty".to_string(),
+            });
+        }
+        if self.rollback_playbook_ref.trim().is_empty() {
+            return Err(ContractError::InvalidShadowEvaluation {
+                detail: "rollback_playbook_ref must not be empty".to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    fn is_verified_ready(&self) -> bool {
+        self.rollback_command_tested && self.transition_receipt_signed
+    }
+}
+
 /// Shadow-gate configuration thresholds.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShadowEvaluationGateConfig {
@@ -1758,6 +1859,13 @@ pub struct ShadowEvaluationGateConfig {
     pub regression_tolerance_millionths: u64,
     /// Minimum significant improvement (millionths) for at least one metric.
     pub min_required_improvement_millionths: u64,
+    /// Default burn-in threshold profile.
+    #[serde(default)]
+    pub default_burn_in_profile: ShadowBurnInThresholdProfile,
+    /// Optional per-extension-class burn-in overrides.
+    #[serde(default)]
+    pub burn_in_profiles_by_extension_class:
+        BTreeMap<ShadowExtensionClass, ShadowBurnInThresholdProfile>,
 }
 
 impl ShadowEvaluationGateConfig {
@@ -1767,15 +1875,55 @@ impl ShadowEvaluationGateConfig {
                 detail: "min_required_improvement_millionths must be > 0".to_string(),
             });
         }
+        self.default_burn_in_profile.validate()?;
+        for profile in self.burn_in_profiles_by_extension_class.values() {
+            profile.validate()?;
+        }
         Ok(())
+    }
+
+    fn burn_in_profile_for(&self, extension_class: ShadowExtensionClass) -> &ShadowBurnInThresholdProfile {
+        self.burn_in_profiles_by_extension_class
+            .get(&extension_class)
+            .unwrap_or(&self.default_burn_in_profile)
     }
 }
 
 impl Default for ShadowEvaluationGateConfig {
     fn default() -> Self {
+        let mut burn_in_profiles_by_extension_class = BTreeMap::new();
+        burn_in_profiles_by_extension_class.insert(
+            ShadowExtensionClass::LowRisk,
+            ShadowBurnInThresholdProfile {
+                min_shadow_success_rate_millionths: 990_000,
+                max_false_deny_rate_millionths: 10_000,
+                min_burn_in_duration_ns: 900_000_000_000,
+                require_verified_rollback_artifacts: true,
+            },
+        );
+        burn_in_profiles_by_extension_class.insert(
+            ShadowExtensionClass::HighRisk,
+            ShadowBurnInThresholdProfile {
+                min_shadow_success_rate_millionths: 998_000,
+                max_false_deny_rate_millionths: 2_500,
+                min_burn_in_duration_ns: 7_200_000_000_000,
+                require_verified_rollback_artifacts: true,
+            },
+        );
+        burn_in_profiles_by_extension_class.insert(
+            ShadowExtensionClass::Critical,
+            ShadowBurnInThresholdProfile {
+                min_shadow_success_rate_millionths: 999_000,
+                max_false_deny_rate_millionths: 1_000,
+                min_burn_in_duration_ns: 14_400_000_000_000,
+                require_verified_rollback_artifacts: true,
+            },
+        );
         Self {
             regression_tolerance_millionths: 5_000,
             min_required_improvement_millionths: 2_500,
+            default_burn_in_profile: ShadowBurnInThresholdProfile::default(),
+            burn_in_profiles_by_extension_class,
         }
     }
 }
@@ -1786,10 +1934,18 @@ pub struct ShadowEvaluationCandidate {
     pub trace_id: String,
     pub decision_id: String,
     pub policy_id: String,
+    #[serde(default)]
+    pub extension_class: ShadowExtensionClass,
     pub candidate_version: String,
     pub baseline_snapshot_id: String,
     pub rollback_token: String,
     pub epoch_id: SecurityEpoch,
+    pub shadow_started_at_ns: u64,
+    pub evaluation_completed_at_ns: u64,
+    pub shadow_success_rate_millionths: u64,
+    pub false_deny_rate_millionths: u64,
+    #[serde(default)]
+    pub rollback_readiness: ShadowRollbackReadinessArtifacts,
     pub baseline_metrics: SafetyMetricSnapshot,
     pub candidate_metrics: SafetyMetricSnapshot,
     pub replay_reference: ShadowReplayReference,
@@ -1824,6 +1980,21 @@ impl ShadowEvaluationCandidate {
                 detail: "rollback_token must not be empty".to_string(),
             });
         }
+        if self.evaluation_completed_at_ns <= self.shadow_started_at_ns {
+            return Err(ContractError::InvalidShadowEvaluation {
+                detail: "evaluation_completed_at_ns must be > shadow_started_at_ns".to_string(),
+            });
+        }
+        if self.shadow_success_rate_millionths > 1_000_000 {
+            return Err(ContractError::InvalidShadowEvaluation {
+                detail: "shadow_success_rate_millionths must be <= 1_000_000".to_string(),
+            });
+        }
+        if self.false_deny_rate_millionths > 1_000_000 {
+            return Err(ContractError::InvalidShadowEvaluation {
+                detail: "false_deny_rate_millionths must be <= 1_000_000".to_string(),
+            });
+        }
         if self.epsilon_spent_millionths < 0 || self.delta_spent_millionths < 0 {
             return Err(ContractError::InvalidShadowEvaluation {
                 detail: "budget spend values must be >= 0".to_string(),
@@ -1832,7 +2003,13 @@ impl ShadowEvaluationCandidate {
         self.baseline_metrics.validate()?;
         self.candidate_metrics.validate()?;
         self.replay_reference.validate()?;
+        self.rollback_readiness.validate()?;
         Ok(())
+    }
+
+    fn burn_in_duration_ns(&self) -> u64 {
+        self.evaluation_completed_at_ns
+            .saturating_sub(self.shadow_started_at_ns)
     }
 }
 
@@ -1979,10 +2156,17 @@ pub struct ShadowPromotionDecisionArtifact {
     pub trace_id: String,
     pub decision_id: String,
     pub policy_id: String,
+    pub extension_class: ShadowExtensionClass,
     pub candidate_version: String,
     pub baseline_snapshot_id: String,
     pub rollback_token: String,
     pub epoch_id: SecurityEpoch,
+    pub burn_in_duration_ns: u64,
+    pub shadow_success_rate_millionths: u64,
+    pub false_deny_rate_millionths: u64,
+    pub rollback_readiness: ShadowRollbackReadinessArtifacts,
+    pub burn_in_profile: ShadowBurnInThresholdProfile,
+    pub burn_in_early_terminated: bool,
     pub replay_reference: ShadowReplayReference,
     pub metric_assessments: BTreeMap<SafetyMetric, ShadowMetricAssessment>,
     pub privacy_budget_status: ShadowPrivacyBudgetStatus,
@@ -2007,8 +2191,74 @@ impl ShadowPromotionDecisionArtifact {
             CanonicalValue::String(self.candidate_version.clone()),
         );
         map.insert(
+            "extension_class".to_string(),
+            CanonicalValue::String(self.extension_class.to_string()),
+        );
+        map.insert(
             "decision_id".to_string(),
             CanonicalValue::String(self.decision_id.clone()),
+        );
+        map.insert(
+            "burn_in_duration_ns".to_string(),
+            CanonicalValue::U64(self.burn_in_duration_ns),
+        );
+        map.insert(
+            "shadow_success_rate_millionths".to_string(),
+            CanonicalValue::U64(self.shadow_success_rate_millionths),
+        );
+        map.insert(
+            "false_deny_rate_millionths".to_string(),
+            CanonicalValue::U64(self.false_deny_rate_millionths),
+        );
+        map.insert(
+            "burn_in_early_terminated".to_string(),
+            CanonicalValue::Bool(self.burn_in_early_terminated),
+        );
+        map.insert(
+            "burn_in_profile".to_string(),
+            CanonicalValue::Map(BTreeMap::from([
+                (
+                    "min_shadow_success_rate_millionths".to_string(),
+                    CanonicalValue::U64(self.burn_in_profile.min_shadow_success_rate_millionths),
+                ),
+                (
+                    "max_false_deny_rate_millionths".to_string(),
+                    CanonicalValue::U64(self.burn_in_profile.max_false_deny_rate_millionths),
+                ),
+                (
+                    "min_burn_in_duration_ns".to_string(),
+                    CanonicalValue::U64(self.burn_in_profile.min_burn_in_duration_ns),
+                ),
+                (
+                    "require_verified_rollback_artifacts".to_string(),
+                    CanonicalValue::Bool(
+                        self.burn_in_profile.require_verified_rollback_artifacts,
+                    ),
+                ),
+            ])),
+        );
+        map.insert(
+            "rollback_readiness".to_string(),
+            CanonicalValue::Map(BTreeMap::from([
+                (
+                    "rollback_command_tested".to_string(),
+                    CanonicalValue::Bool(self.rollback_readiness.rollback_command_tested),
+                ),
+                (
+                    "previous_policy_snapshot_id".to_string(),
+                    CanonicalValue::String(
+                        self.rollback_readiness.previous_policy_snapshot_id.clone(),
+                    ),
+                ),
+                (
+                    "transition_receipt_signed".to_string(),
+                    CanonicalValue::Bool(self.rollback_readiness.transition_receipt_signed),
+                ),
+                (
+                    "rollback_playbook_ref".to_string(),
+                    CanonicalValue::String(self.rollback_readiness.rollback_playbook_ref.clone()),
+                ),
+            ])),
         );
         map.insert(
             "deterministic_replay_ok".to_string(),
@@ -2183,6 +2433,36 @@ impl ShadowPromotionDecisionArtifact {
     }
 }
 
+/// Governance-ready summary row for benchmark bundles and scorecards.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShadowBurnInScorecardEntry {
+    pub policy_id: String,
+    pub candidate_version: String,
+    pub extension_class: ShadowExtensionClass,
+    pub verdict: ShadowPromotionVerdict,
+    pub shadow_success_rate_millionths: u64,
+    pub false_deny_rate_millionths: u64,
+    pub burn_in_duration_ns: u64,
+    pub rollback_ready: bool,
+    pub burn_in_early_terminated: bool,
+}
+
+impl ShadowPromotionDecisionArtifact {
+    pub fn to_scorecard_entry(&self) -> ShadowBurnInScorecardEntry {
+        ShadowBurnInScorecardEntry {
+            policy_id: self.policy_id.clone(),
+            candidate_version: self.candidate_version.clone(),
+            extension_class: self.extension_class,
+            verdict: self.verdict,
+            shadow_success_rate_millionths: self.shadow_success_rate_millionths,
+            false_deny_rate_millionths: self.false_deny_rate_millionths,
+            burn_in_duration_ns: self.burn_in_duration_ns,
+            rollback_ready: self.rollback_readiness.is_verified_ready(),
+            burn_in_early_terminated: self.burn_in_early_terminated,
+        }
+    }
+}
+
 /// Incident receipt emitted when automatic rollback is triggered.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShadowRollbackIncidentReceipt {
@@ -2266,6 +2546,7 @@ pub struct ShadowGateEvent {
 pub struct ShadowEvaluationGate {
     pub config: ShadowEvaluationGateConfig,
     events: Vec<ShadowGateEvent>,
+    evaluated_artifacts: Vec<ShadowPromotionDecisionArtifact>,
     promoted_artifacts: BTreeMap<String, ShadowPromotionDecisionArtifact>,
 }
 
@@ -2275,6 +2556,7 @@ impl ShadowEvaluationGate {
         Ok(Self {
             config,
             events: Vec::new(),
+            evaluated_artifacts: Vec::new(),
             promoted_artifacts: BTreeMap::new(),
         })
     }
@@ -2289,6 +2571,13 @@ impl ShadowEvaluationGate {
 
     pub fn active_artifact(&self, policy_id: &str) -> Option<&ShadowPromotionDecisionArtifact> {
         self.promoted_artifacts.get(policy_id)
+    }
+
+    pub fn scorecard_entries(&self) -> Vec<ShadowBurnInScorecardEntry> {
+        self.evaluated_artifacts
+            .iter()
+            .map(ShadowPromotionDecisionArtifact::to_scorecard_entry)
+            .collect()
     }
 
     pub fn evaluate_candidate(
@@ -2308,6 +2597,22 @@ impl ShadowEvaluationGate {
             );
             return Err(err);
         }
+
+        self.emit_event(
+            &candidate.trace_id,
+            &candidate.decision_id,
+            &candidate.policy_id,
+            "shadow_start",
+            "started",
+            None,
+        );
+
+        let burn_in_profile = self
+            .config
+            .burn_in_profile_for(candidate.extension_class)
+            .clone();
+        let burn_in_duration_ns = candidate.burn_in_duration_ns();
+        let rollback_ready = candidate.rollback_readiness.is_verified_ready();
 
         let mut metric_assessments = BTreeMap::new();
         let mut regression_metrics = Vec::new();
@@ -2366,6 +2671,7 @@ impl ShadowEvaluationGate {
 
         let mut failure_reasons = Vec::new();
         let mut error_code: Option<&str> = None;
+        let mut burn_in_early_terminated = false;
 
         if !budget_status.within_budget {
             failure_reasons.push("privacy budget exceeded for epoch".to_string());
@@ -2390,6 +2696,36 @@ impl ShadowEvaluationGate {
             failure_reasons.push("replay determinism inputs are incomplete or invalid".to_string());
             error_code.get_or_insert("FE-PLC-SHADOW-0003");
         }
+        if burn_in_duration_ns < burn_in_profile.min_burn_in_duration_ns {
+            failure_reasons.push(format!(
+                "burn-in duration {}ns below required {}ns",
+                burn_in_duration_ns, burn_in_profile.min_burn_in_duration_ns
+            ));
+            error_code.get_or_insert("FE-PLC-SHADOW-0008");
+        }
+        if candidate.shadow_success_rate_millionths
+            < burn_in_profile.min_shadow_success_rate_millionths
+        {
+            failure_reasons.push(format!(
+                "shadow success rate {} below required {}",
+                candidate.shadow_success_rate_millionths,
+                burn_in_profile.min_shadow_success_rate_millionths
+            ));
+            error_code.get_or_insert("FE-PLC-SHADOW-0009");
+        }
+        if candidate.false_deny_rate_millionths > burn_in_profile.max_false_deny_rate_millionths {
+            failure_reasons.push(format!(
+                "false-deny rate {} exceeds threshold {}",
+                candidate.false_deny_rate_millionths, burn_in_profile.max_false_deny_rate_millionths
+            ));
+            burn_in_early_terminated = true;
+            error_code.get_or_insert("FE-PLC-SHADOW-0010");
+        }
+        if burn_in_profile.require_verified_rollback_artifacts && !rollback_ready {
+            failure_reasons
+                .push("rollback readiness artifacts are incomplete or unverified".to_string());
+            error_code.get_or_insert("FE-PLC-SHADOW-0011");
+        }
 
         let verdict = if failure_reasons.is_empty() {
             ShadowPromotionVerdict::Pass
@@ -2401,10 +2737,17 @@ impl ShadowEvaluationGate {
             trace_id: candidate.trace_id.clone(),
             decision_id: candidate.decision_id.clone(),
             policy_id: candidate.policy_id.clone(),
+            extension_class: candidate.extension_class,
             candidate_version: candidate.candidate_version.clone(),
             baseline_snapshot_id: candidate.baseline_snapshot_id.clone(),
             rollback_token: candidate.rollback_token.clone(),
             epoch_id: candidate.epoch_id,
+            burn_in_duration_ns,
+            shadow_success_rate_millionths: candidate.shadow_success_rate_millionths,
+            false_deny_rate_millionths: candidate.false_deny_rate_millionths,
+            rollback_readiness: candidate.rollback_readiness.clone(),
+            burn_in_profile,
+            burn_in_early_terminated,
             replay_reference: candidate.replay_reference.clone(),
             metric_assessments,
             privacy_budget_status: budget_status,
@@ -2418,15 +2761,39 @@ impl ShadowEvaluationGate {
         };
         artifact.refresh_signature(signing_key)?;
 
+        let evaluation_outcome = if verdict == ShadowPromotionVerdict::Pass {
+            "pass"
+        } else if burn_in_early_terminated {
+            "early_terminated"
+        } else {
+            "reject"
+        };
+        self.emit_event(
+            &artifact.trace_id,
+            &artifact.decision_id,
+            &artifact.policy_id,
+            "shadow_evaluation",
+            evaluation_outcome,
+            error_code,
+        );
+
         if verdict == ShadowPromotionVerdict::Pass {
+            self.emit_event(
+                &artifact.trace_id,
+                &artifact.decision_id,
+                &artifact.policy_id,
+                "promotion_gate",
+                "pass",
+                None,
+            );
             self.promoted_artifacts
                 .insert(artifact.policy_id.clone(), artifact.clone());
             self.emit_event(
                 &artifact.trace_id,
                 &artifact.decision_id,
                 &artifact.policy_id,
-                "shadow_evaluation",
-                "pass",
+                "auto_enforcement",
+                "promoted",
                 None,
             );
         } else {
@@ -2434,11 +2801,21 @@ impl ShadowEvaluationGate {
                 &artifact.trace_id,
                 &artifact.decision_id,
                 &artifact.policy_id,
-                "shadow_evaluation",
+                "promotion_gate",
                 "reject",
                 error_code,
             );
+            self.emit_event(
+                &artifact.trace_id,
+                &artifact.decision_id,
+                &artifact.policy_id,
+                "rejection",
+                "rejected",
+                error_code,
+            );
         }
+
+        self.evaluated_artifacts.push(artifact.clone());
 
         Ok(artifact)
     }
@@ -2924,6 +3301,15 @@ mod tests {
         }
     }
 
+    fn rollback_readiness() -> ShadowRollbackReadinessArtifacts {
+        ShadowRollbackReadinessArtifacts {
+            rollback_command_tested: true,
+            previous_policy_snapshot_id: "snapshot-2026-02-19".to_string(),
+            transition_receipt_signed: true,
+            rollback_playbook_ref: "playbook://shadow-gate/rollback-v1".to_string(),
+        }
+    }
+
     fn candidate_with_metrics(
         candidate_metrics: SafetyMetricSnapshot,
         epsilon_spent_millionths: i64,
@@ -2933,10 +3319,16 @@ mod tests {
             trace_id: "trace-shadow-1".to_string(),
             decision_id: "decision-shadow-1".to_string(),
             policy_id: "policy-shadow-1".to_string(),
+            extension_class: ShadowExtensionClass::Standard,
             candidate_version: "v2026.02.20".to_string(),
             baseline_snapshot_id: "snapshot-2026-02-19".to_string(),
             rollback_token: "rollback-token-shadow-1".to_string(),
             epoch_id: SecurityEpoch::from_raw(9),
+            shadow_started_at_ns: 1_000_000_000,
+            evaluation_completed_at_ns: 1_000_000_120,
+            shadow_success_rate_millionths: 997_000,
+            false_deny_rate_millionths: 4_000,
+            rollback_readiness: rollback_readiness(),
             baseline_metrics: baseline_metrics(),
             candidate_metrics,
             replay_reference: replay_reference(),
@@ -2949,6 +3341,13 @@ mod tests {
         ShadowEvaluationGate::new(ShadowEvaluationGateConfig {
             regression_tolerance_millionths: 5_000,
             min_required_improvement_millionths: 2_500,
+            default_burn_in_profile: ShadowBurnInThresholdProfile {
+                min_shadow_success_rate_millionths: 995_000,
+                max_false_deny_rate_millionths: 5_000,
+                min_burn_in_duration_ns: 100,
+                require_verified_rollback_artifacts: true,
+            },
+            burn_in_profiles_by_extension_class: BTreeMap::new(),
         })
         .expect("shadow gate")
     }
@@ -3972,10 +4371,17 @@ mod tests {
         assert!(artifact.privacy_budget_status.within_budget);
         assert!(artifact.significant_improvement_count > 0);
         assert!(artifact.failure_reasons.is_empty());
-        assert_eq!(gate.events().len(), 1);
-        assert_eq!(gate.events()[0].event, "shadow_evaluation");
-        assert_eq!(gate.events()[0].outcome, "pass");
-        assert!(gate.events()[0].error_code.is_none());
+        assert_eq!(gate.events().len(), 4);
+        assert_eq!(gate.events()[0].event, "shadow_start");
+        assert_eq!(gate.events()[0].outcome, "started");
+        assert_eq!(gate.events()[1].event, "shadow_evaluation");
+        assert_eq!(gate.events()[1].outcome, "pass");
+        assert!(gate.events()[1].error_code.is_none());
+        assert_eq!(gate.events()[2].event, "promotion_gate");
+        assert_eq!(gate.events()[2].outcome, "pass");
+        assert_eq!(gate.events()[3].event, "auto_enforcement");
+        assert_eq!(gate.events()[3].outcome, "promoted");
+        assert!(artifact.to_scorecard_entry().rollback_ready);
     }
 
     #[test]
@@ -4002,9 +4408,14 @@ mod tests {
                 .iter()
                 .any(|reason| reason.contains("privacy budget exceeded"))
         );
-        assert_eq!(
-            gate.events()[0].error_code.as_deref(),
-            Some("FE-PLC-SHADOW-0002")
+        assert!(gate.events().iter().any(|event| {
+            event.error_code.as_deref() == Some("FE-PLC-SHADOW-0002")
+                && event.event == "shadow_evaluation"
+        }));
+        assert!(
+            gate.events()
+                .iter()
+                .any(|event| event.event == "rejection" && event.outcome == "rejected")
         );
     }
 
@@ -4091,7 +4502,11 @@ mod tests {
                 &governance_signing_key(),
             )
             .expect("shadow evaluation");
-        let event = gate.events().last().expect("event");
+        let event = gate
+            .events()
+            .iter()
+            .find(|event| event.event == "shadow_evaluation")
+            .expect("shadow evaluation event");
 
         assert_eq!(event.trace_id, artifact.trace_id);
         assert_eq!(event.decision_id, artifact.decision_id);
