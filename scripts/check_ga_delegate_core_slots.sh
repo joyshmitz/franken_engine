@@ -12,26 +12,42 @@ artifact_root="${GA_RELEASE_GUARD_ARTIFACT_ROOT:-artifacts/ga_release_delegate_g
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 run_dir="$artifact_root/$timestamp"
 manifest_path="$run_dir/run_manifest.json"
+logs_dir="$run_dir/logs"
+rch_timeout_seconds="${RCH_EXEC_TIMEOUT_SECONDS:-900}"
 
-mkdir -p "$run_dir"
+mkdir -p "$run_dir" "$logs_dir"
 
 run_rch() {
-  rch exec -- env "RUSTUP_TOOLCHAIN=$toolchain" "CARGO_TARGET_DIR=$target_dir" "$@"
+  timeout "${rch_timeout_seconds}" rch exec -- env "RUSTUP_TOOLCHAIN=$toolchain" "CARGO_TARGET_DIR=$target_dir" "$@"
 }
 
 declare -a commands_run=()
+declare -a command_logs=()
 failed_command=""
+failed_log_path=""
 manifest_written=false
 
 run_step() {
   local command_text="$1"
   shift
+  local step_index="${#commands_run[@]}"
+  local log_path="${logs_dir}/step_$(printf '%02d' "$step_index").log"
   commands_run+=("$command_text")
+  command_logs+=("$log_path")
   echo "==> $command_text"
-  if ! run_rch "$@"; then
-    failed_command="$command_text"
-    return 1
+  if run_rch "$@" > >(tee "$log_path") 2>&1; then
+    return 0
   fi
+
+  if rg -q "Remote command finished: exit=0" "$log_path"; then
+    echo "==> recovered: remote execution succeeded; artifact retrieval timed out" \
+      | tee -a "$log_path"
+    return 0
+  fi
+
+  failed_command="$command_text"
+  failed_log_path="$log_path"
+  return 1
 }
 
 run_mode() {
@@ -63,7 +79,7 @@ run_mode() {
 
 write_manifest() {
   local exit_code="${1:-0}"
-  local git_commit dirty_worktree idx comma outcome
+  local git_commit dirty_worktree idx comma outcome failed_log_json
   if [[ "$manifest_written" == true ]]; then
     return
   fi
@@ -95,9 +111,16 @@ write_manifest() {
     echo "  \"dirty_worktree\": ${dirty_worktree},"
     echo "  \"generated_at_utc\": \"${timestamp}\","
     echo "  \"outcome\": \"${outcome}\","
-    if [[ -n "$failed_command" ]]; then
+  if [[ -n "$failed_command" ]]; then
       echo "  \"failed_command\": \"${failed_command}\","
     fi
+    if [[ -n "$failed_log_path" ]]; then
+      failed_log_json="\"${failed_log_path}\""
+    else
+      failed_log_json="null"
+    fi
+    echo "  \"failed_log\": ${failed_log_json},"
+    echo "  \"rch_exec_timeout_seconds\": ${rch_timeout_seconds},"
     echo '  "commands": ['
     for idx in "${!commands_run[@]}"; do
       comma=","
@@ -107,13 +130,24 @@ write_manifest() {
       echo "    \"${commands_run[$idx]}\"${comma}"
     done
     echo '  ],'
+    echo '  "command_logs": ['
+    for idx in "${!command_logs[@]}"; do
+      comma=","
+      if [[ "$idx" == "$(( ${#command_logs[@]} - 1 ))" ]]; then
+        comma=""
+      fi
+      echo "    \"${command_logs[$idx]}\"${comma}"
+    done
+    echo '  ],'
     echo '  "artifacts": {'
     echo "    \"command_log\": \"${run_dir}/commands.txt\","
+    echo "    \"logs_dir\": \"${logs_dir}\","
     echo "    \"manifest\": \"${manifest_path}\""
     echo '  },'
     echo '  "operator_verification": ['
     echo "    \"cat ${manifest_path}\","
     echo "    \"cat ${run_dir}/commands.txt\","
+    echo "    \"find ${logs_dir} -maxdepth 1 -type f | sort\","
     echo "    \"${0} ci\""
     echo '  ]'
     echo "}"
