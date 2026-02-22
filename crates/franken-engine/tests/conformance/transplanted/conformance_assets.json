@@ -1,6 +1,6 @@
 {
   "schema_version": "franken-engine.conformance-assets.v1",
-  "generated_at_utc": "2026-02-20T19:00:00Z",
+  "generated_at_utc": "2026-02-22T06:38:00Z",
   "assets": [
     {
       "asset_id": "asset-promise-resolution",
@@ -23,6 +23,94 @@
       "expected_output_path": "expected/proxy_trap_ordering.expected.txt",
       "expected_output_hash": "f83c79ea8e7fa94fe7fae00fef8373d1c5e11f119800110e1af2bc848f6926ec",
       "import_date": "2026-02-20"
+    },
+    {
+      "asset_id": "asset-closure-capture",
+      "source_donor": "quickjs",
+      "semantic_domain": "closure_capture",
+      "normative_reference": "ES2020 13.4",
+      "fixture_path": "fixtures/closure_capture.fixture.json",
+      "fixture_hash": "e54876b97ba8ef51a7cf210258a4ebdce0bd572e67bd34b4cbed5b39d1f00f74",
+      "expected_output_path": "expected/closure_capture.expected.txt",
+      "expected_output_hash": "35e8ec32ce4c853334c3dc112669c7c0a1673d922763bfa73c956948d3e7575d",
+      "import_date": "2026-02-22"
+    },
+    {
+      "asset_id": "asset-destructuring-binding",
+      "source_donor": "quickjs",
+      "semantic_domain": "destructuring_binding",
+      "normative_reference": "ES2020 13.3.3",
+      "fixture_path": "fixtures/destructuring_binding.fixture.json",
+      "fixture_hash": "1d0ffd0ac10adc52a6654c5a7baf5101a59986624633f2d0a98c503832b66849",
+      "expected_output_path": "expected/destructuring_binding.expected.txt",
+      "expected_output_hash": "37897571e52feaebb8ec9e447728935a65839ee5a5fbd516c8f24582886720d7",
+      "import_date": "2026-02-22"
+    },
+    {
+      "asset_id": "asset-iterator-protocol",
+      "source_donor": "quickjs",
+      "semantic_domain": "iterator_protocol",
+      "normative_reference": "ES2020 25.1",
+      "fixture_path": "fixtures/iterator_protocol.fixture.json",
+      "fixture_hash": "73d3d015acd1c342725eb9573bd09e48bdc6b53263abb9d279afeae0f7df93ab",
+      "expected_output_path": "expected/iterator_protocol.expected.txt",
+      "expected_output_hash": "35e8ec32ce4c853334c3dc112669c7c0a1673d922763bfa73c956948d3e7575d",
+      "import_date": "2026-02-22"
+    },
+    {
+      "asset_id": "asset-generator-lifecycle",
+      "source_donor": "quickjs",
+      "semantic_domain": "generator_lifecycle",
+      "normative_reference": "ES2020 25.4",
+      "fixture_path": "fixtures/generator_lifecycle.fixture.json",
+      "fixture_hash": "f19925a184a9b19fe53fe9a1a557c266eea8725ec704d64b7f6e529e5efd72b7",
+      "expected_output_path": "expected/generator_lifecycle.expected.txt",
+      "expected_output_hash": "f483975a6d3e00276f1464ad6eed1b21ef23a2093d054bcc0991193cb69e9989",
+      "import_date": "2026-02-22"
+    },
+    {
+      "asset_id": "asset-async-await-ordering",
+      "source_donor": "quickjs",
+      "semantic_domain": "async_await_ordering",
+      "normative_reference": "ES2020 25.7",
+      "fixture_path": "fixtures/async_await_ordering.fixture.json",
+      "fixture_hash": "2bea15274179ce796372aa18efad4b66315cc964bf9c6f69a133dd73da6f59c1",
+      "expected_output_path": "expected/async_await_ordering.expected.txt",
+      "expected_output_hash": "989d42125e98fd9ade276b1e83daab4b435a34b57299a34be8ef0d47eaba05a9",
+      "import_date": "2026-02-22"
+    },
+    {
+      "asset_id": "asset-symbol-behavior",
+      "source_donor": "quickjs",
+      "semantic_domain": "symbol_behavior",
+      "normative_reference": "ES2020 19.4",
+      "fixture_path": "fixtures/symbol_behavior.fixture.json",
+      "fixture_hash": "c365e276e482f1e03f337216c0b4d029f20edeaf95d5842422ca8018a3614f00",
+      "expected_output_path": "expected/symbol_behavior.expected.txt",
+      "expected_output_hash": "c60684df1a652873b5ce70dbfa4ea1bc07da7c836d4bd932af6858ac3c155d92",
+      "import_date": "2026-02-22"
+    },
+    {
+      "asset_id": "asset-error-handling",
+      "source_donor": "quickjs",
+      "semantic_domain": "error_handling",
+      "normative_reference": "ES2020 19.5",
+      "fixture_path": "fixtures/error_handling.fixture.json",
+      "fixture_hash": "d6664fa663b32104fda1f85272d94a5fc843b6afccacb1a2a810f1b5eecce570",
+      "expected_output_path": "expected/error_handling.expected.txt",
+      "expected_output_hash": "c142fba545cf5e59758fa0f185b4a22f47a5cf22d90169f5b08e5372874acb1a",
+      "import_date": "2026-02-22"
+    },
+    {
+      "asset_id": "asset-module-namespace-binding",
+      "source_donor": "quickjs",
+      "semantic_domain": "module_namespace_binding",
+      "normative_reference": "ES2020 16.2",
+      "fixture_path": "fixtures/module_namespace_binding.fixture.json",
+      "fixture_hash": "41d900644791f0fee795b03cfe10eb86b8df8bba13a6b00337c7c835bce42e43",
+      "expected_output_path": "expected/module_namespace_binding.expected.txt",
+      "expected_output_hash": "d3679556f01f615f8ff21a22da0cb1a9cb12f7a51732e183da6c797e4c47daa4",
+      "import_date": "2026-02-22"
     }
   ]
 }

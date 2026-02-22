@@ -61,6 +61,8 @@ run_check() {
     run_rch cargo check -p frankenengine-engine --test conformance_min_repro
   run_step "cargo check -p frankenengine-engine --test ifc_conformance_corpus" \
     run_rch cargo check -p frankenengine-engine --test ifc_conformance_corpus
+  run_step "cargo check -p frankenengine-engine --bin franken_ifc_conformance_runner" \
+    run_rch cargo check -p frankenengine-engine --bin franken_ifc_conformance_runner
   run_step "cargo check -p frankenengine-engine --lib conformance_vector_gen::tests::" \
     run_rch cargo check -p frankenengine-engine --lib
 }
@@ -72,6 +74,8 @@ run_test() {
     run_rch cargo test -p frankenengine-engine --test conformance_min_repro
   run_step "cargo test -p frankenengine-engine --test ifc_conformance_corpus" \
     run_rch cargo test -p frankenengine-engine --test ifc_conformance_corpus
+  run_step "cargo run -p frankenengine-engine --bin franken_ifc_conformance_runner -- --manifest crates/franken-engine/tests/conformance/ifc_corpus/ifc_conformance_assets.json --output-root artifacts/ifc_conformance_suite" \
+    run_rch cargo run -p frankenengine-engine --bin franken_ifc_conformance_runner -- --manifest crates/franken-engine/tests/conformance/ifc_corpus/ifc_conformance_assets.json --output-root artifacts/ifc_conformance_suite
   run_step "cargo test -p frankenengine-engine --lib conformance_vector_gen::tests::generate_vectors_produces_all_categories" \
     run_rch cargo test -p frankenengine-engine --lib conformance_vector_gen::tests::generate_vectors_produces_all_categories
   run_step "cargo test -p frankenengine-engine --lib conformance_vector_gen::tests::degraded_vectors_have_scenario" \
@@ -160,6 +164,7 @@ JSONL
   echo '    "conformance_assets",'
   echo '    "conformance_min_repro",'
   echo '    "ifc_conformance_corpus",'
+  echo '    "franken_ifc_conformance_runner",'
   echo '    "conformance_vector_gen::tests::generate_vectors_produces_all_categories",'
     echo '    "conformance_vector_gen::tests::degraded_vectors_have_scenario",'
     echo '    "conformance_vector_gen::tests::fault_vectors_have_scenario",'

@@ -85,11 +85,36 @@ fn transplanted_manifest_runs_and_emits_conformance_evidence_artifact() {
         .run(sample_manifest_path(), &waivers)
         .expect("conformance run");
 
-    assert_eq!(run.summary.total_assets, 2);
+    assert_eq!(run.summary.total_assets, 10);
     assert_eq!(run.summary.failed, 0);
     assert_eq!(run.summary.errored, 0);
     assert!(run.logs.iter().all(|log| log.outcome == "pass"));
     run.enforce_ci_gate().expect("ci gate pass");
+
+    // Verify all 10 semantic domains are represented in the run logs.
+    let domains: std::collections::BTreeSet<&str> = run
+        .logs
+        .iter()
+        .map(|log| log.semantic_domain.as_str())
+        .collect();
+    let expected_domains = [
+        "promise_resolution",
+        "proxy_trap_ordering",
+        "closure_capture",
+        "destructuring_binding",
+        "iterator_protocol",
+        "generator_lifecycle",
+        "async_await_ordering",
+        "symbol_behavior",
+        "error_handling",
+        "module_namespace_binding",
+    ];
+    for domain in &expected_domains {
+        assert!(
+            domains.contains(domain),
+            "missing semantic domain in run logs: {domain}"
+        );
+    }
 
     let collector =
         ConformanceEvidenceCollector::new(test_temp_dir("evidence")).expect("collector");
