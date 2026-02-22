@@ -10,11 +10,11 @@ use frankenengine_engine::hash_tiers::ContentHash;
 use frankenengine_engine::policy_checkpoint::DeterministicTimestamp;
 use frankenengine_engine::security_epoch::SecurityEpoch;
 use frankenengine_engine::signature_preimage::SigningKey;
-use libfuzzer_sys::fuzzer_target;
+use libfuzzer_sys::fuzz_target;
 
 const MAX_MUTATIONS: usize = 64;
 
-fuzzer_target!(|data: &[u8]| {
+fuzz_target!(|data: &[u8]| {
     if data.is_empty() {
         return;
     }
