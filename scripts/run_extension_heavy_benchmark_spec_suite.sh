@@ -6,8 +6,8 @@ cd "$root_dir"
 
 mode="${1:-ci}"
 toolchain="${RUSTUP_TOOLCHAIN:-default}"
-component="extension_heavy_benchmark_spec"
-bead_id="bd-19l0"
+component="${BENCH_COMPONENT:-extension_heavy_benchmark_suite_contract}"
+bead_id="${BEAD_ID:-bd-2ql}"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 run_dir="artifacts/extension_heavy_benchmark_spec/${timestamp}"
 manifest_path="${run_dir}/run_manifest.json"
@@ -35,18 +35,18 @@ run_step() {
 }
 
 run_check() {
-  run_step "cargo check -p frankenengine-engine --test extension_heavy_benchmark_spec" \
-    cargo check -p frankenengine-engine --test extension_heavy_benchmark_spec
+  run_step "cargo check -p frankenengine-engine --test extension_heavy_benchmark_spec --test extension_heavy_benchmark_matrix" \
+    cargo check -p frankenengine-engine --test extension_heavy_benchmark_spec --test extension_heavy_benchmark_matrix
 }
 
 run_test() {
-  run_step "cargo test -p frankenengine-engine --test extension_heavy_benchmark_spec" \
-    cargo test -p frankenengine-engine --test extension_heavy_benchmark_spec
+  run_step "cargo test -p frankenengine-engine --test extension_heavy_benchmark_spec --test extension_heavy_benchmark_matrix" \
+    cargo test -p frankenengine-engine --test extension_heavy_benchmark_spec --test extension_heavy_benchmark_matrix
 }
 
 run_clippy() {
-  run_step "cargo clippy -p frankenengine-engine --test extension_heavy_benchmark_spec -- -D warnings" \
-    cargo clippy -p frankenengine-engine --test extension_heavy_benchmark_spec -- -D warnings
+  run_step "cargo clippy -p frankenengine-engine --test extension_heavy_benchmark_spec --test extension_heavy_benchmark_matrix -- -D warnings" \
+    cargo clippy -p frankenengine-engine --test extension_heavy_benchmark_spec --test extension_heavy_benchmark_matrix -- -D warnings
 }
 
 run_mode() {
@@ -129,7 +129,12 @@ write_manifest() {
     echo "    \"manifest\": \"${manifest_path}\","
     echo "    \"events\": \"${events_path}\","
     echo '    "spec": "docs/EXTENSION_HEAVY_BENCHMARK_SUITE_V1.md",'
-    echo '    "tests": "crates/franken-engine/tests/extension_heavy_benchmark_spec.rs"'
+    echo '    "workload_matrix": "docs/extension_heavy_workload_matrix_v1.json",'
+    echo '    "golden_outputs": "docs/extension_heavy_golden_outputs_v1.json",'
+    echo '    "tests": [' 
+    echo '      "crates/franken-engine/tests/extension_heavy_benchmark_spec.rs",'
+    echo '      "crates/franken-engine/tests/extension_heavy_benchmark_matrix.rs"'
+    echo '    ]'
     echo '  },'
     echo '  "operator_verification": ['
     echo "    \"cat ${manifest_path}\","
@@ -141,7 +146,7 @@ write_manifest() {
   } >"${manifest_path}"
 
   {
-    echo "{\"trace_id\":\"trace-ext-heavy-benchmark-spec-${timestamp}\",\"decision_id\":\"decision-ext-heavy-benchmark-spec-${timestamp}\",\"policy_id\":\"policy-ext-heavy-benchmark-spec-v1\",\"component\":\"${component}\",\"event\":\"suite_completed\",\"outcome\":\"${outcome}\",\"error_code\":${error_code_json}}"
+    echo "{\"trace_id\":\"trace-ext-heavy-benchmark-suite-${timestamp}\",\"decision_id\":\"decision-ext-heavy-benchmark-suite-${timestamp}\",\"policy_id\":\"policy-ext-heavy-benchmark-suite-v1\",\"component\":\"${component}\",\"event\":\"suite_completed\",\"outcome\":\"${outcome}\",\"error_code\":${error_code_json}}"
   } >"${events_path}"
 
   echo "extension-heavy benchmark spec run manifest: ${manifest_path}"
