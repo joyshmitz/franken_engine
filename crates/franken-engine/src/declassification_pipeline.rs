@@ -379,6 +379,12 @@ impl DeclassificationPipeline {
                 "exceeds_threshold",
                 Some("loss_exceeds_threshold"),
             );
+            self.emit_stage_event(
+                request,
+                "decision",
+                "deny",
+                Some("loss_exceeds_threshold"),
+            );
 
             // Deny — loss too high
             self.decision_count += 1;
@@ -419,7 +425,10 @@ impl DeclassificationPipeline {
         now_ms: u64,
     ) -> Option<&EmergencyGrant> {
         self.emergency_grants.values().find(|g| {
-            g.source_label == *source && g.sink_clearance == *sink && !g.is_expired(now_ms)
+            g.source_label == *source
+                && g.sink_clearance == *sink
+                && !g.review_completed
+                && !g.is_expired(now_ms)
         })
     }
 
@@ -471,6 +480,15 @@ impl DeclassificationPipeline {
         request: &DeclassificationRequest,
         policy: &FlowPolicy,
     ) -> PolicyEvalResult {
+        if policy.extension_id != request.extension_id {
+            return PolicyEvalResult::PolicyUnavailable {
+                reason: format!(
+                    "policy extension {} does not match request extension {}",
+                    policy.extension_id, request.extension_id
+                ),
+            };
+        }
+
         // Find matching route
         for route in &policy.declassification_routes {
             if route.route_id == request.requested_route_id
@@ -496,7 +514,9 @@ impl DeclassificationPipeline {
     ) -> Result<DeclassificationReceipt, PipelineError> {
         self.emit_stage_event(request, "emergency_pathway", "started", None);
 
-        let expiry_ms = request.timestamp_ms + self.config.emergency_max_duration_ms;
+        let expiry_ms = request
+            .timestamp_ms
+            .saturating_add(self.config.emergency_max_duration_ms);
         let grant_id = format!("emg-{}", request.request_id);
 
         let grant = EmergencyGrant {
