@@ -90,7 +90,7 @@ fn gate_denies_release_when_required_items_missing_or_failed() {
     let failing = checklist
         .items
         .iter_mut()
-        .find(|item| item.item_id == "security.ifc_coverage")
+        .find(|item| item.item_id == "security.test262_es2020_gate")
         .expect("required item present");
     failing.status = ChecklistItemStatus::Fail;
 
@@ -102,7 +102,7 @@ fn gate_denies_release_when_required_items_missing_or_failed() {
 
     let blockers = decision.blockers.join(" | ");
     assert!(blockers.contains("missing required checklist item `performance.gc_pause_budget`"));
-    assert!(blockers.contains("required item `security.ifc_coverage` is `fail`"));
+    assert!(blockers.contains("required item `security.test262_es2020_gate` is `fail`"));
 }
 
 #[test]

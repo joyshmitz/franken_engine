@@ -199,6 +199,10 @@ const REQUIRED_CHECKLIST_ITEMS: &[RequiredChecklistItem] = &[
         category: ChecklistCategory::Security,
     },
     RequiredChecklistItem {
+        item_id: "security.test262_es2020_gate",
+        category: ChecklistCategory::Security,
+    },
+    RequiredChecklistItem {
         item_id: "security.adversarial_corpus",
         category: ChecklistCategory::Security,
     },
@@ -953,6 +957,7 @@ mod tests {
     #[test]
     fn is_required_item_id_known() {
         assert!(is_required_item_id("security.conformance_suite"));
+        assert!(is_required_item_id("security.test262_es2020_gate"));
         assert!(is_required_item_id("performance.benchmark_suite"));
     }
 
