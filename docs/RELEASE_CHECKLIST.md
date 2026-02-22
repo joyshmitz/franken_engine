@@ -3,6 +3,46 @@
 This checklist is a release gate artifact. A release is blocked until every item
 below is satisfied or an approved, linked exception is present.
 
+## Machine-Readable Gate (`bd-ag4`)
+
+Release candidates must publish a machine-readable checklist artifact with:
+
+- schema version `franken-engine.release-checklist.v1`
+- release tag (`release_tag`)
+- UTC generation timestamp (`generated_at_utc`)
+- structured checklist items (status + artifact references + optional waiver)
+
+Recommended path:
+
+- `artifacts/releases/<release_tag>/release_checklist.json`
+
+Deterministic gate runner (all heavy Rust commands are offloaded via `rch`):
+
+```bash
+./scripts/run_release_checklist_gate.sh ci
+./scripts/run_release_checklist_gate.sh check
+./scripts/run_release_checklist_gate.sh test
+./scripts/run_release_checklist_gate.sh clippy
+```
+
+Machine-readable required item IDs:
+
+- `security.conformance_suite`
+- `security.adversarial_corpus`
+- `security.containment_latency`
+- `security.ifc_coverage`
+- `security.plas_witness_coverage`
+- `performance.benchmark_suite`
+- `performance.speedup_gate_3x`
+- `performance.flamegraph_comparisons`
+- `performance.gc_pause_budget`
+- `reproducibility.env_json`
+- `reproducibility.manifest_json`
+- `reproducibility.repro_lock`
+- `operational.safe_mode_test`
+- `operational.diagnostics_cli_test`
+- `operational.evidence_export_test`
+
 ## Core Validation Gate
 
 - [ ] `rch exec -- ... cargo fmt --check`

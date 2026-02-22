@@ -10,6 +10,23 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+const IFC_CATEGORIES: &[&str] = &["benign", "exfil", "declassify"];
+const IFC_SOURCE_LABELS: &[&str] = &[
+    "credential",
+    "key_material",
+    "privileged_env",
+    "policy_protected",
+];
+const IFC_SINK_CLEARANCES: &[&str] = &[
+    "network_egress",
+    "subprocess_ipc",
+    "persistence_export",
+    "explicit_declassify",
+];
+const IFC_FLOW_PATH_TYPES: &[&str] = &["direct", "indirect", "implicit", "temporal", "covert"];
+const IFC_EXPECTED_OUTCOMES: &[&str] = &["allow", "block", "declassify"];
+const IFC_EXPECTED_EVIDENCE_TYPES: &[&str] = &["none", "flow_violation", "declassification_receipt"];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeterministicRng {
     state: u64,
