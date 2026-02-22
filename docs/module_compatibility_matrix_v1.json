@@ -1,0 +1,127 @@
+{
+  "schema_version": "1.0.0",
+  "entries": [
+    {
+      "case_id": "cjs-require-esm",
+      "feature": "cjs",
+      "scenario": "A CommonJS require attempts to load an ES module entry point.",
+      "node_behavior": "throw_err_require_esm",
+      "bun_behavior": "allow_via_sync_bridge",
+      "franken_native_behavior": "throw_err_require_esm",
+      "franken_node_compat_behavior": "throw_err_require_esm",
+      "franken_bun_compat_behavior": "allow_via_sync_bridge",
+      "explicit_shims": [
+        {
+          "shim_id": "shim-bun-cjs-require-esm-bridge-v1",
+          "mode": "bun_compat",
+          "description": "Explicit sync bridge for Bun-compatible require() of ESM.",
+          "removable": true,
+          "test_case_ref": "lockstep/module/cjs-require-esm"
+        }
+      ],
+      "lockstep_case_refs": [
+        "lockstep/module/cjs-require-esm"
+      ],
+      "test262_refs": [
+        "language/module-code/instn-star-props-circular.js"
+      ],
+      "divergence": {
+        "diverges_from": [
+          "bun"
+        ],
+        "reason": "Native mode follows strict Node-compatible ERR_REQUIRE_ESM behavior.",
+        "impact": "Packages depending on Bun's sync bridge need compat mode or migration.",
+        "waiver_id": "waiver-modcomp-cjs-require-esm-bun",
+        "migration_guidance": "Switch to dynamic import() in CJS or run with bun_compat mode for transitional support."
+      }
+    },
+    {
+      "case_id": "conditional-exports-condition-order",
+      "feature": "conditional_exports",
+      "scenario": "Package exports map has import/require/default branches and resolver must choose deterministic precedence.",
+      "node_behavior": "resolve_condition_import_require_default",
+      "bun_behavior": "resolve_condition_import_require_default",
+      "franken_native_behavior": "resolve_condition_import_require_default",
+      "franken_node_compat_behavior": "resolve_condition_import_require_default",
+      "franken_bun_compat_behavior": "resolve_condition_import_require_default",
+      "explicit_shims": [],
+      "lockstep_case_refs": [
+        "lockstep/module/conditional-exports-condition-order"
+      ],
+      "test262_refs": [
+        "language/module-code/instn-resolve-empty-import.js"
+      ],
+      "divergence": null
+    },
+    {
+      "case_id": "dual-mode-exports-map",
+      "feature": "dual_mode",
+      "scenario": "A dual-mode package defines both import and require targets via exports map.",
+      "node_behavior": "resolve_exports_by_import_style",
+      "bun_behavior": "resolve_exports_by_import_style",
+      "franken_native_behavior": "resolve_exports_by_import_style",
+      "franken_node_compat_behavior": "resolve_exports_by_import_style",
+      "franken_bun_compat_behavior": "resolve_exports_by_import_style",
+      "explicit_shims": [],
+      "lockstep_case_refs": [
+        "lockstep/module/dual-mode-exports-map"
+      ],
+      "test262_refs": [
+        "language/module-code/instn-iee-bndng-cls.js"
+      ],
+      "divergence": null
+    },
+    {
+      "case_id": "esm-import-cjs-default",
+      "feature": "esm",
+      "scenario": "An ES module imports a CommonJS package and consumes default namespace projection.",
+      "node_behavior": "namespace_default_projection",
+      "bun_behavior": "namespace_default_projection",
+      "franken_native_behavior": "namespace_default_projection",
+      "franken_node_compat_behavior": "namespace_default_projection",
+      "franken_bun_compat_behavior": "namespace_default_projection",
+      "explicit_shims": [],
+      "lockstep_case_refs": [
+        "lockstep/module/esm-import-cjs-default"
+      ],
+      "test262_refs": [
+        "language/module-code/instn-named-iee-cycle.js"
+      ],
+      "divergence": null
+    },
+    {
+      "case_id": "package-type-module-extensionless-relative",
+      "feature": "package_json_fields",
+      "scenario": "A package with type=module attempts extensionless relative import resolution.",
+      "node_behavior": "reject_extensionless_relative",
+      "bun_behavior": "resolve_extensionless_relative",
+      "franken_native_behavior": "reject_extensionless_relative",
+      "franken_node_compat_behavior": "reject_extensionless_relative",
+      "franken_bun_compat_behavior": "resolve_extensionless_relative",
+      "explicit_shims": [
+        {
+          "shim_id": "shim-bun-extensionless-relative-v1",
+          "mode": "bun_compat",
+          "description": "Explicit extension probing bridge for Bun-style extensionless relative imports.",
+          "removable": true,
+          "test_case_ref": "lockstep/module/package-type-module-extensionless-relative"
+        }
+      ],
+      "lockstep_case_refs": [
+        "lockstep/module/package-type-module-extensionless-relative"
+      ],
+      "test262_refs": [
+        "language/module-code/instn-resolve-empty-import.js"
+      ],
+      "divergence": {
+        "diverges_from": [
+          "bun"
+        ],
+        "reason": "Native mode keeps explicit extension requirement to avoid implicit path probing.",
+        "impact": "Extensionless relative imports that pass on Bun fail in native mode.",
+        "waiver_id": "waiver-modcomp-extensionless-relative-bun",
+        "migration_guidance": "Add explicit file extensions in ESM imports or opt into bun_compat mode while migrating."
+      }
+    }
+  ]
+}

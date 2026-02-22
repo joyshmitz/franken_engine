@@ -30,6 +30,18 @@ It defines what must be measured, how scores are computed, and which artifacts a
 
 Overrides are allowed only when explicitly declared in manifest artifacts and published with rationale.
 
+## Canonical Workload and Golden Manifests
+
+The normative machine-readable manifests for this suite are:
+- `docs/extension_heavy_workload_matrix_v1.json`
+- `docs/extension_heavy_golden_outputs_v1.json`
+
+Contract requirements:
+- workload matrix must contain exactly five families with `S/M/L` profiles (`15` total workload IDs)
+- every workload must declare deterministic `dataset_checksum_sha256` and `seed_transcript_sha256`
+- every workload must reference a `golden_output_id`
+- every golden output entry must publish `correctness_digest_sha256`, `result_digest_sha256`, and behavior-equivalence verdict fields
+
 ## Per-Case Publication Requirements
 
 Every benchmark case must publish:
