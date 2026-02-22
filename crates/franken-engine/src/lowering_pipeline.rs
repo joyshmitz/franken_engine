@@ -776,11 +776,11 @@ fn infer_ir2_flow_annotations(ir2: &mut Ir2Module) -> FlowInferenceMetrics {
         if let Ir1Op::StoreBinding { binding_id } = &op.inner {
             binding_labels.insert(*binding_id, inferred_data_label.clone());
         }
-        if let Ir1Op::LoadBinding { binding_id } = &op.inner {
-            if let Some(existing) = binding_labels.get(binding_id) {
-                last_label = existing.clone();
-                continue;
-            }
+        if let Ir1Op::LoadBinding { binding_id } = &op.inner
+            && let Some(existing) = binding_labels.get(binding_id)
+        {
+            last_label = existing.clone();
+            continue;
         }
         last_label = inferred_data_label;
     }

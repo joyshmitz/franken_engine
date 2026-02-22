@@ -997,4 +997,563 @@ mod tests {
             ResolutionErrorCode::InvalidReferrer.stable_code()
         );
     }
+
+    // -----------------------------------------------------------------------
+    // Empty specifier rejection
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn empty_specifier_returns_empty_specifier_error() {
+        let resolver = DeterministicModuleResolver::default();
+        let request = ModuleRequest::new("", ImportStyle::Import);
+        let error = resolver
+            .resolve(&request, &context(), &AllowAllPolicy)
+            .expect_err("empty specifier should fail");
+        assert_eq!(error.code, ResolutionErrorCode::EmptySpecifier);
+        assert_eq!(error.code.stable_code(), "FE-MODRES-0001");
+    }
+
+    #[test]
+    fn whitespace_only_specifier_returns_empty_specifier_error() {
+        let resolver = DeterministicModuleResolver::default();
+        let request = ModuleRequest::new("   ", ImportStyle::Import);
+        let error = resolver
+            .resolve(&request, &context(), &AllowAllPolicy)
+            .expect_err("whitespace-only specifier should fail");
+        assert_eq!(error.code, ResolutionErrorCode::EmptySpecifier);
+    }
+
+    // -----------------------------------------------------------------------
+    // Empty key rejection for register methods
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn register_builtin_with_empty_key_returns_error() {
+        let mut resolver = DeterministicModuleResolver::new("/app");
+        let err = resolver
+            .register_builtin("", ModuleDefinition::new(ModuleSyntax::EsModule, ""))
+            .unwrap_err();
+        assert_eq!(err.code, RegistryErrorCode::EmptyKey);
+    }
+
+    #[test]
+    fn register_workspace_module_with_empty_path_returns_error() {
+        let mut resolver = DeterministicModuleResolver::new("/app");
+        let err = resolver
+            .register_workspace_module("", ModuleDefinition::new(ModuleSyntax::EsModule, ""))
+            .unwrap_err();
+        assert_eq!(err.code, RegistryErrorCode::EmptyKey);
+    }
+
+    #[test]
+    fn register_external_module_with_empty_specifier_returns_error() {
+        let mut resolver = DeterministicModuleResolver::new("/app");
+        let err = resolver
+            .register_external_module("", ModuleDefinition::new(ModuleSyntax::CommonJs, ""))
+            .unwrap_err();
+        assert_eq!(err.code, RegistryErrorCode::EmptyKey);
+    }
+
+    // -----------------------------------------------------------------------
+    // Module not found
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn unresolvable_bare_specifier_returns_module_not_found() {
+        let resolver = DeterministicModuleResolver::new("/workspace");
+        let request = ModuleRequest::new("nonexistent-package", ImportStyle::Import);
+        let error = resolver
+            .resolve(&request, &context(), &AllowAllPolicy)
+            .expect_err("unregistered specifier should fail");
+        assert_eq!(error.code, ResolutionErrorCode::ModuleNotFound);
+        assert_eq!(error.code.stable_code(), "FE-MODRES-0004");
+    }
+
+    #[test]
+    fn unresolvable_relative_specifier_returns_module_not_found() {
+        let mut resolver = DeterministicModuleResolver::new("/app");
+        resolver
+            .register_workspace_module(
+                "/app/main.js",
+                ModuleDefinition::new(ModuleSyntax::EsModule, ""),
+            )
+            .unwrap();
+        let request =
+            ModuleRequest::new("./missing", ImportStyle::Import).with_referrer("/app/main.js");
+        let error = resolver
+            .resolve(&request, &context(), &AllowAllPolicy)
+            .expect_err("missing relative should fail");
+        assert_eq!(error.code, ResolutionErrorCode::ModuleNotFound);
+    }
+
+    // -----------------------------------------------------------------------
+    // Absolute specifier resolution
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn absolute_specifier_resolves_workspace_module() {
+        let mut resolver = DeterministicModuleResolver::new("/app");
+        resolver
+            .register_workspace_module(
+                "/app/lib/util.js",
+                ModuleDefinition::new(ModuleSyntax::EsModule, "export const x = 1;"),
+            )
+            .unwrap();
+
+        let request = ModuleRequest::new("/app/lib/util.js", ImportStyle::Import);
+        let outcome = resolver
+            .resolve(&request, &context(), &AllowAllPolicy)
+            .unwrap();
+        assert_eq!(outcome.module.canonical_specifier, "/app/lib/util.js");
+    }
+
+    // -----------------------------------------------------------------------
+    // Bare specifier resolved from workspace
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn bare_specifier_resolves_from_workspace_with_extension_probing() {
+        let mut resolver = DeterministicModuleResolver::new("/app");
+        resolver
+            .register_workspace_module(
+                "/app/utils.js",
+                ModuleDefinition::new(ModuleSyntax::EsModule, "export default 42;"),
+            )
+            .unwrap();
+
+        let request = ModuleRequest::new("utils", ImportStyle::Import);
+        let outcome = resolver
+            .resolve(&request, &context(), &AllowAllPolicy)
+            .unwrap();
+        assert_eq!(outcome.module.canonical_specifier, "/app/utils.js");
+    }
+
+    // -----------------------------------------------------------------------
+    // Index file probing
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn import_probes_index_mjs_for_directory_specifier() {
+        let mut resolver = DeterministicModuleResolver::new("/app");
+        resolver
+            .register_workspace_module(
+                "/app/lib/index.mjs",
+                ModuleDefinition::new(ModuleSyntax::EsModule, "export default 1;"),
+            )
+            .unwrap();
+
+        let request =
+            ModuleRequest::new("./lib", ImportStyle::Import).with_referrer("/app/main.js");
+        let outcome = resolver
+            .resolve(&request, &context(), &AllowAllPolicy)
+            .unwrap();
+        assert_eq!(outcome.module.canonical_specifier, "/app/lib/index.mjs");
+    }
+
+    #[test]
+    fn require_probes_index_cjs_for_directory_specifier() {
+        let mut resolver = DeterministicModuleResolver::new("/app");
+        resolver
+            .register_workspace_module(
+                "/app/lib/index.cjs",
+                ModuleDefinition::new(ModuleSyntax::CommonJs, "module.exports = 1;"),
+            )
+            .unwrap();
+
+        let request =
+            ModuleRequest::new("./lib", ImportStyle::Require).with_referrer("/app/main.js");
+        let outcome = resolver
+            .resolve(&request, &context(), &AllowAllPolicy)
+            .unwrap();
+        assert_eq!(outcome.module.canonical_specifier, "/app/lib/index.cjs");
+    }
+
+    // -----------------------------------------------------------------------
+    // Relative resolution from non-workspace referrer
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn relative_from_builtin_referrer_returns_unsupported_specifier() {
+        let mut resolver = DeterministicModuleResolver::new("/app");
+        resolver
+            .register_builtin(
+                "franken:fs",
+                ModuleDefinition::new(ModuleSyntax::EsModule, "export const read = true;"),
+            )
+            .unwrap();
+
+        let request =
+            ModuleRequest::new("./sub", ImportStyle::Import).with_referrer("builtin:franken:fs");
+        let error = resolver
+            .resolve(&request, &context(), &AllowAllPolicy)
+            .expect_err("relative from builtin referrer should fail");
+        assert_eq!(error.code, ResolutionErrorCode::UnsupportedSpecifier);
+        assert_eq!(error.code.stable_code(), "FE-MODRES-0003");
+    }
+
+    // -----------------------------------------------------------------------
+    // resolve_chain
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn resolve_chain_traverses_dependencies() {
+        let mut resolver = DeterministicModuleResolver::new("/app");
+        resolver
+            .register_workspace_module(
+                "/app/entry.js",
+                ModuleDefinition::new(ModuleSyntax::EsModule, "import './dep';")
+                    .with_dependency(ModuleDependency::new("./dep", ImportStyle::Import)),
+            )
+            .unwrap();
+        resolver
+            .register_workspace_module(
+                "/app/dep.js",
+                ModuleDefinition::new(ModuleSyntax::EsModule, "export default 1;"),
+            )
+            .unwrap();
+
+        let request = ModuleRequest::new("/app/entry.js", ImportStyle::Import);
+        let chain = resolver
+            .resolve_chain(&request, &context(), &AllowAllPolicy)
+            .unwrap();
+
+        assert_eq!(chain.len(), 2);
+        assert_eq!(chain[0].module.canonical_specifier, "/app/entry.js");
+        assert_eq!(chain[1].module.canonical_specifier, "/app/dep.js");
+    }
+
+    #[test]
+    fn resolve_chain_deduplicates_circular_dependencies() {
+        let mut resolver = DeterministicModuleResolver::new("/app");
+        resolver
+            .register_workspace_module(
+                "/app/a.js",
+                ModuleDefinition::new(ModuleSyntax::EsModule, "import './b';")
+                    .with_dependency(ModuleDependency::new("./b", ImportStyle::Import)),
+            )
+            .unwrap();
+        resolver
+            .register_workspace_module(
+                "/app/b.js",
+                ModuleDefinition::new(ModuleSyntax::EsModule, "import './a';")
+                    .with_dependency(ModuleDependency::new("./a", ImportStyle::Import)),
+            )
+            .unwrap();
+
+        let request = ModuleRequest::new("/app/a.js", ImportStyle::Import);
+        let chain = resolver
+            .resolve_chain(&request, &context(), &AllowAllPolicy)
+            .unwrap();
+
+        // Should resolve both but not loop infinitely
+        assert_eq!(chain.len(), 2);
+    }
+
+    #[test]
+    fn resolve_chain_single_module_no_deps() {
+        let mut resolver = DeterministicModuleResolver::new("/app");
+        resolver
+            .register_workspace_module(
+                "/app/leaf.js",
+                ModuleDefinition::new(ModuleSyntax::EsModule, "export const x = 1;"),
+            )
+            .unwrap();
+
+        let request = ModuleRequest::new("/app/leaf.js", ImportStyle::Import);
+        let chain = resolver
+            .resolve_chain(&request, &context(), &AllowAllPolicy)
+            .unwrap();
+        assert_eq!(chain.len(), 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // CapabilityPolicyHook deny-list
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn capability_policy_denies_listed_specifier() {
+        let mut resolver = DeterministicModuleResolver::new("/app");
+        resolver
+            .register_workspace_module(
+                "/app/allowed.js",
+                ModuleDefinition::new(ModuleSyntax::EsModule, "export default 1;"),
+            )
+            .unwrap();
+
+        let policy = CapabilityPolicyHook::new(BTreeSet::new()).deny_specifier("/app/allowed.js");
+
+        let request = ModuleRequest::new("/app/allowed.js", ImportStyle::Import);
+        let error = resolver
+            .resolve(&request, &context(), &policy)
+            .expect_err("deny-listed specifier should fail");
+        assert_eq!(error.code, ResolutionErrorCode::PolicyDenied);
+    }
+
+    // -----------------------------------------------------------------------
+    // AllowAllPolicy
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn allow_all_policy_permits_any_module() {
+        let mut resolver = DeterministicModuleResolver::new("/app");
+        resolver
+            .register_workspace_module(
+                "/app/anything.js",
+                ModuleDefinition::new(ModuleSyntax::EsModule, "export default 1;")
+                    .require_capability(RuntimeCapability::FsWrite)
+                    .require_capability(RuntimeCapability::NetworkEgress),
+            )
+            .unwrap();
+
+        let request = ModuleRequest::new("/app/anything.js", ImportStyle::Import);
+        let outcome = resolver
+            .resolve(&request, &context(), &AllowAllPolicy)
+            .unwrap();
+        assert_eq!(outcome.event.outcome, "allow");
+    }
+
+    // -----------------------------------------------------------------------
+    // ModuleSyntax / ImportStyle / ModuleSourceKind as_str
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn module_syntax_as_str() {
+        assert_eq!(ModuleSyntax::EsModule.as_str(), "esm");
+        assert_eq!(ModuleSyntax::CommonJs.as_str(), "cjs");
+    }
+
+    #[test]
+    fn import_style_as_str() {
+        assert_eq!(ImportStyle::Import.as_str(), "import");
+        assert_eq!(ImportStyle::Require.as_str(), "require");
+    }
+
+    #[test]
+    fn module_source_kind_as_str() {
+        assert_eq!(ModuleSourceKind::BuiltIn.as_str(), "builtin");
+        assert_eq!(ModuleSourceKind::Workspace.as_str(), "workspace");
+        assert_eq!(
+            ModuleSourceKind::ExternalRegistry.as_str(),
+            "external_registry"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // ModuleRecord canonical value/hash determinism
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn module_record_canonical_hash_is_deterministic() {
+        let mut resolver = DeterministicModuleResolver::new("/app");
+        resolver
+            .register_workspace_module(
+                "/app/det.js",
+                ModuleDefinition::new(ModuleSyntax::EsModule, "export default 1;")
+                    .with_provenance("workspace:/app/det.js"),
+            )
+            .unwrap();
+
+        let request = ModuleRequest::new("/app/det.js", ImportStyle::Import);
+        let r1 = resolver
+            .resolve(&request, &context(), &AllowAllPolicy)
+            .unwrap();
+        let r2 = resolver
+            .resolve(&request, &context(), &AllowAllPolicy)
+            .unwrap();
+        assert_eq!(r1.module.content_hash, r2.module.content_hash);
+        assert_eq!(
+            r1.module.record.canonical_bytes(),
+            r2.module.record.canonical_bytes()
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // ResolutionErrorCode stable codes
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn all_resolution_error_codes_have_fe_modres_prefix() {
+        let codes = [
+            ResolutionErrorCode::EmptySpecifier,
+            ResolutionErrorCode::InvalidReferrer,
+            ResolutionErrorCode::UnsupportedSpecifier,
+            ResolutionErrorCode::ModuleNotFound,
+            ResolutionErrorCode::PolicyDenied,
+        ];
+        for code in &codes {
+            let stable = code.stable_code();
+            assert!(
+                stable.starts_with("FE-MODRES-"),
+                "stable_code {} must start with FE-MODRES-",
+                stable
+            );
+        }
+    }
+
+    #[test]
+    fn resolution_error_codes_are_unique() {
+        let codes = [
+            ResolutionErrorCode::EmptySpecifier.stable_code(),
+            ResolutionErrorCode::InvalidReferrer.stable_code(),
+            ResolutionErrorCode::UnsupportedSpecifier.stable_code(),
+            ResolutionErrorCode::ModuleNotFound.stable_code(),
+            ResolutionErrorCode::PolicyDenied.stable_code(),
+        ];
+        let unique: BTreeSet<&str> = codes.iter().copied().collect();
+        assert_eq!(unique.len(), codes.len(), "all stable codes must be unique");
+    }
+
+    // -----------------------------------------------------------------------
+    // ResolutionError Display
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn resolution_error_display_includes_stable_code_and_trace() {
+        let resolver = DeterministicModuleResolver::default();
+        let request = ModuleRequest::new("", ImportStyle::Import);
+        let error = resolver
+            .resolve(&request, &context(), &AllowAllPolicy)
+            .expect_err("empty specifier should fail");
+        let display = format!("{error}");
+        assert!(display.contains("FE-MODRES-0001"));
+        assert!(display.contains("trace-1"));
+        assert!(display.contains("decision-1"));
+        assert!(display.contains("policy-1"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Serde round-trips
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn module_syntax_serde_round_trip() {
+        for syntax in &[ModuleSyntax::EsModule, ModuleSyntax::CommonJs] {
+            let json = serde_json::to_string(syntax).expect("serialize");
+            let decoded: ModuleSyntax = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(&decoded, syntax);
+        }
+    }
+
+    #[test]
+    fn import_style_serde_round_trip() {
+        for style in &[ImportStyle::Import, ImportStyle::Require] {
+            let json = serde_json::to_string(style).expect("serialize");
+            let decoded: ImportStyle = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(&decoded, style);
+        }
+    }
+
+    #[test]
+    fn resolution_error_code_serde_round_trip() {
+        let codes = [
+            ResolutionErrorCode::EmptySpecifier,
+            ResolutionErrorCode::InvalidReferrer,
+            ResolutionErrorCode::UnsupportedSpecifier,
+            ResolutionErrorCode::ModuleNotFound,
+            ResolutionErrorCode::PolicyDenied,
+        ];
+        for code in &codes {
+            let json = serde_json::to_string(code).expect("serialize");
+            let decoded: ResolutionErrorCode = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(&decoded, code);
+        }
+    }
+
+    #[test]
+    fn module_definition_builder_chain() {
+        let def = ModuleDefinition::new(ModuleSyntax::EsModule, "import 'x'; export default 1;")
+            .with_dependency(ModuleDependency::new("x", ImportStyle::Import))
+            .require_capability(RuntimeCapability::FsRead)
+            .with_provenance("test:origin");
+
+        assert_eq!(def.dependencies.len(), 1);
+        assert_eq!(def.dependencies[0].specifier, "x");
+        assert!(
+            def.required_capabilities
+                .contains(&RuntimeCapability::FsRead)
+        );
+        assert_eq!(def.provenance_origin, "test:origin");
+    }
+
+    // -----------------------------------------------------------------------
+    // Path normalization
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn normalize_absolute_path_resolves_dotdot() {
+        assert_eq!(normalize_absolute_path("/a/b/../c"), "/a/c");
+        assert_eq!(normalize_absolute_path("/a/./b/./c"), "/a/b/c");
+        assert_eq!(normalize_absolute_path("/a/b/../../c"), "/c");
+    }
+
+    #[test]
+    fn normalize_absolute_path_root() {
+        assert_eq!(normalize_absolute_path("/"), "/");
+        assert_eq!(normalize_absolute_path("///"), "/");
+    }
+
+    #[test]
+    fn parent_directory_of_file() {
+        assert_eq!(parent_directory("/a/b/c.js"), "/a/b");
+        assert_eq!(parent_directory("/a.js"), "/");
+        assert_eq!(parent_directory("/"), "/");
+    }
+
+    // -----------------------------------------------------------------------
+    // Workspace module with relative path
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn register_workspace_module_with_relative_path_normalizes_to_absolute() {
+        let mut resolver = DeterministicModuleResolver::new("/workspace");
+        resolver
+            .register_workspace_module(
+                "src/lib.js",
+                ModuleDefinition::new(ModuleSyntax::EsModule, "export default 1;"),
+            )
+            .unwrap();
+
+        let request = ModuleRequest::new("/workspace/src/lib.js", ImportStyle::Import);
+        let outcome = resolver
+            .resolve(&request, &context(), &AllowAllPolicy)
+            .unwrap();
+        assert_eq!(outcome.module.canonical_specifier, "/workspace/src/lib.js");
+    }
+
+    // -----------------------------------------------------------------------
+    // Duplicate registration overwrites
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn duplicate_builtin_registration_overwrites_previous() {
+        let mut resolver = DeterministicModuleResolver::new("/app");
+        resolver
+            .register_builtin(
+                "franken:util",
+                ModuleDefinition::new(ModuleSyntax::EsModule, "export const v = 1;"),
+            )
+            .unwrap();
+        resolver
+            .register_builtin(
+                "franken:util",
+                ModuleDefinition::new(ModuleSyntax::EsModule, "export const v = 2;"),
+            )
+            .unwrap();
+
+        let request = ModuleRequest::new("franken:util", ImportStyle::Import);
+        let outcome = resolver
+            .resolve(&request, &context(), &AllowAllPolicy)
+            .unwrap();
+        assert_eq!(outcome.module.record.source, "export const v = 2;");
+    }
+
+    // -----------------------------------------------------------------------
+    // Default resolver root dir
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn default_resolver_has_root_dir_slash() {
+        let resolver = DeterministicModuleResolver::default();
+        assert_eq!(resolver.root_dir(), "/");
+    }
 }

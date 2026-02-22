@@ -812,4 +812,448 @@ mod tests {
         assert!(!event.outcome.is_empty());
         assert!(!event.error_code.is_empty());
     }
+
+    // -----------------------------------------------------------------------
+    // Empty module ID rejection
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn insert_empty_module_id_returns_empty_module_id_error() {
+        let mut cache = ModuleCache::new();
+        let version = ModuleVersionFingerprint::new(source_hash("v1"), 1, 1);
+        let err = cache
+            .insert(
+                CacheInsertRequest::new(
+                    "",
+                    version,
+                    ContentHash::compute(b"artifact"),
+                    "/app/empty.js",
+                ),
+                &context(),
+            )
+            .unwrap_err();
+        assert_eq!(err.code, CacheErrorCode::EmptyModuleId);
+        assert_eq!(err.code.stable_code(), "FE-MODCACHE-0003");
+    }
+
+    #[test]
+    fn insert_whitespace_only_module_id_returns_empty_module_id_error() {
+        let mut cache = ModuleCache::new();
+        let version = ModuleVersionFingerprint::new(source_hash("v1"), 1, 1);
+        let err = cache
+            .insert(
+                CacheInsertRequest::new(
+                    "   ",
+                    version,
+                    ContentHash::compute(b"artifact"),
+                    "/app/ws.js",
+                ),
+                &context(),
+            )
+            .unwrap_err();
+        assert_eq!(err.code, CacheErrorCode::EmptyModuleId);
+    }
+
+    // -----------------------------------------------------------------------
+    // Version regression
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn policy_version_regression_returns_version_regression_error() {
+        let mut cache = ModuleCache::new();
+        let ctx = context();
+        let v1 = ModuleVersionFingerprint::new(source_hash("s"), 5, 1);
+        cache
+            .insert(
+                CacheInsertRequest::new("mod:reg", v1, ContentHash::compute(b"a1"), "/app/reg.js"),
+                &ctx,
+            )
+            .unwrap();
+
+        let v2_regressed = ModuleVersionFingerprint::new(source_hash("s2"), 3, 1);
+        let err = cache
+            .insert(
+                CacheInsertRequest::new(
+                    "mod:reg",
+                    v2_regressed,
+                    ContentHash::compute(b"a2"),
+                    "/app/reg.js",
+                ),
+                &ctx,
+            )
+            .unwrap_err();
+        assert_eq!(err.code, CacheErrorCode::VersionRegression);
+        assert_eq!(err.code.stable_code(), "FE-MODCACHE-0002");
+    }
+
+    #[test]
+    fn trust_revision_regression_returns_version_regression_error() {
+        let mut cache = ModuleCache::new();
+        let ctx = context();
+        let v1 = ModuleVersionFingerprint::new(source_hash("s"), 1, 5);
+        cache
+            .insert(
+                CacheInsertRequest::new("mod:tr", v1, ContentHash::compute(b"a1"), "/app/tr.js"),
+                &ctx,
+            )
+            .unwrap();
+
+        let v2_regressed = ModuleVersionFingerprint::new(source_hash("s2"), 1, 3);
+        let err = cache
+            .insert(
+                CacheInsertRequest::new(
+                    "mod:tr",
+                    v2_regressed,
+                    ContentHash::compute(b"a2"),
+                    "/app/tr.js",
+                ),
+                &ctx,
+            )
+            .unwrap_err();
+        assert_eq!(err.code, CacheErrorCode::VersionRegression);
+    }
+
+    // -----------------------------------------------------------------------
+    // Get edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn get_unknown_module_returns_none() {
+        let cache = ModuleCache::new();
+        let version = ModuleVersionFingerprint::new(source_hash("s"), 1, 1);
+        assert!(cache.get("mod:unknown", &version).is_none());
+    }
+
+    #[test]
+    fn get_with_stale_version_returns_none() {
+        let mut cache = ModuleCache::new();
+        let v1 = ModuleVersionFingerprint::new(source_hash("v1"), 1, 1);
+        cache
+            .insert(
+                CacheInsertRequest::new(
+                    "mod:stale",
+                    v1.clone(),
+                    ContentHash::compute(b"a1"),
+                    "/app/stale.js",
+                ),
+                &context(),
+            )
+            .unwrap();
+
+        let v2 = ModuleVersionFingerprint::new(source_hash("v2"), 2, 1);
+        cache
+            .insert(
+                CacheInsertRequest::new(
+                    "mod:stale",
+                    v2,
+                    ContentHash::compute(b"a2"),
+                    "/app/stale.js",
+                ),
+                &context(),
+            )
+            .unwrap();
+
+        // v1 is now stale
+        assert!(cache.get("mod:stale", &v1).is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // Multiple modules
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn multiple_modules_coexist_independently() {
+        let mut cache = ModuleCache::new();
+        let ctx = context();
+
+        let va = ModuleVersionFingerprint::new(source_hash("a"), 1, 1);
+        let vb = ModuleVersionFingerprint::new(source_hash("b"), 1, 1);
+
+        cache
+            .insert(
+                CacheInsertRequest::new("mod:a", va.clone(), ContentHash::compute(b"aa"), "/a.js"),
+                &ctx,
+            )
+            .unwrap();
+        cache
+            .insert(
+                CacheInsertRequest::new("mod:b", vb.clone(), ContentHash::compute(b"bb"), "/b.js"),
+                &ctx,
+            )
+            .unwrap();
+
+        assert!(cache.get("mod:a", &va).is_some());
+        assert!(cache.get("mod:b", &vb).is_some());
+
+        // Revoke a, b should still be accessible
+        cache.invalidate_trust_revocation("mod:a", 2, &ctx);
+        assert!(cache.get("mod:a", &va).is_none());
+        assert!(cache.get("mod:b", &vb).is_some());
+    }
+
+    // -----------------------------------------------------------------------
+    // CacheErrorCode stable codes
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn all_cache_error_codes_have_fe_modcache_prefix() {
+        let codes = [
+            CacheErrorCode::ModuleRevoked,
+            CacheErrorCode::VersionRegression,
+            CacheErrorCode::EmptyModuleId,
+        ];
+        for code in &codes {
+            let stable = code.stable_code();
+            assert!(
+                stable.starts_with("FE-MODCACHE-"),
+                "stable_code {} must start with FE-MODCACHE-",
+                stable
+            );
+        }
+    }
+
+    #[test]
+    fn cache_error_codes_are_unique() {
+        let codes = [
+            CacheErrorCode::ModuleRevoked.stable_code(),
+            CacheErrorCode::VersionRegression.stable_code(),
+            CacheErrorCode::EmptyModuleId.stable_code(),
+        ];
+        let unique: BTreeSet<&str> = codes.iter().copied().collect();
+        assert_eq!(unique.len(), codes.len(), "all stable codes must be unique");
+    }
+
+    // -----------------------------------------------------------------------
+    // CacheError Display
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn cache_error_display_includes_stable_code_and_message() {
+        let mut cache = ModuleCache::new();
+        let version = ModuleVersionFingerprint::new(source_hash("v1"), 1, 1);
+        let err = cache
+            .insert(
+                CacheInsertRequest::new("", version, ContentHash::compute(b"a"), "/app/e.js"),
+                &context(),
+            )
+            .unwrap_err();
+        let display = format!("{err}");
+        assert!(display.contains("FE-MODCACHE-0003"));
+        assert!(display.contains("must not be empty"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Snapshot
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn empty_cache_snapshot_has_deterministic_state_hash() {
+        let a = ModuleCache::new();
+        let b = ModuleCache::new();
+        assert_eq!(a.state_hash(), b.state_hash());
+        let snap = a.snapshot();
+        assert!(snap.entries.is_empty());
+        assert!(snap.latest_versions.is_empty());
+        assert!(snap.revoked_modules.is_empty());
+    }
+
+    #[test]
+    fn snapshot_contains_all_current_entries() {
+        let mut cache = ModuleCache::new();
+        let ctx = context();
+        let v1 = ModuleVersionFingerprint::new(source_hash("s1"), 1, 1);
+        let v2 = ModuleVersionFingerprint::new(source_hash("s2"), 1, 1);
+
+        cache
+            .insert(
+                CacheInsertRequest::new("mod:x", v1, ContentHash::compute(b"ax"), "/x.js"),
+                &ctx,
+            )
+            .unwrap();
+        cache
+            .insert(
+                CacheInsertRequest::new("mod:y", v2, ContentHash::compute(b"ay"), "/y.js"),
+                &ctx,
+            )
+            .unwrap();
+
+        let snap = cache.snapshot();
+        assert_eq!(snap.entries.len(), 2);
+        assert_eq!(snap.latest_versions.len(), 2);
+    }
+
+    // -----------------------------------------------------------------------
+    // Merge snapshot
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn merge_snapshot_adopts_newer_versions() {
+        let ctx = context();
+        let mut local = ModuleCache::new();
+        let mut remote = ModuleCache::new();
+
+        let v1 = ModuleVersionFingerprint::new(source_hash("s"), 1, 1);
+        let v2 = ModuleVersionFingerprint::new(source_hash("s"), 2, 1);
+
+        local
+            .insert(
+                CacheInsertRequest::new("mod:m", v1.clone(), ContentHash::compute(b"a1"), "/m.js"),
+                &ctx,
+            )
+            .unwrap();
+        remote
+            .insert(
+                CacheInsertRequest::new("mod:m", v2.clone(), ContentHash::compute(b"a2"), "/m.js"),
+                &ctx,
+            )
+            .unwrap();
+
+        let remote_snap = remote.snapshot();
+        local.merge_snapshot(&remote_snap, &ctx);
+
+        // After merge, only v2 should be accessible (v1 is stale)
+        assert!(local.get("mod:m", &v1).is_none());
+        assert!(local.get("mod:m", &v2).is_some());
+    }
+
+    // -----------------------------------------------------------------------
+    // Canonical value determinism
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn module_version_fingerprint_canonical_value_is_deterministic() {
+        let fp1 = ModuleVersionFingerprint::new(source_hash("stable"), 3, 7);
+        let fp2 = ModuleVersionFingerprint::new(source_hash("stable"), 3, 7);
+        assert_eq!(
+            encode_value(&fp1.canonical_value()),
+            encode_value(&fp2.canonical_value())
+        );
+    }
+
+    #[test]
+    fn module_cache_key_canonical_value_is_deterministic() {
+        let version = ModuleVersionFingerprint::new(source_hash("k"), 1, 1);
+        let k1 = ModuleCacheKey::new("mod:det", version.clone());
+        let k2 = ModuleCacheKey::new("mod:det", version);
+        assert_eq!(
+            encode_value(&k1.canonical_value()),
+            encode_value(&k2.canonical_value())
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Event sequence monotonicity
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn event_sequences_are_monotonically_increasing() {
+        let mut cache = ModuleCache::new();
+        let ctx = context();
+        let v1 = ModuleVersionFingerprint::new(source_hash("ev"), 1, 1);
+        cache
+            .insert(
+                CacheInsertRequest::new("mod:ev", v1, ContentHash::compute(b"a"), "/ev.js"),
+                &ctx,
+            )
+            .unwrap();
+        cache.invalidate_trust_revocation("mod:ev", 2, &ctx);
+        cache.restore_trust("mod:ev", 3, &ctx);
+
+        let seqs: Vec<u64> = cache.events().iter().map(|e| e.seq).collect();
+        for window in seqs.windows(2) {
+            assert!(
+                window[1] > window[0],
+                "event seq must be monotonically increasing: {:?}",
+                seqs
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Serde round-trips
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn cache_error_code_serde_round_trip() {
+        let codes = [
+            CacheErrorCode::ModuleRevoked,
+            CacheErrorCode::VersionRegression,
+            CacheErrorCode::EmptyModuleId,
+        ];
+        for code in &codes {
+            let json = serde_json::to_string(code).expect("serialize");
+            let decoded: CacheErrorCode = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(&decoded, code);
+        }
+    }
+
+    #[test]
+    fn module_version_fingerprint_serde_round_trip() {
+        let fp = ModuleVersionFingerprint::new(source_hash("serde-test"), 42, 7);
+        let json = serde_json::to_string(&fp).expect("serialize");
+        let decoded: ModuleVersionFingerprint = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(decoded, fp);
+    }
+
+    #[test]
+    fn cache_snapshot_serde_round_trip() {
+        let mut cache = ModuleCache::new();
+        let ctx = context();
+        let v = ModuleVersionFingerprint::new(source_hash("snap"), 1, 1);
+        cache
+            .insert(
+                CacheInsertRequest::new("mod:snap", v, ContentHash::compute(b"as"), "/snap.js"),
+                &ctx,
+            )
+            .unwrap();
+
+        let snap = cache.snapshot();
+        let json = serde_json::to_string(&snap).expect("serialize");
+        let decoded: CacheSnapshot = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(decoded, snap);
+    }
+
+    // -----------------------------------------------------------------------
+    // Invalidate source update on unknown module
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn invalidate_source_update_on_unknown_module_creates_version_entry() {
+        let mut cache = ModuleCache::new();
+        cache.invalidate_source_update("mod:new", source_hash("fresh"), &context());
+        let snap = cache.snapshot();
+        assert!(snap.latest_versions.contains_key("mod:new"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Forward version upgrade succeeds
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn forward_version_upgrade_succeeds() {
+        let mut cache = ModuleCache::new();
+        let ctx = context();
+        let v1 = ModuleVersionFingerprint::new(source_hash("s"), 1, 1);
+        cache
+            .insert(
+                CacheInsertRequest::new("mod:up", v1, ContentHash::compute(b"a1"), "/up.js"),
+                &ctx,
+            )
+            .unwrap();
+
+        let v2 = ModuleVersionFingerprint::new(source_hash("s2"), 2, 2);
+        cache
+            .insert(
+                CacheInsertRequest::new(
+                    "mod:up",
+                    v2.clone(),
+                    ContentHash::compute(b"a2"),
+                    "/up.js",
+                ),
+                &ctx,
+            )
+            .unwrap();
+
+        assert!(cache.get("mod:up", &v2).is_some());
+    }
 }

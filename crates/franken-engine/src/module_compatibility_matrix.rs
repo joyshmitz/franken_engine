@@ -1110,4 +1110,753 @@ mod tests {
             .expect_err("expected missing waiver error");
         assert_eq!(error.code, CompatibilityMatrixErrorCode::MissingWaiver);
     }
+
+    // ── Enum as_str ────────────────────────────────────────────────
+
+    #[test]
+    fn module_feature_as_str() {
+        assert_eq!(ModuleFeature::Esm.as_str(), "esm");
+        assert_eq!(ModuleFeature::Cjs.as_str(), "cjs");
+        assert_eq!(ModuleFeature::DualMode.as_str(), "dual_mode");
+        assert_eq!(
+            ModuleFeature::ConditionalExports.as_str(),
+            "conditional_exports"
+        );
+        assert_eq!(
+            ModuleFeature::PackageJsonFields.as_str(),
+            "package_json_fields"
+        );
+    }
+
+    #[test]
+    fn compatibility_runtime_as_str() {
+        assert_eq!(
+            CompatibilityRuntime::FrankenEngine.as_str(),
+            "franken_engine"
+        );
+        assert_eq!(CompatibilityRuntime::Node.as_str(), "node");
+        assert_eq!(CompatibilityRuntime::Bun.as_str(), "bun");
+    }
+
+    #[test]
+    fn compatibility_mode_as_str() {
+        assert_eq!(CompatibilityMode::Native.as_str(), "native");
+        assert_eq!(CompatibilityMode::NodeCompat.as_str(), "node_compat");
+        assert_eq!(CompatibilityMode::BunCompat.as_str(), "bun_compat");
+    }
+
+    #[test]
+    fn reference_runtime_as_str() {
+        assert_eq!(ReferenceRuntime::Node.as_str(), "node");
+        assert_eq!(ReferenceRuntime::Bun.as_str(), "bun");
+    }
+
+    // ── Error code stable strings ──────────────────────────────────
+
+    #[test]
+    fn error_code_stable_code_all_variants() {
+        assert_eq!(
+            CompatibilityMatrixErrorCode::MatrixParseError.stable_code(),
+            "FE-MODCOMP-0001"
+        );
+        assert_eq!(
+            CompatibilityMatrixErrorCode::DuplicateCaseId.stable_code(),
+            "FE-MODCOMP-0002"
+        );
+        assert_eq!(
+            CompatibilityMatrixErrorCode::CaseNotFound.stable_code(),
+            "FE-MODCOMP-0003"
+        );
+        assert_eq!(
+            CompatibilityMatrixErrorCode::HiddenShim.stable_code(),
+            "FE-MODCOMP-0004"
+        );
+        assert_eq!(
+            CompatibilityMatrixErrorCode::MissingWaiver.stable_code(),
+            "FE-MODCOMP-0005"
+        );
+        assert_eq!(
+            CompatibilityMatrixErrorCode::MissingMigrationGuidance.stable_code(),
+            "FE-MODCOMP-0006"
+        );
+        assert_eq!(
+            CompatibilityMatrixErrorCode::InvalidMatrix.stable_code(),
+            "FE-MODCOMP-0007"
+        );
+        assert_eq!(
+            CompatibilityMatrixErrorCode::ObservationMismatch.stable_code(),
+            "FE-MODCOMP-0008"
+        );
+    }
+
+    // ── Error Display ──────────────────────────────────────────────
+
+    #[test]
+    fn error_display_without_event() {
+        let err = CompatibilityMatrixError {
+            code: CompatibilityMatrixErrorCode::InvalidMatrix,
+            message: "bad matrix".to_string(),
+            event: None,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("FE-MODCOMP-0007"));
+        assert!(msg.contains("bad matrix"));
+    }
+
+    #[test]
+    fn error_display_with_event() {
+        let err = CompatibilityMatrixError {
+            code: CompatibilityMatrixErrorCode::CaseNotFound,
+            message: "not found".to_string(),
+            event: Some(CompatibilityEvent {
+                seq: 0,
+                trace_id: "t1".to_string(),
+                decision_id: "d1".to_string(),
+                policy_id: "p1".to_string(),
+                component: "test".to_string(),
+                event: "lookup".to_string(),
+                outcome: "error".to_string(),
+                error_code: "FE-MODCOMP-0003".to_string(),
+                case_id: "c1".to_string(),
+                runtime: "franken_engine".to_string(),
+                mode: "native".to_string(),
+                detail: "missing".to_string(),
+            }),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("t1"));
+        assert!(msg.contains("d1"));
+        assert!(msg.contains("p1"));
+    }
+
+    #[test]
+    fn error_is_std_error() {
+        let err = CompatibilityMatrixError {
+            code: CompatibilityMatrixErrorCode::InvalidMatrix,
+            message: "test".to_string(),
+            event: None,
+        };
+        let _: &dyn std::error::Error = &err;
+    }
+
+    // ── from_entries validation ────────────────────────────────────
+
+    #[test]
+    fn from_entries_empty_schema_version_fails() {
+        let err = ModuleCompatibilityMatrix::from_entries("", Vec::new()).unwrap_err();
+        assert_eq!(err.code, CompatibilityMatrixErrorCode::InvalidMatrix);
+    }
+
+    #[test]
+    fn from_entries_empty_case_id_fails() {
+        let entry = CompatibilityMatrixEntry {
+            case_id: "".to_string(),
+            feature: ModuleFeature::Esm,
+            scenario: "test".to_string(),
+            node_behavior: "ok".to_string(),
+            bun_behavior: "ok".to_string(),
+            franken_native_behavior: "ok".to_string(),
+            franken_node_compat_behavior: "ok".to_string(),
+            franken_bun_compat_behavior: "ok".to_string(),
+            explicit_shims: Vec::new(),
+            lockstep_case_refs: vec!["ref".to_string()],
+            test262_refs: vec!["test".to_string()],
+            divergence: None,
+        };
+        let err = ModuleCompatibilityMatrix::from_entries("1.0.0", vec![entry]).unwrap_err();
+        assert_eq!(err.code, CompatibilityMatrixErrorCode::InvalidMatrix);
+    }
+
+    #[test]
+    fn from_entries_duplicate_case_id_fails() {
+        let entry = || CompatibilityMatrixEntry {
+            case_id: "dup-case".to_string(),
+            feature: ModuleFeature::Esm,
+            scenario: "test".to_string(),
+            node_behavior: "ok".to_string(),
+            bun_behavior: "ok".to_string(),
+            franken_native_behavior: "ok".to_string(),
+            franken_node_compat_behavior: "ok".to_string(),
+            franken_bun_compat_behavior: "ok".to_string(),
+            explicit_shims: Vec::new(),
+            lockstep_case_refs: vec!["ref".to_string()],
+            test262_refs: vec!["test".to_string()],
+            divergence: None,
+        };
+        let err =
+            ModuleCompatibilityMatrix::from_entries("1.0.0", vec![entry(), entry()]).unwrap_err();
+        assert_eq!(err.code, CompatibilityMatrixErrorCode::DuplicateCaseId);
+    }
+
+    // ── from_json_str ──────────────────────────────────────────────
+
+    #[test]
+    fn from_json_str_invalid_json_fails() {
+        let err = ModuleCompatibilityMatrix::from_json_str("not json").unwrap_err();
+        assert_eq!(err.code, CompatibilityMatrixErrorCode::MatrixParseError);
+    }
+
+    // ── entry lookup ───────────────────────────────────────────────
+
+    #[test]
+    fn entry_lookup_found() {
+        let matrix = ModuleCompatibilityMatrix::from_default_json().unwrap();
+        let entries = matrix.entries();
+        assert!(!entries.is_empty());
+        let first_id = &entries[0].case_id;
+        assert!(matrix.entry(first_id).is_some());
+    }
+
+    #[test]
+    fn entry_lookup_not_found() {
+        let matrix = ModuleCompatibilityMatrix::from_default_json().unwrap();
+        assert!(matrix.entry("nonexistent-case-id-xyz").is_none());
+    }
+
+    // ── canonical_bytes deterministic ──────────────────────────────
+
+    #[test]
+    fn canonical_bytes_deterministic() {
+        let a = ModuleCompatibilityMatrix::from_default_json().unwrap();
+        let b = ModuleCompatibilityMatrix::from_default_json().unwrap();
+        assert_eq!(a.canonical_bytes(), b.canonical_bytes());
+    }
+
+    // ── events accessor ────────────────────────────────────────────
+
+    #[test]
+    fn events_empty_initially() {
+        let matrix = ModuleCompatibilityMatrix::from_default_json().unwrap();
+        assert!(matrix.events().is_empty());
+    }
+
+    // ── serde round-trips ──────────────────────────────────────────
+
+    #[test]
+    fn module_feature_serde_round_trip() {
+        for variant in [
+            ModuleFeature::Esm,
+            ModuleFeature::Cjs,
+            ModuleFeature::DualMode,
+            ModuleFeature::ConditionalExports,
+            ModuleFeature::PackageJsonFields,
+        ] {
+            let json = serde_json::to_string(&variant).unwrap();
+            let back: ModuleFeature = serde_json::from_str(&json).unwrap();
+            assert_eq!(variant, back);
+        }
+    }
+
+    #[test]
+    fn compatibility_runtime_serde_round_trip() {
+        for variant in [
+            CompatibilityRuntime::FrankenEngine,
+            CompatibilityRuntime::Node,
+            CompatibilityRuntime::Bun,
+        ] {
+            let json = serde_json::to_string(&variant).unwrap();
+            let back: CompatibilityRuntime = serde_json::from_str(&json).unwrap();
+            assert_eq!(variant, back);
+        }
+    }
+
+    #[test]
+    fn compatibility_mode_serde_round_trip() {
+        for variant in [
+            CompatibilityMode::Native,
+            CompatibilityMode::NodeCompat,
+            CompatibilityMode::BunCompat,
+        ] {
+            let json = serde_json::to_string(&variant).unwrap();
+            let back: CompatibilityMode = serde_json::from_str(&json).unwrap();
+            assert_eq!(variant, back);
+        }
+    }
+
+    #[test]
+    fn error_code_serde_round_trip() {
+        for variant in [
+            CompatibilityMatrixErrorCode::MatrixParseError,
+            CompatibilityMatrixErrorCode::DuplicateCaseId,
+            CompatibilityMatrixErrorCode::CaseNotFound,
+            CompatibilityMatrixErrorCode::HiddenShim,
+            CompatibilityMatrixErrorCode::MissingWaiver,
+            CompatibilityMatrixErrorCode::MissingMigrationGuidance,
+            CompatibilityMatrixErrorCode::InvalidMatrix,
+            CompatibilityMatrixErrorCode::ObservationMismatch,
+        ] {
+            let json = serde_json::to_string(&variant).unwrap();
+            let back: CompatibilityMatrixErrorCode = serde_json::from_str(&json).unwrap();
+            assert_eq!(variant, back);
+        }
+    }
+
+    // ── evaluate_observation: case not found ───────────────────────
+
+    #[test]
+    fn evaluate_observation_unknown_case_fails() {
+        let mut matrix = ModuleCompatibilityMatrix::from_default_json().unwrap();
+        let obs = CompatibilityObservation::new(
+            "nonexistent-case-xyz",
+            CompatibilityRuntime::FrankenEngine,
+            CompatibilityMode::Native,
+            "some behavior",
+        );
+        let err = matrix.evaluate_observation(&obs, &context()).unwrap_err();
+        assert_eq!(err.code, CompatibilityMatrixErrorCode::CaseNotFound);
+    }
+
+    // ── required_waiver_ids ────────────────────────────────────────
+
+    #[test]
+    fn required_waiver_ids_from_default() {
+        let matrix = ModuleCompatibilityMatrix::from_default_json().unwrap();
+        let waivers = matrix.required_waiver_ids();
+        // Default matrix should have at least one waiver
+        assert!(!waivers.is_empty());
+    }
+
+    // ── Helper for valid test entries ────────────────────────────
+
+    fn valid_entry(case_id: &str) -> CompatibilityMatrixEntry {
+        CompatibilityMatrixEntry {
+            case_id: case_id.to_string(),
+            feature: ModuleFeature::Esm,
+            scenario: "test scenario".to_string(),
+            node_behavior: "ok".to_string(),
+            bun_behavior: "ok".to_string(),
+            franken_native_behavior: "ok".to_string(),
+            franken_node_compat_behavior: "ok".to_string(),
+            franken_bun_compat_behavior: "ok".to_string(),
+            explicit_shims: Vec::new(),
+            lockstep_case_refs: vec!["lockstep/ref".to_string()],
+            test262_refs: vec!["test262/ref.js".to_string()],
+            divergence: None,
+        }
+    }
+
+    fn valid_shim(mode: CompatibilityMode) -> ExplicitShim {
+        ExplicitShim {
+            shim_id: "shim-1".to_string(),
+            mode,
+            description: "shim description".to_string(),
+            removable: true,
+            test_case_ref: "test/ref.js".to_string(),
+        }
+    }
+
+    // ── validate_entry: empty scenario ───────────────────────────
+
+    #[test]
+    fn validate_entry_empty_scenario_fails() {
+        let mut entry = valid_entry("case-1");
+        entry.scenario.clear();
+        let mut matrix = ModuleCompatibilityMatrix::from_entries("1.0.0", vec![entry]).unwrap();
+        let err = matrix
+            .validate_with_waivers(&BTreeSet::new(), &context())
+            .unwrap_err();
+        assert_eq!(err.code, CompatibilityMatrixErrorCode::InvalidMatrix);
+        assert!(err.message.contains("scenario"));
+    }
+
+    #[test]
+    fn validate_entry_empty_lockstep_refs_fails() {
+        let mut entry = valid_entry("case-1");
+        entry.lockstep_case_refs.clear();
+        let mut matrix = ModuleCompatibilityMatrix::from_entries("1.0.0", vec![entry]).unwrap();
+        let err = matrix
+            .validate_with_waivers(&BTreeSet::new(), &context())
+            .unwrap_err();
+        assert_eq!(err.code, CompatibilityMatrixErrorCode::InvalidMatrix);
+        assert!(err.message.contains("lockstep"));
+    }
+
+    #[test]
+    fn validate_entry_empty_test262_refs_fails() {
+        let mut entry = valid_entry("case-1");
+        entry.test262_refs.clear();
+        let mut matrix = ModuleCompatibilityMatrix::from_entries("1.0.0", vec![entry]).unwrap();
+        let err = matrix
+            .validate_with_waivers(&BTreeSet::new(), &context())
+            .unwrap_err();
+        assert_eq!(err.code, CompatibilityMatrixErrorCode::InvalidMatrix);
+        assert!(err.message.contains("test262"));
+    }
+
+    // ── validate_entry: shim field validation ────────────────────
+
+    #[test]
+    fn validate_entry_shim_empty_shim_id_fails() {
+        let mut entry = valid_entry("case-1");
+        entry.franken_node_compat_behavior = "different".to_string();
+        let mut shim = valid_shim(CompatibilityMode::NodeCompat);
+        shim.shim_id.clear();
+        entry.explicit_shims.push(shim);
+        let mut matrix = ModuleCompatibilityMatrix::from_entries("1.0.0", vec![entry]).unwrap();
+        let err = matrix
+            .validate_with_waivers(&BTreeSet::new(), &context())
+            .unwrap_err();
+        assert_eq!(err.code, CompatibilityMatrixErrorCode::InvalidMatrix);
+        assert!(err.message.contains("shim_id"));
+    }
+
+    #[test]
+    fn validate_entry_shim_empty_description_fails() {
+        let mut entry = valid_entry("case-1");
+        entry.franken_node_compat_behavior = "different".to_string();
+        let mut shim = valid_shim(CompatibilityMode::NodeCompat);
+        shim.description.clear();
+        entry.explicit_shims.push(shim);
+        let mut matrix = ModuleCompatibilityMatrix::from_entries("1.0.0", vec![entry]).unwrap();
+        let err = matrix
+            .validate_with_waivers(&BTreeSet::new(), &context())
+            .unwrap_err();
+        assert_eq!(err.code, CompatibilityMatrixErrorCode::InvalidMatrix);
+        assert!(err.message.contains("description"));
+    }
+
+    #[test]
+    fn validate_entry_shim_empty_test_case_ref_fails() {
+        let mut entry = valid_entry("case-1");
+        entry.franken_node_compat_behavior = "different".to_string();
+        let mut shim = valid_shim(CompatibilityMode::NodeCompat);
+        shim.test_case_ref.clear();
+        entry.explicit_shims.push(shim);
+        let mut matrix = ModuleCompatibilityMatrix::from_entries("1.0.0", vec![entry]).unwrap();
+        let err = matrix
+            .validate_with_waivers(&BTreeSet::new(), &context())
+            .unwrap_err();
+        assert_eq!(err.code, CompatibilityMatrixErrorCode::InvalidMatrix);
+        assert!(err.message.contains("test_case_ref"));
+    }
+
+    #[test]
+    fn validate_entry_shim_not_removable_fails() {
+        let mut entry = valid_entry("case-1");
+        entry.franken_node_compat_behavior = "different".to_string();
+        let mut shim = valid_shim(CompatibilityMode::NodeCompat);
+        shim.removable = false;
+        entry.explicit_shims.push(shim);
+        let mut matrix = ModuleCompatibilityMatrix::from_entries("1.0.0", vec![entry]).unwrap();
+        let err = matrix
+            .validate_with_waivers(&BTreeSet::new(), &context())
+            .unwrap_err();
+        assert_eq!(err.code, CompatibilityMatrixErrorCode::InvalidMatrix);
+        assert!(err.message.contains("removable"));
+    }
+
+    // ── validate_entry: divergence metadata validation ───────────
+
+    #[test]
+    fn validate_entry_divergence_present_but_no_mismatch_fails() {
+        let mut entry = valid_entry("case-1");
+        // All behaviors match, but divergence is declared — invalid
+        entry.divergence = Some(DivergencePolicy {
+            diverges_from: vec![ReferenceRuntime::Node],
+            reason: "reason".to_string(),
+            impact: "impact".to_string(),
+            waiver_id: "w-1".to_string(),
+            migration_guidance: "guidance".to_string(),
+        });
+        let mut matrix = ModuleCompatibilityMatrix::from_entries("1.0.0", vec![entry]).unwrap();
+        let err = matrix
+            .validate_with_waivers(&BTreeSet::from(["w-1".to_string()]), &context())
+            .unwrap_err();
+        assert_eq!(err.code, CompatibilityMatrixErrorCode::InvalidMatrix);
+        assert!(err.message.contains("native behavior matches"));
+    }
+
+    #[test]
+    fn validate_entry_declared_runtime_set_mismatch_fails() {
+        let mut entry = valid_entry("case-1");
+        entry.franken_native_behavior = "native".to_string();
+        entry.franken_node_compat_behavior = "native".to_string();
+        entry.franken_bun_compat_behavior = "native".to_string();
+        entry.node_behavior = "node-diff".to_string();
+        entry.bun_behavior = "bun-diff".to_string();
+        // Declares only Node, but Bun also diverges
+        entry.divergence = Some(DivergencePolicy {
+            diverges_from: vec![ReferenceRuntime::Node],
+            reason: "r".to_string(),
+            impact: "i".to_string(),
+            waiver_id: "w-1".to_string(),
+            migration_guidance: "g".to_string(),
+        });
+        let mut matrix = ModuleCompatibilityMatrix::from_entries("1.0.0", vec![entry]).unwrap();
+        let err = matrix
+            .validate_with_waivers(&BTreeSet::from(["w-1".to_string()]), &context())
+            .unwrap_err();
+        assert_eq!(err.code, CompatibilityMatrixErrorCode::InvalidMatrix);
+        assert!(err.message.contains("runtime set mismatch"));
+    }
+
+    #[test]
+    fn validate_entry_empty_waiver_id_fails() {
+        let mut entry = valid_entry("case-1");
+        entry.franken_native_behavior = "native".to_string();
+        entry.franken_node_compat_behavior = "native".to_string();
+        entry.franken_bun_compat_behavior = "native".to_string();
+        entry.node_behavior = "different".to_string();
+        entry.bun_behavior = "native".to_string();
+        entry.divergence = Some(DivergencePolicy {
+            diverges_from: vec![ReferenceRuntime::Node],
+            reason: "r".to_string(),
+            impact: "i".to_string(),
+            waiver_id: "".to_string(),
+            migration_guidance: "g".to_string(),
+        });
+        let mut matrix = ModuleCompatibilityMatrix::from_entries("1.0.0", vec![entry]).unwrap();
+        let err = matrix
+            .validate_with_waivers(&BTreeSet::new(), &context())
+            .unwrap_err();
+        assert_eq!(err.code, CompatibilityMatrixErrorCode::MissingWaiver);
+    }
+
+    #[test]
+    fn validate_entry_empty_migration_guidance_fails() {
+        let mut entry = valid_entry("case-1");
+        entry.franken_native_behavior = "native".to_string();
+        entry.franken_node_compat_behavior = "native".to_string();
+        entry.franken_bun_compat_behavior = "native".to_string();
+        entry.node_behavior = "different".to_string();
+        entry.bun_behavior = "native".to_string();
+        entry.divergence = Some(DivergencePolicy {
+            diverges_from: vec![ReferenceRuntime::Node],
+            reason: "r".to_string(),
+            impact: "i".to_string(),
+            waiver_id: "w-1".to_string(),
+            migration_guidance: "".to_string(),
+        });
+        let mut matrix = ModuleCompatibilityMatrix::from_entries("1.0.0", vec![entry]).unwrap();
+        let err = matrix
+            .validate_with_waivers(&BTreeSet::from(["w-1".to_string()]), &context())
+            .unwrap_err();
+        assert_eq!(
+            err.code,
+            CompatibilityMatrixErrorCode::MissingMigrationGuidance
+        );
+    }
+
+    #[test]
+    fn validate_entry_diverges_without_policy_fails() {
+        let mut entry = valid_entry("case-1");
+        entry.franken_native_behavior = "native".to_string();
+        entry.franken_node_compat_behavior = "native".to_string();
+        entry.franken_bun_compat_behavior = "native".to_string();
+        entry.node_behavior = "different".to_string();
+        entry.bun_behavior = "native".to_string();
+        // No divergence policy declared
+        entry.divergence = None;
+        let mut matrix = ModuleCompatibilityMatrix::from_entries("1.0.0", vec![entry]).unwrap();
+        let err = matrix
+            .validate_with_waivers(&BTreeSet::new(), &context())
+            .unwrap_err();
+        assert_eq!(err.code, CompatibilityMatrixErrorCode::MissingWaiver);
+    }
+
+    // ── validate_entry: fully valid entry passes ─────────────────
+
+    #[test]
+    fn validate_entry_fully_valid_passes() {
+        let entry = valid_entry("case-ok");
+        let mut matrix = ModuleCompatibilityMatrix::from_entries("1.0.0", vec![entry]).unwrap();
+        matrix
+            .validate_with_waivers(&BTreeSet::new(), &context())
+            .expect("valid entry should pass validation");
+        assert!(!matrix.events().is_empty());
+    }
+
+    #[test]
+    fn validate_entry_valid_with_divergence_passes() {
+        let mut entry = valid_entry("case-div");
+        entry.franken_native_behavior = "native".to_string();
+        entry.franken_node_compat_behavior = "native".to_string();
+        entry.franken_bun_compat_behavior = "native".to_string();
+        entry.node_behavior = "different".to_string();
+        entry.bun_behavior = "native".to_string();
+        entry.divergence = Some(DivergencePolicy {
+            diverges_from: vec![ReferenceRuntime::Node],
+            reason: "reason".to_string(),
+            impact: "low".to_string(),
+            waiver_id: "w-div".to_string(),
+            migration_guidance: "use native API".to_string(),
+        });
+        let mut matrix = ModuleCompatibilityMatrix::from_entries("1.0.0", vec![entry]).unwrap();
+        matrix
+            .validate_with_waivers(&BTreeSet::from(["w-div".to_string()]), &context())
+            .expect("valid divergent entry should pass");
+    }
+
+    // ── evaluate_observation: behavior mismatch ──────────────────
+
+    #[test]
+    fn evaluate_observation_behavior_mismatch_fails() {
+        let entry = valid_entry("case-obs");
+        let mut matrix = ModuleCompatibilityMatrix::from_entries("1.0.0", vec![entry]).unwrap();
+        let obs = CompatibilityObservation::new(
+            "case-obs",
+            CompatibilityRuntime::FrankenEngine,
+            CompatibilityMode::Native,
+            "unexpected-behavior",
+        );
+        let err = matrix.evaluate_observation(&obs, &context()).unwrap_err();
+        assert_eq!(err.code, CompatibilityMatrixErrorCode::ObservationMismatch);
+        assert!(err.message.contains("mismatch"));
+    }
+
+    #[test]
+    fn evaluate_observation_matching_behavior_succeeds() {
+        let entry = valid_entry("case-obs");
+        let mut matrix = ModuleCompatibilityMatrix::from_entries("1.0.0", vec![entry]).unwrap();
+        let obs = CompatibilityObservation::new(
+            "case-obs",
+            CompatibilityRuntime::FrankenEngine,
+            CompatibilityMode::Native,
+            "ok",
+        );
+        let outcome = matrix.evaluate_observation(&obs, &context()).unwrap();
+        assert!(outcome.matched);
+        assert_eq!(outcome.case_id, "case-obs");
+        assert_eq!(outcome.expected_behavior, "ok");
+        assert_eq!(outcome.observed_behavior, "ok");
+        assert!(outcome.divergence.is_none());
+    }
+
+    #[test]
+    fn evaluate_observation_with_divergence_returns_policy() {
+        let mut entry = valid_entry("case-div-obs");
+        entry.franken_native_behavior = "native-behavior".to_string();
+        entry.node_behavior = "node-different".to_string();
+        entry.divergence = Some(DivergencePolicy {
+            diverges_from: vec![ReferenceRuntime::Node],
+            reason: "intentional".to_string(),
+            impact: "low".to_string(),
+            waiver_id: "w-obs".to_string(),
+            migration_guidance: "use compat mode".to_string(),
+        });
+        let mut matrix = ModuleCompatibilityMatrix::from_entries("1.0.0", vec![entry]).unwrap();
+        let obs = CompatibilityObservation::new(
+            "case-div-obs",
+            CompatibilityRuntime::FrankenEngine,
+            CompatibilityMode::Native,
+            "native-behavior",
+        );
+        let outcome = matrix.evaluate_observation(&obs, &context()).unwrap();
+        assert!(outcome.matched);
+        assert!(outcome.divergence.is_some());
+    }
+
+    #[test]
+    fn evaluate_observation_node_runtime() {
+        let mut entry = valid_entry("case-node");
+        entry.node_behavior = "node-ok".to_string();
+        let mut matrix = ModuleCompatibilityMatrix::from_entries("1.0.0", vec![entry]).unwrap();
+        let obs = CompatibilityObservation::new(
+            "case-node",
+            CompatibilityRuntime::Node,
+            CompatibilityMode::Native,
+            "node-ok",
+        );
+        let outcome = matrix.evaluate_observation(&obs, &context()).unwrap();
+        assert!(outcome.matched);
+    }
+
+    #[test]
+    fn evaluate_observation_bun_runtime() {
+        let mut entry = valid_entry("case-bun");
+        entry.bun_behavior = "bun-ok".to_string();
+        let mut matrix = ModuleCompatibilityMatrix::from_entries("1.0.0", vec![entry]).unwrap();
+        let obs = CompatibilityObservation::new(
+            "case-bun",
+            CompatibilityRuntime::Bun,
+            CompatibilityMode::Native,
+            "bun-ok",
+        );
+        let outcome = matrix.evaluate_observation(&obs, &context()).unwrap();
+        assert!(outcome.matched);
+    }
+
+    #[test]
+    fn evaluate_observation_franken_node_compat_mode() {
+        let mut entry = valid_entry("case-nc");
+        entry.franken_node_compat_behavior = "nc-behavior".to_string();
+        let mut matrix = ModuleCompatibilityMatrix::from_entries("1.0.0", vec![entry]).unwrap();
+        let obs = CompatibilityObservation::new(
+            "case-nc",
+            CompatibilityRuntime::FrankenEngine,
+            CompatibilityMode::NodeCompat,
+            "nc-behavior",
+        );
+        let outcome = matrix.evaluate_observation(&obs, &context()).unwrap();
+        assert!(outcome.matched);
+    }
+
+    #[test]
+    fn evaluate_observation_franken_bun_compat_mode() {
+        let mut entry = valid_entry("case-bc");
+        entry.franken_bun_compat_behavior = "bc-behavior".to_string();
+        let mut matrix = ModuleCompatibilityMatrix::from_entries("1.0.0", vec![entry]).unwrap();
+        let obs = CompatibilityObservation::new(
+            "case-bc",
+            CompatibilityRuntime::FrankenEngine,
+            CompatibilityMode::BunCompat,
+            "bc-behavior",
+        );
+        let outcome = matrix.evaluate_observation(&obs, &context()).unwrap();
+        assert!(outcome.matched);
+    }
+
+    // ── to_json_pretty ──────────────────────────────────────────
+
+    #[test]
+    fn to_json_pretty_round_trips() {
+        let matrix = ModuleCompatibilityMatrix::from_default_json().unwrap();
+        let json = matrix.to_json_pretty().unwrap();
+        let reparsed = ModuleCompatibilityMatrix::from_json_str(&json).unwrap();
+        assert_eq!(matrix.canonical_hash(), reparsed.canonical_hash());
+    }
+
+    // ── canonical_hash ──────────────────────────────────────────
+
+    #[test]
+    fn canonical_hash_differs_for_different_entries() {
+        let entry_a = valid_entry("case-a");
+        let entry_b = valid_entry("case-b");
+        let ma = ModuleCompatibilityMatrix::from_entries("1.0.0", vec![entry_a]).unwrap();
+        let mb = ModuleCompatibilityMatrix::from_entries("1.0.0", vec![entry_b]).unwrap();
+        assert_ne!(ma.canonical_hash(), mb.canonical_hash());
+    }
+
+    // ── bun_compat hidden shim ──────────────────────────────────
+
+    #[test]
+    fn validate_entry_bun_compat_hidden_shim_fails() {
+        let mut entry = valid_entry("case-bun-shim");
+        entry.franken_bun_compat_behavior = "different".to_string();
+        // No shim declared for BunCompat
+        let mut matrix = ModuleCompatibilityMatrix::from_entries("1.0.0", vec![entry]).unwrap();
+        let err = matrix
+            .validate_with_waivers(&BTreeSet::new(), &context())
+            .unwrap_err();
+        assert_eq!(err.code, CompatibilityMatrixErrorCode::HiddenShim);
+    }
+
+    // ── event sequencing ────────────────────────────────────────
+
+    #[test]
+    fn events_have_incrementing_sequence_numbers() {
+        let mut matrix = ModuleCompatibilityMatrix::from_entries(
+            "1.0.0",
+            vec![valid_entry("case-1"), valid_entry("case-2")],
+        )
+        .unwrap();
+        matrix
+            .validate_with_waivers(&BTreeSet::new(), &context())
+            .expect("valid entries should pass");
+        let events = matrix.events();
+        assert!(events.len() >= 2);
+        for (i, event) in events.iter().enumerate() {
+            assert_eq!(event.seq, i as u64);
+        }
+    }
 }

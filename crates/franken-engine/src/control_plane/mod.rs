@@ -659,4 +659,173 @@ mod tests {
             }
         ));
     }
+
+    // ── DecisionVerdict ────────────────────────────────────────────
+
+    #[test]
+    fn decision_verdict_as_str() {
+        assert_eq!(DecisionVerdict::Allow.as_str(), "allow");
+        assert_eq!(DecisionVerdict::Deny.as_str(), "deny");
+        assert_eq!(DecisionVerdict::Timeout.as_str(), "timeout");
+    }
+
+    #[test]
+    fn decision_verdict_serde_round_trip() {
+        for variant in [
+            DecisionVerdict::Allow,
+            DecisionVerdict::Deny,
+            DecisionVerdict::Timeout,
+        ] {
+            let json = serde_json::to_string(&variant).unwrap();
+            let back: DecisionVerdict = serde_json::from_str(&json).unwrap();
+            assert_eq!(variant, back);
+        }
+    }
+
+    // ── DecisionRequest conversion helpers ─────────────────────────
+
+    #[test]
+    fn decision_request_calibration_score() {
+        let req = request(1);
+        assert!((req.calibration_score() - 0.94).abs() < 1e-9);
+    }
+
+    #[test]
+    fn decision_request_e_process() {
+        let req = request(1);
+        assert!((req.e_process() - 0.110).abs() < 1e-9);
+    }
+
+    #[test]
+    fn decision_request_ci_width() {
+        let req = request(1);
+        assert!((req.ci_width() - 0.045).abs() < 1e-9);
+    }
+
+    #[test]
+    fn decision_request_serde_round_trip() {
+        let req = request(42);
+        let json = serde_json::to_string(&req).unwrap();
+        let back: DecisionRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(req, back);
+    }
+
+    // ── ControlPlaneAdapterError ───────────────────────────────────
+
+    #[test]
+    fn error_code_values() {
+        assert_eq!(
+            ControlPlaneAdapterError::BudgetExhausted { requested_ms: 10 }.error_code(),
+            "budget_exhausted"
+        );
+        assert_eq!(
+            ControlPlaneAdapterError::DecisionGateway { code: "gw_fail" }.error_code(),
+            "gw_fail"
+        );
+        assert_eq!(
+            ControlPlaneAdapterError::EvidenceEmission { code: "emit_fail" }.error_code(),
+            "emit_fail"
+        );
+    }
+
+    #[test]
+    fn error_display_budget_exhausted() {
+        let err = ControlPlaneAdapterError::BudgetExhausted { requested_ms: 50 };
+        assert!(err.to_string().contains("50"));
+    }
+
+    #[test]
+    fn error_display_decision_gateway() {
+        let err = ControlPlaneAdapterError::DecisionGateway {
+            code: "gateway_err",
+        };
+        assert!(err.to_string().contains("gateway_err"));
+    }
+
+    #[test]
+    fn error_display_evidence_emission() {
+        let err = ControlPlaneAdapterError::EvidenceEmission { code: "emit_err" };
+        assert!(err.to_string().contains("emit_err"));
+    }
+
+    // ── action_to_verdict ──────────────────────────────────────────
+
+    #[test]
+    fn action_to_verdict_allow_synonyms() {
+        assert_eq!(action_to_verdict("allow"), Some(DecisionVerdict::Allow));
+        assert_eq!(action_to_verdict("permit"), Some(DecisionVerdict::Allow));
+        assert_eq!(action_to_verdict("continue"), Some(DecisionVerdict::Allow));
+        assert_eq!(action_to_verdict("ALLOW"), Some(DecisionVerdict::Allow));
+    }
+
+    #[test]
+    fn action_to_verdict_deny_synonyms() {
+        assert_eq!(action_to_verdict("deny"), Some(DecisionVerdict::Deny));
+        assert_eq!(action_to_verdict("reject"), Some(DecisionVerdict::Deny));
+        assert_eq!(action_to_verdict("block"), Some(DecisionVerdict::Deny));
+    }
+
+    #[test]
+    fn action_to_verdict_timeout_synonyms() {
+        assert_eq!(action_to_verdict("timeout"), Some(DecisionVerdict::Timeout));
+        assert_eq!(
+            action_to_verdict("challenge"),
+            Some(DecisionVerdict::Timeout)
+        );
+        assert_eq!(action_to_verdict("defer"), Some(DecisionVerdict::Timeout));
+    }
+
+    #[test]
+    fn action_to_verdict_unknown_returns_none() {
+        assert_eq!(action_to_verdict("unknown_action"), None);
+        assert_eq!(action_to_verdict(""), None);
+    }
+
+    // ── InMemoryEvidenceEmitter ────────────────────────────────────
+
+    #[test]
+    fn in_memory_evidence_emitter_records_entries_and_events() {
+        let req = request(30);
+        let mut emitter = InMemoryEvidenceEmitter::new();
+        assert!(emitter.entries().is_empty());
+        assert!(emitter.events().is_empty());
+
+        emitter
+            .emit(&req, evidence(req.ts_unix_ms, "allow"))
+            .unwrap();
+        assert_eq!(emitter.entries().len(), 1);
+        assert_eq!(emitter.events().len(), 1);
+        assert_eq!(emitter.events()[0].event, "evidence_emit");
+        assert_eq!(emitter.events()[0].outcome, "ok");
+        assert_eq!(emitter.events()[0].component, ADAPTER_COMPONENT);
+    }
+
+    // ── AdapterEvent serde ─────────────────────────────────────────
+
+    #[test]
+    fn adapter_event_serde_round_trip() {
+        let event = AdapterEvent {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            component: "test".to_string(),
+            event: "eval".to_string(),
+            outcome: "ok".to_string(),
+            error_code: None,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: AdapterEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, back);
+    }
+
+    // ── MockDecisionContract exhausted responses ───────────────────
+
+    #[test]
+    fn mock_decision_contract_defaults_to_timeout_when_exhausted() {
+        let req = request(40);
+        let mut decision = MockDecisionContract::new([DecisionVerdict::Allow]);
+        assert_eq!(decision.evaluate(&req).unwrap(), DecisionVerdict::Allow);
+        // Second call exhausts the queue, should default to Timeout
+        assert_eq!(decision.evaluate(&req).unwrap(), DecisionVerdict::Timeout);
+    }
 }

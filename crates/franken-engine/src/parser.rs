@@ -328,7 +328,7 @@ fn parse_statement(
     source_label: &str,
     span: SourceSpan,
 ) -> ParseResult<Statement> {
-    if statement.starts_with("import ") {
+    if statement.starts_with("import ") || statement == "import" {
         if goal == ParseGoal::Script {
             return Err(ParseError::new(
                 ParseErrorCode::InvalidGoal,
@@ -340,7 +340,7 @@ fn parse_statement(
         return parse_import(statement, source_label, span).map(Statement::Import);
     }
 
-    if statement.starts_with("export ") {
+    if statement.starts_with("export ") || statement == "export" {
         if goal == ParseGoal::Script {
             return Err(ParseError::new(
                 ParseErrorCode::InvalidGoal,
@@ -364,7 +364,10 @@ fn parse_import(
     source_label: &str,
     span: SourceSpan,
 ) -> ParseResult<ImportDeclaration> {
-    let body = statement["import ".len()..].trim();
+    let body = statement
+        .get("import ".len()..)
+        .map(str::trim)
+        .unwrap_or("");
     if body.is_empty() {
         return Err(ParseError::new(
             ParseErrorCode::UnsupportedSyntax,
@@ -421,7 +424,10 @@ fn parse_export(
     source_label: &str,
     span: SourceSpan,
 ) -> ParseResult<ExportDeclaration> {
-    let body = statement["export ".len()..].trim();
+    let body = statement
+        .get("export ".len()..)
+        .map(str::trim)
+        .unwrap_or("");
     if body.is_empty() {
         return Err(ParseError::new(
             ParseErrorCode::UnsupportedSyntax,
@@ -457,7 +463,9 @@ fn parse_expression(
     if let Some(value) = parse_quoted_string(expression) {
         return Ok(Expression::StringLiteral(value));
     }
-    if let Ok(value) = expression.parse::<i64>() {
+    if !expression.starts_with('-')
+        && let Ok(value) = expression.parse::<i64>()
+    {
         return Ok(Expression::NumericLiteral(value));
     }
     if let Some(rest) = expression.strip_prefix("await ") {
@@ -580,5 +588,388 @@ mod tests {
             )
             .expect("module parse should succeed");
         assert_eq!(tree.body.len(), 3);
+    }
+
+    // -----------------------------------------------------------------------
+    // Empty / whitespace-only source
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn empty_source_is_rejected() {
+        let parser = CanonicalEs2020Parser;
+        let err = parser
+            .parse("", ParseGoal::Script)
+            .expect_err("empty source must fail");
+        assert_eq!(err.code, ParseErrorCode::EmptySource);
+    }
+
+    #[test]
+    fn whitespace_only_source_is_rejected() {
+        let parser = CanonicalEs2020Parser;
+        for ws in ["  ", "\t\t", "\n\n", "  \n  \t  "] {
+            let err = parser
+                .parse(ws, ParseGoal::Script)
+                .expect_err("whitespace-only source must fail");
+            assert_eq!(err.code, ParseErrorCode::EmptySource);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Script goal rejects export
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn script_goal_rejects_export_declaration() {
+        let parser = CanonicalEs2020Parser;
+        let err = parser
+            .parse("export default 42", ParseGoal::Script)
+            .expect_err("script goal should reject export");
+        assert_eq!(err.code, ParseErrorCode::InvalidGoal);
+    }
+
+    // -----------------------------------------------------------------------
+    // Expression parsing
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn numeric_literal_is_parsed() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser.parse("42", ParseGoal::Script).expect("parse");
+        assert_eq!(tree.body.len(), 1);
+        match &tree.body[0] {
+            Statement::Expression(expr) => {
+                assert_eq!(expr.expression, Expression::NumericLiteral(42));
+            }
+            _ => panic!("expected expression statement"),
+        }
+    }
+
+    #[test]
+    fn negative_numeric_literal_parses_as_raw() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser.parse("-7", ParseGoal::Script).expect("parse");
+        match &tree.body[0] {
+            Statement::Expression(expr) => match &expr.expression {
+                Expression::Raw(_) => {} // negative literals are not parsed directly
+                _ => panic!("expected raw expression for -7"),
+            },
+            _ => panic!("expected expression statement"),
+        }
+    }
+
+    #[test]
+    fn string_literal_single_quotes_parsed() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser.parse("'hello'", ParseGoal::Script).expect("parse");
+        match &tree.body[0] {
+            Statement::Expression(expr) => {
+                assert_eq!(
+                    expr.expression,
+                    Expression::StringLiteral("hello".to_string())
+                );
+            }
+            _ => panic!("expected expression statement"),
+        }
+    }
+
+    #[test]
+    fn string_literal_double_quotes_parsed() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser.parse("\"world\"", ParseGoal::Script).expect("parse");
+        match &tree.body[0] {
+            Statement::Expression(expr) => {
+                assert_eq!(
+                    expr.expression,
+                    Expression::StringLiteral("world".to_string())
+                );
+            }
+            _ => panic!("expected expression statement"),
+        }
+    }
+
+    #[test]
+    fn identifier_expression_parsed() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser.parse("foo", ParseGoal::Script).expect("parse");
+        match &tree.body[0] {
+            Statement::Expression(expr) => {
+                assert_eq!(expr.expression, Expression::Identifier("foo".to_string()));
+            }
+            _ => panic!("expected expression statement"),
+        }
+    }
+
+    #[test]
+    fn underscore_prefix_is_valid_identifier() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser.parse("_private", ParseGoal::Script).expect("parse");
+        match &tree.body[0] {
+            Statement::Expression(expr) => {
+                assert_eq!(
+                    expr.expression,
+                    Expression::Identifier("_private".to_string())
+                );
+            }
+            _ => panic!("expected expression statement"),
+        }
+    }
+
+    #[test]
+    fn dollar_prefix_is_valid_identifier() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser.parse("$elem", ParseGoal::Script).expect("parse");
+        match &tree.body[0] {
+            Statement::Expression(expr) => {
+                assert_eq!(expr.expression, Expression::Identifier("$elem".to_string()));
+            }
+            _ => panic!("expected expression statement"),
+        }
+    }
+
+    #[test]
+    fn await_expression_parsed() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser
+            .parse("await fetch", ParseGoal::Script)
+            .expect("parse");
+        match &tree.body[0] {
+            Statement::Expression(expr) => match &expr.expression {
+                Expression::Await(inner) => {
+                    assert_eq!(**inner, Expression::Identifier("fetch".to_string()));
+                }
+                _ => panic!("expected await expression"),
+            },
+            _ => panic!("expected expression statement"),
+        }
+    }
+
+    #[test]
+    fn complex_expression_parses_as_raw() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser.parse("a + b * c", ParseGoal::Script).expect("parse");
+        match &tree.body[0] {
+            Statement::Expression(expr) => match &expr.expression {
+                Expression::Raw(s) => assert_eq!(s, "a + b * c"),
+                _ => panic!("expected raw expression"),
+            },
+            _ => panic!("expected expression statement"),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Multi-statement / semicolons
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn semicolons_split_statements() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser
+            .parse("x;42;'hello'", ParseGoal::Script)
+            .expect("parse");
+        assert_eq!(tree.body.len(), 3);
+    }
+
+    #[test]
+    fn multiline_source_parsed_correctly() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser
+            .parse("x\n42\n'hello'", ParseGoal::Script)
+            .expect("parse");
+        assert_eq!(tree.body.len(), 3);
+    }
+
+    #[test]
+    fn trailing_semicolons_do_not_create_extra_statements() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser.parse("x;", ParseGoal::Script).expect("parse");
+        assert_eq!(tree.body.len(), 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // Import forms
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn import_with_binding_parsed_in_module() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser
+            .parse("import dep from 'pkg'", ParseGoal::Module)
+            .expect("parse");
+        match &tree.body[0] {
+            Statement::Import(import) => {
+                assert_eq!(import.binding, Some("dep".to_string()));
+                assert_eq!(import.source, "pkg");
+            }
+            _ => panic!("expected import statement"),
+        }
+    }
+
+    #[test]
+    fn import_side_effect_only_parsed() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser
+            .parse("import 'polyfill'", ParseGoal::Module)
+            .expect("parse");
+        match &tree.body[0] {
+            Statement::Import(import) => {
+                assert_eq!(import.binding, None);
+                assert_eq!(import.source, "polyfill");
+            }
+            _ => panic!("expected import statement"),
+        }
+    }
+
+    #[test]
+    fn import_empty_clause_rejected() {
+        let parser = CanonicalEs2020Parser;
+        let err = parser
+            .parse("import ", ParseGoal::Module)
+            .expect_err("empty import clause must fail");
+        assert_eq!(err.code, ParseErrorCode::UnsupportedSyntax);
+    }
+
+    // -----------------------------------------------------------------------
+    // Export forms
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn export_default_identifier_parsed() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser
+            .parse("export default main", ParseGoal::Module)
+            .expect("parse");
+        match &tree.body[0] {
+            Statement::Export(export) => match &export.kind {
+                ExportKind::Default(expr) => {
+                    assert_eq!(*expr, Expression::Identifier("main".to_string()));
+                }
+                _ => panic!("expected default export"),
+            },
+            _ => panic!("expected export statement"),
+        }
+    }
+
+    #[test]
+    fn export_named_clause_parsed() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser
+            .parse("export { a, b }", ParseGoal::Module)
+            .expect("parse");
+        match &tree.body[0] {
+            Statement::Export(export) => match &export.kind {
+                ExportKind::NamedClause(clause) => {
+                    assert_eq!(clause, "{ a, b }");
+                }
+                _ => panic!("expected named clause export"),
+            },
+            _ => panic!("expected export statement"),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // ParserInput implementations
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn str_input_has_inline_label() {
+        let source: &str = "42";
+        let ps = source.into_source().expect("into_source");
+        assert_eq!(ps.label, "<inline>");
+        assert_eq!(ps.text, "42");
+    }
+
+    #[test]
+    fn string_input_has_inline_label() {
+        let source = String::from("hello");
+        let ps = source.into_source().expect("into_source");
+        assert_eq!(ps.label, "<inline>");
+        assert_eq!(ps.text, "hello");
+    }
+
+    #[test]
+    fn stream_input_invalid_utf8_rejected() {
+        let bad_bytes: &[u8] = &[0xFF, 0xFE, 0x00];
+        let input = StreamInput::new(Cursor::new(bad_bytes), "bad_stream");
+        let err = input.into_source().expect_err("invalid UTF-8 must fail");
+        assert_eq!(err.code, ParseErrorCode::InvalidUtf8);
+    }
+
+    // -----------------------------------------------------------------------
+    // ParseError display
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_error_display_without_span() {
+        let err = ParseError::new(ParseErrorCode::EmptySource, "empty", "test.js", None);
+        let display = format!("{}", err);
+        assert!(display.contains("EmptySource"));
+        assert!(display.contains("test.js"));
+    }
+
+    #[test]
+    fn parse_error_display_with_span() {
+        let span = SourceSpan::new(0, 5, 1, 1, 1, 6);
+        let err = ParseError::new(
+            ParseErrorCode::UnsupportedSyntax,
+            "bad token",
+            "test.js",
+            Some(span),
+        );
+        let display = format!("{}", err);
+        assert!(display.contains("line=1"));
+        assert!(display.contains("column=1"));
+    }
+
+    #[test]
+    fn parse_error_round_trips_through_serde() {
+        let err = ParseError::new(
+            ParseErrorCode::EmptySource,
+            "source is empty",
+            "<inline>",
+            None,
+        );
+        let json = serde_json::to_string(&err).expect("serialize");
+        let decoded: ParseError = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(decoded, err);
+    }
+
+    // -----------------------------------------------------------------------
+    // Span correctness
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn single_line_source_span_is_correct() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser.parse("42", ParseGoal::Script).expect("parse");
+        assert_eq!(tree.span.start_line, 1);
+        assert_eq!(tree.span.end_line, 1);
+    }
+
+    #[test]
+    fn multiline_source_span_end_line_is_correct() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser.parse("x\ny\nz", ParseGoal::Script).expect("parse");
+        assert_eq!(tree.span.start_line, 1);
+        assert_eq!(tree.span.end_line, 3);
+    }
+
+    // -----------------------------------------------------------------------
+    // Determinism: multiple parses yield identical output
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn three_identical_parses_produce_identical_canonical_hashes() {
+        let parser = CanonicalEs2020Parser;
+        let source = "import x from 'mod';\nexport default x";
+        let hashes: Vec<String> = (0..3)
+            .map(|_| {
+                parser
+                    .parse(source, ParseGoal::Module)
+                    .expect("parse")
+                    .canonical_hash()
+            })
+            .collect();
+        assert_eq!(hashes[0], hashes[1]);
+        assert_eq!(hashes[1], hashes[2]);
     }
 }

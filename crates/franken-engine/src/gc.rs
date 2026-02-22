@@ -1092,4 +1092,196 @@ mod tests {
         assert_eq!(id.to_string(), "obj-42");
         assert_eq!(id.as_u64(), 42);
     }
+
+    // -----------------------------------------------------------------------
+    // GcError Display
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn gc_error_heap_not_found_display() {
+        let err = GcError::HeapNotFound {
+            extension_id: "missing-ext".to_string(),
+        };
+        let display = format!("{err}");
+        assert!(display.contains("missing-ext"));
+        assert!(display.contains("not found"));
+    }
+
+    #[test]
+    fn gc_error_duplicate_heap_display() {
+        let err = GcError::DuplicateHeap {
+            extension_id: "dup-ext".to_string(),
+        };
+        let display = format!("{err}");
+        assert!(display.contains("dup-ext"));
+        assert!(display.contains("already registered"));
+    }
+
+    #[test]
+    fn gc_error_object_not_found_display() {
+        let err = GcError::ObjectNotFound {
+            extension_id: "ext-a".to_string(),
+            object_id: GcObjectId(99),
+        };
+        let display = format!("{err}");
+        assert!(display.contains("obj-99"));
+        assert!(display.contains("ext-a"));
+    }
+
+    // -----------------------------------------------------------------------
+    // GcPhase Display
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn gc_phase_display() {
+        assert_eq!(GcPhase::Mark.to_string(), "mark");
+        assert_eq!(GcPhase::Sweep.to_string(), "sweep");
+        assert_eq!(GcPhase::Complete.to_string(), "complete");
+    }
+
+    // -----------------------------------------------------------------------
+    // GcPhase and GcError serde round-trips
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn gc_phase_serde_round_trip() {
+        for phase in &[GcPhase::Mark, GcPhase::Sweep, GcPhase::Complete] {
+            let json = serde_json::to_string(phase).expect("serialize");
+            let decoded: GcPhase = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(&decoded, phase);
+        }
+    }
+
+    #[test]
+    fn gc_error_serde_round_trip() {
+        let errors: Vec<GcError> = vec![
+            GcError::HeapNotFound {
+                extension_id: "ext".to_string(),
+            },
+            GcError::DuplicateHeap {
+                extension_id: "ext".to_string(),
+            },
+            GcError::ObjectNotFound {
+                extension_id: "ext".to_string(),
+                object_id: GcObjectId(5),
+            },
+        ];
+        for err in &errors {
+            let json = serde_json::to_string(err).expect("serialize");
+            let decoded: GcError = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(&decoded, err);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // GcConfig default
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn gc_config_default_is_non_deterministic() {
+        let config = GcConfig::default();
+        assert!(!config.deterministic);
+        assert_eq!(config.pressure_threshold_percent, 75);
+    }
+
+    // -----------------------------------------------------------------------
+    // Allocation IDs are monotonically assigned
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn allocation_ids_are_monotonically_assigned() {
+        let mut gc = deterministic_collector();
+        gc.register_heap("ext-a".into()).unwrap();
+
+        let id1 = gc.allocate("ext-a", 10).unwrap();
+        let id2 = gc.allocate("ext-a", 20).unwrap();
+        let id3 = gc.allocate("ext-a", 30).unwrap();
+
+        assert_eq!(id1.as_u64(), 0);
+        assert_eq!(id2.as_u64(), 1);
+        assert_eq!(id3.as_u64(), 2);
+    }
+
+    // -----------------------------------------------------------------------
+    // Allocate on nonexistent heap
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn allocate_on_nonexistent_heap_returns_error() {
+        let mut gc = deterministic_collector();
+        let result = gc.allocate("nonexistent", 100);
+        assert!(matches!(result, Err(GcError::HeapNotFound { .. })));
+    }
+
+    // -----------------------------------------------------------------------
+    // Unroot on nonexistent heap
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn unroot_on_nonexistent_heap_returns_error() {
+        let mut gc = deterministic_collector();
+        let result = gc.unroot("nonexistent", GcObjectId(0));
+        assert!(matches!(result, Err(GcError::HeapNotFound { .. })));
+    }
+
+    // -----------------------------------------------------------------------
+    // Add reference on nonexistent heap
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn add_reference_on_nonexistent_heap_returns_error() {
+        let mut gc = deterministic_collector();
+        let result = gc.add_reference("nonexistent", GcObjectId(0), GcObjectId(1));
+        assert!(matches!(result, Err(GcError::HeapNotFound { .. })));
+    }
+
+    // -----------------------------------------------------------------------
+    // check_pressure with zero budget
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn check_pressure_zero_budget_returns_zero() {
+        let mut gc = deterministic_collector();
+        gc.register_heap("ext-a".into()).unwrap();
+        gc.allocate("ext-a", 100).unwrap();
+        let pressure = gc.check_pressure("ext-a", 0).unwrap();
+        assert!((pressure - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn check_pressure_nonexistent_returns_none() {
+        let gc = deterministic_collector();
+        assert!(gc.check_pressure("nonexistent", 1000).is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // iter_heaps deterministic ordering
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn iter_heaps_returns_deterministic_alphabetical_order() {
+        let mut gc = deterministic_collector();
+        gc.register_heap("ext-z".into()).unwrap();
+        gc.register_heap("ext-a".into()).unwrap();
+        gc.register_heap("ext-m".into()).unwrap();
+
+        let ids: Vec<&str> = gc.iter_heaps().map(|(id, _)| id).collect();
+        assert_eq!(ids, vec!["ext-a", "ext-m", "ext-z"]);
+    }
+
+    // -----------------------------------------------------------------------
+    // GcEvent serde round-trip
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn gc_event_serde_round_trip() {
+        let mut gc = deterministic_collector();
+        gc.register_heap("ext-a".into()).unwrap();
+        gc.allocate("ext-a", 50).unwrap();
+        let event = gc.collect("ext-a").unwrap();
+
+        let json = serde_json::to_string(&event).expect("serialize");
+        let decoded: GcEvent = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(decoded, event);
+    }
 }

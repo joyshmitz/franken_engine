@@ -11,6 +11,7 @@ pub mod attested_execution_cell;
 pub mod baseline_interpreter;
 pub mod bayesian_posterior;
 pub mod benchmark_denominator;
+pub mod benchmark_e2e;
 pub mod bulkhead;
 pub mod cancel_mask;
 pub mod cancellation_lifecycle;
@@ -26,6 +27,7 @@ pub mod compiler_policy;
 pub mod conformance_catalog;
 pub mod conformance_harness;
 pub mod conformance_vector_gen;
+pub mod constrained_ambient_benchmark_lane;
 pub mod containment_executor;
 pub mod control_plane;
 pub mod control_plane_benchmark_split_gate;
@@ -130,6 +132,7 @@ pub mod safe_mode_fallback;
 pub mod safety_decision_router;
 pub mod saga_orchestrator;
 pub mod scheduler_lane;
+pub mod security_e2e;
 pub mod security_epoch;
 pub mod self_replacement;
 pub mod session_hostcall_channel;
@@ -144,6 +147,7 @@ pub mod storage_adapter;
 pub mod supervision;
 pub mod synthesis_budget;
 pub mod tee_attestation_policy;
+pub mod test262_release_gate;
 pub mod threshold_signing;
 pub mod translation_validation;
 pub mod trust_card;
@@ -713,6 +717,277 @@ mod tests {
         let decoded: ExceptionTransitionEvent =
             serde_json::from_str(&encoded).expect("deserialize event");
         assert_eq!(decoded, event);
+    }
+
+    // -----------------------------------------------------------------------
+    // EvalError factory methods
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn eval_error_factory_methods_produce_correct_codes() {
+        let cases: Vec<(EvalError, EvalErrorCode)> = vec![
+            (EvalError::parse_failure("x"), EvalErrorCode::ParseFailure),
+            (
+                EvalError::resolution_failure("x"),
+                EvalErrorCode::ResolutionFailure,
+            ),
+            (EvalError::policy_denied("x"), EvalErrorCode::PolicyDenied),
+            (
+                EvalError::capability_denied("x"),
+                EvalErrorCode::CapabilityDenied,
+            ),
+            (EvalError::runtime_fault("x"), EvalErrorCode::RuntimeFault),
+            (EvalError::hostcall_fault("x"), EvalErrorCode::HostcallFault),
+            (
+                EvalError::invariant_violation("x"),
+                EvalErrorCode::InvariantViolation,
+            ),
+        ];
+        for (error, expected_code) in cases {
+            assert_eq!(error.code, expected_code, "factory for {:?}", expected_code);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // EvalError Display format
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn eval_error_display_format_includes_namespace_class_message() {
+        let err = EvalError::runtime_fault("stack overflow");
+        let display = format!("{err}");
+        assert!(display.contains("eval.runtime.fault"));
+        assert!(display.contains("runtime"));
+        assert!(display.contains("stack overflow"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Serde round-trips for core types
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn eval_error_class_serde_round_trip() {
+        let classes = [
+            EvalErrorClass::Parse,
+            EvalErrorClass::Resolution,
+            EvalErrorClass::Policy,
+            EvalErrorClass::Capability,
+            EvalErrorClass::Runtime,
+            EvalErrorClass::Hostcall,
+            EvalErrorClass::Invariant,
+        ];
+        for class in &classes {
+            let json = serde_json::to_string(class).expect("serialize");
+            let decoded: EvalErrorClass = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(&decoded, class);
+        }
+    }
+
+    #[test]
+    fn eval_error_code_serde_round_trip() {
+        let codes = [
+            EvalErrorCode::EmptySource,
+            EvalErrorCode::ParseFailure,
+            EvalErrorCode::ResolutionFailure,
+            EvalErrorCode::PolicyDenied,
+            EvalErrorCode::CapabilityDenied,
+            EvalErrorCode::RuntimeFault,
+            EvalErrorCode::HostcallFault,
+            EvalErrorCode::InvariantViolation,
+        ];
+        for code in &codes {
+            let json = serde_json::to_string(code).expect("serialize");
+            let decoded: EvalErrorCode = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(&decoded, code);
+        }
+    }
+
+    #[test]
+    fn engine_kind_serde_round_trip() {
+        for kind in &[
+            EngineKind::QuickJsInspiredNative,
+            EngineKind::V8InspiredNative,
+            EngineKind::Hybrid,
+        ] {
+            let json = serde_json::to_string(kind).expect("serialize");
+            let decoded: EngineKind = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(&decoded, kind);
+        }
+    }
+
+    #[test]
+    fn route_reason_serde_round_trip() {
+        let reasons = [
+            RouteReason::DirectEngineInvocation,
+            RouteReason::ContainsImportKeyword,
+            RouteReason::ContainsAwaitKeyword,
+            RouteReason::DefaultQuickJsPath,
+        ];
+        for reason in &reasons {
+            let json = serde_json::to_string(reason).expect("serialize");
+            let decoded: RouteReason = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(&decoded, reason);
+        }
+    }
+
+    #[test]
+    fn eval_error_serde_round_trip() {
+        let err = EvalError::policy_denied("extension blocked");
+        let json = serde_json::to_string(&err).expect("serialize");
+        let decoded: EvalError = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(decoded, err);
+    }
+
+    #[test]
+    fn eval_outcome_serde_round_trip() {
+        let outcome = EvalOutcome {
+            engine: EngineKind::V8InspiredNative,
+            value: "42".to_string(),
+            route_reason: RouteReason::ContainsAwaitKeyword,
+        };
+        let json = serde_json::to_string(&outcome).expect("serialize");
+        let decoded: EvalOutcome = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(decoded, outcome);
+    }
+
+    // -----------------------------------------------------------------------
+    // sorted_eval_errors (non-in-place variant)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn sorted_eval_errors_returns_new_sorted_vec() {
+        let errors = vec![EvalError::runtime_fault("b"), EvalError::parse_failure("a")];
+        let sorted = sorted_eval_errors(errors);
+        assert_eq!(sorted[0].code, EvalErrorCode::ParseFailure);
+        assert_eq!(sorted[1].code, EvalErrorCode::RuntimeFault);
+    }
+
+    // -----------------------------------------------------------------------
+    // propagate_result_across_boundary
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn propagate_result_ok_passes_through() {
+        let result: EvalResult<i32> = Ok(42);
+        let propagated = propagate_result_across_boundary(result, ExceptionBoundary::AsyncJob);
+        assert_eq!(propagated.unwrap(), 42);
+    }
+
+    #[test]
+    fn propagate_result_err_annotates_boundary() {
+        let result: EvalResult<i32> = Err(EvalError::runtime_fault("oops"));
+        let propagated = propagate_result_across_boundary(result, ExceptionBoundary::Hostcall);
+        let err = propagated.unwrap_err();
+        assert!(err.message.contains("boundary=hostcall"));
+        assert_eq!(err.code, EvalErrorCode::RuntimeFault);
+    }
+
+    // -----------------------------------------------------------------------
+    // ExceptionBoundary
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn exception_boundary_stable_labels() {
+        assert_eq!(
+            ExceptionBoundary::SyncCallframe.stable_label(),
+            "sync_callframe"
+        );
+        assert_eq!(ExceptionBoundary::AsyncJob.stable_label(), "async_job");
+        assert_eq!(ExceptionBoundary::Hostcall.stable_label(), "hostcall");
+    }
+
+    #[test]
+    fn exception_boundary_display_matches_stable_label() {
+        for boundary in &[
+            ExceptionBoundary::SyncCallframe,
+            ExceptionBoundary::AsyncJob,
+            ExceptionBoundary::Hostcall,
+        ] {
+            assert_eq!(format!("{boundary}"), boundary.stable_label());
+        }
+    }
+
+    #[test]
+    fn exception_boundary_serde_round_trip() {
+        for boundary in &[
+            ExceptionBoundary::SyncCallframe,
+            ExceptionBoundary::AsyncJob,
+            ExceptionBoundary::Hostcall,
+        ] {
+            let json = serde_json::to_string(boundary).expect("serialize");
+            let decoded: ExceptionBoundary = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(&decoded, boundary);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // EvalErrorClass stable_label
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn eval_error_class_stable_labels_are_all_lowercase() {
+        let classes = [
+            EvalErrorClass::Parse,
+            EvalErrorClass::Resolution,
+            EvalErrorClass::Policy,
+            EvalErrorClass::Capability,
+            EvalErrorClass::Runtime,
+            EvalErrorClass::Hostcall,
+            EvalErrorClass::Invariant,
+        ];
+        for class in &classes {
+            let label = class.stable_label();
+            assert_eq!(
+                label,
+                label.to_lowercase(),
+                "stable_label must be lowercase: {label}"
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // EvalErrorCode stable_namespace uniqueness
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn eval_error_code_stable_namespaces_are_unique() {
+        use std::collections::BTreeSet;
+        let codes = [
+            EvalErrorCode::EmptySource,
+            EvalErrorCode::ParseFailure,
+            EvalErrorCode::ResolutionFailure,
+            EvalErrorCode::PolicyDenied,
+            EvalErrorCode::CapabilityDenied,
+            EvalErrorCode::RuntimeFault,
+            EvalErrorCode::HostcallFault,
+            EvalErrorCode::InvariantViolation,
+        ];
+        let namespaces: BTreeSet<&str> = codes.iter().map(|c| c.stable_namespace()).collect();
+        assert_eq!(
+            namespaces.len(),
+            codes.len(),
+            "all stable namespaces must be unique"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Direct engine eval preserves trimmed source
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn quickjs_engine_trims_and_returns_source() {
+        let mut engine = QuickJsInspiredNativeEngine;
+        let out = engine.eval("  hello  ").unwrap();
+        assert_eq!(out.value, "hello");
+        assert_eq!(out.engine, EngineKind::QuickJsInspiredNative);
+    }
+
+    #[test]
+    fn v8_engine_trims_and_returns_source() {
+        let mut engine = V8InspiredNativeEngine;
+        let out = engine.eval("  world  ").unwrap();
+        assert_eq!(out.value, "world");
+        assert_eq!(out.engine, EngineKind::V8InspiredNative);
     }
 
     #[test]

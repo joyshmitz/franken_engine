@@ -668,6 +668,146 @@ impl fmt::Display for GaReleaseGuardError {
 impl std::error::Error for GaReleaseGuardError {}
 
 // ---------------------------------------------------------------------------
+// Replacement progress telemetry (bd-1a5z)
+// ---------------------------------------------------------------------------
+
+/// Per-slot signal used to compute weighted replacement progress metrics.
+///
+/// Values are expressed in millionths to keep artifacts deterministic and
+/// floating-point free.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SlotReplacementSignal {
+    /// Relative invocation weight for this slot (must be > 0).
+    pub invocation_weight_millionths: u64,
+    /// Estimated throughput uplift if a delegate slot is replaced by native.
+    pub throughput_uplift_millionths: i64,
+    /// Estimated security-risk reduction if a delegate slot is replaced.
+    pub security_risk_reduction_millionths: i64,
+}
+
+impl Default for SlotReplacementSignal {
+    fn default() -> Self {
+        Self {
+            invocation_weight_millionths: 1_000_000,
+            throughput_uplift_millionths: 0,
+            security_risk_reduction_millionths: 0,
+        }
+    }
+}
+
+impl SlotReplacementSignal {
+    fn validate(&self, slot_id: &SlotId) -> Result<(), ReplacementProgressError> {
+        if self.invocation_weight_millionths == 0 {
+            return Err(ReplacementProgressError::InvalidSignal {
+                slot_id: slot_id.as_str().to_string(),
+                detail: "invocation_weight_millionths must be greater than zero".to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    fn expected_value_score_millionths(&self) -> i64 {
+        self.throughput_uplift_millionths
+            .saturating_add(self.security_risk_reduction_millionths)
+    }
+}
+
+/// Ranked replacement candidate for delegate-backed slots.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReplacementPriorityCandidate {
+    pub slot_id: SlotId,
+    pub slot_kind: SlotKind,
+    pub promotion_status: String,
+    pub delegate_backed: bool,
+    pub invocation_weight_millionths: u64,
+    pub throughput_uplift_millionths: i64,
+    pub security_risk_reduction_millionths: i64,
+    pub expected_value_score_millionths: i64,
+}
+
+/// Structured event for replacement-progress snapshots.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReplacementProgressEvent {
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub component: String,
+    pub event: String,
+    pub outcome: String,
+    pub error_code: Option<String>,
+    pub slot_id: Option<String>,
+    pub detail: String,
+}
+
+/// Deterministic replacement-progress artifact for native-coverage and
+/// delegate replacement prioritization.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReplacementProgressSnapshot {
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub component: String,
+    pub total_slots: usize,
+    pub native_slots: usize,
+    pub delegate_slots: usize,
+    pub native_coverage_millionths: u64,
+    pub weighted_native_coverage_millionths: u64,
+    pub weighted_delegate_throughput_uplift_millionths: i64,
+    pub weighted_delegate_security_risk_reduction_millionths: i64,
+    pub recommended_replacement_order: Vec<ReplacementPriorityCandidate>,
+    pub events: Vec<ReplacementProgressEvent>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ReplacementProgressError {
+    InvalidInput { field: String, detail: String },
+    UnknownSignalSlot { slot_id: String },
+    InvalidSignal { slot_id: String, detail: String },
+}
+
+impl fmt::Display for ReplacementProgressError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidInput { field, detail } => {
+                write!(f, "invalid replacement progress input `{field}`: {detail}")
+            }
+            Self::UnknownSignalSlot { slot_id } => {
+                write!(
+                    f,
+                    "replacement progress signal references unknown slot `{slot_id}`"
+                )
+            }
+            Self::InvalidSignal { slot_id, detail } => {
+                write!(
+                    f,
+                    "invalid replacement progress signal for `{slot_id}`: {detail}"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for ReplacementProgressError {}
+
+fn saturating_i128_to_i64(value: i128) -> i64 {
+    if value > i64::MAX as i128 {
+        i64::MAX
+    } else if value < i64::MIN as i128 {
+        i64::MIN
+    } else {
+        value as i64
+    }
+}
+
+fn saturating_u128_to_i128(value: u128) -> i128 {
+    if value > i128::MAX as u128 {
+        i128::MAX
+    } else {
+        value as i128
+    }
+}
+
+// ---------------------------------------------------------------------------
 // SlotRegistry — the registry itself
 // ---------------------------------------------------------------------------
 
@@ -764,6 +904,183 @@ impl SlotRegistry {
             return 0.0;
         }
         self.native_count() as f64 / self.slots.len() as f64
+    }
+
+    /// Build a deterministic replacement-progress snapshot containing native
+    /// coverage, weighted delegate uplift estimates, and EV-ranked replacement
+    /// order for delegate-backed slots.
+    pub fn snapshot_replacement_progress(
+        &self,
+        trace_id: impl Into<String>,
+        decision_id: impl Into<String>,
+        policy_id: impl Into<String>,
+        signals: &BTreeMap<SlotId, SlotReplacementSignal>,
+    ) -> Result<ReplacementProgressSnapshot, ReplacementProgressError> {
+        let trace_id = trace_id.into();
+        let decision_id = decision_id.into();
+        let policy_id = policy_id.into();
+        let component = "self_replacement_progress".to_string();
+
+        if trace_id.trim().is_empty() {
+            return Err(ReplacementProgressError::InvalidInput {
+                field: "trace_id".to_string(),
+                detail: "must not be empty".to_string(),
+            });
+        }
+        if decision_id.trim().is_empty() {
+            return Err(ReplacementProgressError::InvalidInput {
+                field: "decision_id".to_string(),
+                detail: "must not be empty".to_string(),
+            });
+        }
+        if policy_id.trim().is_empty() {
+            return Err(ReplacementProgressError::InvalidInput {
+                field: "policy_id".to_string(),
+                detail: "must not be empty".to_string(),
+            });
+        }
+
+        for slot_id in signals.keys() {
+            if !self.slots.contains_key(slot_id) {
+                return Err(ReplacementProgressError::UnknownSignalSlot {
+                    slot_id: slot_id.as_str().to_string(),
+                });
+            }
+        }
+
+        let total_slots = self.slots.len();
+        let native_slots = self.native_count();
+        let delegate_slots = self.delegate_count();
+
+        let native_coverage_millionths = if total_slots == 0 {
+            0
+        } else {
+            (native_slots as u64).saturating_mul(1_000_000) / total_slots as u64
+        };
+
+        let mut total_weight = 0u128;
+        let mut native_weight = 0u128;
+        let mut delegate_weight = 0u128;
+        let mut delegate_throughput_weighted_sum = 0i128;
+        let mut delegate_security_weighted_sum = 0i128;
+        let mut recommended_replacement_order = Vec::new();
+
+        for (slot_id, entry) in &self.slots {
+            let signal = signals.get(slot_id).cloned().unwrap_or_default();
+            signal.validate(slot_id)?;
+
+            let weight = u128::from(signal.invocation_weight_millionths);
+            total_weight = total_weight.saturating_add(weight);
+
+            if entry.status.is_native() {
+                native_weight = native_weight.saturating_add(weight);
+                continue;
+            }
+
+            delegate_weight = delegate_weight.saturating_add(weight);
+
+            let throughput_contribution = i128::from(signal.throughput_uplift_millionths)
+                .saturating_mul(i128::from(signal.invocation_weight_millionths));
+            let security_contribution = i128::from(signal.security_risk_reduction_millionths)
+                .saturating_mul(i128::from(signal.invocation_weight_millionths));
+            delegate_throughput_weighted_sum =
+                delegate_throughput_weighted_sum.saturating_add(throughput_contribution);
+            delegate_security_weighted_sum =
+                delegate_security_weighted_sum.saturating_add(security_contribution);
+
+            let weighted_ev = i128::from(signal.expected_value_score_millionths())
+                .saturating_mul(i128::from(signal.invocation_weight_millionths))
+                / 1_000_000;
+
+            recommended_replacement_order.push(ReplacementPriorityCandidate {
+                slot_id: slot_id.clone(),
+                slot_kind: entry.kind,
+                promotion_status: entry.status.to_string(),
+                delegate_backed: true,
+                invocation_weight_millionths: signal.invocation_weight_millionths,
+                throughput_uplift_millionths: signal.throughput_uplift_millionths,
+                security_risk_reduction_millionths: signal.security_risk_reduction_millionths,
+                expected_value_score_millionths: saturating_i128_to_i64(weighted_ev),
+            });
+        }
+
+        recommended_replacement_order.sort_by(|left, right| {
+            right
+                .expected_value_score_millionths
+                .cmp(&left.expected_value_score_millionths)
+                .then_with(|| left.slot_id.cmp(&right.slot_id))
+        });
+
+        let weighted_native_coverage_millionths = native_weight
+            .saturating_mul(1_000_000)
+            .checked_div(total_weight)
+            .unwrap_or(0) as u64;
+        let weighted_delegate_throughput_uplift_millionths = if delegate_weight == 0 {
+            0
+        } else {
+            let divisor = saturating_u128_to_i128(delegate_weight).max(1);
+            saturating_i128_to_i64(delegate_throughput_weighted_sum / divisor)
+        };
+        let weighted_delegate_security_risk_reduction_millionths = if delegate_weight == 0 {
+            0
+        } else {
+            let divisor = saturating_u128_to_i128(delegate_weight).max(1);
+            saturating_i128_to_i64(delegate_security_weighted_sum / divisor)
+        };
+
+        let mut events = Vec::with_capacity(recommended_replacement_order.len().saturating_add(1));
+        for candidate in &recommended_replacement_order {
+            events.push(ReplacementProgressEvent {
+                trace_id: trace_id.clone(),
+                decision_id: decision_id.clone(),
+                policy_id: policy_id.clone(),
+                component: component.clone(),
+                event: "replacement_candidate_ranked".to_string(),
+                outcome: "ranked".to_string(),
+                error_code: None,
+                slot_id: Some(candidate.slot_id.as_str().to_string()),
+                detail: format!(
+                    "expected_value_score_millionths={}, invocation_weight_millionths={}",
+                    candidate.expected_value_score_millionths,
+                    candidate.invocation_weight_millionths
+                ),
+            });
+        }
+
+        events.push(ReplacementProgressEvent {
+            trace_id: trace_id.clone(),
+            decision_id: decision_id.clone(),
+            policy_id: policy_id.clone(),
+            component: component.clone(),
+            event: "replacement_progress_snapshot_generated".to_string(),
+            outcome: "success".to_string(),
+            error_code: None,
+            slot_id: None,
+            detail: format!(
+                "total_slots={}, native_slots={}, delegate_slots={}, native_coverage_millionths={}, weighted_native_coverage_millionths={}",
+                total_slots,
+                native_slots,
+                delegate_slots,
+                native_coverage_millionths,
+                weighted_native_coverage_millionths
+            ),
+        });
+
+        Ok(ReplacementProgressSnapshot {
+            trace_id,
+            decision_id,
+            policy_id,
+            component,
+            total_slots,
+            native_slots,
+            delegate_slots,
+            native_coverage_millionths,
+            weighted_native_coverage_millionths,
+            weighted_delegate_throughput_uplift_millionths,
+            weighted_delegate_security_risk_reduction_millionths,
+            recommended_replacement_order,
+            events,
+        })
     }
 
     /// Begin promotion candidacy for a slot.  The slot must currently be
@@ -1352,8 +1669,8 @@ mod tests {
             approved_by: "gov-council".to_string(),
             signed_risk_acknowledgement: "sig:risk-ack-001".to_string(),
             remediation_plan: "finish native replacement within one sprint".to_string(),
-            remediation_deadline_epoch: 50,
-            expires_at_epoch: 48,
+            remediation_deadline_epoch: 48,
+            expires_at_epoch: 50,
         }
     }
 
@@ -1683,6 +2000,204 @@ mod tests {
         )
         .unwrap();
         assert!((reg.native_coverage() - 0.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn replacement_progress_snapshot_reports_weighted_metrics_and_ev_order() {
+        let mut reg = SlotRegistry::new();
+        let parser = register_slot(
+            &mut reg,
+            "parser",
+            SlotKind::Parser,
+            "sha256:delegate-parser-v1",
+        );
+        let interpreter = register_slot(
+            &mut reg,
+            "interpreter",
+            SlotKind::Interpreter,
+            "sha256:delegate-interpreter-v1",
+        );
+        let object_model = register_slot(
+            &mut reg,
+            "object-model",
+            SlotKind::ObjectModel,
+            "sha256:delegate-object-model-v1",
+        );
+        promote_slot(&mut reg, &parser, "sha256:native-parser-v2");
+
+        let mut signals = BTreeMap::new();
+        signals.insert(
+            parser.clone(),
+            SlotReplacementSignal {
+                invocation_weight_millionths: 900_000,
+                throughput_uplift_millionths: 200_000,
+                security_risk_reduction_millionths: 100_000,
+            },
+        );
+        signals.insert(
+            interpreter.clone(),
+            SlotReplacementSignal {
+                invocation_weight_millionths: 800_000,
+                throughput_uplift_millionths: 50_000,
+                security_risk_reduction_millionths: 400_000,
+            },
+        );
+        signals.insert(
+            object_model.clone(),
+            SlotReplacementSignal {
+                invocation_weight_millionths: 100_000,
+                throughput_uplift_millionths: 700_000,
+                security_risk_reduction_millionths: 100_000,
+            },
+        );
+
+        let snapshot = reg
+            .snapshot_replacement_progress(
+                "trace-self-replacement-001",
+                "decision-self-replacement-001",
+                "policy-self-replacement-001",
+                &signals,
+            )
+            .expect("snapshot should succeed");
+
+        assert_eq!(snapshot.total_slots, 3);
+        assert_eq!(snapshot.native_slots, 1);
+        assert_eq!(snapshot.delegate_slots, 2);
+        assert_eq!(snapshot.native_coverage_millionths, 333_333);
+        assert_eq!(snapshot.weighted_native_coverage_millionths, 500_000);
+        assert_eq!(
+            snapshot.weighted_delegate_throughput_uplift_millionths,
+            122_222
+        );
+        assert_eq!(
+            snapshot.weighted_delegate_security_risk_reduction_millionths,
+            366_666
+        );
+
+        assert_eq!(snapshot.recommended_replacement_order.len(), 2);
+        assert_eq!(
+            snapshot.recommended_replacement_order[0].slot_id,
+            interpreter
+        );
+        assert_eq!(
+            snapshot.recommended_replacement_order[0].expected_value_score_millionths,
+            360_000
+        );
+        assert_eq!(
+            snapshot.recommended_replacement_order[1].slot_id,
+            object_model
+        );
+        assert_eq!(
+            snapshot.recommended_replacement_order[1].expected_value_score_millionths,
+            80_000
+        );
+
+        assert!(
+            snapshot
+                .events
+                .iter()
+                .all(|event| event.trace_id == "trace-self-replacement-001"
+                    && event.decision_id == "decision-self-replacement-001"
+                    && event.policy_id == "policy-self-replacement-001"
+                    && event.component == "self_replacement_progress")
+        );
+        assert!(snapshot.events.iter().any(|event| {
+            event.event == "replacement_progress_snapshot_generated" && event.outcome == "success"
+        }));
+    }
+
+    #[test]
+    fn replacement_progress_snapshot_uses_default_signals_when_missing() {
+        let mut reg = SlotRegistry::new();
+        let parser = register_slot(
+            &mut reg,
+            "parser",
+            SlotKind::Parser,
+            "sha256:delegate-parser-v1",
+        );
+        let interpreter = register_slot(
+            &mut reg,
+            "interpreter",
+            SlotKind::Interpreter,
+            "sha256:delegate-interpreter-v1",
+        );
+        promote_slot(&mut reg, &parser, "sha256:native-parser-v2");
+
+        let snapshot = reg
+            .snapshot_replacement_progress(
+                "trace-self-replacement-002",
+                "decision-self-replacement-002",
+                "policy-self-replacement-002",
+                &BTreeMap::new(),
+            )
+            .expect("snapshot should succeed with defaults");
+
+        assert_eq!(snapshot.native_coverage_millionths, 500_000);
+        assert_eq!(snapshot.weighted_native_coverage_millionths, 500_000);
+        assert_eq!(snapshot.weighted_delegate_throughput_uplift_millionths, 0);
+        assert_eq!(
+            snapshot.weighted_delegate_security_risk_reduction_millionths,
+            0
+        );
+        assert_eq!(snapshot.recommended_replacement_order.len(), 1);
+        assert_eq!(
+            snapshot.recommended_replacement_order[0].slot_id,
+            interpreter
+        );
+        assert_eq!(
+            snapshot.recommended_replacement_order[0].invocation_weight_millionths,
+            1_000_000
+        );
+    }
+
+    #[test]
+    fn replacement_progress_snapshot_rejects_unknown_signal_slot() {
+        let mut reg = SlotRegistry::new();
+        register_slot(
+            &mut reg,
+            "parser",
+            SlotKind::Parser,
+            "sha256:delegate-parser-v1",
+        );
+
+        let ghost = SlotId::new("ghost-slot").expect("valid slot id");
+        let signals = BTreeMap::from([(
+            ghost,
+            SlotReplacementSignal {
+                invocation_weight_millionths: 200_000,
+                throughput_uplift_millionths: 100_000,
+                security_risk_reduction_millionths: 100_000,
+            },
+        )]);
+
+        assert!(matches!(
+            reg.snapshot_replacement_progress("trace", "decision", "policy", &signals),
+            Err(ReplacementProgressError::UnknownSignalSlot { .. })
+        ));
+    }
+
+    #[test]
+    fn replacement_progress_snapshot_rejects_zero_weight_signal() {
+        let mut reg = SlotRegistry::new();
+        let parser = register_slot(
+            &mut reg,
+            "parser",
+            SlotKind::Parser,
+            "sha256:delegate-parser-v1",
+        );
+        let signals = BTreeMap::from([(
+            parser,
+            SlotReplacementSignal {
+                invocation_weight_millionths: 0,
+                throughput_uplift_millionths: 500_000,
+                security_risk_reduction_millionths: 500_000,
+            },
+        )]);
+
+        assert!(matches!(
+            reg.snapshot_replacement_progress("trace", "decision", "policy", &signals),
+            Err(ReplacementProgressError::InvalidSignal { .. })
+        ));
     }
 
     #[test]

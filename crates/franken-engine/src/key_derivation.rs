@@ -18,6 +18,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+use crate::hash_tiers::ContentHash;
 use crate::security_epoch::SecurityEpoch;
 
 // ---------------------------------------------------------------------------
@@ -314,15 +315,15 @@ impl KeyDeriver for DeterministicTestDeriver {
                 .wrapping_add(i as u8);
         }
 
-        // Context hash: simple sum for determinism.
+        // Context hash: collision-resistant hash for determinism.
         let ctx_bytes = request.context.to_canonical_bytes();
-        let ctx_hash: u64 = ctx_bytes.iter().map(|b| u64::from(*b)).sum();
+        let ctx_hash = ContentHash::compute(&ctx_bytes);
 
         Ok(DerivedKey {
             key_bytes: output,
             domain: request.domain,
             epoch: request.epoch,
-            context_hash: ctx_hash.to_be_bytes().to_vec(),
+            context_hash: ctx_hash.as_bytes().to_vec(),
         })
     }
 
@@ -419,8 +420,8 @@ impl<D: KeyDeriver> EpochKeyCache<D> {
         trace_id: &str,
     ) -> Result<&DerivedKey, KeyDerivationError> {
         let ctx_bytes = context.to_canonical_bytes();
-        let ctx_hash: u64 = ctx_bytes.iter().map(|b| u64::from(*b)).sum();
-        let ctx_hash_bytes = ctx_hash.to_be_bytes().to_vec();
+        let ctx_hash = ContentHash::compute(&ctx_bytes);
+        let ctx_hash_bytes = ctx_hash.as_bytes().to_vec();
 
         let cache_key = CacheKey {
             domain,

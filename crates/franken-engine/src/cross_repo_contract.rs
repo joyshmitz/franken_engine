@@ -668,7 +668,7 @@ mod tests {
                 ..Default::default()
             }),
         );
-        let invariants = FrankentuiViewPayload::ControlPlaneInvariantsDashboard(
+        let invariants = FrankentuiViewPayload::ControlPlaneInvariantsDashboard(Box::new(
             ControlPlaneInvariantsDashboardView::from_partial(ControlPlaneInvariantsPartial {
                 cluster: "prod".to_string(),
                 zone: "us-east".to_string(),
@@ -755,7 +755,7 @@ mod tests {
                 }],
                 ..Default::default()
             }),
-        );
+        ));
         let flow = FrankentuiViewPayload::FlowDecisionDashboard(
             FlowDecisionDashboardView::from_partial(FlowDecisionPartial {
                 cluster: "prod".to_string(),

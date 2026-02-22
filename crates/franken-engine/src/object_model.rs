@@ -20,6 +20,30 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+/// Serialize/deserialize `BTreeMap<PropertyKey, PropertyDescriptor>` as a
+/// sorted sequence of `[key, descriptor]` pairs.  serde_json requires string
+/// keys for JSON maps but `PropertyKey` is an enum, so we use a vec-of-pairs
+/// representation to preserve full round-trip fidelity.
+mod properties_as_seq {
+    use super::{BTreeMap, PropertyDescriptor, PropertyKey};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(
+        map: &BTreeMap<PropertyKey, PropertyDescriptor>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        let pairs: Vec<(&PropertyKey, &PropertyDescriptor)> = map.iter().collect();
+        pairs.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<BTreeMap<PropertyKey, PropertyDescriptor>, D::Error> {
+        let pairs: Vec<(PropertyKey, PropertyDescriptor)> = Vec::deserialize(deserializer)?;
+        Ok(pairs.into_iter().collect())
+    }
+}
+
 // ---------------------------------------------------------------------------
 // PropertyKey — string or symbol
 // ---------------------------------------------------------------------------
@@ -344,6 +368,7 @@ pub struct OrdinaryObject {
     /// `[[Extensible]]` internal slot.
     pub extensible: bool,
     /// Own properties with descriptors, keyed by PropertyKey.
+    #[serde(with = "properties_as_seq")]
     pub properties: BTreeMap<PropertyKey, PropertyDescriptor>,
     /// `[[Class]]` tag for intrinsic identification.
     pub class_tag: Option<String>,
@@ -1117,12 +1142,11 @@ impl ObjectHeap {
                             continue; // shadowed by own property higher in chain
                         }
                         seen.insert(k.clone());
-                        if let PropertyKey::String(ref s) = k {
-                            if let Some(d) = o.properties.get(&k) {
-                                if d.is_enumerable() {
-                                    result.push(s.clone());
-                                }
-                            }
+                        if let PropertyKey::String(ref s) = k
+                            && let Some(d) = o.properties.get(&k)
+                            && d.is_enumerable()
+                        {
+                            result.push(s.clone());
                         }
                     }
                     current = o.prototype;
@@ -1889,8 +1913,10 @@ mod tests {
 
     #[test]
     fn define_own_property_non_extensible_rejects() {
-        let mut obj = OrdinaryObject::default();
-        obj.extensible = false;
+        let mut obj = OrdinaryObject {
+            extensible: false,
+            ..Default::default()
+        };
         let result = obj
             .define_own_property(str_key("x"), PropertyDescriptor::data(int_val(1)))
             .unwrap();
@@ -2414,9 +2440,11 @@ mod tests {
 
     #[test]
     fn proxy_invariant_get_prototype_of_non_extensible() {
-        let mut obj = OrdinaryObject::default();
-        obj.prototype = Some(ObjectHandle(5));
-        obj.extensible = false;
+        let obj = OrdinaryObject {
+            prototype: Some(ObjectHandle(5)),
+            extensible: false,
+            ..Default::default()
+        };
 
         // Must return same prototype.
         assert!(ProxyInvariantChecker::check_get_prototype_of(&obj, Some(ObjectHandle(5))).is_ok());
@@ -2712,6 +2740,7 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
+    #[allow(clippy::field_reassign_with_default)]
     fn proxy_invariant_own_keys_non_extensible_exact() {
         let mut obj = OrdinaryObject::default();
         obj.define_own_property(str_key("a"), PropertyDescriptor::data(int_val(1)))
@@ -2742,9 +2771,11 @@ mod tests {
 
     #[test]
     fn proxy_invariant_set_prototype_of_non_extensible() {
-        let mut obj = OrdinaryObject::default();
-        obj.prototype = Some(ObjectHandle(5));
-        obj.extensible = false;
+        let obj = OrdinaryObject {
+            prototype: Some(ObjectHandle(5)),
+            extensible: false,
+            ..Default::default()
+        };
 
         // Same prototype — ok.
         assert!(
@@ -2764,6 +2795,7 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
+    #[allow(clippy::field_reassign_with_default)]
     fn proxy_invariant_get_own_property_non_extensible() {
         let mut obj = OrdinaryObject::default();
         obj.define_own_property(str_key("x"), PropertyDescriptor::data(int_val(1)))
@@ -2786,8 +2818,10 @@ mod tests {
 
     #[test]
     fn proxy_invariant_define_property_non_extensible_add() {
-        let mut obj = OrdinaryObject::default();
-        obj.extensible = false;
+        let obj = OrdinaryObject {
+            extensible: false,
+            ..Default::default()
+        };
 
         let desc = PropertyDescriptor::data(int_val(1));
         assert!(
@@ -3630,6 +3664,7 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
+    #[allow(clippy::field_reassign_with_default)]
     fn proxy_invariant_delete_non_extensible_own_property() {
         let mut obj = OrdinaryObject::default();
         obj.define_own_property(str_key("x"), PropertyDescriptor::data(int_val(1)))
@@ -3737,6 +3772,7 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
+    #[allow(clippy::field_reassign_with_default)]
     fn ordinary_object_serde_roundtrip() {
         let mut obj = OrdinaryObject::default();
         obj.define_own_property(str_key("x"), PropertyDescriptor::data(int_val(42)))
@@ -3793,6 +3829,7 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
+    #[allow(clippy::field_reassign_with_default)]
     fn proxy_invariant_has_non_extensible_existing() {
         let mut obj = OrdinaryObject::default();
         obj.define_own_property(str_key("x"), PropertyDescriptor::data(int_val(1)))

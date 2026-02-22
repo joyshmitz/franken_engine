@@ -2107,8 +2107,7 @@ mod tests {
             ctrl.set_tick(203);
             ctrl.report_crash("comp-a", "trace-1").unwrap();
             let events = ctrl.drain_events();
-            let json = serde_json::to_string(&events).unwrap();
-            json
+            serde_json::to_string(&events).unwrap()
         };
         assert_eq!(run(), run());
     }
