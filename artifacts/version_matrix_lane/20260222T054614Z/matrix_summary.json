@@ -1,0 +1,9 @@
+{
+  "schema_version": "franken-engine.version-matrix-lane.summary.v2",
+  "generated_at_utc": "20260222T054614Z",
+  "gate_required": true,
+  "outcome": "exempted",
+  "lanes": [
+    {"lane":"n","outcome":"exempted"}
+  ]
+}
