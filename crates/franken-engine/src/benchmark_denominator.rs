@@ -131,6 +131,8 @@ impl PublicationGateDecision {
 pub enum BenchmarkDenominatorError {
     #[error("{baseline} case set is empty")]
     EmptyCaseSet { baseline: String },
+    #[error("empty workload id in {baseline} case set")]
+    EmptyWorkloadId { baseline: String },
     #[error("duplicate workload id `{workload_id}` in {baseline} case set")]
     DuplicateWorkloadId {
         baseline: String,
@@ -153,7 +155,9 @@ pub enum BenchmarkDenominatorError {
 impl BenchmarkDenominatorError {
     pub fn stable_code(&self) -> &'static str {
         match self {
-            Self::EmptyCaseSet { .. } | Self::DuplicateWorkloadId { .. } => ERROR_INVALID_CASE_SET,
+            Self::EmptyCaseSet { .. }
+            | Self::EmptyWorkloadId { .. }
+            | Self::DuplicateWorkloadId { .. } => ERROR_INVALID_CASE_SET,
             Self::InvalidWeight { .. } => ERROR_INVALID_WEIGHT,
             Self::InvalidThroughput { .. } => ERROR_INVALID_THROUGHPUT,
             Self::InvalidWeightSum { .. } => ERROR_WEIGHT_SUM,
@@ -336,9 +340,8 @@ fn prepare_cases(
     for case in cases {
         let workload_id = case.workload_id.trim();
         if workload_id.is_empty() {
-            return Err(BenchmarkDenominatorError::DuplicateWorkloadId {
+            return Err(BenchmarkDenominatorError::EmptyWorkloadId {
                 baseline: baseline.as_str().to_string(),
-                workload_id: "<empty>".to_string(),
             });
         }
         if !seen_ids.insert(workload_id.to_string()) {
@@ -416,4 +419,511 @@ fn prepare_cases(
 
 fn deterministic_round(value: f64) -> f64 {
     (value * ROUND_SCALE).round() / ROUND_SCALE
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_case(id: &str, franken: f64, baseline: f64) -> BenchmarkCase {
+        BenchmarkCase {
+            workload_id: id.into(),
+            throughput_franken_tps: franken,
+            throughput_baseline_tps: baseline,
+            weight: None,
+            behavior_equivalent: true,
+            latency_envelope_ok: true,
+            error_envelope_ok: true,
+        }
+    }
+
+    fn test_case_weighted(id: &str, franken: f64, baseline: f64, weight: f64) -> BenchmarkCase {
+        BenchmarkCase {
+            workload_id: id.into(),
+            throughput_franken_tps: franken,
+            throughput_baseline_tps: baseline,
+            weight: Some(weight),
+            behavior_equivalent: true,
+            latency_envelope_ok: true,
+            error_envelope_ok: true,
+        }
+    }
+
+    fn test_context() -> PublicationContext {
+        PublicationContext::new("trace-1", "dec-1", "pol-1")
+    }
+
+    fn test_gate_input() -> PublicationGateInput {
+        PublicationGateInput {
+            node_cases: vec![test_case("w1", 3000.0, 1000.0)],
+            bun_cases: vec![test_case("w1", 4000.0, 1000.0)],
+            native_coverage_progression: vec![NativeCoveragePoint {
+                recorded_at_utc: "2026-01-01T00:00:00Z".into(),
+                native_slots: 10,
+                total_slots: 20,
+            }],
+            replacement_lineage_ids: vec!["lineage-1".into()],
+        }
+    }
+
+    // ── BaselineEngine ────────────────────────────────────────────
+
+    #[test]
+    fn baseline_engine_as_str() {
+        assert_eq!(BaselineEngine::Node.as_str(), "node");
+        assert_eq!(BaselineEngine::Bun.as_str(), "bun");
+    }
+
+    #[test]
+    fn baseline_engine_serde_round_trip() {
+        for e in [BaselineEngine::Node, BaselineEngine::Bun] {
+            let json = serde_json::to_string(&e).unwrap();
+            let back: BaselineEngine = serde_json::from_str(&json).unwrap();
+            assert_eq!(e, back);
+        }
+    }
+
+    // ── BenchmarkCase::speedup ────────────────────────────────────
+
+    #[test]
+    fn speedup_basic() {
+        let c = test_case("w1", 3000.0, 1000.0);
+        assert!((c.speedup() - 3.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn speedup_fractional() {
+        let c = test_case("w1", 500.0, 1000.0);
+        assert!((c.speedup() - 0.5).abs() < 1e-10);
+    }
+
+    // ── BenchmarkDenominatorError ─────────────────────────────────
+
+    #[test]
+    fn error_stable_codes() {
+        assert_eq!(
+            BenchmarkDenominatorError::EmptyCaseSet {
+                baseline: "node".into()
+            }
+            .stable_code(),
+            "FE-BENCH-1001"
+        );
+        assert_eq!(
+            BenchmarkDenominatorError::DuplicateWorkloadId {
+                baseline: "node".into(),
+                workload_id: "w1".into()
+            }
+            .stable_code(),
+            "FE-BENCH-1001"
+        );
+        assert_eq!(
+            BenchmarkDenominatorError::InvalidWeight {
+                workload_id: "w1".into(),
+                reason: "bad".into()
+            }
+            .stable_code(),
+            "FE-BENCH-1002"
+        );
+        assert_eq!(
+            BenchmarkDenominatorError::InvalidThroughput {
+                workload_id: "w1".into(),
+                field: "f".into()
+            }
+            .stable_code(),
+            "FE-BENCH-1003"
+        );
+        assert_eq!(
+            BenchmarkDenominatorError::InvalidWeightSum {
+                baseline: "node".into(),
+                sum: 0.5
+            }
+            .stable_code(),
+            "FE-BENCH-1004"
+        );
+        assert_eq!(
+            BenchmarkDenominatorError::MissingCoverageProgression.stable_code(),
+            "FE-BENCH-1005"
+        );
+        assert_eq!(
+            BenchmarkDenominatorError::MissingReplacementLineage.stable_code(),
+            "FE-BENCH-1006"
+        );
+        assert_eq!(
+            BenchmarkDenominatorError::SerializationFailure("x".into()).stable_code(),
+            "FE-BENCH-1007"
+        );
+    }
+
+    #[test]
+    fn error_display() {
+        let e = BenchmarkDenominatorError::EmptyCaseSet {
+            baseline: "node".into(),
+        };
+        assert!(e.to_string().contains("node"));
+        assert!(e.to_string().contains("empty"));
+    }
+
+    // ── deterministic_round ───────────────────────────────────────
+
+    #[test]
+    fn deterministic_round_identity_for_integer() {
+        assert!((deterministic_round(3.0) - 3.0).abs() < 1e-15);
+    }
+
+    #[test]
+    fn deterministic_round_truncates_noise() {
+        let a = deterministic_round(3.000_000_000_001);
+        let b = deterministic_round(3.000_000_000_001);
+        assert_eq!(a, b);
+    }
+
+    // ── weighted_geometric_mean ───────────────────────────────────
+
+    #[test]
+    fn geometric_mean_uniform_weights() {
+        let cases = vec![test_case("w1", 3000.0, 1000.0)];
+        let score = weighted_geometric_mean(&cases, BaselineEngine::Node).unwrap();
+        assert!((score - 3.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn geometric_mean_multiple_equal_speedups() {
+        let cases = vec![
+            test_case("w1", 4000.0, 1000.0),
+            test_case("w2", 4000.0, 1000.0),
+        ];
+        let score = weighted_geometric_mean(&cases, BaselineEngine::Node).unwrap();
+        assert!((score - 4.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn geometric_mean_with_explicit_weights() {
+        let cases = vec![
+            test_case_weighted("w1", 9000.0, 1000.0, 0.5),
+            test_case_weighted("w2", 1000.0, 1000.0, 0.5),
+        ];
+        let score = weighted_geometric_mean(&cases, BaselineEngine::Node).unwrap();
+        // geometric mean of 9x and 1x with equal weights = sqrt(9*1) = 3
+        assert!((score - 3.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn geometric_mean_empty_cases_errors() {
+        let err = weighted_geometric_mean(&[], BaselineEngine::Node).unwrap_err();
+        assert!(matches!(
+            err,
+            BenchmarkDenominatorError::EmptyCaseSet { .. }
+        ));
+    }
+
+    #[test]
+    fn geometric_mean_empty_workload_id_errors() {
+        let cases = vec![test_case("", 3000.0, 1000.0)];
+        let err = weighted_geometric_mean(&cases, BaselineEngine::Node).unwrap_err();
+        assert!(matches!(
+            err,
+            BenchmarkDenominatorError::EmptyWorkloadId { .. }
+        ));
+    }
+
+    #[test]
+    fn geometric_mean_duplicate_workload_errors() {
+        let cases = vec![
+            test_case("w1", 3000.0, 1000.0),
+            test_case("w1", 4000.0, 1000.0),
+        ];
+        let err = weighted_geometric_mean(&cases, BaselineEngine::Node).unwrap_err();
+        assert!(matches!(
+            err,
+            BenchmarkDenominatorError::DuplicateWorkloadId { .. }
+        ));
+    }
+
+    #[test]
+    fn geometric_mean_invalid_throughput_zero() {
+        let cases = vec![test_case("w1", 0.0, 1000.0)];
+        assert!(weighted_geometric_mean(&cases, BaselineEngine::Node).is_err());
+    }
+
+    #[test]
+    fn geometric_mean_invalid_throughput_negative() {
+        let cases = vec![test_case("w1", -1.0, 1000.0)];
+        assert!(weighted_geometric_mean(&cases, BaselineEngine::Node).is_err());
+    }
+
+    #[test]
+    fn geometric_mean_invalid_baseline_zero() {
+        let cases = vec![test_case("w1", 3000.0, 0.0)];
+        assert!(weighted_geometric_mean(&cases, BaselineEngine::Node).is_err());
+    }
+
+    #[test]
+    fn geometric_mean_invalid_throughput_nan() {
+        let cases = vec![test_case("w1", f64::NAN, 1000.0)];
+        assert!(weighted_geometric_mean(&cases, BaselineEngine::Node).is_err());
+    }
+
+    #[test]
+    fn geometric_mean_invalid_weight_negative() {
+        let cases = vec![test_case_weighted("w1", 3000.0, 1000.0, -0.5)];
+        assert!(weighted_geometric_mean(&cases, BaselineEngine::Node).is_err());
+    }
+
+    #[test]
+    fn geometric_mean_mixed_weights_errors() {
+        let cases = vec![
+            test_case("w1", 3000.0, 1000.0),               // None weight
+            test_case_weighted("w2", 4000.0, 1000.0, 1.0), // Some weight
+        ];
+        let err = weighted_geometric_mean(&cases, BaselineEngine::Node).unwrap_err();
+        assert!(matches!(
+            err,
+            BenchmarkDenominatorError::InvalidWeight { .. }
+        ));
+    }
+
+    #[test]
+    fn geometric_mean_weights_not_summing_to_one() {
+        let cases = vec![
+            test_case_weighted("w1", 3000.0, 1000.0, 0.3),
+            test_case_weighted("w2", 4000.0, 1000.0, 0.3),
+        ];
+        let err = weighted_geometric_mean(&cases, BaselineEngine::Node).unwrap_err();
+        assert!(matches!(
+            err,
+            BenchmarkDenominatorError::InvalidWeightSum { .. }
+        ));
+    }
+
+    // ── PublicationContext ─────────────────────────────────────────
+
+    #[test]
+    fn publication_context_new() {
+        let ctx = PublicationContext::new("t", "d", "p");
+        assert_eq!(ctx.trace_id, "t");
+        assert_eq!(ctx.decision_id, "d");
+        assert_eq!(ctx.policy_id, "p");
+    }
+
+    // ── evaluate_publication_gate ──────────────────────────────────
+
+    #[test]
+    fn gate_passing() {
+        let input = test_gate_input();
+        let ctx = test_context();
+        let decision = evaluate_publication_gate(&input, &ctx).unwrap();
+        assert!(decision.publish_allowed);
+        assert!(decision.score_vs_node >= SCORE_THRESHOLD);
+        assert!(decision.score_vs_bun >= SCORE_THRESHOLD);
+        assert!(decision.blockers.is_empty());
+        assert!(!decision.events.is_empty());
+    }
+
+    #[test]
+    fn gate_below_threshold_node() {
+        let mut input = test_gate_input();
+        input.node_cases = vec![test_case("w1", 2000.0, 1000.0)]; // 2x < 3x
+        let decision = evaluate_publication_gate(&input, &test_context()).unwrap();
+        assert!(!decision.publish_allowed);
+        assert!(
+            decision
+                .blockers
+                .iter()
+                .any(|b| b.contains("score_vs_node"))
+        );
+    }
+
+    #[test]
+    fn gate_below_threshold_bun() {
+        let mut input = test_gate_input();
+        input.bun_cases = vec![test_case("w1", 1000.0, 1000.0)]; // 1x < 3x
+        let decision = evaluate_publication_gate(&input, &test_context()).unwrap();
+        assert!(!decision.publish_allowed);
+        assert!(decision.blockers.iter().any(|b| b.contains("score_vs_bun")));
+    }
+
+    #[test]
+    fn gate_behavior_equivalent_false_blocks() {
+        let mut input = test_gate_input();
+        input.node_cases[0].behavior_equivalent = false;
+        let decision = evaluate_publication_gate(&input, &test_context()).unwrap();
+        assert!(!decision.publish_allowed);
+        assert!(
+            decision
+                .blockers
+                .iter()
+                .any(|b| b.contains("behavior-equivalence"))
+        );
+    }
+
+    #[test]
+    fn gate_latency_envelope_false_blocks() {
+        let mut input = test_gate_input();
+        input.bun_cases[0].latency_envelope_ok = false;
+        let decision = evaluate_publication_gate(&input, &test_context()).unwrap();
+        assert!(!decision.publish_allowed);
+        assert!(
+            decision
+                .blockers
+                .iter()
+                .any(|b| b.contains("latency envelope"))
+        );
+    }
+
+    #[test]
+    fn gate_error_envelope_false_blocks() {
+        let mut input = test_gate_input();
+        input.node_cases[0].error_envelope_ok = false;
+        let decision = evaluate_publication_gate(&input, &test_context()).unwrap();
+        assert!(!decision.publish_allowed);
+    }
+
+    #[test]
+    fn gate_missing_coverage_progression() {
+        let mut input = test_gate_input();
+        input.native_coverage_progression.clear();
+        let err = evaluate_publication_gate(&input, &test_context()).unwrap_err();
+        assert!(matches!(
+            err,
+            BenchmarkDenominatorError::MissingCoverageProgression
+        ));
+    }
+
+    #[test]
+    fn gate_missing_lineage() {
+        let mut input = test_gate_input();
+        input.replacement_lineage_ids.clear();
+        let err = evaluate_publication_gate(&input, &test_context()).unwrap_err();
+        assert!(matches!(
+            err,
+            BenchmarkDenominatorError::MissingReplacementLineage
+        ));
+    }
+
+    #[test]
+    fn gate_lineage_dedup_and_trim() {
+        let mut input = test_gate_input();
+        input.replacement_lineage_ids = vec![
+            "  lineage-1 ".into(),
+            "lineage-1".into(),
+            "lineage-2".into(),
+        ];
+        let decision = evaluate_publication_gate(&input, &test_context()).unwrap();
+        assert_eq!(decision.replacement_lineage_ids.len(), 2);
+    }
+
+    #[test]
+    fn gate_empty_lineage_strings_filtered() {
+        let mut input = test_gate_input();
+        input.replacement_lineage_ids = vec!["  ".into(), "".into()];
+        let err = evaluate_publication_gate(&input, &test_context()).unwrap_err();
+        assert!(matches!(
+            err,
+            BenchmarkDenominatorError::MissingReplacementLineage
+        ));
+    }
+
+    #[test]
+    fn gate_events_contain_baselines() {
+        let input = test_gate_input();
+        let decision = evaluate_publication_gate(&input, &test_context()).unwrap();
+        assert!(
+            decision
+                .events
+                .iter()
+                .any(|e| e.event == "node_score_evaluated")
+        );
+        assert!(
+            decision
+                .events
+                .iter()
+                .any(|e| e.event == "bun_score_evaluated")
+        );
+        assert!(
+            decision
+                .events
+                .iter()
+                .any(|e| e.event == "publication_gate_decision")
+        );
+    }
+
+    // ── PublicationGateDecision::to_json_pretty ───────────────────
+
+    #[test]
+    fn decision_to_json_pretty() {
+        let input = test_gate_input();
+        let decision = evaluate_publication_gate(&input, &test_context()).unwrap();
+        let json = decision.to_json_pretty().unwrap();
+        assert!(json.contains("publish_allowed"));
+    }
+
+    // ── serde round-trips ─────────────────────────────────────────
+
+    #[test]
+    fn benchmark_case_serde_round_trip() {
+        let c = test_case("w1", 3000.0, 1000.0);
+        let json = serde_json::to_string(&c).unwrap();
+        let back: BenchmarkCase = serde_json::from_str(&json).unwrap();
+        assert_eq!(c.workload_id, back.workload_id);
+        assert!((c.throughput_franken_tps - back.throughput_franken_tps).abs() < 1e-10);
+    }
+
+    #[test]
+    fn publication_context_serde_round_trip() {
+        let ctx = test_context();
+        let json = serde_json::to_string(&ctx).unwrap();
+        let back: PublicationContext = serde_json::from_str(&json).unwrap();
+        assert_eq!(ctx, back);
+    }
+
+    #[test]
+    fn native_coverage_point_serde_round_trip() {
+        let p = NativeCoveragePoint {
+            recorded_at_utc: "2026-01-01T00:00:00Z".into(),
+            native_slots: 10,
+            total_slots: 20,
+        };
+        let json = serde_json::to_string(&p).unwrap();
+        let back: NativeCoveragePoint = serde_json::from_str(&json).unwrap();
+        assert_eq!(p, back);
+    }
+
+    #[test]
+    fn benchmark_publication_event_serde_round_trip() {
+        let e = BenchmarkPublicationEvent {
+            trace_id: "t".into(),
+            decision_id: "d".into(),
+            policy_id: "p".into(),
+            component: "c".into(),
+            event: "e".into(),
+            outcome: "o".into(),
+            error_code: None,
+        };
+        let json = serde_json::to_string(&e).unwrap();
+        let back: BenchmarkPublicationEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(e, back);
+    }
+
+    #[test]
+    fn gate_decision_serde_round_trip() {
+        let input = test_gate_input();
+        let decision = evaluate_publication_gate(&input, &test_context()).unwrap();
+        let json = serde_json::to_string(&decision).unwrap();
+        let back: PublicationGateDecision = serde_json::from_str(&json).unwrap();
+        assert_eq!(decision.publish_allowed, back.publish_allowed);
+        assert!((decision.score_vs_node - back.score_vs_node).abs() < 1e-10);
+    }
+
+    // ── BenchmarkCase defaults ────────────────────────────────────
+
+    #[test]
+    fn case_defaults_from_json() {
+        let json =
+            r#"{"workload_id":"w","throughput_franken_tps":100.0,"throughput_baseline_tps":50.0}"#;
+        let c: BenchmarkCase = serde_json::from_str(json).unwrap();
+        assert!(c.behavior_equivalent);
+        assert!(c.latency_envelope_ok);
+        assert!(c.error_envelope_ok);
+        assert!(c.weight.is_none());
+    }
 }

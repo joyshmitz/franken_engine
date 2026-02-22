@@ -1320,6 +1320,7 @@ mod tests {
     use crate::control_plane::mocks::{decision_id_from_seed, policy_id_from_seed};
     use crate::control_plane::{DecisionRequest, DecisionVerdict};
 
+    #[allow(dead_code)]
     fn mock_cx(seed: u64) -> MockCx {
         MockCx::new(trace_id_from_seed(seed), MockBudget::new(100_000))
     }

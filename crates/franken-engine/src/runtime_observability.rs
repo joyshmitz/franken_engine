@@ -819,3 +819,696 @@ fn cross_zone_error_code(reference_type: CrossZoneReferenceType) -> FrankenError
         CrossZoneReferenceType::AuthorityDenied => FrankenErrorCode::SlotRegistryAuthorityError,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_context() -> SecurityEventContext {
+        SecurityEventContext {
+            timestamp_ns: 1_000_000,
+            trace_id: "trace-001".to_string(),
+            principal_id: "principal-001".to_string(),
+            decision_id: "decision-001".to_string(),
+            policy_id: "policy-001".to_string(),
+            zone_id: "zone-001".to_string(),
+            component: "test_component".to_string(),
+        }
+    }
+
+    // ── AuthFailureType ───────────────────────────────────────────────
+
+    #[test]
+    fn auth_failure_type_as_label() {
+        assert_eq!(
+            AuthFailureType::SignatureInvalid.as_label(),
+            "signature_invalid"
+        );
+        assert_eq!(AuthFailureType::KeyExpired.as_label(), "key_expired");
+        assert_eq!(AuthFailureType::KeyRevoked.as_label(), "key_revoked");
+        assert_eq!(
+            AuthFailureType::AttestationInvalid.as_label(),
+            "attestation_invalid"
+        );
+    }
+
+    #[test]
+    fn auth_failure_type_display() {
+        assert_eq!(
+            AuthFailureType::SignatureInvalid.to_string(),
+            "signature_invalid"
+        );
+    }
+
+    #[test]
+    fn auth_failure_type_all_constant() {
+        assert_eq!(AuthFailureType::ALL.len(), 4);
+    }
+
+    #[test]
+    fn auth_failure_type_serde_round_trip() {
+        for t in AuthFailureType::ALL {
+            let json = serde_json::to_string(&t).unwrap();
+            let back: AuthFailureType = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, t);
+        }
+    }
+
+    // ── CapabilityDenialReason ─────────────────────────────────────────
+
+    #[test]
+    fn capability_denial_reason_as_label() {
+        assert_eq!(
+            CapabilityDenialReason::InsufficientAuthority.as_label(),
+            "insufficient_authority"
+        );
+        assert_eq!(
+            CapabilityDenialReason::CeilingExceeded.as_label(),
+            "ceiling_exceeded"
+        );
+        assert_eq!(
+            CapabilityDenialReason::AttenuationViolation.as_label(),
+            "attenuation_violation"
+        );
+        assert_eq!(
+            CapabilityDenialReason::AudienceMismatch.as_label(),
+            "audience_mismatch"
+        );
+        assert_eq!(CapabilityDenialReason::Expired.as_label(), "expired");
+        assert_eq!(
+            CapabilityDenialReason::NotYetValid.as_label(),
+            "not_yet_valid"
+        );
+    }
+
+    #[test]
+    fn capability_denial_reason_all_constant() {
+        assert_eq!(CapabilityDenialReason::ALL.len(), 6);
+    }
+
+    #[test]
+    fn capability_denial_reason_serde_round_trip() {
+        for r in CapabilityDenialReason::ALL {
+            let json = serde_json::to_string(&r).unwrap();
+            let back: CapabilityDenialReason = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, r);
+        }
+    }
+
+    // ── ReplayDropReason ──────────────────────────────────────────────
+
+    #[test]
+    fn replay_drop_reason_as_label() {
+        assert_eq!(ReplayDropReason::DuplicateSeq.as_label(), "duplicate_seq");
+        assert_eq!(ReplayDropReason::StaleSeq.as_label(), "stale_seq");
+        assert_eq!(ReplayDropReason::CrossSession.as_label(), "cross_session");
+    }
+
+    #[test]
+    fn replay_drop_reason_all_constant() {
+        assert_eq!(ReplayDropReason::ALL.len(), 3);
+    }
+
+    #[test]
+    fn replay_drop_reason_serde_round_trip() {
+        for r in ReplayDropReason::ALL {
+            let json = serde_json::to_string(&r).unwrap();
+            let back: ReplayDropReason = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, r);
+        }
+    }
+
+    // ── CheckpointViolationType ───────────────────────────────────────
+
+    #[test]
+    fn checkpoint_violation_as_label() {
+        assert_eq!(
+            CheckpointViolationType::RollbackAttempt.as_label(),
+            "rollback_attempt"
+        );
+        assert_eq!(
+            CheckpointViolationType::ForkDetected.as_label(),
+            "fork_detected"
+        );
+        assert_eq!(
+            CheckpointViolationType::QuorumInsufficient.as_label(),
+            "quorum_insufficient"
+        );
+    }
+
+    #[test]
+    fn checkpoint_violation_all_constant() {
+        assert_eq!(CheckpointViolationType::ALL.len(), 3);
+    }
+
+    #[test]
+    fn checkpoint_violation_serde_round_trip() {
+        for v in CheckpointViolationType::ALL {
+            let json = serde_json::to_string(&v).unwrap();
+            let back: CheckpointViolationType = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, v);
+        }
+    }
+
+    // ── RevocationCheckOutcome ────────────────────────────────────────
+
+    #[test]
+    fn revocation_check_outcome_as_label() {
+        assert_eq!(RevocationCheckOutcome::Pass.as_label(), "pass");
+        assert_eq!(RevocationCheckOutcome::Revoked.as_label(), "revoked");
+        assert_eq!(RevocationCheckOutcome::Stale.as_label(), "stale");
+    }
+
+    #[test]
+    fn revocation_check_outcome_all_constant() {
+        assert_eq!(RevocationCheckOutcome::ALL.len(), 3);
+    }
+
+    #[test]
+    fn revocation_check_outcome_serde_round_trip() {
+        for o in RevocationCheckOutcome::ALL {
+            let json = serde_json::to_string(&o).unwrap();
+            let back: RevocationCheckOutcome = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, o);
+        }
+    }
+
+    // ── CrossZoneReferenceType ────────────────────────────────────────
+
+    #[test]
+    fn cross_zone_reference_type_as_label() {
+        assert_eq!(
+            CrossZoneReferenceType::ProvenanceAllowed.as_label(),
+            "provenance_allowed"
+        );
+        assert_eq!(
+            CrossZoneReferenceType::AuthorityDenied.as_label(),
+            "authority_denied"
+        );
+    }
+
+    #[test]
+    fn cross_zone_reference_type_all_constant() {
+        assert_eq!(CrossZoneReferenceType::ALL.len(), 2);
+    }
+
+    #[test]
+    fn cross_zone_reference_type_serde_round_trip() {
+        for t in CrossZoneReferenceType::ALL {
+            let json = serde_json::to_string(&t).unwrap();
+            let back: CrossZoneReferenceType = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, t);
+        }
+    }
+
+    // ── SecurityEventType ─────────────────────────────────────────────
+
+    #[test]
+    fn security_event_type_as_str() {
+        assert_eq!(SecurityEventType::AuthFailure.as_str(), "auth_failure");
+        assert_eq!(
+            SecurityEventType::CapabilityDenial.as_str(),
+            "capability_denial"
+        );
+        assert_eq!(SecurityEventType::ReplayDrop.as_str(), "replay_drop");
+        assert_eq!(
+            SecurityEventType::CheckpointViolation.as_str(),
+            "checkpoint_violation"
+        );
+        assert_eq!(
+            SecurityEventType::RevocationCheck.as_str(),
+            "revocation_check"
+        );
+        assert_eq!(
+            SecurityEventType::CrossZoneReference.as_str(),
+            "cross_zone_reference"
+        );
+    }
+
+    #[test]
+    fn security_event_type_display() {
+        assert_eq!(SecurityEventType::AuthFailure.to_string(), "auth_failure");
+    }
+
+    // ── SecurityOutcome ───────────────────────────────────────────────
+
+    #[test]
+    fn security_outcome_as_str() {
+        assert_eq!(SecurityOutcome::Pass.as_str(), "pass");
+        assert_eq!(SecurityOutcome::Allowed.as_str(), "allowed");
+        assert_eq!(SecurityOutcome::Denied.as_str(), "denied");
+        assert_eq!(SecurityOutcome::Dropped.as_str(), "dropped");
+        assert_eq!(SecurityOutcome::Rejected.as_str(), "rejected");
+        assert_eq!(SecurityOutcome::Degraded.as_str(), "degraded");
+    }
+
+    // ── SecurityEventContext::sanitized ────────────────────────────────
+
+    #[test]
+    fn context_sanitized_preserves_values() {
+        let ctx = test_context().sanitized();
+        assert_eq!(ctx.trace_id, "trace-001");
+        assert_eq!(ctx.principal_id, "principal-001");
+    }
+
+    #[test]
+    fn context_sanitized_fills_empty_with_fallback() {
+        let ctx = SecurityEventContext {
+            timestamp_ns: 0,
+            trace_id: "".to_string(),
+            principal_id: "  ".to_string(),
+            decision_id: "".to_string(),
+            policy_id: "".to_string(),
+            zone_id: "".to_string(),
+            component: "".to_string(),
+        }
+        .sanitized();
+        assert_eq!(ctx.trace_id, "trace-missing");
+        assert_eq!(ctx.principal_id, "principal-missing");
+        assert_eq!(ctx.decision_id, "decision-missing");
+        assert_eq!(ctx.policy_id, "policy-missing");
+        assert_eq!(ctx.zone_id, "zone-missing");
+        assert_eq!(ctx.component, "runtime_observability");
+    }
+
+    // ── StructuredSecurityLogEvent::required_fields_present ────────────
+
+    #[test]
+    fn log_event_required_fields_present_true() {
+        let event = StructuredSecurityLogEvent {
+            timestamp_ns: 1,
+            trace_id: "t".to_string(),
+            component: "c".to_string(),
+            event_type: "e".to_string(),
+            outcome: "o".to_string(),
+            error_code: None,
+            principal_id: "p".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "pol".to_string(),
+            zone_id: "z".to_string(),
+            metadata: BTreeMap::new(),
+        };
+        assert!(event.required_fields_present());
+    }
+
+    #[test]
+    fn log_event_required_fields_present_false_missing_trace() {
+        let event = StructuredSecurityLogEvent {
+            timestamp_ns: 1,
+            trace_id: "".to_string(),
+            component: "c".to_string(),
+            event_type: "e".to_string(),
+            outcome: "o".to_string(),
+            error_code: None,
+            principal_id: "p".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "pol".to_string(),
+            zone_id: "z".to_string(),
+            metadata: BTreeMap::new(),
+        };
+        assert!(!event.required_fields_present());
+    }
+
+    // ── RuntimeSecurityMetrics ────────────────────────────────────────
+
+    #[test]
+    fn metrics_default_all_zeroes() {
+        let m = RuntimeSecurityMetrics::default();
+        assert!(m.auth_failure_total.values().all(|v| *v == 0));
+        assert!(m.capability_denial_total.values().all(|v| *v == 0));
+        assert!(m.replay_drop_total.values().all(|v| *v == 0));
+        assert!(m.checkpoint_violation_total.values().all(|v| *v == 0));
+        assert!(m.revocation_check_total.values().all(|v| *v == 0));
+        assert!(m.cross_zone_reference_total.values().all(|v| *v == 0));
+        assert_eq!(m.revocation_freshness_degraded_seconds, 0);
+    }
+
+    #[test]
+    fn metrics_default_has_all_keys() {
+        let m = RuntimeSecurityMetrics::default();
+        assert_eq!(m.auth_failure_total.len(), 4);
+        assert_eq!(m.capability_denial_total.len(), 6);
+        assert_eq!(m.replay_drop_total.len(), 3);
+        assert_eq!(m.checkpoint_violation_total.len(), 3);
+        assert_eq!(m.revocation_check_total.len(), 3);
+        assert_eq!(m.cross_zone_reference_total.len(), 2);
+    }
+
+    #[test]
+    fn metrics_to_prometheus_contains_all_counters() {
+        let prom = RuntimeSecurityMetrics::default().to_prometheus();
+        assert!(prom.contains("auth_failure_total"));
+        assert!(prom.contains("capability_denial_total"));
+        assert!(prom.contains("replay_drop_total"));
+        assert!(prom.contains("checkpoint_violation_total"));
+        assert!(prom.contains("revocation_freshness_degraded_seconds"));
+        assert!(prom.contains("revocation_check_total"));
+        assert!(prom.contains("cross_zone_reference_total"));
+    }
+
+    #[test]
+    fn metrics_to_prometheus_has_help_and_type() {
+        let prom = RuntimeSecurityMetrics::default().to_prometheus();
+        assert!(prom.contains("# HELP auth_failure_total"));
+        assert!(prom.contains("# TYPE auth_failure_total counter"));
+        assert!(prom.contains("# TYPE revocation_freshness_degraded_seconds gauge"));
+    }
+
+    // ── RuntimeSecurityObservability ──────────────────────────────────
+
+    #[test]
+    fn observability_new_empty() {
+        let obs = RuntimeSecurityObservability::new();
+        assert!(obs.logs().is_empty());
+    }
+
+    #[test]
+    fn record_auth_failure_increments_counter() {
+        let mut obs = RuntimeSecurityObservability::new();
+        let event = obs.record_auth_failure(
+            test_context(),
+            AuthFailureType::SignatureInvalid,
+            Some("secret_key"),
+            None,
+        );
+        assert_eq!(event.event_type, "auth_failure");
+        assert_eq!(event.outcome, "denied");
+        assert!(event.error_code.is_some());
+        assert_eq!(
+            *obs.metrics()
+                .auth_failure_total
+                .get(&AuthFailureType::SignatureInvalid)
+                .unwrap(),
+            1
+        );
+        assert_eq!(obs.logs().len(), 1);
+    }
+
+    #[test]
+    fn record_auth_failure_redacts_key_material() {
+        let mut obs = RuntimeSecurityObservability::new();
+        let event = obs.record_auth_failure(
+            test_context(),
+            AuthFailureType::KeyExpired,
+            Some("my_secret"),
+            Some("my_token"),
+        );
+        let key_hash = event.metadata.get("key_material_hash").unwrap();
+        let token_hash = event.metadata.get("token_content_hash").unwrap();
+        assert!(key_hash.starts_with("sha256:"));
+        assert!(token_hash.starts_with("sha256:"));
+        assert!(!key_hash.contains("my_secret"));
+        assert!(!token_hash.contains("my_token"));
+    }
+
+    #[test]
+    fn record_capability_denial() {
+        let mut obs = RuntimeSecurityObservability::new();
+        let event = obs.record_capability_denial(
+            test_context(),
+            CapabilityDenialReason::InsufficientAuthority,
+            "fs_read",
+        );
+        assert_eq!(event.event_type, "capability_denial");
+        assert_eq!(event.outcome, "denied");
+        assert_eq!(
+            event.metadata.get("requested_capability").unwrap(),
+            "fs_read"
+        );
+        assert_eq!(
+            *obs.metrics()
+                .capability_denial_total
+                .get(&CapabilityDenialReason::InsufficientAuthority)
+                .unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn record_replay_drop() {
+        let mut obs = RuntimeSecurityObservability::new();
+        let event = obs.record_replay_drop(
+            test_context(),
+            ReplayDropReason::DuplicateSeq,
+            5,
+            6,
+            "session-abc",
+        );
+        assert_eq!(event.event_type, "replay_drop");
+        assert_eq!(event.outcome, "dropped");
+        assert_eq!(event.metadata.get("received_seq").unwrap(), "5");
+        assert_eq!(event.metadata.get("expected_seq").unwrap(), "6");
+        // session_id is redacted
+        let sid = event.metadata.get("session_id_hash").unwrap();
+        assert!(sid.starts_with("sha256:"));
+    }
+
+    #[test]
+    fn record_checkpoint_violation() {
+        let mut obs = RuntimeSecurityObservability::new();
+        let event = obs.record_checkpoint_violation(
+            test_context(),
+            CheckpointViolationType::ForkDetected,
+            10,
+            20,
+        );
+        assert_eq!(event.event_type, "checkpoint_violation");
+        assert_eq!(event.outcome, "rejected");
+        assert_eq!(
+            *obs.metrics()
+                .checkpoint_violation_total
+                .get(&CheckpointViolationType::ForkDetected)
+                .unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn record_revocation_check_pass() {
+        let mut obs = RuntimeSecurityObservability::new();
+        let event = obs.record_revocation_check(
+            test_context(),
+            RevocationCheckOutcome::Pass,
+            100,
+            100,
+            50,
+            None,
+        );
+        assert_eq!(event.event_type, "revocation_check");
+        assert_eq!(event.outcome, "pass");
+        assert!(event.error_code.is_none());
+    }
+
+    #[test]
+    fn record_revocation_check_stale_updates_degraded_seconds() {
+        let mut obs = RuntimeSecurityObservability::new();
+        obs.record_revocation_check(
+            test_context(),
+            RevocationCheckOutcome::Stale,
+            80,
+            100,
+            50,
+            Some(120),
+        );
+        assert_eq!(obs.metrics().revocation_freshness_degraded_seconds, 120);
+    }
+
+    #[test]
+    fn record_cross_zone_reference_allowed() {
+        let mut obs = RuntimeSecurityObservability::new();
+        let event = obs.record_cross_zone_reference(
+            test_context(),
+            CrossZoneReferenceType::ProvenanceAllowed,
+            "zone-a",
+            "zone-b",
+        );
+        assert_eq!(event.event_type, "cross_zone_reference");
+        assert_eq!(event.outcome, "allowed");
+        assert!(event.error_code.is_none());
+    }
+
+    #[test]
+    fn record_cross_zone_reference_denied() {
+        let mut obs = RuntimeSecurityObservability::new();
+        let event = obs.record_cross_zone_reference(
+            test_context(),
+            CrossZoneReferenceType::AuthorityDenied,
+            "zone-a",
+            "zone-b",
+        );
+        assert_eq!(event.outcome, "denied");
+        assert!(event.error_code.is_some());
+    }
+
+    // ── render / parse JSONL ──────────────────────────────────────────
+
+    #[test]
+    fn render_and_parse_jsonl_round_trip() {
+        let mut obs = RuntimeSecurityObservability::new();
+        obs.record_auth_failure(
+            test_context(),
+            AuthFailureType::SignatureInvalid,
+            None,
+            None,
+        );
+        obs.record_capability_denial(test_context(), CapabilityDenialReason::Expired, "net");
+
+        let jsonl = render_security_logs_jsonl(obs.logs());
+        let parsed = parse_security_logs_jsonl(&jsonl).unwrap();
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].event_type, "auth_failure");
+        assert_eq!(parsed[1].event_type, "capability_denial");
+    }
+
+    #[test]
+    fn parse_jsonl_empty_input() {
+        let parsed = parse_security_logs_jsonl("").unwrap();
+        assert!(parsed.is_empty());
+    }
+
+    #[test]
+    fn parse_jsonl_blank_lines_skipped() {
+        let parsed = parse_security_logs_jsonl("\n  \n").unwrap();
+        assert!(parsed.is_empty());
+    }
+
+    #[test]
+    fn parse_jsonl_invalid_json_errors() {
+        let result = parse_security_logs_jsonl("not valid json");
+        assert!(result.is_err());
+    }
+
+    // ── redact_sensitive_value ─────────────────────────────────────────
+
+    #[test]
+    fn redact_deterministic() {
+        let a = redact_sensitive_value("secret");
+        let b = redact_sensitive_value("secret");
+        assert_eq!(a, b);
+        assert!(a.starts_with("sha256:"));
+        assert!(!a.contains("secret"));
+    }
+
+    #[test]
+    fn redact_different_inputs_differ() {
+        assert_ne!(
+            redact_sensitive_value("secret1"),
+            redact_sensitive_value("secret2")
+        );
+    }
+
+    // ── sanitize_required ─────────────────────────────────────────────
+
+    #[test]
+    fn sanitize_required_non_empty() {
+        assert_eq!(sanitize_required("hello", "fallback"), "hello");
+    }
+
+    #[test]
+    fn sanitize_required_empty_uses_fallback() {
+        assert_eq!(sanitize_required("", "fallback"), "fallback");
+        assert_eq!(sanitize_required("  ", "fallback"), "fallback");
+    }
+
+    // ── export methods ────────────────────────────────────────────────
+
+    #[test]
+    fn export_prometheus_metrics_not_empty() {
+        let obs = RuntimeSecurityObservability::new();
+        let prom = obs.export_prometheus_metrics();
+        assert!(!prom.is_empty());
+        assert!(prom.contains("auth_failure_total"));
+    }
+
+    #[test]
+    fn export_logs_jsonl_empty_when_no_events() {
+        let obs = RuntimeSecurityObservability::new();
+        assert!(obs.export_logs_jsonl().is_empty());
+    }
+
+    // ── multiple events accumulate ────────────────────────────────────
+
+    #[test]
+    fn multiple_auth_failures_accumulate() {
+        let mut obs = RuntimeSecurityObservability::new();
+        obs.record_auth_failure(
+            test_context(),
+            AuthFailureType::SignatureInvalid,
+            None,
+            None,
+        );
+        obs.record_auth_failure(
+            test_context(),
+            AuthFailureType::SignatureInvalid,
+            None,
+            None,
+        );
+        obs.record_auth_failure(test_context(), AuthFailureType::KeyRevoked, None, None);
+        assert_eq!(
+            *obs.metrics()
+                .auth_failure_total
+                .get(&AuthFailureType::SignatureInvalid)
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            *obs.metrics()
+                .auth_failure_total
+                .get(&AuthFailureType::KeyRevoked)
+                .unwrap(),
+            1
+        );
+        assert_eq!(obs.logs().len(), 3);
+    }
+
+    // ── serde round-trips ──────────────────────────────────────────────
+
+    #[test]
+    fn metrics_serde_round_trip() {
+        let m = RuntimeSecurityMetrics::default();
+        let json = serde_json::to_string(&m).unwrap();
+        let back: RuntimeSecurityMetrics = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, m);
+    }
+
+    #[test]
+    fn observability_serde_round_trip() {
+        let mut obs = RuntimeSecurityObservability::new();
+        obs.record_auth_failure(test_context(), AuthFailureType::KeyExpired, None, None);
+        let json = serde_json::to_string(&obs).unwrap();
+        let back: RuntimeSecurityObservability = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, obs);
+    }
+
+    #[test]
+    fn security_event_type_serde_round_trip() {
+        for t in [
+            SecurityEventType::AuthFailure,
+            SecurityEventType::CapabilityDenial,
+            SecurityEventType::ReplayDrop,
+            SecurityEventType::CheckpointViolation,
+            SecurityEventType::RevocationCheck,
+            SecurityEventType::CrossZoneReference,
+        ] {
+            let json = serde_json::to_string(&t).unwrap();
+            let back: SecurityEventType = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, t);
+        }
+    }
+
+    #[test]
+    fn security_outcome_serde_round_trip() {
+        for o in [
+            SecurityOutcome::Pass,
+            SecurityOutcome::Allowed,
+            SecurityOutcome::Denied,
+            SecurityOutcome::Dropped,
+            SecurityOutcome::Rejected,
+            SecurityOutcome::Degraded,
+        ] {
+            let json = serde_json::to_string(&o).unwrap();
+            let back: SecurityOutcome = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, o);
+        }
+    }
+}

@@ -953,6 +953,7 @@ impl ExtensionLifecycleManager {
     // Internal helpers
     // -----------------------------------------------------------------------
 
+    #[allow(clippy::too_many_arguments)]
     fn emit_event(
         &mut self,
         extension_id: &str,

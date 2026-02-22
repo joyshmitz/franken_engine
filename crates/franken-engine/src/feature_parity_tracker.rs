@@ -402,6 +402,7 @@ pub struct ParityEvent {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ParityTrackerError {
     FeatureNotFound { feature_id: String },
+    WaiverNotFound { waiver_id: String },
     WaiverAlreadyExists { waiver_id: String },
     WaiverSealed { waiver_id: String },
     InvalidWaiver { detail: String },
@@ -414,6 +415,7 @@ impl ParityTrackerError {
     pub fn code(&self) -> &'static str {
         match self {
             Self::FeatureNotFound { .. } => "FE-FPT-0001",
+            Self::WaiverNotFound { .. } => "FE-FPT-0008",
             Self::WaiverAlreadyExists { .. } => "FE-FPT-0002",
             Self::WaiverSealed { .. } => "FE-FPT-0003",
             Self::InvalidWaiver { .. } => "FE-FPT-0004",
@@ -429,6 +431,9 @@ impl fmt::Display for ParityTrackerError {
         match self {
             Self::FeatureNotFound { feature_id } => {
                 write!(f, "{}: feature not found: {feature_id}", self.code())
+            }
+            Self::WaiverNotFound { waiver_id } => {
+                write!(f, "{}: waiver not found: {waiver_id}", self.code())
             }
             Self::WaiverAlreadyExists { waiver_id } => {
                 write!(f, "{}: waiver already exists: {waiver_id}", self.code())
@@ -683,8 +688,8 @@ impl FeatureParityTracker {
         let waiver =
             self.waivers
                 .get_mut(waiver_id)
-                .ok_or_else(|| ParityTrackerError::FeatureNotFound {
-                    feature_id: waiver_id.to_string(),
+                .ok_or_else(|| ParityTrackerError::WaiverNotFound {
+                    waiver_id: waiver_id.to_string(),
                 })?;
         if waiver.sealed {
             return Err(ParityTrackerError::WaiverSealed {
@@ -1275,6 +1280,15 @@ mod tests {
         tracker.seal_waiver("w-1", &ctx).unwrap();
         let err = tracker.seal_waiver("w-1", &ctx).unwrap_err();
         assert_eq!(err.code(), "FE-FPT-0003");
+    }
+
+    #[test]
+    fn seal_nonexistent_waiver_returns_waiver_not_found() {
+        let mut tracker = FeatureParityTracker::new();
+        let ctx = test_ctx();
+        let err = tracker.seal_waiver("does-not-exist", &ctx).unwrap_err();
+        assert_eq!(err.code(), "FE-FPT-0008");
+        assert!(matches!(err, ParityTrackerError::WaiverNotFound { .. }));
     }
 
     // -------------------------------------------------------------------

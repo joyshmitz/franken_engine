@@ -881,7 +881,7 @@ fn attestation_quote_digest(quote: &CellAttestationQuote) -> Result<ContentHash,
 fn map_platform(platform: PlatformKind) -> Option<TeePlatform> {
     match platform {
         PlatformKind::IntelSgx => Some(TeePlatform::IntelSgx),
-        PlatformKind::ArmCca => Some(TeePlatform::ArmTrustZone),
+        PlatformKind::ArmCca => Some(TeePlatform::ArmCca),
         PlatformKind::AmdSevSnp => Some(TeePlatform::AmdSev),
         PlatformKind::Software => None,
     }
@@ -933,6 +933,13 @@ mod tests {
             }],
         );
         approved_measurements.insert(
+            TeePlatform::ArmCca,
+            vec![MeasurementDigest {
+                algorithm: MeasurementAlgorithm::Sha256,
+                digest_hex: digest_hex(0x44, 32),
+            }],
+        );
+        approved_measurements.insert(
             TeePlatform::AmdSev,
             vec![MeasurementDigest {
                 algorithm: MeasurementAlgorithm::Sha384,
@@ -976,6 +983,15 @@ mod tests {
                     root_id: "arm-root".to_string(),
                     platform: TeePlatform::ArmTrustZone,
                     trust_anchor_pem: "-----BEGIN KEY-----arm-----END KEY-----".to_string(),
+                    valid_from_epoch: SecurityEpoch::from_raw(1),
+                    valid_until_epoch: None,
+                    pinning: TrustRootPinning::Pinned,
+                    source: TrustRootSource::Policy,
+                },
+                PlatformTrustRoot {
+                    root_id: "cca-root".to_string(),
+                    platform: TeePlatform::ArmCca,
+                    trust_anchor_pem: "-----BEGIN KEY-----cca-----END KEY-----".to_string(),
                     valid_from_epoch: SecurityEpoch::from_raw(1),
                     valid_until_epoch: None,
                     pinning: TrustRootPinning::Pinned,
@@ -1270,5 +1286,22 @@ mod tests {
                 receipt_id: "missing".to_string()
             }
         );
+    }
+
+    #[test]
+    fn map_platform_maps_all_variants_correctly() {
+        assert_eq!(
+            map_platform(PlatformKind::IntelSgx),
+            Some(TeePlatform::IntelSgx)
+        );
+        assert_eq!(
+            map_platform(PlatformKind::ArmCca),
+            Some(TeePlatform::ArmCca)
+        );
+        assert_eq!(
+            map_platform(PlatformKind::AmdSevSnp),
+            Some(TeePlatform::AmdSev)
+        );
+        assert_eq!(map_platform(PlatformKind::Software), None);
     }
 }

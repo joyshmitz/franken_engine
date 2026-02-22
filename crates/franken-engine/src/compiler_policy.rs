@@ -596,6 +596,7 @@ impl CompilerPolicyEngine {
             .count()
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn record_decision(
         &mut self,
         trace_id: &str,

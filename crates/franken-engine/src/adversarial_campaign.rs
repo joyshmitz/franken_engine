@@ -1177,6 +1177,7 @@ impl PolicyRegressionSuite {
         self.entries.insert(entry.campaign_id.clone(), entry);
     }
 
+    #[allow(dead_code)]
     pub fn get(&self, campaign_id: &str) -> Option<&PolicyRegressionEntry> {
         self.entries.get(campaign_id)
     }
@@ -1189,6 +1190,7 @@ impl PolicyRegressionSuite {
         self.entries.len()
     }
 
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
@@ -1267,6 +1269,7 @@ impl RedBlueLoopIntegrator {
         Ok(classification)
     }
 
+    #[allow(dead_code)]
     pub fn ingest_outcomes(
         &mut self,
         outcomes: &[CampaignOutcomeRecord],
@@ -1642,16 +1645,14 @@ impl RedBlueLoopIntegrator {
             }
         }
 
-        let fn_rate = if attack_total == 0 {
-            0
-        } else {
-            clamp_millionths((attack_escapes * 1_000_000) / attack_total)
-        };
-        let fp_rate = if benign_total == 0 {
-            0
-        } else {
-            clamp_millionths((benign_false_positive * 1_000_000) / benign_total)
-        };
+        let fn_rate = (attack_escapes * 1_000_000)
+            .checked_div(attack_total)
+            .map(clamp_millionths)
+            .unwrap_or(0);
+        let fp_rate = (benign_false_positive * 1_000_000)
+            .checked_div(benign_total)
+            .map(clamp_millionths)
+            .unwrap_or(0);
 
         CalibrationJustificationMetrics {
             false_negative_millionths: fn_rate,
@@ -1789,6 +1790,7 @@ pub enum CampaignRuntime {
 }
 
 impl CampaignRuntime {
+    #[allow(dead_code)]
     pub fn is_baseline(self) -> bool {
         !matches!(self, Self::FrankenEngine)
     }

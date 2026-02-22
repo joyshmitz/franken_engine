@@ -2891,4 +2891,539 @@ mod tests {
         let decoded: AuditResult = serde_json::from_slice(&json).expect("deserialize");
         assert_eq!(audit, decoded);
     }
+
+    // ── EvidenceCategory ───────────────────────────────────────────
+
+    #[test]
+    fn evidence_category_as_str() {
+        assert_eq!(EvidenceCategory::GateResult.as_str(), "gate_result");
+        assert_eq!(
+            EvidenceCategory::PerformanceBenchmark.as_str(),
+            "performance_benchmark"
+        );
+        assert_eq!(
+            EvidenceCategory::SentinelRiskScore.as_str(),
+            "sentinel_risk_score"
+        );
+        assert_eq!(
+            EvidenceCategory::DifferentialExecutionLog.as_str(),
+            "differential_execution_log"
+        );
+        assert_eq!(EvidenceCategory::Additional.as_str(), "additional");
+    }
+
+    #[test]
+    fn evidence_category_display() {
+        assert_eq!(EvidenceCategory::GateResult.to_string(), "gate_result");
+    }
+
+    #[test]
+    fn evidence_category_serde_round_trip() {
+        for variant in [
+            EvidenceCategory::GateResult,
+            EvidenceCategory::PerformanceBenchmark,
+            EvidenceCategory::SentinelRiskScore,
+            EvidenceCategory::DifferentialExecutionLog,
+            EvidenceCategory::Additional,
+        ] {
+            let json = serde_json::to_string(&variant).unwrap();
+            let back: EvidenceCategory = serde_json::from_str(&json).unwrap();
+            assert_eq!(variant, back);
+        }
+    }
+
+    #[test]
+    fn category_from_validation_kind_mapping() {
+        assert_eq!(
+            category_from_validation_kind(ValidationArtifactKind::EquivalenceResult),
+            EvidenceCategory::DifferentialExecutionLog
+        );
+        assert_eq!(
+            category_from_validation_kind(ValidationArtifactKind::CapabilityPreservation),
+            EvidenceCategory::GateResult
+        );
+        assert_eq!(
+            category_from_validation_kind(ValidationArtifactKind::PerformanceBenchmark),
+            EvidenceCategory::PerformanceBenchmark
+        );
+        assert_eq!(
+            category_from_validation_kind(ValidationArtifactKind::AdversarialSurvival),
+            EvidenceCategory::GateResult
+        );
+    }
+
+    // ── LineageIndexError ──────────────────────────────────────────
+
+    #[test]
+    fn lineage_index_error_codes() {
+        assert_eq!(
+            LineageIndexError::Storage(StorageError::NotFound {
+                store: StoreKind::ReplacementLineage,
+                key: "k".into()
+            })
+            .code(),
+            "FE-LIDX-0001"
+        );
+        assert_eq!(
+            LineageIndexError::Serialization {
+                operation: "op".into(),
+                detail: "d".into()
+            }
+            .code(),
+            "FE-LIDX-0002"
+        );
+        assert_eq!(
+            LineageIndexError::CorruptRecord {
+                key: "k".into(),
+                detail: "d".into()
+            }
+            .code(),
+            "FE-LIDX-0003"
+        );
+        assert_eq!(
+            LineageIndexError::InvalidInput { detail: "d".into() }.code(),
+            "FE-LIDX-0004"
+        );
+    }
+
+    #[test]
+    fn lineage_index_error_display() {
+        let err = LineageIndexError::Serialization {
+            operation: "encode".into(),
+            detail: "bad json".into(),
+        };
+        assert!(err.to_string().contains("encode"));
+        assert!(err.to_string().contains("bad json"));
+
+        let err = LineageIndexError::CorruptRecord {
+            key: "k1".into(),
+            detail: "truncated".into(),
+        };
+        assert!(err.to_string().contains("k1"));
+        assert!(err.to_string().contains("truncated"));
+
+        let err = LineageIndexError::InvalidInput {
+            detail: "empty id".into(),
+        };
+        assert!(err.to_string().contains("empty id"));
+    }
+
+    #[test]
+    fn lineage_index_error_is_std_error() {
+        let err = LineageIndexError::InvalidInput {
+            detail: "test".into(),
+        };
+        let _: &dyn std::error::Error = &err;
+    }
+
+    #[test]
+    fn lineage_index_error_from_storage_error() {
+        let storage_err = StorageError::NotFound {
+            store: StoreKind::ReplacementLineage,
+            key: "missing".into(),
+        };
+        let idx_err: LineageIndexError = storage_err.into();
+        assert!(matches!(idx_err, LineageIndexError::Storage(_)));
+    }
+
+    // ── EvidencePointerInput serde ─────────────────────────────────
+
+    #[test]
+    fn evidence_pointer_input_serde_round_trip() {
+        let input = EvidencePointerInput {
+            category: EvidenceCategory::GateResult,
+            artifact_digest: "abc123".to_string(),
+            passed: Some(true),
+            summary: "gate passed".to_string(),
+        };
+        let json = serde_json::to_string(&input).unwrap();
+        let back: EvidencePointerInput = serde_json::from_str(&json).unwrap();
+        assert_eq!(input, back);
+    }
+
+    // ── EvidencePointer ────────────────────────────────────────────
+
+    #[test]
+    fn evidence_pointer_from_input() {
+        let input = EvidencePointerInput {
+            category: EvidenceCategory::PerformanceBenchmark,
+            artifact_digest: "digest-1".to_string(),
+            passed: Some(false),
+            summary: "perf regression".to_string(),
+        };
+        let ptr = EvidencePointer::from_input("receipt-xyz", input);
+        assert_eq!(ptr.receipt_id, "receipt-xyz");
+        assert_eq!(ptr.category, EvidenceCategory::PerformanceBenchmark);
+        assert_eq!(ptr.artifact_digest, "digest-1");
+        assert_eq!(ptr.passed, Some(false));
+    }
+
+    #[test]
+    fn evidence_pointer_serde_round_trip() {
+        let ptr = EvidencePointer {
+            receipt_id: "r-1".to_string(),
+            category: EvidenceCategory::SentinelRiskScore,
+            artifact_digest: "d".to_string(),
+            passed: None,
+            summary: "s".to_string(),
+        };
+        let json = serde_json::to_string(&ptr).unwrap();
+        let back: EvidencePointer = serde_json::from_str(&json).unwrap();
+        assert_eq!(ptr, back);
+    }
+
+    // ── SlotLineageQuery / ReplayJoinQuery serde ───────────────────
+
+    #[test]
+    fn slot_lineage_query_serde_round_trip() {
+        let query = SlotLineageQuery {
+            min_timestamp_ns: Some(100),
+            max_timestamp_ns: Some(500),
+            limit: Some(10),
+        };
+        let json = serde_json::to_string(&query).unwrap();
+        let back: SlotLineageQuery = serde_json::from_str(&json).unwrap();
+        assert_eq!(query, back);
+    }
+
+    #[test]
+    fn replay_join_query_serde_round_trip() {
+        let query = ReplayJoinQuery {
+            slot_id: Some(test_slot_id("s")),
+            min_timestamp_ns: Some(100),
+            max_timestamp_ns: Some(500),
+            limit: Some(10),
+        };
+        let json = serde_json::to_string(&query).unwrap();
+        let back: ReplayJoinQuery = serde_json::from_str(&json).unwrap();
+        assert_eq!(query, back);
+    }
+
+    // ── LineageIndexEvent serde ────────────────────────────────────
+
+    #[test]
+    fn lineage_index_event_serde_round_trip() {
+        let event = LineageIndexEvent {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            component: "replacement_lineage_index".to_string(),
+            event: "index_replacement_receipt".to_string(),
+            outcome: "ok".to_string(),
+            error_code: None,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: LineageIndexEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, back);
+    }
+
+    // ── ReplacementLineageEvidenceIndex ─────────────────────────────
+
+    fn test_context() -> EventContext {
+        EventContext {
+            trace_id: "trace-idx".to_string(),
+            decision_id: "decision-idx".to_string(),
+            policy_id: "policy-idx".to_string(),
+        }
+    }
+
+    #[test]
+    fn evidence_index_new_and_events_empty() {
+        use crate::storage_adapter::InMemoryStorageAdapter;
+        let idx = ReplacementLineageEvidenceIndex::new(InMemoryStorageAdapter::new());
+        assert!(idx.events().is_empty());
+    }
+
+    #[test]
+    fn evidence_index_into_inner() {
+        use crate::storage_adapter::InMemoryStorageAdapter;
+        let adapter = InMemoryStorageAdapter::new();
+        let idx = ReplacementLineageEvidenceIndex::new(adapter);
+        let _recovered = idx.into_inner();
+    }
+
+    #[test]
+    fn evidence_index_replacement_receipt_round_trip() {
+        use crate::storage_adapter::InMemoryStorageAdapter;
+        let mut idx = ReplacementLineageEvidenceIndex::new(InMemoryStorageAdapter::new());
+        let receipt = test_receipt("slot-idx", "old-cell", "new-cell", 5000);
+        let ctx = test_context();
+        let evidence = vec![EvidencePointerInput {
+            category: EvidenceCategory::GateResult,
+            artifact_digest: "gate-digest".to_string(),
+            passed: Some(true),
+            summary: "gate ok".to_string(),
+        }];
+        let record = idx
+            .index_replacement_receipt(&receipt, ReplacementKind::DelegateToNative, &evidence, &ctx)
+            .unwrap();
+        assert_eq!(record.slot_id, receipt.slot_id);
+        assert_eq!(record.old_cell_digest, "old-cell");
+        assert_eq!(record.new_cell_digest, "new-cell");
+        assert_eq!(record.promotion_timestamp_ns, 5000);
+        assert!(!record.receipt_content_hash.is_empty());
+        assert_eq!(idx.events().len(), 1);
+        assert_eq!(idx.events()[0].outcome, "ok");
+    }
+
+    #[test]
+    fn evidence_index_replacement_by_content_hash() {
+        use crate::storage_adapter::InMemoryStorageAdapter;
+        let mut idx = ReplacementLineageEvidenceIndex::new(InMemoryStorageAdapter::new());
+        let receipt = test_receipt("slot-hash", "old", "new", 6000);
+        let ctx = test_context();
+        let record = idx
+            .index_replacement_receipt(&receipt, ReplacementKind::DelegateToNative, &[], &ctx)
+            .unwrap();
+        let found = idx
+            .replacement_by_content_hash(&record.receipt_content_hash, &ctx)
+            .unwrap();
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().receipt_id, record.receipt_id);
+    }
+
+    #[test]
+    fn evidence_index_replacement_by_content_hash_missing() {
+        use crate::storage_adapter::InMemoryStorageAdapter;
+        let mut idx = ReplacementLineageEvidenceIndex::new(InMemoryStorageAdapter::new());
+        let ctx = test_context();
+        let found = idx
+            .replacement_by_content_hash("nonexistent", &ctx)
+            .unwrap();
+        assert!(found.is_none());
+    }
+
+    #[test]
+    fn evidence_index_demotion_receipt() {
+        use crate::storage_adapter::InMemoryStorageAdapter;
+        let mut idx = ReplacementLineageEvidenceIndex::new(InMemoryStorageAdapter::new());
+        let ctx = test_context();
+        let input = DemotionReceiptInput {
+            receipt_id: "demotion-1".to_string(),
+            slot_id: test_slot_id("slot-dem"),
+            demoted_cell_digest: "new-cell".to_string(),
+            restored_cell_digest: "old-cell".to_string(),
+            demotion_reason: "regression detected".to_string(),
+            timestamp_ns: 7000,
+            rollback_token_used: "rollback-token-1".to_string(),
+            linked_replacement_receipt_id: None,
+            evidence: vec![EvidencePointerInput {
+                category: EvidenceCategory::SentinelRiskScore,
+                artifact_digest: "risk-digest".to_string(),
+                passed: Some(false),
+                summary: "high risk".to_string(),
+            }],
+        };
+        let record = idx.index_demotion_receipt(input, &ctx).unwrap();
+        assert_eq!(record.receipt_id, "demotion-1");
+        assert_eq!(record.demotion_reason, "regression detected");
+        assert!(!record.receipt_content_hash.is_empty());
+    }
+
+    #[test]
+    fn evidence_index_demotion_empty_receipt_id_fails() {
+        use crate::storage_adapter::InMemoryStorageAdapter;
+        let mut idx = ReplacementLineageEvidenceIndex::new(InMemoryStorageAdapter::new());
+        let ctx = test_context();
+        let input = DemotionReceiptInput {
+            receipt_id: "".to_string(),
+            slot_id: test_slot_id("slot-dem"),
+            demoted_cell_digest: "d".to_string(),
+            restored_cell_digest: "r".to_string(),
+            demotion_reason: "test".to_string(),
+            timestamp_ns: 100,
+            rollback_token_used: "tok".to_string(),
+            linked_replacement_receipt_id: None,
+            evidence: Vec::new(),
+        };
+        let err = idx.index_demotion_receipt(input, &ctx).unwrap_err();
+        assert!(matches!(err, LineageIndexError::InvalidInput { .. }));
+    }
+
+    #[test]
+    fn evidence_index_demotion_by_content_hash() {
+        use crate::storage_adapter::InMemoryStorageAdapter;
+        let mut idx = ReplacementLineageEvidenceIndex::new(InMemoryStorageAdapter::new());
+        let ctx = test_context();
+        let input = DemotionReceiptInput {
+            receipt_id: "dem-hash-test".to_string(),
+            slot_id: test_slot_id("slot-dh"),
+            demoted_cell_digest: "d".to_string(),
+            restored_cell_digest: "r".to_string(),
+            demotion_reason: "test".to_string(),
+            timestamp_ns: 8000,
+            rollback_token_used: "tok".to_string(),
+            linked_replacement_receipt_id: None,
+            evidence: Vec::new(),
+        };
+        let record = idx.index_demotion_receipt(input, &ctx).unwrap();
+        let found = idx
+            .demotion_by_content_hash(&record.receipt_content_hash, &ctx)
+            .unwrap();
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().receipt_id, "dem-hash-test");
+    }
+
+    #[test]
+    fn evidence_index_slot_lineage() {
+        use crate::storage_adapter::InMemoryStorageAdapter;
+        let mut idx = ReplacementLineageEvidenceIndex::new(InMemoryStorageAdapter::new());
+        let ctx = test_context();
+        let r1 = test_receipt("slot-lin", "old1", "new1", 1000);
+        let r2 = test_receipt("slot-lin", "new1", "new2", 2000);
+        idx.index_replacement_receipt(&r1, ReplacementKind::DelegateToNative, &[], &ctx)
+            .unwrap();
+        idx.index_replacement_receipt(&r2, ReplacementKind::DelegateToNative, &[], &ctx)
+            .unwrap();
+        let slot_id = test_slot_id("slot-lin");
+        let query = SlotLineageQuery::default();
+        let chain = idx.slot_lineage(&slot_id, &query, &ctx).unwrap();
+        assert_eq!(chain.len(), 2);
+        assert_eq!(chain[0].from_cell_digest, "old1");
+        assert_eq!(chain[1].from_cell_digest, "new1");
+    }
+
+    #[test]
+    fn evidence_index_slot_lineage_with_time_filter() {
+        use crate::storage_adapter::InMemoryStorageAdapter;
+        let mut idx = ReplacementLineageEvidenceIndex::new(InMemoryStorageAdapter::new());
+        let ctx = test_context();
+        let r1 = test_receipt("slot-tf", "old1", "new1", 1000);
+        let r2 = test_receipt("slot-tf", "new1", "new2", 2000);
+        let r3 = test_receipt("slot-tf", "new2", "new3", 3000);
+        idx.index_replacement_receipt(&r1, ReplacementKind::DelegateToNative, &[], &ctx)
+            .unwrap();
+        idx.index_replacement_receipt(&r2, ReplacementKind::DelegateToNative, &[], &ctx)
+            .unwrap();
+        idx.index_replacement_receipt(&r3, ReplacementKind::DelegateToNative, &[], &ctx)
+            .unwrap();
+        let slot_id = test_slot_id("slot-tf");
+        let query = SlotLineageQuery {
+            min_timestamp_ns: Some(1500),
+            max_timestamp_ns: Some(2500),
+            limit: None,
+        };
+        let chain = idx.slot_lineage(&slot_id, &query, &ctx).unwrap();
+        assert_eq!(chain.len(), 1);
+        assert_eq!(chain[0].timestamp_ns, 2000);
+    }
+
+    #[test]
+    fn evidence_index_replay_join() {
+        use crate::storage_adapter::InMemoryStorageAdapter;
+        let mut idx = ReplacementLineageEvidenceIndex::new(InMemoryStorageAdapter::new());
+        let ctx = test_context();
+        let receipt = test_receipt("slot-rj", "old", "new", 9000);
+        let evidence = vec![
+            EvidencePointerInput {
+                category: EvidenceCategory::GateResult,
+                artifact_digest: "gate-d".to_string(),
+                passed: Some(true),
+                summary: "gate ok".to_string(),
+            },
+            EvidencePointerInput {
+                category: EvidenceCategory::PerformanceBenchmark,
+                artifact_digest: "perf-d".to_string(),
+                passed: Some(true),
+                summary: "perf ok".to_string(),
+            },
+        ];
+        idx.index_replacement_receipt(&receipt, ReplacementKind::DelegateToNative, &evidence, &ctx)
+            .unwrap();
+        let query = ReplayJoinQuery::default();
+        let rows = idx.replay_join(&query, &ctx).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(!rows[0].gate_results.is_empty());
+        assert!(!rows[0].performance_benchmarks.is_empty());
+    }
+
+    // ── Merkle root empty log ──────────────────────────────────────
+
+    #[test]
+    fn merkle_root_empty_log() {
+        let log = ReplacementLineageLog::new(LineageLogConfig::default());
+        let root = log.merkle_root();
+        // Should return a deterministic "empty" hash
+        assert_eq!(root, ContentHash::compute(b"empty_lineage_tree"));
+    }
+
+    // ── Inclusion proof on empty log ───────────────────────────────
+
+    #[test]
+    fn inclusion_proof_empty_log_returns_none() {
+        let log = ReplacementLineageLog::new(LineageLogConfig::default());
+        assert!(log.inclusion_proof(0).is_none());
+    }
+
+    // ── Data type serde ────────────────────────────────────────────
+
+    #[test]
+    fn replacement_receipt_record_serde_round_trip() {
+        use crate::storage_adapter::InMemoryStorageAdapter;
+        let mut idx = ReplacementLineageEvidenceIndex::new(InMemoryStorageAdapter::new());
+        let receipt = test_receipt("slot-s", "old", "new", 1000);
+        let ctx = test_context();
+        let record = idx
+            .index_replacement_receipt(&receipt, ReplacementKind::Rollback, &[], &ctx)
+            .unwrap();
+        let json = serde_json::to_string(&record).unwrap();
+        let back: ReplacementReceiptRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(record, back);
+    }
+
+    #[test]
+    fn demotion_receipt_record_serde_round_trip() {
+        use crate::storage_adapter::InMemoryStorageAdapter;
+        let mut idx = ReplacementLineageEvidenceIndex::new(InMemoryStorageAdapter::new());
+        let ctx = test_context();
+        let input = DemotionReceiptInput {
+            receipt_id: "dem-serde".to_string(),
+            slot_id: test_slot_id("slot-ds"),
+            demoted_cell_digest: "d".to_string(),
+            restored_cell_digest: "r".to_string(),
+            demotion_reason: "test".to_string(),
+            timestamp_ns: 100,
+            rollback_token_used: "tok".to_string(),
+            linked_replacement_receipt_id: Some("linked-r".to_string()),
+            evidence: Vec::new(),
+        };
+        let record = idx.index_demotion_receipt(input, &ctx).unwrap();
+        let json = serde_json::to_string(&record).unwrap();
+        let back: DemotionReceiptRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(record, back);
+    }
+
+    #[test]
+    fn lineage_chain_entry_serde_round_trip() {
+        let entry = LineageChainEntry {
+            slot_id: test_slot_id("slot-ce"),
+            timestamp_ns: 42,
+            receipt_id: "r".to_string(),
+            kind: ReplacementKind::DelegateToNative,
+            from_cell_digest: "f".to_string(),
+            to_cell_digest: "t".to_string(),
+            receipt_content_hash: "h".to_string(),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let back: LineageChainEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry, back);
+    }
+
+    #[test]
+    fn demotion_receipt_input_serde_round_trip() {
+        let input = DemotionReceiptInput {
+            receipt_id: "dem-in".to_string(),
+            slot_id: test_slot_id("slot"),
+            demoted_cell_digest: "d".to_string(),
+            restored_cell_digest: "r".to_string(),
+            demotion_reason: "reason".to_string(),
+            timestamp_ns: 1,
+            rollback_token_used: "tok".to_string(),
+            linked_replacement_receipt_id: None,
+            evidence: Vec::new(),
+        };
+        let json = serde_json::to_string(&input).unwrap();
+        let back: DemotionReceiptInput = serde_json::from_str(&json).unwrap();
+        assert_eq!(input, back);
+    }
 }

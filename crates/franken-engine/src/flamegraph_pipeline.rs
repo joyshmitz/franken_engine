@@ -1239,3 +1239,778 @@ fn make_event(
         flamegraph_kind,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage_adapter::InMemoryStorageAdapter;
+
+    // ── FlamegraphKind ────────────────────────────────────────────
+    #[test]
+    fn flamegraph_kind_as_str() {
+        assert_eq!(FlamegraphKind::Cpu.as_str(), "cpu");
+        assert_eq!(FlamegraphKind::Allocation.as_str(), "allocation");
+        assert_eq!(FlamegraphKind::DiffCpu.as_str(), "diff_cpu");
+        assert_eq!(FlamegraphKind::DiffAllocation.as_str(), "diff_allocation");
+    }
+
+    #[test]
+    fn flamegraph_kind_is_diff() {
+        assert!(!FlamegraphKind::Cpu.is_diff());
+        assert!(!FlamegraphKind::Allocation.is_diff());
+        assert!(FlamegraphKind::DiffCpu.is_diff());
+        assert!(FlamegraphKind::DiffAllocation.is_diff());
+    }
+
+    #[test]
+    fn flamegraph_kind_display() {
+        assert_eq!(format!("{}", FlamegraphKind::Cpu), "cpu");
+        assert_eq!(
+            format!("{}", FlamegraphKind::DiffAllocation),
+            "diff_allocation"
+        );
+    }
+
+    #[test]
+    fn flamegraph_kind_serde_round_trip() {
+        for kind in [
+            FlamegraphKind::Cpu,
+            FlamegraphKind::Allocation,
+            FlamegraphKind::DiffCpu,
+            FlamegraphKind::DiffAllocation,
+        ] {
+            let json = serde_json::to_string(&kind).unwrap();
+            let back: FlamegraphKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(kind, back);
+        }
+    }
+
+    // ── FoldedStackSample serde ───────────────────────────────────
+    #[test]
+    fn folded_stack_sample_serde_round_trip() {
+        let sample = FoldedStackSample {
+            stack: "main;foo;bar".to_string(),
+            sample_count: 42,
+        };
+        let json = serde_json::to_string(&sample).unwrap();
+        let back: FoldedStackSample = serde_json::from_str(&json).unwrap();
+        assert_eq!(sample, back);
+    }
+
+    // ── FlamegraphDiffEntry serde ─────────────────────────────────
+    #[test]
+    fn flamegraph_diff_entry_serde_round_trip() {
+        let entry = FlamegraphDiffEntry {
+            stack: "main;alloc".to_string(),
+            baseline_samples: 100,
+            candidate_samples: 120,
+            delta_samples: 20,
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let back: FlamegraphDiffEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry, back);
+    }
+
+    // ── FlamegraphMetadata serde ──────────────────────────────────
+    #[test]
+    fn flamegraph_metadata_serde_round_trip() {
+        let meta = test_metadata();
+        let json = serde_json::to_string(&meta).unwrap();
+        let back: FlamegraphMetadata = serde_json::from_str(&json).unwrap();
+        assert_eq!(meta, back);
+    }
+
+    // ── FlamegraphEvidenceLink serde ──────────────────────────────
+    #[test]
+    fn flamegraph_evidence_link_serde_round_trip() {
+        let link = test_evidence_link();
+        let json = serde_json::to_string(&link).unwrap();
+        let back: FlamegraphEvidenceLink = serde_json::from_str(&json).unwrap();
+        assert_eq!(link, back);
+    }
+
+    // ── FlamegraphPipelineEvent serde ─────────────────────────────
+    #[test]
+    fn flamegraph_pipeline_event_serde_round_trip() {
+        let evt = FlamegraphPipelineEvent {
+            trace_id: "t1".to_string(),
+            decision_id: "d1".to_string(),
+            policy_id: "p1".to_string(),
+            component: FLAMEGRAPH_COMPONENT.to_string(),
+            event: "test".to_string(),
+            outcome: "pass".to_string(),
+            error_code: None,
+            artifact_id: Some("art1".to_string()),
+            flamegraph_kind: Some("cpu".to_string()),
+        };
+        let json = serde_json::to_string(&evt).unwrap();
+        let back: FlamegraphPipelineEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(evt, back);
+    }
+
+    // ── FlamegraphPipelineDecision ────────────────────────────────
+    #[test]
+    fn pipeline_decision_is_success() {
+        let dec = FlamegraphPipelineDecision {
+            pipeline_id: "p1".to_string(),
+            trace_id: "t1".to_string(),
+            decision_id: "d1".to_string(),
+            policy_id: "pol1".to_string(),
+            outcome: "pass".to_string(),
+            error_code: None,
+            rollback_required: false,
+            storage_backend: "in_memory".to_string(),
+            storage_integration_point: FLAMEGRAPH_STORAGE_INTEGRATION_POINT.to_string(),
+            artifacts: Vec::new(),
+            store_keys: Vec::new(),
+            events: Vec::new(),
+        };
+        assert!(dec.is_success());
+    }
+
+    #[test]
+    fn pipeline_decision_is_not_success() {
+        let dec = FlamegraphPipelineDecision {
+            pipeline_id: "p1".to_string(),
+            trace_id: "t1".to_string(),
+            decision_id: "d1".to_string(),
+            policy_id: "pol1".to_string(),
+            outcome: "fail".to_string(),
+            error_code: Some("FE-FLAME-1001".to_string()),
+            rollback_required: false,
+            storage_backend: "in_memory".to_string(),
+            storage_integration_point: FLAMEGRAPH_STORAGE_INTEGRATION_POINT.to_string(),
+            artifacts: Vec::new(),
+            store_keys: Vec::new(),
+            events: Vec::new(),
+        };
+        assert!(!dec.is_success());
+    }
+
+    // ── FlamegraphQuery default ───────────────────────────────────
+    #[test]
+    fn flamegraph_query_default() {
+        let q = FlamegraphQuery::default();
+        assert!(q.benchmark_run_id.is_none());
+        assert!(q.workload_id.is_none());
+        assert!(q.git_commit.is_none());
+        assert!(q.kind.is_none());
+        assert!(q.limit.is_none());
+    }
+
+    // ── Error stable codes ────────────────────────────────────────
+    #[test]
+    fn error_stable_codes() {
+        assert_eq!(
+            FlamegraphPipelineError::InvalidRequest {
+                field: "f".into(),
+                detail: "d".into()
+            }
+            .stable_code(),
+            "FE-FLAME-1001"
+        );
+        assert_eq!(
+            FlamegraphPipelineError::InvalidTimestamp { value: "v".into() }.stable_code(),
+            "FE-FLAME-1002"
+        );
+        assert_eq!(
+            FlamegraphPipelineError::InvalidFoldedStack {
+                field: "f".into(),
+                line_number: 1,
+                detail: "d".into()
+            }
+            .stable_code(),
+            "FE-FLAME-1003"
+        );
+        assert_eq!(
+            FlamegraphPipelineError::EmptyFoldedStack { field: "f".into() }.stable_code(),
+            "FE-FLAME-1003"
+        );
+        assert_eq!(
+            FlamegraphPipelineError::MismatchedDiffInput.stable_code(),
+            "FE-FLAME-1004"
+        );
+        assert_eq!(
+            FlamegraphPipelineError::InvalidSvg {
+                kind: FlamegraphKind::Cpu
+            }
+            .stable_code(),
+            "FE-FLAME-1005"
+        );
+        assert_eq!(
+            FlamegraphPipelineError::SerializationFailure { detail: "d".into() }.stable_code(),
+            "FE-FLAME-1006"
+        );
+    }
+
+    #[test]
+    fn error_requires_rollback() {
+        assert!(
+            !FlamegraphPipelineError::InvalidRequest {
+                field: "f".into(),
+                detail: "d".into()
+            }
+            .requires_rollback()
+        );
+        assert!(!FlamegraphPipelineError::MismatchedDiffInput.requires_rollback());
+    }
+
+    #[test]
+    fn error_display_invalid_request() {
+        let e = FlamegraphPipelineError::InvalidRequest {
+            field: "trace_id".into(),
+            detail: "empty".into(),
+        };
+        let s = format!("{e}");
+        assert!(s.contains("trace_id"));
+        assert!(s.contains("empty"));
+    }
+
+    #[test]
+    fn error_display_invalid_timestamp() {
+        let e = FlamegraphPipelineError::InvalidTimestamp {
+            value: "bad".into(),
+        };
+        assert!(format!("{e}").contains("bad"));
+    }
+
+    #[test]
+    fn error_display_invalid_folded_stack() {
+        let e = FlamegraphPipelineError::InvalidFoldedStack {
+            field: "cpu".into(),
+            line_number: 3,
+            detail: "bad count".into(),
+        };
+        let s = format!("{e}");
+        assert!(s.contains("cpu"));
+        assert!(s.contains("3"));
+    }
+
+    #[test]
+    fn error_display_empty_folded_stack() {
+        let e = FlamegraphPipelineError::EmptyFoldedStack {
+            field: "cpu".into(),
+        };
+        assert!(format!("{e}").contains("cpu"));
+    }
+
+    #[test]
+    fn error_display_mismatched_diff() {
+        let e = FlamegraphPipelineError::MismatchedDiffInput;
+        assert!(format!("{e}").contains("baseline"));
+    }
+
+    // ── normalize_stack ───────────────────────────────────────────
+    #[test]
+    fn normalize_stack_basic() {
+        assert_eq!(normalize_stack("a;b;c"), Some("a;b;c".to_string()));
+    }
+
+    #[test]
+    fn normalize_stack_trims_spaces() {
+        assert_eq!(normalize_stack(" a ; b ; c "), Some("a;b;c".to_string()));
+    }
+
+    #[test]
+    fn normalize_stack_removes_empty_frames() {
+        assert_eq!(normalize_stack("a;;b"), Some("a;b".to_string()));
+    }
+
+    #[test]
+    fn normalize_stack_empty_returns_none() {
+        assert_eq!(normalize_stack(""), None);
+    }
+
+    #[test]
+    fn normalize_stack_only_semicolons_returns_none() {
+        assert_eq!(normalize_stack(";;;"), None);
+    }
+
+    // ── parse_folded_stacks ───────────────────────────────────────
+    #[test]
+    fn parse_folded_stacks_basic() {
+        let result = parse_folded_stacks("test", "main;foo 100\nmain;bar 200\n").unwrap();
+        assert_eq!(result.len(), 2);
+        let total: u64 = result.iter().map(|s| s.sample_count).sum();
+        assert_eq!(total, 300);
+    }
+
+    #[test]
+    fn parse_folded_stacks_merges_duplicates() {
+        let result = parse_folded_stacks("test", "main;foo 100\nmain;foo 50\n").unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].sample_count, 150);
+    }
+
+    #[test]
+    fn parse_folded_stacks_skips_blank_lines() {
+        let result = parse_folded_stacks("test", "\nmain;foo 10\n\nmain;bar 20\n\n").unwrap();
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn parse_folded_stacks_empty_payload_errors() {
+        let err = parse_folded_stacks("test", "").unwrap_err();
+        assert_eq!(err.stable_code(), ERROR_INVALID_FOLDED_STACK);
+    }
+
+    #[test]
+    fn parse_folded_stacks_only_whitespace_errors() {
+        let err = parse_folded_stacks("test", "  \n  \n").unwrap_err();
+        assert_eq!(err.stable_code(), ERROR_INVALID_FOLDED_STACK);
+    }
+
+    #[test]
+    fn parse_folded_stacks_invalid_count_errors() {
+        let err = parse_folded_stacks("test", "main;foo abc\n").unwrap_err();
+        assert_eq!(err.stable_code(), ERROR_INVALID_FOLDED_STACK);
+    }
+
+    #[test]
+    fn parse_folded_stacks_zero_count_errors() {
+        let err = parse_folded_stacks("test", "main;foo 0\n").unwrap_err();
+        assert_eq!(err.stable_code(), ERROR_INVALID_FOLDED_STACK);
+    }
+
+    #[test]
+    fn parse_folded_stacks_missing_count_errors() {
+        let err = parse_folded_stacks("test", "main;foo\n").unwrap_err();
+        assert_eq!(err.stable_code(), ERROR_INVALID_FOLDED_STACK);
+    }
+
+    // ── encode_folded_stacks ──────────────────────────────────────
+    #[test]
+    fn encode_folded_stacks_basic() {
+        let samples = vec![
+            FoldedStackSample {
+                stack: "b;c".to_string(),
+                sample_count: 20,
+            },
+            FoldedStackSample {
+                stack: "a;b".to_string(),
+                sample_count: 10,
+            },
+        ];
+        let text = encode_folded_stacks(&samples);
+        assert!(text.contains("a;b 10"));
+        assert!(text.contains("b;c 20"));
+        assert!(text.ends_with('\n'));
+    }
+
+    #[test]
+    fn encode_folded_stacks_sorted() {
+        let samples = vec![
+            FoldedStackSample {
+                stack: "z;z".to_string(),
+                sample_count: 1,
+            },
+            FoldedStackSample {
+                stack: "a;a".to_string(),
+                sample_count: 1,
+            },
+        ];
+        let text = encode_folded_stacks(&samples);
+        let lines: Vec<&str> = text.trim().lines().collect();
+        assert!(lines[0] < lines[1]);
+    }
+
+    // ── looks_like_svg ────────────────────────────────────────────
+    #[test]
+    fn looks_like_svg_valid() {
+        let svg = "<svg><rect/><text>hello</text></svg>";
+        assert!(looks_like_svg(svg));
+    }
+
+    #[test]
+    fn looks_like_svg_invalid_no_svg_tag() {
+        assert!(!looks_like_svg("<div>hello</div>"));
+    }
+
+    #[test]
+    fn looks_like_svg_invalid_no_rect() {
+        assert!(!looks_like_svg("<svg><text>hello</text></svg>"));
+    }
+
+    #[test]
+    fn looks_like_svg_invalid_no_text() {
+        assert!(!looks_like_svg("<svg><rect/></svg>"));
+    }
+
+    // ── xml_escape ────────────────────────────────────────────────
+    #[test]
+    fn xml_escape_special_chars() {
+        assert_eq!(
+            xml_escape("a&b<c>d\"e'f"),
+            "a&amp;b&lt;c&gt;d&quot;e&apos;f"
+        );
+    }
+
+    #[test]
+    fn xml_escape_no_change() {
+        assert_eq!(xml_escape("hello world"), "hello world");
+    }
+
+    // ── build_svg ─────────────────────────────────────────────────
+    #[test]
+    fn build_svg_generates_valid_svg() {
+        let samples = vec![FoldedStackSample {
+            stack: "main;work".to_string(),
+            sample_count: 100,
+        }];
+        let svg = build_svg(FlamegraphKind::Cpu, &samples, &[]);
+        assert!(looks_like_svg(&svg));
+        assert!(svg.contains("cpu flamegraph"));
+    }
+
+    #[test]
+    fn build_svg_diff_uses_colors() {
+        let samples = vec![FoldedStackSample {
+            stack: "main;work".to_string(),
+            sample_count: 50,
+        }];
+        let diff = vec![FlamegraphDiffEntry {
+            stack: "main;work".to_string(),
+            baseline_samples: 30,
+            candidate_samples: 50,
+            delta_samples: 20,
+        }];
+        let svg = build_svg(FlamegraphKind::DiffCpu, &samples, &diff);
+        assert!(looks_like_svg(&svg));
+        assert!(svg.contains("#d9534f")); // positive delta = red
+    }
+
+    #[test]
+    fn build_svg_truncates_to_row_limit() {
+        let samples: Vec<FoldedStackSample> = (0..100)
+            .map(|i| FoldedStackSample {
+                stack: format!("stack_{i}"),
+                sample_count: 100 - i as u64,
+            })
+            .collect();
+        let svg = build_svg(FlamegraphKind::Cpu, &samples, &[]);
+        assert!(looks_like_svg(&svg));
+    }
+
+    // ── build_diff_entries ────────────────────────────────────────
+    #[test]
+    fn build_diff_entries_basic() {
+        let baseline = vec![FoldedStackSample {
+            stack: "a;b".to_string(),
+            sample_count: 100,
+        }];
+        let candidate = vec![FoldedStackSample {
+            stack: "a;b".to_string(),
+            sample_count: 120,
+        }];
+        let entries = build_diff_entries(&baseline, &candidate).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].delta_samples, 20);
+    }
+
+    #[test]
+    fn build_diff_entries_identical_is_empty() {
+        let samples = vec![FoldedStackSample {
+            stack: "a;b".to_string(),
+            sample_count: 100,
+        }];
+        let entries = build_diff_entries(&samples, &samples).unwrap();
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn build_diff_entries_new_stack() {
+        let baseline = vec![];
+        let candidate = vec![FoldedStackSample {
+            stack: "new;stack".to_string(),
+            sample_count: 50,
+        }];
+        let entries = build_diff_entries(&baseline, &candidate).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].baseline_samples, 0);
+        assert_eq!(entries[0].candidate_samples, 50);
+        assert_eq!(entries[0].delta_samples, 50);
+    }
+
+    #[test]
+    fn build_diff_entries_removed_stack() {
+        let baseline = vec![FoldedStackSample {
+            stack: "old;stack".to_string(),
+            sample_count: 30,
+        }];
+        let candidate = vec![];
+        let entries = build_diff_entries(&baseline, &candidate).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].delta_samples, -30);
+    }
+
+    // ── validate_flamegraph_artifact ──────────────────────────────
+    fn test_metadata() -> FlamegraphMetadata {
+        FlamegraphMetadata {
+            benchmark_run_id: "run-1".to_string(),
+            baseline_benchmark_run_id: None,
+            workload_id: "wl-1".to_string(),
+            benchmark_profile: "small".to_string(),
+            config_fingerprint: "fp-1".to_string(),
+            git_commit: "abc123".to_string(),
+            generated_at_utc: "2026-01-01T00:00:00Z".to_string(),
+        }
+    }
+
+    fn test_evidence_link() -> FlamegraphEvidenceLink {
+        FlamegraphEvidenceLink {
+            trace_id: "t1".to_string(),
+            decision_id: "d1".to_string(),
+            policy_id: "p1".to_string(),
+            benchmark_run_id: "run-1".to_string(),
+            optimization_decision_id: "opt-1".to_string(),
+            evidence_node_id: "ev-1".to_string(),
+        }
+    }
+
+    fn test_artifact() -> FlamegraphArtifact {
+        let folded_stacks = vec![FoldedStackSample {
+            stack: "main;work".to_string(),
+            sample_count: 100,
+        }];
+        let folded_stacks_text = encode_folded_stacks(&folded_stacks);
+        let svg = build_svg(FlamegraphKind::Cpu, &folded_stacks, &[]);
+        FlamegraphArtifact {
+            schema_version: FLAMEGRAPH_SCHEMA_VERSION.to_string(),
+            artifact_id: "fg-test123".to_string(),
+            kind: FlamegraphKind::Cpu,
+            metadata: test_metadata(),
+            evidence_link: test_evidence_link(),
+            folded_stacks,
+            folded_stacks_text,
+            svg,
+            total_samples: 100,
+            diff_from_artifact_id: None,
+            diff_entries: Vec::new(),
+            warnings: Vec::new(),
+            storage_integration_point: FLAMEGRAPH_STORAGE_INTEGRATION_POINT.to_string(),
+        }
+    }
+
+    #[test]
+    fn validate_artifact_valid() {
+        validate_flamegraph_artifact(&test_artifact()).unwrap();
+    }
+
+    #[test]
+    fn validate_artifact_bad_schema_version() {
+        let mut a = test_artifact();
+        a.schema_version = "wrong".to_string();
+        let err = validate_flamegraph_artifact(&a).unwrap_err();
+        assert_eq!(err.stable_code(), ERROR_INVALID_REQUEST);
+    }
+
+    #[test]
+    fn validate_artifact_empty_id() {
+        let mut a = test_artifact();
+        a.artifact_id = "  ".to_string();
+        let err = validate_flamegraph_artifact(&a).unwrap_err();
+        assert_eq!(err.stable_code(), ERROR_INVALID_REQUEST);
+    }
+
+    #[test]
+    fn validate_artifact_bad_svg() {
+        let mut a = test_artifact();
+        a.svg = "not svg".to_string();
+        let err = validate_flamegraph_artifact(&a).unwrap_err();
+        assert_eq!(err.stable_code(), ERROR_INVALID_SVG);
+    }
+
+    #[test]
+    fn validate_artifact_bad_integration_point() {
+        let mut a = test_artifact();
+        a.storage_integration_point = "wrong".to_string();
+        let err = validate_flamegraph_artifact(&a).unwrap_err();
+        assert_eq!(err.stable_code(), ERROR_INVALID_REQUEST);
+    }
+
+    #[test]
+    fn validate_artifact_mismatched_total() {
+        let mut a = test_artifact();
+        a.total_samples = 999;
+        let err = validate_flamegraph_artifact(&a).unwrap_err();
+        assert_eq!(err.stable_code(), ERROR_INVALID_REQUEST);
+    }
+
+    #[test]
+    fn validate_artifact_mismatched_stacks_text() {
+        let mut a = test_artifact();
+        a.folded_stacks_text = "different;stack 50\n".to_string();
+        let err = validate_flamegraph_artifact(&a).unwrap_err();
+        assert_eq!(err.stable_code(), ERROR_INVALID_REQUEST);
+    }
+
+    // ── digest_prefix ─────────────────────────────────────────────
+    #[test]
+    fn digest_prefix_deterministic() {
+        let a = digest_prefix("test-input", 16, "pfx");
+        let b = digest_prefix("test-input", 16, "pfx");
+        assert_eq!(a, b);
+        assert!(a.starts_with("pfx-"));
+    }
+
+    #[test]
+    fn digest_prefix_different_inputs() {
+        let a = digest_prefix("input-a", 16, "pfx");
+        let b = digest_prefix("input-b", 16, "pfx");
+        assert_ne!(a, b);
+    }
+
+    // ── build_pipeline_id ─────────────────────────────────────────
+    #[test]
+    fn build_pipeline_id_deterministic() {
+        let req = test_request();
+        let a = build_pipeline_id(&req);
+        let b = build_pipeline_id(&req);
+        assert_eq!(a, b);
+        assert!(a.starts_with("fgpipe-"));
+    }
+
+    // ── Constants ─────────────────────────────────────────────────
+    #[test]
+    fn constants_check() {
+        assert_eq!(FLAMEGRAPH_COMPONENT, "flamegraph_pipeline");
+        assert!(!FLAMEGRAPH_SCHEMA_VERSION.is_empty());
+        assert!(!FLAMEGRAPH_STORAGE_INTEGRATION_POINT.is_empty());
+    }
+
+    // ── run_flamegraph_pipeline (integration) ─────────────────────
+    fn test_request() -> FlamegraphPipelineRequest {
+        FlamegraphPipelineRequest {
+            trace_id: "trace-1".to_string(),
+            decision_id: "dec-1".to_string(),
+            policy_id: "pol-1".to_string(),
+            benchmark_run_id: "run-1".to_string(),
+            optimization_decision_id: "opt-1".to_string(),
+            workload_id: "wl-1".to_string(),
+            benchmark_profile: "small".to_string(),
+            config_fingerprint: "fp-1".to_string(),
+            git_commit: "abc123".to_string(),
+            generated_at_utc: "2026-01-01T00:00:00Z".to_string(),
+            cpu_folded_stacks: "main;cpu_work 100\nmain;other 50\n".to_string(),
+            allocation_folded_stacks: "main;alloc 200\n".to_string(),
+            baseline_benchmark_run_id: None,
+            baseline_cpu_folded_stacks: None,
+            baseline_allocation_folded_stacks: None,
+        }
+    }
+
+    #[test]
+    fn run_pipeline_success() {
+        let mut adapter = InMemoryStorageAdapter::new();
+        let req = test_request();
+        let decision = run_flamegraph_pipeline(&mut adapter, &req);
+        assert!(decision.is_success());
+        assert_eq!(decision.outcome, "pass");
+        assert!(decision.error_code.is_none());
+        assert!(!decision.rollback_required);
+        assert_eq!(decision.artifacts.len(), 2); // cpu + allocation
+        assert_eq!(decision.store_keys.len(), 2);
+    }
+
+    #[test]
+    fn run_pipeline_with_diff() {
+        let mut adapter = InMemoryStorageAdapter::new();
+        let mut req = test_request();
+        req.baseline_benchmark_run_id = Some("baseline-run".to_string());
+        req.baseline_cpu_folded_stacks = Some("main;cpu_work 80\nmain;other 40\n".to_string());
+        req.baseline_allocation_folded_stacks = Some("main;alloc 180\n".to_string());
+        let decision = run_flamegraph_pipeline(&mut adapter, &req);
+        assert!(decision.is_success());
+        assert_eq!(decision.artifacts.len(), 4); // cpu + alloc + diff_cpu + diff_alloc
+    }
+
+    #[test]
+    fn run_pipeline_mismatched_diff_input() {
+        let mut adapter = InMemoryStorageAdapter::new();
+        let mut req = test_request();
+        req.baseline_cpu_folded_stacks = Some("main;cpu 100\n".to_string());
+        // baseline_allocation_folded_stacks is None -> mismatch
+        let decision = run_flamegraph_pipeline(&mut adapter, &req);
+        assert!(!decision.is_success());
+        assert_eq!(
+            decision.error_code.as_deref(),
+            Some(ERROR_MISMATCHED_DIFF_INPUT)
+        );
+    }
+
+    #[test]
+    fn run_pipeline_empty_trace_id_fails() {
+        let mut adapter = InMemoryStorageAdapter::new();
+        let mut req = test_request();
+        req.trace_id = "".to_string();
+        let decision = run_flamegraph_pipeline(&mut adapter, &req);
+        assert!(!decision.is_success());
+        assert_eq!(decision.error_code.as_deref(), Some(ERROR_INVALID_REQUEST));
+    }
+
+    #[test]
+    fn run_pipeline_invalid_timestamp_fails() {
+        let mut adapter = InMemoryStorageAdapter::new();
+        let mut req = test_request();
+        req.generated_at_utc = "not-a-timestamp".to_string();
+        let decision = run_flamegraph_pipeline(&mut adapter, &req);
+        assert!(!decision.is_success());
+        assert_eq!(
+            decision.error_code.as_deref(),
+            Some(ERROR_INVALID_TIMESTAMP)
+        );
+    }
+
+    #[test]
+    fn run_pipeline_empty_cpu_stacks_fails() {
+        let mut adapter = InMemoryStorageAdapter::new();
+        let mut req = test_request();
+        req.cpu_folded_stacks = "".to_string();
+        let decision = run_flamegraph_pipeline(&mut adapter, &req);
+        assert!(!decision.is_success());
+    }
+
+    #[test]
+    fn run_pipeline_storage_failure() {
+        let mut adapter = InMemoryStorageAdapter::new().with_fail_writes(true);
+        let req = test_request();
+        let decision = run_flamegraph_pipeline(&mut adapter, &req);
+        assert!(!decision.is_success());
+        assert_eq!(decision.error_code.as_deref(), Some(ERROR_STORAGE));
+        assert!(decision.rollback_required);
+    }
+
+    #[test]
+    fn run_pipeline_deterministic() {
+        let req = test_request();
+        let mut a1 = InMemoryStorageAdapter::new();
+        let mut a2 = InMemoryStorageAdapter::new();
+        let d1 = run_flamegraph_pipeline(&mut a1, &req);
+        let d2 = run_flamegraph_pipeline(&mut a2, &req);
+        assert_eq!(d1.pipeline_id, d2.pipeline_id);
+        assert_eq!(d1.artifacts.len(), d2.artifacts.len());
+        for (art1, art2) in d1.artifacts.iter().zip(d2.artifacts.iter()) {
+            assert_eq!(art1.artifact_id, art2.artifact_id);
+            assert_eq!(art1.svg, art2.svg);
+        }
+    }
+
+    #[test]
+    fn run_pipeline_events_contain_start_and_complete() {
+        let mut adapter = InMemoryStorageAdapter::new();
+        let req = test_request();
+        let decision = run_flamegraph_pipeline(&mut adapter, &req);
+        let event_names: Vec<&str> = decision.events.iter().map(|e| e.event.as_str()).collect();
+        assert!(event_names.contains(&"pipeline_started"));
+        assert!(event_names.contains(&"pipeline_completed"));
+    }
+
+    #[test]
+    fn run_pipeline_empty_baseline_run_id_fails() {
+        let mut adapter = InMemoryStorageAdapter::new();
+        let mut req = test_request();
+        req.baseline_benchmark_run_id = Some("  ".to_string());
+        let decision = run_flamegraph_pipeline(&mut adapter, &req);
+        assert!(!decision.is_success());
+    }
+}

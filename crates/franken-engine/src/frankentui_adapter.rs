@@ -14,7 +14,7 @@ pub enum FrankentuiViewPayload {
     IncidentReplay(IncidentReplayView),
     PolicyExplanation(PolicyExplanationCardView),
     ControlDashboard(ControlDashboardView),
-    ControlPlaneInvariantsDashboard(ControlPlaneInvariantsDashboardView),
+    ControlPlaneInvariantsDashboard(Box<ControlPlaneInvariantsDashboardView>),
     FlowDecisionDashboard(FlowDecisionDashboardView),
     ReplacementProgressDashboard(ReplacementProgressDashboardView),
     ProofSpecializationLineageDashboard(ProofSpecializationLineageDashboardView),
@@ -1127,8 +1127,9 @@ impl FlowDecisionDashboardView {
             .iter()
             .filter(|node| {
                 filter
-                    .sensitivity
-                    .is_none_or(|sensitivity| node.sensitivity == sensitivity)
+                    .source_label
+                    .as_deref()
+                    .is_none_or(|label| node.label_id.eq_ignore_ascii_case(label))
                     && (relevant_extensions.is_empty()
                         || node
                             .extension_overlays
@@ -2349,7 +2350,20 @@ fn region_row_matches_filter(
     {
         return false;
     }
-    timestamp_matches_range(row.created_at_unix_ms, filter)
+    // A region is alive during [start, end] if it was created at or before
+    // end_unix_ms AND either not yet closed or closed at or after start_unix_ms.
+    if let Some(end) = filter.end_unix_ms
+        && row.created_at_unix_ms > end
+    {
+        return false;
+    }
+    if let Some(start) = filter.start_unix_ms
+        && let Some(closed) = row.closed_at_unix_ms
+        && closed < start
+    {
+        return false;
+    }
+    true
 }
 
 fn cancellation_event_matches_filter(

@@ -48,11 +48,17 @@ fn trust_root_override_artifact_schema_id() -> SchemaId {
 pub enum TeePlatform {
     IntelSgx,
     ArmTrustZone,
+    ArmCca,
     AmdSev,
 }
 
 impl TeePlatform {
-    pub const ALL: [Self; 3] = [Self::IntelSgx, Self::ArmTrustZone, Self::AmdSev];
+    pub const ALL: [Self; 4] = [
+        Self::IntelSgx,
+        Self::ArmTrustZone,
+        Self::ArmCca,
+        Self::AmdSev,
+    ];
 }
 
 impl fmt::Display for TeePlatform {
@@ -60,6 +66,7 @@ impl fmt::Display for TeePlatform {
         match self {
             Self::IntelSgx => f.write_str("intel_sgx"),
             Self::ArmTrustZone => f.write_str("arm_trustzone"),
+            Self::ArmCca => f.write_str("arm_cca"),
             Self::AmdSev => f.write_str("amd_sev"),
         }
     }
@@ -1472,6 +1479,13 @@ mod tests {
             }],
         );
         approved.insert(
+            TeePlatform::ArmCca,
+            vec![MeasurementDigest {
+                algorithm: MeasurementAlgorithm::Sha256,
+                digest_hex: digest_hex(0x44, 32),
+            }],
+        );
+        approved.insert(
             TeePlatform::AmdSev,
             vec![MeasurementDigest {
                 algorithm: MeasurementAlgorithm::Sha384,
@@ -1521,6 +1535,15 @@ mod tests {
                     root_id: "tz-root-a".to_string(),
                     platform: TeePlatform::ArmTrustZone,
                     trust_anchor_pem: "-----BEGIN CERT-----TZ-A".to_string(),
+                    valid_from_epoch: SecurityEpoch::from_raw(0),
+                    valid_until_epoch: None,
+                    pinning: TrustRootPinning::Pinned,
+                    source: TrustRootSource::Policy,
+                },
+                PlatformTrustRoot {
+                    root_id: "cca-root-a".to_string(),
+                    platform: TeePlatform::ArmCca,
+                    trust_anchor_pem: "-----BEGIN CERT-----CCA-A".to_string(),
                     valid_from_epoch: SecurityEpoch::from_raw(0),
                     valid_until_epoch: None,
                     pinning: TrustRootPinning::Pinned,
@@ -1832,5 +1855,14 @@ mod tests {
         assert!(!last.event.is_empty());
         assert!(!last.outcome.is_empty());
         assert!(!last.error_code.is_empty());
+    }
+
+    #[test]
+    fn tee_platform_all_covers_four_variants() {
+        assert_eq!(TeePlatform::ALL.len(), 4);
+        assert_eq!(TeePlatform::IntelSgx.to_string(), "intel_sgx");
+        assert_eq!(TeePlatform::ArmTrustZone.to_string(), "arm_trustzone");
+        assert_eq!(TeePlatform::ArmCca.to_string(), "arm_cca");
+        assert_eq!(TeePlatform::AmdSev.to_string(), "amd_sev");
     }
 }

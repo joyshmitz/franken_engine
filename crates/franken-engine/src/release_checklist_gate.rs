@@ -730,3 +730,449 @@ fn make_event(
         item_id,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_artifact_ref(id: &str) -> ArtifactRef {
+        ArtifactRef {
+            artifact_id: id.to_string(),
+            path: format!("artifacts/{id}.json"),
+            sha256: Some("a".repeat(64)),
+        }
+    }
+
+    fn make_passing_item(item_id: &str, category: ChecklistCategory) -> ChecklistItem {
+        ChecklistItem {
+            item_id: item_id.to_string(),
+            category,
+            required: true,
+            status: ChecklistItemStatus::Pass,
+            artifact_refs: vec![make_artifact_ref("art-1")],
+            waiver: None,
+        }
+    }
+
+    fn make_full_checklist() -> ReleaseChecklist {
+        let items: Vec<ChecklistItem> = REQUIRED_CHECKLIST_ITEMS
+            .iter()
+            .map(|req| make_passing_item(req.item_id, req.category))
+            .collect();
+
+        ReleaseChecklist {
+            schema_version: RELEASE_CHECKLIST_SCHEMA_VERSION.to_string(),
+            release_tag: "v0.1.0".to_string(),
+            generated_at_utc: "2025-01-15T12:00:00Z".to_string(),
+            trace_id: "trace-001".to_string(),
+            decision_id: "decision-001".to_string(),
+            policy_id: "policy-001".to_string(),
+            items,
+        }
+    }
+
+    // ── ChecklistCategory ─────────────────────────────────────────────
+
+    #[test]
+    fn checklist_category_as_str() {
+        assert_eq!(ChecklistCategory::Security.as_str(), "security");
+        assert_eq!(ChecklistCategory::Performance.as_str(), "performance");
+        assert_eq!(
+            ChecklistCategory::Reproducibility.as_str(),
+            "reproducibility"
+        );
+        assert_eq!(ChecklistCategory::Operational.as_str(), "operational");
+    }
+
+    #[test]
+    fn checklist_category_display() {
+        assert_eq!(ChecklistCategory::Security.to_string(), "security");
+    }
+
+    #[test]
+    fn checklist_category_serde_round_trip() {
+        for cat in [
+            ChecklistCategory::Security,
+            ChecklistCategory::Performance,
+            ChecklistCategory::Reproducibility,
+            ChecklistCategory::Operational,
+        ] {
+            let json = serde_json::to_string(&cat).unwrap();
+            let back: ChecklistCategory = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, cat);
+        }
+    }
+
+    // ── ChecklistItemStatus ───────────────────────────────────────────
+
+    #[test]
+    fn item_status_as_str() {
+        assert_eq!(ChecklistItemStatus::Pass.as_str(), "pass");
+        assert_eq!(ChecklistItemStatus::Fail.as_str(), "fail");
+        assert_eq!(ChecklistItemStatus::NotRun.as_str(), "not_run");
+        assert_eq!(ChecklistItemStatus::Waived.as_str(), "waived");
+    }
+
+    #[test]
+    fn item_status_blocks_release() {
+        assert!(ChecklistItemStatus::Fail.blocks_release());
+        assert!(ChecklistItemStatus::NotRun.blocks_release());
+        assert!(!ChecklistItemStatus::Pass.blocks_release());
+        assert!(!ChecklistItemStatus::Waived.blocks_release());
+    }
+
+    #[test]
+    fn item_status_serde_round_trip() {
+        for status in [
+            ChecklistItemStatus::Pass,
+            ChecklistItemStatus::Fail,
+            ChecklistItemStatus::NotRun,
+            ChecklistItemStatus::Waived,
+        ] {
+            let json = serde_json::to_string(&status).unwrap();
+            let back: ChecklistItemStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, status);
+        }
+    }
+
+    // ── ReleaseChecklistGateDecision ──────────────────────────────────
+
+    #[test]
+    fn decision_allows_release() {
+        let d = ReleaseChecklistGateDecision {
+            checklist_id: None,
+            release_tag: "v1".to_string(),
+            outcome: "allow".to_string(),
+            blocked: false,
+            blockers: vec![],
+            error_code: None,
+            rollback_required: false,
+            storage_backend: "test".to_string(),
+            storage_integration_point: "test".to_string(),
+            store_key: None,
+            events: vec![],
+        };
+        assert!(d.allows_release());
+    }
+
+    #[test]
+    fn decision_blocks_release() {
+        let d = ReleaseChecklistGateDecision {
+            checklist_id: None,
+            release_tag: "v1".to_string(),
+            outcome: "deny".to_string(),
+            blocked: true,
+            blockers: vec!["blocker".to_string()],
+            error_code: Some(ERROR_RELEASE_BLOCKED.to_string()),
+            rollback_required: false,
+            storage_backend: "test".to_string(),
+            storage_integration_point: "test".to_string(),
+            store_key: None,
+            events: vec![],
+        };
+        assert!(!d.allows_release());
+    }
+
+    // ── ReleaseChecklistError ─────────────────────────────────────────
+
+    #[test]
+    fn error_stable_codes() {
+        let err = ReleaseChecklistError::InvalidRequest {
+            field: "f".to_string(),
+            detail: "d".to_string(),
+        };
+        assert_eq!(err.stable_code(), ERROR_INVALID_REQUEST);
+
+        let err = ReleaseChecklistError::InvalidTimestamp {
+            value: "v".to_string(),
+        };
+        assert_eq!(err.stable_code(), ERROR_INVALID_TIMESTAMP);
+
+        let err = ReleaseChecklistError::InvalidItem {
+            item_id: "id".to_string(),
+            detail: "d".to_string(),
+        };
+        assert_eq!(err.stable_code(), ERROR_INVALID_ITEM);
+
+        let err = ReleaseChecklistError::SerializationFailure {
+            detail: "d".to_string(),
+        };
+        assert_eq!(err.stable_code(), ERROR_SERIALIZATION);
+    }
+
+    #[test]
+    fn error_requires_rollback() {
+        let err = ReleaseChecklistError::InvalidRequest {
+            field: "f".to_string(),
+            detail: "d".to_string(),
+        };
+        assert!(!err.requires_rollback());
+    }
+
+    #[test]
+    fn error_display() {
+        let err = ReleaseChecklistError::InvalidRequest {
+            field: "release_tag".to_string(),
+            detail: "must not be empty".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("release_tag"));
+        assert!(msg.contains("must not be empty"));
+    }
+
+    // ── required_checklist_items ──────────────────────────────────────
+
+    #[test]
+    fn required_items_not_empty() {
+        let items = required_checklist_items();
+        assert!(!items.is_empty());
+        assert_eq!(items.len(), REQUIRED_CHECKLIST_ITEMS.len());
+    }
+
+    #[test]
+    fn required_items_all_have_non_empty_ids() {
+        for item in required_checklist_items() {
+            assert!(!item.item_id.is_empty());
+        }
+    }
+
+    #[test]
+    fn required_items_cover_all_categories() {
+        let categories: BTreeSet<ChecklistCategory> = required_checklist_items()
+            .iter()
+            .map(|item| item.category)
+            .collect();
+        assert!(categories.contains(&ChecklistCategory::Security));
+        assert!(categories.contains(&ChecklistCategory::Performance));
+        assert!(categories.contains(&ChecklistCategory::Reproducibility));
+        assert!(categories.contains(&ChecklistCategory::Operational));
+    }
+
+    // ── is_required_item_id ──────────────────────────────────────────
+
+    #[test]
+    fn is_required_item_id_known() {
+        assert!(is_required_item_id("security.conformance_suite"));
+        assert!(is_required_item_id("performance.benchmark_suite"));
+    }
+
+    #[test]
+    fn is_required_item_id_unknown() {
+        assert!(!is_required_item_id("unknown.item"));
+    }
+
+    // ── normalize_utc_timestamp ───────────────────────────────────────
+
+    #[test]
+    fn normalize_utc_timestamp_valid() {
+        let result = normalize_utc_timestamp("2025-01-15T12:00:00Z").unwrap();
+        assert!(result.contains("2025-01-15"));
+    }
+
+    #[test]
+    fn normalize_utc_timestamp_with_offset() {
+        let result = normalize_utc_timestamp("2025-01-15T14:00:00+02:00").unwrap();
+        assert!(result.contains("12:00:00")); // Converted to UTC
+    }
+
+    #[test]
+    fn normalize_utc_timestamp_invalid() {
+        let result = normalize_utc_timestamp("not-a-timestamp");
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            ReleaseChecklistError::InvalidTimestamp { .. }
+        ));
+    }
+
+    // ── build_checklist_id ───────────────────────────────────────────
+
+    #[test]
+    fn build_checklist_id_deterministic() {
+        let cl = make_full_checklist();
+        let a = build_checklist_id(&cl);
+        let b = build_checklist_id(&cl);
+        assert_eq!(a, b);
+        assert!(a.starts_with("rchk_"));
+        assert_eq!(a.len(), 5 + 20); // "rchk_" + 20 hex chars
+    }
+
+    #[test]
+    fn build_checklist_id_changes_with_tag() {
+        let mut cl = make_full_checklist();
+        let a = build_checklist_id(&cl);
+        cl.release_tag = "v0.2.0".to_string();
+        let b = build_checklist_id(&cl);
+        assert_ne!(a, b);
+    }
+
+    // ── validate_release_checklist ────────────────────────────────────
+
+    #[test]
+    fn validate_full_checklist_passes() {
+        let cl = make_full_checklist();
+        assert!(validate_release_checklist(&cl).is_ok());
+    }
+
+    #[test]
+    fn validate_wrong_schema_version() {
+        let mut cl = make_full_checklist();
+        cl.schema_version = "wrong-version".to_string();
+        let err = validate_release_checklist(&cl).unwrap_err();
+        assert!(matches!(err, ReleaseChecklistError::InvalidRequest { .. }));
+    }
+
+    #[test]
+    fn validate_empty_release_tag() {
+        let mut cl = make_full_checklist();
+        cl.release_tag = " ".to_string();
+        assert!(validate_release_checklist(&cl).is_err());
+    }
+
+    #[test]
+    fn validate_empty_trace_id() {
+        let mut cl = make_full_checklist();
+        cl.trace_id = "".to_string();
+        assert!(validate_release_checklist(&cl).is_err());
+    }
+
+    #[test]
+    fn validate_empty_items() {
+        let mut cl = make_full_checklist();
+        cl.items.clear();
+        assert!(validate_release_checklist(&cl).is_err());
+    }
+
+    #[test]
+    fn validate_invalid_timestamp() {
+        let mut cl = make_full_checklist();
+        cl.generated_at_utc = "bad-date".to_string();
+        let err = validate_release_checklist(&cl).unwrap_err();
+        assert!(matches!(
+            err,
+            ReleaseChecklistError::InvalidTimestamp { .. }
+        ));
+    }
+
+    #[test]
+    fn validate_duplicate_item_id() {
+        let mut cl = make_full_checklist();
+        let dup = cl.items[0].clone();
+        cl.items.push(dup);
+        let err = validate_release_checklist(&cl).unwrap_err();
+        assert!(matches!(err, ReleaseChecklistError::InvalidItem { .. }));
+    }
+
+    #[test]
+    fn validate_waived_without_waiver_metadata_errors() {
+        let mut cl = make_full_checklist();
+        cl.items[0].status = ChecklistItemStatus::Waived;
+        cl.items[0].waiver = None;
+        let err = validate_release_checklist(&cl).unwrap_err();
+        assert!(matches!(err, ReleaseChecklistError::InvalidItem { .. }));
+    }
+
+    #[test]
+    fn validate_waiver_on_non_waived_errors() {
+        let mut cl = make_full_checklist();
+        cl.items[0].status = ChecklistItemStatus::Pass;
+        cl.items[0].waiver = Some(ChecklistWaiver {
+            reason: "r".to_string(),
+            approver: "a".to_string(),
+            exception_artifact_link: "l".to_string(),
+        });
+        let err = validate_release_checklist(&cl).unwrap_err();
+        assert!(matches!(err, ReleaseChecklistError::InvalidItem { .. }));
+    }
+
+    #[test]
+    fn validate_empty_artifact_id_errors() {
+        let mut cl = make_full_checklist();
+        cl.items[0].artifact_refs[0].artifact_id = " ".to_string();
+        assert!(validate_release_checklist(&cl).is_err());
+    }
+
+    // ── evaluate_checklist ────────────────────────────────────────────
+
+    #[test]
+    fn evaluate_full_passing_not_blocked() {
+        let cl = make_full_checklist();
+        let result = evaluate_checklist(&cl).unwrap();
+        assert!(!result.blocked);
+        assert!(result.blockers.is_empty());
+    }
+
+    #[test]
+    fn evaluate_missing_required_item_is_blocked() {
+        let mut cl = make_full_checklist();
+        // Remove the first required item
+        let first_id = REQUIRED_CHECKLIST_ITEMS[0].item_id;
+        cl.items.retain(|item| item.item_id != first_id);
+        let result = evaluate_checklist(&cl).unwrap();
+        assert!(result.blocked);
+        assert!(result.blockers.iter().any(|b| b.contains(first_id)));
+    }
+
+    #[test]
+    fn evaluate_failed_required_item_is_blocked() {
+        let mut cl = make_full_checklist();
+        cl.items[0].status = ChecklistItemStatus::Fail;
+        let result = evaluate_checklist(&cl).unwrap();
+        assert!(result.blocked);
+    }
+
+    #[test]
+    fn evaluate_pass_without_artifacts_is_blocked() {
+        let mut cl = make_full_checklist();
+        cl.items[0].artifact_refs.clear();
+        let result = evaluate_checklist(&cl).unwrap();
+        assert!(result.blocked);
+    }
+
+    // ── parse_release_checklist_json ──────────────────────────────────
+
+    #[test]
+    fn parse_valid_json() {
+        let cl = make_full_checklist();
+        let json = serde_json::to_string(&cl).unwrap();
+        let parsed = parse_release_checklist_json(&json).unwrap();
+        assert_eq!(parsed.release_tag, "v0.1.0");
+    }
+
+    #[test]
+    fn parse_invalid_json() {
+        let err = parse_release_checklist_json("not json").unwrap_err();
+        assert!(matches!(
+            err,
+            ReleaseChecklistError::SerializationFailure { .. }
+        ));
+    }
+
+    // ── serde round-trips ──────────────────────────────────────────────
+
+    #[test]
+    fn checklist_serde_round_trip() {
+        let cl = make_full_checklist();
+        let json = serde_json::to_string(&cl).unwrap();
+        let back: ReleaseChecklist = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, cl);
+    }
+
+    #[test]
+    fn gate_event_serde_round_trip() {
+        let event = ReleaseChecklistGateEvent {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            component: RELEASE_CHECKLIST_COMPONENT.to_string(),
+            event: "test".to_string(),
+            outcome: "pass".to_string(),
+            error_code: None,
+            checklist_id: Some("rchk_abc".to_string()),
+            item_id: None,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: ReleaseChecklistGateEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, event);
+    }
+}

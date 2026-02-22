@@ -506,3 +506,540 @@ fn parse_versions_from_tags(tags: &[String]) -> Vec<ParsedVersion> {
     out.dedup();
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── MatrixLaneKind ────────────────────────────────────────────
+
+    #[test]
+    fn lane_kind_as_str() {
+        assert_eq!(MatrixLaneKind::Current.as_str(), "n_n");
+        assert_eq!(MatrixLaneKind::Previous.as_str(), "n_n_minus_1");
+        assert_eq!(MatrixLaneKind::Next.as_str(), "n_n_plus_1");
+        assert_eq!(MatrixLaneKind::Pinned.as_str(), "pinned");
+    }
+
+    #[test]
+    fn lane_kind_ordering() {
+        assert!(MatrixLaneKind::Current < MatrixLaneKind::Previous);
+        assert!(MatrixLaneKind::Previous < MatrixLaneKind::Next);
+        assert!(MatrixLaneKind::Next < MatrixLaneKind::Pinned);
+    }
+
+    #[test]
+    fn lane_kind_serde_round_trip() {
+        for kind in [
+            MatrixLaneKind::Current,
+            MatrixLaneKind::Previous,
+            MatrixLaneKind::Next,
+            MatrixLaneKind::Pinned,
+        ] {
+            let json = serde_json::to_string(&kind).unwrap();
+            let back: MatrixLaneKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(kind, back);
+        }
+    }
+
+    // ── ParsedVersion ─────────────────────────────────────────────
+
+    #[test]
+    fn parsed_version_basic() {
+        let v = ParsedVersion::parse("1.2.3").unwrap();
+        assert_eq!(v.major, 1);
+        assert_eq!(v.minor, 2);
+        assert_eq!(v.patch, 3);
+        assert!(v.prerelease.is_none());
+    }
+
+    #[test]
+    fn parsed_version_with_v_prefix() {
+        let v = ParsedVersion::parse("v1.0.5").unwrap();
+        assert_eq!(v.major, 1);
+        assert_eq!(v.minor, 0);
+        assert_eq!(v.patch, 5);
+    }
+
+    #[test]
+    fn parsed_version_with_prerelease() {
+        let v = ParsedVersion::parse("2.0.0-beta.1").unwrap();
+        assert_eq!(v.major, 2);
+        assert!(v.is_prerelease());
+        assert_eq!(v.prerelease.as_deref(), Some("beta.1"));
+    }
+
+    #[test]
+    fn parsed_version_invalid_too_many_parts() {
+        assert!(ParsedVersion::parse("1.2.3.4").is_none());
+    }
+
+    #[test]
+    fn parsed_version_invalid_non_numeric() {
+        assert!(ParsedVersion::parse("abc").is_none());
+    }
+
+    #[test]
+    fn parsed_version_invalid_two_parts() {
+        assert!(ParsedVersion::parse("1.2").is_none());
+    }
+
+    #[test]
+    fn parsed_version_format_stable() {
+        let v = ParsedVersion::parse("1.2.3").unwrap();
+        assert_eq!(v.format(), "1.2.3");
+    }
+
+    #[test]
+    fn parsed_version_format_prerelease() {
+        let v = ParsedVersion::parse("1.2.3-alpha").unwrap();
+        assert_eq!(v.format(), "1.2.3-alpha");
+    }
+
+    #[test]
+    fn parsed_version_bump_patch_next() {
+        let v = ParsedVersion::parse("1.2.3").unwrap();
+        assert_eq!(v.bump_patch_next(), "1.2.4-next");
+    }
+
+    #[test]
+    fn parsed_version_ordering_by_components() {
+        let v1 = ParsedVersion::parse("1.0.0").unwrap();
+        let v2 = ParsedVersion::parse("1.0.1").unwrap();
+        let v3 = ParsedVersion::parse("1.1.0").unwrap();
+        let v4 = ParsedVersion::parse("2.0.0").unwrap();
+        assert!(v1 < v2);
+        assert!(v2 < v3);
+        assert!(v3 < v4);
+    }
+
+    #[test]
+    fn parsed_version_prerelease_sorts_before_stable() {
+        let pre = ParsedVersion::parse("1.0.0-alpha").unwrap();
+        let stable = ParsedVersion::parse("1.0.0").unwrap();
+        assert!(pre < stable);
+    }
+
+    // ── MatrixOutcome serde ───────────────────────────────────────
+
+    #[test]
+    fn matrix_outcome_serde() {
+        for outcome in [MatrixOutcome::Pass, MatrixOutcome::Fail] {
+            let json = serde_json::to_string(&outcome).unwrap();
+            let back: MatrixOutcome = serde_json::from_str(&json).unwrap();
+            assert_eq!(outcome, back);
+        }
+    }
+
+    // ── FailureScopeKind serde ────────────────────────────────────
+
+    #[test]
+    fn failure_scope_kind_serde() {
+        for scope in [
+            FailureScopeKind::Universal,
+            FailureScopeKind::VersionSpecific,
+        ] {
+            let json = serde_json::to_string(&scope).unwrap();
+            let back: FailureScopeKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(scope, back);
+        }
+    }
+
+    // ── VersionMatrixError Display ────────────────────────────────
+
+    #[test]
+    fn error_display_missing_current() {
+        let e = VersionMatrixError::MissingCurrentVersion {
+            repo: "engine".into(),
+        };
+        assert!(e.to_string().contains("engine"));
+    }
+
+    #[test]
+    fn error_display_invalid_pinned() {
+        let e = VersionMatrixError::InvalidPinnedCombination {
+            boundary_surface: "ifc".into(),
+            reason: "empty version".into(),
+        };
+        assert!(e.to_string().contains("ifc"));
+        assert!(e.to_string().contains("empty version"));
+    }
+
+    // ── derive_version_slots ──────────────────────────────────────
+
+    #[test]
+    fn derive_slots_from_tags() {
+        let source = VersionSource {
+            tags: vec!["v1.0.0".into(), "v1.1.0".into(), "v0.9.0".into()],
+            branch_names: vec![],
+            current_override: None,
+            previous_override: None,
+            next_override: None,
+        };
+        let slots = derive_version_slots(&source, "engine").unwrap();
+        assert_eq!(slots.current, "1.1.0");
+        assert_eq!(slots.previous, Some("1.0.0".into()));
+        assert!(slots.next.is_none());
+    }
+
+    #[test]
+    fn derive_slots_with_overrides() {
+        let source = VersionSource {
+            tags: vec!["v1.0.0".into()],
+            branch_names: vec![],
+            current_override: Some("2.0.0".into()),
+            previous_override: Some("1.0.0".into()),
+            next_override: Some("3.0.0".into()),
+        };
+        let slots = derive_version_slots(&source, "engine").unwrap();
+        assert_eq!(slots.current, "2.0.0");
+        assert_eq!(slots.previous, Some("1.0.0".into()));
+        assert_eq!(slots.next, Some("3.0.0".into()));
+    }
+
+    #[test]
+    fn derive_slots_no_versions_errors() {
+        let source = VersionSource::default();
+        assert!(matches!(
+            derive_version_slots(&source, "engine"),
+            Err(VersionMatrixError::MissingCurrentVersion { .. })
+        ));
+    }
+
+    #[test]
+    fn derive_slots_prerelease_next() {
+        let source = VersionSource {
+            tags: vec!["v1.0.0".into(), "v1.1.0-rc.1".into()],
+            branch_names: vec![],
+            current_override: None,
+            previous_override: None,
+            next_override: None,
+        };
+        let slots = derive_version_slots(&source, "engine").unwrap();
+        assert_eq!(slots.current, "1.0.0");
+        assert_eq!(slots.next, Some("1.1.0-rc.1".into()));
+    }
+
+    #[test]
+    fn derive_slots_branch_derived_next() {
+        let source = VersionSource {
+            tags: vec!["v1.0.0".into()],
+            branch_names: vec!["main".into()],
+            current_override: None,
+            previous_override: None,
+            next_override: None,
+        };
+        let slots = derive_version_slots(&source, "engine").unwrap();
+        assert_eq!(slots.next, Some("1.0.1-next".into()));
+        assert!(!slots.derivation_notes.is_empty());
+    }
+
+    // ── derive_version_matrix ─────────────────────────────────────
+
+    fn test_spec() -> BoundaryMatrixSpec {
+        BoundaryMatrixSpec {
+            boundary_surface: "ifc".into(),
+            local_repo: "engine".into(),
+            remote_repo: "host".into(),
+            local_versions: VersionSource {
+                tags: vec!["v1.0.0".into(), "v0.9.0".into()],
+                branch_names: vec![],
+                current_override: None,
+                previous_override: None,
+                next_override: None,
+            },
+            remote_versions: VersionSource {
+                tags: vec!["v2.0.0".into(), "v1.9.0".into()],
+                branch_names: vec![],
+                current_override: None,
+                previous_override: None,
+                next_override: None,
+            },
+            pinned_combinations: vec![],
+        }
+    }
+
+    #[test]
+    fn derive_matrix_basic() {
+        let plan = derive_version_matrix(&[test_spec()]).unwrap();
+        assert_eq!(plan.schema_version, VERSION_MATRIX_SCHEMA);
+        assert!(!plan.cells.is_empty());
+        let current = plan
+            .cells
+            .iter()
+            .find(|c| c.lane_kind == MatrixLaneKind::Current)
+            .unwrap();
+        assert_eq!(current.local_version, "1.0.0");
+        assert_eq!(current.remote_version, "2.0.0");
+    }
+
+    #[test]
+    fn derive_matrix_includes_previous() {
+        let plan = derive_version_matrix(&[test_spec()]).unwrap();
+        let prev = plan
+            .cells
+            .iter()
+            .find(|c| c.lane_kind == MatrixLaneKind::Previous);
+        assert!(prev.is_some());
+    }
+
+    #[test]
+    fn derive_matrix_pinned_combination() {
+        let mut spec = test_spec();
+        spec.pinned_combinations.push(PinnedVersionCombination {
+            local_version: "0.8.0".into(),
+            remote_version: "1.5.0".into(),
+            reason: "legacy".into(),
+        });
+        let plan = derive_version_matrix(&[spec]).unwrap();
+        let pinned = plan
+            .cells
+            .iter()
+            .find(|c| c.lane_kind == MatrixLaneKind::Pinned);
+        assert!(pinned.is_some());
+        assert!(pinned.unwrap().pinned);
+    }
+
+    #[test]
+    fn derive_matrix_rejects_empty_pinned_version() {
+        let mut spec = test_spec();
+        spec.pinned_combinations.push(PinnedVersionCombination {
+            local_version: "".into(),
+            remote_version: "1.0.0".into(),
+            reason: "bad".into(),
+        });
+        assert!(matches!(
+            derive_version_matrix(&[spec]),
+            Err(VersionMatrixError::InvalidPinnedCombination { .. })
+        ));
+    }
+
+    #[test]
+    fn derive_matrix_dedup_cells() {
+        let spec = test_spec();
+        let plan = derive_version_matrix(&[spec.clone(), spec]).unwrap();
+        let current_count = plan
+            .cells
+            .iter()
+            .filter(|c| c.lane_kind == MatrixLaneKind::Current)
+            .count();
+        assert_eq!(current_count, 1);
+    }
+
+    // ── classify_failure_scopes ───────────────────────────────────
+
+    #[test]
+    fn classify_no_failures() {
+        let plan = derive_version_matrix(&[test_spec()]).unwrap();
+        let results: Vec<MatrixCellResult> = plan
+            .cells
+            .iter()
+            .map(|c| MatrixCellResult {
+                trace_id: "t".into(),
+                decision_id: "d".into(),
+                policy_id: "p".into(),
+                cell_id: c.cell_id.clone(),
+                boundary_surface: c.boundary_surface.clone(),
+                lane_kind: c.lane_kind,
+                outcome: MatrixOutcome::Pass,
+                error_code: None,
+                failure_fingerprint: None,
+                failure_class: None,
+            })
+            .collect();
+        let scopes = classify_failure_scopes(&plan, &results);
+        assert!(scopes.is_empty());
+    }
+
+    #[test]
+    fn classify_universal_failure() {
+        let plan = derive_version_matrix(&[test_spec()]).unwrap();
+        let results: Vec<MatrixCellResult> = plan
+            .cells
+            .iter()
+            .map(|c| MatrixCellResult {
+                trace_id: "t".into(),
+                decision_id: "d".into(),
+                policy_id: "p".into(),
+                cell_id: c.cell_id.clone(),
+                boundary_surface: c.boundary_surface.clone(),
+                lane_kind: c.lane_kind,
+                outcome: MatrixOutcome::Fail,
+                error_code: Some("E1".into()),
+                failure_fingerprint: Some("fp1".into()),
+                failure_class: Some("fc1".into()),
+            })
+            .collect();
+        let scopes = classify_failure_scopes(&plan, &results);
+        assert!(!scopes.is_empty());
+        assert!(
+            scopes
+                .iter()
+                .any(|s| s.scope == FailureScopeKind::Universal)
+        );
+    }
+
+    #[test]
+    fn classify_version_specific_failure() {
+        let plan = derive_version_matrix(&[test_spec()]).unwrap();
+        assert!(plan.cells.len() >= 2);
+        let mut results: Vec<MatrixCellResult> = plan
+            .cells
+            .iter()
+            .map(|c| MatrixCellResult {
+                trace_id: "t".into(),
+                decision_id: "d".into(),
+                policy_id: "p".into(),
+                cell_id: c.cell_id.clone(),
+                boundary_surface: c.boundary_surface.clone(),
+                lane_kind: c.lane_kind,
+                outcome: MatrixOutcome::Pass,
+                error_code: None,
+                failure_fingerprint: None,
+                failure_class: None,
+            })
+            .collect();
+        // Fail only the first cell
+        results[0].outcome = MatrixOutcome::Fail;
+        results[0].failure_fingerprint = Some("fp-specific".into());
+        let scopes = classify_failure_scopes(&plan, &results);
+        assert!(
+            scopes
+                .iter()
+                .any(|s| s.scope == FailureScopeKind::VersionSpecific)
+        );
+    }
+
+    // ── summarize_matrix_health ───────────────────────────────────
+
+    #[test]
+    fn health_all_pass() {
+        let plan = derive_version_matrix(&[test_spec()]).unwrap();
+        let results: Vec<MatrixCellResult> = plan
+            .cells
+            .iter()
+            .map(|c| MatrixCellResult {
+                trace_id: "t".into(),
+                decision_id: "d".into(),
+                policy_id: "p".into(),
+                cell_id: c.cell_id.clone(),
+                boundary_surface: c.boundary_surface.clone(),
+                lane_kind: c.lane_kind,
+                outcome: MatrixOutcome::Pass,
+                error_code: None,
+                failure_fingerprint: None,
+                failure_class: None,
+            })
+            .collect();
+        let health = summarize_matrix_health(&plan, &results);
+        assert_eq!(health.total_cells, plan.cells.len());
+        assert_eq!(health.passed_cells, results.len());
+        assert_eq!(health.failed_cells, 0);
+        assert_eq!(health.universal_failures, 0);
+        assert_eq!(health.version_specific_failures, 0);
+    }
+
+    // ── build_cell ────────────────────────────────────────────────
+
+    #[test]
+    fn build_cell_id_format() {
+        let spec = test_spec();
+        let cell = build_cell(&spec, MatrixLaneKind::Current, "1.0.0", "2.0.0", false);
+        assert_eq!(cell.cell_id, "ifc::n_n::1.0.0::2.0.0");
+        assert!(!cell.pinned);
+        assert!(cell.expected_conformance_command.contains("--matrix-cell"));
+    }
+
+    // ── parse_versions_from_tags ──────────────────────────────────
+
+    #[test]
+    fn parse_tags_basic() {
+        let tags = vec!["v1.0.0".into(), "v2.0.0-beta".into()];
+        let parsed = parse_versions_from_tags(&tags);
+        assert_eq!(parsed.len(), 2);
+    }
+
+    #[test]
+    fn parse_tags_empty() {
+        let parsed = parse_versions_from_tags(&[]);
+        assert!(parsed.is_empty());
+    }
+
+    #[test]
+    fn parse_tags_deduplicates() {
+        let tags = vec!["v1.0.0".into(), "v1.0.0".into()];
+        let parsed = parse_versions_from_tags(&tags);
+        assert_eq!(parsed.len(), 1);
+    }
+
+    // ── VersionSource / BoundaryMatrixSpec serde ──────────────────
+
+    #[test]
+    fn version_source_default() {
+        let vs = VersionSource::default();
+        assert!(vs.tags.is_empty());
+        assert!(vs.current_override.is_none());
+    }
+
+    #[test]
+    fn boundary_matrix_spec_serde_round_trip() {
+        let spec = test_spec();
+        let json = serde_json::to_string(&spec).unwrap();
+        let back: BoundaryMatrixSpec = serde_json::from_str(&json).unwrap();
+        assert_eq!(spec, back);
+    }
+
+    #[test]
+    fn version_matrix_plan_serde_round_trip() {
+        let plan = derive_version_matrix(&[test_spec()]).unwrap();
+        let json = serde_json::to_string(&plan).unwrap();
+        let back: VersionMatrixPlan = serde_json::from_str(&json).unwrap();
+        assert_eq!(plan, back);
+    }
+
+    #[test]
+    fn matrix_cell_result_serde_round_trip() {
+        let r = MatrixCellResult {
+            trace_id: "t".into(),
+            decision_id: "d".into(),
+            policy_id: "p".into(),
+            cell_id: "c".into(),
+            boundary_surface: "b".into(),
+            lane_kind: MatrixLaneKind::Current,
+            outcome: MatrixOutcome::Pass,
+            error_code: None,
+            failure_fingerprint: None,
+            failure_class: None,
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        let back: MatrixCellResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(r, back);
+    }
+
+    #[test]
+    fn matrix_health_summary_serde_round_trip() {
+        let s = MatrixHealthSummary {
+            total_cells: 3,
+            passed_cells: 2,
+            failed_cells: 1,
+            universal_failures: 0,
+            version_specific_failures: 1,
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        let back: MatrixHealthSummary = serde_json::from_str(&json).unwrap();
+        assert_eq!(s, back);
+    }
+
+    #[test]
+    fn version_slots_serde_round_trip() {
+        let s = VersionSlots {
+            current: "1.0.0".into(),
+            previous: Some("0.9.0".into()),
+            next: None,
+            derivation_notes: vec!["auto".into()],
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        let back: VersionSlots = serde_json::from_str(&json).unwrap();
+        assert_eq!(s, back);
+    }
+}

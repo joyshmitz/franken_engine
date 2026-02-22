@@ -1627,8 +1627,35 @@ where
 mod tests {
     use super::*;
 
+    use crate::security_epoch::SecurityEpoch;
+    use crate::static_authority_analyzer::{AnalysisMethod, PrecisionEstimate};
+
     fn cap(name: &str) -> Capability {
         Capability::new(name)
+    }
+
+    fn test_static_report(extension_id: &str, caps: BTreeSet<Capability>) -> StaticAnalysisReport {
+        StaticAnalysisReport {
+            report_id: EngineObjectId([0xCC; 32]),
+            extension_id: extension_id.to_string(),
+            upper_bound_capabilities: caps,
+            per_capability_evidence: Vec::new(),
+            primary_analysis_method: AnalysisMethod::LatticeReachability,
+            precision: PrecisionEstimate {
+                upper_bound_size: 0,
+                manifest_declared_size: 0,
+                ratio_millionths: 1_000_000,
+                excluded_by_path_sensitivity: 0,
+            },
+            analysis_duration_ns: 0,
+            timed_out: false,
+            path_sensitive: false,
+            effect_graph_hash: ContentHash::compute(b"test-effect-graph"),
+            manifest_hash: ContentHash::compute(b"test-manifest"),
+            epoch: SecurityEpoch::GENESIS,
+            timestamp_ns: 0,
+            zone: "test-zone".to_string(),
+        }
     }
 
     fn config_with_seed(seed: u64) -> ShadowAblationConfig {
@@ -1772,5 +1799,771 @@ mod tests {
         let err = ShadowAblationEngine::new(config, SynthesisBudgetContract::default())
             .expect_err("trace_id must be rejected");
         assert!(err.to_string().contains("trace_id"));
+    }
+
+    #[test]
+    fn config_validation_rejects_empty_decision_id() {
+        let mut config = config_with_seed(1);
+        config.decision_id.clear();
+        let err = ShadowAblationEngine::new(config, SynthesisBudgetContract::default())
+            .expect_err("decision_id must be rejected");
+        assert!(err.to_string().contains("decision_id"));
+    }
+
+    #[test]
+    fn config_validation_rejects_empty_policy_id() {
+        let mut config = config_with_seed(1);
+        config.policy_id.clear();
+        let err = ShadowAblationEngine::new(config, SynthesisBudgetContract::default())
+            .expect_err("policy_id must be rejected");
+        assert!(err.to_string().contains("policy_id"));
+    }
+
+    #[test]
+    fn config_validation_rejects_empty_extension_id() {
+        let mut config = config_with_seed(1);
+        config.extension_id.clear();
+        let err = ShadowAblationEngine::new(config, SynthesisBudgetContract::default())
+            .expect_err("extension_id must be rejected");
+        assert!(err.to_string().contains("extension_id"));
+    }
+
+    #[test]
+    fn config_validation_rejects_empty_replay_corpus_id() {
+        let mut config = config_with_seed(1);
+        config.replay_corpus_id.clear();
+        let err = ShadowAblationEngine::new(config, SynthesisBudgetContract::default())
+            .expect_err("replay_corpus_id must be rejected");
+        assert!(err.to_string().contains("replay_corpus_id"));
+    }
+
+    #[test]
+    fn config_validation_rejects_empty_randomness_snapshot_id() {
+        let mut config = config_with_seed(1);
+        config.randomness_snapshot_id.clear();
+        let err = ShadowAblationEngine::new(config, SynthesisBudgetContract::default())
+            .expect_err("randomness_snapshot_id must be rejected");
+        assert!(err.to_string().contains("randomness_snapshot_id"));
+    }
+
+    #[test]
+    fn config_validation_rejects_empty_zone() {
+        let mut config = config_with_seed(1);
+        config.zone.clear();
+        let err = ShadowAblationEngine::new(config, SynthesisBudgetContract::default())
+            .expect_err("zone must be rejected");
+        assert!(err.to_string().contains("zone"));
+    }
+
+    // ── Error Display ──────────────────────────────────────────────
+    #[test]
+    fn error_display_empty_static_upper_bound() {
+        let err = ShadowAblationError::EmptyStaticUpperBound {
+            extension_id: "ext-1".to_string(),
+        };
+        assert!(err.to_string().contains("ext-1"));
+        assert!(err.to_string().contains("empty"));
+    }
+
+    #[test]
+    fn error_display_extension_mismatch() {
+        let err = ShadowAblationError::ExtensionMismatch {
+            expected: "ext-a".to_string(),
+            found: "ext-b".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("ext-a"));
+        assert!(msg.contains("ext-b"));
+    }
+
+    #[test]
+    fn error_display_invalid_config() {
+        let err = ShadowAblationError::InvalidConfig {
+            detail: "bad field".to_string(),
+        };
+        assert!(err.to_string().contains("bad field"));
+    }
+
+    #[test]
+    fn error_display_invalid_oracle_result() {
+        let err = ShadowAblationError::InvalidOracleResult {
+            detail: "negative threshold".to_string(),
+        };
+        assert!(err.to_string().contains("negative threshold"));
+    }
+
+    #[test]
+    fn error_display_budget() {
+        let err = ShadowAblationError::Budget {
+            detail: "compute exceeded".to_string(),
+        };
+        assert!(err.to_string().contains("compute exceeded"));
+    }
+
+    #[test]
+    fn error_display_signature_failed() {
+        let err = ShadowAblationError::SignatureFailed {
+            detail: "key error".to_string(),
+        };
+        assert!(err.to_string().contains("key error"));
+    }
+
+    #[test]
+    fn error_display_signature_invalid() {
+        let err = ShadowAblationError::SignatureInvalid {
+            detail: "tampered".to_string(),
+        };
+        assert!(err.to_string().contains("tampered"));
+    }
+
+    #[test]
+    fn error_display_integrity_failure() {
+        let err = ShadowAblationError::IntegrityFailure {
+            expected: "aabb".to_string(),
+            actual: "ccdd".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("aabb"));
+        assert!(msg.contains("ccdd"));
+    }
+
+    #[test]
+    fn error_is_std_error() {
+        let err = ShadowAblationError::Budget {
+            detail: "test".to_string(),
+        };
+        let _: &dyn std::error::Error = &err;
+    }
+
+    // ── Enum Display ───────────────────────────────────────────────
+    #[test]
+    fn search_strategy_display() {
+        assert_eq!(
+            AblationSearchStrategy::LatticeGreedy.to_string(),
+            "lattice_greedy"
+        );
+        assert_eq!(
+            AblationSearchStrategy::BinaryGuided.to_string(),
+            "binary_guided"
+        );
+    }
+
+    #[test]
+    fn search_stage_display() {
+        assert_eq!(
+            AblationSearchStage::SingleCapability.to_string(),
+            "single_capability"
+        );
+        assert_eq!(
+            AblationSearchStage::CorrelatedPair.to_string(),
+            "correlated_pair"
+        );
+        assert_eq!(AblationSearchStage::BinaryBlock.to_string(), "binary_block");
+    }
+
+    #[test]
+    fn failure_class_display() {
+        assert_eq!(
+            AblationFailureClass::CorrectnessRegression.to_string(),
+            "ablation_correctness_regression"
+        );
+        assert_eq!(
+            AblationFailureClass::InvariantViolation.to_string(),
+            "ablation_invariant_violation"
+        );
+        assert_eq!(
+            AblationFailureClass::RiskBudgetExceeded.to_string(),
+            "ablation_risk_budget_exceeded"
+        );
+        assert_eq!(
+            AblationFailureClass::ExecutionFailure.to_string(),
+            "ablation_execution_failure"
+        );
+        assert_eq!(
+            AblationFailureClass::OracleError.to_string(),
+            "ablation_oracle_error"
+        );
+        assert_eq!(
+            AblationFailureClass::InvalidOracleResult.to_string(),
+            "ablation_invalid_oracle_result"
+        );
+        assert_eq!(
+            AblationFailureClass::BudgetExhausted.to_string(),
+            "ablation_budget_exhausted"
+        );
+    }
+
+    // ── Serde round-trips ──────────────────────────────────────────
+    #[test]
+    fn search_strategy_serde_round_trip() {
+        for variant in [
+            AblationSearchStrategy::LatticeGreedy,
+            AblationSearchStrategy::BinaryGuided,
+        ] {
+            let json = serde_json::to_string(&variant).unwrap();
+            let back: AblationSearchStrategy = serde_json::from_str(&json).unwrap();
+            assert_eq!(variant, back);
+        }
+    }
+
+    #[test]
+    fn search_stage_serde_round_trip() {
+        for variant in [
+            AblationSearchStage::SingleCapability,
+            AblationSearchStage::CorrelatedPair,
+            AblationSearchStage::BinaryBlock,
+        ] {
+            let json = serde_json::to_string(&variant).unwrap();
+            let back: AblationSearchStage = serde_json::from_str(&json).unwrap();
+            assert_eq!(variant, back);
+        }
+    }
+
+    #[test]
+    fn failure_class_serde_round_trip() {
+        for variant in [
+            AblationFailureClass::CorrectnessRegression,
+            AblationFailureClass::InvariantViolation,
+            AblationFailureClass::RiskBudgetExceeded,
+            AblationFailureClass::ExecutionFailure,
+            AblationFailureClass::OracleError,
+            AblationFailureClass::InvalidOracleResult,
+            AblationFailureClass::BudgetExhausted,
+        ] {
+            let json = serde_json::to_string(&variant).unwrap();
+            let back: AblationFailureClass = serde_json::from_str(&json).unwrap();
+            assert_eq!(variant, back);
+        }
+    }
+
+    #[test]
+    fn config_serde_round_trip() {
+        let config = config_with_seed(42);
+        let json = serde_json::to_string(&config).unwrap();
+        let back: ShadowAblationConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config, back);
+    }
+
+    #[test]
+    fn config_default_values() {
+        let config = ShadowAblationConfig::default();
+        assert!(!config.trace_id.is_empty());
+        assert_eq!(config.max_pair_trials, 256);
+        assert_eq!(config.max_block_trials, 128);
+        assert_eq!(config.strategy, AblationSearchStrategy::LatticeGreedy);
+    }
+
+    #[test]
+    fn evaluation_record_serde_round_trip() {
+        let record = sample_evaluation("test-candidate");
+        let json = serde_json::to_string(&record).unwrap();
+        let back: ShadowAblationEvaluationRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(record, back);
+    }
+
+    // ── Observation validation ─────────────────────────────────────
+    #[test]
+    fn observation_validate_negative_correctness_threshold_fails() {
+        let obs = ShadowAblationObservation {
+            correctness_score_millionths: 900_000,
+            correctness_threshold_millionths: -1,
+            invariants: BTreeMap::new(),
+            risk_score_millionths: 0,
+            risk_threshold_millionths: 0,
+            consumed: PhaseConsumption::zero(),
+            replay_pointer: "replay://test".to_string(),
+            evidence_pointer: "evidence://test".to_string(),
+            execution_trace_hash: ContentHash::compute(b"test"),
+            failure_detail: None,
+        };
+        let err = obs.validate().unwrap_err();
+        assert!(err.to_string().contains("correctness_threshold"));
+    }
+
+    #[test]
+    fn observation_validate_negative_risk_threshold_fails() {
+        let obs = ShadowAblationObservation {
+            correctness_score_millionths: 900_000,
+            correctness_threshold_millionths: 0,
+            invariants: BTreeMap::new(),
+            risk_score_millionths: 0,
+            risk_threshold_millionths: -1,
+            consumed: PhaseConsumption::zero(),
+            replay_pointer: "replay://test".to_string(),
+            evidence_pointer: "evidence://test".to_string(),
+            execution_trace_hash: ContentHash::compute(b"test"),
+            failure_detail: None,
+        };
+        let err = obs.validate().unwrap_err();
+        assert!(err.to_string().contains("risk_threshold"));
+    }
+
+    #[test]
+    fn observation_validate_empty_replay_pointer_fails() {
+        let obs = ShadowAblationObservation {
+            correctness_score_millionths: 900_000,
+            correctness_threshold_millionths: 0,
+            invariants: BTreeMap::new(),
+            risk_score_millionths: 0,
+            risk_threshold_millionths: 0,
+            consumed: PhaseConsumption::zero(),
+            replay_pointer: String::new(),
+            evidence_pointer: "evidence://test".to_string(),
+            execution_trace_hash: ContentHash::compute(b"test"),
+            failure_detail: None,
+        };
+        let err = obs.validate().unwrap_err();
+        assert!(err.to_string().contains("replay_pointer"));
+    }
+
+    #[test]
+    fn observation_validate_empty_evidence_pointer_fails() {
+        let obs = ShadowAblationObservation {
+            correctness_score_millionths: 900_000,
+            correctness_threshold_millionths: 0,
+            invariants: BTreeMap::new(),
+            risk_score_millionths: 0,
+            risk_threshold_millionths: 0,
+            consumed: PhaseConsumption::zero(),
+            replay_pointer: "replay://test".to_string(),
+            evidence_pointer: String::new(),
+            execution_trace_hash: ContentHash::compute(b"test"),
+            failure_detail: None,
+        };
+        let err = obs.validate().unwrap_err();
+        assert!(err.to_string().contains("evidence_pointer"));
+    }
+
+    #[test]
+    fn observation_validate_zero_trace_hash_fails() {
+        let obs = ShadowAblationObservation {
+            correctness_score_millionths: 900_000,
+            correctness_threshold_millionths: 0,
+            invariants: BTreeMap::new(),
+            risk_score_millionths: 0,
+            risk_threshold_millionths: 0,
+            consumed: PhaseConsumption::zero(),
+            replay_pointer: "replay://test".to_string(),
+            evidence_pointer: "evidence://test".to_string(),
+            execution_trace_hash: ContentHash([0u8; 32]),
+            failure_detail: None,
+        };
+        let err = obs.validate().unwrap_err();
+        assert!(err.to_string().contains("execution_trace_hash"));
+    }
+
+    #[test]
+    fn observation_validate_valid() {
+        let obs = ShadowAblationObservation {
+            correctness_score_millionths: 900_000,
+            correctness_threshold_millionths: 800_000,
+            invariants: BTreeMap::new(),
+            risk_score_millionths: 100_000,
+            risk_threshold_millionths: 300_000,
+            consumed: PhaseConsumption::zero(),
+            replay_pointer: "replay://test".to_string(),
+            evidence_pointer: "evidence://test".to_string(),
+            execution_trace_hash: ContentHash::compute(b"test"),
+            failure_detail: None,
+        };
+        obs.validate().expect("should be valid");
+    }
+
+    // ── Transcript tamper detection ────────────────────────────────
+    #[test]
+    fn tampered_transcript_fails_verification() {
+        let signing_key = SigningKey::from_bytes([0x42; 32]);
+        let input = ShadowAblationTranscriptInput {
+            trace_id: "trace-tamper".to_string(),
+            decision_id: "decision-tamper".to_string(),
+            policy_id: "policy-tamper".to_string(),
+            extension_id: "ext-tamper".to_string(),
+            static_report_id: EngineObjectId([0xBB; 32]),
+            replay_corpus_id: "corpus-tamper".to_string(),
+            randomness_snapshot_id: "rng-tamper".to_string(),
+            deterministic_seed: 99,
+            search_strategy: AblationSearchStrategy::LatticeGreedy,
+            initial_capabilities: BTreeSet::from([cap("clock")]),
+            final_capabilities: BTreeSet::from([cap("clock")]),
+            evaluations: Vec::new(),
+            fallback: None,
+            budget_utilization: BTreeMap::new(),
+        };
+        let mut transcript =
+            SignedShadowAblationTranscript::create_signed(input, &signing_key).unwrap();
+        // Tamper with the transcript — signature check catches it first
+        transcript.extension_id = "ext-evil".to_string();
+        let err = transcript.verify_signature().unwrap_err();
+        assert!(
+            matches!(err, ShadowAblationError::SignatureInvalid { .. })
+                || matches!(err, ShadowAblationError::IntegrityFailure { .. })
+        );
+    }
+
+    // ── highest_power_of_two_leq ───────────────────────────────────
+    #[test]
+    fn highest_power_of_two_leq_values() {
+        assert_eq!(highest_power_of_two_leq(0), 0);
+        assert_eq!(highest_power_of_two_leq(1), 1);
+        assert_eq!(highest_power_of_two_leq(2), 2);
+        assert_eq!(highest_power_of_two_leq(3), 2);
+        assert_eq!(highest_power_of_two_leq(4), 4);
+        assert_eq!(highest_power_of_two_leq(7), 4);
+        assert_eq!(highest_power_of_two_leq(8), 8);
+        assert_eq!(highest_power_of_two_leq(15), 8);
+        assert_eq!(highest_power_of_two_leq(16), 16);
+    }
+
+    // ── Engine run: empty static upper bound ───────────────────────
+    #[test]
+    fn run_rejects_empty_static_upper_bound() {
+        let config = config_with_seed(1);
+        let engine =
+            ShadowAblationEngine::new(config.clone(), SynthesisBudgetContract::default()).unwrap();
+        let report = test_static_report(&config.extension_id, BTreeSet::new());
+        let signing_key = SigningKey::from_bytes([0x01; 32]);
+        let err = engine
+            .run(&report, &signing_key, |_| unreachable!())
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            ShadowAblationError::EmptyStaticUpperBound { .. }
+        ));
+    }
+
+    // ── Engine run: extension mismatch ─────────────────────────────
+    #[test]
+    fn run_rejects_extension_mismatch() {
+        let config = config_with_seed(1);
+        let engine = ShadowAblationEngine::new(config, SynthesisBudgetContract::default()).unwrap();
+        let report = test_static_report("wrong-ext", BTreeSet::from([cap("fs_read")]));
+        let signing_key = SigningKey::from_bytes([0x01; 32]);
+        let err = engine
+            .run(&report, &signing_key, |_| unreachable!())
+            .unwrap_err();
+        assert!(matches!(err, ShadowAblationError::ExtensionMismatch { .. }));
+    }
+
+    // ── Engine run: oracle error produces OracleError class ────────
+    #[test]
+    fn run_oracle_error_records_failure_class() {
+        let config = config_with_seed(1);
+        let engine =
+            ShadowAblationEngine::new(config.clone(), SynthesisBudgetContract::default()).unwrap();
+        let report = test_static_report(
+            &config.extension_id,
+            BTreeSet::from([cap("fs_read"), cap("net")]),
+        );
+        let signing_key = SigningKey::from_bytes([0x01; 32]);
+        let result = engine
+            .run(&report, &signing_key, |_| {
+                Err(ShadowAblationError::Budget {
+                    detail: "oracle boom".to_string(),
+                })
+            })
+            .unwrap();
+        // All single-removal attempts should fail with OracleError class
+        assert!(
+            result
+                .evaluations
+                .iter()
+                .all(|e| e.failure_class == Some(AblationFailureClass::OracleError))
+        );
+        // Capabilities unchanged since all oracle calls failed
+        assert_eq!(result.minimal_capabilities, result.initial_capabilities);
+    }
+
+    // ── Engine run: invalid observation triggers InvalidOracleResult ──
+    #[test]
+    fn run_invalid_observation_records_failure() {
+        let config = config_with_seed(1);
+        let engine =
+            ShadowAblationEngine::new(config.clone(), SynthesisBudgetContract::default()).unwrap();
+        let report = test_static_report(
+            &config.extension_id,
+            BTreeSet::from([cap("fs_read"), cap("net")]),
+        );
+        let signing_key = SigningKey::from_bytes([0x01; 32]);
+        let result = engine
+            .run(&report, &signing_key, |_| {
+                Ok(ShadowAblationObservation {
+                    correctness_score_millionths: 900_000,
+                    correctness_threshold_millionths: -1, // invalid
+                    invariants: BTreeMap::new(),
+                    risk_score_millionths: 0,
+                    risk_threshold_millionths: 0,
+                    consumed: PhaseConsumption::zero(),
+                    replay_pointer: "replay://test".to_string(),
+                    evidence_pointer: "evidence://test".to_string(),
+                    execution_trace_hash: ContentHash::compute(b"test"),
+                    failure_detail: None,
+                })
+            })
+            .unwrap();
+        assert!(
+            result
+                .evaluations
+                .iter()
+                .all(|e| e.failure_class == Some(AblationFailureClass::InvalidOracleResult))
+        );
+    }
+
+    // ── Engine run: BinaryGuided strategy ──────────────────────────
+    #[test]
+    fn run_binary_guided_strategy_removes_capabilities() {
+        let mut config = config_with_seed(42);
+        config.strategy = AblationSearchStrategy::BinaryGuided;
+        config.max_pair_trials = 10;
+        config.max_block_trials = 10;
+        let engine =
+            ShadowAblationEngine::new(config.clone(), SynthesisBudgetContract::default()).unwrap();
+        let caps = BTreeSet::from([
+            cap("a"),
+            cap("b"),
+            cap("c"),
+            cap("d"),
+            cap("e"),
+            cap("f"),
+            cap("g"),
+            cap("h"),
+        ]);
+        let report = test_static_report(&config.extension_id, caps.clone());
+        let signing_key = SigningKey::from_bytes([0x02; 32]);
+        // Oracle that rejects single removals but accepts block removals (>= 2),
+        // so that single-phase leaves caps intact and block phase actually runs.
+        let result = engine
+            .run(&report, &signing_key, |req| {
+                let pass = req.removed_capabilities.len() >= 2;
+                let score = if pass { 999_000 } else { 100_000 };
+                Ok(ShadowAblationObservation {
+                    correctness_score_millionths: score,
+                    correctness_threshold_millionths: 500_000,
+                    invariants: BTreeMap::new(),
+                    risk_score_millionths: 0,
+                    risk_threshold_millionths: 500_000,
+                    consumed: PhaseConsumption::zero(),
+                    replay_pointer: "replay://ok".to_string(),
+                    evidence_pointer: "evidence://ok".to_string(),
+                    execution_trace_hash: ContentHash::compute(b"ok"),
+                    failure_detail: None,
+                })
+            })
+            .unwrap();
+        assert_eq!(result.search_strategy, AblationSearchStrategy::BinaryGuided);
+        // Should have BinaryBlock evaluations since single removals fail
+        assert!(
+            result
+                .evaluations
+                .iter()
+                .any(|e| e.search_stage == AblationSearchStage::BinaryBlock)
+        );
+        assert!(!result.budget_exhausted);
+    }
+
+    // ── Engine run: correctness regression ──────────────────────────
+    #[test]
+    fn run_correctness_regression_retains_capability() {
+        let config = config_with_seed(1);
+        let engine =
+            ShadowAblationEngine::new(config.clone(), SynthesisBudgetContract::default()).unwrap();
+        let report = test_static_report(&config.extension_id, BTreeSet::from([cap("only_cap")]));
+        let signing_key = SigningKey::from_bytes([0x02; 32]);
+        // Correctness below threshold => regression
+        let result = engine
+            .run(&report, &signing_key, |_| {
+                Ok(ShadowAblationObservation {
+                    correctness_score_millionths: 100_000,
+                    correctness_threshold_millionths: 900_000,
+                    invariants: BTreeMap::new(),
+                    risk_score_millionths: 0,
+                    risk_threshold_millionths: 500_000,
+                    consumed: PhaseConsumption::zero(),
+                    replay_pointer: "replay://ok".to_string(),
+                    evidence_pointer: "evidence://ok".to_string(),
+                    execution_trace_hash: ContentHash::compute(b"ok"),
+                    failure_detail: None,
+                })
+            })
+            .unwrap();
+        assert_eq!(result.minimal_capabilities.len(), 1);
+        assert!(
+            result
+                .evaluations
+                .iter()
+                .any(|e| e.failure_class == Some(AblationFailureClass::CorrectnessRegression))
+        );
+    }
+
+    // ── Engine run: risk budget exceeded ────────────────────────────
+    #[test]
+    fn run_risk_budget_exceeded_retains_capability() {
+        let config = config_with_seed(1);
+        let engine =
+            ShadowAblationEngine::new(config.clone(), SynthesisBudgetContract::default()).unwrap();
+        let report = test_static_report(&config.extension_id, BTreeSet::from([cap("only_cap")]));
+        let signing_key = SigningKey::from_bytes([0x02; 32]);
+        // Risk above threshold
+        let result = engine
+            .run(&report, &signing_key, |_| {
+                Ok(ShadowAblationObservation {
+                    correctness_score_millionths: 999_000,
+                    correctness_threshold_millionths: 900_000,
+                    invariants: BTreeMap::new(),
+                    risk_score_millionths: 999_000,
+                    risk_threshold_millionths: 100_000,
+                    consumed: PhaseConsumption::zero(),
+                    replay_pointer: "replay://ok".to_string(),
+                    evidence_pointer: "evidence://ok".to_string(),
+                    execution_trace_hash: ContentHash::compute(b"ok"),
+                    failure_detail: None,
+                })
+            })
+            .unwrap();
+        assert_eq!(result.minimal_capabilities.len(), 1);
+        assert!(
+            result
+                .evaluations
+                .iter()
+                .any(|e| e.failure_class == Some(AblationFailureClass::RiskBudgetExceeded))
+        );
+    }
+
+    // ── Engine run: pair removal with successful pair ───────────────
+    #[test]
+    fn run_pair_removal_successful() {
+        let mut config = config_with_seed(42);
+        config.max_pair_trials = 100;
+        let engine =
+            ShadowAblationEngine::new(config.clone(), SynthesisBudgetContract::default()).unwrap();
+        let report = test_static_report(
+            &config.extension_id,
+            BTreeSet::from([cap("a"), cap("b"), cap("c")]),
+        );
+        let signing_key = SigningKey::from_bytes([0x03; 32]);
+        let call_count = std::cell::Cell::new(0u32);
+        let result = engine
+            .run(&report, &signing_key, |req| {
+                let count = call_count.get();
+                call_count.set(count + 1);
+                // Reject single removals but accept pair removal
+                let pass = req.removed_capabilities.len() >= 2 || count > 5;
+                let score = if pass { 999_000 } else { 100_000 };
+                Ok(ShadowAblationObservation {
+                    correctness_score_millionths: score,
+                    correctness_threshold_millionths: 500_000,
+                    invariants: BTreeMap::new(),
+                    risk_score_millionths: 0,
+                    risk_threshold_millionths: 500_000,
+                    consumed: PhaseConsumption::zero(),
+                    replay_pointer: "replay://ok".to_string(),
+                    evidence_pointer: "evidence://ok".to_string(),
+                    execution_trace_hash: ContentHash::compute(b"ok"),
+                    failure_detail: None,
+                })
+            })
+            .unwrap();
+        // Should have at least attempted pair removal
+        assert!(
+            result
+                .evaluations
+                .iter()
+                .any(|e| e.search_stage == AblationSearchStage::CorrelatedPair)
+        );
+    }
+
+    // ── Unsigned bytes deterministic ───────────────────────────────
+    #[test]
+    fn transcript_unsigned_bytes_deterministic() {
+        let signing_key = SigningKey::from_bytes([0x50; 32]);
+        let input = || ShadowAblationTranscriptInput {
+            trace_id: "trace-bytes".to_string(),
+            decision_id: "decision-bytes".to_string(),
+            policy_id: "policy-bytes".to_string(),
+            extension_id: "ext-bytes".to_string(),
+            static_report_id: EngineObjectId([0x11; 32]),
+            replay_corpus_id: "corpus-bytes".to_string(),
+            randomness_snapshot_id: "rng-bytes".to_string(),
+            deterministic_seed: 7,
+            search_strategy: AblationSearchStrategy::LatticeGreedy,
+            initial_capabilities: BTreeSet::from([cap("x")]),
+            final_capabilities: BTreeSet::from([cap("x")]),
+            evaluations: Vec::new(),
+            fallback: None,
+            budget_utilization: BTreeMap::new(),
+        };
+        let t1 = SignedShadowAblationTranscript::create_signed(input(), &signing_key).unwrap();
+        let t2 = SignedShadowAblationTranscript::create_signed(input(), &signing_key).unwrap();
+        assert_eq!(t1.unsigned_bytes(), t2.unsigned_bytes());
+        assert_eq!(t1.transcript_hash, t2.transcript_hash);
+    }
+
+    // ── Log event and run result serde ─────────────────────────────
+    #[test]
+    fn log_event_serde_round_trip() {
+        let event = ShadowAblationLogEvent {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            component: "shadow_ablation_engine".to_string(),
+            event: "test_event".to_string(),
+            outcome: "pass".to_string(),
+            error_code: None,
+            search_stage: Some("single_capability".to_string()),
+            candidate_id: Some("cand-1".to_string()),
+            removed_capabilities: vec!["cap_a".to_string()],
+            remaining_capability_count: Some(3),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: ShadowAblationLogEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, back);
+    }
+
+    #[test]
+    fn candidate_request_serde_round_trip() {
+        let req = ShadowAblationCandidateRequest {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            extension_id: "e".to_string(),
+            search_stage: AblationSearchStage::SingleCapability,
+            sequence: 1,
+            candidate_id: "cand-1".to_string(),
+            removed_capabilities: BTreeSet::from([cap("a")]),
+            candidate_capabilities: BTreeSet::from([cap("b")]),
+            replay_corpus_id: "corpus".to_string(),
+            randomness_snapshot_id: "rng".to_string(),
+            deterministic_seed: 42,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let back: ShadowAblationCandidateRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(req, back);
+    }
+
+    #[test]
+    fn observation_serde_round_trip() {
+        let obs = ShadowAblationObservation {
+            correctness_score_millionths: 900_000,
+            correctness_threshold_millionths: 800_000,
+            invariants: BTreeMap::from([("inv_a".to_string(), true)]),
+            risk_score_millionths: 50_000,
+            risk_threshold_millionths: 300_000,
+            consumed: PhaseConsumption::zero(),
+            replay_pointer: "replay://obs".to_string(),
+            evidence_pointer: "evidence://obs".to_string(),
+            execution_trace_hash: ContentHash::compute(b"obs"),
+            failure_detail: None,
+        };
+        let json = serde_json::to_string(&obs).unwrap();
+        let back: ShadowAblationObservation = serde_json::from_str(&json).unwrap();
+        assert_eq!(obs, back);
+    }
+
+    // ── Engine config accessor ─────────────────────────────────────
+    #[test]
+    fn engine_config_accessor() {
+        let config = config_with_seed(99);
+        let engine =
+            ShadowAblationEngine::new(config.clone(), SynthesisBudgetContract::default()).unwrap();
+        assert_eq!(engine.config(), &config);
     }
 }

@@ -686,6 +686,7 @@ mod tests {
         )
     }
 
+    #[allow(dead_code)]
     fn mock_cx_seed(seed: u64, budget_ms: u64) -> MockCx {
         MockCx::new(
             crate::control_plane::mocks::trace_id_from_seed(seed),

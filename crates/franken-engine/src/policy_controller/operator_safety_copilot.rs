@@ -1330,3 +1330,1043 @@ fn format_millionths(value: i64) -> String {
     let fractional = abs % MILLION;
     format!("{sign}{whole}.{fractional:06}")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── Helper constructors ───────────────────────────────────────
+    fn test_candidate(
+        action: &str,
+        target: &str,
+        loss_reduction: i64,
+        confidence: i64,
+    ) -> ActionRecommendationCandidate {
+        ActionRecommendationCandidate {
+            action_type: action.to_string(),
+            target_extension: target.to_string(),
+            expected_loss_reduction_millionths: loss_reduction,
+            confidence_millionths: confidence,
+            side_effects: vec!["side-effect-1".to_string()],
+            collateral_extensions: 2,
+            estimated_action_latency_ms: 100,
+            reversibility: RecommendationReversibility::Reversible,
+            time_sensitivity: TimeSensitivity::NearTerm,
+            rollback_window_ms: Some(30_000),
+            snapshot_id: Some("snap-1".to_string()),
+        }
+    }
+
+    fn test_input() -> OperatorSafetyCopilotInput {
+        OperatorSafetyCopilotInput {
+            trace_id: "trace-1".to_string(),
+            decision_id: "dec-1".to_string(),
+            policy_id: "pol-1".to_string(),
+            incident_id: "inc-1".to_string(),
+            no_action_expected_loss_millionths: 500_000,
+            recommendations: vec![
+                test_candidate("throttle", "ext-a", 400_000, 800_000),
+                test_candidate("isolate", "ext-b", 300_000, 700_000),
+            ],
+            confidence_bands: vec![ConfidenceBand {
+                metric: "attack_probability".to_string(),
+                point_millionths: 500_000,
+                lower_millionths: 300_000,
+                upper_millionths: 700_000,
+                confidence_level_bps: 9500,
+            }],
+            evidence_strength: EvidenceStrength {
+                evidence_atoms: 42,
+                observation_window_seconds: 300,
+            },
+            decision_boundary_hints: vec![DecisionBoundaryHint {
+                metric: "attacker_roi".to_string(),
+                current_millionths: 400_000,
+                threshold_millionths: 500_000,
+                additional_evidence_needed: 5,
+                evidence_type: "hostcall_anomaly".to_string(),
+                trigger_direction: BoundaryTriggerDirection::AtOrAbove,
+            }],
+            timeline: vec![IncidentTimelineEvent {
+                timestamp_ns: 1000,
+                event_id: "evt-1".to_string(),
+                event_type: "anomaly_detected".to_string(),
+                detail: "budget spike".to_string(),
+                outcome: "flagged".to_string(),
+                error_code: None,
+                drilldown: TimelineDrilldownPointers::default(),
+            }],
+        }
+    }
+
+    fn test_identity() -> OperatorIdentity {
+        OperatorIdentity {
+            operator_id: "op-1".to_string(),
+            role: OperatorRole::Operator,
+        }
+    }
+
+    fn build_test_surface() -> OperatorSafetyCopilotSurface {
+        build_operator_safety_copilot_surface(&test_input()).unwrap()
+    }
+
+    // ── Enum serde round-trips ────────────────────────────────────
+    #[test]
+    fn recommendation_reversibility_serde() {
+        for v in [
+            RecommendationReversibility::Reversible,
+            RecommendationReversibility::LimitedWindow,
+            RecommendationReversibility::Irreversible,
+        ] {
+            let json = serde_json::to_string(&v).unwrap();
+            let back: RecommendationReversibility = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, back);
+        }
+    }
+
+    #[test]
+    fn time_sensitivity_serde() {
+        for v in [
+            TimeSensitivity::Immediate,
+            TimeSensitivity::NearTerm,
+            TimeSensitivity::Routine,
+        ] {
+            let json = serde_json::to_string(&v).unwrap();
+            let back: TimeSensitivity = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, back);
+        }
+    }
+
+    #[test]
+    fn operator_role_serde() {
+        for v in [
+            OperatorRole::Viewer,
+            OperatorRole::Operator,
+            OperatorRole::Administrator,
+        ] {
+            let json = serde_json::to_string(&v).unwrap();
+            let back: OperatorRole = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, back);
+        }
+    }
+
+    #[test]
+    fn boundary_trigger_direction_serde() {
+        for v in [
+            BoundaryTriggerDirection::AtOrAbove,
+            BoundaryTriggerDirection::AtOrBelow,
+        ] {
+            let json = serde_json::to_string(&v).unwrap();
+            let back: BoundaryTriggerDirection = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, back);
+        }
+    }
+
+    #[test]
+    fn incident_severity_ordering() {
+        assert!(IncidentSeverity::Low < IncidentSeverity::Medium);
+        assert!(IncidentSeverity::Medium < IncidentSeverity::High);
+        assert!(IncidentSeverity::High < IncidentSeverity::Critical);
+    }
+
+    #[test]
+    fn incident_severity_serde() {
+        for v in [
+            IncidentSeverity::Low,
+            IncidentSeverity::Medium,
+            IncidentSeverity::High,
+            IncidentSeverity::Critical,
+        ] {
+            let json = serde_json::to_string(&v).unwrap();
+            let back: IncidentSeverity = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, back);
+        }
+    }
+
+    #[test]
+    fn extension_trust_level_ordering() {
+        assert!(ExtensionTrustLevel::High < ExtensionTrustLevel::Guarded);
+        assert!(ExtensionTrustLevel::Guarded < ExtensionTrustLevel::Watch);
+        assert!(ExtensionTrustLevel::Watch < ExtensionTrustLevel::Quarantined);
+    }
+
+    // ── CopilotError Display ──────────────────────────────────────
+    #[test]
+    fn copilot_error_display_missing_recommendations() {
+        let e = CopilotError::MissingRecommendations;
+        assert!(format!("{e}").contains("missing recommendations"));
+    }
+
+    #[test]
+    fn copilot_error_display_invalid_probability() {
+        let e = CopilotError::InvalidProbability {
+            field: "confidence".into(),
+            value: -1,
+        };
+        let s = format!("{e}");
+        assert!(s.contains("confidence"));
+        assert!(s.contains("-1"));
+    }
+
+    #[test]
+    fn copilot_error_display_invalid_field() {
+        let e = CopilotError::InvalidField {
+            field: "trace_id".into(),
+        };
+        assert!(format!("{e}").contains("trace_id"));
+    }
+
+    #[test]
+    fn copilot_error_display_invalid_confidence_band() {
+        let e = CopilotError::InvalidConfidenceBand {
+            metric: "m1".into(),
+        };
+        assert!(format!("{e}").contains("m1"));
+    }
+
+    #[test]
+    fn copilot_error_display_missing_snapshot() {
+        let e = CopilotError::MissingSnapshotForRollback {
+            action_type: "throttle".into(),
+            target_extension: "ext-a".into(),
+        };
+        let s = format!("{e}");
+        assert!(s.contains("throttle"));
+        assert!(s.contains("ext-a"));
+    }
+
+    #[test]
+    fn copilot_error_display_invalid_rollback_window() {
+        let e = CopilotError::InvalidRollbackWindow {
+            action_type: "isolate".into(),
+            target_extension: "ext-b".into(),
+        };
+        let s = format!("{e}");
+        assert!(s.contains("isolate"));
+        assert!(s.contains("ext-b"));
+    }
+
+    #[test]
+    fn copilot_error_display_unauthorized_role() {
+        let e = CopilotError::UnauthorizedRole {
+            role: OperatorRole::Viewer,
+            action: "execute".into(),
+        };
+        let s = format!("{e}");
+        assert!(s.contains("Viewer"));
+        assert!(s.contains("execute"));
+    }
+
+    #[test]
+    fn copilot_error_display_rank_out_of_range() {
+        let e = CopilotError::RecommendationRankOutOfRange {
+            requested_rank: 5,
+            available: 2,
+        };
+        let s = format!("{e}");
+        assert!(s.contains("5"));
+        assert!(s.contains("2"));
+    }
+
+    #[test]
+    fn copilot_error_display_operator_mismatch() {
+        let e = CopilotError::OperatorMismatch {
+            selected_by: "op-1".into(),
+            confirmed_by: "op-2".into(),
+        };
+        let s = format!("{e}");
+        assert!(s.contains("op-1"));
+        assert!(s.contains("op-2"));
+    }
+
+    #[test]
+    fn copilot_error_display_missing_confirmation_token() {
+        let e = CopilotError::MissingConfirmationToken;
+        assert!(format!("{e}").contains("confirmation token"));
+    }
+
+    #[test]
+    fn copilot_error_is_std_error() {
+        let e = CopilotError::MissingRecommendations;
+        let _: &dyn Error = &e;
+    }
+
+    // ── validate_probability ──────────────────────────────────────
+    #[test]
+    fn validate_probability_valid_zero() {
+        validate_probability("test", 0).unwrap();
+    }
+
+    #[test]
+    fn validate_probability_valid_million() {
+        validate_probability("test", MILLION).unwrap();
+    }
+
+    #[test]
+    fn validate_probability_valid_mid() {
+        validate_probability("test", 500_000).unwrap();
+    }
+
+    #[test]
+    fn validate_probability_negative_fails() {
+        assert!(validate_probability("test", -1).is_err());
+    }
+
+    #[test]
+    fn validate_probability_above_million_fails() {
+        assert!(validate_probability("test", MILLION + 1).is_err());
+    }
+
+    // ── validate_non_empty ────────────────────────────────────────
+    #[test]
+    fn validate_non_empty_valid() {
+        validate_non_empty("f", "hello").unwrap();
+    }
+
+    #[test]
+    fn validate_non_empty_empty_fails() {
+        assert!(validate_non_empty("f", "").is_err());
+    }
+
+    #[test]
+    fn validate_non_empty_whitespace_fails() {
+        assert!(validate_non_empty("f", "  ").is_err());
+    }
+
+    // ── role_can_execute_actions ───────────────────────────────────
+    #[test]
+    fn role_can_execute() {
+        assert!(!role_can_execute_actions(OperatorRole::Viewer));
+        assert!(role_can_execute_actions(OperatorRole::Operator));
+        assert!(role_can_execute_actions(OperatorRole::Administrator));
+    }
+
+    // ── canonical_action_token ────────────────────────────────────
+    #[test]
+    fn canonical_action_token_basic() {
+        assert_eq!(canonical_action_token("Throttle CPU"), "throttle-cpu");
+    }
+
+    #[test]
+    fn canonical_action_token_special_chars() {
+        assert_eq!(canonical_action_token("a!!b@@c"), "a-b-c");
+    }
+
+    #[test]
+    fn canonical_action_token_trailing_special() {
+        assert_eq!(canonical_action_token("action!!"), "action");
+    }
+
+    #[test]
+    fn canonical_action_token_empty() {
+        assert_eq!(canonical_action_token(""), "unknown-action");
+    }
+
+    #[test]
+    fn canonical_action_token_only_special() {
+        assert_eq!(canonical_action_token("!!!"), "unknown-action");
+    }
+
+    // ── deterministic_signature ───────────────────────────────────
+    #[test]
+    fn deterministic_signature_same_inputs() {
+        let a = deterministic_signature(&["hello", "world"]);
+        let b = deterministic_signature(&["hello", "world"]);
+        assert_eq!(a, b);
+        assert_eq!(a.len(), 16); // 16 hex chars = 8 bytes
+    }
+
+    #[test]
+    fn deterministic_signature_different_inputs() {
+        let a = deterministic_signature(&["hello"]);
+        let b = deterministic_signature(&["world"]);
+        assert_ne!(a, b);
+    }
+
+    // ── format_millionths ─────────────────────────────────────────
+    #[test]
+    fn format_millionths_positive() {
+        assert_eq!(format_millionths(1_500_000), "1.500000");
+    }
+
+    #[test]
+    fn format_millionths_zero() {
+        assert_eq!(format_millionths(0), "0.000000");
+    }
+
+    #[test]
+    fn format_millionths_negative() {
+        assert_eq!(format_millionths(-250_000), "-0.250000");
+    }
+
+    #[test]
+    fn format_millionths_fraction_only() {
+        assert_eq!(format_millionths(123), "0.000123");
+    }
+
+    // ── percentile_ms ─────────────────────────────────────────────
+    #[test]
+    fn percentile_ms_basic() {
+        let sorted = vec![10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
+        let p50 = percentile_ms(&sorted, 5_000);
+        let p95 = percentile_ms(&sorted, 9_500);
+        assert!((40..=60).contains(&p50));
+        assert!(p95 >= 90);
+    }
+
+    #[test]
+    fn percentile_ms_empty() {
+        assert_eq!(percentile_ms(&[], 5_000), 0);
+    }
+
+    #[test]
+    fn percentile_ms_single() {
+        assert_eq!(percentile_ms(&[42], 5_000), 42);
+    }
+
+    // ── recommendation_sort ───────────────────────────────────────
+    #[test]
+    fn recommendation_sort_by_loss_reduction() {
+        let a = test_candidate("a", "ext-a", 500_000, 800_000);
+        let b = test_candidate("b", "ext-b", 300_000, 800_000);
+        let mut recs = [b.clone(), a.clone()];
+        recs.sort_by(recommendation_sort);
+        assert_eq!(recs[0].action_type, "a"); // higher loss reduction first
+    }
+
+    #[test]
+    fn recommendation_sort_by_confidence_on_tie() {
+        let a = test_candidate("a", "ext-a", 500_000, 900_000);
+        let b = test_candidate("b", "ext-b", 500_000, 800_000);
+        let mut recs = [b.clone(), a.clone()];
+        recs.sort_by(recommendation_sort);
+        assert_eq!(recs[0].action_type, "a"); // higher confidence first
+    }
+
+    #[test]
+    fn recommendation_sort_by_action_type_on_tie() {
+        let a = test_candidate("aaa", "ext-a", 500_000, 800_000);
+        let b = test_candidate("bbb", "ext-a", 500_000, 800_000);
+        let mut recs = [b.clone(), a.clone()];
+        recs.sort_by(recommendation_sort);
+        assert_eq!(recs[0].action_type, "aaa"); // alphabetical
+    }
+
+    // ── ConfidenceBand validate ───────────────────────────────────
+    #[test]
+    fn confidence_band_validate_valid() {
+        let band = ConfidenceBand {
+            metric: "m".to_string(),
+            point_millionths: 500_000,
+            lower_millionths: 300_000,
+            upper_millionths: 700_000,
+            confidence_level_bps: 9500,
+        };
+        band.validate().unwrap();
+    }
+
+    #[test]
+    fn confidence_band_validate_inverted_bounds() {
+        let band = ConfidenceBand {
+            metric: "m".to_string(),
+            point_millionths: 200_000,
+            lower_millionths: 500_000,
+            upper_millionths: 700_000,
+            confidence_level_bps: 9500,
+        };
+        assert!(band.validate().is_err());
+    }
+
+    #[test]
+    fn confidence_band_validate_zero_bps() {
+        let band = ConfidenceBand {
+            metric: "m".to_string(),
+            point_millionths: 500_000,
+            lower_millionths: 300_000,
+            upper_millionths: 700_000,
+            confidence_level_bps: 0,
+        };
+        assert!(band.validate().is_err());
+    }
+
+    #[test]
+    fn confidence_band_validate_bps_over_10000() {
+        let band = ConfidenceBand {
+            metric: "m".to_string(),
+            point_millionths: 500_000,
+            lower_millionths: 300_000,
+            upper_millionths: 700_000,
+            confidence_level_bps: 10_001,
+        };
+        assert!(band.validate().is_err());
+    }
+
+    // ── DecisionBoundaryHint validate ─────────────────────────────
+    #[test]
+    fn decision_boundary_hint_validate_valid() {
+        let hint = DecisionBoundaryHint {
+            metric: "m".to_string(),
+            current_millionths: 400_000,
+            threshold_millionths: 500_000,
+            additional_evidence_needed: 5,
+            evidence_type: "hostcall".to_string(),
+            trigger_direction: BoundaryTriggerDirection::AtOrAbove,
+        };
+        hint.validate().unwrap();
+    }
+
+    #[test]
+    fn decision_boundary_hint_validate_zero_evidence() {
+        let hint = DecisionBoundaryHint {
+            metric: "m".to_string(),
+            current_millionths: 400_000,
+            threshold_millionths: 500_000,
+            additional_evidence_needed: 0,
+            evidence_type: "hostcall".to_string(),
+            trigger_direction: BoundaryTriggerDirection::AtOrAbove,
+        };
+        assert!(hint.validate().is_err());
+    }
+
+    // ── build_operator_safety_copilot_surface ─────────────────────
+    #[test]
+    fn build_surface_basic() {
+        let surface = build_test_surface();
+        assert_eq!(surface.trace_id, "trace-1");
+        assert_eq!(surface.decision_id, "dec-1");
+        assert_eq!(surface.incident_id, "inc-1");
+        assert!(surface.read_only);
+        assert_eq!(surface.recommended_action.rank, 1);
+        assert_eq!(surface.alternatives.len(), 1);
+        assert!(!surface.logs.is_empty());
+    }
+
+    #[test]
+    fn build_surface_ranks_by_loss_reduction() {
+        let surface = build_test_surface();
+        // throttle has 400k, isolate has 300k -> throttle should be rank 1
+        assert_eq!(surface.recommended_action.action_type, "throttle");
+        assert_eq!(surface.alternatives[0].action_type, "isolate");
+    }
+
+    #[test]
+    fn build_surface_empty_recommendations_fails() {
+        let mut input = test_input();
+        input.recommendations.clear();
+        assert!(build_operator_safety_copilot_surface(&input).is_err());
+    }
+
+    #[test]
+    fn build_surface_empty_trace_id_fails() {
+        let mut input = test_input();
+        input.trace_id = "".to_string();
+        assert!(build_operator_safety_copilot_surface(&input).is_err());
+    }
+
+    #[test]
+    fn build_surface_negative_no_action_loss_fails() {
+        let mut input = test_input();
+        input.no_action_expected_loss_millionths = -1;
+        assert!(build_operator_safety_copilot_surface(&input).is_err());
+    }
+
+    #[test]
+    fn build_surface_invalid_confidence_probability_fails() {
+        let mut input = test_input();
+        input.recommendations[0].confidence_millionths = MILLION + 1;
+        assert!(build_operator_safety_copilot_surface(&input).is_err());
+    }
+
+    #[test]
+    fn build_surface_missing_snapshot_reversible_fails() {
+        let mut input = test_input();
+        input.recommendations[0].snapshot_id = None;
+        assert!(build_operator_safety_copilot_surface(&input).is_err());
+    }
+
+    #[test]
+    fn build_surface_missing_snapshot_limited_window_fails() {
+        let mut input = test_input();
+        input.recommendations[0].reversibility = RecommendationReversibility::LimitedWindow;
+        input.recommendations[0].snapshot_id = None;
+        assert!(build_operator_safety_copilot_surface(&input).is_err());
+    }
+
+    #[test]
+    fn build_surface_missing_rollback_window_limited_fails() {
+        let mut input = test_input();
+        input.recommendations[0].reversibility = RecommendationReversibility::LimitedWindow;
+        input.recommendations[0].rollback_window_ms = None;
+        assert!(build_operator_safety_copilot_surface(&input).is_err());
+    }
+
+    #[test]
+    fn build_surface_irreversible_no_snapshot_ok() {
+        let mut input = test_input();
+        input.recommendations[0].reversibility = RecommendationReversibility::Irreversible;
+        input.recommendations[0].snapshot_id = None;
+        input.recommendations[0].rollback_window_ms = None;
+        build_operator_safety_copilot_surface(&input).unwrap();
+    }
+
+    #[test]
+    fn build_surface_sorts_timeline_by_timestamp() {
+        let mut input = test_input();
+        input.timeline.push(IncidentTimelineEvent {
+            timestamp_ns: 500,
+            event_id: "evt-0".to_string(),
+            event_type: "earlier".to_string(),
+            detail: "first".to_string(),
+            outcome: "ok".to_string(),
+            error_code: None,
+            drilldown: TimelineDrilldownPointers::default(),
+        });
+        let surface = build_operator_safety_copilot_surface(&input).unwrap();
+        assert_eq!(surface.timeline[0].timestamp_ns, 500);
+        assert_eq!(surface.timeline[1].timestamp_ns, 1000);
+    }
+
+    #[test]
+    fn build_surface_sorts_confidence_bands() {
+        let mut input = test_input();
+        input.confidence_bands.push(ConfidenceBand {
+            metric: "aaa_metric".to_string(),
+            point_millionths: 100_000,
+            lower_millionths: 50_000,
+            upper_millionths: 200_000,
+            confidence_level_bps: 9000,
+        });
+        let surface = build_operator_safety_copilot_surface(&input).unwrap();
+        assert_eq!(surface.confidence_bands[0].metric, "aaa_metric");
+    }
+
+    // ── select_recommendation_for_review ──────────────────────────
+    #[test]
+    fn select_recommendation_rank_1() {
+        let surface = build_test_surface();
+        let identity = test_identity();
+        let review = select_recommendation_for_review(&surface, &identity, 1, 999).unwrap();
+        assert_eq!(review.selected_rank, 1);
+        assert_eq!(review.selected_recommendation.action_type, "throttle");
+        assert_eq!(review.audit_event.event, "copilot_action_selected");
+    }
+
+    #[test]
+    fn select_recommendation_rank_2() {
+        let surface = build_test_surface();
+        let identity = test_identity();
+        let review = select_recommendation_for_review(&surface, &identity, 2, 999).unwrap();
+        assert_eq!(review.selected_rank, 2);
+        assert_eq!(review.selected_recommendation.action_type, "isolate");
+    }
+
+    #[test]
+    fn select_recommendation_rank_out_of_range() {
+        let surface = build_test_surface();
+        let identity = test_identity();
+        let err = select_recommendation_for_review(&surface, &identity, 10, 999).unwrap_err();
+        assert!(matches!(
+            err,
+            CopilotError::RecommendationRankOutOfRange { .. }
+        ));
+    }
+
+    #[test]
+    fn select_recommendation_viewer_unauthorized() {
+        let surface = build_test_surface();
+        let identity = OperatorIdentity {
+            operator_id: "op-1".to_string(),
+            role: OperatorRole::Viewer,
+        };
+        let err = select_recommendation_for_review(&surface, &identity, 1, 999).unwrap_err();
+        assert!(matches!(err, CopilotError::UnauthorizedRole { .. }));
+    }
+
+    #[test]
+    fn select_recommendation_empty_operator_id() {
+        let surface = build_test_surface();
+        let identity = OperatorIdentity {
+            operator_id: "".to_string(),
+            role: OperatorRole::Operator,
+        };
+        assert!(select_recommendation_for_review(&surface, &identity, 1, 999).is_err());
+    }
+
+    #[test]
+    fn select_recommendation_administrator_allowed() {
+        let surface = build_test_surface();
+        let identity = OperatorIdentity {
+            operator_id: "admin-1".to_string(),
+            role: OperatorRole::Administrator,
+        };
+        select_recommendation_for_review(&surface, &identity, 1, 999).unwrap();
+    }
+
+    // ── confirm_selected_recommendation ───────────────────────────
+    #[test]
+    fn confirm_recommendation_basic() {
+        let surface = build_test_surface();
+        let identity = test_identity();
+        let review = select_recommendation_for_review(&surface, &identity, 1, 999).unwrap();
+        let confirmed =
+            confirm_selected_recommendation(&review, &identity, "token-123", 1000).unwrap();
+        assert!(!confirmed.execution_command.is_empty());
+        assert!(confirmed.receipt.receipt_id.starts_with("action-receipt-"));
+        assert_eq!(confirmed.audit_event.event, "copilot_action_confirmed");
+        assert_eq!(confirmed.log_event.outcome, "pass");
+    }
+
+    #[test]
+    fn confirm_recommendation_operator_mismatch() {
+        let surface = build_test_surface();
+        let identity = test_identity();
+        let review = select_recommendation_for_review(&surface, &identity, 1, 999).unwrap();
+        let other = OperatorIdentity {
+            operator_id: "op-other".to_string(),
+            role: OperatorRole::Operator,
+        };
+        let err = confirm_selected_recommendation(&review, &other, "token", 1000).unwrap_err();
+        assert!(matches!(err, CopilotError::OperatorMismatch { .. }));
+    }
+
+    #[test]
+    fn confirm_recommendation_empty_token() {
+        let surface = build_test_surface();
+        let identity = test_identity();
+        let review = select_recommendation_for_review(&surface, &identity, 1, 999).unwrap();
+        let err = confirm_selected_recommendation(&review, &identity, "  ", 1000).unwrap_err();
+        assert!(matches!(err, CopilotError::MissingConfirmationToken));
+    }
+
+    #[test]
+    fn confirm_recommendation_viewer_unauthorized() {
+        let surface = build_test_surface();
+        let identity = test_identity();
+        let review = select_recommendation_for_review(&surface, &identity, 1, 999).unwrap();
+        let viewer = OperatorIdentity {
+            operator_id: "op-1".to_string(),
+            role: OperatorRole::Viewer,
+        };
+        let err = confirm_selected_recommendation(&review, &viewer, "token", 1000).unwrap_err();
+        assert!(matches!(err, CopilotError::UnauthorizedRole { .. }));
+    }
+
+    #[test]
+    fn confirm_recommendation_receipt_deterministic() {
+        let surface = build_test_surface();
+        let identity = test_identity();
+        let review = select_recommendation_for_review(&surface, &identity, 1, 999).unwrap();
+        let c1 = confirm_selected_recommendation(&review, &identity, "token", 1000).unwrap();
+        let c2 = confirm_selected_recommendation(&review, &identity, "token", 1000).unwrap();
+        assert_eq!(c1.receipt.receipt_id, c2.receipt.receipt_id);
+        assert_eq!(c1.receipt.signature, c2.receipt.signature);
+    }
+
+    // ── build_rollback_execution_receipt ───────────────────────────
+    #[test]
+    fn rollback_receipt_basic() {
+        let input = RollbackReceiptInput {
+            trace_id: "t1".to_string(),
+            decision_id: "d1".to_string(),
+            policy_id: "p1".to_string(),
+            action_receipt_id: "ar-1".to_string(),
+            rollback_decision_id: "rd-1".to_string(),
+            evidence_pointer: "ep-1".to_string(),
+            restoration_verification: "rv-1".to_string(),
+            executed_at_ns: 5000,
+        };
+        let receipt = build_rollback_execution_receipt(&input).unwrap();
+        assert!(receipt.receipt_id.starts_with("rollback-receipt-"));
+        assert_eq!(receipt.action_receipt_id, "ar-1");
+    }
+
+    #[test]
+    fn rollback_receipt_empty_field_fails() {
+        let mut input = RollbackReceiptInput {
+            trace_id: "t1".to_string(),
+            decision_id: "d1".to_string(),
+            policy_id: "p1".to_string(),
+            action_receipt_id: "ar-1".to_string(),
+            rollback_decision_id: "rd-1".to_string(),
+            evidence_pointer: "ep-1".to_string(),
+            restoration_verification: "rv-1".to_string(),
+            executed_at_ns: 5000,
+        };
+        input.trace_id = "".to_string();
+        assert!(build_rollback_execution_receipt(&input).is_err());
+    }
+
+    #[test]
+    fn rollback_receipt_deterministic() {
+        let input = RollbackReceiptInput {
+            trace_id: "t1".to_string(),
+            decision_id: "d1".to_string(),
+            policy_id: "p1".to_string(),
+            action_receipt_id: "ar-1".to_string(),
+            rollback_decision_id: "rd-1".to_string(),
+            evidence_pointer: "ep-1".to_string(),
+            restoration_verification: "rv-1".to_string(),
+            executed_at_ns: 5000,
+        };
+        let r1 = build_rollback_execution_receipt(&input).unwrap();
+        let r2 = build_rollback_execution_receipt(&input).unwrap();
+        assert_eq!(r1.receipt_id, r2.receipt_id);
+        assert_eq!(r1.signature, r2.signature);
+    }
+
+    // ── build_fleet_health_overview ───────────────────────────────
+    #[test]
+    fn fleet_health_overview_basic() {
+        let cards = vec![
+            ExtensionTrustCard {
+                extension_id: "ext-1".to_string(),
+                trust_level: ExtensionTrustLevel::High,
+                recent_evidence_atoms: 5,
+                recent_decision_ids: vec!["d1".to_string()],
+                current_recommendation: None,
+            },
+            ExtensionTrustCard {
+                extension_id: "ext-2".to_string(),
+                trust_level: ExtensionTrustLevel::Quarantined,
+                recent_evidence_atoms: 10,
+                recent_decision_ids: vec!["d2".to_string()],
+                current_recommendation: Some("isolate".to_string()),
+            },
+        ];
+        let incidents = vec![ActiveIncidentSummary {
+            incident_id: "inc-1".to_string(),
+            extension_id: "ext-2".to_string(),
+            severity: IncidentSeverity::High,
+            started_at_ns: 1000,
+            status: "active".to_string(),
+        }];
+        let overview = build_fleet_health_overview(&cards, &incidents, &[100_000, 200_000], &[]);
+        assert_eq!(overview.trust_level_distribution.len(), 4);
+        assert_eq!(overview.active_incidents_count, 1);
+        assert_eq!(overview.highest_severity, IncidentSeverity::High);
+        assert_eq!(overview.extension_details.len(), 2);
+    }
+
+    #[test]
+    fn fleet_health_overview_empty() {
+        let overview = build_fleet_health_overview(&[], &[], &[], &[]);
+        assert_eq!(overview.active_incidents_count, 0);
+        assert_eq!(overview.highest_severity, IncidentSeverity::Low);
+    }
+
+    #[test]
+    fn fleet_health_overview_sorts_extensions_by_id() {
+        let cards = vec![
+            ExtensionTrustCard {
+                extension_id: "z-ext".to_string(),
+                trust_level: ExtensionTrustLevel::High,
+                recent_evidence_atoms: 0,
+                recent_decision_ids: vec![],
+                current_recommendation: None,
+            },
+            ExtensionTrustCard {
+                extension_id: "a-ext".to_string(),
+                trust_level: ExtensionTrustLevel::High,
+                recent_evidence_atoms: 0,
+                recent_decision_ids: vec![],
+                current_recommendation: None,
+            },
+        ];
+        let overview = build_fleet_health_overview(&cards, &[], &[], &[]);
+        assert_eq!(overview.extension_details[0].extension_id, "a-ext");
+        assert_eq!(overview.extension_details[1].extension_id, "z-ext");
+    }
+
+    // ── build_policy_effectiveness_view ───────────────────────────
+    #[test]
+    fn policy_effectiveness_view_basic() {
+        let input = PolicyEffectivenessInput {
+            detection_counts: vec![CategoryDetectionCount {
+                category: "anomaly".to_string(),
+                detected_events: 80,
+                total_events: 100,
+            }],
+            false_positive_rate_trend_millionths: vec![50_000, 40_000],
+            containment_latencies_ms: vec![10, 20, 30, 40, 50],
+            calibration_history: vec![CalibrationPoint {
+                timestamp_ns: 1000,
+                expected_millionths: 800_000,
+                observed_millionths: 750_000,
+            }],
+        };
+        let view = build_policy_effectiveness_view(&input).unwrap();
+        assert_eq!(view.detection_rate_by_category.len(), 1);
+        assert_eq!(view.detection_rate_by_category[0].rate_millionths, 800_000);
+        assert!(view.containment_latency_p50_ms > 0);
+    }
+
+    #[test]
+    fn policy_effectiveness_view_zero_total_events() {
+        let input = PolicyEffectivenessInput {
+            detection_counts: vec![CategoryDetectionCount {
+                category: "zero".to_string(),
+                detected_events: 0,
+                total_events: 0,
+            }],
+            false_positive_rate_trend_millionths: vec![],
+            containment_latencies_ms: vec![],
+            calibration_history: vec![],
+        };
+        let view = build_policy_effectiveness_view(&input).unwrap();
+        assert_eq!(view.detection_rate_by_category[0].rate_millionths, 0);
+    }
+
+    #[test]
+    fn policy_effectiveness_view_invalid_fp_rate_fails() {
+        let input = PolicyEffectivenessInput {
+            detection_counts: vec![],
+            false_positive_rate_trend_millionths: vec![MILLION + 1],
+            containment_latencies_ms: vec![],
+            calibration_history: vec![],
+        };
+        assert!(build_policy_effectiveness_view(&input).is_err());
+    }
+
+    #[test]
+    fn policy_effectiveness_view_sorts_categories() {
+        let input = PolicyEffectivenessInput {
+            detection_counts: vec![
+                CategoryDetectionCount {
+                    category: "zzz".to_string(),
+                    detected_events: 10,
+                    total_events: 100,
+                },
+                CategoryDetectionCount {
+                    category: "aaa".to_string(),
+                    detected_events: 20,
+                    total_events: 100,
+                },
+            ],
+            false_positive_rate_trend_millionths: vec![],
+            containment_latencies_ms: vec![],
+            calibration_history: vec![],
+        };
+        let view = build_policy_effectiveness_view(&input).unwrap();
+        assert_eq!(view.detection_rate_by_category[0].category, "aaa");
+    }
+
+    // ── render_copilot_summary ────────────────────────────────────
+    #[test]
+    fn render_copilot_summary_basic() {
+        let surface = build_test_surface();
+        let summary = render_copilot_summary(&surface);
+        assert!(summary.contains("trace_id: trace-1"));
+        assert!(summary.contains("decision_id: dec-1"));
+        assert!(summary.contains("incident_id: inc-1"));
+        assert!(summary.contains("recommended_action: throttle ext-a"));
+        assert!(summary.contains("read_only: true"));
+    }
+
+    #[test]
+    fn render_copilot_summary_contains_alternatives() {
+        let surface = build_test_surface();
+        let summary = render_copilot_summary(&surface);
+        assert!(summary.contains("alternative_1: isolate ext-b"));
+    }
+
+    #[test]
+    fn render_copilot_summary_contains_confidence_bands() {
+        let surface = build_test_surface();
+        let summary = render_copilot_summary(&surface);
+        assert!(summary.contains("confidence_band:attack_probability"));
+    }
+
+    #[test]
+    fn render_copilot_summary_contains_decision_boundaries() {
+        let surface = build_test_surface();
+        let summary = render_copilot_summary(&surface);
+        assert!(summary.contains("decision_boundary:attacker_roi"));
+    }
+
+    // ── build_rollback_command ─────────────────────────────────────
+    #[test]
+    fn rollback_command_reversible() {
+        let candidate = test_candidate("throttle", "ext-a", 400_000, 800_000);
+        let cmd = build_rollback_command("t1", "d1", "p1", &candidate);
+        assert!(cmd.command.contains("rollback throttle"));
+        assert!(cmd.command.contains("--snapshot-id snap-1"));
+        assert!(cmd.command.contains("--verify"));
+    }
+
+    #[test]
+    fn rollback_command_limited_window() {
+        let mut candidate = test_candidate("isolate", "ext-b", 300_000, 700_000);
+        candidate.reversibility = RecommendationReversibility::LimitedWindow;
+        candidate.rollback_window_ms = Some(60_000);
+        let cmd = build_rollback_command("t1", "d1", "p1", &candidate);
+        assert!(cmd.command.contains("--window-ms 60000"));
+    }
+
+    #[test]
+    fn rollback_command_irreversible() {
+        let mut candidate = test_candidate("terminate", "ext-c", 200_000, 600_000);
+        candidate.reversibility = RecommendationReversibility::Irreversible;
+        let cmd = build_rollback_command("t1", "d1", "p1", &candidate);
+        assert!(cmd.command.contains("mark-irreversible"));
+        assert!(cmd.command.contains("--acknowledge"));
+        assert!(cmd.safety_summary.contains("irreversible"));
+    }
+
+    // ── Serde round-trips for data types ──────────────────────────
+    #[test]
+    fn copilot_structured_log_event_serde() {
+        let evt = CopilotStructuredLogEvent {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            component: COPILOT_COMPONENT.to_string(),
+            event: "test".to_string(),
+            outcome: "pass".to_string(),
+            error_code: None,
+        };
+        let json = serde_json::to_string(&evt).unwrap();
+        let back: CopilotStructuredLogEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(evt, back);
+    }
+
+    #[test]
+    fn operator_audit_event_serde() {
+        let evt = OperatorAuditEvent {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            operator_id: "op".to_string(),
+            operator_role: OperatorRole::Operator,
+            event: "test".to_string(),
+            outcome: "pass".to_string(),
+            context: "ctx".to_string(),
+            timestamp_ns: 1234,
+            error_code: None,
+        };
+        let json = serde_json::to_string(&evt).unwrap();
+        let back: OperatorAuditEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(evt, back);
+    }
+
+    #[test]
+    fn action_impact_summary_serde() {
+        let s = ActionImpactSummary {
+            dependent_extensions_affected: 3,
+            estimated_latency_ms: 100,
+            reversible: true,
+            rollback_window_ms_remaining: Some(30_000),
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        let back: ActionImpactSummary = serde_json::from_str(&json).unwrap();
+        assert_eq!(s, back);
+    }
+
+    #[test]
+    fn timeline_drilldown_pointers_default() {
+        let p = TimelineDrilldownPointers::default();
+        assert!(p.evidence_pointer.is_none());
+        assert!(p.decision_receipt_pointer.is_none());
+        assert!(p.replay_pointer.is_none());
+        assert!(p.counterfactual_pointer.is_none());
+    }
+}
