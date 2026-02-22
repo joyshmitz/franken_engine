@@ -3,7 +3,8 @@ use std::collections::BTreeMap;
 use frankenengine_engine::frankentui_adapter::{
     ActionCandidateView, ActiveSpecializationRowView, AdapterEnvelope, AdapterStream,
     BenchmarkTrendPointView, BlockedFlowView, CancellationEventView, CancellationKind,
-    ConfinementProofView, ConfinementStatus, ControlDashboardPartial, ControlDashboardView,
+    CapabilityDeltaDashboardView, CapabilityDeltaReplayJoinPartial, ConfinementProofView,
+    ConfinementStatus, ControlDashboardPartial, ControlDashboardView,
     ControlPlaneInvariantsDashboardView, ControlPlaneInvariantsPartial, DashboardAlertMetric,
     DashboardAlertRule, DashboardMetricView, DashboardRefreshPolicy, DashboardSeverity,
     DecisionOutcomeKind, DeclassificationDecisionView, DeclassificationOutcome, DriverView,
@@ -347,6 +348,158 @@ fn flow_decision_dashboard_round_trips_with_ifc_views() {
             assert!(!view.alert_indicators.is_empty());
         }
         other => panic!("expected flow decision dashboard payload, got {other:?}"),
+    }
+}
+
+#[test]
+fn capability_delta_dashboard_round_trips_with_replay_join_mapping() {
+    let extension_id = frankenengine_engine::engine_object_id::EngineObjectId([0x11; 32]);
+    let witness_id = frankenengine_engine::engine_object_id::EngineObjectId([0x22; 32]);
+    let policy_id = frankenengine_engine::engine_object_id::EngineObjectId([0x33; 32]);
+    let witness = frankenengine_engine::capability_witness::CapabilityWitness {
+        witness_id: witness_id.clone(),
+        schema_version: frankenengine_engine::capability_witness::WitnessSchemaVersion::CURRENT,
+        extension_id: extension_id.clone(),
+        policy_id: policy_id.clone(),
+        lifecycle_state: frankenengine_engine::capability_witness::LifecycleState::Active,
+        required_capabilities: std::collections::BTreeSet::from([
+            frankenengine_engine::policy_theorem_compiler::Capability::new("fs.read"),
+            frankenengine_engine::policy_theorem_compiler::Capability::new("network.fetch"),
+        ]),
+        denied_capabilities: std::collections::BTreeSet::new(),
+        proof_obligations: vec![
+            frankenengine_engine::capability_witness::ProofObligation {
+                capability: frankenengine_engine::policy_theorem_compiler::Capability::new(
+                    "fs.read",
+                ),
+                kind: frankenengine_engine::capability_witness::ProofKind::StaticAnalysis,
+                proof_artifact_id: frankenengine_engine::engine_object_id::EngineObjectId(
+                    [0x41; 32],
+                ),
+                justification: "file read path required".to_string(),
+                artifact_hash: frankenengine_engine::hash_tiers::ContentHash::compute(
+                    b"proof-static",
+                ),
+            },
+            frankenengine_engine::capability_witness::ProofObligation {
+                capability: frankenengine_engine::policy_theorem_compiler::Capability::new(
+                    "network.fetch",
+                ),
+                kind: frankenengine_engine::capability_witness::ProofKind::PolicyTheoremCheck,
+                proof_artifact_id: frankenengine_engine::engine_object_id::EngineObjectId(
+                    [0x42; 32],
+                ),
+                justification: "remote fetch route required".to_string(),
+                artifact_hash: frankenengine_engine::hash_tiers::ContentHash::compute(
+                    b"proof-theorem",
+                ),
+            },
+        ],
+        denial_records: vec![],
+        confidence: frankenengine_engine::capability_witness::ConfidenceInterval {
+            lower_millionths: 800_000,
+            upper_millionths: 950_000,
+            n_trials: 20,
+            n_successes: 18,
+        },
+        replay_seed: 42,
+        transcript_hash: frankenengine_engine::hash_tiers::ContentHash::compute(
+            b"witness-transcript",
+        ),
+        rollback_token: None,
+        synthesizer_signature: vec![0xAA; 64],
+        promotion_signatures: vec![vec![0xBB; 64]],
+        epoch: frankenengine_engine::security_epoch::SecurityEpoch::from_raw(44),
+        timestamp_ns: 1_700_000_005_000_000_000,
+        content_hash: frankenengine_engine::hash_tiers::ContentHash::compute(b"witness-content"),
+        metadata: BTreeMap::new(),
+    };
+
+    let replay_row = frankenengine_engine::capability_witness::WitnessReplayJoinRow {
+        witness: frankenengine_engine::capability_witness::WitnessIndexRecord {
+            witness_id,
+            extension_id: extension_id.clone(),
+            policy_id,
+            epoch: frankenengine_engine::security_epoch::SecurityEpoch::from_raw(44),
+            lifecycle_state: frankenengine_engine::capability_witness::LifecycleState::Active,
+            promotion_timestamp_ns: 1_700_000_004_900_000_000,
+            content_hash: frankenengine_engine::hash_tiers::ContentHash::compute(b"index-content"),
+            witness,
+        },
+        receipts: vec![
+            frankenengine_engine::capability_witness::CapabilityEscrowReceiptRecord {
+                receipt_id: "escrow-1".to_string(),
+                extension_id: extension_id.clone(),
+                capability: Some(
+                    frankenengine_engine::policy_theorem_compiler::Capability::new("network.fetch"),
+                ),
+                decision_kind: "challenge".to_string(),
+                outcome: "pending".to_string(),
+                timestamp_ns: 1_700_000_005_100_000_000,
+                trace_id: "trace-escrow-1".to_string(),
+                decision_id: "decision-escrow-1".to_string(),
+                policy_id: "policy-escrow".to_string(),
+                error_code: None,
+            },
+            frankenengine_engine::capability_witness::CapabilityEscrowReceiptRecord {
+                receipt_id: "escrow-2".to_string(),
+                extension_id,
+                capability: Some(
+                    frankenengine_engine::policy_theorem_compiler::Capability::new("network.fetch"),
+                ),
+                decision_kind: "operator_override".to_string(),
+                outcome: "approved".to_string(),
+                timestamp_ns: 1_700_000_005_200_000_000,
+                trace_id: "trace-escrow-2".to_string(),
+                decision_id: "decision-escrow-2".to_string(),
+                policy_id: "policy-escrow".to_string(),
+                error_code: None,
+            },
+        ],
+    };
+
+    let dashboard =
+        CapabilityDeltaDashboardView::from_replay_join_partial(CapabilityDeltaReplayJoinPartial {
+            cluster: "prod".to_string(),
+            zone: "us-east-1".to_string(),
+            security_epoch: Some(44),
+            generated_at_unix_ms: Some(1_700_000_005_300),
+            replay_rows: vec![replay_row],
+            manifest_declared_capabilities: BTreeMap::from([(
+                "1111111111111111111111111111111111111111111111111111111111111111".to_string(),
+                vec!["fs.read".to_string()],
+            )]),
+            high_escrow_alert_threshold: Some(2),
+            pending_override_alert_threshold: Some(1),
+            ..Default::default()
+        });
+
+    assert_eq!(dashboard.current_capability_rows.len(), 1);
+    assert_eq!(
+        dashboard.current_capability_rows[0].over_privileged_capabilities,
+        vec!["network.fetch".to_string()]
+    );
+    assert_eq!(dashboard.escrow_event_feed.len(), 2);
+    assert_eq!(dashboard.override_rationale_rows.len(), 1);
+
+    let envelope = AdapterEnvelope::new(
+        "trace-cap-delta-1",
+        1_700_000_005_301,
+        AdapterStream::CapabilityDeltaDashboard,
+        UpdateKind::Snapshot,
+        FrankentuiViewPayload::CapabilityDeltaDashboard(dashboard),
+    );
+    let encoded = envelope.encode_json().expect("encode");
+    let decoded: AdapterEnvelope = serde_json::from_slice(&encoded).expect("decode");
+    assert_eq!(decoded.stream, AdapterStream::CapabilityDeltaDashboard);
+    match decoded.payload {
+        FrankentuiViewPayload::CapabilityDeltaDashboard(view) => {
+            assert_eq!(view.current_capability_rows.len(), 1);
+            assert_eq!(view.proposed_minimal_rows.len(), 1);
+            assert_eq!(view.escrow_event_feed.len(), 2);
+            assert_eq!(view.override_rationale_rows[0].override_id, "escrow-2");
+        }
+        other => panic!("expected capability-delta dashboard payload, got {other:?}"),
     }
 }
 

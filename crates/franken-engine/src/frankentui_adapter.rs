@@ -2,6 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
+use crate::capability_witness::{CapabilityEscrowReceiptRecord, ProofKind, WitnessReplayJoinRow};
+
 pub const FRANKENTUI_ADAPTER_SCHEMA_VERSION: u32 = 1;
 const UNKNOWN_LABEL: &str = "unknown";
 
@@ -16,6 +18,7 @@ pub enum FrankentuiViewPayload {
     ControlDashboard(ControlDashboardView),
     ControlPlaneInvariantsDashboard(Box<ControlPlaneInvariantsDashboardView>),
     FlowDecisionDashboard(FlowDecisionDashboardView),
+    CapabilityDeltaDashboard(CapabilityDeltaDashboardView),
     ReplacementProgressDashboard(ReplacementProgressDashboardView),
     ProofSpecializationLineageDashboard(ProofSpecializationLineageDashboardView),
 }
@@ -28,6 +31,7 @@ pub enum AdapterStream {
     ControlDashboard,
     ControlPlaneInvariantsDashboard,
     FlowDecisionDashboard,
+    CapabilityDeltaDashboard,
     ReplacementProgressDashboard,
     ProofSpecializationLineageDashboard,
 }
@@ -1839,6 +1843,1068 @@ pub struct ProofSpecializationDashboardFilter {
     pub end_unix_ms: Option<u64>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum OverrideReviewStatus {
+    #[default]
+    Pending,
+    Approved,
+    Rejected,
+    Waived,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum GrantExpiryStatus {
+    #[default]
+    Active,
+    ExpiringSoon,
+    Expired,
+    NotApplicable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CurrentCapabilityDeltaRowView {
+    pub extension_id: String,
+    pub witness_id: String,
+    pub policy_id: String,
+    pub witness_epoch: u64,
+    pub lifecycle_state: String,
+    pub active_witness_capabilities: Vec<String>,
+    pub manifest_declared_capabilities: Vec<String>,
+    pub over_privileged_capabilities: Vec<String>,
+    pub over_privilege_ratio_millionths: u64,
+    pub over_privilege_replay_ref: String,
+    pub latest_receipt_timestamp_ns: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilityJustificationDrillView {
+    pub capability: String,
+    pub justification: String,
+    pub static_analysis_ref: Option<String>,
+    pub ablation_result_ref: Option<String>,
+    pub theorem_check_ref: Option<String>,
+    pub operator_attestation_ref: Option<String>,
+    pub inherited_ref: Option<String>,
+    pub playback_ref: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProposedMinimalCapabilityDeltaRowView {
+    pub extension_id: String,
+    pub witness_id: String,
+    pub current_capabilities: Vec<String>,
+    pub proposed_minimal_capabilities: Vec<String>,
+    pub removed_capabilities: Vec<String>,
+    pub capability_justifications: Vec<CapabilityJustificationDrillView>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilityDeltaEscrowEventView {
+    pub receipt_id: String,
+    pub extension_id: String,
+    pub capability: Option<String>,
+    pub decision_kind: String,
+    pub outcome: String,
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub error_code: Option<String>,
+    pub timestamp_ns: u64,
+    pub receipt_ref: String,
+    pub replay_ref: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OverrideRationaleView {
+    pub override_id: String,
+    pub extension_id: String,
+    pub capability: Option<String>,
+    pub rationale: String,
+    pub signed_justification_ref: String,
+    pub review_status: OverrideReviewStatus,
+    pub grant_expiry_status: GrantExpiryStatus,
+    pub requested_at_unix_ms: u64,
+    pub reviewed_at_unix_ms: Option<u64>,
+    pub expires_at_unix_ms: Option<u64>,
+    pub receipt_ref: String,
+    pub replay_ref: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilityPromotionBatchReviewView {
+    pub batch_id: String,
+    pub extension_ids: Vec<String>,
+    pub witness_ids: Vec<String>,
+    pub pending_review_count: u64,
+    pub generated_at_unix_ms: u64,
+    pub workflow_ref: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilityDeltaAlertView {
+    pub alert_id: String,
+    pub extension_id: Option<String>,
+    pub severity: DashboardSeverity,
+    pub reason: String,
+    pub generated_at_unix_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilityDeltaDashboardView {
+    pub cluster: String,
+    pub zone: String,
+    pub security_epoch: u64,
+    pub generated_at_unix_ms: u64,
+    pub current_capability_rows: Vec<CurrentCapabilityDeltaRowView>,
+    pub proposed_minimal_rows: Vec<ProposedMinimalCapabilityDeltaRowView>,
+    pub escrow_event_feed: Vec<CapabilityDeltaEscrowEventView>,
+    pub override_rationale_rows: Vec<OverrideRationaleView>,
+    pub batch_review_queue: Vec<CapabilityPromotionBatchReviewView>,
+    pub alert_indicators: Vec<CapabilityDeltaAlertView>,
+    pub event_subscription_cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct CapabilityDeltaPartial {
+    pub cluster: String,
+    pub zone: String,
+    pub security_epoch: Option<u64>,
+    pub generated_at_unix_ms: Option<u64>,
+    #[serde(default)]
+    pub current_capability_rows: Vec<CurrentCapabilityDeltaRowView>,
+    #[serde(default)]
+    pub proposed_minimal_rows: Vec<ProposedMinimalCapabilityDeltaRowView>,
+    #[serde(default)]
+    pub escrow_event_feed: Vec<CapabilityDeltaEscrowEventView>,
+    #[serde(default)]
+    pub override_rationale_rows: Vec<OverrideRationaleView>,
+    #[serde(default)]
+    pub batch_review_queue: Vec<CapabilityPromotionBatchReviewView>,
+    #[serde(default)]
+    pub alert_indicators: Vec<CapabilityDeltaAlertView>,
+    pub event_subscription_cursor: Option<String>,
+    pub high_escrow_alert_threshold: Option<u64>,
+    pub pending_override_alert_threshold: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct CapabilityDeltaDashboardFilter {
+    pub extension_id: Option<String>,
+    pub capability: Option<String>,
+    pub outcome: Option<String>,
+    pub min_over_privilege_ratio_millionths: Option<u64>,
+    pub grant_expiry_status: Option<GrantExpiryStatus>,
+    pub start_timestamp_ns: Option<u64>,
+    pub end_timestamp_ns: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct CapabilityDeltaReplayJoinPartial {
+    pub cluster: String,
+    pub zone: String,
+    pub security_epoch: Option<u64>,
+    pub generated_at_unix_ms: Option<u64>,
+    #[serde(default)]
+    pub replay_rows: Vec<WitnessReplayJoinRow>,
+    #[serde(default)]
+    pub manifest_declared_capabilities: BTreeMap<String, Vec<String>>,
+    #[serde(default)]
+    pub override_rationale_rows: Vec<OverrideRationaleView>,
+    #[serde(default)]
+    pub batch_review_queue: Vec<CapabilityPromotionBatchReviewView>,
+    pub event_subscription_cursor: Option<String>,
+    pub high_escrow_alert_threshold: Option<u64>,
+    pub pending_override_alert_threshold: Option<u64>,
+}
+
+impl CapabilityDeltaDashboardView {
+    pub fn from_partial(input: CapabilityDeltaPartial) -> Self {
+        let mut current_capability_rows = input.current_capability_rows;
+        for row in &mut current_capability_rows {
+            row.extension_id = normalize_non_empty(std::mem::take(&mut row.extension_id));
+            row.witness_id = normalize_non_empty(std::mem::take(&mut row.witness_id));
+            row.policy_id = normalize_non_empty(std::mem::take(&mut row.policy_id));
+            row.lifecycle_state = normalize_non_empty(std::mem::take(&mut row.lifecycle_state));
+            row.over_privilege_replay_ref =
+                normalize_non_empty(std::mem::take(&mut row.over_privilege_replay_ref));
+            row.active_witness_capabilities.sort();
+            row.active_witness_capabilities.dedup();
+            for capability in &mut row.active_witness_capabilities {
+                *capability = normalize_non_empty(std::mem::take(capability));
+            }
+            row.manifest_declared_capabilities.sort();
+            row.manifest_declared_capabilities.dedup();
+            for capability in &mut row.manifest_declared_capabilities {
+                *capability = normalize_non_empty(std::mem::take(capability));
+            }
+            row.over_privileged_capabilities.sort();
+            row.over_privileged_capabilities.dedup();
+            for capability in &mut row.over_privileged_capabilities {
+                *capability = normalize_non_empty(std::mem::take(capability));
+            }
+            row.over_privilege_ratio_millionths = compute_over_privilege_ratio_millionths(
+                row.active_witness_capabilities.len(),
+                row.over_privileged_capabilities.len(),
+            );
+        }
+        current_capability_rows.sort_by(|left, right| {
+            right
+                .over_privilege_ratio_millionths
+                .cmp(&left.over_privilege_ratio_millionths)
+                .then(left.extension_id.cmp(&right.extension_id))
+                .then(left.witness_id.cmp(&right.witness_id))
+        });
+
+        let mut proposed_minimal_rows = input.proposed_minimal_rows;
+        for row in &mut proposed_minimal_rows {
+            row.extension_id = normalize_non_empty(std::mem::take(&mut row.extension_id));
+            row.witness_id = normalize_non_empty(std::mem::take(&mut row.witness_id));
+            row.current_capabilities.sort();
+            row.current_capabilities.dedup();
+            for capability in &mut row.current_capabilities {
+                *capability = normalize_non_empty(std::mem::take(capability));
+            }
+            row.proposed_minimal_capabilities.sort();
+            row.proposed_minimal_capabilities.dedup();
+            for capability in &mut row.proposed_minimal_capabilities {
+                *capability = normalize_non_empty(std::mem::take(capability));
+            }
+            row.removed_capabilities.sort();
+            row.removed_capabilities.dedup();
+            for capability in &mut row.removed_capabilities {
+                *capability = normalize_non_empty(std::mem::take(capability));
+            }
+            row.capability_justifications
+                .sort_by(|left, right| left.capability.cmp(&right.capability));
+            for capability_justification in &mut row.capability_justifications {
+                capability_justification.capability =
+                    normalize_non_empty(std::mem::take(&mut capability_justification.capability));
+                capability_justification.justification = normalize_non_empty(std::mem::take(
+                    &mut capability_justification.justification,
+                ));
+                capability_justification.static_analysis_ref = normalize_optional_non_empty(
+                    capability_justification.static_analysis_ref.take(),
+                );
+                capability_justification.ablation_result_ref = normalize_optional_non_empty(
+                    capability_justification.ablation_result_ref.take(),
+                );
+                capability_justification.theorem_check_ref =
+                    normalize_optional_non_empty(capability_justification.theorem_check_ref.take());
+                capability_justification.operator_attestation_ref = normalize_optional_non_empty(
+                    capability_justification.operator_attestation_ref.take(),
+                );
+                capability_justification.inherited_ref =
+                    normalize_optional_non_empty(capability_justification.inherited_ref.take());
+                capability_justification.playback_ref =
+                    normalize_non_empty(std::mem::take(&mut capability_justification.playback_ref));
+            }
+        }
+        proposed_minimal_rows.sort_by(|left, right| {
+            left.extension_id
+                .cmp(&right.extension_id)
+                .then(left.witness_id.cmp(&right.witness_id))
+        });
+
+        let mut escrow_event_feed = input.escrow_event_feed;
+        escrow_event_feed.sort_by(|left, right| {
+            left.timestamp_ns
+                .cmp(&right.timestamp_ns)
+                .then(left.extension_id.cmp(&right.extension_id))
+                .then(left.receipt_id.cmp(&right.receipt_id))
+        });
+        for escrow_event in &mut escrow_event_feed {
+            escrow_event.receipt_id =
+                normalize_non_empty(std::mem::take(&mut escrow_event.receipt_id));
+            escrow_event.extension_id =
+                normalize_non_empty(std::mem::take(&mut escrow_event.extension_id));
+            escrow_event.capability = normalize_optional_non_empty(escrow_event.capability.take());
+            escrow_event.decision_kind =
+                normalize_non_empty(std::mem::take(&mut escrow_event.decision_kind));
+            escrow_event.outcome = normalize_non_empty(std::mem::take(&mut escrow_event.outcome));
+            escrow_event.trace_id = normalize_non_empty(std::mem::take(&mut escrow_event.trace_id));
+            escrow_event.decision_id =
+                normalize_non_empty(std::mem::take(&mut escrow_event.decision_id));
+            escrow_event.policy_id =
+                normalize_non_empty(std::mem::take(&mut escrow_event.policy_id));
+            escrow_event.error_code = normalize_optional_non_empty(escrow_event.error_code.take());
+            escrow_event.receipt_ref =
+                normalize_non_empty(std::mem::take(&mut escrow_event.receipt_ref));
+            escrow_event.replay_ref =
+                normalize_non_empty(std::mem::take(&mut escrow_event.replay_ref));
+        }
+
+        let mut override_rationale_rows = input.override_rationale_rows;
+        override_rationale_rows.sort_by(|left, right| {
+            left.requested_at_unix_ms
+                .cmp(&right.requested_at_unix_ms)
+                .then(left.override_id.cmp(&right.override_id))
+        });
+        for override_row in &mut override_rationale_rows {
+            override_row.override_id =
+                normalize_non_empty(std::mem::take(&mut override_row.override_id));
+            override_row.extension_id =
+                normalize_non_empty(std::mem::take(&mut override_row.extension_id));
+            override_row.capability = normalize_optional_non_empty(override_row.capability.take());
+            override_row.rationale =
+                normalize_non_empty(std::mem::take(&mut override_row.rationale));
+            override_row.signed_justification_ref =
+                normalize_non_empty(std::mem::take(&mut override_row.signed_justification_ref));
+            override_row.receipt_ref =
+                normalize_non_empty(std::mem::take(&mut override_row.receipt_ref));
+            override_row.replay_ref =
+                normalize_non_empty(std::mem::take(&mut override_row.replay_ref));
+        }
+
+        let generated_at_unix_ms = input.generated_at_unix_ms.unwrap_or_default();
+        let mut batch_review_queue = if input.batch_review_queue.is_empty() {
+            derive_capability_batch_review_queue(&current_capability_rows, generated_at_unix_ms)
+        } else {
+            input.batch_review_queue
+        };
+        batch_review_queue.sort_by(|left, right| {
+            right
+                .pending_review_count
+                .cmp(&left.pending_review_count)
+                .then(left.batch_id.cmp(&right.batch_id))
+        });
+        for batch in &mut batch_review_queue {
+            batch.batch_id = normalize_non_empty(std::mem::take(&mut batch.batch_id));
+            batch.workflow_ref = normalize_non_empty(std::mem::take(&mut batch.workflow_ref));
+            batch.extension_ids.sort();
+            batch.extension_ids.dedup();
+            for extension_id in &mut batch.extension_ids {
+                *extension_id = normalize_non_empty(std::mem::take(extension_id));
+            }
+            batch.witness_ids.sort();
+            batch.witness_ids.dedup();
+            for witness_id in &mut batch.witness_ids {
+                *witness_id = normalize_non_empty(std::mem::take(witness_id));
+            }
+        }
+
+        let high_escrow_alert_threshold = input.high_escrow_alert_threshold.unwrap_or(5).max(1);
+        let pending_override_alert_threshold =
+            input.pending_override_alert_threshold.unwrap_or(1).max(1);
+        let mut alert_indicators = if input.alert_indicators.is_empty() {
+            compute_capability_delta_alerts(
+                &current_capability_rows,
+                &escrow_event_feed,
+                &override_rationale_rows,
+                generated_at_unix_ms,
+                high_escrow_alert_threshold,
+                pending_override_alert_threshold,
+            )
+        } else {
+            input.alert_indicators
+        };
+        alert_indicators.sort_by(|left, right| left.alert_id.cmp(&right.alert_id));
+        for alert in &mut alert_indicators {
+            alert.alert_id = normalize_non_empty(std::mem::take(&mut alert.alert_id));
+            alert.extension_id = normalize_optional_non_empty(alert.extension_id.take());
+            alert.reason = normalize_non_empty(std::mem::take(&mut alert.reason));
+        }
+
+        let event_subscription_cursor = input.event_subscription_cursor.and_then(|cursor| {
+            let normalized = normalize_non_empty(cursor);
+            (normalized != UNKNOWN_LABEL).then_some(normalized)
+        });
+
+        Self {
+            cluster: normalize_non_empty(input.cluster),
+            zone: normalize_non_empty(input.zone),
+            security_epoch: input.security_epoch.unwrap_or_default(),
+            generated_at_unix_ms,
+            current_capability_rows,
+            proposed_minimal_rows,
+            escrow_event_feed,
+            override_rationale_rows,
+            batch_review_queue,
+            alert_indicators,
+            event_subscription_cursor,
+        }
+    }
+
+    pub fn filtered(&self, filter: &CapabilityDeltaDashboardFilter) -> Self {
+        let current_capability_rows = self
+            .current_capability_rows
+            .iter()
+            .filter(|row| capability_delta_current_row_matches_filter(row, filter))
+            .cloned()
+            .collect::<Vec<_>>();
+        let proposed_minimal_rows = self
+            .proposed_minimal_rows
+            .iter()
+            .filter(|row| capability_delta_proposed_row_matches_filter(row, filter))
+            .cloned()
+            .collect::<Vec<_>>();
+        let escrow_event_feed = self
+            .escrow_event_feed
+            .iter()
+            .filter(|row| capability_delta_escrow_row_matches_filter(row, filter))
+            .cloned()
+            .collect::<Vec<_>>();
+        let override_rationale_rows = self
+            .override_rationale_rows
+            .iter()
+            .filter(|row| capability_delta_override_row_matches_filter(row, filter))
+            .cloned()
+            .collect::<Vec<_>>();
+
+        let relevant_extensions = current_capability_rows
+            .iter()
+            .map(|row| row.extension_id.clone())
+            .chain(
+                proposed_minimal_rows
+                    .iter()
+                    .map(|row| row.extension_id.clone()),
+            )
+            .chain(escrow_event_feed.iter().map(|row| row.extension_id.clone()))
+            .chain(
+                override_rationale_rows
+                    .iter()
+                    .map(|row| row.extension_id.clone()),
+            )
+            .collect::<BTreeSet<_>>();
+
+        let batch_review_queue = self
+            .batch_review_queue
+            .iter()
+            .filter(|batch| {
+                relevant_extensions.is_empty()
+                    || batch
+                        .extension_ids
+                        .iter()
+                        .any(|extension_id| relevant_extensions.contains(extension_id))
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+
+        let alert_indicators = self
+            .alert_indicators
+            .iter()
+            .filter(|alert| {
+                alert
+                    .extension_id
+                    .as_deref()
+                    .is_none_or(|extension_id| relevant_extensions.contains(extension_id))
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+
+        Self {
+            cluster: self.cluster.clone(),
+            zone: self.zone.clone(),
+            security_epoch: self.security_epoch,
+            generated_at_unix_ms: self.generated_at_unix_ms,
+            current_capability_rows,
+            proposed_minimal_rows,
+            escrow_event_feed,
+            override_rationale_rows,
+            batch_review_queue,
+            alert_indicators,
+            event_subscription_cursor: self.event_subscription_cursor.clone(),
+        }
+    }
+
+    pub fn from_replay_join_partial(input: CapabilityDeltaReplayJoinPartial) -> Self {
+        let CapabilityDeltaReplayJoinPartial {
+            cluster,
+            zone,
+            security_epoch,
+            generated_at_unix_ms,
+            replay_rows,
+            manifest_declared_capabilities,
+            override_rationale_rows,
+            batch_review_queue,
+            event_subscription_cursor,
+            high_escrow_alert_threshold,
+            pending_override_alert_threshold,
+        } = input;
+
+        let mut normalized_manifest_declared_capabilities = BTreeMap::<String, Vec<String>>::new();
+        for (extension_id, capabilities) in manifest_declared_capabilities {
+            let extension_id = normalize_non_empty(extension_id);
+            let mut normalized_capabilities = capabilities
+                .into_iter()
+                .map(normalize_non_empty)
+                .collect::<Vec<_>>();
+            normalized_capabilities.sort();
+            normalized_capabilities.dedup();
+            normalized_manifest_declared_capabilities.insert(extension_id, normalized_capabilities);
+        }
+
+        let mut current_capability_rows = Vec::new();
+        let mut proposed_minimal_rows = Vec::new();
+        let mut escrow_event_feed = Vec::new();
+        let mut override_rationale_by_id = BTreeMap::<String, OverrideRationaleView>::new();
+
+        for replay_row in replay_rows {
+            let extension_id = replay_row.witness.extension_id.to_string();
+            let witness_id = replay_row.witness.witness_id.to_string();
+            let policy_id = replay_row.witness.policy_id.to_string();
+            let lifecycle_state = replay_row.witness.lifecycle_state.to_string();
+
+            let mut proposed_minimal_capabilities = replay_row
+                .witness
+                .witness
+                .required_capabilities
+                .iter()
+                .map(|capability| capability.as_str().to_string())
+                .collect::<Vec<_>>();
+            proposed_minimal_capabilities.sort();
+            proposed_minimal_capabilities.dedup();
+
+            let manifest_capabilities = normalized_manifest_declared_capabilities
+                .get(&extension_id)
+                .cloned()
+                .unwrap_or_else(|| proposed_minimal_capabilities.clone());
+            let over_privileged_capabilities = proposed_minimal_capabilities
+                .iter()
+                .filter(|capability| {
+                    !manifest_capabilities
+                        .iter()
+                        .any(|manifest| manifest.eq_ignore_ascii_case(capability))
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            let removed_capabilities = manifest_capabilities
+                .iter()
+                .filter(|capability| {
+                    !proposed_minimal_capabilities
+                        .iter()
+                        .any(|minimal| minimal.eq_ignore_ascii_case(capability))
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+
+            let capability_justifications = proposed_minimal_capabilities
+                .iter()
+                .map(|capability| build_capability_justification_drill(&replay_row, capability))
+                .collect::<Vec<_>>();
+
+            current_capability_rows.push(CurrentCapabilityDeltaRowView {
+                extension_id: extension_id.clone(),
+                witness_id: witness_id.clone(),
+                policy_id: policy_id.clone(),
+                witness_epoch: replay_row.witness.epoch.as_u64(),
+                lifecycle_state,
+                active_witness_capabilities: proposed_minimal_capabilities.clone(),
+                manifest_declared_capabilities: manifest_capabilities.clone(),
+                over_privileged_capabilities,
+                over_privilege_ratio_millionths: 0,
+                over_privilege_replay_ref: format!("frankentui://replay/witness/{witness_id}"),
+                latest_receipt_timestamp_ns: replay_row
+                    .receipts
+                    .iter()
+                    .map(|receipt| receipt.timestamp_ns)
+                    .max(),
+            });
+
+            proposed_minimal_rows.push(ProposedMinimalCapabilityDeltaRowView {
+                extension_id: extension_id.clone(),
+                witness_id,
+                current_capabilities: manifest_capabilities,
+                proposed_minimal_capabilities,
+                removed_capabilities,
+                capability_justifications,
+            });
+
+            for receipt in replay_row.receipts {
+                let event = build_capability_delta_escrow_event(&extension_id, &receipt);
+                if is_override_decision_kind(&event.decision_kind) {
+                    let override_row =
+                        build_override_rationale_from_escrow_event(&event, generated_at_unix_ms);
+                    override_rationale_by_id.insert(override_row.override_id.clone(), override_row);
+                }
+                escrow_event_feed.push(event);
+            }
+        }
+
+        for override_row in override_rationale_rows {
+            override_rationale_by_id.insert(override_row.override_id.clone(), override_row);
+        }
+
+        Self::from_partial(CapabilityDeltaPartial {
+            cluster,
+            zone,
+            security_epoch,
+            generated_at_unix_ms,
+            current_capability_rows,
+            proposed_minimal_rows,
+            escrow_event_feed,
+            override_rationale_rows: override_rationale_by_id.into_values().collect::<Vec<_>>(),
+            batch_review_queue,
+            alert_indicators: Vec::new(),
+            event_subscription_cursor,
+            high_escrow_alert_threshold,
+            pending_override_alert_threshold,
+        })
+    }
+}
+
+fn compute_over_privilege_ratio_millionths(
+    total_capabilities: usize,
+    over_privileged: usize,
+) -> u64 {
+    if total_capabilities == 0 {
+        return 0;
+    }
+    #[allow(clippy::cast_possible_truncation)]
+    {
+        ((over_privileged as u128 * 1_000_000u128) / total_capabilities as u128) as u64
+    }
+}
+
+fn derive_capability_batch_review_queue(
+    current_rows: &[CurrentCapabilityDeltaRowView],
+    generated_at_unix_ms: u64,
+) -> Vec<CapabilityPromotionBatchReviewView> {
+    if current_rows.is_empty() {
+        return Vec::new();
+    }
+    let mut extension_ids = current_rows
+        .iter()
+        .map(|row| row.extension_id.clone())
+        .collect::<Vec<_>>();
+    extension_ids.sort();
+    extension_ids.dedup();
+    let mut witness_ids = current_rows
+        .iter()
+        .map(|row| row.witness_id.clone())
+        .collect::<Vec<_>>();
+    witness_ids.sort();
+    witness_ids.dedup();
+
+    let pending_review_count = current_rows
+        .iter()
+        .filter(|row| row.over_privilege_ratio_millionths > 0)
+        .count() as u64;
+    vec![CapabilityPromotionBatchReviewView {
+        batch_id: "capability-delta-review-default".to_string(),
+        extension_ids,
+        witness_ids,
+        pending_review_count,
+        generated_at_unix_ms,
+        workflow_ref: "frankentui://witness-promotion/batch/default".to_string(),
+    }]
+}
+
+fn build_capability_justification_drill(
+    replay_row: &WitnessReplayJoinRow,
+    capability: &str,
+) -> CapabilityJustificationDrillView {
+    let mut static_analysis_ref = None;
+    let mut ablation_result_ref = None;
+    let mut theorem_check_ref = None;
+    let mut operator_attestation_ref = None;
+    let mut inherited_ref = None;
+    let mut justification_parts = Vec::new();
+
+    for proof in replay_row
+        .witness
+        .witness
+        .proof_obligations
+        .iter()
+        .filter(|proof| proof.capability.as_str().eq_ignore_ascii_case(capability))
+    {
+        let proof_ref = format!("frankentui://proof/{}", proof.proof_artifact_id);
+        match proof.kind {
+            ProofKind::StaticAnalysis => {
+                if static_analysis_ref.is_none() {
+                    static_analysis_ref = Some(proof_ref);
+                }
+            }
+            ProofKind::DynamicAblation => {
+                if ablation_result_ref.is_none() {
+                    ablation_result_ref = Some(proof_ref);
+                }
+            }
+            ProofKind::PolicyTheoremCheck => {
+                if theorem_check_ref.is_none() {
+                    theorem_check_ref = Some(proof_ref);
+                }
+            }
+            ProofKind::OperatorAttestation => {
+                if operator_attestation_ref.is_none() {
+                    operator_attestation_ref = Some(proof_ref);
+                }
+            }
+            ProofKind::InheritedFromPredecessor => {
+                if inherited_ref.is_none() {
+                    inherited_ref = Some(proof_ref);
+                }
+            }
+        }
+        let justification = normalize_non_empty(proof.justification.clone());
+        if !justification_parts
+            .iter()
+            .any(|item| item == &justification)
+        {
+            justification_parts.push(justification);
+        }
+    }
+
+    let justification = if justification_parts.is_empty() {
+        "no explicit proof obligation recorded".to_string()
+    } else {
+        justification_parts.join("; ")
+    };
+    let playback_ref = theorem_check_ref
+        .clone()
+        .or_else(|| ablation_result_ref.clone())
+        .or_else(|| static_analysis_ref.clone())
+        .or_else(|| operator_attestation_ref.clone())
+        .or_else(|| inherited_ref.clone())
+        .unwrap_or_else(|| format!("frankentui://proof/capability/{capability}"));
+
+    CapabilityJustificationDrillView {
+        capability: capability.to_string(),
+        justification,
+        static_analysis_ref,
+        ablation_result_ref,
+        theorem_check_ref,
+        operator_attestation_ref,
+        inherited_ref,
+        playback_ref,
+    }
+}
+
+fn build_capability_delta_escrow_event(
+    extension_id: &str,
+    receipt: &CapabilityEscrowReceiptRecord,
+) -> CapabilityDeltaEscrowEventView {
+    CapabilityDeltaEscrowEventView {
+        receipt_id: receipt.receipt_id.clone(),
+        extension_id: extension_id.to_string(),
+        capability: receipt
+            .capability
+            .as_ref()
+            .map(|capability| capability.as_str().to_string()),
+        decision_kind: receipt.decision_kind.clone(),
+        outcome: receipt.outcome.clone(),
+        trace_id: receipt.trace_id.clone(),
+        decision_id: receipt.decision_id.clone(),
+        policy_id: receipt.policy_id.clone(),
+        error_code: receipt.error_code.clone(),
+        timestamp_ns: receipt.timestamp_ns,
+        receipt_ref: format!("frankentui://escrow-receipt/{}", receipt.receipt_id),
+        replay_ref: format!("frankentui://replay/escrow/{}", receipt.receipt_id),
+    }
+}
+
+fn is_override_decision_kind(decision_kind: &str) -> bool {
+    let decision_kind = decision_kind.trim().to_ascii_lowercase();
+    decision_kind.contains("override") || decision_kind.contains("emergency_grant")
+}
+
+fn build_override_rationale_from_escrow_event(
+    event: &CapabilityDeltaEscrowEventView,
+    generated_at_unix_ms: Option<u64>,
+) -> OverrideRationaleView {
+    let requested_at_unix_ms = event.timestamp_ns / 1_000_000;
+    let effective_now_unix_ms = generated_at_unix_ms.unwrap_or(requested_at_unix_ms);
+    let review_status = derive_override_review_status(&event.outcome);
+    let mut expires_at_unix_ms = if is_override_decision_kind(&event.decision_kind) {
+        Some(requested_at_unix_ms.saturating_add(86_400_000))
+    } else {
+        None
+    };
+    let mut grant_expiry_status = if is_override_decision_kind(&event.decision_kind) {
+        GrantExpiryStatus::Active
+    } else {
+        GrantExpiryStatus::NotApplicable
+    };
+    let outcome_lower = event.outcome.to_ascii_lowercase();
+    if outcome_lower.contains("expired") {
+        grant_expiry_status = GrantExpiryStatus::Expired;
+    } else if let Some(expiry) = expires_at_unix_ms {
+        if expiry <= effective_now_unix_ms {
+            grant_expiry_status = GrantExpiryStatus::Expired;
+        } else if expiry.saturating_sub(effective_now_unix_ms) <= 3_600_000 {
+            grant_expiry_status = GrantExpiryStatus::ExpiringSoon;
+        }
+    } else {
+        expires_at_unix_ms = None;
+    }
+
+    OverrideRationaleView {
+        override_id: event.receipt_id.clone(),
+        extension_id: event.extension_id.clone(),
+        capability: event.capability.clone(),
+        rationale: format!(
+            "decision_kind={} outcome={} trace_id={}",
+            event.decision_kind, event.outcome, event.trace_id
+        ),
+        signed_justification_ref: format!("frankentui://signed-override/{}", event.receipt_id),
+        review_status,
+        grant_expiry_status,
+        requested_at_unix_ms,
+        reviewed_at_unix_ms: if review_status == OverrideReviewStatus::Pending {
+            None
+        } else {
+            Some(requested_at_unix_ms)
+        },
+        expires_at_unix_ms,
+        receipt_ref: event.receipt_ref.clone(),
+        replay_ref: event.replay_ref.clone(),
+    }
+}
+
+fn derive_override_review_status(outcome: &str) -> OverrideReviewStatus {
+    let normalized = outcome.trim().to_ascii_lowercase();
+    if normalized.contains("reject") || normalized.contains("deny") {
+        return OverrideReviewStatus::Rejected;
+    }
+    if normalized.contains("waive") {
+        return OverrideReviewStatus::Waived;
+    }
+    if normalized.contains("approve") || normalized.contains("grant") {
+        return OverrideReviewStatus::Approved;
+    }
+    OverrideReviewStatus::Pending
+}
+
+fn compute_capability_delta_alerts(
+    current_rows: &[CurrentCapabilityDeltaRowView],
+    escrow_event_feed: &[CapabilityDeltaEscrowEventView],
+    override_rows: &[OverrideRationaleView],
+    generated_at_unix_ms: u64,
+    high_escrow_alert_threshold: u64,
+    pending_override_alert_threshold: u64,
+) -> Vec<CapabilityDeltaAlertView> {
+    let mut alerts = Vec::new();
+
+    let mut escrow_counts_by_extension = BTreeMap::<String, u64>::new();
+    for event in escrow_event_feed {
+        let entry = escrow_counts_by_extension
+            .entry(event.extension_id.clone())
+            .or_default();
+        *entry = entry.saturating_add(1);
+    }
+    for (extension_id, count) in escrow_counts_by_extension {
+        if count >= high_escrow_alert_threshold {
+            alerts.push(CapabilityDeltaAlertView {
+                alert_id: format!("high-escrow-rate-{extension_id}"),
+                extension_id: Some(extension_id),
+                severity: if count >= high_escrow_alert_threshold.saturating_mul(2) {
+                    DashboardSeverity::Critical
+                } else {
+                    DashboardSeverity::Warning
+                },
+                reason: format!(
+                    "escrow_events={} exceeds threshold={}",
+                    count, high_escrow_alert_threshold
+                ),
+                generated_at_unix_ms,
+            });
+        }
+    }
+
+    for current_row in current_rows {
+        if current_row.over_privilege_ratio_millionths > 0 {
+            alerts.push(CapabilityDeltaAlertView {
+                alert_id: format!("over-privilege-{}", current_row.extension_id),
+                extension_id: Some(current_row.extension_id.clone()),
+                severity: if current_row.over_privilege_ratio_millionths >= 250_000 {
+                    DashboardSeverity::Critical
+                } else {
+                    DashboardSeverity::Warning
+                },
+                reason: format!(
+                    "over_privilege_ratio_millionths={} witness_id={}",
+                    current_row.over_privilege_ratio_millionths, current_row.witness_id
+                ),
+                generated_at_unix_ms,
+            });
+        }
+    }
+
+    let pending_override_count = override_rows
+        .iter()
+        .filter(|row| row.review_status == OverrideReviewStatus::Pending)
+        .count() as u64;
+    if pending_override_count >= pending_override_alert_threshold {
+        alerts.push(CapabilityDeltaAlertView {
+            alert_id: "pending-override-reviews".to_string(),
+            extension_id: None,
+            severity: if pending_override_count
+                >= pending_override_alert_threshold.saturating_mul(2)
+            {
+                DashboardSeverity::Critical
+            } else {
+                DashboardSeverity::Warning
+            },
+            reason: format!(
+                "pending_override_reviews={} threshold={}",
+                pending_override_count, pending_override_alert_threshold
+            ),
+            generated_at_unix_ms,
+        });
+    }
+
+    let expired_overrides = override_rows
+        .iter()
+        .filter(|row| row.grant_expiry_status == GrantExpiryStatus::Expired)
+        .count() as u64;
+    if expired_overrides > 0 {
+        alerts.push(CapabilityDeltaAlertView {
+            alert_id: "expired-emergency-grants".to_string(),
+            extension_id: None,
+            severity: DashboardSeverity::Critical,
+            reason: format!("expired_emergency_grants={expired_overrides}"),
+            generated_at_unix_ms,
+        });
+    }
+
+    let expiring_soon_overrides = override_rows
+        .iter()
+        .filter(|row| row.grant_expiry_status == GrantExpiryStatus::ExpiringSoon)
+        .count() as u64;
+    if expiring_soon_overrides > 0 {
+        alerts.push(CapabilityDeltaAlertView {
+            alert_id: "expiring-emergency-grants".to_string(),
+            extension_id: None,
+            severity: DashboardSeverity::Warning,
+            reason: format!("expiring_soon_emergency_grants={expiring_soon_overrides}"),
+            generated_at_unix_ms,
+        });
+    }
+
+    alerts.sort_by(|left, right| left.alert_id.cmp(&right.alert_id));
+    alerts
+}
+
+fn capability_delta_current_row_matches_filter(
+    row: &CurrentCapabilityDeltaRowView,
+    filter: &CapabilityDeltaDashboardFilter,
+) -> bool {
+    if let Some(extension_id) = filter.extension_id.as_deref()
+        && !row.extension_id.eq_ignore_ascii_case(extension_id)
+    {
+        return false;
+    }
+    if let Some(capability) = filter.capability.as_deref()
+        && !row
+            .active_witness_capabilities
+            .iter()
+            .chain(row.manifest_declared_capabilities.iter())
+            .chain(row.over_privileged_capabilities.iter())
+            .any(|value| value.eq_ignore_ascii_case(capability))
+    {
+        return false;
+    }
+    if let Some(min_ratio) = filter.min_over_privilege_ratio_millionths
+        && row.over_privilege_ratio_millionths < min_ratio
+    {
+        return false;
+    }
+    if let Some(timestamp_ns) = row.latest_receipt_timestamp_ns
+        && !capability_delta_timestamp_matches_range(timestamp_ns, filter)
+    {
+        return false;
+    }
+    true
+}
+
+fn capability_delta_proposed_row_matches_filter(
+    row: &ProposedMinimalCapabilityDeltaRowView,
+    filter: &CapabilityDeltaDashboardFilter,
+) -> bool {
+    if let Some(extension_id) = filter.extension_id.as_deref()
+        && !row.extension_id.eq_ignore_ascii_case(extension_id)
+    {
+        return false;
+    }
+    if let Some(capability) = filter.capability.as_deref()
+        && !row
+            .current_capabilities
+            .iter()
+            .chain(row.proposed_minimal_capabilities.iter())
+            .chain(row.removed_capabilities.iter())
+            .chain(
+                row.capability_justifications
+                    .iter()
+                    .map(|row| &row.capability),
+            )
+            .any(|value| value.eq_ignore_ascii_case(capability))
+    {
+        return false;
+    }
+    true
+}
+
+fn capability_delta_escrow_row_matches_filter(
+    row: &CapabilityDeltaEscrowEventView,
+    filter: &CapabilityDeltaDashboardFilter,
+) -> bool {
+    if let Some(extension_id) = filter.extension_id.as_deref()
+        && !row.extension_id.eq_ignore_ascii_case(extension_id)
+    {
+        return false;
+    }
+    if let Some(capability) = filter.capability.as_deref()
+        && !row
+            .capability
+            .as_deref()
+            .is_some_and(|value| value.eq_ignore_ascii_case(capability))
+    {
+        return false;
+    }
+    if let Some(outcome) = filter.outcome.as_deref()
+        && !row.outcome.eq_ignore_ascii_case(outcome)
+    {
+        return false;
+    }
+    capability_delta_timestamp_matches_range(row.timestamp_ns, filter)
+}
+
+fn capability_delta_override_row_matches_filter(
+    row: &OverrideRationaleView,
+    filter: &CapabilityDeltaDashboardFilter,
+) -> bool {
+    if let Some(extension_id) = filter.extension_id.as_deref()
+        && !row.extension_id.eq_ignore_ascii_case(extension_id)
+    {
+        return false;
+    }
+    if let Some(capability) = filter.capability.as_deref()
+        && !row
+            .capability
+            .as_deref()
+            .is_some_and(|value| value.eq_ignore_ascii_case(capability))
+    {
+        return false;
+    }
+    if let Some(grant_expiry_status) = filter.grant_expiry_status
+        && row.grant_expiry_status != grant_expiry_status
+    {
+        return false;
+    }
+    capability_delta_timestamp_matches_range(
+        row.requested_at_unix_ms.saturating_mul(1_000_000),
+        filter,
+    )
+}
+
+fn capability_delta_timestamp_matches_range(
+    timestamp_ns: u64,
+    filter: &CapabilityDeltaDashboardFilter,
+) -> bool {
+    if let Some(start_timestamp_ns) = filter.start_timestamp_ns
+        && timestamp_ns < start_timestamp_ns
+    {
+        return false;
+    }
+    if let Some(end_timestamp_ns) = filter.end_timestamp_ns
+        && timestamp_ns > end_timestamp_ns
+    {
+        return false;
+    }
+    true
+}
+
 pub fn build_native_coverage_meter(
     slot_status_overview: &[SlotStatusOverviewRow],
     trend: Vec<CoverageTrendPoint>,
@@ -3096,6 +4162,269 @@ mod tests {
         assert_eq!(filtered.fallback_events.len(), 1);
         assert_eq!(filtered.proof_inventory.len(), 1);
         assert_eq!(filtered.performance_impact.active_specialization_count, 1);
+    }
+
+    #[test]
+    fn capability_delta_dashboard_builds_alerts_and_filters() {
+        let dashboard = CapabilityDeltaDashboardView::from_partial(CapabilityDeltaPartial {
+            cluster: "prod".to_string(),
+            zone: "us-east-1".to_string(),
+            security_epoch: Some(44),
+            generated_at_unix_ms: Some(1_700_000_005_000),
+            current_capability_rows: vec![
+                CurrentCapabilityDeltaRowView {
+                    extension_id: " ext-a ".to_string(),
+                    witness_id: " witness-a ".to_string(),
+                    policy_id: " policy-a ".to_string(),
+                    witness_epoch: 44,
+                    lifecycle_state: " active ".to_string(),
+                    active_witness_capabilities: vec![
+                        "fs.read".to_string(),
+                        "network.fetch".to_string(),
+                    ],
+                    manifest_declared_capabilities: vec!["fs.read".to_string()],
+                    over_privileged_capabilities: vec!["network.fetch".to_string()],
+                    over_privilege_ratio_millionths: 0,
+                    over_privilege_replay_ref: " frankentui://replay/witness/witness-a "
+                        .to_string(),
+                    latest_receipt_timestamp_ns: Some(1_700_000_005_500_000_000),
+                },
+                CurrentCapabilityDeltaRowView {
+                    extension_id: "ext-b".to_string(),
+                    witness_id: "witness-b".to_string(),
+                    policy_id: "policy-b".to_string(),
+                    witness_epoch: 44,
+                    lifecycle_state: "active".to_string(),
+                    active_witness_capabilities: vec!["fs.read".to_string()],
+                    manifest_declared_capabilities: vec!["fs.read".to_string()],
+                    over_privileged_capabilities: vec![],
+                    over_privilege_ratio_millionths: 0,
+                    over_privilege_replay_ref: "frankentui://replay/witness/witness-b".to_string(),
+                    latest_receipt_timestamp_ns: Some(1_700_000_005_100_000_000),
+                },
+            ],
+            proposed_minimal_rows: vec![ProposedMinimalCapabilityDeltaRowView {
+                extension_id: "ext-a".to_string(),
+                witness_id: "witness-a".to_string(),
+                current_capabilities: vec![
+                    "fs.read".to_string(),
+                    "network.fetch".to_string(),
+                    "network.fetch".to_string(),
+                ],
+                proposed_minimal_capabilities: vec!["fs.read".to_string()],
+                removed_capabilities: vec!["network.fetch".to_string()],
+                capability_justifications: vec![CapabilityJustificationDrillView {
+                    capability: "fs.read".to_string(),
+                    justification: "static path requires file read".to_string(),
+                    static_analysis_ref: Some("frankentui://proof/static/fs-read".to_string()),
+                    ablation_result_ref: None,
+                    theorem_check_ref: Some("frankentui://proof/theorem/fs-read".to_string()),
+                    operator_attestation_ref: None,
+                    inherited_ref: None,
+                    playback_ref: "frankentui://proof/theorem/fs-read".to_string(),
+                }],
+            }],
+            escrow_event_feed: vec![
+                CapabilityDeltaEscrowEventView {
+                    receipt_id: "receipt-1".to_string(),
+                    extension_id: "ext-a".to_string(),
+                    capability: Some("network.fetch".to_string()),
+                    decision_kind: "challenge".to_string(),
+                    outcome: "pending".to_string(),
+                    trace_id: "trace-1".to_string(),
+                    decision_id: "decision-1".to_string(),
+                    policy_id: "policy-a".to_string(),
+                    error_code: None,
+                    timestamp_ns: 1_700_000_005_200_000_000,
+                    receipt_ref: "frankentui://escrow-receipt/receipt-1".to_string(),
+                    replay_ref: "frankentui://replay/escrow/receipt-1".to_string(),
+                },
+                CapabilityDeltaEscrowEventView {
+                    receipt_id: "receipt-2".to_string(),
+                    extension_id: "ext-a".to_string(),
+                    capability: Some("network.fetch".to_string()),
+                    decision_kind: "emergency_grant".to_string(),
+                    outcome: "approved".to_string(),
+                    trace_id: "trace-2".to_string(),
+                    decision_id: "decision-2".to_string(),
+                    policy_id: "policy-a".to_string(),
+                    error_code: None,
+                    timestamp_ns: 1_700_000_005_300_000_000,
+                    receipt_ref: "frankentui://escrow-receipt/receipt-2".to_string(),
+                    replay_ref: "frankentui://replay/escrow/receipt-2".to_string(),
+                },
+            ],
+            override_rationale_rows: vec![OverrideRationaleView {
+                override_id: "override-1".to_string(),
+                extension_id: "ext-a".to_string(),
+                capability: Some("network.fetch".to_string()),
+                rationale: "break-glass override".to_string(),
+                signed_justification_ref: "frankentui://signed-override/override-1".to_string(),
+                review_status: OverrideReviewStatus::Pending,
+                grant_expiry_status: GrantExpiryStatus::ExpiringSoon,
+                requested_at_unix_ms: 1_700_000_004_900,
+                reviewed_at_unix_ms: None,
+                expires_at_unix_ms: Some(1_700_000_005_100),
+                receipt_ref: "frankentui://escrow-receipt/receipt-2".to_string(),
+                replay_ref: "frankentui://replay/escrow/receipt-2".to_string(),
+            }],
+            high_escrow_alert_threshold: Some(2),
+            pending_override_alert_threshold: Some(1),
+            ..Default::default()
+        });
+
+        assert_eq!(dashboard.current_capability_rows.len(), 2);
+        assert_eq!(dashboard.current_capability_rows[0].extension_id, "ext-a");
+        assert_eq!(
+            dashboard.current_capability_rows[0].over_privilege_ratio_millionths,
+            500_000
+        );
+        assert_eq!(dashboard.escrow_event_feed.len(), 2);
+        assert!(!dashboard.alert_indicators.is_empty());
+        assert_eq!(dashboard.proposed_minimal_rows.len(), 1);
+
+        let filtered = dashboard.filtered(&CapabilityDeltaDashboardFilter {
+            extension_id: Some("ext-a".to_string()),
+            capability: Some("network.fetch".to_string()),
+            outcome: Some("approved".to_string()),
+            min_over_privilege_ratio_millionths: Some(100_000),
+            grant_expiry_status: Some(GrantExpiryStatus::ExpiringSoon),
+            start_timestamp_ns: Some(1_700_000_004_800_000_000),
+            end_timestamp_ns: Some(1_700_000_005_600_000_000),
+        });
+
+        assert_eq!(filtered.current_capability_rows.len(), 1);
+        assert_eq!(filtered.escrow_event_feed.len(), 1);
+        assert_eq!(filtered.override_rationale_rows.len(), 1);
+        assert_eq!(filtered.proposed_minimal_rows.len(), 1);
+    }
+
+    #[test]
+    fn capability_delta_dashboard_from_replay_join_partial_maps_witness_and_receipts() {
+        let extension_id = crate::engine_object_id::EngineObjectId([0x11; 32]);
+        let witness_id = crate::engine_object_id::EngineObjectId([0x22; 32]);
+        let policy_id = crate::engine_object_id::EngineObjectId([0x33; 32]);
+        let witness = crate::capability_witness::CapabilityWitness {
+            witness_id: witness_id.clone(),
+            schema_version: crate::capability_witness::WitnessSchemaVersion::CURRENT,
+            extension_id: extension_id.clone(),
+            policy_id: policy_id.clone(),
+            lifecycle_state: crate::capability_witness::LifecycleState::Active,
+            required_capabilities: std::collections::BTreeSet::from([
+                crate::policy_theorem_compiler::Capability::new("fs.read"),
+                crate::policy_theorem_compiler::Capability::new("network.fetch"),
+            ]),
+            denied_capabilities: std::collections::BTreeSet::new(),
+            proof_obligations: vec![
+                crate::capability_witness::ProofObligation {
+                    capability: crate::policy_theorem_compiler::Capability::new("fs.read"),
+                    kind: crate::capability_witness::ProofKind::StaticAnalysis,
+                    proof_artifact_id: crate::engine_object_id::EngineObjectId([0x41; 32]),
+                    justification: "file read path required".to_string(),
+                    artifact_hash: crate::hash_tiers::ContentHash::compute(b"proof-static"),
+                },
+                crate::capability_witness::ProofObligation {
+                    capability: crate::policy_theorem_compiler::Capability::new("network.fetch"),
+                    kind: crate::capability_witness::ProofKind::PolicyTheoremCheck,
+                    proof_artifact_id: crate::engine_object_id::EngineObjectId([0x42; 32]),
+                    justification: "remote attest fetch route".to_string(),
+                    artifact_hash: crate::hash_tiers::ContentHash::compute(b"proof-theorem"),
+                },
+            ],
+            denial_records: vec![],
+            confidence: crate::capability_witness::ConfidenceInterval {
+                lower_millionths: 800_000,
+                upper_millionths: 950_000,
+                n_trials: 20,
+                n_successes: 18,
+            },
+            replay_seed: 42,
+            transcript_hash: crate::hash_tiers::ContentHash::compute(b"witness-transcript"),
+            rollback_token: None,
+            synthesizer_signature: vec![0xAA; 64],
+            promotion_signatures: vec![vec![0xBB; 64]],
+            epoch: crate::security_epoch::SecurityEpoch::from_raw(44),
+            timestamp_ns: 1_700_000_005_000_000_000,
+            content_hash: crate::hash_tiers::ContentHash::compute(b"witness-content"),
+            metadata: BTreeMap::new(),
+        };
+
+        let replay_row = WitnessReplayJoinRow {
+            witness: crate::capability_witness::WitnessIndexRecord {
+                witness_id,
+                extension_id: extension_id.clone(),
+                policy_id,
+                epoch: crate::security_epoch::SecurityEpoch::from_raw(44),
+                lifecycle_state: crate::capability_witness::LifecycleState::Active,
+                promotion_timestamp_ns: 1_700_000_004_900_000_000,
+                content_hash: crate::hash_tiers::ContentHash::compute(b"index-content"),
+                witness,
+            },
+            receipts: vec![
+                CapabilityEscrowReceiptRecord {
+                    receipt_id: "escrow-1".to_string(),
+                    extension_id: extension_id.clone(),
+                    capability: Some(crate::policy_theorem_compiler::Capability::new(
+                        "network.fetch",
+                    )),
+                    decision_kind: "challenge".to_string(),
+                    outcome: "pending".to_string(),
+                    timestamp_ns: 1_700_000_005_100_000_000,
+                    trace_id: "trace-escrow-1".to_string(),
+                    decision_id: "decision-escrow-1".to_string(),
+                    policy_id: "policy-escrow".to_string(),
+                    error_code: None,
+                },
+                CapabilityEscrowReceiptRecord {
+                    receipt_id: "escrow-2".to_string(),
+                    extension_id,
+                    capability: Some(crate::policy_theorem_compiler::Capability::new(
+                        "network.fetch",
+                    )),
+                    decision_kind: "operator_override".to_string(),
+                    outcome: "approved".to_string(),
+                    timestamp_ns: 1_700_000_005_200_000_000,
+                    trace_id: "trace-escrow-2".to_string(),
+                    decision_id: "decision-escrow-2".to_string(),
+                    policy_id: "policy-escrow".to_string(),
+                    error_code: None,
+                },
+            ],
+        };
+
+        let dashboard = CapabilityDeltaDashboardView::from_replay_join_partial(
+            CapabilityDeltaReplayJoinPartial {
+                cluster: "prod".to_string(),
+                zone: "us-east-1".to_string(),
+                security_epoch: Some(44),
+                generated_at_unix_ms: Some(1_700_000_005_300),
+                replay_rows: vec![replay_row],
+                manifest_declared_capabilities: BTreeMap::from([(
+                    "1111111111111111111111111111111111111111111111111111111111111111".to_string(),
+                    vec!["fs.read".to_string()],
+                )]),
+                high_escrow_alert_threshold: Some(2),
+                pending_override_alert_threshold: Some(1),
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(dashboard.current_capability_rows.len(), 1);
+        assert_eq!(
+            dashboard.current_capability_rows[0].over_privileged_capabilities,
+            vec!["network.fetch".to_string()]
+        );
+        assert_eq!(dashboard.proposed_minimal_rows.len(), 1);
+        assert_eq!(dashboard.escrow_event_feed.len(), 2);
+        assert_eq!(dashboard.override_rationale_rows.len(), 1);
+        assert_eq!(dashboard.override_rationale_rows[0].override_id, "escrow-2");
+        assert!(
+            dashboard.proposed_minimal_rows[0]
+                .capability_justifications
+                .iter()
+                .any(|row| row.capability == "network.fetch"
+                    && row.theorem_check_ref.as_deref().is_some())
+        );
     }
 
     #[test]

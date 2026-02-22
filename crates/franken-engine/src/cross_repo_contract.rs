@@ -462,6 +462,7 @@ pub fn integration_point_inventory() -> BTreeMap<String, Vec<String>> {
             "ControlDashboardView".to_string(),
             "ControlPlaneInvariantsDashboardView".to_string(),
             "FlowDecisionDashboardView".to_string(),
+            "CapabilityDeltaDashboardView".to_string(),
             "ReplacementProgressDashboardView".to_string(),
             "ProofSpecializationLineageDashboardView".to_string(),
         ],
@@ -542,18 +543,20 @@ mod tests {
         ActiveSpecializationRowView, AdapterEnvelope, AdapterStream, BenchmarkTrendPointView,
         BlockedFlowView, CancellationEventView, CancellationKind, ConfinementProofView,
         ConfinementStatus, ControlDashboardView, ControlPlaneInvariantsDashboardView,
-        ControlPlaneInvariantsPartial, DashboardAlertMetric, DashboardAlertRule,
-        DashboardMetricView, DashboardSeverity, DecisionOutcomeKind, DeclassificationDecisionView,
-        DeclassificationOutcome, ExtensionStatusRow, FlowDecisionDashboardView,
-        FlowDecisionPartial, FlowProofCoverageView, FlowSensitivityLevel, FrankentuiViewPayload,
-        IncidentReplayView, LabelMapEdgeView, LabelMapNodeView, LabelMapView, ObligationState,
-        ObligationStatusRowView, PolicyExplanationCardView, PolicyExplanationPartial,
-        ProofInventoryKind, ProofInventoryRowView, ProofSpecializationInvalidationReason,
-        ProofSpecializationLineageDashboardView, ProofSpecializationLineagePartial,
-        ProofValidityStatus, RecoveryStatus, RegionLifecycleRowView, ReplacementOpportunityInput,
-        ReplacementProgressDashboardView, ReplacementProgressPartial, ReplacementRiskLevel,
-        ReplayEventView, ReplayHealthPanelView, ReplayHealthStatus, ReplayStatus,
-        SafeModeActivationView, SchemaCompatibilityStatus, SchemaVersionPanelView,
+        ControlPlaneInvariantsPartial, CurrentCapabilityDeltaRowView, DashboardAlertMetric,
+        DashboardAlertRule, DashboardMetricView, DashboardSeverity, DecisionOutcomeKind,
+        DeclassificationDecisionView, DeclassificationOutcome, ExtensionStatusRow,
+        FlowDecisionDashboardView, FlowDecisionPartial, FlowProofCoverageView,
+        FlowSensitivityLevel, FrankentuiViewPayload, GrantExpiryStatus, IncidentReplayView,
+        LabelMapEdgeView, LabelMapNodeView, LabelMapView, ObligationState, ObligationStatusRowView,
+        OverrideRationaleView, OverrideReviewStatus, PolicyExplanationCardView,
+        PolicyExplanationPartial, ProofInventoryKind, ProofInventoryRowView,
+        ProofSpecializationInvalidationReason, ProofSpecializationLineageDashboardView,
+        ProofSpecializationLineagePartial, ProofValidityStatus,
+        ProposedMinimalCapabilityDeltaRowView, RecoveryStatus, RegionLifecycleRowView,
+        ReplacementOpportunityInput, ReplacementProgressDashboardView, ReplacementProgressPartial,
+        ReplacementRiskLevel, ReplayEventView, ReplayHealthPanelView, ReplayHealthStatus,
+        ReplayStatus, SafeModeActivationView, SchemaCompatibilityStatus, SchemaVersionPanelView,
         SlotStatusOverviewRow, SpecializationFallbackEventView, SpecializationFallbackReason,
         SpecializationInvalidationRowView, ThresholdComparator, UpdateKind,
     };
@@ -832,6 +835,89 @@ mod tests {
                 ..Default::default()
             }),
         );
+        let capability_delta = FrankentuiViewPayload::CapabilityDeltaDashboard(
+            crate::frankentui_adapter::CapabilityDeltaDashboardView::from_partial(
+                crate::frankentui_adapter::CapabilityDeltaPartial {
+                    cluster: "prod".to_string(),
+                    zone: "us-east".to_string(),
+                    security_epoch: Some(8),
+                    generated_at_unix_ms: Some(1_700_000_000_430),
+                    current_capability_rows: vec![CurrentCapabilityDeltaRowView {
+                        extension_id: "ext-a".to_string(),
+                        witness_id: "witness-a".to_string(),
+                        policy_id: "policy-a".to_string(),
+                        witness_epoch: 8,
+                        lifecycle_state: "active".to_string(),
+                        active_witness_capabilities: vec![
+                            "fs.read".to_string(),
+                            "network.fetch".to_string(),
+                        ],
+                        manifest_declared_capabilities: vec!["fs.read".to_string()],
+                        over_privileged_capabilities: vec!["network.fetch".to_string()],
+                        over_privilege_ratio_millionths: 0,
+                        over_privilege_replay_ref: "frankentui://replay/witness/witness-a"
+                            .to_string(),
+                        latest_receipt_timestamp_ns: Some(1_700_000_000_420_000_000),
+                    }],
+                    proposed_minimal_rows: vec![ProposedMinimalCapabilityDeltaRowView {
+                        extension_id: "ext-a".to_string(),
+                        witness_id: "witness-a".to_string(),
+                        current_capabilities: vec![
+                            "fs.read".to_string(),
+                            "network.fetch".to_string(),
+                        ],
+                        proposed_minimal_capabilities: vec!["fs.read".to_string()],
+                        removed_capabilities: vec!["network.fetch".to_string()],
+                        capability_justifications: vec![
+                            crate::frankentui_adapter::CapabilityJustificationDrillView {
+                                capability: "fs.read".to_string(),
+                                justification: "static analysis path".to_string(),
+                                static_analysis_ref: Some(
+                                    "frankentui://proof/static/fs-read".to_string(),
+                                ),
+                                ablation_result_ref: None,
+                                theorem_check_ref: None,
+                                operator_attestation_ref: None,
+                                inherited_ref: None,
+                                playback_ref: "frankentui://proof/static/fs-read".to_string(),
+                            },
+                        ],
+                    }],
+                    escrow_event_feed: vec![
+                        crate::frankentui_adapter::CapabilityDeltaEscrowEventView {
+                            receipt_id: "escrow-1".to_string(),
+                            extension_id: "ext-a".to_string(),
+                            capability: Some("network.fetch".to_string()),
+                            decision_kind: "challenge".to_string(),
+                            outcome: "pending".to_string(),
+                            trace_id: "trace-escrow-1".to_string(),
+                            decision_id: "decision-escrow-1".to_string(),
+                            policy_id: "policy-a".to_string(),
+                            error_code: None,
+                            timestamp_ns: 1_700_000_000_421_000_000,
+                            receipt_ref: "frankentui://escrow-receipt/escrow-1".to_string(),
+                            replay_ref: "frankentui://replay/escrow/escrow-1".to_string(),
+                        },
+                    ],
+                    override_rationale_rows: vec![OverrideRationaleView {
+                        override_id: "override-1".to_string(),
+                        extension_id: "ext-a".to_string(),
+                        capability: Some("network.fetch".to_string()),
+                        rationale: "manual override".to_string(),
+                        signed_justification_ref: "frankentui://signed-override/override-1"
+                            .to_string(),
+                        review_status: OverrideReviewStatus::Pending,
+                        grant_expiry_status: GrantExpiryStatus::ExpiringSoon,
+                        requested_at_unix_ms: 1_700_000_000_422,
+                        reviewed_at_unix_ms: None,
+                        expires_at_unix_ms: Some(1_700_000_001_422),
+                        receipt_ref: "frankentui://escrow-receipt/escrow-1".to_string(),
+                        replay_ref: "frankentui://replay/escrow/escrow-1".to_string(),
+                    }],
+                    ..Default::default()
+                },
+            ),
+        );
         let proof_lineage = FrankentuiViewPayload::ProofSpecializationLineageDashboard(
             ProofSpecializationLineageDashboardView::from_partial(
                 ProofSpecializationLineagePartial {
@@ -900,6 +986,7 @@ mod tests {
             replacement,
             invariants,
             flow,
+            capability_delta,
             proof_lineage,
         ] {
             let envelope = AdapterEnvelope::new(
@@ -937,6 +1024,7 @@ mod tests {
             AdapterStream::ControlDashboard,
             AdapterStream::ControlPlaneInvariantsDashboard,
             AdapterStream::FlowDecisionDashboard,
+            AdapterStream::CapabilityDeltaDashboard,
             AdapterStream::ReplacementProgressDashboard,
             AdapterStream::ProofSpecializationLineageDashboard,
         ];
@@ -946,6 +1034,7 @@ mod tests {
             "control_dashboard",
             "control_plane_invariants_dashboard",
             "flow_decision_dashboard",
+            "capability_delta_dashboard",
             "replacement_progress_dashboard",
             "proof_specialization_lineage_dashboard",
         ];
