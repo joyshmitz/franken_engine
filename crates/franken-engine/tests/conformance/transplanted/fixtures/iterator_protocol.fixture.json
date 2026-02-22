@@ -1,0 +1,5 @@
+{
+  "donor_harness": "quickjs",
+  "source": "var obj = { [Symbol.iterator]() { var n = 0; return { next() { return n < 3 ? {value: n++, done: false} : {done: true}; } }; } }; var result = []; for (var v of obj) result.push(v); print(result.join(','));",
+  "observed_output": "0,1,2\nprops:0,1,2,length"
+}

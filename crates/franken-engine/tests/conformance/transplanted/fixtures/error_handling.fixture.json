@@ -1,0 +1,5 @@
+{
+  "donor_harness": "quickjs",
+  "source": "try { null.prop; } catch(e) { print(e.constructor.name + '|' + e.message); } try { undeclared; } catch(e) { print(e.constructor.name + '|' + e.message); }",
+  "observed_output": "TypeError|Cannot read property 'prop' of null\nReferenceError|undeclared is not defined\nprops:"
+}

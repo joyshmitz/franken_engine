@@ -1,0 +1,5 @@
+{
+  "donor_harness": "quickjs",
+  "source": "var s1 = Symbol('desc'); var s2 = Symbol('desc'); print(typeof s1 + ',' + (s1 === s2) + ',' + s1.toString() + ',' + String(s1));",
+  "observed_output": "symbol,false,Symbol(desc),Symbol(desc)\nprops:"
+}

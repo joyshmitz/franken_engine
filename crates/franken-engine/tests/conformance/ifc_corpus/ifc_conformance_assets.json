@@ -1,55 +1,4437 @@
 {
   "schema_version": "franken-engine.conformance-assets.v1",
-  "generated_at_utc": "2026-02-22T06:00:00Z",
+  "generated_at_utc": "2026-02-22T07:00:00Z",
   "assets": [
     {
-      "asset_id": "ifc-benign-dual-cap-001",
+      "asset_id": "ifc-benign-001",
       "source_donor": "franken-ifc",
-      "semantic_domain": "ifc_corpus/benign",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
       "normative_reference": "PLAN 10.7 / 9I.7",
       "fixture_path": "fixtures/benign_dual_cap.fixture.json",
-      "fixture_hash": "3a1316f9d005daa251d62f5084ee6be5255101faae52453979842b9361a2ea4e",
-      "expected_output_path": "expected/benign_dual_cap.expected.txt",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
       "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
       "import_date": "2026-02-22",
       "category": "benign",
-      "source_labels": ["credential"],
-      "sink_clearances": ["persistence_export"],
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "network_egress"
+      ],
       "flow_path_type": "direct",
       "expected_outcome": "allow",
       "expected_evidence_type": "none"
     },
     {
-      "asset_id": "ifc-exfil-direct-001",
+      "asset_id": "ifc-benign-002",
       "source_donor": "franken-ifc",
-      "semantic_domain": "ifc_corpus/exfil",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-003",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "persistence_export"
+      ],
+      "flow_path_type": "implicit",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-004",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "temporal",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-005",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "network_egress"
+      ],
+      "flow_path_type": "covert",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-006",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "direct",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-007",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "persistence_export"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-008",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "implicit",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-009",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "network_egress"
+      ],
+      "flow_path_type": "temporal",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-010",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/non_sensitive",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_non_sensitive_network.fixture.json",
+      "fixture_hash": "f96c691f127d1921f4ad819f5c6a057a021f77d3738f2cb10edf13b9295c03fe",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "covert",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-011",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "persistence_export"
+      ],
+      "flow_path_type": "direct",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-012",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-013",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "network_egress"
+      ],
+      "flow_path_type": "implicit",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-014",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "temporal",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-015",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "persistence_export"
+      ],
+      "flow_path_type": "covert",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-016",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "direct",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-017",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "network_egress"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-018",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "implicit",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-019",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "persistence_export"
+      ],
+      "flow_path_type": "temporal",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-020",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/non_sensitive",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_non_sensitive_network.fixture.json",
+      "fixture_hash": "f96c691f127d1921f4ad819f5c6a057a021f77d3738f2cb10edf13b9295c03fe",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "covert",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-021",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "network_egress"
+      ],
+      "flow_path_type": "direct",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-022",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-023",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "persistence_export"
+      ],
+      "flow_path_type": "implicit",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-024",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "temporal",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-025",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "network_egress"
+      ],
+      "flow_path_type": "covert",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-026",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "direct",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-027",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "persistence_export"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-028",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "implicit",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-029",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "network_egress"
+      ],
+      "flow_path_type": "temporal",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-030",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/non_sensitive",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_non_sensitive_network.fixture.json",
+      "fixture_hash": "f96c691f127d1921f4ad819f5c6a057a021f77d3738f2cb10edf13b9295c03fe",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "covert",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-031",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "persistence_export"
+      ],
+      "flow_path_type": "direct",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-032",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-033",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "network_egress"
+      ],
+      "flow_path_type": "implicit",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-034",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "temporal",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-035",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "persistence_export"
+      ],
+      "flow_path_type": "covert",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-036",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "direct",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-037",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "network_egress"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-038",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "implicit",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-039",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "persistence_export"
+      ],
+      "flow_path_type": "temporal",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-040",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/non_sensitive",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_non_sensitive_network.fixture.json",
+      "fixture_hash": "f96c691f127d1921f4ad819f5c6a057a021f77d3738f2cb10edf13b9295c03fe",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "covert",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-041",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "network_egress"
+      ],
+      "flow_path_type": "direct",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-042",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-043",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "persistence_export"
+      ],
+      "flow_path_type": "implicit",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-044",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "temporal",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-045",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "network_egress"
+      ],
+      "flow_path_type": "covert",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-046",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "direct",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-047",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "persistence_export"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-048",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "implicit",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-049",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "network_egress"
+      ],
+      "flow_path_type": "temporal",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-050",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/non_sensitive",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_non_sensitive_network.fixture.json",
+      "fixture_hash": "f96c691f127d1921f4ad819f5c6a057a021f77d3738f2cb10edf13b9295c03fe",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "covert",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-051",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "persistence_export"
+      ],
+      "flow_path_type": "direct",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-052",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-053",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "network_egress"
+      ],
+      "flow_path_type": "implicit",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-054",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "temporal",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-055",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "persistence_export"
+      ],
+      "flow_path_type": "covert",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-056",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "direct",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-057",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "network_egress"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-058",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "implicit",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-059",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "persistence_export"
+      ],
+      "flow_path_type": "temporal",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-060",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/non_sensitive",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_non_sensitive_network.fixture.json",
+      "fixture_hash": "f96c691f127d1921f4ad819f5c6a057a021f77d3738f2cb10edf13b9295c03fe",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "covert",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-061",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "network_egress"
+      ],
+      "flow_path_type": "direct",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-062",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-063",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "persistence_export"
+      ],
+      "flow_path_type": "implicit",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-064",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "temporal",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-065",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "network_egress"
+      ],
+      "flow_path_type": "covert",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-066",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "direct",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-067",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "persistence_export"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-068",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "implicit",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-069",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "network_egress"
+      ],
+      "flow_path_type": "temporal",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-070",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/non_sensitive",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_non_sensitive_network.fixture.json",
+      "fixture_hash": "f96c691f127d1921f4ad819f5c6a057a021f77d3738f2cb10edf13b9295c03fe",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "covert",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-071",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "persistence_export"
+      ],
+      "flow_path_type": "direct",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-072",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-073",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "network_egress"
+      ],
+      "flow_path_type": "implicit",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-074",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "temporal",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-075",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "persistence_export"
+      ],
+      "flow_path_type": "covert",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-076",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "direct",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-077",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "network_egress"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-078",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "implicit",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-079",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "persistence_export"
+      ],
+      "flow_path_type": "temporal",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-080",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/non_sensitive",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_non_sensitive_network.fixture.json",
+      "fixture_hash": "f96c691f127d1921f4ad819f5c6a057a021f77d3738f2cb10edf13b9295c03fe",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "covert",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-081",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "network_egress"
+      ],
+      "flow_path_type": "direct",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-082",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-083",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "persistence_export"
+      ],
+      "flow_path_type": "implicit",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-084",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "temporal",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-085",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "network_egress"
+      ],
+      "flow_path_type": "covert",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-086",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "direct",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-087",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "persistence_export"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-088",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "implicit",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-089",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "network_egress"
+      ],
+      "flow_path_type": "temporal",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-090",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/non_sensitive",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_non_sensitive_network.fixture.json",
+      "fixture_hash": "f96c691f127d1921f4ad819f5c6a057a021f77d3738f2cb10edf13b9295c03fe",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "covert",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-091",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "persistence_export"
+      ],
+      "flow_path_type": "direct",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-092",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-093",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "network_egress"
+      ],
+      "flow_path_type": "implicit",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-094",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "temporal",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-095",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "persistence_export"
+      ],
+      "flow_path_type": "covert",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-096",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "direct",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-097",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "network_egress"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-098",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "implicit",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-099",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/dual_capability",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_dual_cap.fixture.json",
+      "fixture_hash": "8d3f8fc95133b5f4aa184c95a719c32361dc16824f564518b75fe8981ab2d19f",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "persistence_export"
+      ],
+      "flow_path_type": "temporal",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-benign-100",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/benign/non_sensitive",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/benign_non_sensitive_network.fixture.json",
+      "fixture_hash": "f96c691f127d1921f4ad819f5c6a057a021f77d3738f2cb10edf13b9295c03fe",
+      "expected_output_path": "expected/benign_allow.expected.txt",
+      "expected_output_hash": "67aa001b109122ca0ddcf8469bbabfafcab7bf9dc0b701b0c9ed22109e6cde70",
+      "import_date": "2026-02-22",
+      "category": "benign",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "covert",
+      "expected_outcome": "allow",
+      "expected_evidence_type": "none"
+    },
+    {
+      "asset_id": "ifc-exfil-001",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/direct",
       "normative_reference": "PLAN 10.7 / 9I.7",
       "fixture_path": "fixtures/exfil_direct.fixture.json",
-      "fixture_hash": "4f7f8cc8c85aa73ef199ac740143a48b3eb0d78643d619def6547dd322834c30",
-      "expected_output_path": "expected/exfil_direct.expected.txt",
+      "fixture_hash": "2c6fb700ff94f9a6b8cbefa6563efcf024152b8ad7b36864276acfc295678418",
+      "expected_output_path": "expected/exfil_block.expected.txt",
       "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
       "import_date": "2026-02-22",
       "category": "exfil",
-      "source_labels": ["credential"],
-      "sink_clearances": ["network_egress"],
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "network_egress"
+      ],
       "flow_path_type": "direct",
       "expected_outcome": "block",
       "expected_evidence_type": "flow_violation"
     },
     {
-      "asset_id": "ifc-declass-exception-001",
+      "asset_id": "ifc-exfil-002",
       "source_donor": "franken-ifc",
-      "semantic_domain": "ifc_corpus/declassify",
+      "semantic_domain": "ifc_corpus/exfil/direct",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_direct.fixture.json",
+      "fixture_hash": "2c6fb700ff94f9a6b8cbefa6563efcf024152b8ad7b36864276acfc295678418",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "direct",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-003",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/direct",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_direct.fixture.json",
+      "fixture_hash": "2c6fb700ff94f9a6b8cbefa6563efcf024152b8ad7b36864276acfc295678418",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "persistence_export"
+      ],
+      "flow_path_type": "direct",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-004",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/direct",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_direct.fixture.json",
+      "fixture_hash": "2c6fb700ff94f9a6b8cbefa6563efcf024152b8ad7b36864276acfc295678418",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "direct",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-005",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/direct",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_direct.fixture.json",
+      "fixture_hash": "2c6fb700ff94f9a6b8cbefa6563efcf024152b8ad7b36864276acfc295678418",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "network_egress"
+      ],
+      "flow_path_type": "direct",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-006",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/direct",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_direct.fixture.json",
+      "fixture_hash": "2c6fb700ff94f9a6b8cbefa6563efcf024152b8ad7b36864276acfc295678418",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "direct",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-007",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/direct",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_direct.fixture.json",
+      "fixture_hash": "2c6fb700ff94f9a6b8cbefa6563efcf024152b8ad7b36864276acfc295678418",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "persistence_export"
+      ],
+      "flow_path_type": "direct",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-008",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/direct",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_direct.fixture.json",
+      "fixture_hash": "2c6fb700ff94f9a6b8cbefa6563efcf024152b8ad7b36864276acfc295678418",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "direct",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-009",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/direct",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_direct.fixture.json",
+      "fixture_hash": "2c6fb700ff94f9a6b8cbefa6563efcf024152b8ad7b36864276acfc295678418",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "network_egress"
+      ],
+      "flow_path_type": "direct",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-010",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/direct",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_direct.fixture.json",
+      "fixture_hash": "2c6fb700ff94f9a6b8cbefa6563efcf024152b8ad7b36864276acfc295678418",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "direct",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-011",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/direct",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_direct.fixture.json",
+      "fixture_hash": "2c6fb700ff94f9a6b8cbefa6563efcf024152b8ad7b36864276acfc295678418",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "persistence_export"
+      ],
+      "flow_path_type": "direct",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-012",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/direct",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_direct.fixture.json",
+      "fixture_hash": "2c6fb700ff94f9a6b8cbefa6563efcf024152b8ad7b36864276acfc295678418",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "direct",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-013",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/direct",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_direct.fixture.json",
+      "fixture_hash": "2c6fb700ff94f9a6b8cbefa6563efcf024152b8ad7b36864276acfc295678418",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "network_egress"
+      ],
+      "flow_path_type": "direct",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-014",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/direct",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_direct.fixture.json",
+      "fixture_hash": "2c6fb700ff94f9a6b8cbefa6563efcf024152b8ad7b36864276acfc295678418",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "direct",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-015",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/direct",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_direct.fixture.json",
+      "fixture_hash": "2c6fb700ff94f9a6b8cbefa6563efcf024152b8ad7b36864276acfc295678418",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "persistence_export"
+      ],
+      "flow_path_type": "direct",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-016",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/direct",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_direct.fixture.json",
+      "fixture_hash": "2c6fb700ff94f9a6b8cbefa6563efcf024152b8ad7b36864276acfc295678418",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "direct",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-017",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/direct",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_direct.fixture.json",
+      "fixture_hash": "2c6fb700ff94f9a6b8cbefa6563efcf024152b8ad7b36864276acfc295678418",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "network_egress"
+      ],
+      "flow_path_type": "direct",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-018",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/direct",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_direct.fixture.json",
+      "fixture_hash": "2c6fb700ff94f9a6b8cbefa6563efcf024152b8ad7b36864276acfc295678418",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "direct",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-019",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/direct",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_direct.fixture.json",
+      "fixture_hash": "2c6fb700ff94f9a6b8cbefa6563efcf024152b8ad7b36864276acfc295678418",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "persistence_export"
+      ],
+      "flow_path_type": "direct",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-020",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/direct",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_direct.fixture.json",
+      "fixture_hash": "2c6fb700ff94f9a6b8cbefa6563efcf024152b8ad7b36864276acfc295678418",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "direct",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-021",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/indirect",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_indirect.fixture.json",
+      "fixture_hash": "f23fdf53434b02b303bd5f6c0a740d3bfc44db7f106d2660047a592d778829cc",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "network_egress"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-022",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/indirect",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_indirect.fixture.json",
+      "fixture_hash": "f23fdf53434b02b303bd5f6c0a740d3bfc44db7f106d2660047a592d778829cc",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-023",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/indirect",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_indirect.fixture.json",
+      "fixture_hash": "f23fdf53434b02b303bd5f6c0a740d3bfc44db7f106d2660047a592d778829cc",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "persistence_export"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-024",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/indirect",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_indirect.fixture.json",
+      "fixture_hash": "f23fdf53434b02b303bd5f6c0a740d3bfc44db7f106d2660047a592d778829cc",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-025",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/indirect",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_indirect.fixture.json",
+      "fixture_hash": "f23fdf53434b02b303bd5f6c0a740d3bfc44db7f106d2660047a592d778829cc",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "network_egress"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-026",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/indirect",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_indirect.fixture.json",
+      "fixture_hash": "f23fdf53434b02b303bd5f6c0a740d3bfc44db7f106d2660047a592d778829cc",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-027",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/indirect",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_indirect.fixture.json",
+      "fixture_hash": "f23fdf53434b02b303bd5f6c0a740d3bfc44db7f106d2660047a592d778829cc",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "persistence_export"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-028",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/indirect",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_indirect.fixture.json",
+      "fixture_hash": "f23fdf53434b02b303bd5f6c0a740d3bfc44db7f106d2660047a592d778829cc",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-029",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/indirect",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_indirect.fixture.json",
+      "fixture_hash": "f23fdf53434b02b303bd5f6c0a740d3bfc44db7f106d2660047a592d778829cc",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "network_egress"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-030",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/indirect",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_indirect.fixture.json",
+      "fixture_hash": "f23fdf53434b02b303bd5f6c0a740d3bfc44db7f106d2660047a592d778829cc",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-031",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/indirect",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_indirect.fixture.json",
+      "fixture_hash": "f23fdf53434b02b303bd5f6c0a740d3bfc44db7f106d2660047a592d778829cc",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "persistence_export"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-032",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/indirect",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_indirect.fixture.json",
+      "fixture_hash": "f23fdf53434b02b303bd5f6c0a740d3bfc44db7f106d2660047a592d778829cc",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-033",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/indirect",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_indirect.fixture.json",
+      "fixture_hash": "f23fdf53434b02b303bd5f6c0a740d3bfc44db7f106d2660047a592d778829cc",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "network_egress"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-034",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/indirect",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_indirect.fixture.json",
+      "fixture_hash": "f23fdf53434b02b303bd5f6c0a740d3bfc44db7f106d2660047a592d778829cc",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-035",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/indirect",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_indirect.fixture.json",
+      "fixture_hash": "f23fdf53434b02b303bd5f6c0a740d3bfc44db7f106d2660047a592d778829cc",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "persistence_export"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-036",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/indirect",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_indirect.fixture.json",
+      "fixture_hash": "f23fdf53434b02b303bd5f6c0a740d3bfc44db7f106d2660047a592d778829cc",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-037",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/indirect",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_indirect.fixture.json",
+      "fixture_hash": "f23fdf53434b02b303bd5f6c0a740d3bfc44db7f106d2660047a592d778829cc",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "network_egress"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-038",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/indirect",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_indirect.fixture.json",
+      "fixture_hash": "f23fdf53434b02b303bd5f6c0a740d3bfc44db7f106d2660047a592d778829cc",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-039",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/indirect",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_indirect.fixture.json",
+      "fixture_hash": "f23fdf53434b02b303bd5f6c0a740d3bfc44db7f106d2660047a592d778829cc",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "persistence_export"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-040",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/indirect",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_indirect.fixture.json",
+      "fixture_hash": "f23fdf53434b02b303bd5f6c0a740d3bfc44db7f106d2660047a592d778829cc",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-041",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/implicit",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_implicit.fixture.json",
+      "fixture_hash": "d51b3f2f52d11f297aa2300b6b48acab52828accf35a0c17ff3f8b7be31631b4",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "network_egress"
+      ],
+      "flow_path_type": "implicit",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-042",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/implicit",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_implicit.fixture.json",
+      "fixture_hash": "d51b3f2f52d11f297aa2300b6b48acab52828accf35a0c17ff3f8b7be31631b4",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "implicit",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-043",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/implicit",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_implicit.fixture.json",
+      "fixture_hash": "d51b3f2f52d11f297aa2300b6b48acab52828accf35a0c17ff3f8b7be31631b4",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "persistence_export"
+      ],
+      "flow_path_type": "implicit",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-044",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/implicit",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_implicit.fixture.json",
+      "fixture_hash": "d51b3f2f52d11f297aa2300b6b48acab52828accf35a0c17ff3f8b7be31631b4",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "implicit",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-045",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/implicit",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_implicit.fixture.json",
+      "fixture_hash": "d51b3f2f52d11f297aa2300b6b48acab52828accf35a0c17ff3f8b7be31631b4",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "network_egress"
+      ],
+      "flow_path_type": "implicit",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-046",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/implicit",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_implicit.fixture.json",
+      "fixture_hash": "d51b3f2f52d11f297aa2300b6b48acab52828accf35a0c17ff3f8b7be31631b4",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "implicit",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-047",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/implicit",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_implicit.fixture.json",
+      "fixture_hash": "d51b3f2f52d11f297aa2300b6b48acab52828accf35a0c17ff3f8b7be31631b4",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "persistence_export"
+      ],
+      "flow_path_type": "implicit",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-048",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/implicit",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_implicit.fixture.json",
+      "fixture_hash": "d51b3f2f52d11f297aa2300b6b48acab52828accf35a0c17ff3f8b7be31631b4",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "implicit",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-049",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/implicit",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_implicit.fixture.json",
+      "fixture_hash": "d51b3f2f52d11f297aa2300b6b48acab52828accf35a0c17ff3f8b7be31631b4",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "network_egress"
+      ],
+      "flow_path_type": "implicit",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-050",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/implicit",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_implicit.fixture.json",
+      "fixture_hash": "d51b3f2f52d11f297aa2300b6b48acab52828accf35a0c17ff3f8b7be31631b4",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "implicit",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-051",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/implicit",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_implicit.fixture.json",
+      "fixture_hash": "d51b3f2f52d11f297aa2300b6b48acab52828accf35a0c17ff3f8b7be31631b4",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "persistence_export"
+      ],
+      "flow_path_type": "implicit",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-052",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/implicit",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_implicit.fixture.json",
+      "fixture_hash": "d51b3f2f52d11f297aa2300b6b48acab52828accf35a0c17ff3f8b7be31631b4",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "implicit",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-053",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/implicit",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_implicit.fixture.json",
+      "fixture_hash": "d51b3f2f52d11f297aa2300b6b48acab52828accf35a0c17ff3f8b7be31631b4",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "network_egress"
+      ],
+      "flow_path_type": "implicit",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-054",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/implicit",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_implicit.fixture.json",
+      "fixture_hash": "d51b3f2f52d11f297aa2300b6b48acab52828accf35a0c17ff3f8b7be31631b4",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "implicit",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-055",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/implicit",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_implicit.fixture.json",
+      "fixture_hash": "d51b3f2f52d11f297aa2300b6b48acab52828accf35a0c17ff3f8b7be31631b4",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "persistence_export"
+      ],
+      "flow_path_type": "implicit",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-056",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/temporal",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_temporal.fixture.json",
+      "fixture_hash": "fa3c05f972b7dbe8bbbaff1330680b8f97ca4816c5141be7c5bd8cbc392d3a1d",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "temporal",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-057",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/temporal",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_temporal.fixture.json",
+      "fixture_hash": "fa3c05f972b7dbe8bbbaff1330680b8f97ca4816c5141be7c5bd8cbc392d3a1d",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "network_egress"
+      ],
+      "flow_path_type": "temporal",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-058",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/temporal",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_temporal.fixture.json",
+      "fixture_hash": "fa3c05f972b7dbe8bbbaff1330680b8f97ca4816c5141be7c5bd8cbc392d3a1d",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "temporal",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-059",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/temporal",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_temporal.fixture.json",
+      "fixture_hash": "fa3c05f972b7dbe8bbbaff1330680b8f97ca4816c5141be7c5bd8cbc392d3a1d",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "persistence_export"
+      ],
+      "flow_path_type": "temporal",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-060",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/temporal",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_temporal.fixture.json",
+      "fixture_hash": "fa3c05f972b7dbe8bbbaff1330680b8f97ca4816c5141be7c5bd8cbc392d3a1d",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "temporal",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-061",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/temporal",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_temporal.fixture.json",
+      "fixture_hash": "fa3c05f972b7dbe8bbbaff1330680b8f97ca4816c5141be7c5bd8cbc392d3a1d",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "network_egress"
+      ],
+      "flow_path_type": "temporal",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-062",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/temporal",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_temporal.fixture.json",
+      "fixture_hash": "fa3c05f972b7dbe8bbbaff1330680b8f97ca4816c5141be7c5bd8cbc392d3a1d",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "temporal",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-063",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/temporal",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_temporal.fixture.json",
+      "fixture_hash": "fa3c05f972b7dbe8bbbaff1330680b8f97ca4816c5141be7c5bd8cbc392d3a1d",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "persistence_export"
+      ],
+      "flow_path_type": "temporal",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-064",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/temporal",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_temporal.fixture.json",
+      "fixture_hash": "fa3c05f972b7dbe8bbbaff1330680b8f97ca4816c5141be7c5bd8cbc392d3a1d",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "temporal",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-065",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/temporal",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_temporal.fixture.json",
+      "fixture_hash": "fa3c05f972b7dbe8bbbaff1330680b8f97ca4816c5141be7c5bd8cbc392d3a1d",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "network_egress"
+      ],
+      "flow_path_type": "temporal",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-066",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/temporal",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_temporal.fixture.json",
+      "fixture_hash": "fa3c05f972b7dbe8bbbaff1330680b8f97ca4816c5141be7c5bd8cbc392d3a1d",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "temporal",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-067",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/temporal",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_temporal.fixture.json",
+      "fixture_hash": "fa3c05f972b7dbe8bbbaff1330680b8f97ca4816c5141be7c5bd8cbc392d3a1d",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "persistence_export"
+      ],
+      "flow_path_type": "temporal",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-068",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/temporal",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_temporal.fixture.json",
+      "fixture_hash": "fa3c05f972b7dbe8bbbaff1330680b8f97ca4816c5141be7c5bd8cbc392d3a1d",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "temporal",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-069",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/temporal",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_temporal.fixture.json",
+      "fixture_hash": "fa3c05f972b7dbe8bbbaff1330680b8f97ca4816c5141be7c5bd8cbc392d3a1d",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "network_egress"
+      ],
+      "flow_path_type": "temporal",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-070",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/temporal",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_temporal.fixture.json",
+      "fixture_hash": "fa3c05f972b7dbe8bbbaff1330680b8f97ca4816c5141be7c5bd8cbc392d3a1d",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "temporal",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-071",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/covert",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_covert.fixture.json",
+      "fixture_hash": "c56e59a0ec5ca9da9584c6bba7a7ed506e984a5ccc11dd3ad2c8645fcd6ad32e",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "persistence_export"
+      ],
+      "flow_path_type": "covert",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-072",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/covert",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_covert.fixture.json",
+      "fixture_hash": "c56e59a0ec5ca9da9584c6bba7a7ed506e984a5ccc11dd3ad2c8645fcd6ad32e",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "covert",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-073",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/covert",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_covert.fixture.json",
+      "fixture_hash": "c56e59a0ec5ca9da9584c6bba7a7ed506e984a5ccc11dd3ad2c8645fcd6ad32e",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "network_egress"
+      ],
+      "flow_path_type": "covert",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-074",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/covert",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_covert.fixture.json",
+      "fixture_hash": "c56e59a0ec5ca9da9584c6bba7a7ed506e984a5ccc11dd3ad2c8645fcd6ad32e",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "covert",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-075",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/covert",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_covert.fixture.json",
+      "fixture_hash": "c56e59a0ec5ca9da9584c6bba7a7ed506e984a5ccc11dd3ad2c8645fcd6ad32e",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "persistence_export"
+      ],
+      "flow_path_type": "covert",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-076",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/covert",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_covert.fixture.json",
+      "fixture_hash": "c56e59a0ec5ca9da9584c6bba7a7ed506e984a5ccc11dd3ad2c8645fcd6ad32e",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "covert",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-077",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/covert",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_covert.fixture.json",
+      "fixture_hash": "c56e59a0ec5ca9da9584c6bba7a7ed506e984a5ccc11dd3ad2c8645fcd6ad32e",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "network_egress"
+      ],
+      "flow_path_type": "covert",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-078",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/covert",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_covert.fixture.json",
+      "fixture_hash": "c56e59a0ec5ca9da9584c6bba7a7ed506e984a5ccc11dd3ad2c8645fcd6ad32e",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "covert",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-079",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/covert",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_covert.fixture.json",
+      "fixture_hash": "c56e59a0ec5ca9da9584c6bba7a7ed506e984a5ccc11dd3ad2c8645fcd6ad32e",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "persistence_export"
+      ],
+      "flow_path_type": "covert",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-exfil-080",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/exfil/covert",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/exfil_covert.fixture.json",
+      "fixture_hash": "c56e59a0ec5ca9da9584c6bba7a7ed506e984a5ccc11dd3ad2c8645fcd6ad32e",
+      "expected_output_path": "expected/exfil_block.expected.txt",
+      "expected_output_hash": "518c813cb13d983354366445c473916023075100687bc10b92373c70d6613746",
+      "import_date": "2026-02-22",
+      "category": "exfil",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "covert",
+      "expected_outcome": "block",
+      "expected_evidence_type": "flow_violation"
+    },
+    {
+      "asset_id": "ifc-declass-001",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/declassify/receipt_path",
       "normative_reference": "PLAN 10.7 / 9I.7",
       "fixture_path": "fixtures/declass_exception.fixture.json",
-      "fixture_hash": "85f3e66a10cb3e9a88f263f91fb0f9ddb99f962b9652ae9ae5da7f74d675ba9a",
-      "expected_output_path": "expected/declass_exception.expected.txt",
-      "expected_output_hash": "3bd882fa30e082cc5789e18ddac37884bb2d3a7a8acaac877429b6335c502772",
+      "fixture_hash": "36f05efca6bdd3a071f3c8659dcd141c489f5f61c6df77ee418217716462c165",
+      "expected_output_path": "expected/declassify_receipt.expected.txt",
+      "expected_output_hash": "7c8e337a2322d7ce276d79fbbcb5ded0d44f39346ccb6270dea52d5663f0f0a2",
       "import_date": "2026-02-22",
       "category": "declassify",
-      "source_labels": ["credential"],
-      "sink_clearances": ["explicit_declassify", "network_egress"],
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "explicit_declassify",
+        "network_egress"
+      ],
       "flow_path_type": "direct",
+      "expected_outcome": "declassify",
+      "expected_evidence_type": "declassification_receipt"
+    },
+    {
+      "asset_id": "ifc-declass-002",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/declassify/receipt_path",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/declass_exception.fixture.json",
+      "fixture_hash": "36f05efca6bdd3a071f3c8659dcd141c489f5f61c6df77ee418217716462c165",
+      "expected_output_path": "expected/declassify_receipt.expected.txt",
+      "expected_output_hash": "7c8e337a2322d7ce276d79fbbcb5ded0d44f39346ccb6270dea52d5663f0f0a2",
+      "import_date": "2026-02-22",
+      "category": "declassify",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "explicit_declassify",
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "declassify",
+      "expected_evidence_type": "declassification_receipt"
+    },
+    {
+      "asset_id": "ifc-declass-003",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/declassify/receipt_path",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/declass_exception.fixture.json",
+      "fixture_hash": "36f05efca6bdd3a071f3c8659dcd141c489f5f61c6df77ee418217716462c165",
+      "expected_output_path": "expected/declassify_receipt.expected.txt",
+      "expected_output_hash": "7c8e337a2322d7ce276d79fbbcb5ded0d44f39346ccb6270dea52d5663f0f0a2",
+      "import_date": "2026-02-22",
+      "category": "declassify",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "explicit_declassify",
+        "persistence_export"
+      ],
+      "flow_path_type": "temporal",
+      "expected_outcome": "declassify",
+      "expected_evidence_type": "declassification_receipt"
+    },
+    {
+      "asset_id": "ifc-declass-004",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/declassify/receipt_path",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/declass_exception.fixture.json",
+      "fixture_hash": "36f05efca6bdd3a071f3c8659dcd141c489f5f61c6df77ee418217716462c165",
+      "expected_output_path": "expected/declassify_receipt.expected.txt",
+      "expected_output_hash": "7c8e337a2322d7ce276d79fbbcb5ded0d44f39346ccb6270dea52d5663f0f0a2",
+      "import_date": "2026-02-22",
+      "category": "declassify",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "direct",
+      "expected_outcome": "declassify",
+      "expected_evidence_type": "declassification_receipt"
+    },
+    {
+      "asset_id": "ifc-declass-005",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/declassify/receipt_path",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/declass_exception.fixture.json",
+      "fixture_hash": "36f05efca6bdd3a071f3c8659dcd141c489f5f61c6df77ee418217716462c165",
+      "expected_output_path": "expected/declassify_receipt.expected.txt",
+      "expected_output_hash": "7c8e337a2322d7ce276d79fbbcb5ded0d44f39346ccb6270dea52d5663f0f0a2",
+      "import_date": "2026-02-22",
+      "category": "declassify",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "explicit_declassify",
+        "network_egress"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "declassify",
+      "expected_evidence_type": "declassification_receipt"
+    },
+    {
+      "asset_id": "ifc-declass-006",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/declassify/receipt_path",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/declass_exception.fixture.json",
+      "fixture_hash": "36f05efca6bdd3a071f3c8659dcd141c489f5f61c6df77ee418217716462c165",
+      "expected_output_path": "expected/declassify_receipt.expected.txt",
+      "expected_output_hash": "7c8e337a2322d7ce276d79fbbcb5ded0d44f39346ccb6270dea52d5663f0f0a2",
+      "import_date": "2026-02-22",
+      "category": "declassify",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "explicit_declassify",
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "temporal",
+      "expected_outcome": "declassify",
+      "expected_evidence_type": "declassification_receipt"
+    },
+    {
+      "asset_id": "ifc-declass-007",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/declassify/receipt_path",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/declass_exception.fixture.json",
+      "fixture_hash": "36f05efca6bdd3a071f3c8659dcd141c489f5f61c6df77ee418217716462c165",
+      "expected_output_path": "expected/declassify_receipt.expected.txt",
+      "expected_output_hash": "7c8e337a2322d7ce276d79fbbcb5ded0d44f39346ccb6270dea52d5663f0f0a2",
+      "import_date": "2026-02-22",
+      "category": "declassify",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "explicit_declassify",
+        "persistence_export"
+      ],
+      "flow_path_type": "direct",
+      "expected_outcome": "declassify",
+      "expected_evidence_type": "declassification_receipt"
+    },
+    {
+      "asset_id": "ifc-declass-008",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/declassify/receipt_path",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/declass_exception.fixture.json",
+      "fixture_hash": "36f05efca6bdd3a071f3c8659dcd141c489f5f61c6df77ee418217716462c165",
+      "expected_output_path": "expected/declassify_receipt.expected.txt",
+      "expected_output_hash": "7c8e337a2322d7ce276d79fbbcb5ded0d44f39346ccb6270dea52d5663f0f0a2",
+      "import_date": "2026-02-22",
+      "category": "declassify",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "declassify",
+      "expected_evidence_type": "declassification_receipt"
+    },
+    {
+      "asset_id": "ifc-declass-009",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/declassify/receipt_path",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/declass_exception.fixture.json",
+      "fixture_hash": "36f05efca6bdd3a071f3c8659dcd141c489f5f61c6df77ee418217716462c165",
+      "expected_output_path": "expected/declassify_receipt.expected.txt",
+      "expected_output_hash": "7c8e337a2322d7ce276d79fbbcb5ded0d44f39346ccb6270dea52d5663f0f0a2",
+      "import_date": "2026-02-22",
+      "category": "declassify",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "explicit_declassify",
+        "network_egress"
+      ],
+      "flow_path_type": "temporal",
+      "expected_outcome": "declassify",
+      "expected_evidence_type": "declassification_receipt"
+    },
+    {
+      "asset_id": "ifc-declass-010",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/declassify/receipt_path",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/declass_exception.fixture.json",
+      "fixture_hash": "36f05efca6bdd3a071f3c8659dcd141c489f5f61c6df77ee418217716462c165",
+      "expected_output_path": "expected/declassify_receipt.expected.txt",
+      "expected_output_hash": "7c8e337a2322d7ce276d79fbbcb5ded0d44f39346ccb6270dea52d5663f0f0a2",
+      "import_date": "2026-02-22",
+      "category": "declassify",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "explicit_declassify",
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "direct",
+      "expected_outcome": "declassify",
+      "expected_evidence_type": "declassification_receipt"
+    },
+    {
+      "asset_id": "ifc-declass-011",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/declassify/receipt_path",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/declass_exception.fixture.json",
+      "fixture_hash": "36f05efca6bdd3a071f3c8659dcd141c489f5f61c6df77ee418217716462c165",
+      "expected_output_path": "expected/declassify_receipt.expected.txt",
+      "expected_output_hash": "7c8e337a2322d7ce276d79fbbcb5ded0d44f39346ccb6270dea52d5663f0f0a2",
+      "import_date": "2026-02-22",
+      "category": "declassify",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "explicit_declassify",
+        "persistence_export"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "declassify",
+      "expected_evidence_type": "declassification_receipt"
+    },
+    {
+      "asset_id": "ifc-declass-012",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/declassify/receipt_path",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/declass_exception.fixture.json",
+      "fixture_hash": "36f05efca6bdd3a071f3c8659dcd141c489f5f61c6df77ee418217716462c165",
+      "expected_output_path": "expected/declassify_receipt.expected.txt",
+      "expected_output_hash": "7c8e337a2322d7ce276d79fbbcb5ded0d44f39346ccb6270dea52d5663f0f0a2",
+      "import_date": "2026-02-22",
+      "category": "declassify",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "temporal",
+      "expected_outcome": "declassify",
+      "expected_evidence_type": "declassification_receipt"
+    },
+    {
+      "asset_id": "ifc-declass-013",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/declassify/receipt_path",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/declass_exception.fixture.json",
+      "fixture_hash": "36f05efca6bdd3a071f3c8659dcd141c489f5f61c6df77ee418217716462c165",
+      "expected_output_path": "expected/declassify_receipt.expected.txt",
+      "expected_output_hash": "7c8e337a2322d7ce276d79fbbcb5ded0d44f39346ccb6270dea52d5663f0f0a2",
+      "import_date": "2026-02-22",
+      "category": "declassify",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "explicit_declassify",
+        "network_egress"
+      ],
+      "flow_path_type": "direct",
+      "expected_outcome": "declassify",
+      "expected_evidence_type": "declassification_receipt"
+    },
+    {
+      "asset_id": "ifc-declass-014",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/declassify/receipt_path",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/declass_exception.fixture.json",
+      "fixture_hash": "36f05efca6bdd3a071f3c8659dcd141c489f5f61c6df77ee418217716462c165",
+      "expected_output_path": "expected/declassify_receipt.expected.txt",
+      "expected_output_hash": "7c8e337a2322d7ce276d79fbbcb5ded0d44f39346ccb6270dea52d5663f0f0a2",
+      "import_date": "2026-02-22",
+      "category": "declassify",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "explicit_declassify",
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "declassify",
+      "expected_evidence_type": "declassification_receipt"
+    },
+    {
+      "asset_id": "ifc-declass-015",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/declassify/receipt_path",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/declass_exception.fixture.json",
+      "fixture_hash": "36f05efca6bdd3a071f3c8659dcd141c489f5f61c6df77ee418217716462c165",
+      "expected_output_path": "expected/declassify_receipt.expected.txt",
+      "expected_output_hash": "7c8e337a2322d7ce276d79fbbcb5ded0d44f39346ccb6270dea52d5663f0f0a2",
+      "import_date": "2026-02-22",
+      "category": "declassify",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "explicit_declassify",
+        "persistence_export"
+      ],
+      "flow_path_type": "temporal",
+      "expected_outcome": "declassify",
+      "expected_evidence_type": "declassification_receipt"
+    },
+    {
+      "asset_id": "ifc-declass-016",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/declassify/receipt_path",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/declass_exception.fixture.json",
+      "fixture_hash": "36f05efca6bdd3a071f3c8659dcd141c489f5f61c6df77ee418217716462c165",
+      "expected_output_path": "expected/declassify_receipt.expected.txt",
+      "expected_output_hash": "7c8e337a2322d7ce276d79fbbcb5ded0d44f39346ccb6270dea52d5663f0f0a2",
+      "import_date": "2026-02-22",
+      "category": "declassify",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "direct",
+      "expected_outcome": "declassify",
+      "expected_evidence_type": "declassification_receipt"
+    },
+    {
+      "asset_id": "ifc-declass-017",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/declassify/receipt_path",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/declass_exception.fixture.json",
+      "fixture_hash": "36f05efca6bdd3a071f3c8659dcd141c489f5f61c6df77ee418217716462c165",
+      "expected_output_path": "expected/declassify_receipt.expected.txt",
+      "expected_output_hash": "7c8e337a2322d7ce276d79fbbcb5ded0d44f39346ccb6270dea52d5663f0f0a2",
+      "import_date": "2026-02-22",
+      "category": "declassify",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "explicit_declassify",
+        "network_egress"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "declassify",
+      "expected_evidence_type": "declassification_receipt"
+    },
+    {
+      "asset_id": "ifc-declass-018",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/declassify/receipt_path",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/declass_exception.fixture.json",
+      "fixture_hash": "36f05efca6bdd3a071f3c8659dcd141c489f5f61c6df77ee418217716462c165",
+      "expected_output_path": "expected/declassify_receipt.expected.txt",
+      "expected_output_hash": "7c8e337a2322d7ce276d79fbbcb5ded0d44f39346ccb6270dea52d5663f0f0a2",
+      "import_date": "2026-02-22",
+      "category": "declassify",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "explicit_declassify",
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "temporal",
+      "expected_outcome": "declassify",
+      "expected_evidence_type": "declassification_receipt"
+    },
+    {
+      "asset_id": "ifc-declass-019",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/declassify/receipt_path",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/declass_exception.fixture.json",
+      "fixture_hash": "36f05efca6bdd3a071f3c8659dcd141c489f5f61c6df77ee418217716462c165",
+      "expected_output_path": "expected/declassify_receipt.expected.txt",
+      "expected_output_hash": "7c8e337a2322d7ce276d79fbbcb5ded0d44f39346ccb6270dea52d5663f0f0a2",
+      "import_date": "2026-02-22",
+      "category": "declassify",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "explicit_declassify",
+        "persistence_export"
+      ],
+      "flow_path_type": "direct",
+      "expected_outcome": "declassify",
+      "expected_evidence_type": "declassification_receipt"
+    },
+    {
+      "asset_id": "ifc-declass-020",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/declassify/receipt_path",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/declass_exception.fixture.json",
+      "fixture_hash": "36f05efca6bdd3a071f3c8659dcd141c489f5f61c6df77ee418217716462c165",
+      "expected_output_path": "expected/declassify_receipt.expected.txt",
+      "expected_output_hash": "7c8e337a2322d7ce276d79fbbcb5ded0d44f39346ccb6270dea52d5663f0f0a2",
+      "import_date": "2026-02-22",
+      "category": "declassify",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "declassify",
+      "expected_evidence_type": "declassification_receipt"
+    },
+    {
+      "asset_id": "ifc-declass-021",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/declassify/receipt_path",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/declass_exception.fixture.json",
+      "fixture_hash": "36f05efca6bdd3a071f3c8659dcd141c489f5f61c6df77ee418217716462c165",
+      "expected_output_path": "expected/declassify_receipt.expected.txt",
+      "expected_output_hash": "7c8e337a2322d7ce276d79fbbcb5ded0d44f39346ccb6270dea52d5663f0f0a2",
+      "import_date": "2026-02-22",
+      "category": "declassify",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "explicit_declassify",
+        "network_egress"
+      ],
+      "flow_path_type": "temporal",
+      "expected_outcome": "declassify",
+      "expected_evidence_type": "declassification_receipt"
+    },
+    {
+      "asset_id": "ifc-declass-022",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/declassify/receipt_path",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/declass_exception.fixture.json",
+      "fixture_hash": "36f05efca6bdd3a071f3c8659dcd141c489f5f61c6df77ee418217716462c165",
+      "expected_output_path": "expected/declassify_receipt.expected.txt",
+      "expected_output_hash": "7c8e337a2322d7ce276d79fbbcb5ded0d44f39346ccb6270dea52d5663f0f0a2",
+      "import_date": "2026-02-22",
+      "category": "declassify",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "explicit_declassify",
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "direct",
+      "expected_outcome": "declassify",
+      "expected_evidence_type": "declassification_receipt"
+    },
+    {
+      "asset_id": "ifc-declass-023",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/declassify/receipt_path",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/declass_exception.fixture.json",
+      "fixture_hash": "36f05efca6bdd3a071f3c8659dcd141c489f5f61c6df77ee418217716462c165",
+      "expected_output_path": "expected/declassify_receipt.expected.txt",
+      "expected_output_hash": "7c8e337a2322d7ce276d79fbbcb5ded0d44f39346ccb6270dea52d5663f0f0a2",
+      "import_date": "2026-02-22",
+      "category": "declassify",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "explicit_declassify",
+        "persistence_export"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "declassify",
+      "expected_evidence_type": "declassification_receipt"
+    },
+    {
+      "asset_id": "ifc-declass-024",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/declassify/receipt_path",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/declass_exception.fixture.json",
+      "fixture_hash": "36f05efca6bdd3a071f3c8659dcd141c489f5f61c6df77ee418217716462c165",
+      "expected_output_path": "expected/declassify_receipt.expected.txt",
+      "expected_output_hash": "7c8e337a2322d7ce276d79fbbcb5ded0d44f39346ccb6270dea52d5663f0f0a2",
+      "import_date": "2026-02-22",
+      "category": "declassify",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "temporal",
+      "expected_outcome": "declassify",
+      "expected_evidence_type": "declassification_receipt"
+    },
+    {
+      "asset_id": "ifc-declass-025",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/declassify/receipt_path",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/declass_exception.fixture.json",
+      "fixture_hash": "36f05efca6bdd3a071f3c8659dcd141c489f5f61c6df77ee418217716462c165",
+      "expected_output_path": "expected/declassify_receipt.expected.txt",
+      "expected_output_hash": "7c8e337a2322d7ce276d79fbbcb5ded0d44f39346ccb6270dea52d5663f0f0a2",
+      "import_date": "2026-02-22",
+      "category": "declassify",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "explicit_declassify",
+        "network_egress"
+      ],
+      "flow_path_type": "direct",
+      "expected_outcome": "declassify",
+      "expected_evidence_type": "declassification_receipt"
+    },
+    {
+      "asset_id": "ifc-declass-026",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/declassify/receipt_path",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/declass_exception.fixture.json",
+      "fixture_hash": "36f05efca6bdd3a071f3c8659dcd141c489f5f61c6df77ee418217716462c165",
+      "expected_output_path": "expected/declassify_receipt.expected.txt",
+      "expected_output_hash": "7c8e337a2322d7ce276d79fbbcb5ded0d44f39346ccb6270dea52d5663f0f0a2",
+      "import_date": "2026-02-22",
+      "category": "declassify",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "explicit_declassify",
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "declassify",
+      "expected_evidence_type": "declassification_receipt"
+    },
+    {
+      "asset_id": "ifc-declass-027",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/declassify/receipt_path",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/declass_exception.fixture.json",
+      "fixture_hash": "36f05efca6bdd3a071f3c8659dcd141c489f5f61c6df77ee418217716462c165",
+      "expected_output_path": "expected/declassify_receipt.expected.txt",
+      "expected_output_hash": "7c8e337a2322d7ce276d79fbbcb5ded0d44f39346ccb6270dea52d5663f0f0a2",
+      "import_date": "2026-02-22",
+      "category": "declassify",
+      "source_labels": [
+        "privileged_env"
+      ],
+      "sink_clearances": [
+        "explicit_declassify",
+        "persistence_export"
+      ],
+      "flow_path_type": "temporal",
+      "expected_outcome": "declassify",
+      "expected_evidence_type": "declassification_receipt"
+    },
+    {
+      "asset_id": "ifc-declass-028",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/declassify/receipt_path",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/declass_exception.fixture.json",
+      "fixture_hash": "36f05efca6bdd3a071f3c8659dcd141c489f5f61c6df77ee418217716462c165",
+      "expected_output_path": "expected/declassify_receipt.expected.txt",
+      "expected_output_hash": "7c8e337a2322d7ce276d79fbbcb5ded0d44f39346ccb6270dea52d5663f0f0a2",
+      "import_date": "2026-02-22",
+      "category": "declassify",
+      "source_labels": [
+        "policy_protected"
+      ],
+      "sink_clearances": [
+        "explicit_declassify"
+      ],
+      "flow_path_type": "direct",
+      "expected_outcome": "declassify",
+      "expected_evidence_type": "declassification_receipt"
+    },
+    {
+      "asset_id": "ifc-declass-029",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/declassify/receipt_path",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/declass_exception.fixture.json",
+      "fixture_hash": "36f05efca6bdd3a071f3c8659dcd141c489f5f61c6df77ee418217716462c165",
+      "expected_output_path": "expected/declassify_receipt.expected.txt",
+      "expected_output_hash": "7c8e337a2322d7ce276d79fbbcb5ded0d44f39346ccb6270dea52d5663f0f0a2",
+      "import_date": "2026-02-22",
+      "category": "declassify",
+      "source_labels": [
+        "credential"
+      ],
+      "sink_clearances": [
+        "explicit_declassify",
+        "network_egress"
+      ],
+      "flow_path_type": "indirect",
+      "expected_outcome": "declassify",
+      "expected_evidence_type": "declassification_receipt"
+    },
+    {
+      "asset_id": "ifc-declass-030",
+      "source_donor": "franken-ifc",
+      "semantic_domain": "ifc_corpus/declassify/receipt_path",
+      "normative_reference": "PLAN 10.7 / 9I.7",
+      "fixture_path": "fixtures/declass_exception.fixture.json",
+      "fixture_hash": "36f05efca6bdd3a071f3c8659dcd141c489f5f61c6df77ee418217716462c165",
+      "expected_output_path": "expected/declassify_receipt.expected.txt",
+      "expected_output_hash": "7c8e337a2322d7ce276d79fbbcb5ded0d44f39346ccb6270dea52d5663f0f0a2",
+      "import_date": "2026-02-22",
+      "category": "declassify",
+      "source_labels": [
+        "key_material"
+      ],
+      "sink_clearances": [
+        "explicit_declassify",
+        "subprocess_ipc"
+      ],
+      "flow_path_type": "temporal",
       "expected_outcome": "declassify",
       "expected_evidence_type": "declassification_receipt"
     }

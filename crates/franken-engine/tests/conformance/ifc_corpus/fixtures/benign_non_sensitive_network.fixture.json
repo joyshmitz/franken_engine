@@ -1,0 +1,1 @@
+{"donor_harness":"franken-ifc","source":"payload = fs.read('/public/report.txt'); net.send(payload)","observed_output":"outcome:allow evidence:none"}

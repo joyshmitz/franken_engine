@@ -1,0 +1,5 @@
+{
+  "donor_harness": "quickjs",
+  "source": "function* gen() { yield 1; yield 2; return 3; } var g = gen(); var results = []; var r; while (!(r = g.next()).done) results.push(r.value); results.push('ret:' + r.value); print(results.join(','));",
+  "observed_output": "1,2,ret:3\nprops:0,1,2,length"
+}

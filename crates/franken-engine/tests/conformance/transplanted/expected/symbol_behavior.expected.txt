@@ -1,0 +1,2 @@
+symbol,false,Symbol(desc),Symbol(desc)
+props:

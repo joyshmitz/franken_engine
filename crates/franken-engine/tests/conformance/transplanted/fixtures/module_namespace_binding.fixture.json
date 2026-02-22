@@ -1,0 +1,5 @@
+{
+  "donor_harness": "quickjs",
+  "source": "var ns = {x: 1, y: 2, z: 3}; Object.freeze(ns); var keys = Object.keys(ns).sort(); print(keys.join(',') + '|' + Object.isFrozen(ns));",
+  "observed_output": "x,y,z|true\nprops:x,y,z"
+}

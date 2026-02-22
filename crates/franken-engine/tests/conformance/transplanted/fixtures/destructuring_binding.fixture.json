@@ -1,0 +1,5 @@
+{
+  "donor_harness": "quickjs",
+  "source": "var {a, b: c, ...rest} = {a: 1, b: 2, d: 4, e: 5}; print(a + ',' + c + ',' + JSON.stringify(rest));",
+  "observed_output": "1,2,{\"d\":4,\"e\":5}\nprops:d,e"
+}

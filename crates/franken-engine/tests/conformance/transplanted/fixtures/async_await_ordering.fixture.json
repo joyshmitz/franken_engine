@@ -1,0 +1,5 @@
+{
+  "donor_harness": "quickjs",
+  "source": "var log = []; async function f() { log.push('a'); await Promise.resolve(); log.push('c'); } f(); log.push('b'); $DONE(log.join(','));",
+  "observed_output": "a,b,c\nprops:0,1,2,length"
+}
