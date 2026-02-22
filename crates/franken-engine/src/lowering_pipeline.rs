@@ -15,6 +15,7 @@ use crate::ir_contract::{
 };
 
 const COMPONENT: &str = "lowering_pipeline";
+const IFC_RUNTIME_GUARD_CAPABILITY: &str = "ifc.check_flow";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LoweringContext {
@@ -88,6 +89,22 @@ pub struct LoweringPipelineOutput {
     pub witnesses: Vec<PassWitness>,
     pub isomorphism_ledger: Vec<IsomorphismLedgerEntry>,
     pub events: Vec<LoweringEvent>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FlowInferenceMetrics {
+    total_flow_ops: u64,
+    static_proven_ops: u64,
+    runtime_check_ops: u64,
+}
+
+impl FlowInferenceMetrics {
+    fn static_coverage_millionths(self) -> u64 {
+        if self.total_flow_ops == 0 {
+            return 1_000_000;
+        }
+        (self.static_proven_ops.saturating_mul(1_000_000)) / self.total_flow_ops
+    }
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -337,6 +354,7 @@ pub fn lower_ir1_to_ir2(
         .into_iter()
         .map(CapabilityTag)
         .collect();
+    let flow_metrics = infer_ir2_flow_annotations(&mut ir2);
 
     let source_hash_matches = ir2.header.source_hash.as_ref() == Some(&ir1_hash);
     let hostcall_effects_have_capability = ir2
@@ -344,6 +362,9 @@ pub fn lower_ir1_to_ir2(
         .iter()
         .filter(|op| matches!(op.effect, EffectBoundary::HostcallEffect))
         .all(|op| op.required_capability.is_some());
+    let flow_metrics_consistent =
+        flow_metrics.static_proven_ops + flow_metrics.runtime_check_ops == flow_metrics.total_flow_ops;
+    let static_coverage_millionths = flow_metrics.static_coverage_millionths();
     let checks = vec![
         InvariantCheck {
             name: "source_hash_linkage".to_string(),
@@ -354,6 +375,24 @@ pub fn lower_ir1_to_ir2(
             name: "hostcall_capability_required".to_string(),
             passed: hostcall_effects_have_capability,
             detail: "Hostcall effects always carry capability tags".to_string(),
+        },
+        InvariantCheck {
+            name: "ir2_flow_metrics_consistent".to_string(),
+            passed: flow_metrics_consistent,
+            detail: format!(
+                "flow_ops={} static_proven={} runtime_checks={}",
+                flow_metrics.total_flow_ops,
+                flow_metrics.static_proven_ops,
+                flow_metrics.runtime_check_ops
+            ),
+        },
+        InvariantCheck {
+            name: "ir2_static_flow_coverage_ratio".to_string(),
+            passed: true,
+            detail: format!(
+                "static_coverage_millionths={} static_proven={} total_flow_ops={}",
+                static_coverage_millionths, flow_metrics.static_proven_ops, flow_metrics.total_flow_ops
+            ),
         },
     ];
     ensure_checks_pass(&checks, "IR2 invariants failed")?;
@@ -394,13 +433,25 @@ pub fn lower_ir2_to_ir3(
                 .required_capability
                 .clone()
                 .unwrap_or_else(|| CapabilityTag("hostcall.invoke".to_string()));
+            let hostcall_arg = last_value_register.unwrap_or(0);
+            if flow_requires_runtime_check(op.flow.as_ref(), &capability) {
+                required_capabilities.insert(IFC_RUNTIME_GUARD_CAPABILITY.to_string());
+                let guard_dst = alloc_register(&mut register_cursor);
+                ir3.instructions.push(Ir3Instruction::HostCall {
+                    capability: CapabilityTag(IFC_RUNTIME_GUARD_CAPABILITY.to_string()),
+                    args: RegRange {
+                        start: hostcall_arg,
+                        count: 1,
+                    },
+                    dst: guard_dst,
+                });
+            }
             required_capabilities.insert(capability.0.clone());
-            let args_start = last_value_register.unwrap_or(0);
             let dst = alloc_register(&mut register_cursor);
             ir3.instructions.push(Ir3Instruction::HostCall {
                 capability,
                 args: RegRange {
-                    start: args_start,
+                    start: hostcall_arg,
                     count: 1,
                 },
                 dst,
@@ -675,6 +726,165 @@ fn classify_ir1_op(
     }
 }
 
+fn infer_ir2_flow_annotations(ir2: &mut Ir2Module) -> FlowInferenceMetrics {
+    let mut binding_labels = BTreeMap::<BindingId, Label>::new();
+    let mut last_label = Label::Public;
+    let mut metrics = FlowInferenceMetrics {
+        total_flow_ops: 0,
+        static_proven_ops: 0,
+        runtime_check_ops: 0,
+    };
+
+    for op in &mut ir2.ops {
+        let inferred_data_label =
+            infer_data_label_for_op(&op.inner, &binding_labels, last_label.clone());
+        let inferred_sink_clearance =
+            infer_sink_clearance(&op.effect, op.required_capability.as_ref(), &inferred_data_label);
+        let requires_declassification = !inferred_data_label.can_flow_to(&inferred_sink_clearance);
+        let runtime_guard_needed = op
+            .required_capability
+            .as_ref()
+            .is_some_and(|capability| {
+                flow_requires_runtime_check(
+                    Some(&FlowAnnotation {
+                        data_label: inferred_data_label.clone(),
+                        sink_clearance: inferred_sink_clearance.clone(),
+                        declassification_required: requires_declassification,
+                    }),
+                    capability,
+                )
+            });
+        let should_annotate = op.flow.is_some() || !matches!(op.effect, EffectBoundary::Pure);
+        if should_annotate {
+            metrics.total_flow_ops = metrics.total_flow_ops.saturating_add(1);
+            if requires_declassification || runtime_guard_needed {
+                metrics.runtime_check_ops = metrics.runtime_check_ops.saturating_add(1);
+            } else {
+                metrics.static_proven_ops = metrics.static_proven_ops.saturating_add(1);
+            }
+            op.flow = Some(FlowAnnotation {
+                data_label: inferred_data_label.clone(),
+                sink_clearance: inferred_sink_clearance,
+                declassification_required: requires_declassification,
+            });
+        } else {
+            op.flow = None;
+        }
+
+        if let Ir1Op::StoreBinding { binding_id } = &op.inner {
+            binding_labels.insert(*binding_id, inferred_data_label.clone());
+        }
+        if let Ir1Op::LoadBinding { binding_id } = &op.inner {
+            if let Some(existing) = binding_labels.get(binding_id) {
+                last_label = existing.clone();
+                continue;
+            }
+        }
+        last_label = inferred_data_label;
+    }
+
+    metrics
+}
+
+fn infer_data_label_for_op(
+    op: &Ir1Op,
+    binding_labels: &BTreeMap<BindingId, Label>,
+    last_label: Label,
+) -> Label {
+    match op {
+        Ir1Op::LoadLiteral {
+            value: Ir1Literal::String(raw),
+        } => {
+            let lowered = raw.to_ascii_lowercase();
+            if lowered.contains("secret")
+                || lowered.contains("token")
+                || lowered.contains("api_key")
+                || lowered.contains("password")
+                || lowered.contains("credential")
+            {
+                Label::Secret
+            } else {
+                Label::Public
+            }
+        }
+        Ir1Op::LoadLiteral { .. } => Label::Public,
+        Ir1Op::LoadBinding { binding_id } => binding_labels
+            .get(binding_id)
+            .cloned()
+            .unwrap_or(Label::Internal),
+        Ir1Op::StoreBinding { .. } => last_label,
+        Ir1Op::ImportModule { .. } | Ir1Op::Await => Label::Internal,
+        Ir1Op::Call { .. } => last_label,
+        Ir1Op::ExportBinding { .. } => last_label,
+        Ir1Op::Return | Ir1Op::Nop => last_label,
+    }
+}
+
+fn infer_sink_clearance(
+    effect: &EffectBoundary,
+    required_capability: Option<&CapabilityTag>,
+    data_label: &Label,
+) -> Label {
+    if let Some(capability) = required_capability {
+        return sink_clearance_from_capability(&capability.0);
+    }
+
+    match effect {
+        EffectBoundary::NetworkEffect => Label::Public,
+        EffectBoundary::FsEffect => Label::Internal,
+        EffectBoundary::ReadEffect | EffectBoundary::WriteEffect => Label::Internal,
+        EffectBoundary::HostcallEffect => Label::Internal,
+        EffectBoundary::Pure => data_label.clone(),
+    }
+}
+
+fn sink_clearance_from_capability(capability: &str) -> Label {
+    let normalized = capability.to_ascii_lowercase();
+    if normalized == "hostcall.invoke" {
+        return Label::Internal;
+    }
+    if normalized.contains("net.")
+        || normalized.contains("net_")
+        || normalized.contains("network")
+        || normalized.contains("process.")
+        || normalized.contains("process_")
+        || normalized.contains("spawn")
+    {
+        return Label::Public;
+    }
+    if normalized.contains("credential") || normalized.contains("key_material") {
+        return Label::TopSecret;
+    }
+    if normalized.contains("secret") || normalized.contains("token") || normalized.contains("key")
+    {
+        return Label::Secret;
+    }
+    if normalized.contains("fs.read") {
+        return Label::Secret;
+    }
+    if normalized.contains("fs.write")
+        || normalized.contains("module.import")
+        || normalized.contains("import")
+    {
+        return Label::Internal;
+    }
+    if normalized.contains("declassify") {
+        return Label::Public;
+    }
+    Label::Internal
+}
+
+fn flow_requires_runtime_check(flow: Option<&FlowAnnotation>, capability: &CapabilityTag) -> bool {
+    let capability_is_dynamic = capability.0 == "hostcall.invoke";
+    let flow_is_ambiguous = flow.is_some_and(|annotation| {
+        matches!(annotation.data_label, Label::Custom { .. })
+            || matches!(annotation.sink_clearance, Label::Custom { .. })
+    });
+    let flow_requires_declassification =
+        flow.is_some_and(|annotation| annotation.declassification_required);
+    capability_is_dynamic || flow_is_ambiguous || flow_requires_declassification
+}
+
 fn extract_hostcall_capability(raw: &str) -> Option<String> {
     let marker = "hostcall<\"";
     let start = raw.find(marker)?;
@@ -843,6 +1053,9 @@ mod tests {
                 .iter()
                 .all(|check| check.passed)
         );
+        assert!(result.witness.invariant_checks.iter().any(
+            |check| check.name == "ir2_static_flow_coverage_ratio"
+        ));
     }
 
     #[test]
@@ -870,6 +1083,103 @@ mod tests {
                 .iter()
                 .all(|check| check.passed)
         );
+    }
+
+    #[test]
+    fn dynamic_hostcall_paths_insert_runtime_ifc_guard() {
+        let mut ir1 = Ir1Module::new(ContentHash::compute(b"flow-ir0"), "dynamic_flow.js");
+        ir1.ops.push(Ir1Op::LoadLiteral {
+            value: Ir1Literal::String("secret_token".to_string()),
+        });
+        ir1.ops.push(Ir1Op::Call { arg_count: 1 });
+        ir1.ops.push(Ir1Op::Return);
+
+        let ir2 = lower_ir1_to_ir2(&ir1)
+            .expect("IR1->IR2 should succeed")
+            .module;
+        let call_op = ir2
+            .ops
+            .iter()
+            .find(|op| matches!(op.inner, Ir1Op::Call { .. }))
+            .expect("call op");
+        assert!(call_op
+            .flow
+            .as_ref()
+            .expect("flow annotation")
+            .declassification_required);
+
+        let ir3 = lower_ir2_to_ir3(&ir2)
+            .expect("IR2->IR3 should succeed")
+            .module;
+        let hostcall_caps: Vec<&str> = ir3
+            .instructions
+            .iter()
+            .filter_map(|instruction| match instruction {
+                Ir3Instruction::HostCall { capability, .. } => Some(capability.0.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(hostcall_caps.contains(&IFC_RUNTIME_GUARD_CAPABILITY));
+        assert!(hostcall_caps.contains(&"hostcall.invoke"));
+
+        let guard_index = ir3
+            .instructions
+            .iter()
+            .position(|instruction| {
+                matches!(
+                    instruction,
+                    Ir3Instruction::HostCall { capability, .. }
+                    if capability.0 == IFC_RUNTIME_GUARD_CAPABILITY
+                )
+            })
+            .expect("guard hostcall");
+        let invoke_index = ir3
+            .instructions
+            .iter()
+            .position(|instruction| {
+                matches!(
+                    instruction,
+                    Ir3Instruction::HostCall { capability, .. }
+                    if capability.0 == "hostcall.invoke"
+                )
+            })
+            .expect("dynamic hostcall");
+        assert!(guard_index < invoke_index);
+    }
+
+    #[test]
+    fn statically_proven_hostcall_skips_runtime_ifc_guard() {
+        let mut ir1 = Ir1Module::new(ContentHash::compute(b"flow-ir0"), "static_flow.js");
+        ir1.ops.push(Ir1Op::LoadLiteral {
+            value: Ir1Literal::String("hostcall<\"fs.read\">".to_string()),
+        });
+        ir1.ops.push(Ir1Op::Return);
+
+        let ir2 = lower_ir1_to_ir2(&ir1)
+            .expect("IR1->IR2 should succeed")
+            .module;
+        let hostcall_op = ir2
+            .ops
+            .iter()
+            .find(|op| matches!(op.effect, EffectBoundary::HostcallEffect))
+            .expect("hostcall op");
+        let flow = hostcall_op.flow.as_ref().expect("flow annotation");
+        assert!(!flow.declassification_required);
+        assert_eq!(flow.data_label, Label::Public);
+
+        let ir3 = lower_ir2_to_ir3(&ir2)
+            .expect("IR2->IR3 should succeed")
+            .module;
+        let hostcall_caps: Vec<&str> = ir3
+            .instructions
+            .iter()
+            .filter_map(|instruction| match instruction {
+                Ir3Instruction::HostCall { capability, .. } => Some(capability.0.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(hostcall_caps.contains(&"fs.read"));
+        assert!(!hostcall_caps.contains(&IFC_RUNTIME_GUARD_CAPABILITY));
     }
 
     #[test]
