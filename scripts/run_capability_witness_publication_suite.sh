@@ -1,0 +1,153 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$root_dir"
+
+mode="${1:-ci}"
+toolchain="${RUSTUP_TOOLCHAIN:-nightly}"
+timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+target_dir="${CARGO_TARGET_DIR:-/tmp/rch_target_franken_engine_capability_witness_publication_${timestamp}}"
+artifact_root="${CAPABILITY_WITNESS_PUBLICATION_ARTIFACT_ROOT:-artifacts/capability_witness_publication}"
+run_dir="$artifact_root/$timestamp"
+manifest_path="$run_dir/run_manifest.json"
+events_path="$run_dir/capability_witness_publication_events.jsonl"
+
+mkdir -p "$run_dir"
+
+run_rch() {
+  rch exec -- env "RUSTUP_TOOLCHAIN=$toolchain" "CARGO_TARGET_DIR=$target_dir" "$@"
+}
+
+declare -a commands_run=()
+failed_command=""
+manifest_written=false
+mode_completed=false
+
+run_step() {
+  local command_text="$1"
+  shift
+  commands_run+=("$command_text")
+  echo "==> $command_text"
+  if ! run_rch "$@"; then
+    failed_command="$command_text"
+    return 1
+  fi
+}
+
+run_mode() {
+  case "$mode" in
+    check)
+      run_step "cargo check -p frankenengine-engine --test capability_witness_publication" \
+        cargo check -p frankenengine-engine --test capability_witness_publication
+      ;;
+    test)
+      run_step "cargo test -p frankenengine-engine --test capability_witness_publication" \
+        cargo test -p frankenengine-engine --test capability_witness_publication
+      run_step "cargo test -p frankenengine-engine --test capability_witness_edge_cases pipeline_" \
+        cargo test -p frankenengine-engine --test capability_witness_edge_cases pipeline_
+      run_step "cargo test -p frankenengine-engine --lib capability_witness::tests::publication_pipeline_" \
+        cargo test -p frankenengine-engine --lib capability_witness::tests::publication_pipeline_
+      ;;
+    clippy)
+      run_step "cargo clippy -p frankenengine-engine --test capability_witness_publication -- -D warnings" \
+        cargo clippy -p frankenengine-engine --test capability_witness_publication -- -D warnings
+      ;;
+    ci)
+      run_step "cargo check -p frankenengine-engine --test capability_witness_publication" \
+        cargo check -p frankenengine-engine --test capability_witness_publication
+      run_step "cargo test -p frankenengine-engine --test capability_witness_publication" \
+        cargo test -p frankenengine-engine --test capability_witness_publication
+      run_step "cargo test -p frankenengine-engine --test capability_witness_edge_cases pipeline_" \
+        cargo test -p frankenengine-engine --test capability_witness_edge_cases pipeline_
+      run_step "cargo test -p frankenengine-engine --lib capability_witness::tests::publication_pipeline_" \
+        cargo test -p frankenengine-engine --lib capability_witness::tests::publication_pipeline_
+      run_step "cargo clippy -p frankenengine-engine --test capability_witness_publication -- -D warnings" \
+        cargo clippy -p frankenengine-engine --test capability_witness_publication -- -D warnings
+      ;;
+    *)
+      echo "usage: $0 [check|test|clippy|ci]" >&2
+      exit 2
+      ;;
+  esac
+  mode_completed=true
+}
+
+write_manifest() {
+  local exit_code="${1:-0}"
+  local git_commit dirty_worktree outcome idx comma error_code_json
+
+  if [[ "$manifest_written" == true ]]; then
+    return
+  fi
+  manifest_written=true
+
+  if [[ "$exit_code" -eq 0 && "$mode_completed" == true ]]; then
+    outcome="pass"
+    error_code_json='null'
+  else
+    outcome="fail"
+    error_code_json='"FE-WITNESS-PUBLICATION-0007"'
+  fi
+
+  git_commit="$(git rev-parse HEAD 2>/dev/null || echo "unknown")"
+  if git diff --quiet --ignore-submodules HEAD -- >/dev/null 2>&1; then
+    dirty_worktree=false
+  else
+    dirty_worktree=true
+  fi
+
+  printf '%s\n' "${commands_run[@]}" >"$run_dir/commands.txt"
+
+  {
+    echo "{"
+    echo '  "schema_version": "franken-engine.capability-witness-publication.run-manifest.v1",'
+    echo '  "component": "capability_witness_publication",'
+    echo '  "bead_id": "bd-2w2g",'
+    echo "  \"mode\": \"${mode}\","
+    echo "  \"generated_at_utc\": \"${timestamp}\","
+    echo "  \"toolchain\": \"${toolchain}\","
+    echo "  \"cargo_target_dir\": \"${target_dir}\","
+    echo "  \"git_commit\": \"${git_commit}\","
+    echo "  \"dirty_worktree\": ${dirty_worktree},"
+    echo "  \"outcome\": \"${outcome}\","
+    echo "  \"mode_completed\": ${mode_completed},"
+    echo "  \"commands_executed\": ${#commands_run[@]},"
+    if [[ -n "$failed_command" ]]; then
+      echo "  \"failed_command\": \"${failed_command}\","
+    fi
+    echo '  "commands": ['
+    for idx in "${!commands_run[@]}"; do
+      comma=","
+      if [[ "$idx" == "$(( ${#commands_run[@]} - 1 ))" ]]; then
+        comma=""
+      fi
+      echo "    \"${commands_run[$idx]}\"${comma}"
+    done
+    echo '  ],'
+    echo '  "artifacts": {'
+    echo "    \"command_log\": \"${run_dir}/commands.txt\","
+    echo "    \"manifest\": \"${manifest_path}\","
+    echo "    \"events\": \"${events_path}\","
+    echo '    "source_module": "crates/franken-engine/src/capability_witness.rs",'
+    echo '    "integration_test": "crates/franken-engine/tests/capability_witness_publication.rs"'
+    echo '  },'
+    echo '  "operator_verification": ['
+    echo "    \"cat ${manifest_path}\","
+    echo "    \"cat ${events_path}\","
+    echo "    \"cat ${run_dir}/commands.txt\","
+    echo "    \"${0} ci\""
+    echo '  ]'
+    echo "}"
+  } >"$manifest_path"
+
+  {
+    echo "{\"trace_id\":\"trace-witness-publication-${timestamp}\",\"decision_id\":\"decision-witness-publication-${timestamp}\",\"policy_id\":\"policy-capability-witness-publication-v1\",\"component\":\"capability_witness_publication_suite\",\"event\":\"suite_completed\",\"outcome\":\"${outcome}\",\"error_code\":${error_code_json}}"
+  } >"$events_path"
+
+  echo "capability witness publication run manifest: $manifest_path"
+  echo "capability witness publication events: $events_path"
+}
+
+trap 'write_manifest $?' EXIT
+run_mode

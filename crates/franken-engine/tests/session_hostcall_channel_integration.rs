@@ -6,14 +6,13 @@
 //! AEAD nonce derivation, shared-buffer transport, multi-session isolation,
 //! replay detection and escalation, expiry policies, and structured events.
 
+use frankenengine_engine::hash_tiers::ContentHash;
 use frankenengine_engine::session_hostcall_channel::{
-    AeadAlgorithm, BackpressureSignal, ChannelPayload, DataPlaneDirection,
-    HandshakeRequest, HandshakeResponse, HostcallEnvelope, SequencePolicy, SessionChannelError,
-    SessionChannelEvent, SessionConfig, SessionHandle, SessionHandshake, SessionHostcallChannel,
+    AeadAlgorithm, BackpressureSignal, ChannelPayload, DataPlaneDirection, SequencePolicy,
+    SessionChannelError, SessionConfig, SessionHandle, SessionHandshake, SessionHostcallChannel,
     SessionState, SharedPayloadDescriptor, SharedSendInput, build_aead_associated_data,
     derive_deterministic_aead_nonce,
 };
-use frankenengine_engine::hash_tiers::{AuthenticityHash, ContentHash};
 use frankenengine_engine::signature_preimage::SigningKey;
 
 // ---------------------------------------------------------------------------
@@ -36,10 +35,7 @@ fn handshake(session_id: &str, trace_id: &str, tick: u64) -> SessionHandshake {
     }
 }
 
-fn create_basic_session(
-    channel: &mut SessionHostcallChannel,
-    session_id: &str,
-) -> SessionHandle {
+fn create_basic_session(channel: &mut SessionHostcallChannel, session_id: &str) -> SessionHandle {
     create_session_with_config(channel, session_id, SessionConfig::default())
 }
 
@@ -238,7 +234,12 @@ fn create_session_rejects_empty_session_id() {
     let mut hs = handshake("sess-1", "trace", 100);
     hs.session_id = "".into();
     let err = channel
-        .create_session(hs, &signing_key(1), &signing_key(2), SessionConfig::default())
+        .create_session(
+            hs,
+            &signing_key(1),
+            &signing_key(2),
+            SessionConfig::default(),
+        )
         .expect_err("should fail");
     assert!(matches!(err, SessionChannelError::InvalidIdentity { .. }));
 }
@@ -249,7 +250,12 @@ fn create_session_rejects_empty_extension_id() {
     let mut hs = handshake("sess-1", "trace", 100);
     hs.extension_id = "".into();
     let err = channel
-        .create_session(hs, &signing_key(1), &signing_key(2), SessionConfig::default())
+        .create_session(
+            hs,
+            &signing_key(1),
+            &signing_key(2),
+            SessionConfig::default(),
+        )
         .expect_err("should fail");
     assert!(matches!(err, SessionChannelError::InvalidIdentity { .. }));
 }
@@ -260,7 +266,12 @@ fn create_session_rejects_empty_host_id() {
     let mut hs = handshake("sess-1", "trace", 100);
     hs.host_id = "".into();
     let err = channel
-        .create_session(hs, &signing_key(1), &signing_key(2), SessionConfig::default())
+        .create_session(
+            hs,
+            &signing_key(1),
+            &signing_key(2),
+            SessionConfig::default(),
+        )
         .expect_err("should fail");
     assert!(matches!(err, SessionChannelError::InvalidIdentity { .. }));
 }
@@ -271,7 +282,12 @@ fn create_session_rejects_too_long_session_id() {
     let mut hs = handshake("sess-1", "trace", 100);
     hs.session_id = "x".repeat(129);
     let err = channel
-        .create_session(hs, &signing_key(1), &signing_key(2), SessionConfig::default())
+        .create_session(
+            hs,
+            &signing_key(1),
+            &signing_key(2),
+            SessionConfig::default(),
+        )
         .expect_err("should fail");
     assert!(matches!(err, SessionChannelError::InvalidIdentity { .. }));
 }
@@ -282,7 +298,12 @@ fn create_session_accepts_128_char_session_id() {
     let mut hs = handshake("sess-1", "trace", 100);
     hs.session_id = "x".repeat(128);
     let handle = channel
-        .create_session(hs, &signing_key(1), &signing_key(2), SessionConfig::default())
+        .create_session(
+            hs,
+            &signing_key(1),
+            &signing_key(2),
+            SessionConfig::default(),
+        )
         .expect("should succeed");
     assert_eq!(handle.session_id.len(), 128);
 }
@@ -294,7 +315,12 @@ fn create_session_rejects_same_extension_and_host_id() {
     hs.extension_id = "same-id".into();
     hs.host_id = "same-id".into();
     let err = channel
-        .create_session(hs, &signing_key(1), &signing_key(2), SessionConfig::default())
+        .create_session(
+            hs,
+            &signing_key(1),
+            &signing_key(2),
+            SessionConfig::default(),
+        )
         .expect_err("should fail");
     assert!(matches!(
         err,
@@ -570,7 +596,14 @@ fn multiple_messages_round_trip_preserves_order_and_content() {
 
     for i in 0..5u8 {
         let seq = channel
-            .send(&handle, vec![i], &format!("trace-send-{i}"), 101 + u64::from(i), None, None)
+            .send(
+                &handle,
+                vec![i],
+                &format!("trace-send-{i}"),
+                101 + u64::from(i),
+                None,
+                None,
+            )
             .expect("send");
         assert_eq!(seq, u64::from(i) + 1);
     }
@@ -578,7 +611,13 @@ fn multiple_messages_round_trip_preserves_order_and_content() {
 
     for i in 0..5u8 {
         let payload = channel
-            .receive(&handle, &format!("trace-recv-{i}"), 200 + u64::from(i), None, None)
+            .receive(
+                &handle,
+                &format!("trace-recv-{i}"),
+                200 + u64::from(i),
+                None,
+                None,
+            )
             .expect("receive");
         assert_eq!(payload, ChannelPayload::Inline(vec![i]));
     }
@@ -610,11 +649,7 @@ fn sequence_numbers_are_monotonically_increasing() {
 #[test]
 fn multiple_sessions_on_same_channel_are_isolated() {
     let mut channel = SessionHostcallChannel::new();
-    let h1 = create_session_with_config(
-        &mut channel,
-        "sess-iso-1",
-        SessionConfig::default(),
-    );
+    let h1 = create_session_with_config(&mut channel, "sess-iso-1", SessionConfig::default());
     // Use different signing keys to avoid handshake collision
     let h2 = channel
         .create_session(

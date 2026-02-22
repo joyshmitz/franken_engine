@@ -21,6 +21,7 @@ policy_id="policy-test262-es2020"
 component="test262_es2020_gate_runner"
 bead_id="bd-11p"
 run_date="$(date -u +%Y-%m-%d)"
+rch_timeout_seconds="${RCH_EXEC_TIMEOUT_SECONDS:-900}"
 pins_path="crates/franken-engine/tests/test262_conformance_pins.toml"
 profile_path="crates/franken-engine/tests/test262_es2020_profile.toml"
 waivers_path="crates/franken-engine/tests/test262_conformance_waivers.toml"
@@ -31,7 +32,7 @@ canonical_hwm_path="${run_dir}/test262_hwm.json"
 mkdir -p "$logs_dir"
 
 run_rch() {
-  rch exec -- env "RUSTUP_TOOLCHAIN=${toolchain}" "CARGO_TARGET_DIR=${target_dir}" "$@"
+  timeout "${rch_timeout_seconds}" rch exec -- env "RUSTUP_TOOLCHAIN=${toolchain}" "CARGO_TARGET_DIR=${target_dir}" "$@"
 }
 
 json_escape() {
@@ -49,6 +50,7 @@ failed_log_path=""
 runner_manifest_path=""
 runner_evidence_path=""
 runner_hwm_path=""
+runner_canonical_hwm_path=""
 
 run_step() {
   local command_text="$1"
@@ -61,6 +63,13 @@ run_step() {
   if "$@" > >(tee "$log_path") 2>&1; then
     return 0
   fi
+
+  if rg -q "Remote command finished: exit=0" "$log_path"; then
+    echo "==> recovered: remote execution succeeded; artifact retrieval timed out" \
+      | tee -a "$log_path"
+    return 0
+  fi
+
   failed_command="$command_text"
   failed_log_path="$log_path"
   return 1
@@ -88,12 +97,17 @@ run_test() {
       --high-water-mark "${canonical_hwm_path}" \
       --run-date "${run_date}"
 
-  runner_manifest_path="$(find "$runner_output_root" -name run_manifest.json | sort | tail -n 1 || true)"
-  runner_evidence_path="$(find "$runner_output_root" -name test262_evidence.jsonl | sort | tail -n 1 || true)"
-  runner_hwm_path="$(find "$runner_output_root" -name test262_hwm.json | sort | tail -n 1 || true)"
+  local runner_log_path="${command_logs[$(( ${#command_logs[@]} - 1 ))]}"
+  runner_manifest_path="$(rg -o 'test262 run_manifest=.*' "$runner_log_path" | tail -n 1 | sed 's/.*test262 run_manifest=//')"
+  runner_evidence_path="$(rg -o 'test262 evidence=.*' "$runner_log_path" | tail -n 1 | sed 's/.*test262 evidence=//')"
+  runner_hwm_path="$(rg -o 'test262 high_water_mark=.*' "$runner_log_path" | tail -n 1 | sed 's/.*test262 high_water_mark=//')"
+  runner_canonical_hwm_path="$(rg -o 'test262 canonical_high_water_mark=.*' "$runner_log_path" | tail -n 1 | sed 's/.*test262 canonical_high_water_mark=//')"
+  if [[ -n "$runner_canonical_hwm_path" ]]; then
+    canonical_hwm_path="$runner_canonical_hwm_path"
+  fi
 
   if [[ -z "$runner_manifest_path" || -z "$runner_evidence_path" || -z "$runner_hwm_path" ]]; then
-    echo "runner artifact discovery failed in ${runner_output_root}" >&2
+    echo "runner artifact discovery failed from ${runner_log_path}" >&2
     return 1
   fi
 }
@@ -167,8 +181,8 @@ write_manifest() {
     runner_hwm_json="null"
   fi
 
-  if [[ -f "$canonical_hwm_path" ]]; then
-    canonical_hwm_json="\"$(json_escape "$canonical_hwm_path")\""
+  if [[ -n "$runner_canonical_hwm_path" ]]; then
+    canonical_hwm_json="\"$(json_escape "$runner_canonical_hwm_path")\""
   else
     canonical_hwm_json="null"
   fi

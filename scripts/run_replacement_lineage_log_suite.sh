@@ -22,6 +22,7 @@ run_rch() {
 declare -a commands_run=()
 failed_command=""
 manifest_written=false
+mode_completed=false
 
 run_step() {
   local command_text="$1"
@@ -43,6 +44,8 @@ run_mode() {
     test)
       run_step "cargo test -p frankenengine-engine --test replacement_lineage_log" \
         cargo test -p frankenengine-engine --test replacement_lineage_log
+      run_step "cargo test -p frankenengine-engine --test replacement_lineage_log e2e_delegate_to_native_promotion_then_rollback_updates_lineage_and_logs -- --exact" \
+        cargo test -p frankenengine-engine --test replacement_lineage_log e2e_delegate_to_native_promotion_then_rollback_updates_lineage_and_logs -- --exact
       run_step "cargo test -p frankenengine-engine replacement_lineage_log::tests::" \
         cargo test -p frankenengine-engine replacement_lineage_log::tests::
       ;;
@@ -55,6 +58,8 @@ run_mode() {
         cargo check -p frankenengine-engine --test replacement_lineage_log
       run_step "cargo test -p frankenengine-engine --test replacement_lineage_log" \
         cargo test -p frankenengine-engine --test replacement_lineage_log
+      run_step "cargo test -p frankenengine-engine --test replacement_lineage_log e2e_delegate_to_native_promotion_then_rollback_updates_lineage_and_logs -- --exact" \
+        cargo test -p frankenengine-engine --test replacement_lineage_log e2e_delegate_to_native_promotion_then_rollback_updates_lineage_and_logs -- --exact
       run_step "cargo test -p frankenengine-engine replacement_lineage_log::tests::" \
         cargo test -p frankenengine-engine replacement_lineage_log::tests::
       run_step "cargo clippy -p frankenengine-engine --test replacement_lineage_log -- -D warnings" \
@@ -65,6 +70,7 @@ run_mode() {
       exit 2
       ;;
   esac
+  mode_completed=true
 }
 
 write_manifest() {
@@ -76,7 +82,7 @@ write_manifest() {
   fi
   manifest_written=true
 
-  if [[ "$exit_code" -eq 0 ]]; then
+  if [[ "$exit_code" -eq 0 && "$mode_completed" == true ]]; then
     outcome="pass"
     error_code_json='null'
   else
@@ -97,7 +103,7 @@ write_manifest() {
     echo "{"
     echo '  "schema_version": "franken-engine.replacement-lineage-log.run-manifest.v1",'
     echo '  "component": "replacement_lineage_log",'
-    echo '  "bead_id": "bd-kr99",'
+    echo '  "bead_id": "bd-1a5z.1",'
     echo "  \"mode\": \"${mode}\","
     echo "  \"generated_at_utc\": \"${timestamp}\","
     echo "  \"toolchain\": \"${toolchain}\","
@@ -105,6 +111,8 @@ write_manifest() {
     echo "  \"git_commit\": \"${git_commit}\","
     echo "  \"dirty_worktree\": ${dirty_worktree},"
     echo "  \"outcome\": \"${outcome}\","
+    echo "  \"mode_completed\": ${mode_completed},"
+    echo "  \"commands_executed\": ${#commands_run[@]},"
     if [[ -n "$failed_command" ]]; then
       echo "  \"failed_command\": \"${failed_command}\","
     fi

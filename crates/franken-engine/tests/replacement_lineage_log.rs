@@ -1,6 +1,11 @@
 use std::collections::BTreeSet;
 
 use frankenengine_engine::engine_object_id::{self, ObjectDomain};
+use frankenengine_engine::promotion_gate_runner::{
+    AdversarialTestResult, CandidateCapabilityRequest, EquivalenceTestCase, GateKind,
+    GateRunnerConfig, GateRunnerInput, GateRunnerOutput, PerformanceMeasurement,
+    run_promotion_gates,
+};
 use frankenengine_engine::replacement_lineage_log::{
     DemotionReceiptInput, EvidenceCategory, EvidencePointerInput, LineageLogConfig,
     LineageLogError, LineageQuery, ReplacementKind, ReplacementLineageEvidenceIndex,
@@ -8,10 +13,15 @@ use frankenengine_engine::replacement_lineage_log::{
 };
 use frankenengine_engine::security_epoch::SecurityEpoch;
 use frankenengine_engine::self_replacement::{
-    ReplacementReceipt, SchemaVersion, SignatureBundle, ValidationArtifactKind,
-    ValidationArtifactRef,
+    ApproverKind, CreateDecisionInput, CreateManifestInput, CreateReceiptInput,
+    DelegateCellManifest, DelegateType, MonitoringHook, PromotionDecision, ReplacementLifecycle,
+    ReplacementReceipt, SandboxConfiguration, SchemaVersion, SignatureBundle,
+    ValidationArtifactKind, ValidationArtifactRef,
 };
-use frankenengine_engine::slot_registry::SlotId;
+use frankenengine_engine::signature_preimage::SigningKey;
+use frankenengine_engine::slot_registry::{
+    AuthorityEnvelope, SlotCapability, SlotId, SlotKind, SlotRegistry,
+};
 use frankenengine_engine::storage_adapter::{EventContext, InMemoryStorageAdapter};
 
 fn slot_id(name: &str) -> SlotId {
@@ -60,6 +70,193 @@ fn index_context() -> EventContext {
 
 fn replacement_receipt_id_hex(receipt: &ReplacementReceipt) -> String {
     hex::encode(receipt.receipt_id.as_bytes())
+}
+
+fn signing_key(seed: u8) -> SigningKey {
+    SigningKey::from_bytes([seed; 32])
+}
+
+fn test_authority_envelope() -> AuthorityEnvelope {
+    AuthorityEnvelope {
+        required: vec![SlotCapability::ReadSource],
+        permitted: vec![
+            SlotCapability::ReadSource,
+            SlotCapability::EmitIr,
+            SlotCapability::EmitEvidence,
+        ],
+    }
+}
+
+fn passing_gate_input(slot_id: &SlotId, authority: &AuthorityEnvelope) -> GateRunnerInput {
+    GateRunnerInput {
+        equivalence_cases: vec![
+            EquivalenceTestCase {
+                test_id: "eq-1".to_string(),
+                input: b"1+1".to_vec(),
+                delegate_output: b"2".to_vec(),
+                candidate_output: b"2".to_vec(),
+            },
+            EquivalenceTestCase {
+                test_id: "eq-2".to_string(),
+                input: b"2+2".to_vec(),
+                delegate_output: b"4".to_vec(),
+                candidate_output: b"4".to_vec(),
+            },
+        ],
+        capability_request: CandidateCapabilityRequest {
+            slot_id: slot_id.clone(),
+            requested_capabilities: authority.required.clone(),
+            authority_envelope: authority.clone(),
+        },
+        performance_measurements: vec![PerformanceMeasurement {
+            benchmark_id: "bench-e2e".to_string(),
+            throughput_millionths: 700_000,
+            latency_ns: 75_000_000,
+            iterations: 10_000,
+            seed: 42,
+        }],
+        adversarial_results: vec![
+            AdversarialTestResult {
+                test_id: "adv-1".to_string(),
+                passed: true,
+                attack_surface: "hostcall".to_string(),
+                evidence: "blocked unexpected hostcall".to_string(),
+            },
+            AdversarialTestResult {
+                test_id: "adv-2".to_string(),
+                passed: true,
+                attack_surface: "module-loader".to_string(),
+                evidence: "no privilege escalation".to_string(),
+            },
+        ],
+    }
+}
+
+fn validation_kind_for_gate(gate: GateKind) -> ValidationArtifactKind {
+    match gate {
+        GateKind::Equivalence => ValidationArtifactKind::EquivalenceResult,
+        GateKind::CapabilityPreservation => ValidationArtifactKind::CapabilityPreservation,
+        GateKind::PerformanceThreshold => ValidationArtifactKind::PerformanceBenchmark,
+        GateKind::AdversarialSurvival => ValidationArtifactKind::AdversarialSurvival,
+    }
+}
+
+fn validation_artifacts_from_gate_output(output: &GateRunnerOutput) -> Vec<ValidationArtifactRef> {
+    output
+        .evaluations
+        .iter()
+        .map(|evaluation| ValidationArtifactRef {
+            kind: validation_kind_for_gate(evaluation.gate),
+            artifact_digest: format!(
+                "{}-{}-{}",
+                output.run_id,
+                evaluation.gate.as_str(),
+                if evaluation.passed { "pass" } else { "fail" }
+            ),
+            passed: evaluation.passed,
+            summary: evaluation.summary.clone(),
+        })
+        .collect()
+}
+
+fn signed_delegate_manifest(
+    slot_id: &SlotId,
+    authority: &AuthorityEnvelope,
+) -> DelegateCellManifest {
+    let key = signing_key(11);
+    let sandbox = SandboxConfiguration::default();
+    let hooks: [MonitoringHook; 0] = [];
+    let expected_behavior_hash = [0xAB; 32];
+    let manifest = DelegateCellManifest::create_signed(
+        &key,
+        CreateManifestInput {
+            slot_id,
+            delegate_type: DelegateType::QuickJsBacked,
+            capability_envelope: authority,
+            sandbox: &sandbox,
+            monitoring_hooks: &hooks,
+            expected_behavior_hash: &expected_behavior_hash,
+            zone: "lineage-e2e-zone",
+        },
+    )
+    .expect("create signed delegate manifest");
+    manifest
+        .verify_signature(&key.verification_key())
+        .expect("delegate manifest signature must verify");
+    manifest
+}
+
+fn signed_promotion_decision(
+    slot_id: &SlotId,
+    candidate_digest: &str,
+    gate_output: &GateRunnerOutput,
+    timestamp_ns: u64,
+) -> PromotionDecision {
+    let approver = ApproverKind::System {
+        component: "promotion-gate-runner".to_string(),
+    };
+    let gate_results = gate_output
+        .evaluations
+        .iter()
+        .map(|evaluation| evaluation.to_gate_result())
+        .collect::<Vec<_>>();
+
+    let mut decision = PromotionDecision::create_unsigned(CreateDecisionInput {
+        slot_id,
+        candidate_cell_digest: candidate_digest,
+        gate_results: &gate_results,
+        risk_level: gate_output.risk_level,
+        approver: &approver,
+        timestamp_ns,
+        epoch: SecurityEpoch::from_raw(11),
+        zone: "lineage-e2e-zone",
+        required_signatures: 2,
+    })
+    .expect("create decision");
+
+    decision
+        .add_signature(&signing_key(17), "gate-runner")
+        .expect("sign decision gate-runner");
+    decision
+        .add_signature(&signing_key(19), "governance-approver")
+        .expect("sign decision governance");
+    decision
+        .verify_signatures()
+        .expect("decision signatures must verify");
+    decision
+}
+
+fn signed_replacement_receipt(
+    slot_id: &SlotId,
+    old_cell_digest: &str,
+    new_cell_digest: &str,
+    timestamp_ns: u64,
+    validation_artifacts: &[ValidationArtifactRef],
+) -> ReplacementReceipt {
+    let mut receipt = ReplacementReceipt::create_unsigned(CreateReceiptInput {
+        slot_id,
+        old_cell_digest,
+        new_cell_digest,
+        validation_artifacts,
+        rollback_token: &format!("rollback-{old_cell_digest}"),
+        promotion_rationale: "deterministic integration lifecycle validation",
+        timestamp_ns,
+        epoch: SecurityEpoch::from_raw(11),
+        zone: "lineage-e2e-zone",
+        required_signatures: 2,
+    })
+    .expect("create replacement receipt");
+
+    receipt
+        .add_signature(&signing_key(17), "gate-runner")
+        .expect("sign receipt gate-runner");
+    receipt
+        .add_signature(&signing_key(19), "governance-approver")
+        .expect("sign receipt governance");
+    receipt
+        .verify_signatures()
+        .expect("receipt signatures must verify");
+    receipt
 }
 
 #[test]
@@ -396,4 +593,220 @@ fn replay_join_order_is_deterministic_across_ingest_order() {
     assert_eq!(rows_a, rows_b);
     assert_eq!(rows_a.len(), 2);
     assert!(rows_a[0].promotion_timestamp_ns <= rows_a[1].promotion_timestamp_ns);
+}
+
+#[test]
+fn e2e_delegate_to_native_promotion_then_rollback_updates_lineage_and_logs() {
+    let slot = slot_id("slot-e2e");
+    let authority = test_authority_envelope();
+    let native_authority = authority.clone();
+
+    let mut registry = SlotRegistry::new();
+    registry
+        .register_delegate(
+            slot.clone(),
+            SlotKind::Parser,
+            authority.clone(),
+            "sha256:delegate-v1".to_string(),
+            "2026-02-22T00:00:00Z".to_string(),
+        )
+        .expect("register delegate");
+    registry
+        .begin_candidacy(
+            &slot,
+            "sha256:native-candidate-v1".to_string(),
+            "2026-02-22T00:01:00Z".to_string(),
+        )
+        .expect("begin candidacy");
+
+    let gate_config =
+        GateRunnerConfig::standard(slot.clone(), "sha256:native-candidate-v1".to_string(), 42);
+    let gate_output = run_promotion_gates(&gate_config, &passing_gate_input(&slot, &authority));
+    assert_eq!(gate_output.slot_id, slot);
+    assert!(
+        gate_output
+            .evaluations
+            .iter()
+            .all(|evaluation| evaluation.passed)
+    );
+    assert!(gate_output.rollback_verified);
+
+    let decision =
+        signed_promotion_decision(&slot, "sha256:native-candidate-v1", &gate_output, 2_000);
+    assert!(decision.is_approved());
+
+    let validation_artifacts = validation_artifacts_from_gate_output(&gate_output);
+    assert_eq!(validation_artifacts.len(), 4);
+    assert!(validation_artifacts.iter().all(|artifact| artifact.passed));
+
+    let promotion_receipt = signed_replacement_receipt(
+        &slot,
+        "sha256:delegate-v1",
+        "sha256:native-v1",
+        3_000,
+        &validation_artifacts,
+    );
+
+    registry
+        .promote(
+            &slot,
+            "sha256:native-v1".to_string(),
+            &native_authority,
+            replacement_receipt_id_hex(&promotion_receipt),
+            "2026-02-22T00:02:00Z".to_string(),
+        )
+        .expect("promote slot");
+    assert_eq!(registry.native_count(), 1);
+    assert_eq!(registry.delegate_count(), 0);
+
+    let mut lifecycle =
+        ReplacementLifecycle::new(slot.clone(), signed_delegate_manifest(&slot, &authority));
+    lifecycle
+        .record_decision(decision)
+        .expect("record promotion decision");
+    lifecycle
+        .record_receipt(promotion_receipt.clone())
+        .expect("record replacement receipt");
+    assert_eq!(lifecycle.completed_stages(), 1);
+
+    let rollback_receipt = signed_replacement_receipt(
+        &slot,
+        "sha256:native-v1",
+        "sha256:delegate-v1",
+        4_200,
+        &validation_artifacts,
+    );
+    registry
+        .demote(
+            &slot,
+            "post-promotion divergence".to_string(),
+            "2026-02-22T00:03:00Z".to_string(),
+        )
+        .expect("demote slot");
+    assert_eq!(registry.native_count(), 0);
+    assert_eq!(registry.delegate_count(), 1);
+
+    let mut log = ReplacementLineageLog::new(LineageLogConfig::default());
+    log.append(
+        promotion_receipt.clone(),
+        ReplacementKind::DelegateToNative,
+        promotion_receipt.timestamp_ns,
+    )
+    .expect("append promotion receipt");
+    log.append(
+        rollback_receipt.clone(),
+        ReplacementKind::Demotion,
+        rollback_receipt.timestamp_ns,
+    )
+    .expect("append rollback receipt");
+    log.create_checkpoint(4_500, SecurityEpoch::from_raw(11))
+        .expect("create checkpoint");
+
+    let slot_lineage = log.slot_lineage(&slot);
+    assert_eq!(slot_lineage.len(), 2);
+    assert_eq!(slot_lineage[0].kind, ReplacementKind::DelegateToNative);
+    assert_eq!(slot_lineage[1].kind, ReplacementKind::Demotion);
+    assert_eq!(slot_lineage[1].new_cell_digest, "sha256:delegate-v1");
+
+    for event in log.events() {
+        assert!(!event.trace_id.trim().is_empty());
+        assert!(!event.decision_id.trim().is_empty());
+        assert!(!event.policy_id.trim().is_empty());
+        assert_eq!(event.component, "replacement_lineage_log");
+        assert!(matches!(
+            event.event.as_str(),
+            "entry_appended" | "checkpoint_created"
+        ));
+        assert_eq!(event.outcome, "ok");
+        assert_eq!(event.error_code, None);
+    }
+
+    let context = EventContext::new(
+        "trace-lineage-lifecycle-e2e",
+        "decision-lineage-lifecycle-e2e",
+        "policy-lineage-lifecycle-e2e",
+    )
+    .expect("lineage index context");
+    let mut index = ReplacementLineageEvidenceIndex::new(InMemoryStorageAdapter::new());
+    let replacement_record = index
+        .index_replacement_receipt(
+            &promotion_receipt,
+            ReplacementKind::DelegateToNative,
+            &[
+                EvidencePointerInput {
+                    category: EvidenceCategory::GateResult,
+                    artifact_digest: "gate-e2e-pass".to_string(),
+                    passed: Some(true),
+                    summary: "all mandatory gates approved".to_string(),
+                },
+                EvidencePointerInput {
+                    category: EvidenceCategory::SentinelRiskScore,
+                    artifact_digest: "risk-e2e-low".to_string(),
+                    passed: Some(true),
+                    summary: "risk remains below demotion threshold".to_string(),
+                },
+            ],
+            &context,
+        )
+        .expect("index replacement receipt");
+
+    index
+        .index_demotion_receipt(
+            DemotionReceiptInput {
+                receipt_id: "demotion-slot-e2e-1".to_string(),
+                slot_id: slot.clone(),
+                demoted_cell_digest: "sha256:native-v1".to_string(),
+                restored_cell_digest: "sha256:delegate-v1".to_string(),
+                demotion_reason: "post_promotion_divergence".to_string(),
+                timestamp_ns: 4_300,
+                rollback_token_used: promotion_receipt.rollback_token.clone(),
+                linked_replacement_receipt_id: Some(replacement_record.receipt_id.clone()),
+                evidence: vec![EvidencePointerInput {
+                    category: EvidenceCategory::DifferentialExecutionLog,
+                    artifact_digest: "diff-e2e-divergence".to_string(),
+                    passed: Some(false),
+                    summary: "burn-in replay divergence detected".to_string(),
+                }],
+            },
+            &context,
+        )
+        .expect("index demotion receipt");
+
+    let indexed_chain = index
+        .slot_lineage(&slot, &SlotLineageQuery::default(), &context)
+        .expect("query slot lineage");
+    assert_eq!(indexed_chain.len(), 2);
+    assert_eq!(indexed_chain[0].kind, ReplacementKind::DelegateToNative);
+    assert_eq!(indexed_chain[1].kind, ReplacementKind::Demotion);
+
+    let replay_rows = index
+        .replay_join(
+            &ReplayJoinQuery {
+                slot_id: Some(slot.clone()),
+                ..ReplayJoinQuery::default()
+            },
+            &context,
+        )
+        .expect("replay join");
+    assert_eq!(replay_rows.len(), 1);
+    let replay_row = &replay_rows[0];
+    assert_eq!(
+        replay_row.demotion_receipt_id.as_deref(),
+        Some("demotion-slot-e2e-1")
+    );
+    assert_eq!(
+        replay_row.demotion_reason.as_deref(),
+        Some("post_promotion_divergence")
+    );
+    assert_eq!(replay_row.sentinel_risk_scores.len(), 1);
+    assert_eq!(replay_row.differential_execution_logs.len(), 2);
+
+    for event in index.events() {
+        assert_eq!(event.trace_id, "trace-lineage-lifecycle-e2e");
+        assert_eq!(event.decision_id, "decision-lineage-lifecycle-e2e");
+        assert_eq!(event.policy_id, "policy-lineage-lifecycle-e2e");
+        assert_eq!(event.component, "replacement_lineage_index");
+        assert_eq!(event.outcome, "ok");
+        assert_eq!(event.error_code, None);
+    }
 }

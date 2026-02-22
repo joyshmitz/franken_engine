@@ -357,9 +357,11 @@ fn classify_delta_error_format_different_error_types() {
     let deltas = classify_conformance_delta(expected, actual);
     assert!(!deltas.is_empty());
     // Both contain Error| so should detect error format change.
-    assert!(deltas
-        .iter()
-        .any(|d| d.kind == ConformanceDeltaKind::ErrorFormatChange));
+    assert!(
+        deltas
+            .iter()
+            .any(|d| d.kind == ConformanceDeltaKind::ErrorFormatChange)
+    );
 }
 
 #[test]
@@ -367,9 +369,11 @@ fn classify_delta_numeric_timing_multiple_numbers() {
     let expected = "latency 100 200 ms";
     let actual = "latency 150 250 ms";
     let deltas = classify_conformance_delta(expected, actual);
-    assert!(deltas
-        .iter()
-        .any(|d| d.kind == ConformanceDeltaKind::TimingChange));
+    assert!(
+        deltas
+            .iter()
+            .any(|d| d.kind == ConformanceDeltaKind::TimingChange)
+    );
 }
 
 // ===================================================================
@@ -893,11 +897,6 @@ fn build_test_repro_artifact(
     let failure_class = classify_failure_class(&delta_classification);
     let severity = severity_for_failure_class(failure_class);
 
-    // Build a verification digest that matches.
-    let material = format!(
-        "seed=7;expected={};actual={}",
-        canonical_expected, canonical_actual
-    );
     // We need to match the internal digest_hex logic (fnv1a64 → 16-char hex).
     // Since we can't call digest_hex from outside, compute it via the public API
     // by constructing a repro with a known seed and checking the verification_digest.
