@@ -1891,7 +1891,11 @@ impl<A: StorageAdapter> WitnessIndexStore<A> {
                 });
             }
 
-            let key = escrow_receipt_key(&receipt.extension_id, receipt.timestamp_ns, &receipt.receipt_id);
+            let key = escrow_receipt_key(
+                &receipt.extension_id,
+                receipt.timestamp_ns,
+                &receipt.receipt_id,
+            );
             let mut metadata = witness_index_table_metadata(TABLE_WITNESS_ESCROW_RECEIPTS);
             metadata.insert(
                 "extension_id".to_string(),
@@ -1931,17 +1935,20 @@ impl<A: StorageAdapter> WitnessIndexStore<A> {
         context: &EventContext,
     ) -> Result<Option<WitnessIndexRecord>, WitnessIndexError> {
         let result = (|| {
-            let Some(pointer) = self
-                .adapter
-                .get(StoreKind::PlasWitness, &witness_by_id_key(witness_id), context)?
+            let Some(pointer) = self.adapter.get(
+                StoreKind::PlasWitness,
+                &witness_by_id_key(witness_id),
+                context,
+            )?
             else {
                 return Ok(None);
             };
-            let pointed_key =
-                String::from_utf8(pointer.value).map_err(|err| WitnessIndexError::CorruptRecord {
+            let pointed_key = String::from_utf8(pointer.value).map_err(|err| {
+                WitnessIndexError::CorruptRecord {
                     key: pointer.key,
                     detail: err.to_string(),
-                })?;
+                }
+            })?;
             self.read_witness_record(&pointed_key, context)
         })();
 
@@ -2026,7 +2033,9 @@ impl<A: StorageAdapter> WitnessIndexStore<A> {
             }
 
             let mut receipts = self.escrow_receipts_for_extension(&query.extension_id, context)?;
-            receipts.retain(|receipt| receipt.timestamp_ns >= start_ns && receipt.timestamp_ns <= end_ns);
+            receipts.retain(|receipt| {
+                receipt.timestamp_ns >= start_ns && receipt.timestamp_ns <= end_ns
+            });
             receipts.sort_by(|a, b| a.sort_key().cmp(&b.sort_key()));
 
             let mut rows = Vec::new();
@@ -2110,7 +2119,10 @@ impl<A: StorageAdapter> WitnessIndexStore<A> {
                 context,
             )?
         } else if let Some(extension_id) = &query.extension_id {
-            self.load_witnesses_from_pointer_prefix(&witness_by_extension_prefix(extension_id), context)?
+            self.load_witnesses_from_pointer_prefix(
+                &witness_by_extension_prefix(extension_id),
+                context,
+            )?
         } else {
             self.load_witnesses_from_table(context)?
         };
@@ -2147,9 +2159,11 @@ impl<A: StorageAdapter> WitnessIndexStore<A> {
         let mut records = Vec::new();
         for row in rows {
             let decoded: WitnessIndexRecord =
-                serde_json::from_slice(&row.value).map_err(|err| WitnessIndexError::CorruptRecord {
-                    key: row.key,
-                    detail: err.to_string(),
+                serde_json::from_slice(&row.value).map_err(|err| {
+                    WitnessIndexError::CorruptRecord {
+                        key: row.key,
+                        detail: err.to_string(),
+                    }
                 })?;
             records.push(decoded);
         }
@@ -2173,11 +2187,12 @@ impl<A: StorageAdapter> WitnessIndexStore<A> {
 
         let mut records = Vec::new();
         for pointer in pointers {
-            let pointed_key =
-                String::from_utf8(pointer.value).map_err(|err| WitnessIndexError::CorruptRecord {
+            let pointed_key = String::from_utf8(pointer.value).map_err(|err| {
+                WitnessIndexError::CorruptRecord {
                     key: pointer.key,
                     detail: err.to_string(),
-                })?;
+                }
+            })?;
             if let Some(record) = self.read_witness_record(&pointed_key, context)? {
                 records.push(record);
             }
@@ -2193,11 +2208,12 @@ impl<A: StorageAdapter> WitnessIndexStore<A> {
         let Some(record) = self.adapter.get(StoreKind::PlasWitness, key, context)? else {
             return Ok(None);
         };
-        let decoded: WitnessIndexRecord =
-            serde_json::from_slice(&record.value).map_err(|err| WitnessIndexError::CorruptRecord {
+        let decoded: WitnessIndexRecord = serde_json::from_slice(&record.value).map_err(|err| {
+            WitnessIndexError::CorruptRecord {
                 key: record.key,
                 detail: err.to_string(),
-            })?;
+            }
+        })?;
         Ok(Some(decoded))
     }
 
@@ -2248,16 +2264,24 @@ impl<A: StorageAdapter> WitnessIndexStore<A> {
 }
 
 fn witness_matches_query(record: &WitnessIndexRecord, query: &WitnessIndexQuery) -> bool {
-    if let Some(extension_id) = &query.extension_id && record.extension_id != *extension_id {
+    if let Some(extension_id) = &query.extension_id
+        && record.extension_id != *extension_id
+    {
         return false;
     }
-    if let Some(policy_id) = &query.policy_id && record.policy_id != *policy_id {
+    if let Some(policy_id) = &query.policy_id
+        && record.policy_id != *policy_id
+    {
         return false;
     }
-    if let Some(epoch) = query.epoch && record.epoch != epoch {
+    if let Some(epoch) = query.epoch
+        && record.epoch != epoch
+    {
         return false;
     }
-    if let Some(lifecycle_state) = query.lifecycle_state && record.lifecycle_state != lifecycle_state {
+    if let Some(lifecycle_state) = query.lifecycle_state
+        && record.lifecycle_state != lifecycle_state
+    {
         return false;
     }
     if !query.include_revoked && record.lifecycle_state == LifecycleState::Revoked {
@@ -2310,7 +2334,10 @@ fn witness_by_id_key(witness_id: &EngineObjectId) -> String {
 }
 
 fn witness_by_extension_prefix(extension_id: &EngineObjectId) -> String {
-    format!("{TABLE_WITNESS_BY_EXTENSION}/{}/", object_id_segment(extension_id))
+    format!(
+        "{TABLE_WITNESS_BY_EXTENSION}/{}/",
+        object_id_segment(extension_id)
+    )
 }
 
 fn witness_by_extension_key(record: &WitnessIndexRecord) -> String {
@@ -2324,7 +2351,10 @@ fn witness_by_extension_key(record: &WitnessIndexRecord) -> String {
 }
 
 fn witness_by_capability_prefix(capability: &Capability) -> String {
-    format!("{TABLE_WITNESS_BY_CAPABILITY}/{}/", capability_segment(capability))
+    format!(
+        "{TABLE_WITNESS_BY_CAPABILITY}/{}/",
+        capability_segment(capability)
+    )
 }
 
 fn witness_by_capability_key(capability: &Capability, record: &WitnessIndexRecord) -> String {
@@ -2345,7 +2375,11 @@ fn escrow_receipt_prefix(extension_id: &EngineObjectId) -> String {
     )
 }
 
-fn escrow_receipt_key(extension_id: &EngineObjectId, timestamp_ns: u64, receipt_id: &str) -> String {
+fn escrow_receipt_key(
+    extension_id: &EngineObjectId,
+    timestamp_ns: u64,
+    receipt_id: &str,
+) -> String {
     format!(
         "{}{:020}/{}",
         escrow_receipt_prefix(extension_id),
