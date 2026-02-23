@@ -380,7 +380,7 @@ impl InterpreterCore {
             Ok(v) => v,
             Err(InterpreterError::Halted) => {
                 // Halt is normal termination; return whatever is in r0.
-                self.registers.first().cloned().unwrap_or(Value::Undefined)
+                self.read_reg(0).unwrap_or(Value::Undefined)
             }
             Err(e) => return Err(e),
         };
@@ -400,7 +400,14 @@ impl InterpreterCore {
         loop {
             if self.ip >= module.instructions.len() {
                 // Fell off the end of the instruction stream.
-                return self.read_reg(0);
+                if let Some(frame) = self.call_stack.pop() {
+                    self.register_base = frame.register_base;
+                    self.write_reg(frame.return_reg, Value::Undefined)?;
+                    self.ip = frame.return_ip;
+                    continue;
+                } else {
+                    return self.read_reg(0);
+                }
             }
 
             if self.instructions_executed >= self.config.instruction_budget {

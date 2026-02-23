@@ -778,7 +778,7 @@ fn confidence_interval_from_posterior(
     let delta_uncertainty = ((selected_loss_millionths.unsigned_abs() as i128
         * uncertainty as i128)
         / (MILLION as i128 * 5)) as i64;
-    let delta_margin = (runner_up_loss_millionths.abs_diff(selected_loss_millionths) as i64) / 10;
+    let delta_margin = (runner_up_loss_millionths.abs_diff(selected_loss_millionths) / 10) as i64;
     let delta = delta_uncertainty.max(delta_margin).max(1);
     DecisionConfidenceInterval {
         lower_millionths: selected_loss_millionths.saturating_sub(delta),

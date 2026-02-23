@@ -389,7 +389,7 @@ impl ChangePointDetector {
 
     /// Update with new evidence.  Returns the change-point probability
     /// (millionths), i.e. P(run_length = 0 | data).
-    pub fn update(&mut self, predictive_likelihood: i64) -> i64 {
+    pub fn update(&mut self, predictive_continuation: i64, predictive_new: i64) -> i64 {
         let n = self.run_length_probs.len();
         let mut new_probs = vec![0i64; n];
 
@@ -397,7 +397,7 @@ impl ChangePointDetector {
         let survival_rate = MILLION - self.hazard_rate;
         for r in (0..n).rev() {
             let growth = self.run_length_probs[r] * survival_rate / MILLION;
-            let weighted = growth * predictive_likelihood / MILLION;
+            let weighted = growth * predictive_continuation / MILLION;
             let target_idx = (r + 1).min(n - 1);
             new_probs[target_idx] += weighted.max(0);
         }
@@ -406,7 +406,7 @@ impl ChangePointDetector {
         let mut change_mass: i64 = 0;
         for r in 0..n {
             let hazard_flow = self.run_length_probs[r] * self.hazard_rate / MILLION;
-            let weighted = hazard_flow * predictive_likelihood / MILLION;
+            let weighted = hazard_flow * predictive_new / MILLION;
             change_mass += weighted.max(0);
         }
         new_probs[0] = change_mass;
@@ -540,19 +540,32 @@ impl BayesianPosteriorUpdater {
 
         // Update cumulative log-likelihood ratio (benign vs malicious).
         // LLR = log(L_malicious / L_benign), in millionths of nats.
-        let llr_step = if likelihoods[0] > 0 {
-            // Approximate log ratio: (mal - ben) / ben scaled to millionths.
-            (likelihoods[2] - likelihoods[0]) * MILLION / likelihoods[0]
-        } else {
+        let llr_step = if likelihoods[0] > 0 && likelihoods[2] > 0 {
+            if likelihoods[2] >= likelihoods[0] {
+                (likelihoods[2] - likelihoods[0]) * MILLION / likelihoods[0]
+            } else {
+                -((likelihoods[0] - likelihoods[2]) * MILLION / likelihoods[2])
+            }
+        } else if likelihoods[0] == 0 {
             MILLION // Max positive LLR when benign likelihood is 0.
+        } else {
+            -MILLION // Max negative LLR when malicious likelihood is 0.
         };
         self.cumulative_llr_millionths += llr_step;
 
-        // BOCPD update: use mean likelihood as predictive.
-        let mean_likelihood = (likelihoods[0] + likelihoods[1] + likelihoods[2] + likelihoods[3])
-            .checked_div(4)
-            .unwrap_or(MILLION);
-        self.change_detector.update(mean_likelihood);
+        // BOCPD update: evaluate how well current posterior predicts data vs the prior.
+        let predictive_continuation = (self.posterior.p_benign * likelihoods[0] / MILLION)
+            + (self.posterior.p_anomalous * likelihoods[1] / MILLION)
+            + (self.posterior.p_malicious * likelihoods[2] / MILLION)
+            + (self.posterior.p_unknown * likelihoods[3] / MILLION);
+
+        let prior = Posterior::default_prior();
+        let predictive_new = (prior.p_benign * likelihoods[0] / MILLION)
+            + (prior.p_anomalous * likelihoods[1] / MILLION)
+            + (prior.p_malicious * likelihoods[2] / MILLION)
+            + (prior.p_unknown * likelihoods[3] / MILLION);
+
+        self.change_detector.update(predictive_continuation, predictive_new);
 
         // Track evidence hash.
         let evidence_bytes = format!(
@@ -1097,7 +1110,7 @@ mod tests {
     fn change_detector_reset() {
         let mut det = ChangePointDetector::new(50_000, 50);
         for _ in 0..10 {
-            det.update(MILLION);
+            det.update(MILLION, MILLION);
         }
         det.reset();
         assert_eq!(det.change_point_probability(), MILLION);
@@ -1107,7 +1120,7 @@ mod tests {
     #[test]
     fn change_detector_serde_roundtrip() {
         let mut det = ChangePointDetector::new(50_000, 50);
-        det.update(MILLION);
+        det.update(MILLION, MILLION);
         let json = serde_json::to_string(&det).unwrap();
         let restored: ChangePointDetector = serde_json::from_str(&json).unwrap();
         assert_eq!(det, restored);
