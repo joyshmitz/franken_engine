@@ -290,10 +290,8 @@ fn throughput_regression_millionths(reference: u64, candidate: u64) -> u64 {
     if candidate >= reference {
         return 0;
     }
-    reference
-        .saturating_sub(candidate)
-        .saturating_mul(1_000_000)
-        / reference
+    let delta = reference.saturating_sub(candidate);
+    ((delta as u128 * 1_000_000) / reference as u128) as u64
 }
 
 fn latency_regression_millionths(reference: u64, candidate: u64) -> u64 {
@@ -303,10 +301,8 @@ fn latency_regression_millionths(reference: u64, candidate: u64) -> u64 {
     if candidate <= reference {
         return 0;
     }
-    candidate
-        .saturating_sub(reference)
-        .saturating_mul(1_000_000)
-        / reference
+    let delta = candidate.saturating_sub(reference);
+    ((delta as u128 * 1_000_000) / reference as u128) as u64
 }
 
 fn coefficient_of_variation_millionths(samples: &[u64]) -> Option<u64> {

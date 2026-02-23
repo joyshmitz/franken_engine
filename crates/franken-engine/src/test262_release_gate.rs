@@ -1230,7 +1230,15 @@ fn parse_quoted(line_no: usize, raw_value: &str) -> io::Result<String> {
 }
 
 fn strip_comment(raw: &str) -> &str {
-    raw.split('#').next().unwrap_or("").trim()
+    let mut in_quotes = false;
+    for (i, c) in raw.char_indices() {
+        if c == '"' {
+            in_quotes = !in_quotes;
+        } else if c == '#' && !in_quotes {
+            return raw[..i].trim();
+        }
+    }
+    raw.trim()
 }
 
 fn wildcard_match(pattern: &str, text: &str) -> bool {

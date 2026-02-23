@@ -285,14 +285,14 @@ impl ConfidenceInterval {
 
         // discriminant in millionths^2
         let var_term = p_hat * (1_000_000 - p_hat) / n;
-        let correction = z2_over_n * z2_over_n / 4 / n;
+        let correction = z2_over_n * 1_000_000 / 4 / n;
         // Approximate sqrt via integer math: we want sqrt(var_term + correction)
         // scaled appropriately.
         let disc = var_term + correction;
         let disc_sqrt = isqrt_millionths(disc);
 
         // z * sqrt(disc) / denom, where z = 1_960_000 millionths
-        let margin = 1_960 * disc_sqrt / denom;
+        let margin = 1_960_000 * disc_sqrt / denom;
 
         let lower = (center_num * 1_000_000 / denom).saturating_sub(margin);
         let upper = (center_num * 1_000_000 / denom).saturating_add(margin);
@@ -705,6 +705,14 @@ impl CapabilityWitness {
     fn synthesis_unsigned_bytes(&self) -> Vec<u8> {
         let mut synthesis_view = self.clone();
         synthesis_view.lifecycle_state = LifecycleState::Draft;
+        // Strip metadata added during theorem evaluation
+        synthesis_view
+            .metadata
+            .retain(|k, _| !k.starts_with("promotion_theorem."));
+        // Strip proof obligations added during theorem evaluation
+        synthesis_view
+            .proof_obligations
+            .retain(|po| po.kind != ProofKind::PolicyTheoremCheck);
         synthesis_view.unsigned_bytes()
     }
 

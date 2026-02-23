@@ -784,6 +784,21 @@ impl ReputationGraph {
             for td_id in transitive_deps {
                 if !directly_affected.contains(&td_id) {
                     transitively_affected.insert(td_id.clone());
+
+                    // Degrade trust for transitive dependents as well
+                    if let Some(ext) = self.extensions.get(&td_id)
+                        && !ext.current_trust_level.is_degraded()
+                        && let Ok(tt) = self.transition_trust(
+                            &td_id,
+                            TrustLevel::Suspicious,
+                            vec![format!("transitive-revocation-propagation:{incident_id}")],
+                            0,
+                            epoch,
+                            timestamp_ns,
+                        )
+                    {
+                        trust_degradations.push(tt);
+                    }
                 }
                 queue.push(td_id);
             }

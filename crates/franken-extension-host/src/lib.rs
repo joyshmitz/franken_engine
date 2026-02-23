@@ -552,6 +552,13 @@ pub fn validate_manifest(manifest: &ExtensionManifest) -> Result<(), ManifestVal
             actual: manifest.version.len(),
         });
     }
+    if manifest.min_engine_version.len() > MAX_VERSION_LEN {
+        return Err(ManifestValidationError::FieldTooLong {
+            field: "min_engine_version",
+            max: MAX_VERSION_LEN,
+            actual: manifest.min_engine_version.len(),
+        });
+    }
     if manifest.entrypoint.len() > MAX_ENTRYPOINT_LEN {
         return Err(ManifestValidationError::FieldTooLong {
             field: "entrypoint",
@@ -1349,7 +1356,13 @@ impl ExtensionLifecycleManager {
 }
 
 fn transition_requires_manifest(transition: LifecycleTransition) -> bool {
-    !matches!(transition, LifecycleTransition::Validate)
+    !matches!(
+        transition,
+        LifecycleTransition::Validate
+            | LifecycleTransition::Terminate
+            | LifecycleTransition::Quarantine
+            | LifecycleTransition::Finalize
+    )
 }
 
 /// Deterministic transition function for compile-active state-machine checking.
@@ -3174,11 +3187,11 @@ impl CapabilityEscrowGateway {
             capability,
             decision_kind,
             next_state,
-            trace_ref,
+            trace_ref.clone(),
             replay_seed,
             context.decision_id,
             context.policy_id,
-            context.policy_id.to_string(),
+            trace_ref,
             contract_chain,
             conditions,
             outcome,

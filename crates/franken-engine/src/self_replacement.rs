@@ -784,12 +784,12 @@ impl PromotionDecision {
         )
         .map_err(SelfReplacementError::IdDerivationFailed)?;
 
-        let verdict = if input.gate_results.iter().all(|g| g.passed) {
-            GateVerdict::Approved
-        } else if input.gate_results.iter().any(|g| !g.passed) {
-            GateVerdict::Denied
-        } else {
+        let verdict = if input.gate_results.is_empty() {
             GateVerdict::Inconclusive
+        } else if input.gate_results.iter().all(|g| g.passed) {
+            GateVerdict::Approved
+        } else {
+            GateVerdict::Denied
         };
 
         Ok(Self {

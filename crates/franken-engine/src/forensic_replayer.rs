@@ -893,14 +893,14 @@ fn determine_final_state(steps: &[ReplayStep]) -> ContainmentState {
                 }
             }
             ContainmentAction::Terminate => {
-                if state.is_alive() {
+                if state.is_alive() || state == ContainmentState::Suspended {
                     ContainmentState::Terminated
                 } else {
                     state
                 }
             }
             ContainmentAction::Quarantine => {
-                if state.is_alive() {
+                if state.is_alive() || state == ContainmentState::Suspended {
                     ContainmentState::Quarantined
                 } else {
                     state

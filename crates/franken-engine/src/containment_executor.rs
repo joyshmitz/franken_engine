@@ -382,7 +382,7 @@ impl ContainmentExecutor {
         }
 
         // Execute action.
-        let cooperative = matches!(
+        let cooperative = !matches!(
             action,
             ContainmentAction::Terminate | ContainmentAction::Quarantine
         );
