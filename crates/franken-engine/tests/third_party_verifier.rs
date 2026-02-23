@@ -1,0 +1,308 @@
+use std::collections::BTreeMap;
+use std::fs;
+use std::path::PathBuf;
+use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use frankenengine_engine::benchmark_denominator::{
+    BenchmarkCase, NativeCoveragePoint, PublicationContext, PublicationGateInput,
+    evaluate_publication_gate,
+};
+use frankenengine_engine::causal_replay::{
+    DecisionSnapshot, NondeterminismSource, RecorderConfig, RecordingMode, TraceRecord,
+    TraceRecorder,
+};
+use frankenengine_engine::containment_executor::ContainmentState;
+use frankenengine_engine::incident_replay_bundle::{BundleBuilder, IncidentReplayBundle};
+use frankenengine_engine::quarantine_mesh_gate::{
+    CriterionResult, FaultType, FaultScenarioResult, GateValidationResult,
+};
+use frankenengine_engine::security_epoch::SecurityEpoch;
+use frankenengine_engine::signature_preimage::SigningKey;
+use frankenengine_engine::third_party_verifier::{
+    BenchmarkClaimBundle, ClaimedBenchmarkOutcome, ContainmentClaimBundle, ReplayClaimBundle,
+    VerificationVerdict, verify_benchmark_claim, verify_containment_claim, verify_replay_claim,
+};
+
+fn temp_json_path(prefix: &str) -> PathBuf {
+    let mut path = std::env::temp_dir();
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time should be monotonic")
+        .as_nanos();
+    path.push(format!("{prefix}_{}_{}.json", std::process::id(), nonce));
+    path
+}
+
+fn write_json<T: serde::Serialize>(prefix: &str, value: &T) -> PathBuf {
+    let path = temp_json_path(prefix);
+    fs::write(
+        &path,
+        serde_json::to_vec_pretty(value).expect("json serialization should succeed"),
+    )
+    .expect("json write should succeed");
+    path
+}
+
+fn make_signing_key(seed: u8) -> SigningKey {
+    let mut key = [0u8; 32];
+    for (index, byte) in key.iter_mut().enumerate() {
+        *byte = seed.wrapping_add(index as u8).wrapping_mul(7);
+    }
+    SigningKey::from_bytes(key)
+}
+
+fn make_trace(trace_id: &str) -> TraceRecord {
+    let signing_key = make_signing_key(9);
+    let mut recorder = TraceRecorder::new(RecorderConfig {
+        trace_id: trace_id.to_string(),
+        recording_mode: RecordingMode::Full,
+        epoch: SecurityEpoch::from_raw(3),
+        start_tick: 1000,
+        signing_key: signing_key.as_bytes().to_vec(),
+    });
+
+    recorder.record_nondeterminism(
+        NondeterminismSource::Timestamp,
+        vec![0, 0, 0, 0, 0, 0, 3, 232],
+        1000,
+        None,
+    );
+
+    recorder.record_decision(DecisionSnapshot {
+        decision_index: 0,
+        trace_id: trace_id.to_string(),
+        decision_id: "decision-001".to_string(),
+        policy_id: "policy-001".to_string(),
+        policy_version: 1,
+        epoch: SecurityEpoch::from_raw(3),
+        tick: 1001,
+        threshold_millionths: 500_000,
+        loss_matrix: BTreeMap::new(),
+        evidence_hashes: Vec::new(),
+        chosen_action: "allow".to_string(),
+        outcome_millionths: 100_000,
+        extension_id: "ext-001".to_string(),
+        nondeterminism_range: (0, 0),
+    });
+
+    recorder.finalize()
+}
+
+fn make_incident_bundle() -> (IncidentReplayBundle, String) {
+    let signing_key = make_signing_key(11);
+    let verification_key_hex = signing_key.verification_key().to_hex();
+    let trace = make_trace("trace-verify-001");
+    let bundle = BundleBuilder::new(
+        "incident-verify-001".to_string(),
+        SecurityEpoch::from_raw(3),
+        5000,
+        "producer-key-001".to_string(),
+        signing_key,
+    )
+    .window(1000, 2000)
+    .trace("trace-verify-001".to_string(), trace)
+    .build()
+    .expect("bundle should build");
+
+    (bundle, verification_key_hex)
+}
+
+fn make_replay_claim_bundle() -> ReplayClaimBundle {
+    let (bundle, verification_key_hex) = make_incident_bundle();
+    ReplayClaimBundle {
+        trace_id: "trace-verify-001".to_string(),
+        decision_id: "decision-verify-001".to_string(),
+        policy_id: "policy-verify-001".to_string(),
+        verification_timestamp_ns: 6000,
+        current_epoch: 3,
+        bundle,
+        signature_verification_key_hex: Some(verification_key_hex),
+        receipt_verification_keys_hex: BTreeMap::new(),
+        counterfactual_configs: Vec::new(),
+    }
+}
+
+fn benchmark_case(workload_id: &str, franken_tps: f64, baseline_tps: f64) -> BenchmarkCase {
+    BenchmarkCase {
+        workload_id: workload_id.to_string(),
+        throughput_franken_tps: franken_tps,
+        throughput_baseline_tps: baseline_tps,
+        weight: None,
+        behavior_equivalent: true,
+        latency_envelope_ok: true,
+        error_envelope_ok: true,
+    }
+}
+
+fn make_benchmark_claim_bundle() -> BenchmarkClaimBundle {
+    let input = PublicationGateInput {
+        node_cases: vec![
+            benchmark_case("boot-storm/s", 3000.0, 900.0),
+            benchmark_case("mixed-cpu-io/s", 2800.0, 800.0),
+        ],
+        bun_cases: vec![
+            benchmark_case("boot-storm/s", 3000.0, 950.0),
+            benchmark_case("mixed-cpu-io/s", 2800.0, 850.0),
+        ],
+        native_coverage_progression: vec![NativeCoveragePoint {
+            recorded_at_utc: "2026-02-23T00:00:00Z".to_string(),
+            native_slots: 42,
+            total_slots: 48,
+        }],
+        replacement_lineage_ids: vec!["lineage-a".to_string()],
+    };
+
+    let ctx = PublicationContext::new(
+        "trace-bench-001".to_string(),
+        "decision-bench-001".to_string(),
+        "policy-bench-001".to_string(),
+    );
+    let recomputed = evaluate_publication_gate(&input, &ctx).expect("benchmark gate should pass");
+
+    BenchmarkClaimBundle {
+        trace_id: "trace-bench-001".to_string(),
+        decision_id: "decision-bench-001".to_string(),
+        policy_id: "policy-bench-001".to_string(),
+        input,
+        claimed: ClaimedBenchmarkOutcome {
+            score_vs_node: recomputed.score_vs_node,
+            score_vs_bun: recomputed.score_vs_bun,
+            publish_allowed: recomputed.publish_allowed,
+            blockers: recomputed.blockers.clone(),
+        },
+    }
+}
+
+fn make_containment_claim_bundle() -> ContainmentClaimBundle {
+    let scenarios = vec![FaultScenarioResult {
+        scenario_id: "scenario-1".to_string(),
+        fault_type: FaultType::NetworkPartition,
+        passed: true,
+        criteria: vec![CriterionResult {
+            name: "autonomous-isolation".to_string(),
+            passed: true,
+            detail: "isolated in budget".to_string(),
+        }],
+        receipts_emitted: 1,
+        final_state: Some(ContainmentState::Quarantined),
+        detection_latency_ns: 100_000_000,
+        isolation_verified: true,
+        recovery_verified: true,
+    }];
+
+    ContainmentClaimBundle {
+        trace_id: "trace-cont-001".to_string(),
+        decision_id: "decision-cont-001".to_string(),
+        policy_id: "policy-cont-001".to_string(),
+        detection_latency_sla_ns: 500_000_000,
+        result: GateValidationResult {
+            seed: 7,
+            scenarios,
+            passed: true,
+            total_scenarios: 1,
+            passed_scenarios: 1,
+            events: Vec::new(),
+            result_digest: "digest-001".to_string(),
+        },
+    }
+}
+
+#[test]
+fn benchmark_claim_verifies_when_claim_matches_computation() {
+    let bundle = make_benchmark_claim_bundle();
+    let report = verify_benchmark_claim(&bundle);
+    assert_eq!(report.verdict, VerificationVerdict::Verified);
+    assert_eq!(report.exit_code(), 0);
+}
+
+#[test]
+fn benchmark_claim_detects_tampered_score() {
+    let mut bundle = make_benchmark_claim_bundle();
+    bundle.claimed.score_vs_node += 0.25;
+    let report = verify_benchmark_claim(&bundle);
+    assert_eq!(report.verdict, VerificationVerdict::Failed);
+    assert!(
+        report
+            .checks
+            .iter()
+            .any(|check| check.name == "score_vs_node_matches" && !check.passed)
+    );
+}
+
+#[test]
+fn replay_claim_verifies_integrity_and_fidelity() {
+    let bundle = make_replay_claim_bundle();
+    let report = verify_replay_claim(&bundle);
+    assert_eq!(report.verdict, VerificationVerdict::Verified);
+    assert_eq!(report.exit_code(), 0);
+}
+
+#[test]
+fn containment_claim_verifies_when_counts_and_sla_match() {
+    let bundle = make_containment_claim_bundle();
+    let report = verify_containment_claim(&bundle);
+    assert_eq!(report.verdict, VerificationVerdict::Verified);
+    assert_eq!(report.exit_code(), 0);
+}
+
+#[test]
+fn containment_claim_fails_when_latency_exceeds_sla() {
+    let mut bundle = make_containment_claim_bundle();
+    bundle.result.scenarios[0].detection_latency_ns = 600_000_000;
+    let report = verify_containment_claim(&bundle);
+    assert_eq!(report.verdict, VerificationVerdict::Failed);
+    assert!(
+        report
+            .checks
+            .iter()
+            .any(|check| check.name.contains("latency_sla:scenario-1") && !check.passed)
+    );
+}
+
+#[test]
+fn franken_verify_benchmark_command_exits_successfully() {
+    let input = make_benchmark_claim_bundle();
+    let input_path = write_json("tpv_benchmark", &input);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_franken-verify"))
+        .args([
+            "benchmark",
+            "--input",
+            input_path.to_str().expect("utf8 path"),
+            "--summary",
+        ])
+        .output()
+        .expect("benchmark command should execute");
+
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    assert!(stdout.contains("claim_type=benchmark"));
+    assert!(stdout.contains("verdict=Verified"));
+
+    let _ = fs::remove_file(input_path);
+}
+
+#[test]
+fn franken_verify_containment_command_surfaces_failure_exit_code() {
+    let mut input = make_containment_claim_bundle();
+    input.result.scenarios[0].detection_latency_ns = 800_000_000;
+    let input_path = write_json("tpv_containment", &input);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_franken-verify"))
+        .args([
+            "containment",
+            "--input",
+            input_path.to_str().expect("utf8 path"),
+            "--summary",
+        ])
+        .output()
+        .expect("containment command should execute");
+
+    assert_eq!(output.status.code(), Some(25));
+    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    assert!(stdout.contains("claim_type=containment"));
+    assert!(stdout.contains("verdict=Failed"));
+
+    let _ = fs::remove_file(input_path);
+}

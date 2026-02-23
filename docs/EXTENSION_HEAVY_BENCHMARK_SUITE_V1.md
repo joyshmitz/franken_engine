@@ -20,6 +20,23 @@ It defines what must be measured, how scores are computed, and which artifacts a
 | `reload-revoke-churn` | Hot-reload and revocation while traffic remains continuous. | `S`, `M`, `L` |
 | `adversarial-noise-under-load` | Legitimate workload with adversarial extension noise injected. | `S`, `M`, `L` |
 
+## Threat Scenario Matrix (Normative)
+
+Security workloads and adversarial tracks must include the following scenario classes:
+1. credential theft attempt with escalating sophistication
+2. privilege escalation via hostcall sequence abuse
+3. data exfiltration via covert channel construction
+4. policy evasion via benign-mimicking behavior
+5. supply-chain compromise via dependency poisoning
+
+Each scenario execution must declare:
+- `attack_category`
+- `scenario_id`
+- `expected_detection_outcome`
+- `expected_containment_outcome`
+- `expected_latency_bound_ms`
+- `corpus_checksum_sha256`
+
 ## Scale Profile Matrix (Normative Defaults)
 
 | Profile | Extension Count | Event Rate (events/sec) | Dependency Graph Size | Policy Complexity Tier |
@@ -75,6 +92,14 @@ Constraints:
 Claim acceptance requires both conditions:
 - `score_vs_node >= 3.0`
 - `score_vs_bun >= 3.0`
+
+## Transparent Scoring Governance
+
+- Published weights are mandatory for every score component and must be present in result artifacts.
+- No hidden or post-hoc adjustments are allowed after run completion.
+- Normalization and aggregation formulas are fixed per benchmark version.
+- Score methodology changes require explicit version bump and changelog entry.
+- Benchmark methodology updates require public review notes (RFC-style summary + disposition).
 
 ## Fairness and Denominator Contract
 
@@ -167,6 +192,19 @@ If a previously published claim is invalidated:
 1. mark claim `UNDER_REVIEW`
 2. publish corrected status with linked evidence
 3. rerun suite and republish only on passing artifacts
+
+## Publication and Standardization Contract
+
+- Specification is published as an open, machine-verifiable contract under `docs/`.
+- Reference harness behavior is exercised by repository test/suite scripts and evidence manifests.
+- Result submission bundles must include reproducibility artifacts and deterministic verifier outputs.
+- Claim language must follow `docs/CLAIM_LANGUAGE_POLICY.md`.
+- Published benchmark runs must include a submission record with:
+  - `submission_id`
+  - `benchmark_version`
+  - `runtime_versions`
+  - `score_bundle_digest`
+  - `verifier_report_digest`
 
 ## Independent Verifier Onboarding
 

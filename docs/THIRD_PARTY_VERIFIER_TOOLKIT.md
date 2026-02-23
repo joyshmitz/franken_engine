@@ -1,0 +1,204 @@
+# Third-Party Verifier Toolkit (`franken-verify`)
+
+This runbook describes how independent operators can verify FrankenEngine claim artifacts without running the FrankenEngine control plane.
+
+## Scope
+
+Current verifier surfaces:
+- `benchmark`: verify benchmark claim consistency and cross-runtime workload fairness
+- `replay`: verify incident replay bundle integrity/fidelity and optional signature/receipt/counterfactual checks
+- `containment`: verify containment gate result invariants and latency-SLA compliance
+- `receipt`: existing unified receipt verifier pipeline
+
+## Build
+
+```bash
+cargo build -p frankenengine-engine --bin franken-verify
+```
+
+Binary path:
+
+```bash
+./target/debug/franken-verify
+```
+
+## Usage
+
+```bash
+franken-verify receipt <receipt_id> --input <path> [--summary]
+franken-verify benchmark --input <path> [--summary]
+franken-verify replay --input <path> [--summary]
+franken-verify containment --input <path> [--summary]
+```
+
+`--summary` emits a compact line suitable for CI gates.
+Without `--summary`, the tool emits JSON reports.
+
+## Exit Codes
+
+- `0`: verified/pass
+- `20`: receipt signature layer failure (legacy receipt subcommand)
+- `21`: receipt transparency layer failure (legacy receipt subcommand)
+- `22`: receipt attestation layer failure (legacy receipt subcommand)
+- `23`: stale data warning/failure (legacy receipt subcommand)
+- `24`: partially verified (checks skipped)
+- `25`: failed verification
+- `26`: inconclusive verification
+- `2`: CLI or input parse error
+
+## Input Schemas
+
+### Benchmark (`benchmark --input`)
+
+```json
+{
+  "trace_id": "trace-bench-001",
+  "decision_id": "decision-bench-001",
+  "policy_id": "policy-bench-001",
+  "input": {
+    "node_cases": [
+      {
+        "workload_id": "boot-storm/s",
+        "throughput_franken_tps": 3000.0,
+        "throughput_baseline_tps": 900.0,
+        "weight": null,
+        "behavior_equivalent": true,
+        "latency_envelope_ok": true,
+        "error_envelope_ok": true
+      }
+    ],
+    "bun_cases": [
+      {
+        "workload_id": "boot-storm/s",
+        "throughput_franken_tps": 3000.0,
+        "throughput_baseline_tps": 950.0,
+        "weight": null,
+        "behavior_equivalent": true,
+        "latency_envelope_ok": true,
+        "error_envelope_ok": true
+      }
+    ],
+    "native_coverage_progression": [
+      {
+        "recorded_at_utc": "2026-02-23T00:00:00Z",
+        "native_slots": 42,
+        "total_slots": 48
+      }
+    ],
+    "replacement_lineage_ids": ["lineage-a"]
+  },
+  "claimed": {
+    "score_vs_node": 3.2,
+    "score_vs_bun": 3.1,
+    "publish_allowed": true,
+    "blockers": []
+  }
+}
+```
+
+### Replay (`replay --input`)
+
+```json
+{
+  "trace_id": "trace-verify-001",
+  "decision_id": "decision-verify-001",
+  "policy_id": "policy-verify-001",
+  "verification_timestamp_ns": 6000,
+  "current_epoch": 3,
+  "bundle": { "...": "IncidentReplayBundle JSON" },
+  "signature_verification_key_hex": "<64 hex chars>",
+  "receipt_verification_keys_hex": {
+    "<signer_engine_object_id_hex>": "<64 hex chars>"
+  },
+  "counterfactual_configs": []
+}
+```
+
+Notes:
+- `signature_verification_key_hex` is optional.
+- `receipt_verification_keys_hex` is optional.
+- `counterfactual_configs` may be empty for fidelity-only verification.
+
+### Containment (`containment --input`)
+
+```json
+{
+  "trace_id": "trace-cont-001",
+  "decision_id": "decision-cont-001",
+  "policy_id": "policy-cont-001",
+  "detection_latency_sla_ns": 500000000,
+  "result": {
+    "seed": 7,
+    "scenarios": [
+      {
+        "scenario_id": "scenario-1",
+        "fault_type": "NetworkPartition",
+        "passed": true,
+        "criteria": [
+          {
+            "name": "autonomous-isolation",
+            "passed": true,
+            "detail": "isolated in budget"
+          }
+        ],
+        "receipts_emitted": 1,
+        "final_state": "Quarantined",
+        "detection_latency_ns": 100000000,
+        "isolation_verified": true,
+        "recovery_verified": true
+      }
+    ],
+    "passed": true,
+    "total_scenarios": 1,
+    "passed_scenarios": 1,
+    "events": [],
+    "result_digest": "digest-001"
+  }
+}
+```
+
+## Example Commands
+
+```bash
+franken-verify benchmark --input artifacts/claims/benchmark_claim.json --summary
+franken-verify replay --input artifacts/claims/replay_claim.json --summary
+franken-verify containment --input artifacts/claims/containment_claim.json --summary
+```
+
+For machine ingestion:
+
+```bash
+franken-verify replay --input artifacts/claims/replay_claim.json > artifacts/claims/replay_verify_report.json
+```
+
+## Verification Semantics
+
+- Benchmark:
+  - recomputes publication-gate scores
+  - compares claimed vs recomputed scores and publish decision
+  - compares blocker sets
+  - validates node/bun workload-set fairness
+- Replay:
+  - integrity + artifact-hash checks
+  - replay fidelity checks
+  - optional signature verification
+  - optional receipt verification
+  - optional counterfactual rechecks
+- Containment:
+  - scenario count consistency
+  - passed-count and aggregate pass-flag consistency
+  - per-scenario criteria consistency
+  - latency-SLA checks
+  - isolation and recovery invariant checks for passing scenarios
+
+## CI Integration
+
+Suggested gate pattern:
+
+```bash
+franken-verify benchmark --input <bundle.json> --summary
+franken-verify replay --input <bundle.json> --summary
+franken-verify containment --input <bundle.json> --summary
+```
+
+Fail the pipeline on non-zero exit status.

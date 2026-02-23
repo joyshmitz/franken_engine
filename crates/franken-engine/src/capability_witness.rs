@@ -701,6 +701,13 @@ impl CapabilityWitness {
         buf
     }
 
+    /// Canonical unsigned bytes for synthesis-bound signatures/integrity checks.
+    fn synthesis_unsigned_bytes(&self) -> Vec<u8> {
+        let mut synthesis_view = self.clone();
+        synthesis_view.lifecycle_state = LifecycleState::Draft;
+        synthesis_view.unsigned_bytes()
+    }
+
     /// Transition to a new lifecycle state.
     pub fn transition_to(&mut self, target: LifecycleState) -> Result<(), WitnessError> {
         if !self.lifecycle_state.can_transition_to(target) {
@@ -1114,7 +1121,7 @@ impl CapabilityWitness {
         let mut sig_bytes = [0u8; 64];
         sig_bytes.copy_from_slice(&self.synthesizer_signature);
         let sig = Signature::from_bytes(sig_bytes);
-        let unsigned = self.unsigned_bytes();
+        let unsigned = self.synthesis_unsigned_bytes();
         verify_signature(verification_key, &unsigned, &sig).map_err(|e| {
             WitnessError::SignatureInvalid {
                 detail: e.to_string(),
@@ -1124,7 +1131,7 @@ impl CapabilityWitness {
 
     /// Verify content hash integrity.
     pub fn verify_integrity(&self) -> Result<(), WitnessError> {
-        let computed = ContentHash::compute(&self.unsigned_bytes());
+        let computed = ContentHash::compute(&self.synthesis_unsigned_bytes());
         if computed == self.content_hash {
             Ok(())
         } else {
@@ -3011,9 +3018,7 @@ impl WitnessPublicationPipeline {
     ) -> Result<(), WitnessPublicationError> {
         // Witnesses are synthesized/signed in Draft state and may transition
         // afterward; verify against the canonical synthesis view.
-        let mut synthesis_view = witness.clone();
-        synthesis_view.lifecycle_state = LifecycleState::Draft;
-        let unsigned = synthesis_view.unsigned_bytes();
+        let unsigned = witness.synthesis_unsigned_bytes();
 
         let computed = ContentHash::compute(&unsigned);
         if computed != witness.content_hash {

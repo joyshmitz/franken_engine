@@ -15,6 +15,8 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
+use serde::{Deserialize, Serialize};
+
 use crate::ast::ParseGoal;
 use crate::baseline_interpreter::{
     ExecutionResult, InterpreterError, LaneChoice, LaneReason, LaneRouter, RoutedResult,
@@ -51,7 +53,7 @@ use crate::security_epoch::SecurityEpoch;
 // ---------------------------------------------------------------------------
 
 /// Preset selection for the loss matrix used in action selection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LossMatrixPreset {
     Balanced,
     Conservative,
@@ -79,8 +81,6 @@ pub struct OrchestratorConfig {
     pub loss_matrix_preset: LossMatrixPreset,
     /// Force a specific interpreter lane.
     pub force_lane: Option<LaneChoice>,
-    /// Override instruction budget.
-    pub instruction_budget: Option<u64>,
     /// Max drain ticks for cell close.
     pub drain_deadline_ticks: u64,
     /// Saga concurrency limit.
@@ -100,7 +100,6 @@ impl Default for OrchestratorConfig {
         Self {
             loss_matrix_preset: LossMatrixPreset::Balanced,
             force_lane: None,
-            instruction_budget: None,
             drain_deadline_ticks: 10_000,
             max_concurrent_sagas: 4,
             epoch: SecurityEpoch::from_raw(1),
@@ -116,7 +115,7 @@ impl Default for OrchestratorConfig {
 // ---------------------------------------------------------------------------
 
 /// An extension package submitted for execution.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtensionPackage {
     /// Unique extension identifier.
     pub extension_id: String,
@@ -553,7 +552,7 @@ impl ExecutionOrchestrator {
                 SagaType::Quarantine => quarantine_saga_steps(&package.extension_id),
                 SagaType::Eviction => eviction_saga_steps(&package.extension_id),
                 SagaType::Revocation => revocation_saga_steps(&package.extension_id),
-                _ => quarantine_saga_steps(&package.extension_id),
+                SagaType::Publish => unreachable!("action_to_saga_type never returns Publish"),
             };
             let saga_id_str = format!("{trace_id}:saga");
             let id =
@@ -567,11 +566,11 @@ impl ExecutionOrchestrator {
         Ok((Some(receipt), saga_id))
     }
 
-    fn next_trace_id(&mut self) -> String {
+    fn next_trace_id(&self) -> String {
         format!("{}:{}", self.config.trace_id_prefix, self.execution_counter)
     }
 
-    fn next_decision_id(&mut self) -> String {
+    fn next_decision_id(&self) -> String {
         format!(
             "{}:decision:{}",
             self.config.trace_id_prefix, self.execution_counter

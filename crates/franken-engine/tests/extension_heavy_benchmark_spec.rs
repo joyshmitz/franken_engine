@@ -63,10 +63,12 @@ fn benchmark_spec_contains_required_sections() {
     let spec = read_spec();
     let required_sections = [
         "## Required Benchmark Families",
+        "## Threat Scenario Matrix (Normative)",
         "## Scale Profile Matrix (Normative Defaults)",
         "## Per-Case Publication Requirements",
         "## Behavior-Equivalence Hard Gates",
         "## Scoring Formula (Binding)",
+        "## Transparent Scoring Governance",
         "## Fairness and Denominator Contract",
         "## Required Metric Families",
         "## Workload and Result Schema Contract",
@@ -74,6 +76,7 @@ fn benchmark_spec_contains_required_sections() {
         "## Reproducibility and Verifier Workflow",
         "## CI Publication Gate",
         "## Failure Semantics and Rollback",
+        "## Publication and Standardization Contract",
         "## Independent Verifier Onboarding",
     ];
 
@@ -204,6 +207,40 @@ fn required_metric_families_and_event_keys_are_declared() {
 }
 
 #[test]
+fn threat_scenario_matrix_declares_required_attack_categories() {
+    let spec = read_spec();
+    let required_scenarios = [
+        "credential theft",
+        "privilege escalation",
+        "data exfiltration",
+        "policy evasion",
+        "supply-chain compromise",
+    ];
+
+    for scenario in required_scenarios {
+        assert!(
+            spec.contains(scenario),
+            "threat scenario matrix missing scenario category fragment: {scenario}"
+        );
+    }
+
+    let required_fields = [
+        "`attack_category`",
+        "`scenario_id`",
+        "`expected_detection_outcome`",
+        "`expected_containment_outcome`",
+        "`expected_latency_bound_ms`",
+        "`corpus_checksum_sha256`",
+    ];
+    for field in required_fields {
+        assert!(
+            spec.contains(field),
+            "threat scenario matrix missing required field: {field}"
+        );
+    }
+}
+
+#[test]
 fn verifier_workflow_and_bundle_requirements_are_explicit() {
     let spec = read_spec();
     let required_items = [
@@ -220,6 +257,30 @@ fn verifier_workflow_and_bundle_requirements_are_explicit() {
         assert!(
             spec.contains(item),
             "verifier/bundle requirement missing: {item}"
+        );
+    }
+}
+
+#[test]
+fn transparent_scoring_and_publication_rules_are_explicit() {
+    let spec = read_spec();
+    let required_fragments = [
+        "Published weights are mandatory",
+        "No hidden or post-hoc adjustments",
+        "version bump and changelog entry",
+        "public review notes",
+        "docs/CLAIM_LANGUAGE_POLICY.md",
+        "`submission_id`",
+        "`benchmark_version`",
+        "`runtime_versions`",
+        "`score_bundle_digest`",
+        "`verifier_report_digest`",
+    ];
+
+    for fragment in required_fragments {
+        assert!(
+            spec.contains(fragment),
+            "missing transparent scoring/publication requirement fragment: {fragment}"
         );
     }
 }
