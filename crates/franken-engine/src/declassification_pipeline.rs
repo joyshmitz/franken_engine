@@ -379,12 +379,7 @@ impl DeclassificationPipeline {
                 "exceeds_threshold",
                 Some("loss_exceeds_threshold"),
             );
-            self.emit_stage_event(
-                request,
-                "decision",
-                "deny",
-                Some("loss_exceeds_threshold"),
-            );
+            self.emit_stage_event(request, "decision", "deny", Some("loss_exceeds_threshold"));
 
             // Deny — loss too high
             self.decision_count += 1;

@@ -213,8 +213,11 @@ impl Bulkhead {
     }
 
     fn is_at_pressure(&self) -> bool {
-        let threshold =
-            self.config.max_concurrent.saturating_mul(self.config.pressure_threshold_pct as usize) / 100;
+        let threshold = self
+            .config
+            .max_concurrent
+            .saturating_mul(self.config.pressure_threshold_pct as usize)
+            / 100;
         self.active_count() >= threshold
     }
 }

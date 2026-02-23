@@ -285,13 +285,12 @@ impl ExtensionHostLifecycleManager {
             let session_cell_id = self.session_cell_id(extension_id, session_id);
             if let Some(session_cell) = self.cell_manager.get_mut(&session_cell_id)
                 && session_cell.state() == RegionState::Running
+                && let Ok(outcome) =
+                    self.cancellation_manager
+                        .cancel_cell(session_cell, cx, LifecycleEvent::Unload)
             {
-                if let Ok(outcome) = self
-                    .cancellation_manager
-                    .cancel_cell(session_cell, cx, LifecycleEvent::Unload)
-                {
-                    self.cell_manager.archive_cell(&session_cell_id, outcome.finalize_result);
-                }
+                self.cell_manager
+                    .archive_cell(&session_cell_id, outcome.finalize_result);
             }
         }
 
@@ -311,7 +310,8 @@ impl ExtensionHostLifecycleManager {
                 message: e.to_string(),
             })?;
 
-        self.cell_manager.archive_cell(extension_id, outcome.finalize_result.clone());
+        self.cell_manager
+            .archive_cell(extension_id, outcome.finalize_result.clone());
 
         // Mark as unloaded.
         if let Some(record) = self.extensions.get_mut(extension_id) {
@@ -455,7 +455,8 @@ impl ExtensionHostLifecycleManager {
                 message: e.to_string(),
             })?;
 
-        self.cell_manager.archive_cell(&session_cell_id, outcome.finalize_result.clone());
+        self.cell_manager
+            .archive_cell(&session_cell_id, outcome.finalize_result.clone());
 
         // Remove session from record.
         if let Some(record) = self.extensions.get_mut(extension_id) {
@@ -507,13 +508,12 @@ impl ExtensionHostLifecycleManager {
             let session_cell_id = self.session_cell_id(extension_id, session_id);
             if let Some(session_cell) = self.cell_manager.get_mut(&session_cell_id)
                 && session_cell.state() == RegionState::Running
-            {
-                if let Ok(outcome) = self
+                && let Ok(outcome) = self
                     .cancellation_manager
                     .cancel_cell(session_cell, cx, event)
-                {
-                    self.cell_manager.archive_cell(&session_cell_id, outcome.finalize_result);
-                }
+            {
+                self.cell_manager
+                    .archive_cell(&session_cell_id, outcome.finalize_result);
             }
         }
 
@@ -533,7 +533,8 @@ impl ExtensionHostLifecycleManager {
                 message: e.to_string(),
             })?;
 
-        self.cell_manager.archive_cell(extension_id, outcome.finalize_result.clone());
+        self.cell_manager
+            .archive_cell(extension_id, outcome.finalize_result.clone());
 
         // Mark as unloaded.
         if let Some(record) = self.extensions.get_mut(extension_id) {

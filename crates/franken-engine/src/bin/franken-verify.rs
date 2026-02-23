@@ -124,10 +124,7 @@ fn run_containment(args: &[String]) -> Result<i32, String> {
     Ok(report.exit_code())
 }
 
-fn parse_input_flags<'a>(
-    args: &'a [String],
-    subcommand: &str,
-) -> Result<(&'a str, bool), String> {
+fn parse_input_flags<'a>(args: &'a [String], subcommand: &str) -> Result<(&'a str, bool), String> {
     let mut input_path: Option<&str> = None;
     let mut summary = false;
 

@@ -848,7 +848,10 @@ impl PolicyDecider for CounterfactualDecider {
 
         // Re-decide: choose action with lowest expected loss that meets threshold.
         let mut best_action = snapshot.chosen_action.clone();
-        let mut best_cost = remapped.get(&best_action).copied().unwrap_or(snapshot.outcome_millionths);
+        let mut best_cost = remapped
+            .get(&best_action)
+            .copied()
+            .unwrap_or(snapshot.outcome_millionths);
 
         if best_cost > threshold {
             best_cost = i64::MAX;
@@ -863,7 +866,10 @@ impl PolicyDecider for CounterfactualDecider {
 
         if best_cost == i64::MAX {
             best_action = snapshot.chosen_action.clone();
-            best_cost = remapped.get(&best_action).copied().unwrap_or(snapshot.outcome_millionths);
+            best_cost = remapped
+                .get(&best_action)
+                .copied()
+                .unwrap_or(snapshot.outcome_millionths);
         }
 
         (best_action, best_cost)

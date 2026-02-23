@@ -572,7 +572,11 @@ impl CellManager {
     }
 
     /// Register a pre-created cell.
-    pub fn insert_cell(&mut self, cell_id: impl Into<String>, cell: ExecutionCell) -> &mut ExecutionCell {
+    pub fn insert_cell(
+        &mut self,
+        cell_id: impl Into<String>,
+        cell: ExecutionCell,
+    ) -> &mut ExecutionCell {
         let cell_id = cell_id.into();
         self.cells.insert(cell_id.clone(), cell);
         self.cells.get_mut(&cell_id).expect("just inserted")
@@ -807,11 +811,12 @@ impl ExtensionHostBinding {
         let trace_id = trace_id.into();
 
         let (decision_id, policy_id, session_cell) = {
-            let cell = self.manager.get_mut(extension_id).ok_or_else(|| {
-                CellError::CellNotFound {
-                    cell_id: extension_id.to_string(),
-                }
-            })?;
+            let cell =
+                self.manager
+                    .get_mut(extension_id)
+                    .ok_or_else(|| CellError::CellNotFound {
+                        cell_id: extension_id.to_string(),
+                    })?;
 
             let decision_id = cell.decision_id.clone();
             let policy_id = cell.policy_id.clone();

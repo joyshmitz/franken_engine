@@ -487,8 +487,11 @@ pub fn evaluate_controller_interference(
                     let right_reg =
                         lookup_registration(&registration_index, &writes[j].controller_id)
                             .expect("registration must exist");
-                    let separation = left_reg.timescale.write_interval_millionths
-                        .abs_diff(right_reg.timescale.write_interval_millionths) as i64;
+                    let separation = left_reg
+                        .timescale
+                        .write_interval_millionths
+                        .abs_diff(right_reg.timescale.write_interval_millionths)
+                        as i64;
                     if separation < scenario.config.min_timescale_separation_millionths {
                         conflicting_pair = Some((
                             writes[i].controller_id.clone(),

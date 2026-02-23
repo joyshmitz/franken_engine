@@ -706,7 +706,11 @@ impl InterpreterCore {
             });
         }
         let actual_reg = self.register_base + reg as usize;
-        Ok(self.registers.get(actual_reg).cloned().unwrap_or(Value::Undefined))
+        Ok(self
+            .registers
+            .get(actual_reg)
+            .cloned()
+            .unwrap_or(Value::Undefined))
     }
 
     fn write_reg(&mut self, reg: u32, value: Value) -> Result<(), InterpreterError> {

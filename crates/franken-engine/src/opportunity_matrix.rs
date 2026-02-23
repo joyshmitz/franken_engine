@@ -231,7 +231,10 @@ pub fn hotspot_profile_from_flamegraphs(
 ///
 /// Result is in `[1_000_000, 2_000_000]` where `1_000_000` is neutral and
 /// larger values indicate higher pressure to prioritize wins.
-pub fn benchmark_pressure_from_cases(node_cases: &[BenchmarkCase], bun_cases: &[BenchmarkCase]) -> i64 {
+pub fn benchmark_pressure_from_cases(
+    node_cases: &[BenchmarkCase],
+    bun_cases: &[BenchmarkCase],
+) -> i64 {
     let mut speeds = Vec::new();
     for case in node_cases.iter().chain(bun_cases.iter()) {
         if case.throughput_baseline_tps <= 0.0 {
@@ -267,7 +270,11 @@ pub fn derive_candidates_from_hotspots(
     default_effort_hours_millionths: i64,
     max_candidates: usize,
 ) -> Vec<OptimizationCandidateInput> {
-    let total_samples = hotspots.iter().map(|entry| entry.sample_count).sum::<u64>().max(1);
+    let total_samples = hotspots
+        .iter()
+        .map(|entry| entry.sample_count)
+        .sum::<u64>()
+        .max(1);
     hotspots
         .iter()
         .take(max_candidates)
@@ -394,15 +401,19 @@ fn run_impl(
                 OpportunityStatus::RejectedLowScore
             };
 
-            let score_detail =
-                compute_score_millionths(candidate, hotpath_weight, request.benchmark_pressure_millionths);
-            let threshold_met = score_detail.score_millionths >= OPPORTUNITY_SCORE_THRESHOLD_MILLIONTHS;
-            let final_status = if matches!(status, OpportunityStatus::RejectedLowScore) && threshold_met
-            {
-                OpportunityStatus::Selected
-            } else {
-                status
-            };
+            let score_detail = compute_score_millionths(
+                candidate,
+                hotpath_weight,
+                request.benchmark_pressure_millionths,
+            );
+            let threshold_met =
+                score_detail.score_millionths >= OPPORTUNITY_SCORE_THRESHOLD_MILLIONTHS;
+            let final_status =
+                if matches!(status, OpportunityStatus::RejectedLowScore) && threshold_met {
+                    OpportunityStatus::Selected
+                } else {
+                    status
+                };
             if matches!(final_status, OpportunityStatus::RejectedLowScore) {
                 rejection_reason = Some("SCORE_BELOW_THRESHOLD".to_string());
             }
@@ -455,7 +466,8 @@ fn run_impl(
             predicted_gain_millionths: entry.predicted_gain_millionths,
             actual_gain_millionths: entry.actual_gain_millionths,
             signed_error_millionths: entry.actual_gain_millionths - entry.predicted_gain_millionths,
-            absolute_error_millionths: (entry.actual_gain_millionths - entry.predicted_gain_millionths)
+            absolute_error_millionths: (entry.actual_gain_millionths
+                - entry.predicted_gain_millionths)
                 .abs(),
             completed_at_utc: entry.completed_at_utc.clone(),
         })
@@ -539,10 +551,15 @@ fn validate_request(request: &OpportunityMatrixRequest) -> Result<(), Opportunit
 }
 
 fn hotspot_weight_map(hotspots: &[HotspotProfileEntry]) -> BTreeMap<String, i64> {
-    let total_samples = hotspots.iter().map(|entry| entry.sample_count).sum::<u64>().max(1);
+    let total_samples = hotspots
+        .iter()
+        .map(|entry| entry.sample_count)
+        .sum::<u64>()
+        .max(1);
     let mut map = BTreeMap::new();
     for hotspot in hotspots {
-        let weight = ((hotspot.sample_count as i128 * 1_000_000i128) / total_samples as i128) as i64;
+        let weight =
+            ((hotspot.sample_count as i128 * 1_000_000i128) / total_samples as i128) as i64;
         map.insert(hotspot.key(), weight.clamp(0, 1_000_000));
     }
     map
@@ -710,8 +727,14 @@ mod tests {
         let request = base_request();
         let decision_a = run_opportunity_matrix_scoring(&request);
         let decision_b = run_opportunity_matrix_scoring(&request);
-        assert_eq!(decision_a.ranked_opportunities, decision_b.ranked_opportunities);
-        assert_eq!(decision_a.selected_opportunity_ids, decision_b.selected_opportunity_ids);
+        assert_eq!(
+            decision_a.ranked_opportunities,
+            decision_b.ranked_opportunities
+        );
+        assert_eq!(
+            decision_a.selected_opportunity_ids,
+            decision_b.selected_opportunity_ids
+        );
         assert!(decision_a.has_selected_opportunities());
         assert_eq!(
             decision_a.ranked_opportunities[0].opportunity_id,
@@ -733,10 +756,12 @@ mod tests {
         let decision = run_opportunity_matrix_scoring(&request);
         assert_eq!(decision.outcome, "deny");
         assert!(decision.selected_opportunity_ids.is_empty());
-        assert!(decision
-            .ranked_opportunities
-            .iter()
-            .all(|candidate| !candidate.threshold_met));
+        assert!(
+            decision
+                .ranked_opportunities
+                .iter()
+                .all(|candidate| !candidate.threshold_met)
+        );
     }
 
     #[test]
@@ -764,10 +789,12 @@ mod tests {
         request.candidates[0].engineering_effort_hours_millionths = 0;
         let decision = run_opportunity_matrix_scoring(&request);
         assert_eq!(decision.outcome, "allow");
-        assert!(decision
-            .ranked_opportunities
-            .iter()
-            .all(|entry| entry.score_millionths >= 0));
+        assert!(
+            decision
+                .ranked_opportunities
+                .iter()
+                .all(|entry| entry.score_millionths >= 0)
+        );
     }
 
     #[test]
@@ -810,13 +837,7 @@ mod tests {
             },
         ];
         let derived = derive_candidates_from_hotspots(
-            &hotspots,
-            1_300_000,
-            2,
-            200_000,
-            1_000_000,
-            2_000_000,
-            2,
+            &hotspots, 1_300_000, 2, 200_000, 1_000_000, 2_000_000, 2,
         );
         assert_eq!(derived.len(), 2);
         assert_eq!(derived[0].opportunity_id, "opp:vm-core:dispatch_loop");
