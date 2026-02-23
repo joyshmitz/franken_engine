@@ -1325,9 +1325,9 @@ fn percentile_ms(sorted_values: &[u64], percentile_bps: u16) -> u64 {
 
 fn format_millionths(value: i64) -> String {
     let sign = if value < 0 { "-" } else { "" };
-    let abs = value.abs();
-    let whole = abs / MILLION;
-    let fractional = abs % MILLION;
+    let abs = value.unsigned_abs();
+    let whole = abs / 1_000_000;
+    let fractional = abs % 1_000_000;
     format!("{sign}{whole}.{fractional:06}")
 }
 

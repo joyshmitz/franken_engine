@@ -2125,7 +2125,7 @@ fn parse_waiver_toml(content: &str) -> io::Result<ConformanceWaiverSet> {
 
     fn parse_quoted(line_no: usize, value: &str) -> io::Result<String> {
         let trimmed = value.trim();
-        if trimmed.len() <= 2 || !trimmed.starts_with('"') || !trimmed.ends_with('"') {
+        if trimmed.len() < 2 || !trimmed.starts_with('"') || !trimmed.ends_with('"') {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("invalid TOML string at line {line_no}"),

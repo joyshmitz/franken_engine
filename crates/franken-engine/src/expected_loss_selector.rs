@@ -775,9 +775,9 @@ fn confidence_interval_from_posterior(
         .max()
         .unwrap_or(0);
     let uncertainty = MILLION.saturating_sub(max_prob);
-    let delta_uncertainty = ((selected_loss_millionths.abs() as i128 * uncertainty as i128)
+    let delta_uncertainty = ((selected_loss_millionths.unsigned_abs() as i128 * uncertainty as i128)
         / (MILLION as i128 * 5)) as i64;
-    let delta_margin = (runner_up_loss_millionths - selected_loss_millionths).abs() / 10;
+    let delta_margin = (runner_up_loss_millionths.abs_diff(selected_loss_millionths) as i64) / 10;
     let delta = delta_uncertainty.max(delta_margin).max(1);
     DecisionConfidenceInterval {
         lower_millionths: selected_loss_millionths.saturating_sub(delta),
@@ -820,7 +820,7 @@ fn compute_borderline_sensitivity(
         return (false, BTreeMap::new());
     }
     let margin = runner_up_el.saturating_sub(selected_el);
-    let threshold = selected_el.abs().max(1) / 10;
+    let threshold = (selected_el.unsigned_abs() as i64).max(1) / 10;
     let borderline = margin <= threshold;
 
     if !borderline {
@@ -835,7 +835,7 @@ fn compute_borderline_sensitivity(
     for state in RiskState::ALL {
         let loss_sel = loss_matrix.loss(selected_action, state);
         let loss_run = loss_matrix.loss(runner_up_action, state);
-        let diff = (loss_run - loss_sel).abs();
+        let diff = loss_run.abs_diff(loss_sel) as i64;
         if diff > 0 {
             let delta = (margin as i128 * MILLION as i128 / diff as i128) as i64;
             deltas.insert(state.to_string(), delta);

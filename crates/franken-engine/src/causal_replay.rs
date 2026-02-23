@@ -323,6 +323,12 @@ impl TraceRecord {
     /// Verify the hash-chain integrity of all entries.
     pub fn verify_chain_integrity(&self) -> Result<(), ReplayError> {
         if self.entries.is_empty() {
+            if self.chain_hash != ContentHash::compute(b"empty-trace") {
+                return Err(ReplayError::ChainIntegrity {
+                    entry_index: 0,
+                    detail: "chain_hash does not match empty-trace hash".into(),
+                });
+            }
             return Ok(());
         }
 
@@ -834,18 +840,30 @@ impl PolicyDecider for CounterfactualDecider {
                 .get(action)
                 .cloned()
                 .unwrap_or_else(|| action.clone());
-            remapped.insert(effective_action, *cost);
+            let existing = remapped.entry(effective_action).or_insert(*cost);
+            if *cost < *existing {
+                *existing = *cost;
+            }
         }
 
         // Re-decide: choose action with lowest expected loss that meets threshold.
         let mut best_action = snapshot.chosen_action.clone();
-        let mut best_cost = snapshot.outcome_millionths;
+        let mut best_cost = remapped.get(&best_action).copied().unwrap_or(snapshot.outcome_millionths);
+
+        if best_cost > threshold {
+            best_cost = i64::MAX;
+        }
 
         for (action, cost) in &remapped {
             if *cost <= threshold && *cost < best_cost {
                 best_action = action.clone();
                 best_cost = *cost;
             }
+        }
+
+        if best_cost == i64::MAX {
+            best_action = snapshot.chosen_action.clone();
+            best_cost = remapped.get(&best_action).copied().unwrap_or(snapshot.outcome_millionths);
         }
 
         (best_action, best_cost)

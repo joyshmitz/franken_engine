@@ -844,7 +844,7 @@ impl CounterexampleSynthesizer {
                 let b_reads: BTreeSet<String> =
                     b.read_metrics.intersection(&shared).cloned().collect();
 
-                let separation = (a.timescale_millionths - b.timescale_millionths).abs();
+                let separation = a.timescale_millionths.abs_diff(b.timescale_millionths) as i64;
                 if !a.has_timescale_statement() || !b.has_timescale_statement() {
                     interferences.push(ControllerInterference {
                         kind: InterferenceKind::TimescaleConflict,

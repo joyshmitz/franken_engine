@@ -38,7 +38,7 @@ fn pos_height(pos: u64) -> u32 {
 
 /// Check if a number's binary representation is all 1-bits (e.g. 1, 3, 7, 15...).
 fn is_all_ones(n: u64) -> bool {
-    n > 0 && n == (1u64 << n.count_ones()) - 1
+    n > 0 && (n & n.wrapping_add(1)) == 0
 }
 
 /// Convert a 0-indexed leaf number to its MMR position.
@@ -126,11 +126,11 @@ fn peak_positions(size: u64) -> Vec<u64> {
     while remaining > 0 {
         // Find the largest complete binary tree that fits.
         let mut h = 64 - remaining.leading_zeros(); // bit length
-        let mut tree_size = (1u64 << h) - 1;
+        let mut tree_size = if h == 64 { u64::MAX } else { (1u64 << h) - 1 };
 
         if tree_size > remaining {
             h -= 1;
-            tree_size = (1u64 << h) - 1;
+            tree_size = if h == 64 { u64::MAX } else { (1u64 << h) - 1 };
         }
 
         // Peak is at the top of this complete tree.
