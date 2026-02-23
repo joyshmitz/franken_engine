@@ -527,6 +527,28 @@ impl SagaOrchestrator {
             });
         }
 
+        // Idempotency check.
+        if saga.step_records.iter().any(|r| {
+            r.action_type == ActionType::Forward
+                && r.step_index == step_index
+                && r.idempotency_key_hex == idempotency_key_hex
+        }) {
+            return Ok(saga.state.clone());
+        }
+
+        // Validate state
+        match saga.state {
+            SagaState::InProgress {
+                step_index: current_step,
+            } if current_step == step_index => {}
+            _ => {
+                return Err(SagaError::SagaAlreadyTerminal {
+                    saga_id: saga_id.to_string(),
+                    state: saga.state.to_string(),
+                });
+            }
+        }
+
         let step_name = saga.steps[step_index].step_name.clone();
 
         saga.step_records.push(StepRecord {
@@ -625,6 +647,28 @@ impl SagaOrchestrator {
                 step_index,
                 step_count: saga.steps.len(),
             });
+        }
+
+        // Idempotency check.
+        if saga.step_records.iter().any(|r| {
+            r.action_type == ActionType::Compensate
+                && r.step_index == step_index
+                && r.idempotency_key_hex == idempotency_key_hex
+        }) {
+            return Ok(saga.state.clone());
+        }
+
+        // Validate state
+        match saga.state {
+            SagaState::Compensating {
+                step_index: current_step,
+            } if current_step == step_index => {}
+            _ => {
+                return Err(SagaError::SagaAlreadyTerminal {
+                    saga_id: saga_id.to_string(),
+                    state: saga.state.to_string(),
+                });
+            }
         }
 
         let step_name = saga.steps[step_index].step_name.clone();

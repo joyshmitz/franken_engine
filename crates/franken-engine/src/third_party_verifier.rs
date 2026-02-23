@@ -280,12 +280,7 @@ pub fn verify_replay_claim(bundle: &ReplayClaimBundle) -> ThirdPartyVerification
                 &mut checks,
                 &mut saw_skipped,
             ),
-            Err(error) => fail_check(
-                &mut checks,
-                "signature_key_parse",
-                CODE_REPLAY_PARSE,
-                error,
-            ),
+            Err(error) => fail_check(&mut checks, "signature_key_parse", CODE_REPLAY_PARSE, error),
         }
     }
 
@@ -302,12 +297,7 @@ pub fn verify_replay_claim(bundle: &ReplayClaimBundle) -> ThirdPartyVerification
                 &mut checks,
                 &mut saw_skipped,
             ),
-            Err(error) => fail_check(
-                &mut checks,
-                "receipt_key_parse",
-                CODE_REPLAY_PARSE,
-                error,
-            ),
+            Err(error) => fail_check(&mut checks, "receipt_key_parse", CODE_REPLAY_PARSE, error),
         }
     }
 
@@ -349,7 +339,10 @@ pub fn verify_containment_claim(bundle: &ContainmentClaimBundle) -> ThirdPartyVe
         pass_check(
             &mut checks,
             "scenario_count_matches",
-            format!("scenarios={} and total_scenarios={}", total, bundle.result.total_scenarios),
+            format!(
+                "scenarios={} and total_scenarios={}",
+                total, bundle.result.total_scenarios
+            ),
         );
     } else {
         fail_check(
@@ -548,7 +541,10 @@ fn compare_float_check(
     }
 }
 
-fn verdict_from_checks(checks: &[VerificationCheckResult], saw_skipped: bool) -> VerificationVerdict {
+fn verdict_from_checks(
+    checks: &[VerificationCheckResult],
+    saw_skipped: bool,
+) -> VerificationVerdict {
     if checks.is_empty() {
         return VerificationVerdict::Inconclusive;
     }

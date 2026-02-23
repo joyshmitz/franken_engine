@@ -14,8 +14,7 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 pub const PLAS_BENCHMARK_BUNDLE_COMPONENT: &str = "plas_benchmark_bundle";
-pub const PLAS_BENCHMARK_BUNDLE_SCHEMA_VERSION: &str =
-    "franken-engine.plas-benchmark-bundle.v1";
+pub const PLAS_BENCHMARK_BUNDLE_SCHEMA_VERSION: &str = "franken-engine.plas-benchmark-bundle.v1";
 
 const ERROR_INVALID_INPUT: &str = "FE-PLAS-BENCH-2001";
 const ERROR_DUPLICATE_EXTENSION: &str = "FE-PLAS-BENCH-2002";
@@ -326,10 +325,17 @@ impl PlasBenchmarkBundleDecision {
         out.push_str("# PLAS Benchmark Bundle\n\n");
         out.push_str(&format!("- Bundle ID: `{}`\n", self.bundle_id));
         out.push_str(&format!("- Benchmark Run: `{}`\n", self.benchmark_run_id));
-        out.push_str(&format!("- Generated At (ns): `{}`\n", self.generated_at_ns));
+        out.push_str(&format!(
+            "- Generated At (ns): `{}`\n",
+            self.generated_at_ns
+        ));
         out.push_str(&format!(
             "- Publication Gate: **{}**\n\n",
-            if self.publish_allowed { "ALLOW" } else { "DENY" }
+            if self.publish_allowed {
+                "ALLOW"
+            } else {
+                "DENY"
+            }
         ));
 
         if !self.blockers.is_empty() {
@@ -351,7 +357,10 @@ impl PlasBenchmarkBundleDecision {
         ));
         out.push_str(&format!(
             "| Authoring-time reduction | {} | >= {} | {} |\n",
-            format_pct_signed(self.overall_summary.mean_authoring_time_reduction_millionths),
+            format_pct_signed(
+                self.overall_summary
+                    .mean_authoring_time_reduction_millionths
+            ),
             format_pct_signed(self.thresholds.min_authoring_time_reduction_millionths),
             pass_mark(self.overall_summary.authoring_time_reduction_threshold_pass),
         ));
@@ -363,7 +372,10 @@ impl PlasBenchmarkBundleDecision {
         ));
         out.push_str(&format!(
             "| Escrow-event rate (/hour) | {} | {} | {} |\n",
-            format_scaled_rate(self.overall_summary.mean_escrow_event_rate_per_hour_millionths),
+            format_scaled_rate(
+                self.overall_summary
+                    .mean_escrow_event_rate_per_hour_millionths
+            ),
             self.thresholds
                 .max_escrow_event_rate_per_hour_millionths
                 .map(format_scaled_rate)
@@ -564,7 +576,10 @@ pub fn build_plas_benchmark_bundle(
         &extension_results,
         &thresholds,
         missing_cohorts.is_empty(),
-        cohort_summaries.iter().map(|summary| summary.cohort).collect(),
+        cohort_summaries
+            .iter()
+            .map(|summary| summary.cohort)
+            .collect(),
     );
 
     if !overall_summary.over_privilege_ratio_threshold_pass {
@@ -764,7 +779,8 @@ fn summarize_cohort(
         mean_over <= thresholds.max_over_privilege_ratio_millionths;
     let authoring_time_reduction_threshold_pass =
         mean_authoring >= thresholds.min_authoring_time_reduction_millionths;
-    let false_deny_rate_threshold_pass = mean_false_deny <= thresholds.max_false_deny_rate_millionths;
+    let false_deny_rate_threshold_pass =
+        mean_false_deny <= thresholds.max_false_deny_rate_millionths;
     let witness_coverage_threshold_pass =
         witness_coverage >= thresholds.min_witness_coverage_millionths;
     let escrow_event_rate_threshold_pass = thresholds
@@ -834,7 +850,8 @@ fn summarize_overall(
         mean_over <= thresholds.max_over_privilege_ratio_millionths;
     let authoring_time_reduction_threshold_pass =
         mean_authoring >= thresholds.min_authoring_time_reduction_millionths;
-    let false_deny_rate_threshold_pass = mean_false_deny <= thresholds.max_false_deny_rate_millionths;
+    let false_deny_rate_threshold_pass =
+        mean_false_deny <= thresholds.max_false_deny_rate_millionths;
     let witness_coverage_threshold_pass =
         witness_coverage >= thresholds.min_witness_coverage_millionths;
     let escrow_event_rate_threshold_pass = thresholds
@@ -1085,9 +1102,5 @@ fn format_scaled_rate(millionths: u64) -> String {
 }
 
 fn pass_mark(pass: bool) -> &'static str {
-    if pass {
-        "yes"
-    } else {
-        "no"
-    }
+    if pass { "yes" } else { "no" }
 }

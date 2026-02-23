@@ -386,7 +386,7 @@ impl DpBudgetSemantics {
     /// Compute the maximum number of epochs before budget exhaustion
     /// under the given composition method.
     pub fn max_epochs(&self) -> u64 {
-        match self.composition_method {
+        let eps_epochs = match self.composition_method {
             CompositionMethod::Basic => {
                 // Linear composition: total = k * epsilon_per_epoch.
                 (self.lifetime_epsilon_budget_millionths / self.epsilon_per_epoch_millionths) as u64
@@ -399,6 +399,14 @@ impl DpBudgetSemantics {
                     self.lifetime_epsilon_budget_millionths / self.epsilon_per_epoch_millionths;
                 (ratio * ratio) as u64
             }
+        };
+
+        if self.delta_per_epoch_millionths > 0 {
+            let delta_epochs =
+                (self.lifetime_delta_budget_millionths / self.delta_per_epoch_millionths) as u64;
+            eps_epochs.min(delta_epochs)
+        } else {
+            eps_epochs
         }
     }
 }
@@ -1422,6 +1430,14 @@ impl PrivacyLearningContract {
             CanonicalValue::I64(self.dp_budget.lifetime_epsilon_budget_millionths),
         );
         map.insert(
+            "dp_delta_per_epoch".to_string(),
+            CanonicalValue::I64(self.dp_budget.delta_per_epoch_millionths),
+        );
+        map.insert(
+            "dp_lifetime_delta".to_string(),
+            CanonicalValue::I64(self.dp_budget.lifetime_delta_budget_millionths),
+        );
+        map.insert(
             "epoch".to_string(),
             CanonicalValue::U64(self.epoch.as_u64()),
         );
@@ -1794,8 +1810,7 @@ impl ShadowBurnInThresholdProfile {
             || self.min_shadow_success_rate_millionths > 1_000_000
         {
             return Err(ContractError::InvalidShadowEvaluation {
-                detail: "min_shadow_success_rate_millionths must be in 1..=1_000_000"
-                    .to_string(),
+                detail: "min_shadow_success_rate_millionths must be in 1..=1_000_000".to_string(),
             });
         }
         if self.max_false_deny_rate_millionths > 1_000_000 {
@@ -1882,7 +1897,10 @@ impl ShadowEvaluationGateConfig {
         Ok(())
     }
 
-    fn burn_in_profile_for(&self, extension_class: ShadowExtensionClass) -> &ShadowBurnInThresholdProfile {
+    fn burn_in_profile_for(
+        &self,
+        extension_class: ShadowExtensionClass,
+    ) -> &ShadowBurnInThresholdProfile {
         self.burn_in_profiles_by_extension_class
             .get(&extension_class)
             .unwrap_or(&self.default_burn_in_profile)
@@ -2231,9 +2249,7 @@ impl ShadowPromotionDecisionArtifact {
                 ),
                 (
                     "require_verified_rollback_artifacts".to_string(),
-                    CanonicalValue::Bool(
-                        self.burn_in_profile.require_verified_rollback_artifacts,
-                    ),
+                    CanonicalValue::Bool(self.burn_in_profile.require_verified_rollback_artifacts),
                 ),
             ])),
         );
@@ -2716,7 +2732,8 @@ impl ShadowEvaluationGate {
         if candidate.false_deny_rate_millionths > burn_in_profile.max_false_deny_rate_millionths {
             failure_reasons.push(format!(
                 "false-deny rate {} exceeds threshold {}",
-                candidate.false_deny_rate_millionths, burn_in_profile.max_false_deny_rate_millionths
+                candidate.false_deny_rate_millionths,
+                burn_in_profile.max_false_deny_rate_millionths
             ));
             burn_in_early_terminated = true;
             error_code.get_or_insert("FE-PLC-SHADOW-0010");
