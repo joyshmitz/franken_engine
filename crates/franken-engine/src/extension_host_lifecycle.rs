@@ -286,9 +286,12 @@ impl ExtensionHostLifecycleManager {
             if let Some(session_cell) = self.cell_manager.get_mut(&session_cell_id)
                 && session_cell.state() == RegionState::Running
             {
-                let _ =
-                    self.cancellation_manager
-                        .cancel_cell(session_cell, cx, LifecycleEvent::Unload);
+                if let Ok(outcome) = self
+                    .cancellation_manager
+                    .cancel_cell(session_cell, cx, LifecycleEvent::Unload)
+                {
+                    self.cell_manager.archive_cell(&session_cell_id, outcome.finalize_result);
+                }
             }
         }
 
@@ -307,6 +310,8 @@ impl ExtensionHostLifecycleManager {
                 error_code: e.error_code().to_string(),
                 message: e.to_string(),
             })?;
+
+        self.cell_manager.archive_cell(extension_id, outcome.finalize_result.clone());
 
         // Mark as unloaded.
         if let Some(record) = self.extensions.get_mut(extension_id) {
@@ -377,23 +382,24 @@ impl ExtensionHostLifecycleManager {
         }
 
         // Create session sub-cell via the extension cell.
-        let ext_cell_mut = self.cell_manager.get_mut(extension_id).ok_or_else(|| {
-            HostLifecycleError::ExtensionNotFound {
-                extension_id: extension_id.to_string(),
-            }
-        })?;
-        let _child = ext_cell_mut
-            .create_session(&session_cell_id, &trace_id)
-            .map_err(|e| HostLifecycleError::CellError {
-                extension_id: extension_id.to_string(),
-                error_code: e.error_code().to_string(),
-                message: e.to_string(),
+        let child = {
+            let ext_cell_mut = self.cell_manager.get_mut(extension_id).ok_or_else(|| {
+                HostLifecycleError::ExtensionNotFound {
+                    extension_id: extension_id.to_string(),
+                }
             })?;
+            ext_cell_mut
+                .create_session(&session_cell_id, &trace_id)
+                .map_err(|e| HostLifecycleError::CellError {
+                    extension_id: extension_id.to_string(),
+                    error_code: e.error_code().to_string(),
+                    message: e.to_string(),
+                })?
+        };
 
         // Also register the session in the CellManager for independent access.
         self.session_counter += 1;
-        self.cell_manager
-            .create_extension_cell(&session_cell_id, &trace_id);
+        self.cell_manager.insert_cell(&session_cell_id, child);
 
         // Track session in the extension record.
         if let Some(record) = self.extensions.get_mut(extension_id) {
@@ -449,6 +455,8 @@ impl ExtensionHostLifecycleManager {
                 message: e.to_string(),
             })?;
 
+        self.cell_manager.archive_cell(&session_cell_id, outcome.finalize_result.clone());
+
         // Remove session from record.
         if let Some(record) = self.extensions.get_mut(extension_id) {
             record.sessions.remove(session_id);
@@ -500,9 +508,12 @@ impl ExtensionHostLifecycleManager {
             if let Some(session_cell) = self.cell_manager.get_mut(&session_cell_id)
                 && session_cell.state() == RegionState::Running
             {
-                let _ = self
+                if let Ok(outcome) = self
                     .cancellation_manager
-                    .cancel_cell(session_cell, cx, event);
+                    .cancel_cell(session_cell, cx, event)
+                {
+                    self.cell_manager.archive_cell(&session_cell_id, outcome.finalize_result);
+                }
             }
         }
 
@@ -521,6 +532,8 @@ impl ExtensionHostLifecycleManager {
                 error_code: e.error_code().to_string(),
                 message: e.to_string(),
             })?;
+
+        self.cell_manager.archive_cell(extension_id, outcome.finalize_result.clone());
 
         // Mark as unloaded.
         if let Some(record) = self.extensions.get_mut(extension_id) {

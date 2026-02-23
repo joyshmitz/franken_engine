@@ -506,12 +506,16 @@ impl CancellationManager {
         cx: &mut C,
         event: LifecycleEvent,
     ) -> Result<CancellationOutcome, CancellationError> {
-        let cell = manager
-            .get_mut(cell_id)
-            .ok_or_else(|| CancellationError::CellNotFound {
-                cell_id: cell_id.to_string(),
-            })?;
-        self.cancel_cell(cell, cx, event)
+        let outcome = {
+            let cell = manager
+                .get_mut(cell_id)
+                .ok_or_else(|| CancellationError::CellNotFound {
+                    cell_id: cell_id.to_string(),
+                })?;
+            self.cancel_cell(cell, cx, event)?
+        };
+        manager.archive_cell(cell_id, outcome.finalize_result.clone());
+        Ok(outcome)
     }
 
     /// Cancel all active cells in a manager with the same lifecycle event.

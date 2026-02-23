@@ -571,6 +571,13 @@ impl CellManager {
         self.cells.get_mut(&cell_id).expect("just inserted")
     }
 
+    /// Register a pre-created cell.
+    pub fn insert_cell(&mut self, cell_id: impl Into<String>, cell: ExecutionCell) -> &mut ExecutionCell {
+        let cell_id = cell_id.into();
+        self.cells.insert(cell_id.clone(), cell);
+        self.cells.get_mut(&cell_id).expect("just inserted")
+    }
+
     /// Get a reference to a cell.
     pub fn get(&self, cell_id: &str) -> Option<&ExecutionCell> {
         self.cells.get(cell_id)
@@ -579,6 +586,14 @@ impl CellManager {
     /// Get a mutable reference to a cell.
     pub fn get_mut(&mut self, cell_id: &str) -> Option<&mut ExecutionCell> {
         self.cells.get_mut(cell_id)
+    }
+
+    /// Move a finalized cell to the closed set.
+    pub fn archive_cell(&mut self, cell_id: &str, result: FinalizeResult) {
+        if let Some(cell) = self.cells.remove(cell_id) {
+            let _ = cell;
+        }
+        self.closed_cells.push((cell_id.to_string(), result));
     }
 
     /// Close a cell and move it to the closed set.
@@ -791,18 +806,21 @@ impl ExtensionHostBinding {
         let session_id = session_id.into();
         let trace_id = trace_id.into();
 
-        let cell =
-            self.manager
-                .cells
-                .get_mut(extension_id)
-                .ok_or_else(|| CellError::CellNotFound {
+        let (decision_id, policy_id, session_cell) = {
+            let cell = self.manager.get_mut(extension_id).ok_or_else(|| {
+                CellError::CellNotFound {
                     cell_id: extension_id.to_string(),
-                })?;
+                }
+            })?;
 
-        let decision_id = cell.decision_id.clone();
-        let policy_id = cell.policy_id.clone();
+            let decision_id = cell.decision_id.clone();
+            let policy_id = cell.policy_id.clone();
 
-        let _session_cell = cell.create_session(&session_id, &trace_id)?;
+            let session_cell = cell.create_session(&session_id, &trace_id)?;
+            (decision_id, policy_id, session_cell)
+        };
+
+        self.manager.insert_cell(&session_id, session_cell);
 
         self.emit_evidence(
             &trace_id,
