@@ -12,7 +12,12 @@ use frankenengine_engine::cross_repo_contract::RegressionClass;
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
-fn make_surface(sibling: SiblingRepo, id: &str, kind: SurfaceKind, vc: VersionClass) -> BoundarySurface {
+fn make_surface(
+    sibling: SiblingRepo,
+    id: &str,
+    kind: SurfaceKind,
+    vc: VersionClass,
+) -> BoundarySurface {
     BoundarySurface {
         sibling,
         surface_id: id.to_string(),
@@ -89,7 +94,12 @@ fn sibling_repo_display_matches_as_str() {
 fn sibling_repo_ordering_is_declaration_order() {
     let all = SiblingRepo::all();
     for i in 1..all.len() {
-        assert!(all[i - 1] < all[i], "{:?} should be < {:?}", all[i - 1], all[i]);
+        assert!(
+            all[i - 1] < all[i],
+            "{:?} should be < {:?}",
+            all[i - 1],
+            all[i]
+        );
     }
 }
 
@@ -119,7 +129,10 @@ fn sibling_repo_copy_eq() {
 fn sibling_repo_primary_count() {
     let primary_count = SiblingRepo::all().iter().filter(|r| r.is_primary()).count();
     assert_eq!(primary_count, 4);
-    let non_primary = SiblingRepo::all().iter().filter(|r| !r.is_primary()).count();
+    let non_primary = SiblingRepo::all()
+        .iter()
+        .filter(|r| !r.is_primary())
+        .count();
     assert_eq!(non_primary, 2);
 }
 
@@ -173,7 +186,12 @@ fn surface_kind_display_matches_as_str() {
 fn surface_kind_ordering_is_declaration_order() {
     let kinds = all_surface_kinds();
     for i in 1..kinds.len() {
-        assert!(kinds[i - 1] < kinds[i], "{:?} should be < {:?}", kinds[i - 1], kinds[i]);
+        assert!(
+            kinds[i - 1] < kinds[i],
+            "{:?} should be < {:?}",
+            kinds[i - 1],
+            kinds[i]
+        );
     }
 }
 
@@ -200,7 +218,11 @@ fn surface_kind_as_str_no_uppercase() {
 
 #[test]
 fn version_class_serde_all() {
-    for vc in [VersionClass::Patch, VersionClass::Minor, VersionClass::Major] {
+    for vc in [
+        VersionClass::Patch,
+        VersionClass::Minor,
+        VersionClass::Major,
+    ] {
         let json = serde_json::to_string(&vc).unwrap();
         let decoded: VersionClass = serde_json::from_str(&json).unwrap();
         assert_eq!(vc, decoded);
@@ -209,7 +231,11 @@ fn version_class_serde_all() {
 
 #[test]
 fn version_class_display_matches_as_str() {
-    for vc in [VersionClass::Patch, VersionClass::Minor, VersionClass::Major] {
+    for vc in [
+        VersionClass::Patch,
+        VersionClass::Minor,
+        VersionClass::Major,
+    ] {
         assert_eq!(vc.to_string(), vc.as_str());
     }
 }
@@ -247,7 +273,10 @@ fn semantic_version_zero() {
 #[test]
 fn semantic_version_max_components() {
     let v = SemanticVersion::new(u32::MAX, u32::MAX, u32::MAX);
-    assert_eq!(v.to_string(), format!("{}.{}.{}", u32::MAX, u32::MAX, u32::MAX));
+    assert_eq!(
+        v.to_string(),
+        format!("{}.{}.{}", u32::MAX, u32::MAX, u32::MAX)
+    );
 }
 
 #[test]
@@ -300,9 +329,18 @@ fn semantic_version_copy() {
 #[test]
 fn version_compatibility_display_all() {
     assert_eq!(VersionCompatibility::Exact.to_string(), "exact");
-    assert_eq!(VersionCompatibility::PatchCompatible.to_string(), "patch_compatible");
-    assert_eq!(VersionCompatibility::MinorCompatible.to_string(), "minor_compatible");
-    assert_eq!(VersionCompatibility::MajorIncompatible.to_string(), "major_incompatible");
+    assert_eq!(
+        VersionCompatibility::PatchCompatible.to_string(),
+        "patch_compatible"
+    );
+    assert_eq!(
+        VersionCompatibility::MinorCompatible.to_string(),
+        "minor_compatible"
+    );
+    assert_eq!(
+        VersionCompatibility::MajorIncompatible.to_string(),
+        "major_incompatible"
+    );
 }
 
 #[test]
@@ -349,14 +387,20 @@ fn negotiate_version_same_major_different_minor_and_patch() {
     // Minor differs => MinorCompatible (patch difference is ignored)
     let a = SemanticVersion::new(1, 2, 3);
     let b = SemanticVersion::new(1, 5, 9);
-    assert_eq!(negotiate_version(a, b), VersionCompatibility::MinorCompatible);
+    assert_eq!(
+        negotiate_version(a, b),
+        VersionCompatibility::MinorCompatible
+    );
 }
 
 #[test]
 fn negotiate_version_different_major_same_minor_patch() {
     let a = SemanticVersion::new(1, 5, 5);
     let b = SemanticVersion::new(2, 5, 5);
-    assert_eq!(negotiate_version(a, b), VersionCompatibility::MajorIncompatible);
+    assert_eq!(
+        negotiate_version(a, b),
+        VersionCompatibility::MajorIncompatible
+    );
 }
 
 #[test]
@@ -391,14 +435,20 @@ fn negotiate_version_0x_series() {
     // 0.x versions: same major=0, different minor => MinorCompatible
     let a = SemanticVersion::new(0, 1, 0);
     let b = SemanticVersion::new(0, 2, 0);
-    assert_eq!(negotiate_version(a, b), VersionCompatibility::MinorCompatible);
+    assert_eq!(
+        negotiate_version(a, b),
+        VersionCompatibility::MinorCompatible
+    );
 }
 
 #[test]
 fn negotiate_version_0x_patch_only() {
     let a = SemanticVersion::new(0, 1, 0);
     let b = SemanticVersion::new(0, 1, 1);
-    assert_eq!(negotiate_version(a, b), VersionCompatibility::PatchCompatible);
+    assert_eq!(
+        negotiate_version(a, b),
+        VersionCompatibility::PatchCompatible
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -459,7 +509,11 @@ fn required_response_display_all() {
 
 #[test]
 fn required_response_as_str_matches_display() {
-    for rr in [RequiredResponse::Log, RequiredResponse::Warn, RequiredResponse::Block] {
+    for rr in [
+        RequiredResponse::Log,
+        RequiredResponse::Warn,
+        RequiredResponse::Block,
+    ] {
         assert_eq!(rr.as_str(), rr.to_string());
     }
 }
@@ -472,7 +526,11 @@ fn required_response_ordering() {
 
 #[test]
 fn required_response_serde_all() {
-    for rr in [RequiredResponse::Log, RequiredResponse::Warn, RequiredResponse::Block] {
+    for rr in [
+        RequiredResponse::Log,
+        RequiredResponse::Warn,
+        RequiredResponse::Block,
+    ] {
         let json = serde_json::to_string(&rr).unwrap();
         let decoded: RequiredResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(rr, decoded);
@@ -714,7 +772,10 @@ fn replay_obligation_relaxed_verify() {
         reproduction_command: String::new(),
     };
     let errors = obl.verify(&artifact);
-    assert!(errors.is_empty(), "relaxed obligation should pass: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "relaxed obligation should pass: {errors:?}"
+    );
 }
 
 #[test]
@@ -808,7 +869,10 @@ fn conformance_vector_serde_negative() {
     let json = serde_json::to_string(&v).unwrap();
     let decoded: ConformanceVector = serde_json::from_str(&json).unwrap();
     assert_eq!(v, decoded);
-    assert_eq!(decoded.expected_regression_class, Some(RegressionClass::Breaking));
+    assert_eq!(
+        decoded.expected_regression_class,
+        Some(RegressionClass::Breaking)
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -817,27 +881,43 @@ fn conformance_vector_serde_negative() {
 
 #[test]
 fn catalog_entry_has_required_vectors_both_present() {
-    let entry = make_entry("test/both", SiblingRepo::Frankentui, RegressionClass::Behavioral);
+    let entry = make_entry(
+        "test/both",
+        SiblingRepo::Frankentui,
+        RegressionClass::Behavioral,
+    );
     assert!(entry.has_required_vectors());
 }
 
 #[test]
 fn catalog_entry_has_required_vectors_no_positive() {
-    let mut entry = make_entry("test/no_pos", SiblingRepo::Frankentui, RegressionClass::Behavioral);
+    let mut entry = make_entry(
+        "test/no_pos",
+        SiblingRepo::Frankentui,
+        RegressionClass::Behavioral,
+    );
     entry.positive_vectors.clear();
     assert!(!entry.has_required_vectors());
 }
 
 #[test]
 fn catalog_entry_has_required_vectors_no_negative() {
-    let mut entry = make_entry("test/no_neg", SiblingRepo::Frankentui, RegressionClass::Behavioral);
+    let mut entry = make_entry(
+        "test/no_neg",
+        SiblingRepo::Frankentui,
+        RegressionClass::Behavioral,
+    );
     entry.negative_vectors.clear();
     assert!(!entry.has_required_vectors());
 }
 
 #[test]
 fn catalog_entry_has_required_vectors_both_empty() {
-    let mut entry = make_entry("test/both_empty", SiblingRepo::Frankentui, RegressionClass::Behavioral);
+    let mut entry = make_entry(
+        "test/both_empty",
+        SiblingRepo::Frankentui,
+        RegressionClass::Behavioral,
+    );
     entry.positive_vectors.clear();
     entry.negative_vectors.clear();
     assert!(!entry.has_required_vectors());
@@ -845,7 +925,11 @@ fn catalog_entry_has_required_vectors_both_empty() {
 
 #[test]
 fn catalog_entry_serde_roundtrip() {
-    let entry = make_entry("serde/entry", SiblingRepo::Frankensqlite, RegressionClass::Breaking);
+    let entry = make_entry(
+        "serde/entry",
+        SiblingRepo::Frankensqlite,
+        RegressionClass::Breaking,
+    );
     let json = serde_json::to_string(&entry).unwrap();
     let decoded: CatalogEntry = serde_json::from_str(&json).unwrap();
     assert_eq!(entry, decoded);
@@ -853,7 +937,11 @@ fn catalog_entry_serde_roundtrip() {
 
 #[test]
 fn catalog_entry_unapproved() {
-    let mut entry = make_entry("unapproved", SiblingRepo::Frankentui, RegressionClass::Behavioral);
+    let mut entry = make_entry(
+        "unapproved",
+        SiblingRepo::Frankentui,
+        RegressionClass::Behavioral,
+    );
     entry.approved = false;
     entry.approval_epoch = None;
     assert!(!entry.approved);
@@ -987,7 +1075,11 @@ fn catalog_new_empty() {
 #[test]
 fn catalog_add_entry_creates_change_record() {
     let mut catalog = ConformanceCatalog::new(SemanticVersion::new(1, 0, 0));
-    let entry = make_entry("add/test", SiblingRepo::Frankentui, RegressionClass::Behavioral);
+    let entry = make_entry(
+        "add/test",
+        SiblingRepo::Frankentui,
+        RegressionClass::Behavioral,
+    );
     catalog.add_entry(entry);
     assert_eq!(catalog.entries.len(), 1);
     assert_eq!(catalog.change_log.len(), 1);
@@ -1014,7 +1106,11 @@ fn catalog_add_multiple_entries() {
 #[test]
 fn catalog_get_entry_found() {
     let mut catalog = ConformanceCatalog::new(SemanticVersion::new(1, 0, 0));
-    catalog.add_entry(make_entry("find_me", SiblingRepo::Frankentui, RegressionClass::Behavioral));
+    catalog.add_entry(make_entry(
+        "find_me",
+        SiblingRepo::Frankentui,
+        RegressionClass::Behavioral,
+    ));
     let found = catalog.get_entry("find_me");
     assert!(found.is_some());
     assert_eq!(found.unwrap().entry_id, "find_me");
@@ -1029,9 +1125,21 @@ fn catalog_get_entry_not_found() {
 #[test]
 fn catalog_entries_for_boundary_filters() {
     let mut catalog = ConformanceCatalog::new(SemanticVersion::new(1, 0, 0));
-    catalog.add_entry(make_entry("a1", SiblingRepo::Frankentui, RegressionClass::Behavioral));
-    catalog.add_entry(make_entry("a2", SiblingRepo::Frankentui, RegressionClass::Breaking));
-    catalog.add_entry(make_entry("b1", SiblingRepo::Asupersync, RegressionClass::Behavioral));
+    catalog.add_entry(make_entry(
+        "a1",
+        SiblingRepo::Frankentui,
+        RegressionClass::Behavioral,
+    ));
+    catalog.add_entry(make_entry(
+        "a2",
+        SiblingRepo::Frankentui,
+        RegressionClass::Breaking,
+    ));
+    catalog.add_entry(make_entry(
+        "b1",
+        SiblingRepo::Asupersync,
+        RegressionClass::Behavioral,
+    ));
 
     let tui = catalog.entries_for_boundary(SiblingRepo::Frankentui);
     assert_eq!(tui.len(), 2);
@@ -1050,8 +1158,16 @@ fn catalog_covered_boundaries_empty() {
 #[test]
 fn catalog_covered_boundaries_deduplicates() {
     let mut catalog = ConformanceCatalog::new(SemanticVersion::new(1, 0, 0));
-    catalog.add_entry(make_entry("x1", SiblingRepo::Frankentui, RegressionClass::Behavioral));
-    catalog.add_entry(make_entry("x2", SiblingRepo::Frankentui, RegressionClass::Breaking));
+    catalog.add_entry(make_entry(
+        "x1",
+        SiblingRepo::Frankentui,
+        RegressionClass::Behavioral,
+    ));
+    catalog.add_entry(make_entry(
+        "x2",
+        SiblingRepo::Frankentui,
+        RegressionClass::Breaking,
+    ));
     let covered = catalog.covered_boundaries();
     assert_eq!(covered.len(), 1);
     assert!(covered.contains(&SiblingRepo::Frankentui));
@@ -1066,9 +1182,21 @@ fn catalog_entries_by_class_empty() {
 #[test]
 fn catalog_entries_by_class_counts_correct() {
     let mut catalog = ConformanceCatalog::new(SemanticVersion::new(1, 0, 0));
-    catalog.add_entry(make_entry("e1", SiblingRepo::Frankentui, RegressionClass::Breaking));
-    catalog.add_entry(make_entry("e2", SiblingRepo::Frankentui, RegressionClass::Breaking));
-    catalog.add_entry(make_entry("e3", SiblingRepo::Frankentui, RegressionClass::Behavioral));
+    catalog.add_entry(make_entry(
+        "e1",
+        SiblingRepo::Frankentui,
+        RegressionClass::Breaking,
+    ));
+    catalog.add_entry(make_entry(
+        "e2",
+        SiblingRepo::Frankentui,
+        RegressionClass::Breaking,
+    ));
+    catalog.add_entry(make_entry(
+        "e3",
+        SiblingRepo::Frankentui,
+        RegressionClass::Behavioral,
+    ));
 
     let counts = catalog.entries_by_class();
     assert_eq!(counts[&RegressionClass::Breaking], 2);
@@ -1079,7 +1207,11 @@ fn catalog_entries_by_class_counts_correct() {
 #[test]
 fn catalog_validate_vector_coverage_all_valid() {
     let mut catalog = ConformanceCatalog::new(SemanticVersion::new(1, 0, 0));
-    catalog.add_entry(make_entry("v1", SiblingRepo::Frankentui, RegressionClass::Behavioral));
+    catalog.add_entry(make_entry(
+        "v1",
+        SiblingRepo::Frankentui,
+        RegressionClass::Behavioral,
+    ));
     assert!(catalog.validate_vector_coverage().is_empty());
 }
 
@@ -1097,8 +1229,16 @@ fn catalog_validate_vector_coverage_missing_positive() {
 #[test]
 fn catalog_serde_roundtrip() {
     let mut catalog = ConformanceCatalog::new(SemanticVersion::new(2, 0, 0));
-    catalog.add_entry(make_entry("s1", SiblingRepo::Frankentui, RegressionClass::Behavioral));
-    catalog.add_entry(make_entry("s2", SiblingRepo::Asupersync, RegressionClass::Breaking));
+    catalog.add_entry(make_entry(
+        "s1",
+        SiblingRepo::Frankentui,
+        RegressionClass::Behavioral,
+    ));
+    catalog.add_entry(make_entry(
+        "s2",
+        SiblingRepo::Asupersync,
+        RegressionClass::Breaking,
+    ));
     let json = serde_json::to_string(&catalog).unwrap();
     let decoded: ConformanceCatalog = serde_json::from_str(&json).unwrap();
     assert_eq!(catalog, decoded);
@@ -1111,7 +1251,11 @@ fn catalog_serde_roundtrip() {
 #[test]
 fn validate_catalog_clean_passes() {
     let mut catalog = ConformanceCatalog::new(SemanticVersion::new(1, 0, 0));
-    catalog.add_entry(make_entry("clean", SiblingRepo::Frankentui, RegressionClass::Behavioral));
+    catalog.add_entry(make_entry(
+        "clean",
+        SiblingRepo::Frankentui,
+        RegressionClass::Behavioral,
+    ));
     let errors = validate_catalog(&catalog);
     assert!(errors.is_empty(), "errors: {errors:?}");
 }
@@ -1119,11 +1263,23 @@ fn validate_catalog_clean_passes() {
 #[test]
 fn validate_catalog_duplicate_entry_ids() {
     let mut catalog = ConformanceCatalog::new(SemanticVersion::new(1, 0, 0));
-    catalog.add_entry(make_entry("dup", SiblingRepo::Frankentui, RegressionClass::Behavioral));
+    catalog.add_entry(make_entry(
+        "dup",
+        SiblingRepo::Frankentui,
+        RegressionClass::Behavioral,
+    ));
     // Manually push a duplicate (bypassing add_entry's change log)
-    catalog.entries.push(make_entry("dup", SiblingRepo::Asupersync, RegressionClass::Breaking));
+    catalog.entries.push(make_entry(
+        "dup",
+        SiblingRepo::Asupersync,
+        RegressionClass::Breaking,
+    ));
     let errors = validate_catalog(&catalog);
-    assert!(errors.iter().any(|e| e.detail.contains("duplicate entry ID")));
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.detail.contains("duplicate entry ID"))
+    );
 }
 
 #[test]
@@ -1134,12 +1290,20 @@ fn validate_catalog_duplicate_vector_ids() {
     let mut catalog = ConformanceCatalog::new(SemanticVersion::new(1, 0, 0));
     catalog.add_entry(entry);
     let errors = validate_catalog(&catalog);
-    assert!(errors.iter().any(|e| e.detail.contains("duplicate vector ID")));
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.detail.contains("duplicate vector ID"))
+    );
 }
 
 #[test]
 fn validate_catalog_empty_covered_fields() {
-    let mut entry = make_entry("empty_fields", SiblingRepo::Frankentui, RegressionClass::Behavioral);
+    let mut entry = make_entry(
+        "empty_fields",
+        SiblingRepo::Frankentui,
+        RegressionClass::Behavioral,
+    );
     entry.boundary.covered_fields.clear();
     let mut catalog = ConformanceCatalog::new(SemanticVersion::new(1, 0, 0));
     catalog.add_entry(entry);
@@ -1162,7 +1326,9 @@ fn validate_catalog_missing_taxonomy_class() {
 fn validate_catalog_partial_taxonomy() {
     let mut catalog = ConformanceCatalog::new(SemanticVersion::new(1, 0, 0));
     // Keep only Breaking
-    catalog.taxonomy.retain(|t| t.regression_class == RegressionClass::Breaking);
+    catalog
+        .taxonomy
+        .retain(|t| t.regression_class == RegressionClass::Breaking);
     let errors = validate_catalog(&catalog);
     let taxonomy_errors: Vec<_> = errors.iter().filter(|e| e.field == "taxonomy").collect();
     assert_eq!(taxonomy_errors.len(), 3); // Missing Behavioral, Observability, Performance
@@ -1177,7 +1343,11 @@ fn validate_catalog_multiple_error_types() {
     entry.boundary.covered_fields.clear(); // empty fields
     catalog.add_entry(entry);
     let errors = validate_catalog(&catalog);
-    assert!(errors.len() >= 6, "expected at least 6 errors, got {}: {errors:?}", errors.len());
+    assert!(
+        errors.len() >= 6,
+        "expected at least 6 errors, got {}: {errors:?}",
+        errors.len()
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1195,7 +1365,11 @@ fn canonical_surfaces_all_repos_covered() {
     let surfaces = canonical_boundary_surfaces();
     let repos: BTreeSet<SiblingRepo> = surfaces.iter().map(|s| s.sibling).collect();
     for repo in SiblingRepo::all() {
-        assert!(repos.contains(repo), "repo {} not in canonical surfaces", repo);
+        assert!(
+            repos.contains(repo),
+            "repo {} not in canonical surfaces",
+            repo
+        );
     }
 }
 
@@ -1209,7 +1383,11 @@ fn canonical_surfaces_unique_ids() {
 #[test]
 fn canonical_surfaces_all_have_nonempty_fields() {
     for surface in canonical_boundary_surfaces() {
-        assert!(!surface.covered_fields.is_empty(), "surface {} has no fields", surface.surface_id);
+        assert!(
+            !surface.covered_fields.is_empty(),
+            "surface {} has no fields",
+            surface.surface_id
+        );
     }
 }
 
@@ -1241,7 +1419,11 @@ fn build_canonical_catalog_version() {
 fn build_canonical_catalog_all_approved() {
     let catalog = build_canonical_catalog();
     for entry in &catalog.entries {
-        assert!(entry.approved, "entry {} should be approved", entry.entry_id);
+        assert!(
+            entry.approved,
+            "entry {} should be approved",
+            entry.entry_id
+        );
         assert_eq!(entry.approval_epoch, Some(1));
     }
 }
@@ -1250,7 +1432,10 @@ fn build_canonical_catalog_all_approved() {
 fn build_canonical_catalog_validates_clean() {
     let catalog = build_canonical_catalog();
     let errors = validate_catalog(&catalog);
-    assert!(errors.is_empty(), "canonical catalog should validate: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "canonical catalog should validate: {errors:?}"
+    );
 }
 
 #[test]
@@ -1329,7 +1514,11 @@ fn integration_custom_catalog_with_validation_errors() {
     let mut catalog = ConformanceCatalog::new(SemanticVersion::new(0, 1, 0));
 
     // Add a valid entry
-    catalog.add_entry(make_entry("valid", SiblingRepo::Frankentui, RegressionClass::Behavioral));
+    catalog.add_entry(make_entry(
+        "valid",
+        SiblingRepo::Frankentui,
+        RegressionClass::Behavioral,
+    ));
 
     // Add an entry missing negative vectors
     let mut bad_entry = make_entry("bad", SiblingRepo::Asupersync, RegressionClass::Breaking);
@@ -1369,9 +1558,15 @@ fn integration_version_negotiation_across_all_boundaries() {
         .collect();
 
     assert_eq!(results.len(), 6);
-    let compatible_count = results.iter().filter(|r| r.compatibility.is_compatible()).count();
+    let compatible_count = results
+        .iter()
+        .filter(|r| r.compatibility.is_compatible())
+        .count();
     assert_eq!(compatible_count, 4); // 4 primary repos got patch diff
-    let incompatible_count = results.iter().filter(|r| !r.compatibility.is_compatible()).count();
+    let incompatible_count = results
+        .iter()
+        .filter(|r| !r.compatibility.is_compatible())
+        .count();
     assert_eq!(incompatible_count, 2); // 2 non-primary got major diff
 }
 
@@ -1381,7 +1576,11 @@ fn integration_replay_obligation_for_canonical_entries() {
     for entry in &catalog.entries {
         let artifact = valid_artifact(&entry.entry_id, entry.boundary.sibling);
         let errors = entry.replay_obligation.verify(&artifact);
-        assert!(errors.is_empty(), "entry {} obligation failed: {errors:?}", entry.entry_id);
+        assert!(
+            errors.is_empty(),
+            "entry {} obligation failed: {errors:?}",
+            entry.entry_id
+        );
     }
 }
 
@@ -1390,6 +1589,10 @@ fn integration_taxonomy_classify_all_canonical_entries() {
     let catalog = build_canonical_catalog();
     for entry in &catalog.entries {
         let classified = classify_failure(&catalog.taxonomy, entry.failure_class);
-        assert!(classified.is_some(), "no taxonomy for {:?}", entry.failure_class);
+        assert!(
+            classified.is_some(),
+            "no taxonomy for {:?}",
+            entry.failure_class
+        );
     }
 }

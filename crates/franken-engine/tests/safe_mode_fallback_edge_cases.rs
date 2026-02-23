@@ -419,14 +419,23 @@ fn recover_decision_partial_keeps_active() {
     assert_eq!(mgr.quarantined_extensions().len(), 3);
 
     mgr.recover_decision_contract("t4", "ext-a");
-    assert_eq!(mgr.status(FailureType::DecisionContractError), SafeModeStatus::Active);
+    assert_eq!(
+        mgr.status(FailureType::DecisionContractError),
+        SafeModeStatus::Active
+    );
     assert_eq!(mgr.quarantined_extensions().len(), 2);
 
     mgr.recover_decision_contract("t5", "ext-b");
-    assert_eq!(mgr.status(FailureType::DecisionContractError), SafeModeStatus::Active);
+    assert_eq!(
+        mgr.status(FailureType::DecisionContractError),
+        SafeModeStatus::Active
+    );
 
     mgr.recover_decision_contract("t6", "ext-c");
-    assert_eq!(mgr.status(FailureType::DecisionContractError), SafeModeStatus::Normal);
+    assert_eq!(
+        mgr.status(FailureType::DecisionContractError),
+        SafeModeStatus::Normal
+    );
 }
 
 #[test]
@@ -613,7 +622,11 @@ fn action_tier_display_unique() {
 
 #[test]
 fn action_tier_serde_all() {
-    for tier in [ActionTier::HighImpact, ActionTier::Standard, ActionTier::LowImpact] {
+    for tier in [
+        ActionTier::HighImpact,
+        ActionTier::Standard,
+        ActionTier::LowImpact,
+    ] {
         let json = serde_json::to_string(&tier).unwrap();
         let decoded: ActionTier = serde_json::from_str(&json).unwrap();
         assert_eq!(tier, decoded);
@@ -686,7 +699,8 @@ fn attestation_request_new_sets_default_tier() {
 
 #[test]
 fn attestation_request_serde() {
-    let req = AttestationActionRequest::new("trace", "dec", "pol", AutonomousAction::Terminate, 999);
+    let req =
+        AttestationActionRequest::new("trace", "dec", "pol", AutonomousAction::Terminate, 999);
     let json = serde_json::to_string(&req).unwrap();
     let decoded: AttestationActionRequest = serde_json::from_str(&json).unwrap();
     assert_eq!(req, decoded);
@@ -694,13 +708,8 @@ fn attestation_request_serde() {
 
 #[test]
 fn attestation_request_custom_tier_override() {
-    let mut req = AttestationActionRequest::new(
-        "t",
-        "d",
-        "p",
-        AutonomousAction::MetricsEmission,
-        0,
-    );
+    let mut req =
+        AttestationActionRequest::new("t", "d", "p", AutonomousAction::MetricsEmission, 0);
     assert_eq!(req.tier, ActionTier::LowImpact);
     req.tier = ActionTier::HighImpact; // Override
     assert_eq!(req.tier, ActionTier::HighImpact);
@@ -896,9 +905,7 @@ fn low_impact_always_executes_regardless_of_health() {
 fn standard_healthy_no_warning() {
     let mut mgr = attest_mgr();
     let req = make_request(AutonomousAction::RoutineMonitoring, 100);
-    let decision = mgr
-        .evaluate_action(req, AttestationHealth::Valid)
-        .unwrap();
+    let decision = mgr.evaluate_action(req, AttestationHealth::Valid).unwrap();
     match decision {
         AttestationFallbackDecision::Execute { warning, .. } => {
             assert!(warning.is_none());
@@ -930,9 +937,7 @@ fn standard_unhealthy_has_warning() {
 fn high_impact_healthy_normal_executes() {
     let mut mgr = attest_mgr();
     let req = make_request(AutonomousAction::Quarantine, 100);
-    let decision = mgr
-        .evaluate_action(req, AttestationHealth::Valid)
-        .unwrap();
+    let decision = mgr.evaluate_action(req, AttestationHealth::Valid).unwrap();
     assert!(matches!(
         decision,
         AttestationFallbackDecision::Execute { .. }

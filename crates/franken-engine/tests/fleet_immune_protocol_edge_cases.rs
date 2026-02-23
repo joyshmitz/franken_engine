@@ -365,7 +365,8 @@ fn sequence_range_large_overflows() {
 #[test]
 fn evidence_packet_with_extensions() {
     let mut p = evidence("node-1", "ext-1", 1, 100_000);
-    p.extensions.insert("custom_key".to_string(), "custom_value".to_string());
+    p.extensions
+        .insert("custom_key".to_string(), "custom_value".to_string());
     let json = serde_json::to_string(&p).unwrap();
     let back: EvidencePacket = serde_json::from_str(&json).unwrap();
     assert_eq!(back.extensions["custom_key"], "custom_value");
@@ -391,7 +392,8 @@ fn evidence_packet_zero_delta() {
 #[test]
 fn containment_intent_with_extensions() {
     let mut i = intent("node-1", "ext-1", ContainmentAction::Sandbox, 1, 1);
-    i.extensions.insert("reason".to_string(), "policy_violation".to_string());
+    i.extensions
+        .insert("reason".to_string(), "policy_violation".to_string());
     let json = serde_json::to_string(&i).unwrap();
     let back: ContainmentIntent = serde_json::from_str(&json).unwrap();
     assert_eq!(back.extensions["reason"], "policy_violation");
@@ -400,11 +402,7 @@ fn containment_intent_with_extensions() {
 #[test]
 fn containment_intent_multiple_evidence_ids() {
     let mut i = intent("node-1", "ext-1", ContainmentAction::Terminate, 1, 1);
-    i.supporting_evidence_ids = vec![
-        "ev-1".to_string(),
-        "ev-2".to_string(),
-        "ev-3".to_string(),
-    ];
+    i.supporting_evidence_ids = vec!["ev-1".to_string(), "ev-2".to_string(), "ev-3".to_string()];
     let json = serde_json::to_string(&i).unwrap();
     let back: ContainmentIntent = serde_json::from_str(&json).unwrap();
     assert_eq!(back.supporting_evidence_ids.len(), 3);
@@ -415,8 +413,10 @@ fn containment_intent_multiple_evidence_ids() {
 #[test]
 fn heartbeat_with_local_health() {
     let mut hb = heartbeat("node-1", 1, 5_000_000_000);
-    hb.local_health.insert("cpu_pct".to_string(), "45".to_string());
-    hb.local_health.insert("mem_mb".to_string(), "2048".to_string());
+    hb.local_health
+        .insert("cpu_pct".to_string(), "45".to_string());
+    hb.local_health
+        .insert("mem_mb".to_string(), "2048".to_string());
     let json = serde_json::to_string(&hb).unwrap();
     let back: HeartbeatLiveness = serde_json::from_str(&json).unwrap();
     assert_eq!(back.local_health.len(), 2);
@@ -626,7 +626,10 @@ fn gossip_config_default_timing_relationships() {
     // Partition timeout should be >= heartbeat interval
     assert!(config.partition_timeout_ns >= config.heartbeat_interval_ns);
     // Default: partition timeout = 3x heartbeat
-    assert_eq!(config.partition_timeout_ns, 3 * config.heartbeat_interval_ns);
+    assert_eq!(
+        config.partition_timeout_ns,
+        3 * config.heartbeat_interval_ns
+    );
     // Checkpoint interval > heartbeat interval
     assert!(config.checkpoint_interval_ns > config.heartbeat_interval_ns);
 }
@@ -981,7 +984,10 @@ fn state_next_sequence_starts_at_one() {
 fn state_process_evidence_version_mismatch() {
     let mut state = FleetProtocolState::new(NodeId::new("local"), GossipConfig::default());
     let mut p = evidence("remote", "ext-1", 1, 100);
-    p.protocol_version = ProtocolVersion { major: 99, minor: 0 };
+    p.protocol_version = ProtocolVersion {
+        major: 99,
+        minor: 0,
+    };
     let err = state.process_evidence(&p).unwrap_err();
     assert!(matches!(err, ProtocolError::IncompatibleVersion { .. }));
 }
@@ -990,7 +996,10 @@ fn state_process_evidence_version_mismatch() {
 fn state_process_intent_version_mismatch() {
     let mut state = FleetProtocolState::new(NodeId::new("local"), GossipConfig::default());
     let mut i = intent("remote", "ext-1", ContainmentAction::Allow, 1, 1);
-    i.protocol_version = ProtocolVersion { major: 99, minor: 0 };
+    i.protocol_version = ProtocolVersion {
+        major: 99,
+        minor: 0,
+    };
     let err = state.process_intent(&i).unwrap_err();
     assert!(matches!(err, ProtocolError::IncompatibleVersion { .. }));
 }
@@ -999,7 +1008,10 @@ fn state_process_intent_version_mismatch() {
 fn state_process_heartbeat_version_mismatch() {
     let mut state = FleetProtocolState::new(NodeId::new("local"), GossipConfig::default());
     let mut hb = heartbeat("remote", 1, 1_000);
-    hb.protocol_version = ProtocolVersion { major: 99, minor: 0 };
+    hb.protocol_version = ProtocolVersion {
+        major: 99,
+        minor: 0,
+    };
     let err = state.process_heartbeat(&hb).unwrap_err();
     assert!(matches!(err, ProtocolError::IncompatibleVersion { .. }));
 }
@@ -1189,12 +1201,12 @@ fn integration_replay_protection_across_message_types() {
         .process_intent(&intent("n1", "ext-1", ContainmentAction::Allow, 2, 1))
         .unwrap();
     // Now heartbeat with seq=1 from same node → replay
-    let err = state.process_heartbeat(&heartbeat("n1", 1, 1_000)).unwrap_err();
+    let err = state
+        .process_heartbeat(&heartbeat("n1", 1, 1_000))
+        .unwrap_err();
     assert!(matches!(err, ProtocolError::ReplayDetected { .. }));
     // seq=3 → ok
-    state
-        .process_heartbeat(&heartbeat("n1", 3, 2_000))
-        .unwrap();
+    state.process_heartbeat(&heartbeat("n1", 3, 2_000)).unwrap();
 }
 
 // ── Determinism ─────────────────────────────────────────────────────────────

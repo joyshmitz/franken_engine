@@ -7,9 +7,9 @@ use frankenengine_engine::conformance_catalog::{
     SemanticVersion, SiblingRepo, SurfaceKind, VersionClass,
 };
 use frankenengine_engine::conformance_vector_gen::{
-    canonical_boundary_properties, generate_vectors, properties_for_surface,
-    validate_property_coverage, BoundaryProperty, DegradedScenario, FaultScenario,
-    GeneratedVector, GenerationResult, GeneratorConfig, PropertyCheckResult, VectorCategory,
+    BoundaryProperty, DegradedScenario, FaultScenario, GeneratedVector, GenerationResult,
+    GeneratorConfig, PropertyCheckResult, VectorCategory, canonical_boundary_properties,
+    generate_vectors, properties_for_surface, validate_property_coverage,
 };
 use frankenengine_engine::cross_repo_contract::RegressionClass;
 
@@ -21,11 +21,7 @@ fn test_catalog() -> ConformanceCatalog {
     conformance_catalog::build_canonical_catalog()
 }
 
-fn make_minimal_entry(
-    id: &str,
-    sibling: SiblingRepo,
-    surface_kind: SurfaceKind,
-) -> CatalogEntry {
+fn make_minimal_entry(id: &str, sibling: SiblingRepo, surface_kind: SurfaceKind) -> CatalogEntry {
     CatalogEntry {
         entry_id: id.to_string(),
         boundary: BoundarySurface {
@@ -95,7 +91,12 @@ fn vector_category_ordering_exhaustive() {
     ];
     for i in 0..ordered.len() {
         for j in (i + 1)..ordered.len() {
-            assert!(ordered[i] < ordered[j], "{:?} should be < {:?}", ordered[i], ordered[j]);
+            assert!(
+                ordered[i] < ordered[j],
+                "{:?} should be < {:?}",
+                ordered[i],
+                ordered[j]
+            );
         }
     }
 }
@@ -423,9 +424,7 @@ fn generator_config_serde_with_filters() {
     let mut config = GeneratorConfig::default();
     config.sibling_filter.insert(SiblingRepo::Frankentui);
     config.sibling_filter.insert(SiblingRepo::Frankensqlite);
-    config
-        .surface_filter
-        .insert(SurfaceKind::TuiEventContract);
+    config.surface_filter.insert(SurfaceKind::TuiEventContract);
     let json = serde_json::to_string(&config).unwrap();
     let restored: GeneratorConfig = serde_json::from_str(&json).unwrap();
     assert_eq!(config, restored);
@@ -539,7 +538,10 @@ fn canonical_properties_specific_ids_present() {
 fn canonical_properties_roundtrip_count() {
     let props = canonical_boundary_properties();
     let roundtrip_count = props.iter().filter(|p| p.requires_roundtrip).count();
-    assert!(roundtrip_count >= 3, "expected at least 3 roundtrip properties, got {roundtrip_count}");
+    assert!(
+        roundtrip_count >= 3,
+        "expected at least 3 roundtrip properties, got {roundtrip_count}"
+    );
 }
 
 #[test]
@@ -593,7 +595,9 @@ fn canonical_properties_all_have_descriptions() {
 fn properties_for_surface_api_message_includes_error_envelope() {
     let props = properties_for_surface(SurfaceKind::ApiMessage);
     assert!(
-        props.iter().any(|p| p.property_id == "error-envelope-stability"),
+        props
+            .iter()
+            .any(|p| p.property_id == "error-envelope-stability"),
         "ApiMessage should include error-envelope-stability"
     );
 }
@@ -740,7 +744,11 @@ fn generate_vectors_unique_ids() {
     let catalog = test_catalog();
     let result = generate_vectors(&catalog, &GeneratorConfig::default());
     let ids = result.vector_ids();
-    assert_eq!(ids.len(), result.vectors.len(), "all vector IDs must be unique");
+    assert_eq!(
+        ids.len(),
+        result.vectors.len(),
+        "all vector IDs must be unique"
+    );
 }
 
 #[test]
@@ -769,7 +777,11 @@ fn positive_vectors_always_expect_pass() {
     let result = generate_vectors(&catalog, &GeneratorConfig::default());
     for v in &result.vectors {
         if v.category == VectorCategory::Positive {
-            assert!(v.expected_pass, "positive vector {} should expect pass", v.vector_id);
+            assert!(
+                v.expected_pass,
+                "positive vector {} should expect pass",
+                v.vector_id
+            );
             assert!(
                 v.expected_regression_class.is_none(),
                 "positive vector {} should have no regression class",
@@ -808,7 +820,11 @@ fn fault_vectors_always_have_fault_scenario() {
                 "fault vector {} must have fault_scenario",
                 v.vector_id
             );
-            assert!(!v.expected_pass, "fault vector {} should expect failure", v.vector_id);
+            assert!(
+                !v.expected_pass,
+                "fault vector {} should expect failure",
+                v.vector_id
+            );
             assert!(v.degraded_scenario.is_none());
         }
     }
@@ -879,9 +895,7 @@ fn combined_sibling_and_surface_filter() {
     let catalog = test_catalog();
     let mut config = GeneratorConfig::default();
     config.sibling_filter.insert(SiblingRepo::Frankentui);
-    config
-        .surface_filter
-        .insert(SurfaceKind::TuiEventContract);
+    config.surface_filter.insert(SurfaceKind::TuiEventContract);
     let result = generate_vectors(&catalog, &config);
     for v in &result.vectors {
         assert_eq!(v.boundary, SiblingRepo::Frankentui);
@@ -895,9 +909,7 @@ fn impossible_filter_produces_empty_result() {
     let mut config = GeneratorConfig::default();
     // Frankensqlite with TuiEventContract — likely no match
     config.sibling_filter.insert(SiblingRepo::Frankensqlite);
-    config
-        .surface_filter
-        .insert(SurfaceKind::TuiEventContract);
+    config.surface_filter.insert(SurfaceKind::TuiEventContract);
     let result = generate_vectors(&catalog, &config);
     // Either empty or only has matching entries
     for v in &result.vectors {
@@ -913,9 +925,11 @@ fn impossible_filter_produces_empty_result() {
 #[test]
 fn max_positive_per_entry_respected() {
     let mut catalog = ConformanceCatalog::new(SemanticVersion::new(1, 0, 0));
-    catalog
-        .entries
-        .push(make_minimal_entry("test/one", SiblingRepo::Frankentui, SurfaceKind::TuiEventContract));
+    catalog.entries.push(make_minimal_entry(
+        "test/one",
+        SiblingRepo::Frankentui,
+        SurfaceKind::TuiEventContract,
+    ));
     let config = GeneratorConfig {
         max_positive_per_entry: 1,
         ..Default::default()
@@ -928,9 +942,11 @@ fn max_positive_per_entry_respected() {
 #[test]
 fn max_negative_per_entry_respected() {
     let mut catalog = ConformanceCatalog::new(SemanticVersion::new(1, 0, 0));
-    catalog
-        .entries
-        .push(make_minimal_entry("test/one", SiblingRepo::Frankentui, SurfaceKind::TuiEventContract));
+    catalog.entries.push(make_minimal_entry(
+        "test/one",
+        SiblingRepo::Frankentui,
+        SurfaceKind::TuiEventContract,
+    ));
     let config = GeneratorConfig {
         max_negative_per_entry: 2,
         ..Default::default()
@@ -943,9 +959,11 @@ fn max_negative_per_entry_respected() {
 #[test]
 fn max_degraded_per_entry_respected() {
     let mut catalog = ConformanceCatalog::new(SemanticVersion::new(1, 0, 0));
-    catalog
-        .entries
-        .push(make_minimal_entry("test/one", SiblingRepo::Frankentui, SurfaceKind::TuiEventContract));
+    catalog.entries.push(make_minimal_entry(
+        "test/one",
+        SiblingRepo::Frankentui,
+        SurfaceKind::TuiEventContract,
+    ));
     let config = GeneratorConfig {
         max_degraded_per_entry: 2,
         ..Default::default()
@@ -958,9 +976,11 @@ fn max_degraded_per_entry_respected() {
 #[test]
 fn max_fault_per_entry_respected() {
     let mut catalog = ConformanceCatalog::new(SemanticVersion::new(1, 0, 0));
-    catalog
-        .entries
-        .push(make_minimal_entry("test/one", SiblingRepo::Frankentui, SurfaceKind::TuiEventContract));
+    catalog.entries.push(make_minimal_entry(
+        "test/one",
+        SiblingRepo::Frankentui,
+        SurfaceKind::TuiEventContract,
+    ));
     let config = GeneratorConfig {
         max_fault_per_entry: 3,
         ..Default::default()
@@ -997,11 +1017,17 @@ fn warns_on_entry_with_no_positive_vectors() {
 #[test]
 fn no_warning_when_positive_vectors_exist() {
     let mut catalog = ConformanceCatalog::new(SemanticVersion::new(1, 0, 0));
-    catalog
-        .entries
-        .push(make_minimal_entry("test/with_pos", SiblingRepo::Frankentui, SurfaceKind::TuiEventContract));
+    catalog.entries.push(make_minimal_entry(
+        "test/with_pos",
+        SiblingRepo::Frankentui,
+        SurfaceKind::TuiEventContract,
+    ));
     let result = generate_vectors(&catalog, &GeneratorConfig::default());
-    assert!(result.warnings.is_empty(), "should not have warnings: {:?}", result.warnings);
+    assert!(
+        result.warnings.is_empty(),
+        "should not have warnings: {:?}",
+        result.warnings
+    );
 }
 
 // =========================================================================
@@ -1082,7 +1108,10 @@ fn different_seeds_produce_different_vectors() {
             diff += 1;
         }
     }
-    assert!(diff > 0, "different seeds should produce different vector seeds");
+    assert!(
+        diff > 0,
+        "different seeds should produce different vector seeds"
+    );
 }
 
 // =========================================================================

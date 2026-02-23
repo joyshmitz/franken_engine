@@ -200,7 +200,13 @@ fn test262_result_valid() {
         area: FeatureArea::BigInt,
         total: 100,
         passing: 95,
-        failing_test_ids: vec!["t1".into(), "t2".into(), "t3".into(), "t4".into(), "t5".into()],
+        failing_test_ids: vec![
+            "t1".into(),
+            "t2".into(),
+            "t3".into(),
+            "t4".into(),
+            "t5".into(),
+        ],
     };
     assert!(r.validate().is_ok());
 }
@@ -507,18 +513,12 @@ fn error_codes_all_unique() {
         ParityTrackerError::WaiverSealed {
             waiver_id: "w".into(),
         },
-        ParityTrackerError::InvalidWaiver {
-            detail: "d".into(),
-        },
-        ParityTrackerError::InvalidMetrics {
-            detail: "d".into(),
-        },
+        ParityTrackerError::InvalidWaiver { detail: "d".into() },
+        ParityTrackerError::InvalidMetrics { detail: "d".into() },
         ParityTrackerError::DuplicateFeature {
             feature_id: "x".into(),
         },
-        ParityTrackerError::GateEvaluationFailed {
-            detail: "d".into(),
-        },
+        ParityTrackerError::GateEvaluationFailed { detail: "d".into() },
     ];
     let codes: Vec<&str> = errors.iter().map(|e| e.code()).collect();
     let unique: std::collections::BTreeSet<&str> = codes.iter().copied().collect();
@@ -556,7 +556,10 @@ fn error_display_non_empty() {
     for err in &errors {
         let msg = err.to_string();
         assert!(!msg.is_empty());
-        assert!(msg.contains(err.code()), "display should include error code");
+        assert!(
+            msg.contains(err.code()),
+            "display should include error code"
+        );
     }
 }
 
@@ -596,18 +599,12 @@ fn error_serde_round_trip() {
         ParityTrackerError::WaiverSealed {
             waiver_id: "w".into(),
         },
-        ParityTrackerError::InvalidWaiver {
-            detail: "d".into(),
-        },
-        ParityTrackerError::InvalidMetrics {
-            detail: "d".into(),
-        },
+        ParityTrackerError::InvalidWaiver { detail: "d".into() },
+        ParityTrackerError::InvalidMetrics { detail: "d".into() },
         ParityTrackerError::DuplicateFeature {
             feature_id: "x".into(),
         },
-        ParityTrackerError::GateEvaluationFailed {
-            detail: "d".into(),
-        },
+        ParityTrackerError::GateEvaluationFailed { detail: "d".into() },
     ];
     for err in &errors {
         let json = serde_json::to_string(err).unwrap();
@@ -875,7 +872,12 @@ fn ingest_test262_emits_event() {
         failing_test_ids: vec![],
     };
     tracker.ingest_test262(&result, &c).unwrap();
-    assert!(tracker.events().iter().any(|e| e.event == "test262_ingested"));
+    assert!(
+        tracker
+            .events()
+            .iter()
+            .any(|e| e.event == "test262_ingested")
+    );
 }
 
 // ===========================================================================
@@ -991,10 +993,12 @@ fn ingest_lockstep_emits_event() {
         mismatches: vec![],
     };
     tracker.ingest_lockstep(&result, &c).unwrap();
-    assert!(tracker
-        .events()
-        .iter()
-        .any(|e| e.event == "lockstep_ingested"));
+    assert!(
+        tracker
+            .events()
+            .iter()
+            .any(|e| e.event == "lockstep_ingested")
+    );
 }
 
 // ===========================================================================
@@ -1213,10 +1217,7 @@ fn dashboard_status_counts() {
 
     // All start as not_started.
     let dash = tracker.dashboard();
-    assert_eq!(
-        dash.status_counts.get("not_started"),
-        Some(&10)
-    );
+    assert_eq!(dash.status_counts.get("not_started"), Some(&10));
 
     // Move one to in_progress.
     tracker
@@ -1365,10 +1366,12 @@ fn gate_unwaived_failures_detected() {
     let decision = tracker.evaluate_gate(&c);
     assert!(!decision.passed);
     // Should have unwaived failure since require_waiver_coverage is true by default.
-    assert!(decision
-        .unwaived_failures
-        .iter()
-        .any(|u| u.feature_id == bigint_fid()));
+    assert!(
+        decision
+            .unwaived_failures
+            .iter()
+            .any(|u| u.feature_id == bigint_fid())
+    );
 }
 
 #[test]
@@ -1376,10 +1379,12 @@ fn gate_emits_event() {
     let mut tracker = all_passing_tracker();
     let c = ctx();
     tracker.evaluate_gate(&c);
-    assert!(tracker
-        .events()
-        .iter()
-        .any(|e| e.event == "release_gate_evaluated"));
+    assert!(
+        tracker
+            .events()
+            .iter()
+            .any(|e| e.event == "release_gate_evaluated")
+    );
 }
 
 #[test]
@@ -1440,7 +1445,11 @@ fn events_emitted_on_operations() {
 
     let events = tracker.events();
     assert!(events.len() >= 2);
-    assert!(events.iter().all(|e| e.component == "feature_parity_tracker"));
+    assert!(
+        events
+            .iter()
+            .all(|e| e.component == "feature_parity_tracker")
+    );
     assert!(events.iter().all(|e| e.trace_id == "trace-int"));
 }
 
@@ -1496,10 +1505,7 @@ fn tracker_serde_round_trip() {
     let restored: FeatureParityTracker = serde_json::from_str(&json).unwrap();
     assert_eq!(restored.feature_count(), tracker.feature_count());
     assert_eq!(restored.waiver_count(), tracker.waiver_count());
-    assert_eq!(
-        restored.feature(&bigint_fid()).unwrap().test262_passing,
-        8
-    );
+    assert_eq!(restored.feature(&bigint_fid()).unwrap().test262_passing, 8);
 }
 
 // ===========================================================================
@@ -1562,8 +1568,14 @@ fn stress_all_areas_test262_and_lockstep() {
     let dash = tracker.dashboard();
     assert_eq!(dash.total_features, 10);
     assert!(dash.overall_test262_pass_rate_millionths > 0);
-    assert!(dash.overall_lockstep_match_rates_millionths.contains_key("node"));
-    assert!(dash.overall_lockstep_match_rates_millionths.contains_key("bun"));
+    assert!(
+        dash.overall_lockstep_match_rates_millionths
+            .contains_key("node")
+    );
+    assert!(
+        dash.overall_lockstep_match_rates_millionths
+            .contains_key("bun")
+    );
 
     // All features have results.
     for snap in dash.per_area.values() {

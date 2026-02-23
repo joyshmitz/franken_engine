@@ -74,7 +74,11 @@ fn violation_kind_hash_all_four_distinct() {
         ViolationKind::CanonicalTypeShadow,
     ];
     let hashes: BTreeSet<u64> = kinds.iter().map(hash_of).collect();
-    assert_eq!(hashes.len(), 4, "all 4 ViolationKind variants must hash distinctly");
+    assert_eq!(
+        hashes.len(),
+        4,
+        "all 4 ViolationKind variants must hash distinctly"
+    );
 }
 
 #[test]
@@ -92,10 +96,22 @@ fn violation_kind_serde_stable_strings() {
 
 #[test]
 fn violation_kind_display_all_four() {
-    assert_eq!(ViolationKind::ForbiddenPattern.to_string(), "forbidden_pattern");
-    assert_eq!(ViolationKind::MissingCxParameter.to_string(), "missing_cx_parameter");
-    assert_eq!(ViolationKind::DirectUpstreamImport.to_string(), "direct_upstream_import");
-    assert_eq!(ViolationKind::CanonicalTypeShadow.to_string(), "canonical_type_shadow");
+    assert_eq!(
+        ViolationKind::ForbiddenPattern.to_string(),
+        "forbidden_pattern"
+    );
+    assert_eq!(
+        ViolationKind::MissingCxParameter.to_string(),
+        "missing_cx_parameter"
+    );
+    assert_eq!(
+        ViolationKind::DirectUpstreamImport.to_string(),
+        "direct_upstream_import"
+    );
+    assert_eq!(
+        ViolationKind::CanonicalTypeShadow.to_string(),
+        "canonical_type_shadow"
+    );
 }
 
 #[test]
@@ -152,7 +168,10 @@ fn finding_ordering_by_kind_first() {
         remediation: String::new(),
         exempted: false,
     };
-    assert!(a < b, "ForbiddenPattern < DirectUpstreamImport regardless of other fields");
+    assert!(
+        a < b,
+        "ForbiddenPattern < DirectUpstreamImport regardless of other fields"
+    );
 }
 
 #[test]
@@ -193,7 +212,13 @@ fn finding_clone() {
 
 #[test]
 fn exemption_serde_roundtrip() {
-    let e = make_exemption("ex-1", "m::mod", ViolationKind::ForbiddenPattern, "std::fs", 0);
+    let e = make_exemption(
+        "ex-1",
+        "m::mod",
+        ViolationKind::ForbiddenPattern,
+        "std::fs",
+        0,
+    );
     let json = serde_json::to_string(&e).unwrap();
     let restored: ExtensionHostExemption = serde_json::from_str(&json).unwrap();
     assert_eq!(e, restored);
@@ -234,18 +259,42 @@ fn registry_default_is_empty() {
 #[test]
 fn registry_add_increments_len() {
     let mut reg = ExtensionHostExemptionRegistry::new();
-    reg.add(make_exemption("e1", "m", ViolationKind::ForbiddenPattern, "t", 0));
+    reg.add(make_exemption(
+        "e1",
+        "m",
+        ViolationKind::ForbiddenPattern,
+        "t",
+        0,
+    ));
     assert_eq!(reg.len(), 1);
     assert!(!reg.is_empty());
-    reg.add(make_exemption("e2", "m", ViolationKind::DirectUpstreamImport, "t", 0));
+    reg.add(make_exemption(
+        "e2",
+        "m",
+        ViolationKind::DirectUpstreamImport,
+        "t",
+        0,
+    ));
     assert_eq!(reg.len(), 2);
 }
 
 #[test]
 fn registry_entries_returns_all() {
     let mut reg = ExtensionHostExemptionRegistry::new();
-    reg.add(make_exemption("e1", "m1", ViolationKind::ForbiddenPattern, "t", 0));
-    reg.add(make_exemption("e2", "m2", ViolationKind::DirectUpstreamImport, "t", 0));
+    reg.add(make_exemption(
+        "e1",
+        "m1",
+        ViolationKind::ForbiddenPattern,
+        "t",
+        0,
+    ));
+    reg.add(make_exemption(
+        "e2",
+        "m2",
+        ViolationKind::DirectUpstreamImport,
+        "t",
+        0,
+    ));
     assert_eq!(reg.entries().len(), 2);
     assert_eq!(reg.entries()[0].exemption_id, "e1");
     assert_eq!(reg.entries()[1].exemption_id, "e2");
@@ -254,7 +303,13 @@ fn registry_entries_returns_all() {
 #[test]
 fn registry_is_exempted_line_zero_matches_any_line() {
     let mut reg = ExtensionHostExemptionRegistry::new();
-    reg.add(make_exemption("e1", "m", ViolationKind::ForbiddenPattern, "tok", 0));
+    reg.add(make_exemption(
+        "e1",
+        "m",
+        ViolationKind::ForbiddenPattern,
+        "tok",
+        0,
+    ));
     // line=0 means module-wide: should match any line number
     assert!(reg.is_exempted("m", ViolationKind::ForbiddenPattern, "tok", 1));
     assert!(reg.is_exempted("m", ViolationKind::ForbiddenPattern, "tok", 42));
@@ -264,7 +319,13 @@ fn registry_is_exempted_line_zero_matches_any_line() {
 #[test]
 fn registry_is_exempted_specific_line_only_matches_that_line() {
     let mut reg = ExtensionHostExemptionRegistry::new();
-    reg.add(make_exemption("e1", "m", ViolationKind::ForbiddenPattern, "tok", 5));
+    reg.add(make_exemption(
+        "e1",
+        "m",
+        ViolationKind::ForbiddenPattern,
+        "tok",
+        5,
+    ));
     assert!(reg.is_exempted("m", ViolationKind::ForbiddenPattern, "tok", 5));
     assert!(!reg.is_exempted("m", ViolationKind::ForbiddenPattern, "tok", 4));
     assert!(!reg.is_exempted("m", ViolationKind::ForbiddenPattern, "tok", 6));
@@ -273,29 +334,59 @@ fn registry_is_exempted_specific_line_only_matches_that_line() {
 #[test]
 fn registry_is_exempted_wrong_module_no_match() {
     let mut reg = ExtensionHostExemptionRegistry::new();
-    reg.add(make_exemption("e1", "m::a", ViolationKind::ForbiddenPattern, "tok", 0));
+    reg.add(make_exemption(
+        "e1",
+        "m::a",
+        ViolationKind::ForbiddenPattern,
+        "tok",
+        0,
+    ));
     assert!(!reg.is_exempted("m::b", ViolationKind::ForbiddenPattern, "tok", 1));
 }
 
 #[test]
 fn registry_is_exempted_wrong_kind_no_match() {
     let mut reg = ExtensionHostExemptionRegistry::new();
-    reg.add(make_exemption("e1", "m", ViolationKind::ForbiddenPattern, "tok", 0));
+    reg.add(make_exemption(
+        "e1",
+        "m",
+        ViolationKind::ForbiddenPattern,
+        "tok",
+        0,
+    ));
     assert!(!reg.is_exempted("m", ViolationKind::DirectUpstreamImport, "tok", 1));
 }
 
 #[test]
 fn registry_is_exempted_wrong_token_no_match() {
     let mut reg = ExtensionHostExemptionRegistry::new();
-    reg.add(make_exemption("e1", "m", ViolationKind::ForbiddenPattern, "tok_a", 0));
+    reg.add(make_exemption(
+        "e1",
+        "m",
+        ViolationKind::ForbiddenPattern,
+        "tok_a",
+        0,
+    ));
     assert!(!reg.is_exempted("m", ViolationKind::ForbiddenPattern, "tok_b", 1));
 }
 
 #[test]
 fn registry_serde_roundtrip() {
     let mut reg = ExtensionHostExemptionRegistry::new();
-    reg.add(make_exemption("e1", "m1", ViolationKind::ForbiddenPattern, "t1", 0));
-    reg.add(make_exemption("e2", "m2", ViolationKind::CanonicalTypeShadow, "t2", 10));
+    reg.add(make_exemption(
+        "e1",
+        "m1",
+        ViolationKind::ForbiddenPattern,
+        "t1",
+        0,
+    ));
+    reg.add(make_exemption(
+        "e2",
+        "m2",
+        ViolationKind::CanonicalTypeShadow,
+        "t2",
+        10,
+    ));
     let json = serde_json::to_string(&reg).unwrap();
     let restored: ExtensionHostExemptionRegistry = serde_json::from_str(&json).unwrap();
     assert_eq!(reg, restored);
@@ -315,7 +406,14 @@ fn guard_config_default_forbidden_imports_count() {
 #[test]
 fn guard_config_default_canonical_types_content() {
     let config = GuardConfig::default();
-    let expected = ["TraceId", "DecisionId", "PolicyId", "SchemaVersion", "Budget", "Cx"];
+    let expected = [
+        "TraceId",
+        "DecisionId",
+        "PolicyId",
+        "SchemaVersion",
+        "Budget",
+        "Cx",
+    ];
     assert_eq!(config.canonical_types.len(), expected.len());
     for t in &expected {
         assert!(
@@ -368,7 +466,11 @@ fn guard_config_add_effectful_indicator() {
     let orig_count = config.effectful_indicators.len();
     config.add_effectful_indicator("custom_effect");
     assert_eq!(config.effectful_indicators.len(), orig_count + 1);
-    assert!(config.effectful_indicators.contains(&"custom_effect".to_string()));
+    assert!(
+        config
+            .effectful_indicators
+            .contains(&"custom_effect".to_string())
+    );
 }
 
 #[test]
@@ -460,7 +562,13 @@ fn guard_config_accessor() {
 #[test]
 fn guard_exemptions_accessor() {
     let mut reg = ExtensionHostExemptionRegistry::new();
-    reg.add(make_exemption("e1", "m", ViolationKind::ForbiddenPattern, "tok", 0));
+    reg.add(make_exemption(
+        "e1",
+        "m",
+        ViolationKind::ForbiddenPattern,
+        "tok",
+        0,
+    ));
     let guard = ExtensionHostGuard::new(GuardConfig::default(), reg.clone());
     assert_eq!(*guard.exemptions(), reg);
 }
@@ -549,7 +657,14 @@ fn multiple_imports_on_different_lines() {
 #[test]
 fn all_six_canonical_types_detected_as_struct() {
     let guard = ExtensionHostGuard::standard();
-    let types = ["TraceId", "DecisionId", "PolicyId", "SchemaVersion", "Budget", "Cx"];
+    let types = [
+        "TraceId",
+        "DecisionId",
+        "PolicyId",
+        "SchemaVersion",
+        "Budget",
+        "Cx",
+    ];
     for t in &types {
         let source = format!("pub struct {t}(u64);");
         let findings = guard.audit_source("m", "f.rs", &source);
@@ -567,7 +682,14 @@ fn all_six_canonical_types_detected_as_struct() {
 #[test]
 fn all_six_canonical_types_detected_as_enum() {
     let guard = ExtensionHostGuard::standard();
-    let types = ["TraceId", "DecisionId", "PolicyId", "SchemaVersion", "Budget", "Cx"];
+    let types = [
+        "TraceId",
+        "DecisionId",
+        "PolicyId",
+        "SchemaVersion",
+        "Budget",
+        "Cx",
+    ];
     for t in &types {
         let source = format!("pub enum {t} {{ A, B }}");
         let findings = guard.audit_source("m", "f.rs", &source);
@@ -585,7 +707,14 @@ fn all_six_canonical_types_detected_as_enum() {
 #[test]
 fn all_six_canonical_types_detected_as_type_alias() {
     let guard = ExtensionHostGuard::standard();
-    let types = ["TraceId", "DecisionId", "PolicyId", "SchemaVersion", "Budget", "Cx"];
+    let types = [
+        "TraceId",
+        "DecisionId",
+        "PolicyId",
+        "SchemaVersion",
+        "Budget",
+        "Cx",
+    ];
     for t in &types {
         let source = format!("type {t} = u64;");
         let findings = guard.audit_source("m", "f.rs", &source);
@@ -623,7 +752,11 @@ fn shadow_finding_remediation_mentions_control_plane() {
         .filter(|f| f.kind == ViolationKind::CanonicalTypeShadow)
         .collect();
     assert!(!shadow_findings.is_empty());
-    assert!(shadow_findings[0].remediation.contains("crate::control_plane"));
+    assert!(
+        shadow_findings[0]
+            .remediation
+            .contains("crate::control_plane")
+    );
 }
 
 #[test]
@@ -668,7 +801,10 @@ fn all_nine_effectful_indicators_detected() {
         "consume_budget",
     ];
     for ind in &indicators {
-        let guard = ExtensionHostGuard::new(GuardConfig::default(), ExtensionHostExemptionRegistry::new());
+        let guard = ExtensionHostGuard::new(
+            GuardConfig::default(),
+            ExtensionHostExemptionRegistry::new(),
+        );
         let source = format!("fn bad_fn(data: &[u8]) {{\n    {ind}(data);\n}}");
         let findings = guard.audit_source("m", "f.rs", &source);
         let cx_count = findings
@@ -744,7 +880,10 @@ fn cx_via_named_cx_colon_accepted() {
 
 #[test]
 fn missing_cx_finding_description_contains_fn_name() {
-    let guard = ExtensionHostGuard::new(GuardConfig::default(), ExtensionHostExemptionRegistry::new());
+    let guard = ExtensionHostGuard::new(
+        GuardConfig::default(),
+        ExtensionHostExemptionRegistry::new(),
+    );
     let source = "fn my_effectful_fn(data: &[u8]) {\n    dispatch_hostcall(\"op\");\n}";
     let findings = guard.audit_source("m", "f.rs", source);
     let cx_findings: Vec<_> = findings
@@ -757,7 +896,10 @@ fn missing_cx_finding_description_contains_fn_name() {
 
 #[test]
 fn missing_cx_finding_remediation_mentions_context_adapter() {
-    let guard = ExtensionHostGuard::new(GuardConfig::default(), ExtensionHostExemptionRegistry::new());
+    let guard = ExtensionHostGuard::new(
+        GuardConfig::default(),
+        ExtensionHostExemptionRegistry::new(),
+    );
     let source = "fn bad_fn() {\n    dispatch_hostcall(\"op\");\n}";
     let findings = guard.audit_source("m", "f.rs", source);
     let cx_findings: Vec<_> = findings
@@ -783,7 +925,10 @@ fn module_not_in_cx_prefix_not_checked() {
 #[test]
 fn empty_cx_prefixes_checks_all_modules() {
     // Default config has empty cx_audited_module_prefixes
-    let guard = ExtensionHostGuard::new(GuardConfig::default(), ExtensionHostExemptionRegistry::new());
+    let guard = ExtensionHostGuard::new(
+        GuardConfig::default(),
+        ExtensionHostExemptionRegistry::new(),
+    );
     let source = "fn bad_fn() {\n    dispatch_hostcall(\"op\");\n}";
     let findings = guard.audit_source("any::module::path", "f.rs", source);
     let cx_violations: Vec<_> = findings
@@ -795,7 +940,10 @@ fn empty_cx_prefixes_checks_all_modules() {
 
 #[test]
 fn one_finding_per_function_not_per_indicator() {
-    let guard = ExtensionHostGuard::new(GuardConfig::default(), ExtensionHostExemptionRegistry::new());
+    let guard = ExtensionHostGuard::new(
+        GuardConfig::default(),
+        ExtensionHostExemptionRegistry::new(),
+    );
     let source = "fn multi_effect() {\n    dispatch_hostcall(\"a\");\n    emit_telemetry(\"b\");\n    consume_budget(10);\n}";
     let findings = guard.audit_source("m", "f.rs", source);
     let cx_violations: Vec<_> = findings
@@ -807,7 +955,10 @@ fn one_finding_per_function_not_per_indicator() {
 
 #[test]
 fn pure_function_no_cx_violation() {
-    let guard = ExtensionHostGuard::new(GuardConfig::default(), ExtensionHostExemptionRegistry::new());
+    let guard = ExtensionHostGuard::new(
+        GuardConfig::default(),
+        ExtensionHostExemptionRegistry::new(),
+    );
     let source = "fn pure_math(x: i64, y: i64) -> i64 {\n    x + y\n}";
     let findings = guard.audit_source("m", "f.rs", source);
     let cx_violations: Vec<_> = findings
@@ -819,7 +970,10 @@ fn pure_function_no_cx_violation() {
 
 #[test]
 fn trait_declaration_not_flagged_as_missing_cx() {
-    let guard = ExtensionHostGuard::new(GuardConfig::default(), ExtensionHostExemptionRegistry::new());
+    let guard = ExtensionHostGuard::new(
+        GuardConfig::default(),
+        ExtensionHostExemptionRegistry::new(),
+    );
     // Trait method ending with `;` should be skipped by extract_fn_signature
     let source = "    fn abstract_method(&self) -> bool;";
     let findings = guard.audit_source("m", "f.rs", source);
@@ -839,7 +993,11 @@ fn base_patterns_detect_std_fs() {
     let guard = ExtensionHostGuard::standard();
     let source = "let data = std::fs::read(\"file.txt\");";
     let findings = guard.audit_source("m", "f.rs", source);
-    assert!(findings.iter().any(|f| f.kind == ViolationKind::ForbiddenPattern));
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.kind == ViolationKind::ForbiddenPattern)
+    );
 }
 
 #[test]
@@ -847,7 +1005,11 @@ fn base_patterns_detect_tcp_stream() {
     let guard = ExtensionHostGuard::standard();
     let source = "let s = TcpStream::connect(\"127.0.0.1:80\");";
     let findings = guard.audit_source("m", "f.rs", source);
-    assert!(findings.iter().any(|f| f.kind == ViolationKind::ForbiddenPattern));
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.kind == ViolationKind::ForbiddenPattern)
+    );
 }
 
 #[test]
@@ -855,7 +1017,11 @@ fn base_patterns_detect_command_new() {
     let guard = ExtensionHostGuard::standard();
     let source = "let out = Command::new(\"ls\").output();";
     let findings = guard.audit_source("m", "f.rs", source);
-    assert!(findings.iter().any(|f| f.kind == ViolationKind::ForbiddenPattern));
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.kind == ViolationKind::ForbiddenPattern)
+    );
 }
 
 #[test]
@@ -863,7 +1029,11 @@ fn base_patterns_detect_static_mut() {
     let guard = ExtensionHostGuard::standard();
     let source = "static mut COUNTER: u64 = 0;";
     let findings = guard.audit_source("m", "f.rs", source);
-    assert!(findings.iter().any(|f| f.kind == ViolationKind::ForbiddenPattern));
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.kind == ViolationKind::ForbiddenPattern)
+    );
 }
 
 #[test]
@@ -871,7 +1041,11 @@ fn base_patterns_detect_system_time() {
     let guard = ExtensionHostGuard::standard();
     let source = "let now = SystemTime::now();";
     let findings = guard.audit_source("m", "f.rs", source);
-    assert!(findings.iter().any(|f| f.kind == ViolationKind::ForbiddenPattern));
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.kind == ViolationKind::ForbiddenPattern)
+    );
 }
 
 #[test]
@@ -1143,7 +1317,11 @@ fn custom_forbidden_import_works_in_audit() {
     let guard = ExtensionHostGuard::new(config, ExtensionHostExemptionRegistry::new());
     let source = "use evil_crate::Bad;";
     let findings = guard.audit_source("m", "f.rs", source);
-    assert!(findings.iter().any(|f| f.kind == ViolationKind::DirectUpstreamImport));
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.kind == ViolationKind::DirectUpstreamImport)
+    );
 }
 
 #[test]
@@ -1153,7 +1331,11 @@ fn custom_effectful_indicator_works_in_audit() {
     let guard = ExtensionHostGuard::new(config, ExtensionHostExemptionRegistry::new());
     let source = "fn bad_fn() {\n    my_custom_effect();\n}";
     let findings = guard.audit_source("m", "f.rs", source);
-    assert!(findings.iter().any(|f| f.kind == ViolationKind::MissingCxParameter));
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.kind == ViolationKind::MissingCxParameter)
+    );
 }
 
 #[test]
@@ -1202,7 +1384,11 @@ struct Budget { amount: u64 }
 fn bad() { dispatch_hostcall(\"op\"); }";
     let findings = guard.audit_source("m::x", "f.rs", source);
     for f in &findings {
-        assert!(!f.remediation.is_empty(), "kind {:?} must have remediation", f.kind);
+        assert!(
+            !f.remediation.is_empty(),
+            "kind {:?} must have remediation",
+            f.kind
+        );
     }
 }
 

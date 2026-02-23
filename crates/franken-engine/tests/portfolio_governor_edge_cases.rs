@@ -8,8 +8,8 @@ use frankenengine_engine::moonshot_contract::{
     MoonshotStage, RiskBudget, RiskDimension, RollbackPlan, RollbackStep, TargetMetric,
 };
 use frankenengine_engine::portfolio_governor::{
-    ArtifactEvidence, GovernorConfig, GovernorDecisionKind, GovernorError,
-    MetricObservation, MoonshotStatus, PortfolioGovernor, Scorecard,
+    ArtifactEvidence, GovernorConfig, GovernorDecisionKind, GovernorError, MetricObservation,
+    MoonshotStatus, PortfolioGovernor, Scorecard,
 };
 use frankenengine_engine::security_epoch::SecurityEpoch;
 
@@ -289,10 +289,7 @@ fn governor_decision_kind_display_all() {
         "kill"
     );
     assert_eq!(
-        GovernorDecisionKind::Pause {
-            reason: "r".into()
-        }
-        .to_string(),
+        GovernorDecisionKind::Pause { reason: "r".into() }.to_string(),
         "pause(r)"
     );
     assert_eq!(GovernorDecisionKind::Resume.to_string(), "resume");
@@ -502,9 +499,11 @@ fn metric_observation_serde_roundtrip() {
 fn moonshot_state_latest_metric_not_found() {
     let mut gov = test_governor();
     register_test_moonshot(&mut gov);
-    assert!(gov.moonshots["mc-test-001"]
-        .latest_metric("nonexistent")
-        .is_none());
+    assert!(
+        gov.moonshots["mc-test-001"]
+            .latest_metric("nonexistent")
+            .is_none()
+    );
 }
 
 #[test]
@@ -606,9 +605,7 @@ fn scorecard_interference_scales_with_active_count() {
     register_test_moonshot(&mut gov);
 
     // 1 active moonshot → interference = 0
-    let sc1 = gov
-        .compute_scorecard("mc-test-001", 2_000_000_000)
-        .unwrap();
+    let sc1 = gov.compute_scorecard("mc-test-001", 2_000_000_000).unwrap();
     assert_eq!(sc1.cross_initiative_interference_millionths, 0);
 
     // Add second moonshot
@@ -617,9 +614,7 @@ fn scorecard_interference_scales_with_active_count() {
     gov.register_moonshot(c2, 1_000_000_000).unwrap();
 
     // 2 active moonshots → interference = (2-1)*50_000 = 50_000
-    let sc2 = gov
-        .compute_scorecard("mc-test-001", 2_000_000_000)
-        .unwrap();
+    let sc2 = gov.compute_scorecard("mc-test-001", 2_000_000_000).unwrap();
     assert_eq!(sc2.cross_initiative_interference_millionths, 50_000);
 }
 
@@ -642,9 +637,7 @@ fn scorecard_burden_from_budget() {
     let mut gov = test_governor();
     register_test_moonshot(&mut gov);
     gov.update_budget("mc-test-001", 300_000).unwrap();
-    let sc = gov
-        .compute_scorecard("mc-test-001", 2_000_000_000)
-        .unwrap();
+    let sc = gov.compute_scorecard("mc-test-001", 2_000_000_000).unwrap();
     assert_eq!(sc.operational_burden_millionths, 300_000);
 }
 
@@ -671,9 +664,7 @@ fn gate_hold_risk_too_high() {
     )
     .unwrap();
 
-    let decision = gov
-        .evaluate_gate("mc-test-001", 101_000_000_000)
-        .unwrap();
+    let decision = gov.evaluate_gate("mc-test-001", 101_000_000_000).unwrap();
     // Should be Hold due to high risk or Kill from kill criteria
     match &decision.kind {
         GovernorDecisionKind::Hold { reason } => {
@@ -827,9 +818,7 @@ fn pause_resume_cycle_decision_ids_increment() {
     let d1 = gov
         .pause_moonshot("mc-test-001", "need resources", 2_000_000_000)
         .unwrap();
-    let d2 = gov
-        .resume_moonshot("mc-test-001", 3_000_000_000)
-        .unwrap();
+    let d2 = gov.resume_moonshot("mc-test-001", 3_000_000_000).unwrap();
     assert_eq!(d1.decision_id, "gov-1");
     assert_eq!(d2.decision_id, "gov-2");
 }
@@ -914,8 +903,7 @@ fn rank_portfolio_excludes_paused_and_killed() {
         reason: "test".into(),
         killed_at_ns: 0,
     };
-    gov.pause_moonshot("mc-003", "test", 2_000_000_000)
-        .unwrap();
+    gov.pause_moonshot("mc-003", "test", 2_000_000_000).unwrap();
 
     let rankings = gov.rank_portfolio(3_000_000_000);
     assert_eq!(rankings.len(), 1);
@@ -1083,16 +1071,12 @@ fn integration_friction_decreases_with_artifact_completion() {
     register_test_moonshot(&mut gov);
 
     // No artifacts → high friction
-    let sc1 = gov
-        .compute_scorecard("mc-test-001", 1_000_000_000)
-        .unwrap();
+    let sc1 = gov.compute_scorecard("mc-test-001", 1_000_000_000).unwrap();
 
     // Submit one of two obligations
     submit_research_artifact(&mut gov, "mc-test-001");
 
     // Friction should decrease
-    let sc2 = gov
-        .compute_scorecard("mc-test-001", 2_000_000_000)
-        .unwrap();
+    let sc2 = gov.compute_scorecard("mc-test-001", 2_000_000_000).unwrap();
     assert!(sc2.implementation_friction_millionths < sc1.implementation_friction_millionths);
 }

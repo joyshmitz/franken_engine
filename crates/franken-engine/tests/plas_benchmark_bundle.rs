@@ -1,7 +1,7 @@
 use frankenengine_engine::plas_benchmark_bundle::{
-    build_plas_benchmark_bundle, PlasBenchmarkBundleRequest, PlasBenchmarkCohort,
+    PLAS_BENCHMARK_BUNDLE_SCHEMA_VERSION, PlasBenchmarkBundleRequest, PlasBenchmarkCohort,
     PlasBenchmarkExtensionSample, PlasBenchmarkThresholds, PlasBenchmarkTrendPoint,
-    PLAS_BENCHMARK_BUNDLE_SCHEMA_VERSION,
+    build_plas_benchmark_bundle,
 };
 
 fn base_sample(extension_id: &str, cohort: PlasBenchmarkCohort) -> PlasBenchmarkExtensionSample {
@@ -47,7 +47,10 @@ fn bundle_allows_publication_when_thresholds_pass_for_all_cohorts() {
     let request = request_with_samples(representative_samples());
     let decision = build_plas_benchmark_bundle(&request).expect("bundle should build");
 
-    assert_eq!(decision.schema_version, PLAS_BENCHMARK_BUNDLE_SCHEMA_VERSION);
+    assert_eq!(
+        decision.schema_version,
+        PLAS_BENCHMARK_BUNDLE_SCHEMA_VERSION
+    );
     assert!(decision.publish_allowed);
     assert!(decision.blockers.is_empty());
     assert_eq!(decision.cohort_summaries.len(), 4);
@@ -71,10 +74,12 @@ fn bundle_denies_when_false_deny_threshold_exceeded() {
     let decision = build_plas_benchmark_bundle(&request).expect("bundle should build");
 
     assert!(!decision.publish_allowed);
-    assert!(decision
-        .blockers
-        .iter()
-        .any(|blocker| blocker.contains("false-deny")));
+    assert!(
+        decision
+            .blockers
+            .iter()
+            .any(|blocker| blocker.contains("false-deny"))
+    );
     assert!(decision
         .events
         .iter()
@@ -90,10 +95,12 @@ fn bundle_denies_when_required_cohort_is_missing() {
     let decision = build_plas_benchmark_bundle(&request).expect("bundle should build");
 
     assert!(!decision.publish_allowed);
-    assert!(decision
-        .blockers
-        .iter()
-        .any(|blocker| blocker.contains("missing representative cohort coverage")));
+    assert!(
+        decision
+            .blockers
+            .iter()
+            .any(|blocker| blocker.contains("missing representative cohort coverage"))
+    );
 }
 
 #[test]
@@ -113,10 +120,12 @@ fn trend_regression_is_detected_without_blocking_by_default() {
 
     assert!(decision.trend_regression_detected);
     assert!(decision.publish_allowed);
-    assert!(decision
-        .events
-        .iter()
-        .any(|event| event.event == "trend_regression_check" && event.outcome == "warn"));
+    assert!(
+        decision
+            .events
+            .iter()
+            .any(|event| event.event == "trend_regression_check" && event.outcome == "warn")
+    );
 }
 
 #[test]
@@ -141,10 +150,12 @@ fn trend_regression_can_block_when_configured() {
 
     assert!(decision.trend_regression_detected);
     assert!(!decision.publish_allowed);
-    assert!(decision
-        .blockers
-        .iter()
-        .any(|blocker| blocker.contains("trend regression detected")));
+    assert!(
+        decision
+            .blockers
+            .iter()
+            .any(|blocker| blocker.contains("trend regression detected"))
+    );
 }
 
 #[test]

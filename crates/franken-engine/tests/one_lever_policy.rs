@@ -58,9 +58,11 @@ fn multi_lever_change_without_override_is_denied() {
     );
     assert!(decision.is_multi_lever);
     assert!(decision.override_reason.is_none());
-    assert!(decision
-        .lever_categories
-        .contains(&LeverCategory::Execution));
+    assert!(
+        decision
+            .lever_categories
+            .contains(&LeverCategory::Execution)
+    );
     assert!(decision.lever_categories.contains(&LeverCategory::Memory));
 }
 
@@ -68,8 +70,7 @@ fn multi_lever_change_without_override_is_denied() {
 fn multi_lever_override_allows_with_reason() {
     let mut request = base_request();
     request.commit_message =
-        "perf: coupled runtime fix [multi-lever: scheduler and gc are tightly coupled]"
-            .to_string();
+        "perf: coupled runtime fix [multi-lever: scheduler and gc are tightly coupled]".to_string();
     request.changed_paths = vec![
         "crates/franken-engine/src/baseline_interpreter.rs".to_string(),
         "crates/franken-engine/src/gc_pause.rs".to_string(),
@@ -94,12 +95,16 @@ fn missing_baseline_after_evidence_is_denied() {
     let decision = evaluate_one_lever_policy(&request);
     assert_eq!(decision.outcome, "deny");
     assert_eq!(decision.error_code.as_deref(), Some(ERROR_MISSING_EVIDENCE));
-    assert!(decision
-        .missing_requirements
-        .contains(&"baseline_benchmark_run_id".to_string()));
-    assert!(decision
-        .missing_requirements
-        .contains(&"post_change_benchmark_run_id".to_string()));
+    assert!(
+        decision
+            .missing_requirements
+            .contains(&"baseline_benchmark_run_id".to_string())
+    );
+    assert!(
+        decision
+            .missing_requirements
+            .contains(&"post_change_benchmark_run_id".to_string())
+    );
 }
 
 #[test]
@@ -111,12 +116,16 @@ fn missing_semantic_equivalence_and_replay_refs_is_denied() {
     let decision = evaluate_one_lever_policy(&request);
     assert_eq!(decision.outcome, "deny");
     assert_eq!(decision.error_code.as_deref(), Some(ERROR_MISSING_EVIDENCE));
-    assert!(decision
-        .missing_requirements
-        .contains(&"semantic_equivalence_ref".to_string()));
-    assert!(decision
-        .missing_requirements
-        .contains(&"trace_replay_ref".to_string()));
+    assert!(
+        decision
+            .missing_requirements
+            .contains(&"semantic_equivalence_ref".to_string())
+    );
+    assert!(
+        decision
+            .missing_requirements
+            .contains(&"trace_replay_ref".to_string())
+    );
 }
 
 #[test]
@@ -128,12 +137,16 @@ fn missing_rollback_or_reprofile_is_denied() {
     let decision = evaluate_one_lever_policy(&request);
     assert_eq!(decision.outcome, "deny");
     assert_eq!(decision.error_code.as_deref(), Some(ERROR_MISSING_EVIDENCE));
-    assert!(decision
-        .missing_requirements
-        .contains(&"rollback_instructions_ref".to_string()));
-    assert!(decision
-        .missing_requirements
-        .contains(&"reprofile_after_merge_ref".to_string()));
+    assert!(
+        decision
+            .missing_requirements
+            .contains(&"rollback_instructions_ref".to_string())
+    );
+    assert!(
+        decision
+            .missing_requirements
+            .contains(&"reprofile_after_merge_ref".to_string())
+    );
 }
 
 #[test]

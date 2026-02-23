@@ -141,8 +141,7 @@ fn end_to_end_profile_to_ranked_output() {
     assert!(decision.has_selected_opportunities());
     assert!(!decision.selected_opportunity_ids.is_empty());
     assert_eq!(
-        decision.ranked_opportunities[0].target_function,
-        "dispatch",
+        decision.ranked_opportunities[0].target_function, "dispatch",
         "highest hotspot should rank first in deterministic ordering",
     );
 }
@@ -193,9 +192,18 @@ fn historical_tracking_records_predicted_vs_actual_error() {
 
     let decision = run_opportunity_matrix_scoring(&request);
     assert_eq!(decision.historical_tracking.len(), 2);
-    assert_eq!(decision.historical_tracking[0].signed_error_millionths, 120_000);
-    assert_eq!(decision.historical_tracking[1].signed_error_millionths, -50_000);
-    assert_eq!(decision.historical_tracking[1].absolute_error_millionths, 50_000);
+    assert_eq!(
+        decision.historical_tracking[0].signed_error_millionths,
+        120_000
+    );
+    assert_eq!(
+        decision.historical_tracking[1].signed_error_millionths,
+        -50_000
+    );
+    assert_eq!(
+        decision.historical_tracking[1].absolute_error_millionths,
+        50_000
+    );
 }
 
 #[test]

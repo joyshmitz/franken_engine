@@ -8,9 +8,8 @@ use std::collections::BTreeSet;
 
 use frankenengine_engine::reputation::{
     EdgeType, EvidenceNode, EvidenceSource, EvidenceType, ExtensionNode, IncidentNode,
-    IncidentSeverity, OperatorOverrideInput, ProvenanceRecord, PublisherNode,
-    ReputationGraph, ReputationGraphError, ResolutionStatus, TrustLevel, TrustLookupResult,
-    TrustTransition,
+    IncidentSeverity, OperatorOverrideInput, ProvenanceRecord, PublisherNode, ReputationGraph,
+    ReputationGraphError, ResolutionStatus, TrustLevel, TrustLookupResult, TrustTransition,
 };
 use frankenengine_engine::security_epoch::SecurityEpoch;
 
@@ -428,31 +427,49 @@ fn full_lifecycle_register_evidence_transition_revocation_override_lookup() {
 
     // Auto-upgrade: Unknown → Provisional.
     let tt1 = graph
-        .transition_trust("ext-1", TrustLevel::Provisional, vec!["ev-1".into()], 1, epoch(1), 1_000)
+        .transition_trust(
+            "ext-1",
+            TrustLevel::Provisional,
+            vec!["ev-1".into()],
+            1,
+            epoch(1),
+            1_000,
+        )
         .unwrap();
     assert_eq!(tt1.old_level, TrustLevel::Unknown);
     assert!(!tt1.operator_override);
 
     // Auto-upgrade: Provisional → Established.
     graph
-        .transition_trust("ext-1", TrustLevel::Established, vec!["ev-1".into()], 1, epoch(1), 2_000)
+        .transition_trust(
+            "ext-1",
+            TrustLevel::Established,
+            vec!["ev-1".into()],
+            1,
+            epoch(1),
+            2_000,
+        )
         .unwrap();
 
     // Auto-degrade: Established → Suspicious.
     graph
-        .transition_trust("ext-1", TrustLevel::Suspicious, vec!["ev-bad".into()], 1, epoch(1), 3_000)
+        .transition_trust(
+            "ext-1",
+            TrustLevel::Suspicious,
+            vec!["ev-bad".into()],
+            1,
+            epoch(1),
+            3_000,
+        )
         .unwrap();
 
     // Auto-upgrade from degraded → denied.
-    let result = graph.transition_trust(
-        "ext-1",
-        TrustLevel::Established,
-        vec![],
-        1,
-        epoch(1),
-        4_000,
-    );
-    assert!(matches!(result, Err(ReputationGraphError::AutoUpgradeDenied { .. })));
+    let result =
+        graph.transition_trust("ext-1", TrustLevel::Established, vec![], 1, epoch(1), 4_000);
+    assert!(matches!(
+        result,
+        Err(ReputationGraphError::AutoUpgradeDenied { .. })
+    ));
 
     // Operator override: Suspicious → Provisional.
     let tt_override = graph
@@ -493,13 +510,26 @@ fn revocation_propagation_transitive_chain() {
     let mut graph = ReputationGraph::new();
 
     // Chain: ext-a ← ext-b ← ext-c.
-    graph.register_extension(test_extension("ext-a", "pub-1")).unwrap();
-    graph.register_extension(test_extension_with_deps("ext-b", "pub-1", &["ext-a"])).unwrap();
-    graph.register_extension(test_extension_with_deps("ext-c", "pub-1", &["ext-b"])).unwrap();
+    graph
+        .register_extension(test_extension("ext-a", "pub-1"))
+        .unwrap();
+    graph
+        .register_extension(test_extension_with_deps("ext-b", "pub-1", &["ext-a"]))
+        .unwrap();
+    graph
+        .register_extension(test_extension_with_deps("ext-c", "pub-1", &["ext-b"]))
+        .unwrap();
 
     // Revoke ext-a.
     graph
-        .transition_trust("ext-a", TrustLevel::Revoked, vec!["incident-1".into()], 1, epoch(1), 1_000)
+        .transition_trust(
+            "ext-a",
+            TrustLevel::Revoked,
+            vec!["incident-1".into()],
+            1,
+            epoch(1),
+            1_000,
+        )
         .unwrap();
 
     let impact = graph
@@ -516,7 +546,9 @@ fn revocation_propagation_transitive_chain() {
 fn revocation_propagation_does_not_degrade_already_degraded() {
     let mut graph = ReputationGraph::new();
 
-    graph.register_extension(test_extension("ext-a", "pub-1")).unwrap();
+    graph
+        .register_extension(test_extension("ext-a", "pub-1"))
+        .unwrap();
 
     let mut ext_b = test_extension_with_deps("ext-b", "pub-1", &["ext-a"]);
     ext_b.current_trust_level = TrustLevel::Compromised; // Already degraded.
@@ -542,7 +574,9 @@ fn revocation_propagation_does_not_degrade_already_degraded() {
 #[test]
 fn trust_transition_ids_are_monotonic() {
     let mut graph = ReputationGraph::new();
-    graph.register_extension(test_extension("ext-1", "pub-1")).unwrap();
+    graph
+        .register_extension(test_extension("ext-1", "pub-1"))
+        .unwrap();
 
     let tt1 = graph
         .transition_trust("ext-1", TrustLevel::Provisional, vec![], 1, epoch(1), 1_000)
@@ -565,8 +599,12 @@ fn trust_transition_ids_are_monotonic() {
 #[test]
 fn get_evidence_for_extension_returns_linked() {
     let mut graph = ReputationGraph::new();
-    graph.register_extension(test_extension("ext-1", "pub-1")).unwrap();
-    graph.register_extension(test_extension("ext-2", "pub-1")).unwrap();
+    graph
+        .register_extension(test_extension("ext-1", "pub-1"))
+        .unwrap();
+    graph
+        .register_extension(test_extension("ext-2", "pub-1"))
+        .unwrap();
 
     graph.add_evidence("ext-1", test_evidence("ev-1")).unwrap();
     graph.add_evidence("ext-1", test_evidence("ev-2")).unwrap();
@@ -583,8 +621,12 @@ fn get_evidence_for_extension_returns_linked() {
 #[test]
 fn incident_count_for_extension() {
     let mut graph = ReputationGraph::new();
-    graph.register_extension(test_extension("ext-1", "pub-1")).unwrap();
-    graph.register_extension(test_extension("ext-2", "pub-1")).unwrap();
+    graph
+        .register_extension(test_extension("ext-1", "pub-1"))
+        .unwrap();
+    graph
+        .register_extension(test_extension("ext-2", "pub-1"))
+        .unwrap();
 
     assert_eq!(graph.incident_count_for_extension("ext-1"), 0);
 
@@ -624,7 +666,9 @@ fn dependency_risk_score_per_trust_level() {
         let mut dep = test_extension("dep", "pub-1");
         dep.current_trust_level = *level;
         graph.register_extension(dep).unwrap();
-        graph.register_extension(test_extension_with_deps("ext", "pub-1", &["dep"])).unwrap();
+        graph
+            .register_extension(test_extension_with_deps("ext", "pub-1", &["dep"]))
+            .unwrap();
 
         let result = graph.trust_lookup("ext").unwrap();
         assert_eq!(
@@ -653,7 +697,9 @@ fn dependency_risk_missing_dep_treated_as_high_risk() {
 #[test]
 fn provenance_with_gaps() {
     let mut graph = ReputationGraph::new();
-    graph.register_extension(test_extension("ext-1", "pub-1")).unwrap();
+    graph
+        .register_extension(test_extension("ext-1", "pub-1"))
+        .unwrap();
 
     let record = ProvenanceRecord {
         extension_id: "ext-1".into(),
@@ -718,12 +764,23 @@ fn graph_serde_roundtrip_with_full_data() {
     let mut graph = ReputationGraph::new();
 
     graph.register_publisher(test_publisher("pub-1"));
-    graph.register_extension(test_extension("ext-1", "pub-1")).unwrap();
-    graph.register_extension(test_extension_with_deps("ext-2", "pub-1", &["ext-1"])).unwrap();
+    graph
+        .register_extension(test_extension("ext-1", "pub-1"))
+        .unwrap();
+    graph
+        .register_extension(test_extension_with_deps("ext-2", "pub-1", &["ext-1"]))
+        .unwrap();
 
     graph.add_evidence("ext-1", test_evidence("ev-1")).unwrap();
     graph
-        .transition_trust("ext-1", TrustLevel::Provisional, vec!["ev-1".into()], 1, epoch(1), 1_000)
+        .transition_trust(
+            "ext-1",
+            TrustLevel::Provisional,
+            vec!["ev-1".into()],
+            1,
+            epoch(1),
+            1_000,
+        )
         .unwrap();
 
     let inc = IncidentNode {
@@ -781,7 +838,14 @@ fn stress_many_extensions_and_transitions() {
             .transition_trust(&id, TrustLevel::Provisional, vec![], 1, epoch(1), i * 1_000)
             .unwrap();
         graph
-            .transition_trust(&id, TrustLevel::Established, vec![], 1, epoch(1), i * 1_000 + 500)
+            .transition_trust(
+                &id,
+                TrustLevel::Established,
+                vec![],
+                1,
+                epoch(1),
+                i * 1_000 + 500,
+            )
             .unwrap();
     }
 
@@ -807,7 +871,9 @@ fn stress_many_extensions_and_transitions() {
 #[test]
 fn trust_lookup_without_publisher_registration() {
     let mut graph = ReputationGraph::new();
-    graph.register_extension(test_extension("ext-1", "pub-1")).unwrap();
+    graph
+        .register_extension(test_extension("ext-1", "pub-1"))
+        .unwrap();
 
     // Publisher not registered — trust score should be None.
     let result = graph.trust_lookup("ext-1").unwrap();
@@ -817,13 +883,29 @@ fn trust_lookup_without_publisher_registration() {
 #[test]
 fn trust_lookup_last_transition_populated() {
     let mut graph = ReputationGraph::new();
-    graph.register_extension(test_extension("ext-1", "pub-1")).unwrap();
+    graph
+        .register_extension(test_extension("ext-1", "pub-1"))
+        .unwrap();
 
     graph
-        .transition_trust("ext-1", TrustLevel::Provisional, vec!["ev-1".into()], 1, epoch(1), 1_000)
+        .transition_trust(
+            "ext-1",
+            TrustLevel::Provisional,
+            vec!["ev-1".into()],
+            1,
+            epoch(1),
+            1_000,
+        )
         .unwrap();
     graph
-        .transition_trust("ext-1", TrustLevel::Suspicious, vec!["ev-bad".into()], 1, epoch(1), 2_000)
+        .transition_trust(
+            "ext-1",
+            TrustLevel::Suspicious,
+            vec!["ev-bad".into()],
+            1,
+            epoch(1),
+            2_000,
+        )
         .unwrap();
 
     let result = graph.trust_lookup("ext-1").unwrap();

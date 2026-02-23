@@ -30,7 +30,11 @@ fn delegate_manifest(capabilities: &[Capability], max_lifetime_ns: u64) -> Deleg
 }
 
 fn lctx() -> LifecycleContext<'static> {
-    LifecycleContext::new("trace-escrow-adv", "decision-escrow-adv", "policy-escrow-adv")
+    LifecycleContext::new(
+        "trace-escrow-adv",
+        "decision-escrow-adv",
+        "policy-escrow-adv",
+    )
 }
 
 fn fctx() -> FlowEnforcementContext<'static> {
@@ -118,17 +122,14 @@ fn time_delayed_escalation_after_benign_sequence_still_requires_escrow() {
         .capability_escrow_records()
         .values()
         .all(|record| record.state != CapabilityEscrowState::Approved));
-    assert!(delegate
-        .capability_escrow_receipts()
-        .iter()
-        .all(|receipt| {
-            matches!(
-                receipt.decision,
-                CapabilityEscrowDecisionKind::Challenge
-                    | CapabilityEscrowDecisionKind::Sandbox
-                    | CapabilityEscrowDecisionKind::Deny
-            )
-        }));
+    assert!(delegate.capability_escrow_receipts().iter().all(|receipt| {
+        matches!(
+            receipt.decision,
+            CapabilityEscrowDecisionKind::Challenge
+                | CapabilityEscrowDecisionKind::Sandbox
+                | CapabilityEscrowDecisionKind::Deny
+        )
+    }));
 }
 
 #[test]
@@ -312,12 +313,9 @@ fn escrow_flood_campaign_triggers_contract_denials() {
         .count();
     assert!(flood_denials > 0, "expected flood-protection denials");
 
-    assert!(delegate
-        .capability_escrow_events()
-        .iter()
-        .any(|event| {
-            event.outcome == "denied" && event.error_code.as_deref() == Some("FE-ESCROW-0003")
-        }));
+    assert!(delegate.capability_escrow_events().iter().any(|event| {
+        event.outcome == "denied" && event.error_code.as_deref() == Some("FE-ESCROW-0003")
+    }));
 }
 
 #[test]

@@ -47,12 +47,7 @@ fn quarantine_input(suffix: &str) -> MarkerInput {
     }
 }
 
-fn make_input(
-    decision_type: DecisionType,
-    suffix: &str,
-    ticks: u64,
-    epoch: u64,
-) -> MarkerInput {
+fn make_input(decision_type: DecisionType, suffix: &str, ticks: u64, epoch: u64) -> MarkerInput {
     MarkerInput {
         timestamp_ticks: ticks,
         epoch_id: epoch,
@@ -331,24 +326,12 @@ fn by_event_type_returns_matching_decision_types() {
         1,
     ));
 
+    assert_eq!(stream.by_event_type("security_action:quarantine").len(), 2);
     assert_eq!(
-        stream
-            .by_event_type("security_action:quarantine")
-            .len(),
-        2
-    );
-    assert_eq!(
-        stream
-            .by_event_type("policy_transition:activation")
-            .len(),
+        stream.by_event_type("policy_transition:activation").len(),
         1
     );
-    assert_eq!(
-        stream
-            .by_event_type("revocation_event:issuance")
-            .len(),
-        1
-    );
+    assert_eq!(stream.by_event_type("revocation_event:issuance").len(), 1);
     assert!(stream.by_event_type("nonexistent").is_empty());
 }
 
@@ -1034,7 +1017,10 @@ fn queries_cross_check_against_full_markers() {
 
     // by_event_type
     assert_eq!(stream.by_event_type("security_action:quarantine").len(), 2);
-    assert_eq!(stream.by_event_type("policy_transition:activation").len(), 1);
+    assert_eq!(
+        stream.by_event_type("policy_transition:activation").len(),
+        1
+    );
 
     // by_principal_id
     assert_eq!(stream.by_principal_id("alice").len(), 2);
@@ -1091,8 +1077,7 @@ fn chain_integrity_error_display_all_variants() {
 
 #[test]
 fn chain_integrity_error_is_std_error() {
-    let err: Box<dyn std::error::Error> =
-        Box::new(ChainIntegrityError::EmptyStream);
+    let err: Box<dyn std::error::Error> = Box::new(ChainIntegrityError::EmptyStream);
     assert_eq!(err.to_string(), "empty stream");
 }
 
@@ -1128,7 +1113,12 @@ fn stress_large_stream_verifies() {
 
     for i in 0..500 {
         let dt = decision_types[i % decision_types.len()].clone();
-        stream.append(make_input(dt, &format!("stress-{i}"), i as u64, i as u64 / 100));
+        stream.append(make_input(
+            dt,
+            &format!("stress-{i}"),
+            i as u64,
+            i as u64 / 100,
+        ));
     }
 
     assert_eq!(stream.len(), 500);

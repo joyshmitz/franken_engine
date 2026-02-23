@@ -6,10 +6,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use frankenengine_engine::security_epoch::SecurityEpoch;
 use frankenengine_engine::trust_economics::{
     ActionCost, AttackerCostModel, AttackerRoiAssessment, BlastRadiusEstimate, ContainmentAction,
-    ContainmentCostModel, DecomposedLossMatrix, FleetRoiSummary, RoiAlertLevel, RoiTrend,
-    StrategyCostAdjustment, SubLoss, TrueState, TrustEconomicsError, TrustEconomicsModelInputs,
-    classify_roi_alert_level, classify_roi_trend, default_conservative_loss_matrix,
-    summarize_fleet_roi, MILLIONTHS,
+    ContainmentCostModel, DecomposedLossMatrix, FleetRoiSummary, MILLIONTHS, RoiAlertLevel,
+    RoiTrend, StrategyCostAdjustment, SubLoss, TrueState, TrustEconomicsError,
+    TrustEconomicsModelInputs, classify_roi_alert_level, classify_roi_trend,
+    default_conservative_loss_matrix, summarize_fleet_roi,
 };
 
 // ---------------------------------------------------------------------------
@@ -154,7 +154,15 @@ fn containment_action_hash_deterministic() {
 
 #[test]
 fn containment_action_display_all() {
-    let expected = ["allow", "warn", "challenge", "sandbox", "suspend", "terminate", "quarantine"];
+    let expected = [
+        "allow",
+        "warn",
+        "challenge",
+        "sandbox",
+        "suspend",
+        "terminate",
+        "quarantine",
+    ];
     for (v, e) in ContainmentAction::ALL.iter().zip(expected.iter()) {
         assert_eq!(v.to_string(), *e);
     }
@@ -223,7 +231,10 @@ fn roi_alert_level_display_all() {
     assert_eq!(RoiAlertLevel::Unprofitable.to_string(), "unprofitable");
     assert_eq!(RoiAlertLevel::Neutral.to_string(), "neutral");
     assert_eq!(RoiAlertLevel::Profitable.to_string(), "profitable");
-    assert_eq!(RoiAlertLevel::HighlyProfitable.to_string(), "highly_profitable");
+    assert_eq!(
+        RoiAlertLevel::HighlyProfitable.to_string(),
+        "highly_profitable"
+    );
 }
 
 // ===========================================================================
@@ -260,18 +271,27 @@ fn classify_roi_boundary_exactly_500_000() {
 #[test]
 fn classify_roi_boundary_exactly_1_000_001() {
     // > 1_000_000, so Profitable.
-    assert_eq!(classify_roi_alert_level(1_000_001), RoiAlertLevel::Profitable);
+    assert_eq!(
+        classify_roi_alert_level(1_000_001),
+        RoiAlertLevel::Profitable
+    );
 }
 
 #[test]
 fn classify_roi_boundary_exactly_2_000_000() {
     // 2_000_000 is NOT > 2_000_000, so Profitable.
-    assert_eq!(classify_roi_alert_level(2_000_000), RoiAlertLevel::Profitable);
+    assert_eq!(
+        classify_roi_alert_level(2_000_000),
+        RoiAlertLevel::Profitable
+    );
 }
 
 #[test]
 fn classify_roi_negative() {
-    assert_eq!(classify_roi_alert_level(-1_000_000), RoiAlertLevel::Unprofitable);
+    assert_eq!(
+        classify_roi_alert_level(-1_000_000),
+        RoiAlertLevel::Unprofitable
+    );
 }
 
 #[test]
@@ -521,7 +541,10 @@ fn loss_matrix_overwrite_cell() {
             false_action_cost: 0,
         },
     );
-    assert_eq!(m.total_loss(TrueState::Benign, ContainmentAction::Allow), 100);
+    assert_eq!(
+        m.total_loss(TrueState::Benign, ContainmentAction::Allow),
+        100
+    );
     // Cell count should still be 1.
     assert_eq!(m.cell_count(), 1);
 }
@@ -666,7 +689,10 @@ fn model_inputs_validate_version_same_is_regression() {
     // Same version (1) should be a regression.
     assert!(matches!(
         m.validate_version_update(1),
-        Err(TrustEconomicsError::VersionRegression { current: 1, attempted: 1 })
+        Err(TrustEconomicsError::VersionRegression {
+            current: 1,
+            attempted: 1
+        })
     ));
 }
 
@@ -675,7 +701,10 @@ fn model_inputs_validate_version_zero_is_regression() {
     let m = sample_model_inputs();
     assert!(matches!(
         m.validate_version_update(0),
-        Err(TrustEconomicsError::VersionRegression { current: 1, attempted: 0 })
+        Err(TrustEconomicsError::VersionRegression {
+            current: 1,
+            attempted: 0
+        })
     ));
 }
 

@@ -11,9 +11,8 @@ use frankenengine_engine::proof_schema::{
 use frankenengine_engine::security_epoch::SecurityEpoch;
 use frankenengine_engine::tee_attestation_policy::DecisionImpact;
 use frankenengine_engine::translation_validation::{
-    QuarantineEntry, RollbackReceipt, StagePromotion, TranslationValidationGate,
-    ValidationEvent, ValidationEventType, ValidationGateError, ValidationMode,
-    ValidationVerdict,
+    QuarantineEntry, RollbackReceipt, StagePromotion, TranslationValidationGate, ValidationEvent,
+    ValidationEventType, ValidationGateError, ValidationMode, ValidationVerdict,
 };
 
 // ── helpers ──────────────────────────────────────────────────────────────
@@ -609,7 +608,13 @@ fn gate_submit_mismatched_token() {
 fn gate_submit_duplicate() {
     let mut g = TranslationValidationGate::new();
     submit_opt(&mut g, "opt-1", 1000);
-    let result = g.submit(&opt_receipt("opt-1"), &rollback_token("opt-1"), KEY, epoch(), 2000);
+    let result = g.submit(
+        &opt_receipt("opt-1"),
+        &rollback_token("opt-1"),
+        KEY,
+        epoch(),
+        2000,
+    );
     assert!(matches!(
         result,
         Err(ValidationGateError::DuplicateSubmission { .. })
@@ -843,7 +848,13 @@ fn gate_quarantine_blocks_resubmission() {
         .unwrap();
     assert!(g.is_quarantined("opt-1"));
 
-    let result = g.submit(&opt_receipt("opt-1"), &rollback_token("opt-1"), KEY, epoch(), 3000);
+    let result = g.submit(
+        &opt_receipt("opt-1"),
+        &rollback_token("opt-1"),
+        KEY,
+        epoch(),
+        3000,
+    );
     assert!(matches!(
         result,
         Err(ValidationGateError::Quarantined { .. })
@@ -903,7 +914,10 @@ fn gate_events_track_full_lifecycle() {
 
     let events = g.events();
     assert_eq!(events.len(), 3);
-    assert!(matches!(events[0].event_type, ValidationEventType::Submitted));
+    assert!(matches!(
+        events[0].event_type,
+        ValidationEventType::Submitted
+    ));
     assert!(matches!(
         events[1].event_type,
         ValidationEventType::Validated { .. }
@@ -952,10 +966,7 @@ fn gate_serde_roundtrip() {
     let parsed: TranslationValidationGate = serde_json::from_str(&json).unwrap();
     assert_eq!(parsed.tracked_count(), 1);
     assert_eq!(parsed.event_count(), 3);
-    assert_eq!(
-        parsed.current_stage("opt-1"),
-        Some(ActivationStage::Canary)
-    );
+    assert_eq!(parsed.current_stage("opt-1"), Some(ActivationStage::Canary));
 }
 
 #[test]

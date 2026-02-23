@@ -8,8 +8,7 @@ use std::collections::BTreeSet;
 
 use frankenengine_engine::attestation_handshake::{
     AttestationChallenge, AttestationResponse, CellAuthorization, CellHandshakeClient,
-    HandshakeError, HandshakeEvent, HandshakeOutcome, PolicyPlaneVerifier,
-    ReattestationTrigger,
+    HandshakeError, HandshakeEvent, HandshakeOutcome, PolicyPlaneVerifier, ReattestationTrigger,
 };
 use frankenengine_engine::attested_execution_cell::{
     CellFunction, MeasurementDigest, SoftwareTrustRoot, TrustRootBackend,
@@ -140,9 +139,7 @@ fn handshake_error_display_all_non_empty() {
         HandshakeError::MeasurementNotApproved {
             measurement_hash: ContentHash::compute(b"x"),
         },
-        HandshakeError::QuoteVerificationFailed {
-            result: "r".into(),
-        },
+        HandshakeError::QuoteVerificationFailed { result: "r".into() },
         HandshakeError::NonceMismatch,
         HandshakeError::KeyBindingInvalid,
         HandshakeError::ResponseSignatureInvalid,
@@ -158,9 +155,7 @@ fn handshake_error_display_all_non_empty() {
         HandshakeError::CellNotFound {
             cell_id: "c".into(),
         },
-        HandshakeError::ReattestationRequired {
-            reason: "r".into(),
-        },
+        HandshakeError::ReattestationRequired { reason: "r".into() },
         HandshakeError::IdDerivation("i".into()),
     ];
     for err in &errors {
@@ -212,9 +207,18 @@ fn reattestation_trigger_serde_roundtrip_all_variants() {
 #[test]
 fn reattestation_trigger_display_all_variants() {
     assert_eq!(ReattestationTrigger::Periodic.to_string(), "periodic");
-    assert_eq!(ReattestationTrigger::PolicyChange.to_string(), "policy-change");
-    assert_eq!(ReattestationTrigger::EpochTransition.to_string(), "epoch-transition");
-    assert_eq!(ReattestationTrigger::TrustRootUpdate.to_string(), "trust-root-update");
+    assert_eq!(
+        ReattestationTrigger::PolicyChange.to_string(),
+        "policy-change"
+    );
+    assert_eq!(
+        ReattestationTrigger::EpochTransition.to_string(),
+        "epoch-transition"
+    );
+    assert_eq!(
+        ReattestationTrigger::TrustRootUpdate.to_string(),
+        "trust-root-update"
+    );
     assert_eq!(ReattestationTrigger::Manual.to_string(), "manual");
 }
 
@@ -354,8 +358,16 @@ fn revoke_one_cell_leaves_others() {
 
     assert!(verifier.revoke_authorization("cell-001"));
     assert_eq!(verifier.authorization_count(), 1);
-    assert!(verifier.check_authorization("cell-002", "sign_receipts", 3000).is_ok());
-    assert!(verifier.check_authorization("cell-001", "sign_receipts", 3000).is_err());
+    assert!(
+        verifier
+            .check_authorization("cell-002", "sign_receipts", 3000)
+            .is_ok()
+    );
+    assert!(
+        verifier
+            .check_authorization("cell-001", "sign_receipts", 3000)
+            .is_err()
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -475,7 +487,10 @@ fn events_track_both_successes_and_failures() {
     let client = test_client("cell-001");
     let _ = do_full_handshake(&mut verifier, &client, &root, &measurement, 1000);
     assert_eq!(verifier.events().len(), 1);
-    assert_eq!(verifier.events()[0].outcome, HandshakeOutcome::MeasurementRejected);
+    assert_eq!(
+        verifier.events()[0].outcome,
+        HandshakeOutcome::MeasurementRejected
+    );
     assert!(verifier.events()[0].failure_reason.is_some());
 
     // Now approve and retry.
@@ -537,7 +552,9 @@ fn attestation_response_serde_roundtrip() {
     let measurement = test_measurement(&root);
     let client = test_client("cell-001");
     let verifier = test_verifier();
-    let challenge = verifier.generate_challenge([1u8; 32], 1000, 10_000).unwrap();
+    let challenge = verifier
+        .generate_challenge([1u8; 32], 1000, 10_000)
+        .unwrap();
     let response = client.respond(&challenge, &measurement, &root, 10_000, 1000);
 
     let json = serde_json::to_string(&response).unwrap();
@@ -551,7 +568,9 @@ fn attestation_response_canonical_bytes_deterministic() {
     let measurement = test_measurement(&root);
     let client = test_client("cell-001");
     let verifier = test_verifier();
-    let challenge = verifier.generate_challenge([1u8; 32], 1000, 10_000).unwrap();
+    let challenge = verifier
+        .generate_challenge([1u8; 32], 1000, 10_000)
+        .unwrap();
     let r1 = client.respond(&challenge, &measurement, &root, 10_000, 1000);
     let r2 = client.respond(&challenge, &measurement, &root, 10_000, 1000);
     assert_eq!(r1.canonical_bytes(), r2.canonical_bytes());
@@ -597,8 +616,20 @@ fn approve_multiple_measurements() {
     let mut verifier = test_verifier();
     let root = test_trust_root();
 
-    let m1 = root.measure(b"code-v1", b"config-v1", b"policy-v1", b"schema-v1", "1.0.0");
-    let m2 = root.measure(b"code-v2", b"config-v2", b"policy-v2", b"schema-v2", "2.0.0");
+    let m1 = root.measure(
+        b"code-v1",
+        b"config-v1",
+        b"policy-v1",
+        b"schema-v1",
+        "1.0.0",
+    );
+    let m2 = root.measure(
+        b"code-v2",
+        b"config-v2",
+        b"policy-v2",
+        b"schema-v2",
+        "2.0.0",
+    );
 
     verifier.approve_measurement(m1.composite_hash());
     verifier.approve_measurement(m2.composite_hash());

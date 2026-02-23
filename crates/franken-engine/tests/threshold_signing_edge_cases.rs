@@ -8,10 +8,10 @@ use frankenengine_engine::policy_checkpoint::DeterministicTimestamp;
 use frankenengine_engine::security_epoch::SecurityEpoch;
 use frankenengine_engine::signature_preimage::{SigningKey, VerificationKey};
 use frankenengine_engine::threshold_signing::{
-    threshold_policy_schema, threshold_policy_schema_id, threshold_ceremony_schema_id,
     CreateThresholdPolicyInput, PartialSignature, ShareHolderId, ShareRefreshResult,
     ThresholdCeremony, ThresholdError, ThresholdEventType, ThresholdResult, ThresholdScope,
-    ThresholdSigningPolicy, refresh_shares,
+    ThresholdSigningPolicy, refresh_shares, threshold_ceremony_schema_id, threshold_policy_schema,
+    threshold_policy_schema_id,
 };
 
 // =========================================================================
@@ -53,7 +53,11 @@ fn test_principal() -> PrincipalId {
     PrincipalId::from_bytes([0xAA; 32])
 }
 
-fn create_policy(k: u32, keys: &[SigningKey], scopes: BTreeSet<ThresholdScope>) -> ThresholdSigningPolicy {
+fn create_policy(
+    k: u32,
+    keys: &[SigningKey],
+    scopes: BTreeSet<ThresholdScope>,
+) -> ThresholdSigningPolicy {
     ThresholdSigningPolicy::create(CreateThresholdPolicyInput {
         principal_id: test_principal(),
         threshold_k: k,
@@ -71,13 +75,9 @@ fn run_ceremony(
     keys_to_sign: &[&SigningKey],
     preimage: &[u8],
 ) -> ThresholdResult {
-    let mut ceremony = ThresholdCeremony::new(
-        policy,
-        scope,
-        preimage,
-        DeterministicTimestamp(1000),
-    )
-    .expect("new ceremony");
+    let mut ceremony =
+        ThresholdCeremony::new(policy, scope, preimage, DeterministicTimestamp(1000))
+            .expect("new ceremony");
     for (i, key) in keys_to_sign.iter().enumerate() {
         ceremony
             .submit_partial(key, preimage, DeterministicTimestamp(1001 + i as u64))
@@ -100,7 +100,11 @@ fn scope_copy_semantics() {
 #[test]
 fn scope_hash_all_four_distinct() {
     let hashes: BTreeSet<u64> = ThresholdScope::ALL.iter().map(hash_of).collect();
-    assert_eq!(hashes.len(), 4, "all 4 ThresholdScope variants must hash distinctly");
+    assert_eq!(
+        hashes.len(),
+        4,
+        "all 4 ThresholdScope variants must hash distinctly"
+    );
 }
 
 #[test]
@@ -114,18 +118,39 @@ fn scope_serde_all_four_roundtrip() {
 
 #[test]
 fn scope_serde_stable_strings() {
-    assert_eq!(serde_json::to_string(&ThresholdScope::EmergencyRevocation).unwrap(), "\"EmergencyRevocation\"");
-    assert_eq!(serde_json::to_string(&ThresholdScope::KeyRotation).unwrap(), "\"KeyRotation\"");
-    assert_eq!(serde_json::to_string(&ThresholdScope::AuthoritySetChange).unwrap(), "\"AuthoritySetChange\"");
-    assert_eq!(serde_json::to_string(&ThresholdScope::PolicyCheckpoint).unwrap(), "\"PolicyCheckpoint\"");
+    assert_eq!(
+        serde_json::to_string(&ThresholdScope::EmergencyRevocation).unwrap(),
+        "\"EmergencyRevocation\""
+    );
+    assert_eq!(
+        serde_json::to_string(&ThresholdScope::KeyRotation).unwrap(),
+        "\"KeyRotation\""
+    );
+    assert_eq!(
+        serde_json::to_string(&ThresholdScope::AuthoritySetChange).unwrap(),
+        "\"AuthoritySetChange\""
+    );
+    assert_eq!(
+        serde_json::to_string(&ThresholdScope::PolicyCheckpoint).unwrap(),
+        "\"PolicyCheckpoint\""
+    );
 }
 
 #[test]
 fn scope_display_all_four() {
-    assert_eq!(ThresholdScope::EmergencyRevocation.to_string(), "emergency_revocation");
+    assert_eq!(
+        ThresholdScope::EmergencyRevocation.to_string(),
+        "emergency_revocation"
+    );
     assert_eq!(ThresholdScope::KeyRotation.to_string(), "key_rotation");
-    assert_eq!(ThresholdScope::AuthoritySetChange.to_string(), "authority_set_change");
-    assert_eq!(ThresholdScope::PolicyCheckpoint.to_string(), "policy_checkpoint");
+    assert_eq!(
+        ThresholdScope::AuthoritySetChange.to_string(),
+        "authority_set_change"
+    );
+    assert_eq!(
+        ThresholdScope::PolicyCheckpoint.to_string(),
+        "policy_checkpoint"
+    );
 }
 
 #[test]
@@ -138,7 +163,12 @@ fn scope_ordering_exhaustive() {
     ];
     for i in 0..ordered.len() {
         for j in (i + 1)..ordered.len() {
-            assert!(ordered[i] < ordered[j], "{:?} should be < {:?}", ordered[i], ordered[j]);
+            assert!(
+                ordered[i] < ordered[j],
+                "{:?} should be < {:?}",
+                ordered[i],
+                ordered[j]
+            );
         }
     }
 }
@@ -231,7 +261,11 @@ fn share_holder_id_ordering() {
 #[test]
 fn policy_create_minimum_valid_2_of_2() {
     let keys = make_keys(2);
-    let policy = create_policy(2, &keys, make_scopes_single(ThresholdScope::EmergencyRevocation));
+    let policy = create_policy(
+        2,
+        &keys,
+        make_scopes_single(ThresholdScope::EmergencyRevocation),
+    );
     assert_eq!(policy.threshold_k, 2);
     assert_eq!(policy.total_n, 2);
 }
@@ -239,7 +273,11 @@ fn policy_create_minimum_valid_2_of_2() {
 #[test]
 fn policy_create_1_of_2_valid() {
     let keys = make_keys(2);
-    let policy = create_policy(1, &keys, make_scopes_single(ThresholdScope::EmergencyRevocation));
+    let policy = create_policy(
+        1,
+        &keys,
+        make_scopes_single(ThresholdScope::EmergencyRevocation),
+    );
     assert_eq!(policy.threshold_k, 1);
     assert_eq!(policy.total_n, 2);
 }
@@ -322,7 +360,11 @@ fn policy_create_empty_scopes_rejected() {
 #[test]
 fn policy_requires_threshold_checks_scoped() {
     let keys = make_keys(3);
-    let policy = create_policy(2, &keys, make_scopes_single(ThresholdScope::PolicyCheckpoint));
+    let policy = create_policy(
+        2,
+        &keys,
+        make_scopes_single(ThresholdScope::PolicyCheckpoint),
+    );
     assert!(policy.requires_threshold(ThresholdScope::PolicyCheckpoint));
     assert!(!policy.requires_threshold(ThresholdScope::EmergencyRevocation));
     assert!(!policy.requires_threshold(ThresholdScope::KeyRotation));
@@ -373,14 +415,20 @@ fn policy_serde_roundtrip() {
 #[test]
 fn ceremony_scope_not_thresholded_rejected() {
     let keys = make_keys(3);
-    let policy = create_policy(2, &keys, make_scopes_single(ThresholdScope::EmergencyRevocation));
+    let policy = create_policy(
+        2,
+        &keys,
+        make_scopes_single(ThresholdScope::EmergencyRevocation),
+    );
     let result = ThresholdCeremony::new(
         &policy,
         ThresholdScope::KeyRotation, // Not in scoped_operations
         TEST_PREIMAGE,
         DeterministicTimestamp(1000),
     );
-    assert!(matches!(result, Err(ThresholdError::ScopeNotThresholded { scope }) if scope == ThresholdScope::KeyRotation));
+    assert!(
+        matches!(result, Err(ThresholdError::ScopeNotThresholded { scope }) if scope == ThresholdScope::KeyRotation)
+    );
 }
 
 #[test]
@@ -411,7 +459,10 @@ fn ceremony_unauthorized_holder_rejected() {
     .unwrap();
     let rogue = SigningKey::from_bytes([0xFF; 32]);
     let result = ceremony.submit_partial(&rogue, TEST_PREIMAGE, DeterministicTimestamp(1001));
-    assert!(matches!(result, Err(ThresholdError::UnauthorizedShareHolder { .. })));
+    assert!(matches!(
+        result,
+        Err(ThresholdError::UnauthorizedShareHolder { .. })
+    ));
 }
 
 #[test]
@@ -429,7 +480,10 @@ fn ceremony_duplicate_submission_rejected() {
         .submit_partial(&keys[0], TEST_PREIMAGE, DeterministicTimestamp(1001))
         .unwrap();
     let result = ceremony.submit_partial(&keys[0], TEST_PREIMAGE, DeterministicTimestamp(1002));
-    assert!(matches!(result, Err(ThresholdError::DuplicateSubmission { .. })));
+    assert!(matches!(
+        result,
+        Err(ThresholdError::DuplicateSubmission { .. })
+    ));
 }
 
 #[test]
@@ -475,7 +529,10 @@ fn ceremony_finalize_twice_rejected() {
         .unwrap();
     ceremony.finalize(TEST_PREIMAGE).unwrap();
     let result = ceremony.finalize(TEST_PREIMAGE);
-    assert!(matches!(result, Err(ThresholdError::CeremonyAlreadyFinalized)));
+    assert!(matches!(
+        result,
+        Err(ThresholdError::CeremonyAlreadyFinalized)
+    ));
 }
 
 #[test]
@@ -497,7 +554,10 @@ fn ceremony_submit_after_finalize_rejected() {
         .unwrap();
     ceremony.finalize(TEST_PREIMAGE).unwrap();
     let result = ceremony.submit_partial(&keys[2], TEST_PREIMAGE, DeterministicTimestamp(1003));
-    assert!(matches!(result, Err(ThresholdError::CeremonyAlreadyFinalized)));
+    assert!(matches!(
+        result,
+        Err(ThresholdError::CeremonyAlreadyFinalized)
+    ));
 }
 
 #[test]
@@ -547,7 +607,12 @@ fn ceremony_all_n_shares_submit_and_finalize() {
     let keys = make_keys(5);
     let policy = create_policy(3, &keys, make_scopes_all());
     let key_refs: Vec<&SigningKey> = keys.iter().collect();
-    let result = run_ceremony(&policy, ThresholdScope::EmergencyRevocation, &key_refs, TEST_PREIMAGE);
+    let result = run_ceremony(
+        &policy,
+        ThresholdScope::EmergencyRevocation,
+        &key_refs,
+        TEST_PREIMAGE,
+    );
     assert_eq!(result.signatures.len(), 5);
     assert_eq!(result.participating_shares.len(), 5);
     result.verify(TEST_PREIMAGE).expect("verify all shares");
@@ -558,10 +623,17 @@ fn ceremony_exact_threshold_submits() {
     let keys = make_keys(5);
     let policy = create_policy(3, &keys, make_scopes_all());
     let key_refs: Vec<&SigningKey> = keys.iter().take(3).collect();
-    let result = run_ceremony(&policy, ThresholdScope::EmergencyRevocation, &key_refs, TEST_PREIMAGE);
+    let result = run_ceremony(
+        &policy,
+        ThresholdScope::EmergencyRevocation,
+        &key_refs,
+        TEST_PREIMAGE,
+    );
     assert_eq!(result.signatures.len(), 3);
     assert_eq!(result.threshold_k, 3);
-    result.verify(TEST_PREIMAGE).expect("verify exact threshold");
+    result
+        .verify(TEST_PREIMAGE)
+        .expect("verify exact threshold");
 }
 
 // =========================================================================
@@ -573,9 +645,17 @@ fn result_verify_wrong_preimage_fails() {
     let keys = make_keys(3);
     let policy = create_policy(2, &keys, make_scopes_all());
     let key_refs: Vec<&SigningKey> = keys.iter().take(2).collect();
-    let result = run_ceremony(&policy, ThresholdScope::EmergencyRevocation, &key_refs, TEST_PREIMAGE);
+    let result = run_ceremony(
+        &policy,
+        ThresholdScope::EmergencyRevocation,
+        &key_refs,
+        TEST_PREIMAGE,
+    );
     let verify_result = result.verify(b"wrong-preimage");
-    assert!(matches!(verify_result, Err(ThresholdError::PreimageMismatch)));
+    assert!(matches!(
+        verify_result,
+        Err(ThresholdError::PreimageMismatch)
+    ));
 }
 
 #[test]
@@ -583,7 +663,12 @@ fn result_serde_roundtrip() {
     let keys = make_keys(3);
     let policy = create_policy(2, &keys, make_scopes_all());
     let key_refs: Vec<&SigningKey> = keys.iter().take(2).collect();
-    let result = run_ceremony(&policy, ThresholdScope::EmergencyRevocation, &key_refs, TEST_PREIMAGE);
+    let result = run_ceremony(
+        &policy,
+        ThresholdScope::EmergencyRevocation,
+        &key_refs,
+        TEST_PREIMAGE,
+    );
     let json = serde_json::to_string(&result).unwrap();
     let restored: ThresholdResult = serde_json::from_str(&json).unwrap();
     assert_eq!(result, restored);
@@ -621,7 +706,10 @@ fn refresh_shares_wrong_count_rejected() {
         .map(|sk| sk.verification_key())
         .collect();
     let result = refresh_shares(&policy, &new_vks, SecurityEpoch::from_raw(2));
-    assert!(matches!(result, Err(ThresholdError::InvalidThreshold { .. })));
+    assert!(matches!(
+        result,
+        Err(ThresholdError::InvalidThreshold { .. })
+    ));
 }
 
 #[test]
@@ -675,7 +763,10 @@ fn refresh_shares_old_keys_rejected_in_new_policy() {
     )
     .unwrap();
     let result = ceremony.submit_partial(&keys[0], TEST_PREIMAGE, DeterministicTimestamp(3001));
-    assert!(matches!(result, Err(ThresholdError::UnauthorizedShareHolder { .. })));
+    assert!(matches!(
+        result,
+        Err(ThresholdError::UnauthorizedShareHolder { .. })
+    ));
 }
 
 #[test]
@@ -686,7 +777,8 @@ fn share_refresh_result_serde_roundtrip() {
         .map(|i| SigningKey::from_bytes([(i + 50) as u8; 32]))
         .collect();
     let new_vks: Vec<VerificationKey> = new_keys.iter().map(|sk| sk.verification_key()).collect();
-    let (_, refresh_result) = refresh_shares(&policy, &new_vks, SecurityEpoch::from_raw(2)).unwrap();
+    let (_, refresh_result) =
+        refresh_shares(&policy, &new_vks, SecurityEpoch::from_raw(2)).unwrap();
     let json = serde_json::to_string(&refresh_result).unwrap();
     let restored: ShareRefreshResult = serde_json::from_str(&json).unwrap();
     assert_eq!(refresh_result, restored);
@@ -741,17 +833,34 @@ fn error_serde_all_variants_roundtrip() {
 fn error_display_all_non_empty() {
     let holder = ShareHolderId([0x42; 32]);
     let errors: Vec<ThresholdError> = vec![
-        ThresholdError::InvalidThreshold { k: 0, n: 3, detail: "test".to_string() },
-        ThresholdError::InsufficientThresholdShares { collected: 1, required: 3 },
-        ThresholdError::UnauthorizedShareHolder { holder: holder.clone() },
-        ThresholdError::DuplicateSubmission { holder: holder.clone() },
+        ThresholdError::InvalidThreshold {
+            k: 0,
+            n: 3,
+            detail: "test".to_string(),
+        },
+        ThresholdError::InsufficientThresholdShares {
+            collected: 1,
+            required: 3,
+        },
+        ThresholdError::UnauthorizedShareHolder {
+            holder: holder.clone(),
+        },
+        ThresholdError::DuplicateSubmission {
+            holder: holder.clone(),
+        },
         ThresholdError::DuplicateShareHolder,
         ThresholdError::PartialSignatureInvalid { holder },
-        ThresholdError::SigningFailed { detail: "oops".to_string() },
-        ThresholdError::IdDerivationFailed { detail: "bad".to_string() },
+        ThresholdError::SigningFailed {
+            detail: "oops".to_string(),
+        },
+        ThresholdError::IdDerivationFailed {
+            detail: "bad".to_string(),
+        },
         ThresholdError::CeremonyAlreadyFinalized,
         ThresholdError::PreimageMismatch,
-        ThresholdError::ScopeNotThresholded { scope: ThresholdScope::KeyRotation },
+        ThresholdError::ScopeNotThresholded {
+            scope: ThresholdScope::KeyRotation,
+        },
         ThresholdError::NoScopedOperations,
     ];
     for err in &errors {
@@ -856,9 +965,10 @@ fn ceremony_events_include_unauthorized() {
     let rogue = SigningKey::from_bytes([0xFF; 32]);
     let _ = ceremony.submit_partial(&rogue, TEST_PREIMAGE, DeterministicTimestamp(1001));
     let events = ceremony.drain_events();
-    assert!(events
-        .iter()
-        .any(|e| matches!(e.event_type, ThresholdEventType::UnauthorizedSubmission { .. })));
+    assert!(events.iter().any(|e| matches!(
+        e.event_type,
+        ThresholdEventType::UnauthorizedSubmission { .. }
+    )));
 }
 
 // =========================================================================
@@ -926,9 +1036,19 @@ fn ceremony_deterministic_100_iterations() {
     let policy = create_policy(2, &keys, make_scopes_all());
     let key_refs: Vec<&SigningKey> = keys.iter().take(2).collect();
 
-    let baseline = run_ceremony(&policy, ThresholdScope::EmergencyRevocation, &key_refs, TEST_PREIMAGE);
+    let baseline = run_ceremony(
+        &policy,
+        ThresholdScope::EmergencyRevocation,
+        &key_refs,
+        TEST_PREIMAGE,
+    );
     for _ in 0..100 {
-        let run = run_ceremony(&policy, ThresholdScope::EmergencyRevocation, &key_refs, TEST_PREIMAGE);
+        let run = run_ceremony(
+            &policy,
+            ThresholdScope::EmergencyRevocation,
+            &key_refs,
+            TEST_PREIMAGE,
+        );
         assert_eq!(baseline.ceremony_id, run.ceremony_id);
         assert_eq!(baseline.signatures.len(), run.signatures.len());
         for (s1, s2) in baseline.signatures.iter().zip(run.signatures.iter()) {
@@ -950,7 +1070,12 @@ fn integration_full_lifecycle_with_refresh() {
 
     // Run ceremony with initial keys
     let key_refs: Vec<&SigningKey> = keys.iter().take(2).collect();
-    let result1 = run_ceremony(&policy, ThresholdScope::EmergencyRevocation, &key_refs, TEST_PREIMAGE);
+    let result1 = run_ceremony(
+        &policy,
+        ThresholdScope::EmergencyRevocation,
+        &key_refs,
+        TEST_PREIMAGE,
+    );
     result1.verify(TEST_PREIMAGE).expect("verify initial");
 
     // Refresh shares
@@ -979,9 +1104,11 @@ fn integration_full_lifecycle_with_refresh() {
         DeterministicTimestamp(5000),
     )
     .unwrap();
-    assert!(ceremony
-        .submit_partial(&keys[0], TEST_PREIMAGE, DeterministicTimestamp(5001))
-        .is_err());
+    assert!(
+        ceremony
+            .submit_partial(&keys[0], TEST_PREIMAGE, DeterministicTimestamp(5001))
+            .is_err()
+    );
 }
 
 #[test]
@@ -991,12 +1118,22 @@ fn integration_different_subsets_both_valid() {
 
     // Subset A: keys 0,1
     let refs_a: Vec<&SigningKey> = vec![&keys[0], &keys[1]];
-    let result_a = run_ceremony(&policy, ThresholdScope::EmergencyRevocation, &refs_a, TEST_PREIMAGE);
+    let result_a = run_ceremony(
+        &policy,
+        ThresholdScope::EmergencyRevocation,
+        &refs_a,
+        TEST_PREIMAGE,
+    );
     result_a.verify(TEST_PREIMAGE).expect("verify A");
 
     // Subset B: keys 3,4
     let refs_b: Vec<&SigningKey> = vec![&keys[3], &keys[4]];
-    let result_b = run_ceremony(&policy, ThresholdScope::EmergencyRevocation, &refs_b, TEST_PREIMAGE);
+    let result_b = run_ceremony(
+        &policy,
+        ThresholdScope::EmergencyRevocation,
+        &refs_b,
+        TEST_PREIMAGE,
+    );
     result_b.verify(TEST_PREIMAGE).expect("verify B");
 
     // Different ceremony IDs (different timestamps in run_ceremony)

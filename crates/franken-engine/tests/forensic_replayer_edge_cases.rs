@@ -62,11 +62,8 @@ fn build_trace(evidence: Vec<Evidence>) -> IncidentTrace {
     let loss_matrix = LossMatrix::balanced();
     let likelihood_model = LikelihoodModel::default();
 
-    let mut updater = BayesianPosteriorUpdater::with_model(
-        prior.clone(),
-        "ext-001",
-        likelihood_model.clone(),
-    );
+    let mut updater =
+        BayesianPosteriorUpdater::with_model(prior.clone(), "ext-001", likelihood_model.clone());
     let mut selector = ExpectedLossSelector::new(loss_matrix.clone());
 
     let mut posterior_history = Vec::new();
@@ -451,7 +448,10 @@ fn replay_diff_serde_no_divergence() {
     let diff = ReplayDiff {
         counterfactual_description: "no change".to_string(),
         first_divergence_step: None,
-        step_changes: vec![(0, DecisionChange::Identical), (1, DecisionChange::Identical)],
+        step_changes: vec![
+            (0, DecisionChange::Identical),
+            (1, DecisionChange::Identical),
+        ],
         action_change_count: 0,
         original_final_action: Some(ContainmentAction::Allow),
         counterfactual_final_action: Some(ContainmentAction::Allow),
@@ -512,7 +512,11 @@ fn replayer_replay_count_accumulates_across_traces() {
     replayer.replay(&t2, &ReplayConfig::default()).unwrap();
     assert_eq!(replayer.replay_count(), 2);
     replayer
-        .counterfactual(&t1, &ReplayConfig::default(), &CounterfactualSpec::identity())
+        .counterfactual(
+            &t1,
+            &ReplayConfig::default(),
+            &CounterfactualSpec::identity(),
+        )
         .unwrap();
     assert_eq!(replayer.replay_count(), 3);
 }
@@ -641,10 +645,7 @@ fn counterfactual_inject_at_same_index() {
     let mut replayer = ForensicReplayer::new();
 
     let spec = CounterfactualSpec {
-        inject_evidence: vec![
-            (0, suspicious_evidence()),
-            (0, malicious_evidence()),
-        ],
+        inject_evidence: vec![(0, suspicious_evidence()), (0, malicious_evidence())],
         description: "inject two at index 0".to_string(),
         ..CounterfactualSpec::identity()
     };
@@ -658,12 +659,16 @@ fn counterfactual_inject_at_same_index() {
 
 #[test]
 fn counterfactual_skip_and_inject_combined() {
-    let evidence = vec![benign_evidence(), suspicious_evidence(), malicious_evidence()];
+    let evidence = vec![
+        benign_evidence(),
+        suspicious_evidence(),
+        malicious_evidence(),
+    ];
     let trace = build_trace(evidence);
     let mut replayer = ForensicReplayer::new();
 
     let spec = CounterfactualSpec {
-        skip_evidence_indices: vec![1], // Remove suspicious.
+        skip_evidence_indices: vec![1],                // Remove suspicious.
         inject_evidence: vec![(1, benign_evidence())], // Add benign in its place.
         description: "replace suspicious with benign".to_string(),
         ..CounterfactualSpec::identity()
@@ -782,7 +787,11 @@ fn replay_all_benign_stays_running() {
 
 #[test]
 fn replayer_epoch_propagates_to_all_steps() {
-    let evidence = vec![benign_evidence(), suspicious_evidence(), malicious_evidence()];
+    let evidence = vec![
+        benign_evidence(),
+        suspicious_evidence(),
+        malicious_evidence(),
+    ];
     let trace = build_trace(evidence);
     let mut replayer = ForensicReplayer::new();
     replayer.set_epoch(SecurityEpoch::from_raw(42));

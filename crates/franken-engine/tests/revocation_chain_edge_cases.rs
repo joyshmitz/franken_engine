@@ -28,17 +28,17 @@ const TEST_ZONE: &str = "test-zone";
 
 fn head_signing_key() -> SigningKey {
     SigningKey::from_bytes([
-        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E,
-        0x0F, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C,
-        0x1D, 0x1E, 0x1F, 0x20,
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+        0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E,
+        0x1F, 0x20,
     ])
 }
 
 fn revocation_signing_key() -> SigningKey {
     SigningKey::from_bytes([
-        0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xA8, 0xA9, 0xAA, 0xAB, 0xAC, 0xAD, 0xAE,
-        0xAF, 0xB0, 0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xB8, 0xB9, 0xBA, 0xBB, 0xBC,
-        0xBD, 0xBE, 0xBF, 0xC0,
+        0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xA8, 0xA9, 0xAA, 0xAB, 0xAC, 0xAD, 0xAE, 0xAF,
+        0xB0, 0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xB8, 0xB9, 0xBA, 0xBB, 0xBC, 0xBD, 0xBE,
+        0xBF, 0xC0,
     ])
 }
 
@@ -387,7 +387,11 @@ fn chain_event_serde() {
 
 #[test]
 fn revocation_serde_round_trip() {
-    let rev = make_revocation(RevocationTargetType::Key, RevocationReason::Compromised, [1; 32]);
+    let rev = make_revocation(
+        RevocationTargetType::Key,
+        RevocationReason::Compromised,
+        [1; 32],
+    );
     let json = serde_json::to_string(&rev).unwrap();
     let back: Revocation = serde_json::from_str(&json).unwrap();
     assert_eq!(rev, back);
@@ -399,7 +403,11 @@ fn revocation_serde_round_trip() {
 
 #[test]
 fn revocation_event_serde_round_trip() {
-    let rev = make_revocation(RevocationTargetType::Token, RevocationReason::Expired, [5; 32]);
+    let rev = make_revocation(
+        RevocationTargetType::Token,
+        RevocationReason::Expired,
+        [5; 32],
+    );
     let event = RevocationEvent {
         event_id: EngineObjectId([0xAA; 32]),
         revocation: rev,
@@ -413,7 +421,11 @@ fn revocation_event_serde_round_trip() {
 
 #[test]
 fn revocation_event_canonical_bytes_deterministic() {
-    let rev = make_revocation(RevocationTargetType::Key, RevocationReason::Compromised, [10; 32]);
+    let rev = make_revocation(
+        RevocationTargetType::Key,
+        RevocationReason::Compromised,
+        [10; 32],
+    );
     let event = RevocationEvent {
         event_id: EngineObjectId([0xBB; 32]),
         revocation: rev,
@@ -427,7 +439,11 @@ fn revocation_event_canonical_bytes_deterministic() {
 
 #[test]
 fn revocation_event_content_hash_deterministic() {
-    let rev = make_revocation(RevocationTargetType::Key, RevocationReason::Compromised, [11; 32]);
+    let rev = make_revocation(
+        RevocationTargetType::Key,
+        RevocationReason::Compromised,
+        [11; 32],
+    );
     let event = RevocationEvent {
         event_id: EngineObjectId([0xCC; 32]),
         revocation: rev,
@@ -441,7 +457,11 @@ fn revocation_event_content_hash_deterministic() {
 
 #[test]
 fn revocation_event_content_hash_changes_with_seq() {
-    let rev1 = make_revocation(RevocationTargetType::Key, RevocationReason::Compromised, [12; 32]);
+    let rev1 = make_revocation(
+        RevocationTargetType::Key,
+        RevocationReason::Compromised,
+        [12; 32],
+    );
     let rev2 = rev1.clone();
     let e1 = RevocationEvent {
         event_id: EngineObjectId([0xDD; 32]),
@@ -537,7 +557,11 @@ fn empty_chain_events_empty() {
 fn genesis_append_creates_proper_event() {
     let mut chain = RevocationChain::new(TEST_ZONE);
     let sk = head_signing_key();
-    let rev = make_revocation(RevocationTargetType::Key, RevocationReason::Compromised, [1; 32]);
+    let rev = make_revocation(
+        RevocationTargetType::Key,
+        RevocationReason::Compromised,
+        [1; 32],
+    );
     let seq = chain.append(rev, &sk, "t-gen").unwrap();
     assert_eq!(seq, 0);
     assert_eq!(chain.len(), 1);
@@ -553,7 +577,11 @@ fn genesis_append_creates_proper_event() {
 fn genesis_append_sets_head() {
     let mut chain = RevocationChain::new(TEST_ZONE);
     let sk = head_signing_key();
-    let rev = make_revocation(RevocationTargetType::Key, RevocationReason::Compromised, [1; 32]);
+    let rev = make_revocation(
+        RevocationTargetType::Key,
+        RevocationReason::Compromised,
+        [1; 32],
+    );
     chain.append(rev, &sk, "t").unwrap();
     let head = chain.head().unwrap();
     assert_eq!(head.head_seq, 0);
@@ -596,12 +624,20 @@ fn chain_hash_changes_after_each_append() {
     let sk = head_signing_key();
     let initial_hash = chain.chain_hash().clone();
 
-    let rev = make_revocation(RevocationTargetType::Key, RevocationReason::Compromised, [1; 32]);
+    let rev = make_revocation(
+        RevocationTargetType::Key,
+        RevocationReason::Compromised,
+        [1; 32],
+    );
     chain.append(rev, &sk, "t").unwrap();
     let hash_after_1 = chain.chain_hash().clone();
     assert_ne!(initial_hash, hash_after_1);
 
-    let rev = make_revocation(RevocationTargetType::Token, RevocationReason::Expired, [2; 32]);
+    let rev = make_revocation(
+        RevocationTargetType::Token,
+        RevocationReason::Expired,
+        [2; 32],
+    );
     chain.append(rev, &sk, "t").unwrap();
     let hash_after_2 = chain.chain_hash().clone();
     assert_ne!(hash_after_1, hash_after_2);
@@ -613,7 +649,11 @@ fn head_seq_increases_monotonically() {
     let sk = head_signing_key();
     let mut prev_seq = None;
     for i in 0..5u8 {
-        let rev = make_revocation(RevocationTargetType::Key, RevocationReason::Compromised, [i + 50; 32]);
+        let rev = make_revocation(
+            RevocationTargetType::Key,
+            RevocationReason::Compromised,
+            [i + 50; 32],
+        );
         chain.append(rev, &sk, &format!("t-{i}")).unwrap();
         let current = chain.head_seq().unwrap();
         if let Some(prev) = prev_seq {
@@ -632,7 +672,11 @@ fn is_revoked_true_after_append() {
     let mut chain = RevocationChain::new(TEST_ZONE);
     let sk = head_signing_key();
     let target = EngineObjectId([42; 32]);
-    let rev = make_revocation(RevocationTargetType::Key, RevocationReason::Compromised, [42; 32]);
+    let rev = make_revocation(
+        RevocationTargetType::Key,
+        RevocationReason::Compromised,
+        [42; 32],
+    );
     chain.append(rev, &sk, "t").unwrap();
     assert!(chain.is_revoked(&target));
 }
@@ -641,7 +685,11 @@ fn is_revoked_true_after_append() {
 fn is_revoked_false_for_nonexistent() {
     let mut chain = RevocationChain::new(TEST_ZONE);
     let sk = head_signing_key();
-    let rev = make_revocation(RevocationTargetType::Key, RevocationReason::Compromised, [1; 32]);
+    let rev = make_revocation(
+        RevocationTargetType::Key,
+        RevocationReason::Compromised,
+        [1; 32],
+    );
     chain.append(rev, &sk, "t").unwrap();
     assert!(!chain.is_revoked(&EngineObjectId([99; 32])));
 }
@@ -682,7 +730,11 @@ fn is_revoked_audited_emits_event() {
 fn is_revoked_audited_true_after_append() {
     let mut chain = RevocationChain::new(TEST_ZONE);
     let sk = head_signing_key();
-    let rev = make_revocation(RevocationTargetType::Key, RevocationReason::Compromised, [77; 32]);
+    let rev = make_revocation(
+        RevocationTargetType::Key,
+        RevocationReason::Compromised,
+        [77; 32],
+    );
     chain.append(rev, &sk, "t").unwrap();
     chain.drain_events();
 
@@ -711,7 +763,11 @@ fn duplicate_target_rejected() {
     let mut chain = RevocationChain::new(TEST_ZONE);
     let sk = head_signing_key();
 
-    let rev1 = make_revocation(RevocationTargetType::Key, RevocationReason::Compromised, [1; 32]);
+    let rev1 = make_revocation(
+        RevocationTargetType::Key,
+        RevocationReason::Compromised,
+        [1; 32],
+    );
     chain.append(rev1, &sk, "t-1").unwrap();
 
     let rev2 = make_revocation(
@@ -729,11 +785,19 @@ fn duplicate_target_emits_reject_audit() {
     let mut chain = RevocationChain::new(TEST_ZONE);
     let sk = head_signing_key();
 
-    let rev1 = make_revocation(RevocationTargetType::Key, RevocationReason::Compromised, [1; 32]);
+    let rev1 = make_revocation(
+        RevocationTargetType::Key,
+        RevocationReason::Compromised,
+        [1; 32],
+    );
     chain.append(rev1, &sk, "t-1").unwrap();
     chain.drain_events();
 
-    let rev2 = make_revocation(RevocationTargetType::Key, RevocationReason::Compromised, [1; 32]);
+    let rev2 = make_revocation(
+        RevocationTargetType::Key,
+        RevocationReason::Compromised,
+        [1; 32],
+    );
     let _ = chain.append(rev2, &sk, "t-2");
     let counts = chain.event_counts();
     assert_eq!(counts.get("append_rejected"), Some(&1));
@@ -838,7 +902,11 @@ fn verify_chain_after_appends() {
 fn verify_chain_mut_emits_audit_event() {
     let mut chain = RevocationChain::new(TEST_ZONE);
     let sk = head_signing_key();
-    let rev = make_revocation(RevocationTargetType::Key, RevocationReason::Compromised, [1; 32]);
+    let rev = make_revocation(
+        RevocationTargetType::Key,
+        RevocationReason::Compromised,
+        [1; 32],
+    );
     chain.append(rev, &sk, "t").unwrap();
     chain.drain_events();
 
@@ -856,7 +924,11 @@ fn verify_head_signature_succeeds() {
     let mut chain = RevocationChain::new(TEST_ZONE);
     let sk = head_signing_key();
     let vk = sk.verification_key();
-    let rev = make_revocation(RevocationTargetType::Key, RevocationReason::Compromised, [1; 32]);
+    let rev = make_revocation(
+        RevocationTargetType::Key,
+        RevocationReason::Compromised,
+        [1; 32],
+    );
     chain.append(rev, &sk, "t").unwrap();
     assert!(chain.verify_head_signature(&vk).is_ok());
 }
@@ -865,7 +937,11 @@ fn verify_head_signature_succeeds() {
 fn verify_head_signature_wrong_key() {
     let mut chain = RevocationChain::new(TEST_ZONE);
     let sk = head_signing_key();
-    let rev = make_revocation(RevocationTargetType::Key, RevocationReason::Compromised, [1; 32]);
+    let rev = make_revocation(
+        RevocationTargetType::Key,
+        RevocationReason::Compromised,
+        [1; 32],
+    );
     chain.append(rev, &sk, "t").unwrap();
 
     let wrong_vk = VerificationKey::from_bytes([0xFF; 32]);
@@ -881,10 +957,18 @@ fn verify_head_signature_wrong_key() {
 fn verify_append_accepts_valid_next_event() {
     let mut chain = RevocationChain::new(TEST_ZONE);
     let sk = head_signing_key();
-    let rev = make_revocation(RevocationTargetType::Key, RevocationReason::Compromised, [1; 32]);
+    let rev = make_revocation(
+        RevocationTargetType::Key,
+        RevocationReason::Compromised,
+        [1; 32],
+    );
     chain.append(rev, &sk, "t").unwrap();
 
-    let rev2 = make_revocation(RevocationTargetType::Token, RevocationReason::Expired, [2; 32]);
+    let rev2 = make_revocation(
+        RevocationTargetType::Token,
+        RevocationReason::Expired,
+        [2; 32],
+    );
     let prev_id = chain.events().last().unwrap().event_id.clone();
     let next_event = RevocationEvent {
         event_id: EngineObjectId([0xAA; 32]),
@@ -899,10 +983,18 @@ fn verify_append_accepts_valid_next_event() {
 fn verify_append_rejects_wrong_seq() {
     let mut chain = RevocationChain::new(TEST_ZONE);
     let sk = head_signing_key();
-    let rev = make_revocation(RevocationTargetType::Key, RevocationReason::Compromised, [1; 32]);
+    let rev = make_revocation(
+        RevocationTargetType::Key,
+        RevocationReason::Compromised,
+        [1; 32],
+    );
     chain.append(rev, &sk, "t").unwrap();
 
-    let rev2 = make_revocation(RevocationTargetType::Token, RevocationReason::Expired, [2; 32]);
+    let rev2 = make_revocation(
+        RevocationTargetType::Token,
+        RevocationReason::Expired,
+        [2; 32],
+    );
     let next_event = RevocationEvent {
         event_id: EngineObjectId([0xBB; 32]),
         revocation: rev2,
@@ -917,10 +1009,18 @@ fn verify_append_rejects_wrong_seq() {
 fn verify_append_rejects_wrong_prev_link() {
     let mut chain = RevocationChain::new(TEST_ZONE);
     let sk = head_signing_key();
-    let rev = make_revocation(RevocationTargetType::Key, RevocationReason::Compromised, [1; 32]);
+    let rev = make_revocation(
+        RevocationTargetType::Key,
+        RevocationReason::Compromised,
+        [1; 32],
+    );
     chain.append(rev, &sk, "t").unwrap();
 
-    let rev2 = make_revocation(RevocationTargetType::Token, RevocationReason::Expired, [2; 32]);
+    let rev2 = make_revocation(
+        RevocationTargetType::Token,
+        RevocationReason::Expired,
+        [2; 32],
+    );
     let next_event = RevocationEvent {
         event_id: EngineObjectId([0xCC; 32]),
         revocation: rev2,
@@ -934,7 +1034,11 @@ fn verify_append_rejects_wrong_prev_link() {
 #[test]
 fn verify_append_on_empty_chain_accepts_genesis() {
     let chain = RevocationChain::new(TEST_ZONE);
-    let rev = make_revocation(RevocationTargetType::Key, RevocationReason::Compromised, [1; 32]);
+    let rev = make_revocation(
+        RevocationTargetType::Key,
+        RevocationReason::Compromised,
+        [1; 32],
+    );
     let genesis = RevocationEvent {
         event_id: EngineObjectId([0xAA; 32]),
         revocation: rev,
@@ -947,7 +1051,11 @@ fn verify_append_on_empty_chain_accepts_genesis() {
 #[test]
 fn verify_append_rejects_genesis_with_prev_event() {
     let chain = RevocationChain::new(TEST_ZONE);
-    let rev = make_revocation(RevocationTargetType::Key, RevocationReason::Compromised, [1; 32]);
+    let rev = make_revocation(
+        RevocationTargetType::Key,
+        RevocationReason::Compromised,
+        [1; 32],
+    );
     let bad_genesis = RevocationEvent {
         event_id: EngineObjectId([0xAA; 32]),
         revocation: rev,
@@ -1034,7 +1142,11 @@ fn rebuild_detects_tampered_chain() {
 fn rebuild_detects_head_seq_mismatch() {
     let mut chain = RevocationChain::new(TEST_ZONE);
     let sk = head_signing_key();
-    let rev = make_revocation(RevocationTargetType::Key, RevocationReason::Compromised, [90; 32]);
+    let rev = make_revocation(
+        RevocationTargetType::Key,
+        RevocationReason::Compromised,
+        [90; 32],
+    );
     chain.append(rev, &sk, "t").unwrap();
 
     let events = chain.events().to_vec();
@@ -1048,7 +1160,11 @@ fn rebuild_detects_head_seq_mismatch() {
 fn rebuild_detects_head_chain_hash_mismatch() {
     let mut chain = RevocationChain::new(TEST_ZONE);
     let sk = head_signing_key();
-    let rev = make_revocation(RevocationTargetType::Key, RevocationReason::Compromised, [91; 32]);
+    let rev = make_revocation(
+        RevocationTargetType::Key,
+        RevocationReason::Compromised,
+        [91; 32],
+    );
     chain.append(rev, &sk, "t").unwrap();
 
     let events = chain.events().to_vec();
@@ -1062,7 +1178,11 @@ fn rebuild_detects_head_chain_hash_mismatch() {
 fn rebuild_detects_duplicate_target() {
     let mut chain = RevocationChain::new(TEST_ZONE);
     let sk = head_signing_key();
-    let rev = make_revocation(RevocationTargetType::Key, RevocationReason::Compromised, [1; 32]);
+    let rev = make_revocation(
+        RevocationTargetType::Key,
+        RevocationReason::Compromised,
+        [1; 32],
+    );
     chain.append(rev, &sk, "t").unwrap();
 
     let mut events = chain.events().to_vec();
@@ -1084,7 +1204,11 @@ fn rebuild_detects_duplicate_target() {
 fn append_emits_revocation_appended_event() {
     let mut chain = RevocationChain::new(TEST_ZONE);
     let sk = head_signing_key();
-    let rev = make_revocation(RevocationTargetType::Key, RevocationReason::Compromised, [1; 32]);
+    let rev = make_revocation(
+        RevocationTargetType::Key,
+        RevocationReason::Compromised,
+        [1; 32],
+    );
     chain.append(rev, &sk, "t-audit").unwrap();
 
     let events = chain.drain_events();
@@ -1093,20 +1217,30 @@ fn append_emits_revocation_appended_event() {
         ChainEventType::RevocationAppended { event_seq: 0, .. }
     )));
     // Genesis (seq=0) should NOT emit HeadAdvanced
-    assert!(!events
-        .iter()
-        .any(|e| matches!(e.event_type, ChainEventType::HeadAdvanced { .. })));
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e.event_type, ChainEventType::HeadAdvanced { .. }))
+    );
 }
 
 #[test]
 fn non_genesis_append_emits_head_advanced() {
     let mut chain = RevocationChain::new(TEST_ZONE);
     let sk = head_signing_key();
-    let rev1 = make_revocation(RevocationTargetType::Key, RevocationReason::Compromised, [1; 32]);
+    let rev1 = make_revocation(
+        RevocationTargetType::Key,
+        RevocationReason::Compromised,
+        [1; 32],
+    );
     chain.append(rev1, &sk, "t-1").unwrap();
     chain.drain_events();
 
-    let rev2 = make_revocation(RevocationTargetType::Token, RevocationReason::Expired, [2; 32]);
+    let rev2 = make_revocation(
+        RevocationTargetType::Token,
+        RevocationReason::Expired,
+        [2; 32],
+    );
     chain.append(rev2, &sk, "t-2").unwrap();
     let events = chain.drain_events();
     assert!(events.iter().any(|e| matches!(
@@ -1122,7 +1256,11 @@ fn non_genesis_append_emits_head_advanced() {
 fn audit_events_have_correct_zone_and_trace_id() {
     let mut chain = RevocationChain::new(TEST_ZONE);
     let sk = head_signing_key();
-    let rev = make_revocation(RevocationTargetType::Key, RevocationReason::Compromised, [1; 32]);
+    let rev = make_revocation(
+        RevocationTargetType::Key,
+        RevocationReason::Compromised,
+        [1; 32],
+    );
     chain.append(rev, &sk, "trace-xyz").unwrap();
 
     let events = chain.drain_events();
@@ -1136,7 +1274,11 @@ fn audit_events_have_correct_zone_and_trace_id() {
 fn drain_events_clears() {
     let mut chain = RevocationChain::new(TEST_ZONE);
     let sk = head_signing_key();
-    let rev = make_revocation(RevocationTargetType::Key, RevocationReason::Compromised, [1; 32]);
+    let rev = make_revocation(
+        RevocationTargetType::Key,
+        RevocationReason::Compromised,
+        [1; 32],
+    );
     chain.append(rev, &sk, "t").unwrap();
     assert!(!chain.drain_events().is_empty());
     assert!(chain.drain_events().is_empty());
@@ -1148,9 +1290,17 @@ fn event_counts_by_type() {
     let sk = head_signing_key();
 
     // Append two events (2 RevocationAppended + 1 HeadAdvanced)
-    let rev1 = make_revocation(RevocationTargetType::Key, RevocationReason::Compromised, [1; 32]);
+    let rev1 = make_revocation(
+        RevocationTargetType::Key,
+        RevocationReason::Compromised,
+        [1; 32],
+    );
     chain.append(rev1, &sk, "t-1").unwrap();
-    let rev2 = make_revocation(RevocationTargetType::Token, RevocationReason::Expired, [2; 32]);
+    let rev2 = make_revocation(
+        RevocationTargetType::Token,
+        RevocationReason::Expired,
+        [2; 32],
+    );
     chain.append(rev2, &sk, "t-2").unwrap();
 
     // One audited lookup
@@ -1196,7 +1346,11 @@ fn large_chain_120_events_verifies() {
         let mut target = [0u8; 32];
         target[0] = (i & 0xFF) as u8;
         target[1] = (i >> 8) as u8;
-        let rev = make_revocation(RevocationTargetType::Token, RevocationReason::Expired, target);
+        let rev = make_revocation(
+            RevocationTargetType::Token,
+            RevocationReason::Expired,
+            target,
+        );
         chain.append(rev, &sk, &format!("t-{i}")).unwrap();
     }
     assert_eq!(chain.len(), 120);
@@ -1227,7 +1381,11 @@ fn full_pipeline_append_verify_lookup_rebuild() {
 
     // Append several revocations
     for i in 0..5u8 {
-        let rev = make_revocation(RevocationTargetType::Key, RevocationReason::Compromised, [i; 32]);
+        let rev = make_revocation(
+            RevocationTargetType::Key,
+            RevocationReason::Compromised,
+            [i; 32],
+        );
         chain.append(rev, &sk, &format!("t-{i}")).unwrap();
     }
 
@@ -1255,11 +1413,19 @@ fn different_targets_produce_different_chain_hashes() {
     let sk = head_signing_key();
 
     let mut chain_a = RevocationChain::new(TEST_ZONE);
-    let rev_a = make_revocation(RevocationTargetType::Key, RevocationReason::Compromised, [1; 32]);
+    let rev_a = make_revocation(
+        RevocationTargetType::Key,
+        RevocationReason::Compromised,
+        [1; 32],
+    );
     chain_a.append(rev_a, &sk, "t").unwrap();
 
     let mut chain_b = RevocationChain::new(TEST_ZONE);
-    let rev_b = make_revocation(RevocationTargetType::Key, RevocationReason::Compromised, [2; 32]);
+    let rev_b = make_revocation(
+        RevocationTargetType::Key,
+        RevocationReason::Compromised,
+        [2; 32],
+    );
     chain_b.append(rev_b, &sk, "t").unwrap();
 
     assert_ne!(chain_a.chain_hash(), chain_b.chain_hash());
@@ -1270,11 +1436,19 @@ fn head_id_changes_with_each_append() {
     let mut chain = RevocationChain::new(TEST_ZONE);
     let sk = head_signing_key();
 
-    let rev1 = make_revocation(RevocationTargetType::Key, RevocationReason::Compromised, [1; 32]);
+    let rev1 = make_revocation(
+        RevocationTargetType::Key,
+        RevocationReason::Compromised,
+        [1; 32],
+    );
     chain.append(rev1, &sk, "t-1").unwrap();
     let head_id_1 = chain.head().unwrap().head_id.clone();
 
-    let rev2 = make_revocation(RevocationTargetType::Token, RevocationReason::Expired, [2; 32]);
+    let rev2 = make_revocation(
+        RevocationTargetType::Token,
+        RevocationReason::Expired,
+        [2; 32],
+    );
     chain.append(rev2, &sk, "t-2").unwrap();
     let head_id_2 = chain.head().unwrap().head_id.clone();
 
@@ -1288,7 +1462,11 @@ fn rebuilt_chain_lookups_match_original() {
 
     let targets: Vec<[u8; 32]> = (0..10u8).map(|i| [i + 20; 32]).collect();
     for t in &targets {
-        let rev = make_revocation(RevocationTargetType::Extension, RevocationReason::Superseded, *t);
+        let rev = make_revocation(
+            RevocationTargetType::Extension,
+            RevocationReason::Superseded,
+            *t,
+        );
         chain.append(rev, &sk, "t").unwrap();
     }
 

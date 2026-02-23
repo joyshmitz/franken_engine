@@ -100,7 +100,14 @@ fn all_pairs_matrix(loss: i64) -> LossMatrix {
 
 #[test]
 fn containment_action_display_all() {
-    let expected = ["allow", "challenge", "sandbox", "suspend", "terminate", "quarantine"];
+    let expected = [
+        "allow",
+        "challenge",
+        "sandbox",
+        "suspend",
+        "terminate",
+        "quarantine",
+    ];
     for (action, name) in ContainmentAction::ALL.iter().zip(&expected) {
         assert_eq!(action.to_string(), *name);
     }
@@ -233,8 +240,14 @@ fn loss_lookup_known_values() {
     let m = LossMatrix::balanced();
     // Verify specific known values from the balanced matrix.
     assert_eq!(m.loss(ContainmentAction::Allow, RiskState::Benign), 0);
-    assert_eq!(m.loss(ContainmentAction::Terminate, RiskState::Malicious), 500_000);
-    assert_eq!(m.loss(ContainmentAction::Quarantine, RiskState::Malicious), 200_000);
+    assert_eq!(
+        m.loss(ContainmentAction::Terminate, RiskState::Malicious),
+        500_000
+    );
+    assert_eq!(
+        m.loss(ContainmentAction::Quarantine, RiskState::Malicious),
+        200_000
+    );
 }
 
 #[test]
@@ -336,9 +349,7 @@ fn select_benign_chooses_allow() {
 fn select_malicious_chooses_severe() {
     let mut s = ExpectedLossSelector::balanced();
     let d = s.select(&certain_malicious());
-    assert!(
-        d.action == ContainmentAction::Quarantine || d.action == ContainmentAction::Terminate
-    );
+    assert!(d.action == ContainmentAction::Quarantine || d.action == ContainmentAction::Terminate);
 }
 
 #[test]
@@ -527,9 +538,7 @@ fn error_std_error() {
 #[test]
 fn error_serde_all() {
     let errors = [
-        RuntimeDecisionScoringError::MissingField {
-            field: "x".into(),
-        },
+        RuntimeDecisionScoringError::MissingField { field: "x".into() },
         RuntimeDecisionScoringError::ZeroAttackerCost,
         RuntimeDecisionScoringError::AllActionsBlocked,
     ];
@@ -628,10 +637,12 @@ fn runtime_scoring_guardrail_blocks_optimal() {
     input.blocked_actions.insert(ContainmentAction::Allow);
     let score = s.score_runtime_decision(&input).unwrap();
     assert_ne!(score.selected_action, ContainmentAction::Allow);
-    assert!(score
-        .events
-        .iter()
-        .any(|e| e.event == "guardrail_veto_applied"));
+    assert!(
+        score
+            .events
+            .iter()
+            .any(|e| e.event == "guardrail_veto_applied")
+    );
 }
 
 #[test]
@@ -776,9 +787,7 @@ fn non_borderline_has_empty_sensitivity() {
 #[test]
 fn runtime_scoring_rationale_contains_posterior() {
     let mut s = ExpectedLossSelector::balanced();
-    let score = s
-        .score_runtime_decision(&sample_input(uniform()))
-        .unwrap();
+    let score = s.score_runtime_decision(&sample_input(uniform())).unwrap();
     assert!(score.selection_rationale.contains("p_benign="));
     assert!(score.selection_rationale.contains("p_malicious="));
     assert!(score.selection_rationale.contains("margin="));
@@ -791,9 +800,7 @@ fn runtime_scoring_rationale_contains_posterior() {
 #[test]
 fn runtime_scoring_fleet_roi_includes_extension() {
     let mut s = ExpectedLossSelector::balanced();
-    let score = s
-        .score_runtime_decision(&sample_input(uniform()))
-        .unwrap();
+    let score = s.score_runtime_decision(&sample_input(uniform())).unwrap();
     assert_eq!(score.fleet_roi_summary.extension_count, 2);
     assert_eq!(score.attacker_roi.extension_id, "ext-001");
 }

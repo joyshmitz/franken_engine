@@ -189,7 +189,10 @@ fn interpreter_error_serde_all_variants() {
             max: 256,
         },
         InterpreterError::InstructionOutOfBounds { ip: 10, count: 5 },
-        InterpreterError::StackOverflow { depth: 300, max: 256 },
+        InterpreterError::StackOverflow {
+            depth: 300,
+            max: 256,
+        },
         InterpreterError::TypeError {
             expected: "number".into(),
             got: "string".into(),
@@ -243,7 +246,10 @@ fn interpreter_error_display_all_variants() {
             "instruction pointer",
         ),
         (
-            InterpreterError::StackOverflow { depth: 300, max: 256 },
+            InterpreterError::StackOverflow {
+                depth: 300,
+                max: 256,
+            },
             "stack overflow",
         ),
         (
@@ -290,7 +296,10 @@ fn interpreter_error_display_all_variants() {
     ];
     for (err, expected_substr) in &cases {
         let s = err.to_string();
-        assert!(s.contains(expected_substr), "'{s}' should contain '{expected_substr}'");
+        assert!(
+            s.contains(expected_substr),
+            "'{s}' should contain '{expected_substr}'"
+        );
     }
 }
 
@@ -874,10 +883,12 @@ fn witness_events_include_execution_completed() {
         Ir3Instruction::Halt,
     ]);
     let result = quickjs_execute(&m).unwrap();
-    assert!(result
-        .witness_events
-        .iter()
-        .any(|e| e.kind == WitnessEventKind::ExecutionCompleted));
+    assert!(
+        result
+            .witness_events
+            .iter()
+            .any(|e| e.kind == WitnessEventKind::ExecutionCompleted)
+    );
 }
 
 #[test]
@@ -894,14 +905,18 @@ fn witness_events_from_hostcall() {
     cfg.granted_capabilities = vec!["fs".into()];
     let lane = QuickJsLane::with_config(cfg);
     let result = lane.execute(&m, "test").unwrap();
-    assert!(result
-        .witness_events
-        .iter()
-        .any(|e| e.kind == WitnessEventKind::HostcallDispatched));
-    assert!(result
-        .witness_events
-        .iter()
-        .any(|e| e.kind == WitnessEventKind::CapabilityChecked));
+    assert!(
+        result
+            .witness_events
+            .iter()
+            .any(|e| e.kind == WitnessEventKind::HostcallDispatched)
+    );
+    assert!(
+        result
+            .witness_events
+            .iter()
+            .any(|e| e.kind == WitnessEventKind::CapabilityChecked)
+    );
 }
 
 #[test]
@@ -1118,19 +1133,19 @@ fn fibonacci_iterative_10() {
     // Compute fib(10) = 55 iteratively
     // r0=a, r1=b, r2=counter, r3=limit, r4=temp, r5=1
     let m = test_module(vec![
-        Ir3Instruction::LoadInt { dst: 0, value: 0 },  // 0: a = 0
-        Ir3Instruction::LoadInt { dst: 1, value: 1 },  // 1: b = 1
-        Ir3Instruction::LoadInt { dst: 2, value: 0 },  // 2: counter = 0
+        Ir3Instruction::LoadInt { dst: 0, value: 0 }, // 0: a = 0
+        Ir3Instruction::LoadInt { dst: 1, value: 1 }, // 1: b = 1
+        Ir3Instruction::LoadInt { dst: 2, value: 0 }, // 2: counter = 0
         Ir3Instruction::LoadInt { dst: 3, value: 10 }, // 3: limit = 10
-        Ir3Instruction::LoadInt { dst: 5, value: 1 },  // 4: const 1
+        Ir3Instruction::LoadInt { dst: 5, value: 1 }, // 4: const 1
         // Loop body (5):
         Ir3Instruction::Add {
             dst: 4,
             lhs: 0,
             rhs: 1,
         }, // 5: temp = a + b
-        Ir3Instruction::Move { dst: 0, src: 1 },       // 6: a = b
-        Ir3Instruction::Move { dst: 1, src: 4 },       // 7: b = temp
+        Ir3Instruction::Move { dst: 0, src: 1 }, // 6: a = b
+        Ir3Instruction::Move { dst: 1, src: 4 }, // 7: b = temp
         Ir3Instruction::Add {
             dst: 2,
             lhs: 2,
@@ -1142,7 +1157,7 @@ fn fibonacci_iterative_10() {
             rhs: 2,
         }, // 9: r4 = limit - counter
         Ir3Instruction::JumpIf { cond: 4, target: 5 }, // 10: loop
-        Ir3Instruction::Halt,                           // 11
+        Ir3Instruction::Halt,                    // 11
     ]);
     let result = quickjs_execute(&m).unwrap();
     assert_eq!(result.value, Value::Int(55));

@@ -396,8 +396,7 @@ fn verification_error_display_all_variants() {
 
 #[test]
 fn verification_error_implements_std_error() {
-    let e: Box<dyn std::error::Error> =
-        Box::new(VerificationError::EmptyProofBundle);
+    let e: Box<dyn std::error::Error> = Box::new(VerificationError::EmptyProofBundle);
     assert!(!e.to_string().is_empty());
 }
 
@@ -484,10 +483,7 @@ fn builder_includes_operator_actions() {
     .operator_action(OperatorAction {
         operator: "admin".to_string(),
         action: "force restore trust".to_string(),
-        authorization_hash: AuthenticityHash::compute_keyed(
-            b"admin-key",
-            b"force restore trust",
-        ),
+        authorization_hash: AuthenticityHash::compute_keyed(b"admin-key", b"force restore trust"),
         timestamp_ticks: 2000,
     })
     .build();

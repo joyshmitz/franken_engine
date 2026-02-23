@@ -497,8 +497,16 @@ fn policy_ir_granted_capabilities() {
 fn policy_ir_granted_capabilities_dedup() {
     let ir = PolicyIr {
         nodes: vec![
-            simple_node("n1", MergeOperator::Intersection, vec![grant("a", "fs.read", "z")]),
-            simple_node("n2", MergeOperator::Intersection, vec![grant("b", "fs.read", "z")]),
+            simple_node(
+                "n1",
+                MergeOperator::Intersection,
+                vec![grant("a", "fs.read", "z")],
+            ),
+            simple_node(
+                "n2",
+                MergeOperator::Intersection,
+                vec![grant("b", "fs.read", "z")],
+            ),
         ],
         ..valid_policy()
     };
@@ -519,8 +527,16 @@ fn policy_ir_subjects() {
 fn policy_ir_subjects_dedup() {
     let ir = PolicyIr {
         nodes: vec![
-            simple_node("n1", MergeOperator::Intersection, vec![grant("same", "fs.read", "z")]),
-            simple_node("n2", MergeOperator::Intersection, vec![grant("same", "net.egress", "z")]),
+            simple_node(
+                "n1",
+                MergeOperator::Intersection,
+                vec![grant("same", "fs.read", "z")],
+            ),
+            simple_node(
+                "n2",
+                MergeOperator::Intersection,
+                vec![grant("same", "net.egress", "z")],
+            ),
         ],
         ..valid_policy()
     };
@@ -801,9 +817,21 @@ fn compile_too_large_error() {
     let c = PolicyTheoremCompiler::with_limits(2, true);
     let ir = PolicyIr {
         nodes: vec![
-            simple_node("n1", MergeOperator::Intersection, vec![grant("a", "fs.read", "z")]),
-            simple_node("n2", MergeOperator::Intersection, vec![grant("b", "fs.read", "z")]),
-            simple_node("n3", MergeOperator::Intersection, vec![grant("c", "fs.read", "z")]),
+            simple_node(
+                "n1",
+                MergeOperator::Intersection,
+                vec![grant("a", "fs.read", "z")],
+            ),
+            simple_node(
+                "n2",
+                MergeOperator::Intersection,
+                vec![grant("b", "fs.read", "z")],
+            ),
+            simple_node(
+                "n3",
+                MergeOperator::Intersection,
+                vec![grant("c", "fs.read", "z")],
+            ),
         ],
         ..valid_policy()
     };
@@ -823,8 +851,16 @@ fn compile_exactly_at_max_nodes_succeeds() {
     let c = PolicyTheoremCompiler::with_limits(2, true);
     let ir = PolicyIr {
         nodes: vec![
-            simple_node("n1", MergeOperator::Intersection, vec![grant("a", "fs.read", "z")]),
-            simple_node("n2", MergeOperator::Intersection, vec![grant("b", "net.egress", "z")]),
+            simple_node(
+                "n1",
+                MergeOperator::Intersection,
+                vec![grant("a", "fs.read", "z")],
+            ),
+            simple_node(
+                "n2",
+                MergeOperator::Intersection,
+                vec![grant("b", "net.egress", "z")],
+            ),
         ],
         ..valid_policy()
     };
@@ -849,10 +885,12 @@ fn compile_union_without_claim_violates_monotonicity() {
     };
     let result = c.compile(&ir).unwrap();
     assert!(!result.all_passed);
-    assert!(result
-        .counterexamples
-        .iter()
-        .any(|cx| cx.property == FormalProperty::Monotonicity));
+    assert!(
+        result
+            .counterexamples
+            .iter()
+            .any(|cx| cx.property == FormalProperty::Monotonicity)
+    );
 }
 
 #[test]
@@ -878,7 +916,10 @@ fn compile_attenuation_preserves_monotonicity() {
     let base = simple_node(
         "base",
         MergeOperator::Intersection,
-        vec![grant("ext-A", "fs.read", "z"), grant("ext-A", "fs.write", "z")],
+        vec![
+            grant("ext-A", "fs.read", "z"),
+            grant("ext-A", "fs.write", "z"),
+        ],
     );
     let att = simple_node(
         "att",
@@ -917,10 +958,12 @@ fn compile_undefined_capability_fails_type_check() {
     let result = c.compile(&ir).unwrap();
     assert!(!result.all_passed);
     // The type-check uses AttenuationLegality as its property marker.
-    assert!(result
-        .counterexamples
-        .iter()
-        .any(|cx| cx.description.contains("undefined capabilities")));
+    assert!(
+        result
+            .counterexamples
+            .iter()
+            .any(|cx| cx.description.contains("undefined capabilities"))
+    );
 }
 
 #[test]
@@ -934,10 +977,12 @@ fn compile_zero_lifetime_grant_fails_type_check() {
     };
     let result = c.compile(&ir).unwrap();
     assert!(!result.all_passed);
-    assert!(result
-        .counterexamples
-        .iter()
-        .any(|cx| cx.description.contains("zero-lifetime")));
+    assert!(
+        result
+            .counterexamples
+            .iter()
+            .any(|cx| cx.description.contains("zero-lifetime"))
+    );
 }
 
 // ===========================================================================
@@ -992,10 +1037,12 @@ fn compile_non_interference_shared_subject_fails() {
     };
     let result = c.compile(&ir).unwrap();
     assert!(!result.all_passed);
-    assert!(result
-        .counterexamples
-        .iter()
-        .any(|cx| cx.property == FormalProperty::NonInterference));
+    assert!(
+        result
+            .counterexamples
+            .iter()
+            .any(|cx| cx.property == FormalProperty::NonInterference)
+    );
 }
 
 #[test]
@@ -1003,10 +1050,12 @@ fn compile_no_non_interference_claims_passes() {
     // If no NI claims exist, the pass should succeed vacuously.
     let c = PolicyTheoremCompiler::new();
     let result = c.compile(&valid_policy()).unwrap();
-    assert!(result
-        .witnesses
-        .iter()
-        .any(|w| w.property == FormalProperty::NonInterference));
+    assert!(
+        result
+            .witnesses
+            .iter()
+            .any(|w| w.property == FormalProperty::NonInterference)
+    );
 }
 
 // ===========================================================================
@@ -1034,10 +1083,12 @@ fn compile_precedence_duplicate_priorities_fails_merge_determinism() {
     };
     let result = c.compile(&ir).unwrap();
     assert!(!result.all_passed);
-    assert!(result
-        .counterexamples
-        .iter()
-        .any(|cx| cx.property == FormalProperty::MergeDeterminism));
+    assert!(
+        result
+            .counterexamples
+            .iter()
+            .any(|cx| cx.property == FormalProperty::MergeDeterminism)
+    );
 }
 
 #[test]
@@ -1088,10 +1139,12 @@ fn compile_precedence_zero_priority_fails_stability() {
     };
     let result = c.compile(&ir).unwrap();
     assert!(!result.all_passed);
-    assert!(result
-        .counterexamples
-        .iter()
-        .any(|cx| cx.property == FormalProperty::PrecedenceStability));
+    assert!(
+        result
+            .counterexamples
+            .iter()
+            .any(|cx| cx.property == FormalProperty::PrecedenceStability)
+    );
 }
 
 // ===========================================================================
@@ -1117,10 +1170,12 @@ fn compile_attenuation_escalation_fails() {
     };
     let result = c.compile(&ir).unwrap();
     assert!(!result.all_passed);
-    assert!(result
-        .counterexamples
-        .iter()
-        .any(|cx| cx.property == FormalProperty::AttenuationLegality));
+    assert!(
+        result
+            .counterexamples
+            .iter()
+            .any(|cx| cx.property == FormalProperty::AttenuationLegality)
+    );
 }
 
 #[test]
@@ -1301,10 +1356,12 @@ fn pre_deployment_with_violations() {
     let result = hooks.pre_deployment_check(&ir).unwrap();
     assert!(!result.passed);
     assert!(!result.diagnostics.is_empty());
-    assert!(result
-        .diagnostics
-        .iter()
-        .all(|d| d.severity == DiagnosticSeverity::Error));
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|d| d.severity == DiagnosticSeverity::Error)
+    );
 }
 
 // ===========================================================================
@@ -1343,14 +1400,18 @@ fn runtime_check_monotonicity_violation() {
     };
     let result = hooks.runtime_check(&ir).unwrap();
     assert!(!result.passed);
-    assert!(result
-        .diagnostics
-        .iter()
-        .any(|d| d.property_violated == FormalProperty::Monotonicity));
-    assert!(result
-        .diagnostics
-        .iter()
-        .all(|d| d.severity == DiagnosticSeverity::Fatal));
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.property_violated == FormalProperty::Monotonicity)
+    );
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|d| d.severity == DiagnosticSeverity::Fatal)
+    );
 }
 
 #[test]
@@ -1372,10 +1433,12 @@ fn runtime_check_attenuation_violation() {
     };
     let result = hooks.runtime_check(&ir).unwrap();
     assert!(!result.passed);
-    assert!(result
-        .diagnostics
-        .iter()
-        .any(|d| d.property_violated == FormalProperty::AttenuationLegality));
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.property_violated == FormalProperty::AttenuationLegality)
+    );
 }
 
 #[test]

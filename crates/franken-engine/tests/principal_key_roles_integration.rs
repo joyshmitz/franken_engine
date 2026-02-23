@@ -215,9 +215,15 @@ fn derive_role_key_domain_separation_all_pairs() {
 #[test]
 fn derive_role_key_epoch_sensitivity() {
     let seed = test_seed();
-    let k1 = principal_key_roles::derive_role_key(&seed, KeyRole::Signing, SecurityEpoch::from_raw(1));
-    let k2 = principal_key_roles::derive_role_key(&seed, KeyRole::Signing, SecurityEpoch::from_raw(2));
-    let k3 = principal_key_roles::derive_role_key(&seed, KeyRole::Signing, SecurityEpoch::from_raw(u64::MAX));
+    let k1 =
+        principal_key_roles::derive_role_key(&seed, KeyRole::Signing, SecurityEpoch::from_raw(1));
+    let k2 =
+        principal_key_roles::derive_role_key(&seed, KeyRole::Signing, SecurityEpoch::from_raw(2));
+    let k3 = principal_key_roles::derive_role_key(
+        &seed,
+        KeyRole::Signing,
+        SecurityEpoch::from_raw(u64::MAX),
+    );
     assert_ne!(k1, k2);
     assert_ne!(k2, k3);
     assert_ne!(k1, k3);
@@ -232,7 +238,14 @@ fn role_key_entry_serde_roundtrip() {
     let epoch = SecurityEpoch::from_raw(1);
     let seed = test_seed();
     let sk = make_signing_key(&seed, epoch);
-    let entry = make_role_entry(KeyRole::Signing, sk.verification_key(), None, KeyStatus::Active, epoch, 0);
+    let entry = make_role_entry(
+        KeyRole::Signing,
+        sk.verification_key(),
+        None,
+        KeyStatus::Active,
+        epoch,
+        0,
+    );
     let json = serde_json::to_string(&entry).unwrap();
     let back: RoleKeyEntry = serde_json::from_str(&json).unwrap();
     assert_eq!(entry, back);
@@ -261,7 +274,14 @@ fn role_key_entry_with_encryption_pk_serde_roundtrip() {
 fn role_key_entry_identity_bytes_differ_by_role() {
     let epoch = SecurityEpoch::from_raw(1);
     let vk = VerificationKey([0x55; 32]);
-    let signing = make_role_entry(KeyRole::Signing, vk.clone(), None, KeyStatus::Active, epoch, 0);
+    let signing = make_role_entry(
+        KeyRole::Signing,
+        vk.clone(),
+        None,
+        KeyStatus::Active,
+        epoch,
+        0,
+    );
     let issuance = make_role_entry(KeyRole::Issuance, vk, None, KeyStatus::Active, epoch, 0);
     assert_ne!(signing.identity_bytes(), issuance.identity_bytes());
 }
@@ -338,7 +358,10 @@ fn owner_key_bundle_wrong_verifier_rejected() {
     .unwrap();
 
     let wrong_vk = VerificationKey([0xFF; 32]);
-    assert_eq!(bundle.verify(&wrong_vk), Err(KeyRoleError::BundleSignatureInvalid));
+    assert_eq!(
+        bundle.verify(&wrong_vk),
+        Err(KeyRoleError::BundleSignatureInvalid)
+    );
 }
 
 #[test]
@@ -478,8 +501,16 @@ fn key_role_error_display_all_variants() {
     };
     assert!(err.to_string().contains("encryption"));
 
-    assert!(KeyRoleError::BundleCreationFailed.to_string().contains("bundle"));
-    assert!(KeyRoleError::BundleSignatureInvalid.to_string().contains("signature"));
+    assert!(
+        KeyRoleError::BundleCreationFailed
+            .to_string()
+            .contains("bundle")
+    );
+    assert!(
+        KeyRoleError::BundleSignatureInvalid
+            .to_string()
+            .contains("signature")
+    );
 
     let err = KeyRoleError::SequenceRegression {
         role: KeyRole::Signing,
@@ -491,7 +522,11 @@ fn key_role_error_display_all_variants() {
     assert!(s.contains("10"));
     assert!(s.contains("5"));
 
-    assert!(KeyRoleError::PrincipalNotFound.to_string().contains("principal"));
+    assert!(
+        KeyRoleError::PrincipalNotFound
+            .to_string()
+            .contains("principal")
+    );
 
     let err = KeyRoleError::DuplicateKey {
         role: KeyRole::Issuance,
@@ -746,9 +781,7 @@ fn principal_key_store_rotation_chain() {
         .unwrap();
 
     // Rotate 0 → 1.
-    store
-        .rotate_key(KeyRole::Signing, 0, 1, epoch)
-        .unwrap();
+    store.rotate_key(KeyRole::Signing, 0, 1, epoch).unwrap();
 
     let active = store.get_active_key(KeyRole::Signing).unwrap();
     assert_eq!(active.sequence, 1);
@@ -758,9 +791,7 @@ fn principal_key_store_rotation_chain() {
     assert_eq!(verifiable.len(), 2);
 
     // Rotate 1 → 2.
-    store
-        .rotate_key(KeyRole::Signing, 1, 2, epoch)
-        .unwrap();
+    store.rotate_key(KeyRole::Signing, 1, 2, epoch).unwrap();
 
     let active = store.get_active_key(KeyRole::Signing).unwrap();
     assert_eq!(active.sequence, 2);

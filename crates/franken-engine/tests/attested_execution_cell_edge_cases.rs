@@ -40,7 +40,13 @@ fn cell_input(label: &str, func: CellFunction, zone: &str, ep: SecurityEpoch) ->
 }
 
 fn measure(root: &SoftwareTrustRoot) -> MeasurementDigest {
-    root.measure(b"code-v1", b"config-v1", b"policy-v1", b"schema-v1", "1.0.0")
+    root.measure(
+        b"code-v1",
+        b"config-v1",
+        b"policy-v1",
+        b"schema-v1",
+        "1.0.0",
+    )
 }
 
 /// Drive a cell from Provisioning all the way to Active and return its string id.
@@ -120,7 +126,11 @@ fn lifecycle_clone_eq() {
 
 #[test]
 fn trust_level_serde_all_variants() {
-    for v in &[TrustLevel::SoftwareOnly, TrustLevel::Hybrid, TrustLevel::Hardware] {
+    for v in &[
+        TrustLevel::SoftwareOnly,
+        TrustLevel::Hybrid,
+        TrustLevel::Hardware,
+    ] {
         let json = serde_json::to_string(v).unwrap();
         let restored: TrustLevel = serde_json::from_str(&json).unwrap();
         assert_eq!(*v, restored);
@@ -340,7 +350,10 @@ fn verification_result_display_all() {
         .to_string(),
         "expired"
     );
-    assert_eq!(VerificationResult::NonceMismatch.to_string(), "nonce-mismatch");
+    assert_eq!(
+        VerificationResult::NonceMismatch.to_string(),
+        "nonce-mismatch"
+    );
     assert_eq!(
         VerificationResult::SignerRevoked {
             key_id: "k1".to_string(),
@@ -518,36 +531,48 @@ fn cell_error_serde_all_variants() {
 
 #[test]
 fn cell_error_display_content() {
-    assert!(CellError::IdDerivation("bad".to_string())
+    assert!(
+        CellError::IdDerivation("bad".to_string())
+            .to_string()
+            .contains("bad")
+    );
+    assert!(
+        CellError::NotFound {
+            cell_id: "c1".to_string()
+        }
         .to_string()
-        .contains("bad"));
-    assert!(CellError::NotFound {
-        cell_id: "c1".to_string()
-    }
-    .to_string()
-    .contains("c1"));
-    assert!(CellError::InvalidTransition {
-        from: CellLifecycle::Active,
-        to: CellLifecycle::Provisioning,
-    }
-    .to_string()
-    .contains("active"));
-    assert!(CellError::NotOperational {
-        lifecycle: CellLifecycle::Suspended
-    }
-    .to_string()
-    .contains("suspended"));
-    assert!(CellError::AttestationFailed {
-        reason: "expired".to_string()
-    }
-    .to_string()
-    .contains("expired"));
+        .contains("c1")
+    );
+    assert!(
+        CellError::InvalidTransition {
+            from: CellLifecycle::Active,
+            to: CellLifecycle::Provisioning,
+        }
+        .to_string()
+        .contains("active")
+    );
+    assert!(
+        CellError::NotOperational {
+            lifecycle: CellLifecycle::Suspended
+        }
+        .to_string()
+        .contains("suspended")
+    );
+    assert!(
+        CellError::AttestationFailed {
+            reason: "expired".to_string()
+        }
+        .to_string()
+        .contains("expired")
+    );
     assert!(CellError::NotMeasured.to_string().contains("measured"));
-    assert!(CellError::TrustRootRevoked {
-        key_id: "k1".to_string()
-    }
-    .to_string()
-    .contains("k1"));
+    assert!(
+        CellError::TrustRootRevoked {
+            key_id: "k1".to_string()
+        }
+        .to_string()
+        .contains("k1")
+    );
     assert!(CellError::EmptyLabel.to_string().contains("label"));
     assert!(CellError::EmptyZone.to_string().contains("zone"));
     assert!(CellError::EmptyAuthority.to_string().contains("authority"));
@@ -722,7 +747,10 @@ fn registry_create_whitespace_only_label_rejected() {
         trust_level: TrustLevel::SoftwareOnly,
         authority_envelope: auth(&["eval"]),
     };
-    assert!(matches!(reg.create_cell(input, 1000), Err(CellError::EmptyLabel)));
+    assert!(matches!(
+        reg.create_cell(input, 1000),
+        Err(CellError::EmptyLabel)
+    ));
 }
 
 #[test]
@@ -736,7 +764,10 @@ fn registry_create_whitespace_only_zone_rejected() {
         trust_level: TrustLevel::SoftwareOnly,
         authority_envelope: auth(&["eval"]),
     };
-    assert!(matches!(reg.create_cell(input, 1000), Err(CellError::EmptyZone)));
+    assert!(matches!(
+        reg.create_cell(input, 1000),
+        Err(CellError::EmptyZone)
+    ));
 }
 
 // ===========================================================================
@@ -793,12 +824,7 @@ fn registry_multiple_cells_multiple_zones() {
 
     let zones = ["zone-a", "zone-b", "zone-c"];
     for (i, zone) in zones.iter().enumerate() {
-        let input = cell_input(
-            &format!("cell-{i}"),
-            CellFunction::ProofValidator,
-            zone,
-            ep,
-        );
+        let input = cell_input(&format!("cell-{i}"), CellFunction::ProofValidator, zone, ep);
         reg.create_cell(input, i as u64 * 1000).unwrap();
     }
 
@@ -816,7 +842,15 @@ fn registry_measure_wrong_state_fails() {
     let mut reg = CellRegistry::new();
     let root = make_root("k1", 1);
     let ep = epoch(1);
-    let cid = activate_cell(&mut reg, &root, "cell-1", CellFunction::ProofValidator, "prod", ep, 1000);
+    let cid = activate_cell(
+        &mut reg,
+        &root,
+        "cell-1",
+        CellFunction::ProofValidator,
+        "prod",
+        ep,
+        1000,
+    );
     // Cell is Active — cannot measure.
     let result = reg.measure_cell(&cid, measure(&root), 5000, ep);
     assert!(matches!(result, Err(CellError::InvalidTransition { .. })));
@@ -828,7 +862,10 @@ fn registry_attest_from_provisioning_fails() {
     let root = make_root("k1", 1);
     let ep = epoch(1);
     let id = reg
-        .create_cell(cell_input("cell-1", CellFunction::ProofValidator, "prod", ep), 1000)
+        .create_cell(
+            cell_input("cell-1", CellFunction::ProofValidator, "prod", ep),
+            1000,
+        )
         .unwrap();
     let cid = format!("{id}");
     let m = measure(&root);
@@ -845,7 +882,10 @@ fn registry_activate_from_measured_fails() {
     let root = make_root("k1", 1);
     let ep = epoch(1);
     let id = reg
-        .create_cell(cell_input("cell-1", CellFunction::ProofValidator, "prod", ep), 1000)
+        .create_cell(
+            cell_input("cell-1", CellFunction::ProofValidator, "prod", ep),
+            1000,
+        )
         .unwrap();
     let cid = format!("{id}");
     reg.measure_cell(&cid, measure(&root), 2000, ep).unwrap();
@@ -859,7 +899,10 @@ fn registry_suspend_from_provisioning_fails() {
     let mut reg = CellRegistry::new();
     let ep = epoch(1);
     let id = reg
-        .create_cell(cell_input("cell-1", CellFunction::ProofValidator, "prod", ep), 1000)
+        .create_cell(
+            cell_input("cell-1", CellFunction::ProofValidator, "prod", ep),
+            1000,
+        )
         .unwrap();
     let cid = format!("{id}");
     let result = reg.suspend_cell(&cid, "test", 2000, ep);
@@ -871,7 +914,10 @@ fn registry_decommission_from_provisioning_fails() {
     let mut reg = CellRegistry::new();
     let ep = epoch(1);
     let id = reg
-        .create_cell(cell_input("cell-1", CellFunction::ProofValidator, "prod", ep), 1000)
+        .create_cell(
+            cell_input("cell-1", CellFunction::ProofValidator, "prod", ep),
+            1000,
+        )
         .unwrap();
     let cid = format!("{id}");
     let result = reg.decommission_cell(&cid, "test", 2000, ep);
@@ -883,16 +929,39 @@ fn registry_lifecycle_receipts_accumulate() {
     let mut reg = CellRegistry::new();
     let root = make_root("k1", 1);
     let ep = epoch(1);
-    let cid = activate_cell(&mut reg, &root, "cell-1", CellFunction::ProofValidator, "prod", ep, 1000);
+    let cid = activate_cell(
+        &mut reg,
+        &root,
+        "cell-1",
+        CellFunction::ProofValidator,
+        "prod",
+        ep,
+        1000,
+    );
 
     let cell = reg.get(&cid).unwrap();
     // Provisioning→Measured, Measured→Attested, Attested→Active = 3 receipts.
     assert_eq!(cell.transition_receipts.len(), 3);
-    assert_eq!(cell.transition_receipts[0].from_state, CellLifecycle::Provisioning);
-    assert_eq!(cell.transition_receipts[0].to_state, CellLifecycle::Measured);
-    assert_eq!(cell.transition_receipts[1].from_state, CellLifecycle::Measured);
-    assert_eq!(cell.transition_receipts[1].to_state, CellLifecycle::Attested);
-    assert_eq!(cell.transition_receipts[2].from_state, CellLifecycle::Attested);
+    assert_eq!(
+        cell.transition_receipts[0].from_state,
+        CellLifecycle::Provisioning
+    );
+    assert_eq!(
+        cell.transition_receipts[0].to_state,
+        CellLifecycle::Measured
+    );
+    assert_eq!(
+        cell.transition_receipts[1].from_state,
+        CellLifecycle::Measured
+    );
+    assert_eq!(
+        cell.transition_receipts[1].to_state,
+        CellLifecycle::Attested
+    );
+    assert_eq!(
+        cell.transition_receipts[2].from_state,
+        CellLifecycle::Attested
+    );
     assert_eq!(cell.transition_receipts[2].to_state, CellLifecycle::Active);
 }
 
@@ -901,7 +970,15 @@ fn registry_events_seq_monotonic() {
     let mut reg = CellRegistry::new();
     let root = make_root("k1", 1);
     let ep = epoch(1);
-    let _ = activate_cell(&mut reg, &root, "cell-1", CellFunction::ProofValidator, "prod", ep, 1000);
+    let _ = activate_cell(
+        &mut reg,
+        &root,
+        "cell-1",
+        CellFunction::ProofValidator,
+        "prod",
+        ep,
+        1000,
+    );
 
     let events = reg.events();
     for (i, ev) in events.iter().enumerate() {
@@ -914,7 +991,15 @@ fn registry_events_contain_cell_id() {
     let mut reg = CellRegistry::new();
     let root = make_root("k1", 1);
     let ep = epoch(1);
-    let cid = activate_cell(&mut reg, &root, "cell-1", CellFunction::ProofValidator, "prod", ep, 1000);
+    let cid = activate_cell(
+        &mut reg,
+        &root,
+        "cell-1",
+        CellFunction::ProofValidator,
+        "prod",
+        ep,
+        1000,
+    );
 
     for ev in reg.events() {
         assert_eq!(ev.cell_id, cid);
@@ -933,15 +1018,30 @@ fn registry_revoke_trust_root_mixed_cells() {
 
     // Activate two cells with same key.
     let cid1 = activate_cell(
-        &mut reg, &root, "cell-1", CellFunction::ProofValidator, "prod", ep, 1000,
+        &mut reg,
+        &root,
+        "cell-1",
+        CellFunction::ProofValidator,
+        "prod",
+        ep,
+        1000,
     );
     let cid2 = activate_cell(
-        &mut reg, &root, "cell-2", CellFunction::EvidenceAccumulator, "prod", ep, 2000,
+        &mut reg,
+        &root,
+        "cell-2",
+        CellFunction::EvidenceAccumulator,
+        "prod",
+        ep,
+        2000,
     );
 
     // Create a third cell that stays in Provisioning.
     let _ = reg
-        .create_cell(cell_input("cell-3", CellFunction::ExtensionRuntime, "prod", ep), 3000)
+        .create_cell(
+            cell_input("cell-3", CellFunction::ExtensionRuntime, "prod", ep),
+            3000,
+        )
         .unwrap();
 
     let suspended = reg.revoke_trust_root("k1", 4000, ep);
@@ -958,7 +1058,13 @@ fn registry_revoke_nonexistent_key_no_effect() {
     let root = make_root("k1", 1);
     let ep = epoch(1);
     let cid = activate_cell(
-        &mut reg, &root, "cell-1", CellFunction::ProofValidator, "prod", ep, 1000,
+        &mut reg,
+        &root,
+        "cell-1",
+        CellFunction::ProofValidator,
+        "prod",
+        ep,
+        1000,
     );
 
     let suspended = reg.revoke_trust_root("nonexistent-key", 5000, ep);
@@ -976,7 +1082,13 @@ fn registry_active_cells_updates_after_suspend() {
     let root = make_root("k1", 1);
     let ep = epoch(1);
     let cid = activate_cell(
-        &mut reg, &root, "cell-1", CellFunction::ProofValidator, "prod", ep, 1000,
+        &mut reg,
+        &root,
+        "cell-1",
+        CellFunction::ProofValidator,
+        "prod",
+        ep,
+        1000,
     );
 
     assert_eq!(reg.active_cells().len(), 1);
@@ -990,11 +1102,18 @@ fn registry_active_cells_updates_after_decommission() {
     let root = make_root("k1", 1);
     let ep = epoch(1);
     let cid = activate_cell(
-        &mut reg, &root, "cell-1", CellFunction::ProofValidator, "prod", ep, 1000,
+        &mut reg,
+        &root,
+        "cell-1",
+        CellFunction::ProofValidator,
+        "prod",
+        ep,
+        1000,
     );
 
     assert_eq!(reg.active_cells().len(), 1);
-    reg.decommission_cell(&cid, "end of life", 5000, ep).unwrap();
+    reg.decommission_cell(&cid, "end of life", 5000, ep)
+        .unwrap();
     assert_eq!(reg.active_cells().len(), 0);
 }
 
@@ -1007,7 +1126,10 @@ fn registry_get_nonexistent_returns_none() {
 #[test]
 fn registry_cells_by_function_empty_for_unused() {
     let reg = CellRegistry::new();
-    assert!(reg.cells_by_function(CellFunction::PolicyEvaluator).is_empty());
+    assert!(
+        reg.cells_by_function(CellFunction::PolicyEvaluator)
+            .is_empty()
+    );
 }
 
 // ===========================================================================
@@ -1021,10 +1143,22 @@ fn registry_serde_after_full_lifecycle() {
     let ep = epoch(1);
 
     let cid1 = activate_cell(
-        &mut reg, &root, "cell-1", CellFunction::ProofValidator, "zone-a", ep, 1000,
+        &mut reg,
+        &root,
+        "cell-1",
+        CellFunction::ProofValidator,
+        "zone-a",
+        ep,
+        1000,
     );
     let _ = activate_cell(
-        &mut reg, &root, "cell-2", CellFunction::EvidenceAccumulator, "zone-b", ep, 2000,
+        &mut reg,
+        &root,
+        "cell-2",
+        CellFunction::EvidenceAccumulator,
+        "zone-b",
+        ep,
+        2000,
     );
     reg.suspend_cell(&cid1, "test suspend", 5000, ep).unwrap();
 
@@ -1047,7 +1181,13 @@ fn registry_serde_preserves_events() {
     let root = make_root("k1", 1);
     let ep = epoch(1);
     let _ = activate_cell(
-        &mut reg, &root, "cell-1", CellFunction::ProofValidator, "prod", ep, 1000,
+        &mut reg,
+        &root,
+        "cell-1",
+        CellFunction::ProofValidator,
+        "prod",
+        ep,
+        1000,
     );
     let event_count = reg.events().len();
 
@@ -1111,7 +1251,13 @@ fn integration_full_lifecycle_with_reattestation() {
 
     // Create → Measure → Attest → Activate.
     let cid = activate_cell(
-        &mut reg, &root, "cell-1", CellFunction::DecisionReceiptSigner, "prod", ep, 1000,
+        &mut reg,
+        &root,
+        "cell-1",
+        CellFunction::DecisionReceiptSigner,
+        "prod",
+        ep,
+        1000,
     );
     assert!(reg.get(&cid).unwrap().lifecycle.is_operational());
 
@@ -1149,7 +1295,13 @@ fn integration_decommission_from_suspended() {
     let ep = epoch(1);
 
     let cid = activate_cell(
-        &mut reg, &root, "cell-1", CellFunction::PolicyEvaluator, "staging", ep, 1000,
+        &mut reg,
+        &root,
+        "cell-1",
+        CellFunction::PolicyEvaluator,
+        "staging",
+        ep,
+        1000,
     );
     reg.suspend_cell(&cid, "maintenance", 5000, ep).unwrap();
     reg.decommission_cell(&cid, "retired", 6000, ep).unwrap();
@@ -1168,7 +1320,13 @@ fn integration_revoke_then_reattest_and_reactivate() {
     let ep = epoch(1);
 
     let cid = activate_cell(
-        &mut reg, &root, "cell-1", CellFunction::EvidenceAccumulator, "prod", ep, 1000,
+        &mut reg,
+        &root,
+        "cell-1",
+        CellFunction::EvidenceAccumulator,
+        "prod",
+        ep,
+        1000,
     );
 
     // Revoke trust root — suspends the cell.
@@ -1191,10 +1349,22 @@ fn integration_multiple_cells_different_epochs() {
     let root = make_root("k1", 1);
 
     let cid1 = activate_cell(
-        &mut reg, &root, "epoch1-cell", CellFunction::DecisionReceiptSigner, "prod", epoch(1), 1000,
+        &mut reg,
+        &root,
+        "epoch1-cell",
+        CellFunction::DecisionReceiptSigner,
+        "prod",
+        epoch(1),
+        1000,
     );
     let cid2 = activate_cell(
-        &mut reg, &root, "epoch2-cell", CellFunction::ProofValidator, "prod", epoch(2), 2000,
+        &mut reg,
+        &root,
+        "epoch2-cell",
+        CellFunction::ProofValidator,
+        "prod",
+        epoch(2),
+        2000,
     );
 
     assert_eq!(reg.get(&cid1).unwrap().epoch, epoch(1));
@@ -1206,7 +1376,12 @@ fn integration_multiple_cells_different_epochs() {
 #[test]
 fn integration_cell_id_deterministic_across_registries() {
     let ep = epoch(1);
-    let input = cell_input("deterministic-cell", CellFunction::PolicyEvaluator, "zone-x", ep);
+    let input = cell_input(
+        "deterministic-cell",
+        CellFunction::PolicyEvaluator,
+        "zone-x",
+        ep,
+    );
 
     let mut reg1 = CellRegistry::new();
     let id1 = reg1.create_cell(input.clone(), 1000).unwrap();

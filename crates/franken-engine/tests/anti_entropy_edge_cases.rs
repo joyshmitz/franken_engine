@@ -8,9 +8,9 @@
 use std::collections::BTreeSet;
 
 use frankenengine_engine::anti_entropy::{
-    FallbackConfig, FallbackProtocol, FallbackRateAlert, FallbackRateMonitor, FallbackRequest,
-    FallbackResult, FallbackTrigger, Iblt, IbltCell, ObjectId, ReconcileConfig, ReconcileError,
-    ReconcileEvent, ReconcileObjectType, ReconcileResult, ReconcileSession, FallbackEvidence,
+    FallbackConfig, FallbackEvidence, FallbackProtocol, FallbackRateAlert, FallbackRateMonitor,
+    FallbackRequest, FallbackResult, FallbackTrigger, Iblt, IbltCell, ObjectId, ReconcileConfig,
+    ReconcileError, ReconcileEvent, ReconcileObjectType, ReconcileResult, ReconcileSession,
 };
 use frankenengine_engine::hash_tiers::ContentHash;
 use frankenengine_engine::security_epoch::SecurityEpoch;
@@ -62,9 +62,18 @@ fn object_type_serde_all_variants() {
 
 #[test]
 fn object_type_display_all_variants() {
-    assert_eq!(ReconcileObjectType::RevocationEvent.to_string(), "revocation_event");
-    assert_eq!(ReconcileObjectType::CheckpointMarker.to_string(), "checkpoint_marker");
-    assert_eq!(ReconcileObjectType::EvidenceEntry.to_string(), "evidence_entry");
+    assert_eq!(
+        ReconcileObjectType::RevocationEvent.to_string(),
+        "revocation_event"
+    );
+    assert_eq!(
+        ReconcileObjectType::CheckpointMarker.to_string(),
+        "checkpoint_marker"
+    );
+    assert_eq!(
+        ReconcileObjectType::EvidenceEntry.to_string(),
+        "evidence_entry"
+    );
 }
 
 #[test]
@@ -231,7 +240,10 @@ fn iblt_subtract_hash_mismatch() {
     let a = Iblt::new(64, 3);
     let b = Iblt::new(64, 4); // different num_hashes
     let result = a.subtract(&b);
-    assert!(matches!(result, Err(ReconcileError::IbltSizeMismatch { .. })));
+    assert!(matches!(
+        result,
+        Err(ReconcileError::IbltSizeMismatch { .. })
+    ));
 }
 
 #[test]
@@ -436,7 +448,9 @@ fn session_reconcile_empty_sets() {
     let mut session = ReconcileSession::new(epoch(1), config);
     let empty: BTreeSet<[u8; 32]> = BTreeSet::new();
     let remote_iblt = session.build_iblt(&empty);
-    let result = session.reconcile(&empty, &remote_iblt, "peer-1", "t1").unwrap();
+    let result = session
+        .reconcile(&empty, &remote_iblt, "peer-1", "t1")
+        .unwrap();
     assert!(!result.fallback_triggered);
     assert!(result.objects_to_send.is_empty());
     assert!(result.objects_to_fetch.is_empty());
@@ -456,7 +470,9 @@ fn session_reconcile_local_only_elements() {
     let remote: BTreeSet<[u8; 32]> = BTreeSet::new();
     let remote_iblt = session.build_iblt(&remote);
 
-    let result = session.reconcile(&local, &remote_iblt, "peer-1", "t1").unwrap();
+    let result = session
+        .reconcile(&local, &remote_iblt, "peer-1", "t1")
+        .unwrap();
     assert!(!result.fallback_triggered);
     assert_eq!(result.objects_to_send.len(), 5);
     assert!(result.objects_to_fetch.is_empty());
@@ -476,7 +492,9 @@ fn session_reconcile_remote_only_elements() {
     let remote: BTreeSet<[u8; 32]> = (0..5).map(make_hash).collect();
     let remote_iblt = session.build_iblt(&remote);
 
-    let result = session.reconcile(&local, &remote_iblt, "peer-1", "t1").unwrap();
+    let result = session
+        .reconcile(&local, &remote_iblt, "peer-1", "t1")
+        .unwrap();
     assert!(!result.fallback_triggered);
     assert!(result.objects_to_send.is_empty());
     assert_eq!(result.objects_to_fetch.len(), 5);
@@ -514,8 +532,12 @@ fn session_event_counts_accumulate() {
     let remote_iblt = session.build_iblt(&objects);
 
     // Two successful reconciliations.
-    session.reconcile(&objects, &remote_iblt, "p1", "t1").unwrap();
-    session.reconcile(&objects, &remote_iblt, "p2", "t2").unwrap();
+    session
+        .reconcile(&objects, &remote_iblt, "p1", "t1")
+        .unwrap();
+    session
+        .reconcile(&objects, &remote_iblt, "p2", "t2")
+        .unwrap();
 
     assert_eq!(session.event_counts().get("reconcile_success"), Some(&2));
 }
@@ -534,7 +556,9 @@ fn session_reconcile_event_fields() {
     local.insert(make_hash(100));
     let remote_iblt = session.build_iblt(&remote);
 
-    session.reconcile(&local, &remote_iblt, "node-7", "trace-42").unwrap();
+    session
+        .reconcile(&local, &remote_iblt, "node-7", "trace-42")
+        .unwrap();
     let events = session.drain_events();
     assert_eq!(events.len(), 1);
     let ev = &events[0];
@@ -558,27 +582,44 @@ fn session_fallback_event_fields() {
     };
     let mut session = ReconcileSession::new(epoch(3), config);
     // Use make_wide_hash pattern matching inline tests for guaranteed peel failure.
-    let local: BTreeSet<[u8; 32]> = (0u16..200).map(|i| {
-        let mut h = [0u8; 32];
-        let bytes = i.to_le_bytes();
-        h[0] = bytes[0]; h[1] = bytes[1]; h[2] = 0xAA;
-        for j in 3..32 { h[j] = h[j-1].wrapping_mul(37).wrapping_add(0xAA); }
-        h
-    }).collect();
-    let remote: BTreeSet<[u8; 32]> = (200u16..400).map(|i| {
-        let mut h = [0u8; 32];
-        let bytes = i.to_le_bytes();
-        h[0] = bytes[0]; h[1] = bytes[1]; h[2] = 0xBB;
-        for j in 3..32 { h[j] = h[j-1].wrapping_mul(37).wrapping_add(0xBB); }
-        h
-    }).collect();
+    let local: BTreeSet<[u8; 32]> = (0u16..200)
+        .map(|i| {
+            let mut h = [0u8; 32];
+            let bytes = i.to_le_bytes();
+            h[0] = bytes[0];
+            h[1] = bytes[1];
+            h[2] = 0xAA;
+            for j in 3..32 {
+                h[j] = h[j - 1].wrapping_mul(37).wrapping_add(0xAA);
+            }
+            h
+        })
+        .collect();
+    let remote: BTreeSet<[u8; 32]> = (200u16..400)
+        .map(|i| {
+            let mut h = [0u8; 32];
+            let bytes = i.to_le_bytes();
+            h[0] = bytes[0];
+            h[1] = bytes[1];
+            h[2] = 0xBB;
+            for j in 3..32 {
+                h[j] = h[j - 1].wrapping_mul(37).wrapping_add(0xBB);
+            }
+            h
+        })
+        .collect();
     let remote_iblt = session.build_iblt(&remote);
 
-    let result = session.reconcile(&local, &remote_iblt, "peer-x", "trace-fb").unwrap();
+    let result = session
+        .reconcile(&local, &remote_iblt, "peer-x", "trace-fb")
+        .unwrap();
     assert!(result.fallback_triggered);
 
     let events = session.drain_events();
-    let fb_event = events.iter().find(|e| e.event == "reconcile_fallback").unwrap();
+    let fb_event = events
+        .iter()
+        .find(|e| e.event == "reconcile_fallback")
+        .unwrap();
     assert!(fb_event.fallback_triggered);
     assert_eq!(fb_event.peer, "peer-x");
     assert_eq!(fb_event.epoch_id, 3);
@@ -715,7 +756,9 @@ fn fallback_trigger_display_all_variants() {
 
 #[test]
 fn fallback_trigger_peel_failed_display_includes_count() {
-    let t = FallbackTrigger::PeelFailed { remaining_cells: 42 };
+    let t = FallbackTrigger::PeelFailed {
+        remaining_cells: 42,
+    };
     assert!(t.to_string().contains("42"));
 }
 
@@ -889,7 +932,10 @@ fn fallback_protocol_evidence_original_reconciliation_id() {
         peer: "node-A",
         trace_id: "t1",
     });
-    assert_eq!(result.evidence.original_reconciliation_id, "recon-123:node-A");
+    assert_eq!(
+        result.evidence.original_reconciliation_id,
+        "recon-123:node-A"
+    );
 }
 
 #[test]
@@ -1008,10 +1054,7 @@ fn incremental_fallback_identical_sets_skips_all_ranges() {
     assert!(result.objects_to_send.is_empty());
     assert!(result.objects_to_fetch.is_empty());
     // All 4 ranges should have been skipped.
-    assert_eq!(
-        fb.event_counts().get("fallback_ranges_skipped"),
-        Some(&4)
-    );
+    assert_eq!(fb.event_counts().get("fallback_ranges_skipped"), Some(&4));
 }
 
 #[test]
@@ -1046,8 +1089,15 @@ fn incremental_fallback_difference_in_one_range() {
     assert!(result.objects_to_send.contains(&extra));
     assert!(result.objects_to_fetch.is_empty());
     // At least some ranges should have been skipped.
-    let skipped = fb.event_counts().get("fallback_ranges_skipped").copied().unwrap_or(0);
-    assert!(skipped >= 1, "expected at least 1 skipped range, got {skipped}");
+    let skipped = fb
+        .event_counts()
+        .get("fallback_ranges_skipped")
+        .copied()
+        .unwrap_or(0);
+    assert!(
+        skipped >= 1,
+        "expected at least 1 skipped range, got {skipped}"
+    );
 }
 
 #[test]
@@ -1361,20 +1411,32 @@ fn iblt_reconcile_agrees_with_exact_difference() {
 fn fallback_after_iblt_failure_yields_correct_diff() {
     // Simulate: IBLT fails → fallback protocol handles it.
     // Use large disjoint sets to guarantee peel failure with tiny IBLT.
-    let local: BTreeSet<[u8; 32]> = (0u16..200).map(|i| {
-        let mut h = [0u8; 32];
-        let bytes = i.to_le_bytes();
-        h[0] = bytes[0]; h[1] = bytes[1]; h[2] = 0xCC;
-        for j in 3..32 { h[j] = h[j-1].wrapping_mul(37).wrapping_add(0xCC); }
-        h
-    }).collect();
-    let remote: BTreeSet<[u8; 32]> = (200u16..400).map(|i| {
-        let mut h = [0u8; 32];
-        let bytes = i.to_le_bytes();
-        h[0] = bytes[0]; h[1] = bytes[1]; h[2] = 0xDD;
-        for j in 3..32 { h[j] = h[j-1].wrapping_mul(37).wrapping_add(0xDD); }
-        h
-    }).collect();
+    let local: BTreeSet<[u8; 32]> = (0u16..200)
+        .map(|i| {
+            let mut h = [0u8; 32];
+            let bytes = i.to_le_bytes();
+            h[0] = bytes[0];
+            h[1] = bytes[1];
+            h[2] = 0xCC;
+            for j in 3..32 {
+                h[j] = h[j - 1].wrapping_mul(37).wrapping_add(0xCC);
+            }
+            h
+        })
+        .collect();
+    let remote: BTreeSet<[u8; 32]> = (200u16..400)
+        .map(|i| {
+            let mut h = [0u8; 32];
+            let bytes = i.to_le_bytes();
+            h[0] = bytes[0];
+            h[1] = bytes[1];
+            h[2] = 0xDD;
+            for j in 3..32 {
+                h[j] = h[j - 1].wrapping_mul(37).wrapping_add(0xDD);
+            }
+            h
+        })
+        .collect();
 
     // IBLT with tiny table will fail.
     let config = ReconcileConfig {
@@ -1393,7 +1455,9 @@ fn fallback_after_iblt_failure_yields_correct_diff() {
     let fb_result = fb.execute(FallbackRequest {
         local_hashes: &local,
         remote_hashes: &remote,
-        trigger: FallbackTrigger::PeelFailed { remaining_cells: 99 },
+        trigger: FallbackTrigger::PeelFailed {
+            remaining_cells: 99,
+        },
         reconciliation_id: "r",
         peer: "p",
         trace_id: "t",
@@ -1447,7 +1511,9 @@ fn full_pipeline_iblt_success_to_rate_monitor() {
         let remote = local.clone();
         local.insert(make_hash(100 + i));
         let remote_iblt = session.build_iblt(&remote);
-        let result = session.reconcile(&local, &remote_iblt, "p", &format!("t{i}")).unwrap();
+        let result = session
+            .reconcile(&local, &remote_iblt, "p", &format!("t{i}"))
+            .unwrap();
         assert!(!result.fallback_triggered);
         monitor.record(result.fallback_triggered);
     }
@@ -1475,7 +1541,9 @@ fn deterministic_reconciliation_replay() {
         remote.insert(make_hash(200));
 
         let remote_iblt = session.build_iblt(&remote);
-        let result = session.reconcile(&local, &remote_iblt, "peer-1", "trace-1").unwrap();
+        let result = session
+            .reconcile(&local, &remote_iblt, "peer-1", "trace-1")
+            .unwrap();
         let events = session.drain_events();
         (result, events)
     };

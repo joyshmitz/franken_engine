@@ -194,16 +194,10 @@ fn lifecycle_transition_display_all() {
     assert_eq!(format!("{}", LifecycleTransition::Suspend), "suspend");
     assert_eq!(format!("{}", LifecycleTransition::Freeze), "freeze");
     assert_eq!(format!("{}", LifecycleTransition::Resume), "resume");
-    assert_eq!(
-        format!("{}", LifecycleTransition::Reactivate),
-        "reactivate"
-    );
+    assert_eq!(format!("{}", LifecycleTransition::Reactivate), "reactivate");
     assert_eq!(format!("{}", LifecycleTransition::Terminate), "terminate");
     assert_eq!(format!("{}", LifecycleTransition::Finalize), "finalize");
-    assert_eq!(
-        format!("{}", LifecycleTransition::Quarantine),
-        "quarantine"
-    );
+    assert_eq!(format!("{}", LifecycleTransition::Quarantine), "quarantine");
     assert_eq!(
         format!("{}", LifecycleTransition::RejectManifest),
         "reject_manifest"
@@ -398,10 +392,7 @@ fn lifecycle_error_error_code_stability() {
         "LIFECYCLE_MANIFEST_REJECTED"
     );
     assert_eq!(
-        LifecycleError::Internal {
-            detail: "d".into()
-        }
-        .error_code(),
+        LifecycleError::Internal { detail: "d".into() }.error_code(),
         "LIFECYCLE_INTERNAL"
     );
 }
@@ -1111,9 +1102,7 @@ fn cooperative_shutdown_zero_grace_within() {
     mgr.register("ext-a", default_budget(), cfg).unwrap();
     advance_to_running(&mut mgr, "ext-a");
     // elapsed=0, grace=0, 0<=0 → within grace
-    let state = mgr
-        .cooperative_shutdown("ext-a", "t-sd", 0, false)
-        .unwrap();
+    let state = mgr.cooperative_shutdown("ext-a", "t-sd", 0, false).unwrap();
     assert_eq!(state, ExtensionState::Terminated);
 }
 
@@ -1450,13 +1439,8 @@ fn integration_full_lifecycle_with_manifest_and_budget_tracking() {
         .unwrap();
     mgr.transition("ext-main", LifecycleTransition::Resume, "trace-2", None)
         .unwrap();
-    mgr.transition(
-        "ext-main",
-        LifecycleTransition::Reactivate,
-        "trace-2",
-        None,
-    )
-    .unwrap();
+    mgr.transition("ext-main", LifecycleTransition::Reactivate, "trace-2", None)
+        .unwrap();
 
     // Cooperative shutdown
     let final_state = mgr

@@ -11,9 +11,9 @@ use std::collections::BTreeSet;
 use frankenengine_engine::engine_object_id::{self, EngineObjectId, ObjectDomain, SchemaId};
 use frankenengine_engine::hash_tiers::ContentHash;
 use frankenengine_engine::proof_ingestion::{
-    create_proof_input, ActivationStageLocal, HypothesisKind, IngestionConfig, IngestionError,
-    IngestionEvent, IngestionEventType, OptimizerHypothesis, ProofIngestionEngine, ProofInput,
-    ProofType, ProofValidationStatus, RiskLevel, SpecializationReceipt,
+    ActivationStageLocal, HypothesisKind, IngestionConfig, IngestionError, IngestionEvent,
+    IngestionEventType, OptimizerHypothesis, ProofIngestionEngine, ProofInput, ProofType,
+    ProofValidationStatus, RiskLevel, SpecializationReceipt, create_proof_input,
 };
 use frankenengine_engine::security_epoch::SecurityEpoch;
 
@@ -260,7 +260,10 @@ fn proof_validation_status_display_non_empty() {
     ];
 
     for s in &statuses {
-        assert!(!s.to_string().is_empty(), "display should not be empty: {s:?}");
+        assert!(
+            !s.to_string().is_empty(),
+            "display should not be empty: {s:?}"
+        );
     }
 }
 
@@ -853,11 +856,7 @@ fn churn_triggers_conservative_mode() {
 
     // Ingest and invalidate enough proofs to trigger conservative mode.
     for i in 0u8..3 {
-        let proof = make_proof(
-            ProofType::PlasCapabilityWitness,
-            &[i, i, i],
-            "policy-001",
-        );
+        let proof = make_proof(ProofType::PlasCapabilityWitness, &[i, i, i], "policy-001");
         let pid = proof.proof_id.clone();
         engine.ingest_proof(proof, 1000).unwrap();
         engine.invalidate_proof(&pid, "churn", 1000 + u64::from(i));
@@ -943,11 +942,7 @@ fn emit_receipt_for_each_activation_stage() {
     ];
 
     for (i, stage) in stages.iter().enumerate() {
-        let proof = make_proof(
-            ProofType::IfcFlowProof,
-            &[i as u8, 0xAA],
-            "policy-001",
-        );
+        let proof = make_proof(ProofType::IfcFlowProof, &[i as u8, 0xAA], "policy-001");
         let hyps = engine.ingest_proof(proof, 1000).unwrap();
 
         let receipt = engine

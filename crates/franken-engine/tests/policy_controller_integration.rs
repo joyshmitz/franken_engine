@@ -741,7 +741,11 @@ fn evidence_entry_has_all_candidates() {
         .expect("evidence");
 
     assert_eq!(entry.candidates.len(), 3);
-    let names: Vec<&str> = entry.candidates.iter().map(|c| c.action_name.as_str()).collect();
+    let names: Vec<&str> = entry
+        .candidates
+        .iter()
+        .map(|c| c.action_name.as_str())
+        .collect();
     assert!(names.contains(&"low"));
     assert!(names.contains(&"medium"));
     assert!(names.contains(&"high"));
@@ -765,7 +769,10 @@ fn evidence_entry_chosen_action_matches_selection() {
         .expect("evidence");
 
     assert_eq!(entry.chosen_action.action_name, sel.action);
-    assert_eq!(entry.chosen_action.expected_loss_millionths, sel.expected_loss);
+    assert_eq!(
+        entry.chosen_action.expected_loss_millionths,
+        sel.expected_loss
+    );
     assert_eq!(entry.chosen_action.rationale, "minimum expected loss");
 }
 
@@ -981,7 +988,11 @@ fn stress_many_decisions() {
     assert_eq!(ctrl.decisions().len(), 50);
 
     // All decision IDs unique.
-    let ids: Vec<&str> = ctrl.decisions().iter().map(|d| d.decision_id.as_str()).collect();
+    let ids: Vec<&str> = ctrl
+        .decisions()
+        .iter()
+        .map(|d| d.decision_id.as_str())
+        .collect();
     let unique: std::collections::BTreeSet<&str> = ids.iter().copied().collect();
     assert_eq!(unique.len(), 50);
 }

@@ -11,7 +11,7 @@ use frankenengine_engine::compiler_policy::{
     OptimizationClassPolicy, ProofStore, SecurityProof, SpecializationDecision,
     SpecializationOutcome,
 };
-use frankenengine_engine::engine_object_id::{derive_id, ObjectDomain, SchemaId};
+use frankenengine_engine::engine_object_id::{ObjectDomain, SchemaId, derive_id};
 use frankenengine_engine::ifc_artifacts::Label;
 use frankenengine_engine::proof_specialization_receipt::{OptimizationClass, ProofType};
 use frankenengine_engine::security_epoch::SecurityEpoch;
@@ -583,16 +583,8 @@ fn engine_shared_proof_across_regions() {
         OptimizationClass::HostcallDispatchSpecialization,
         vec![pid.clone()],
     );
-    let r2 = region(
-        "r-b",
-        OptimizationClass::PathElimination,
-        vec![pid.clone()],
-    );
-    let r3 = region(
-        "r-c",
-        OptimizationClass::SuperinstructionFusion,
-        vec![pid],
-    );
+    let r2 = region("r-b", OptimizationClass::PathElimination, vec![pid.clone()]);
+    let r3 = region("r-c", OptimizationClass::SuperinstructionFusion, vec![pid]);
 
     assert!(eng.evaluate(&r1, "t1", 1000).outcome.is_applied());
     assert!(eng.evaluate(&r2, "t2", 2000).outcome.is_applied());

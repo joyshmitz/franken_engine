@@ -692,10 +692,12 @@ fn shadow_gate_rejects_when_burn_in_duration_below_threshold() {
         .evaluate_candidate(&contract, candidate, &governance_signing_key())
         .expect("shadow evaluation");
     assert_eq!(artifact.verdict, ShadowPromotionVerdict::Reject);
-    assert!(artifact
-        .failure_reasons
-        .iter()
-        .any(|reason| reason.contains("burn-in duration")));
+    assert!(
+        artifact
+            .failure_reasons
+            .iter()
+            .any(|reason| reason.contains("burn-in duration"))
+    );
     assert!(gate.events().iter().any(|event| {
         event.error_code.as_deref() == Some("FE-PLC-SHADOW-0008")
             && event.event == "shadow_evaluation"

@@ -6,15 +6,15 @@
 //! boundary contract builders, integration_point_inventory,
 //! version_compatibility_registry.
 
-use std::collections::{BTreeMap, BTreeSet};
 use frankenengine_engine::cross_repo_contract::{
-    fastapi_endpoint_response_contract, frankensqlite_migration_receipt_contract,
-    frankensqlite_storage_event_contract, frankensqlite_store_record_contract,
-    frankentui_envelope_contract, integration_point_inventory, verify_deterministic_serde,
-    verify_error_code_format, verify_schema_compliance, verify_structured_log,
-    version_compatibility_registry, ContractSuiteResult, ContractViolation, FieldType,
-    RegressionClass, SchemaContract, VersionCompatibilityEntry,
+    ContractSuiteResult, ContractViolation, FieldType, RegressionClass, SchemaContract,
+    VersionCompatibilityEntry, fastapi_endpoint_response_contract,
+    frankensqlite_migration_receipt_contract, frankensqlite_storage_event_contract,
+    frankensqlite_store_record_contract, frankentui_envelope_contract, integration_point_inventory,
+    verify_deterministic_serde, verify_error_code_format, verify_schema_compliance,
+    verify_structured_log, version_compatibility_registry,
 };
+use std::collections::{BTreeMap, BTreeSet};
 
 // ── RegressionClass ─────────────────────────────────────────────────────────
 
@@ -51,7 +51,12 @@ fn regression_class_ordering_exhaustive() {
     ];
     for i in 0..sorted.len() {
         for j in (i + 1)..sorted.len() {
-            assert!(sorted[i] < sorted[j], "{:?} should be < {:?}", sorted[i], sorted[j]);
+            assert!(
+                sorted[i] < sorted[j],
+                "{:?} should be < {:?}",
+                sorted[i],
+                sorted[j]
+            );
         }
     }
 }
@@ -83,7 +88,12 @@ fn field_type_ordering_all_six() {
     ];
     for i in 0..sorted.len() {
         for j in (i + 1)..sorted.len() {
-            assert!(sorted[i] < sorted[j], "{:?} should be < {:?}", sorted[i], sorted[j]);
+            assert!(
+                sorted[i] < sorted[j],
+                "{:?} should be < {:?}",
+                sorted[i],
+                sorted[j]
+            );
         }
     }
 }
@@ -169,7 +179,10 @@ fn contract_violation_display_with_all_regression_classes() {
             detail: "d".to_string(),
         };
         let s = v.to_string();
-        assert!(s.contains(&class.to_string()), "display must contain class name");
+        assert!(
+            s.contains(&class.to_string()),
+            "display must contain class name"
+        );
     }
 }
 
@@ -384,7 +397,10 @@ fn schema_contract_field_absent_from_types_not_checked() {
 fn verify_structured_log_non_object() {
     let violations = verify_structured_log(&serde_json::json!("not an object"), "test");
     assert_eq!(violations.len(), 1);
-    assert_eq!(violations[0].regression_class, RegressionClass::Observability);
+    assert_eq!(
+        violations[0].regression_class,
+        RegressionClass::Observability
+    );
     assert!(violations[0].detail.contains("JSON object"));
 }
 
@@ -430,7 +446,11 @@ fn verify_structured_log_partial_missing() {
     let violations = verify_structured_log(&json, "boundary_x");
     assert_eq!(violations.len(), 2); // missing component and outcome
     assert!(violations.iter().all(|v| v.boundary == "boundary_x"));
-    assert!(violations.iter().all(|v| v.contract_name == "structured_log"));
+    assert!(
+        violations
+            .iter()
+            .all(|v| v.contract_name == "structured_log")
+    );
 }
 
 #[test]
@@ -542,7 +562,9 @@ fn verify_schema_compliance_with_compliant_json() {
     struct TestType {
         id: String,
     }
-    let value = TestType { id: "hello".to_string() };
+    let value = TestType {
+        id: "hello".to_string(),
+    };
     let violations = verify_schema_compliance(&value, &contract);
     assert!(violations.is_empty());
 }
@@ -562,7 +584,9 @@ fn verify_schema_compliance_with_non_compliant_type() {
     struct TestType {
         count: String, // should be number
     }
-    let value = TestType { count: "not_number".to_string() };
+    let value = TestType {
+        count: "not_number".to_string(),
+    };
     let violations = verify_schema_compliance(&value, &contract);
     assert_eq!(violations.len(), 1);
     assert!(violations[0].detail.contains("count"));
@@ -1004,7 +1028,10 @@ fn required_and_optional_fields_no_overlap() {
 #[test]
 fn contract_builders_deterministic() {
     for _ in 0..10 {
-        assert_eq!(frankentui_envelope_contract(), frankentui_envelope_contract());
+        assert_eq!(
+            frankentui_envelope_contract(),
+            frankentui_envelope_contract()
+        );
         assert_eq!(
             frankensqlite_store_record_contract(),
             frankensqlite_store_record_contract()

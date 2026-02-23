@@ -15,7 +15,7 @@ use frankenengine_engine::causal_replay::{
 use frankenengine_engine::containment_executor::ContainmentState;
 use frankenengine_engine::incident_replay_bundle::{BundleBuilder, IncidentReplayBundle};
 use frankenengine_engine::quarantine_mesh_gate::{
-    CriterionResult, FaultType, FaultScenarioResult, GateValidationResult,
+    CriterionResult, FaultScenarioResult, FaultType, GateValidationResult,
 };
 use frankenengine_engine::security_epoch::SecurityEpoch;
 use frankenengine_engine::signature_preimage::SigningKey;

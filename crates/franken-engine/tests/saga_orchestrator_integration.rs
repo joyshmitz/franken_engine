@@ -5,9 +5,9 @@
 //! compensation, epoch management, builder helpers, and stress scenarios.
 
 use frankenengine_engine::saga_orchestrator::{
-    eviction_saga_steps, publish_saga_steps, quarantine_saga_steps, revocation_saga_steps,
     ActionType, Saga, SagaError, SagaEvent, SagaId, SagaOrchestrator, SagaState, SagaStep,
-    SagaType, StepOutcome, StepRecord,
+    SagaType, StepOutcome, StepRecord, eviction_saga_steps, publish_saga_steps,
+    quarantine_saga_steps, revocation_saga_steps,
 };
 use frankenengine_engine::security_epoch::SecurityEpoch;
 
@@ -1143,9 +1143,7 @@ fn epoch_invalidation_emits_events() {
     orch.advance_epoch(SecurityEpoch::from_raw(2), "t-epoch");
 
     let events = orch.drain_events();
-    assert!(events
-        .iter()
-        .any(|e| e.event == "saga_epoch_invalidated"));
+    assert!(events.iter().any(|e| e.event == "saga_epoch_invalidated"));
 }
 
 #[test]
@@ -1385,8 +1383,14 @@ fn stress_20_sagas_mixed_outcomes() {
             SagaType::Eviction => eviction_saga_steps(&format!("art-{i}")),
             SagaType::Publish => publish_saga_steps(&format!("pkg-{i}")),
         };
-        orch.create_saga(&format!("s-{i}"), saga_type, steps, &format!("t-{i}"), i as u64)
-            .unwrap();
+        orch.create_saga(
+            &format!("s-{i}"),
+            saga_type,
+            steps,
+            &format!("t-{i}"),
+            i as u64,
+        )
+        .unwrap();
     }
 
     assert_eq!(orch.total_count(), 20);

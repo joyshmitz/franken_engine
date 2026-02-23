@@ -7,12 +7,12 @@
 //! Display, std::error::Error, serde), audit events, and full lifecycle.
 
 use frankenengine_engine::capability_token::PrincipalId;
+use frankenengine_engine::engine_object_id::EngineObjectId;
 use frankenengine_engine::key_attestation::{
     AttestationError, AttestationEvent, AttestationEventType, AttestationNonce, AttestationStore,
     CreateAttestationInput, DevicePosture, KeyAttestation, NonceRegistry, attestation_schema,
     attestation_schema_id,
 };
-use frankenengine_engine::engine_object_id::EngineObjectId;
 use frankenengine_engine::policy_checkpoint::DeterministicTimestamp;
 use frankenengine_engine::principal_key_roles::KeyRole;
 use frankenengine_engine::security_epoch::SecurityEpoch;
@@ -358,7 +358,9 @@ fn verify_owner_signature_ok() {
 fn verify_owner_signature_wrong_key() {
     let att = create_attestation(KeyRole::Signing, 1, 100, 200);
     let wrong = SigningKey::from_bytes([0xFF; 32]);
-    let err = att.verify_owner_signature(&wrong.verification_key()).unwrap_err();
+    let err = att
+        .verify_owner_signature(&wrong.verification_key())
+        .unwrap_err();
     assert!(matches!(err, AttestationError::SignatureInvalid { .. }));
 }
 
@@ -560,7 +562,12 @@ fn store_register_wrong_signature() {
     let att = create_attestation(KeyRole::Signing, 1, 100, 200);
     let wrong = SigningKey::from_bytes([0xFF; 32]);
     let err = store
-        .register(att, &wrong.verification_key(), DeterministicTimestamp(150), "t")
+        .register(
+            att,
+            &wrong.verification_key(),
+            DeterministicTimestamp(150),
+            "t",
+        )
         .unwrap_err();
     assert!(matches!(err, AttestationError::SignatureInvalid { .. }));
 }
@@ -620,11 +627,19 @@ fn store_active_for_role() {
         .register(att2, &owner_vk(), DeterministicTimestamp(150), "t2")
         .unwrap();
 
-    let signing = store.active_for_role(&test_principal(), KeyRole::Signing, DeterministicTimestamp(150));
+    let signing = store.active_for_role(
+        &test_principal(),
+        KeyRole::Signing,
+        DeterministicTimestamp(150),
+    );
     assert_eq!(signing.len(), 1);
     assert_eq!(signing[0].key_role, KeyRole::Signing);
 
-    let issuance = store.active_for_role(&test_principal(), KeyRole::Issuance, DeterministicTimestamp(150));
+    let issuance = store.active_for_role(
+        &test_principal(),
+        KeyRole::Issuance,
+        DeterministicTimestamp(150),
+    );
     assert!(issuance.is_empty());
 }
 
@@ -688,9 +703,15 @@ fn store_purge_expired_selective() {
     let att1 = create_attestation(KeyRole::Signing, 1, 100, 200);
     let att2 = create_attestation(KeyRole::Encryption, 2, 100, 300);
     let att3 = create_attestation(KeyRole::Issuance, 3, 100, 400);
-    store.register(att1, &owner_vk(), DeterministicTimestamp(150), "t1").unwrap();
-    store.register(att2, &owner_vk(), DeterministicTimestamp(150), "t2").unwrap();
-    store.register(att3, &owner_vk(), DeterministicTimestamp(150), "t3").unwrap();
+    store
+        .register(att1, &owner_vk(), DeterministicTimestamp(150), "t1")
+        .unwrap();
+    store
+        .register(att2, &owner_vk(), DeterministicTimestamp(150), "t2")
+        .unwrap();
+    store
+        .register(att3, &owner_vk(), DeterministicTimestamp(150), "t3")
+        .unwrap();
 
     assert_eq!(store.purge_expired(DeterministicTimestamp(250), "t"), 1);
     assert_eq!(store.total_count(), 2);
@@ -712,7 +733,9 @@ fn store_purge_expired_on_empty() {
 fn store_purge_expired_none_expired() {
     let mut store = AttestationStore::new(TEST_ZONE);
     let att = create_attestation(KeyRole::Signing, 1, 100, 200);
-    store.register(att, &owner_vk(), DeterministicTimestamp(150), "t").unwrap();
+    store
+        .register(att, &owner_vk(), DeterministicTimestamp(150), "t")
+        .unwrap();
     assert_eq!(store.purge_expired(DeterministicTimestamp(150), "t"), 0);
 }
 
@@ -724,10 +747,15 @@ fn store_purge_expired_none_expired() {
 fn audit_events_on_register() {
     let mut store = AttestationStore::new(TEST_ZONE);
     let att = create_attestation(KeyRole::Signing, 1, 100, 200);
-    store.register(att, &owner_vk(), DeterministicTimestamp(150), "t-reg").unwrap();
+    store
+        .register(att, &owner_vk(), DeterministicTimestamp(150), "t-reg")
+        .unwrap();
     let events = store.drain_events();
     assert_eq!(events.len(), 1);
-    assert!(matches!(events[0].event_type, AttestationEventType::Registered { .. }));
+    assert!(matches!(
+        events[0].event_type,
+        AttestationEventType::Registered { .. }
+    ));
     assert_eq!(events[0].zone, TEST_ZONE);
     assert_eq!(events[0].trace_id, "t-reg");
 }
@@ -749,19 +777,26 @@ fn audit_events_on_rejection() {
 fn audit_events_on_revoke() {
     let mut store = AttestationStore::new(TEST_ZONE);
     let att = create_attestation(KeyRole::Signing, 1, 100, 200);
-    let id = store.register(att, &owner_vk(), DeterministicTimestamp(150), "t").unwrap();
+    let id = store
+        .register(att, &owner_vk(), DeterministicTimestamp(150), "t")
+        .unwrap();
     store.drain_events();
     store.revoke(&id, "t-rev").unwrap();
     let events = store.drain_events();
     assert_eq!(events.len(), 1);
-    assert!(matches!(events[0].event_type, AttestationEventType::Revoked { .. }));
+    assert!(matches!(
+        events[0].event_type,
+        AttestationEventType::Revoked { .. }
+    ));
 }
 
 #[test]
 fn audit_events_on_purge() {
     let mut store = AttestationStore::new(TEST_ZONE);
     let att = create_attestation(KeyRole::Signing, 1, 100, 200);
-    store.register(att, &owner_vk(), DeterministicTimestamp(150), "t").unwrap();
+    store
+        .register(att, &owner_vk(), DeterministicTimestamp(150), "t")
+        .unwrap();
     store.drain_events();
     store.purge_expired(DeterministicTimestamp(300), "t-purge");
     let events = store.drain_events();
@@ -776,7 +811,9 @@ fn audit_events_on_purge() {
 fn audit_drain_clears_events() {
     let mut store = AttestationStore::new(TEST_ZONE);
     let att = create_attestation(KeyRole::Signing, 1, 100, 200);
-    store.register(att, &owner_vk(), DeterministicTimestamp(150), "t").unwrap();
+    store
+        .register(att, &owner_vk(), DeterministicTimestamp(150), "t")
+        .unwrap();
     let first = store.drain_events();
     assert_eq!(first.len(), 1);
     let second = store.drain_events();
@@ -828,25 +865,38 @@ fn audit_event_type_serde_all_variants() {
 #[test]
 fn error_display_all_variants() {
     let errors = [
-        (AttestationError::SelfAttestationRejected, "self-attestation rejected"),
         (
-            AttestationError::InvalidNonce { detail: "bad".to_string() },
+            AttestationError::SelfAttestationRejected,
+            "self-attestation rejected",
+        ),
+        (
+            AttestationError::InvalidNonce {
+                detail: "bad".to_string(),
+            },
             "invalid nonce: bad",
         ),
         (
-            AttestationError::SignatureInvalid { detail: "wrong".to_string() },
+            AttestationError::SignatureInvalid {
+                detail: "wrong".to_string(),
+            },
             "signature invalid: wrong",
         ),
         (
-            AttestationError::SignatureFailed { detail: "fail".to_string() },
+            AttestationError::SignatureFailed {
+                detail: "fail".to_string(),
+            },
             "signature failed: fail",
         ),
         (
-            AttestationError::IdDerivationFailed { detail: "err".to_string() },
+            AttestationError::IdDerivationFailed {
+                detail: "err".to_string(),
+            },
             "id derivation failed: err",
         ),
         (
-            AttestationError::DevicePostureInvalid { detail: "bad posture".to_string() },
+            AttestationError::DevicePostureInvalid {
+                detail: "bad posture".to_string(),
+            },
             "device posture invalid: bad posture",
         ),
     ];
@@ -895,7 +945,10 @@ fn error_display_zone_mismatch() {
         expected: "zone-a".to_string(),
         actual: "zone-b".to_string(),
     };
-    assert_eq!(err.to_string(), "zone mismatch: expected=zone-a, actual=zone-b");
+    assert_eq!(
+        err.to_string(),
+        "zone mismatch: expected=zone-a, actual=zone-b"
+    );
 }
 
 #[test]
@@ -935,10 +988,18 @@ fn error_serde_all_variants() {
             nonce: AttestationNonce::from_counter(5),
             high_water: 10,
         },
-        AttestationError::InvalidNonce { detail: "x".to_string() },
-        AttestationError::SignatureInvalid { detail: "y".to_string() },
-        AttestationError::SignatureFailed { detail: "z".to_string() },
-        AttestationError::IdDerivationFailed { detail: "w".to_string() },
+        AttestationError::InvalidNonce {
+            detail: "x".to_string(),
+        },
+        AttestationError::SignatureInvalid {
+            detail: "y".to_string(),
+        },
+        AttestationError::SignatureFailed {
+            detail: "z".to_string(),
+        },
+        AttestationError::IdDerivationFailed {
+            detail: "w".to_string(),
+        },
         AttestationError::InvalidExpiry {
             issued_at: DeterministicTimestamp(200),
             expires_at: DeterministicTimestamp(100),
@@ -953,7 +1014,9 @@ fn error_serde_all_variants() {
         AttestationError::NotFound {
             attestation_id: EngineObjectId([0x22; 32]),
         },
-        AttestationError::DevicePostureInvalid { detail: "dp".to_string() },
+        AttestationError::DevicePostureInvalid {
+            detail: "dp".to_string(),
+        },
     ];
     for err in &errors {
         let json = serde_json::to_string(err).unwrap();
@@ -1095,7 +1158,9 @@ fn multiple_principals_isolated() {
 
     // Principal 1.
     let att1 = create_attestation(KeyRole::Signing, 1, 100, 200);
-    store.register(att1, &owner_vk(), DeterministicTimestamp(150), "t-p1").unwrap();
+    store
+        .register(att1, &owner_vk(), DeterministicTimestamp(150), "t-p1")
+        .unwrap();
 
     // Principal 2.
     let p2_owner = SigningKey::from_bytes([0x10; 32]);
@@ -1117,7 +1182,9 @@ fn multiple_principals_isolated() {
         },
     )
     .unwrap();
-    store.register(att2, &p2_owner_vk, DeterministicTimestamp(150), "t-p2").unwrap();
+    store
+        .register(att2, &p2_owner_vk, DeterministicTimestamp(150), "t-p2")
+        .unwrap();
 
     assert_eq!(store.total_count(), 2);
     assert_eq!(store.principal_count(), 2);

@@ -7,8 +7,8 @@ use frankenengine_engine::privacy_learning_contract::{
     CreateContractInput, DataRetentionPolicy, DpBudgetSemantics, FeatureField, FeatureFieldType,
     FeatureSchema, HumanOverrideRequest, SafetyMetric, SafetyMetricSnapshot, SecretSharingScheme,
     SecureAggregationRequirements, ShadowBurnInThresholdProfile, ShadowEvaluationCandidate,
-    ShadowEvaluationGate, ShadowEvaluationGateConfig, ShadowExtensionClass,
-    ShadowPromotionVerdict, ShadowReplayReference, ShadowRollbackReadinessArtifacts, UpdatePolicy,
+    ShadowEvaluationGate, ShadowEvaluationGateConfig, ShadowExtensionClass, ShadowPromotionVerdict,
+    ShadowReplayReference, ShadowRollbackReadinessArtifacts, UpdatePolicy,
 };
 use frankenengine_engine::security_epoch::SecurityEpoch;
 use frankenengine_engine::signature_preimage::SigningKey;
@@ -246,9 +246,11 @@ fn shadow_gate_full_lifecycle_pass_reject_override_and_rollback() {
 
     let scorecards = gate.scorecard_entries();
     assert!(scorecards.len() >= 2);
-    assert!(scorecards
-        .iter()
-        .any(|entry| entry.policy_id == "policy-shadow-gate"));
+    assert!(
+        scorecards
+            .iter()
+            .any(|entry| entry.policy_id == "policy-shadow-gate")
+    );
 }
 
 #[test]
@@ -274,7 +276,8 @@ fn shadow_gate_early_terminates_when_false_deny_exceeds_threshold() {
     let mut gate = gate();
     let signing = governance_signing_key();
 
-    let mut excessive_false_deny = candidate("decision-early-stop", improved_metrics(), 90_000, 900);
+    let mut excessive_false_deny =
+        candidate("decision-early-stop", improved_metrics(), 90_000, 900);
     excessive_false_deny.false_deny_rate_millionths = 7_500;
 
     let artifact = gate
@@ -282,14 +285,17 @@ fn shadow_gate_early_terminates_when_false_deny_exceeds_threshold() {
         .expect("shadow evaluation");
     assert_eq!(artifact.verdict, ShadowPromotionVerdict::Reject);
     assert!(artifact.burn_in_early_terminated);
-    assert!(artifact
-        .failure_reasons
-        .iter()
-        .any(|reason| reason.contains("false-deny rate")));
-    assert!(gate
-        .events()
-        .iter()
-        .any(|event| event.event == "shadow_evaluation" && event.outcome == "early_terminated"));
+    assert!(
+        artifact
+            .failure_reasons
+            .iter()
+            .any(|reason| reason.contains("false-deny rate"))
+    );
+    assert!(
+        gate.events()
+            .iter()
+            .any(|event| event.event == "shadow_evaluation" && event.outcome == "early_terminated")
+    );
 }
 
 #[test]
@@ -304,8 +310,10 @@ fn shadow_gate_applies_stricter_high_risk_threshold_profile() {
         .evaluate_candidate(&contract, high_risk, &signing)
         .expect("shadow evaluation");
     assert_eq!(artifact.verdict, ShadowPromotionVerdict::Reject);
-    assert!(artifact
-        .failure_reasons
-        .iter()
-        .any(|reason| reason.contains("shadow success rate")));
+    assert!(
+        artifact
+            .failure_reasons
+            .iter()
+            .any(|reason| reason.contains("shadow success rate"))
+    );
 }

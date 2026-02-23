@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use frankenengine_engine::plas_lockstep::{
-    evaluate_plas_lockstep_case, LockstepFailureClass, LockstepRuntime, PlasLockstepCase,
-    PlasLockstepError, RuntimeObservation, RuntimeTolerance,
+    LockstepFailureClass, LockstepRuntime, PlasLockstepCase, PlasLockstepError, RuntimeObservation,
+    RuntimeTolerance, evaluate_plas_lockstep_case,
 };
 
 fn observation(runtime: LockstepRuntime, tag: &str, elapsed_ns: u64) -> RuntimeObservation {

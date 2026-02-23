@@ -17,8 +17,8 @@ use frankenengine_engine::replacement_lineage_log::{
     EvidencePointerInput, InclusionProof, LineageChainEntry, LineageLogConfig, LineageLogError,
     LineageLogEvent, LineageQuery, LineageStep, LineageVerification, LogCheckpoint,
     MerkleProofStep, ProofDirection, ReplacementKind, ReplacementLineageEvidenceIndex,
-    ReplacementLineageLog, ReplayJoinQuery, SlotLineageQuery,
-    verify_consistency_proof, verify_inclusion_proof,
+    ReplacementLineageLog, ReplayJoinQuery, SlotLineageQuery, verify_consistency_proof,
+    verify_inclusion_proof,
 };
 use frankenengine_engine::security_epoch::SecurityEpoch;
 use frankenengine_engine::self_replacement::{
@@ -100,7 +100,10 @@ fn replacement_kind_hash_four_distinct() {
 
 #[test]
 fn replacement_kind_as_str_all_four() {
-    assert_eq!(ReplacementKind::DelegateToNative.as_str(), "delegate_to_native");
+    assert_eq!(
+        ReplacementKind::DelegateToNative.as_str(),
+        "delegate_to_native"
+    );
     assert_eq!(ReplacementKind::Demotion.as_str(), "demotion");
     assert_eq!(ReplacementKind::Rollback.as_str(), "rollback");
     assert_eq!(ReplacementKind::RePromotion.as_str(), "re_promotion");
@@ -221,7 +224,8 @@ fn inclusion_proof_serde() {
 fn inclusion_proof_empty_path_single_entry() {
     let mut log = ReplacementLineageLog::new(LineageLogConfig::default());
     let r = test_receipt("slot-a", "old", "new", 100);
-    log.append(r, ReplacementKind::DelegateToNative, 100).unwrap();
+    log.append(r, ReplacementKind::DelegateToNative, 100)
+        .unwrap();
     let proof = log.inclusion_proof(0).unwrap();
     assert!(proof.path.is_empty());
     assert!(verify_inclusion_proof(&proof));
@@ -232,7 +236,8 @@ fn inclusion_proof_power_of_two_entries() {
     let mut log = ReplacementLineageLog::new(LineageLogConfig::default());
     for i in 0..16 {
         let r = test_receipt("slot-a", &format!("old-{i}"), &format!("new-{i}"), i * 100);
-        log.append(r, ReplacementKind::DelegateToNative, i * 100).unwrap();
+        log.append(r, ReplacementKind::DelegateToNative, i * 100)
+            .unwrap();
     }
     for i in 0..16 {
         let proof = log.inclusion_proof(i).expect("proof exists");
@@ -250,7 +255,8 @@ fn inclusion_proof_two_entries() {
     let mut log = ReplacementLineageLog::new(LineageLogConfig::default());
     for i in 0..2 {
         let r = test_receipt("slot-a", &format!("old-{i}"), &format!("new-{i}"), i * 100);
-        log.append(r, ReplacementKind::DelegateToNative, i * 100).unwrap();
+        log.append(r, ReplacementKind::DelegateToNative, i * 100)
+            .unwrap();
     }
     for i in 0..2 {
         let proof = log.inclusion_proof(i).unwrap();
@@ -264,7 +270,8 @@ fn inclusion_proof_three_entries() {
     let mut log = ReplacementLineageLog::new(LineageLogConfig::default());
     for i in 0..3 {
         let r = test_receipt("slot-a", &format!("old-{i}"), &format!("new-{i}"), i * 100);
-        log.append(r, ReplacementKind::DelegateToNative, i * 100).unwrap();
+        log.append(r, ReplacementKind::DelegateToNative, i * 100)
+            .unwrap();
     }
     for i in 0..3 {
         let proof = log.inclusion_proof(i).unwrap();
@@ -280,7 +287,8 @@ fn inclusion_proof_tampered_entry_hash_fails_verification() {
     let mut log = ReplacementLineageLog::new(LineageLogConfig::default());
     for i in 0..4 {
         let r = test_receipt("slot-a", &format!("old-{i}"), &format!("new-{i}"), i * 100);
-        log.append(r, ReplacementKind::DelegateToNative, i * 100).unwrap();
+        log.append(r, ReplacementKind::DelegateToNative, i * 100)
+            .unwrap();
     }
     let mut proof = log.inclusion_proof(1).unwrap();
     proof.entry_hash = ContentHash::compute(b"tampered");
@@ -292,7 +300,8 @@ fn inclusion_proof_tampered_sibling_fails_verification() {
     let mut log = ReplacementLineageLog::new(LineageLogConfig::default());
     for i in 0..4 {
         let r = test_receipt("slot-a", &format!("old-{i}"), &format!("new-{i}"), i * 100);
-        log.append(r, ReplacementKind::DelegateToNative, i * 100).unwrap();
+        log.append(r, ReplacementKind::DelegateToNative, i * 100)
+            .unwrap();
     }
     let mut proof = log.inclusion_proof(0).unwrap();
     if let Some(step) = proof.path.first_mut() {
@@ -347,7 +356,11 @@ fn consistency_proof_length_mismatch_fails() {
         older_root: ContentHash::compute(b"x"),
         newer_root: ContentHash::compute(b"y"),
         older_entry_hashes: vec![ContentHash::compute(b"a")], // length 1 != 2
-        newer_entry_hashes: vec![ContentHash::compute(b"a"), ContentHash::compute(b"b"), ContentHash::compute(b"c")],
+        newer_entry_hashes: vec![
+            ContentHash::compute(b"a"),
+            ContentHash::compute(b"b"),
+            ContentHash::compute(b"c"),
+        ],
     };
     assert!(!verify_consistency_proof(&proof));
 }
@@ -404,7 +417,10 @@ fn config_custom_serde() {
 
 #[test]
 fn error_sequence_mismatch_display() {
-    let err = LineageLogError::SequenceMismatch { expected: 5, got: 3 };
+    let err = LineageLogError::SequenceMismatch {
+        expected: 5,
+        got: 3,
+    };
     let s = format!("{err}");
     assert!(s.contains("5"));
     assert!(s.contains("3"));
@@ -464,10 +480,18 @@ fn error_empty_log_display() {
 #[test]
 fn error_serde_all_variants() {
     let errors = vec![
-        LineageLogError::SequenceMismatch { expected: 1, got: 2 },
+        LineageLogError::SequenceMismatch {
+            expected: 1,
+            got: 2,
+        },
         LineageLogError::ChainBreak { sequence: 3 },
-        LineageLogError::DuplicateReceipt { receipt_id: "r".into() },
-        LineageLogError::CheckpointBeyondLog { checkpoint_length: 5, log_length: 3 },
+        LineageLogError::DuplicateReceipt {
+            receipt_id: "r".into(),
+        },
+        LineageLogError::CheckpointBeyondLog {
+            checkpoint_length: 5,
+            log_length: 3,
+        },
         LineageLogError::CheckpointNotFound { checkpoint_seq: 7 },
         LineageLogError::InvalidCheckpointOrder { older: 2, newer: 1 },
         LineageLogError::EmptyLog,
@@ -660,7 +684,12 @@ fn append_all_replacement_kinds() {
         ReplacementKind::RePromotion,
     ];
     for (i, kind) in kinds.iter().enumerate() {
-        let r = test_receipt("slot-a", &format!("old-{i}"), &format!("new-{i}"), (i as u64 + 1) * 100);
+        let r = test_receipt(
+            "slot-a",
+            &format!("old-{i}"),
+            &format!("new-{i}"),
+            (i as u64 + 1) * 100,
+        );
         log.append(r, *kind, (i as u64 + 1) * 100).unwrap();
     }
     assert_eq!(log.len(), 4);
@@ -673,7 +702,8 @@ fn append_all_replacement_kinds() {
 fn append_duplicate_receipt_returns_error() {
     let mut log = ReplacementLineageLog::new(LineageLogConfig::default());
     let r = test_receipt("slot-a", "old", "new", 100);
-    log.append(r.clone(), ReplacementKind::DelegateToNative, 100).unwrap();
+    log.append(r.clone(), ReplacementKind::DelegateToNative, 100)
+        .unwrap();
     let err = log.append(r, ReplacementKind::Demotion, 200).unwrap_err();
     assert!(matches!(err, LineageLogError::DuplicateReceipt { .. }));
 }
@@ -691,7 +721,8 @@ fn auto_checkpoint_interval_3() {
     let mut log = ReplacementLineageLog::new(config);
     for i in 0..9 {
         let r = test_receipt("slot-a", &format!("old-{i}"), &format!("new-{i}"), i * 100);
-        log.append(r, ReplacementKind::DelegateToNative, i * 100).unwrap();
+        log.append(r, ReplacementKind::DelegateToNative, i * 100)
+            .unwrap();
     }
     // Checkpoints at entries 2 (3 entries), 5 (6 entries), 8 (9 entries).
     assert_eq!(log.checkpoints().len(), 3);
@@ -706,7 +737,8 @@ fn auto_checkpoint_disabled_when_interval_zero() {
     let mut log = ReplacementLineageLog::new(config);
     for i in 0..10 {
         let r = test_receipt("slot-a", &format!("old-{i}"), &format!("new-{i}"), i * 100);
-        log.append(r, ReplacementKind::DelegateToNative, i * 100).unwrap();
+        log.append(r, ReplacementKind::DelegateToNative, i * 100)
+            .unwrap();
     }
     assert!(log.checkpoints().is_empty());
 }
@@ -718,7 +750,9 @@ fn auto_checkpoint_disabled_when_interval_zero() {
 #[test]
 fn checkpoint_on_empty_log_returns_empty_error() {
     let mut log = ReplacementLineageLog::new(LineageLogConfig::default());
-    let err = log.create_checkpoint(100, SecurityEpoch::from_raw(1)).unwrap_err();
+    let err = log
+        .create_checkpoint(100, SecurityEpoch::from_raw(1))
+        .unwrap_err();
     assert!(matches!(err, LineageLogError::EmptyLog));
 }
 
@@ -727,8 +761,10 @@ fn multiple_checkpoints_have_increasing_sequences() {
     let mut log = ReplacementLineageLog::new(LineageLogConfig::default());
     for i in 0..5 {
         let r = test_receipt("slot-a", &format!("old-{i}"), &format!("new-{i}"), i * 100);
-        log.append(r, ReplacementKind::DelegateToNative, i * 100).unwrap();
-        log.create_checkpoint(i * 100, SecurityEpoch::from_raw(1)).unwrap();
+        log.append(r, ReplacementKind::DelegateToNative, i * 100)
+            .unwrap();
+        log.create_checkpoint(i * 100, SecurityEpoch::from_raw(1))
+            .unwrap();
     }
     assert_eq!(log.checkpoints().len(), 5);
     for (i, cp) in log.checkpoints().iter().enumerate() {
@@ -741,7 +777,8 @@ fn multiple_checkpoints_have_increasing_sequences() {
 fn checkpoint_preserves_epoch() {
     let mut log = ReplacementLineageLog::new(LineageLogConfig::default());
     let r = test_receipt("slot-a", "old", "new", 100);
-    log.append(r, ReplacementKind::DelegateToNative, 100).unwrap();
+    log.append(r, ReplacementKind::DelegateToNative, 100)
+        .unwrap();
     let epoch = SecurityEpoch::from_raw(42);
     log.create_checkpoint(100, epoch).unwrap();
     assert_eq!(log.checkpoints()[0].epoch, epoch);
@@ -755,7 +792,8 @@ fn checkpoint_preserves_epoch() {
 fn first_entry_predecessor_is_genesis() {
     let mut log = ReplacementLineageLog::new(LineageLogConfig::default());
     let r = test_receipt("slot-a", "old", "new", 100);
-    log.append(r, ReplacementKind::DelegateToNative, 100).unwrap();
+    log.append(r, ReplacementKind::DelegateToNative, 100)
+        .unwrap();
     let genesis = ContentHash::compute(b"genesis");
     assert_eq!(log.entries()[0].predecessor_hash, genesis);
 }
@@ -765,7 +803,8 @@ fn chain_links_are_contiguous() {
     let mut log = ReplacementLineageLog::new(LineageLogConfig::default());
     for i in 0..10 {
         let r = test_receipt("slot-a", &format!("old-{i}"), &format!("new-{i}"), i * 100);
-        log.append(r, ReplacementKind::DelegateToNative, i * 100).unwrap();
+        log.append(r, ReplacementKind::DelegateToNative, i * 100)
+            .unwrap();
     }
     for i in 1..10 {
         assert_eq!(
@@ -782,7 +821,8 @@ fn different_kinds_produce_different_hashes() {
     let mut log2 = ReplacementLineageLog::new(LineageLogConfig::default());
     let r1 = test_receipt("slot-a", "old", "new", 100);
     let r2 = test_receipt("slot-a", "old", "new", 100);
-    log1.append(r1, ReplacementKind::DelegateToNative, 100).unwrap();
+    log1.append(r1, ReplacementKind::DelegateToNative, 100)
+        .unwrap();
     log2.append(r2, ReplacementKind::Rollback, 100).unwrap();
     assert_ne!(log1.entries()[0].entry_hash, log2.entries()[0].entry_hash);
 }
@@ -803,7 +843,8 @@ fn merkle_root_changes_on_append() {
     let mut log = ReplacementLineageLog::new(LineageLogConfig::default());
     let root_empty = log.merkle_root();
     let r = test_receipt("slot-a", "old", "new", 100);
-    log.append(r, ReplacementKind::DelegateToNative, 100).unwrap();
+    log.append(r, ReplacementKind::DelegateToNative, 100)
+        .unwrap();
     assert_ne!(log.merkle_root(), root_empty);
 }
 
@@ -824,9 +865,11 @@ fn query_combined_slot_and_kind() {
     let r1 = test_receipt("slot-a", "old1", "new1", 100);
     let r2 = test_receipt("slot-a", "new1", "old1", 200);
     let r3 = test_receipt("slot-b", "old2", "new2", 300);
-    log.append(r1, ReplacementKind::DelegateToNative, 100).unwrap();
+    log.append(r1, ReplacementKind::DelegateToNative, 100)
+        .unwrap();
     log.append(r2, ReplacementKind::Demotion, 200).unwrap();
-    log.append(r3, ReplacementKind::DelegateToNative, 300).unwrap();
+    log.append(r3, ReplacementKind::DelegateToNative, 300)
+        .unwrap();
 
     let mut kinds = BTreeSet::new();
     kinds.insert(ReplacementKind::DelegateToNative);
@@ -847,7 +890,8 @@ fn query_time_range_boundary_inclusive() {
     let mut log = ReplacementLineageLog::new(LineageLogConfig::default());
     for i in 1..=5 {
         let r = test_receipt("slot-a", &format!("old-{i}"), &format!("new-{i}"), i * 100);
-        log.append(r, ReplacementKind::DelegateToNative, i * 100).unwrap();
+        log.append(r, ReplacementKind::DelegateToNative, i * 100)
+            .unwrap();
     }
     // Exact boundary match: min=200, max=400 should include 200, 300, 400.
     let query = LineageQuery {
@@ -864,7 +908,8 @@ fn query_time_range_boundary_inclusive() {
 fn query_nonexistent_slot() {
     let mut log = ReplacementLineageLog::new(LineageLogConfig::default());
     let r = test_receipt("slot-a", "old", "new", 100);
-    log.append(r, ReplacementKind::DelegateToNative, 100).unwrap();
+    log.append(r, ReplacementKind::DelegateToNative, 100)
+        .unwrap();
     let results = log.query(&LineageQuery::for_slot(test_slot_id("nonexistent")));
     assert!(results.is_empty());
 }
@@ -884,7 +929,8 @@ fn slot_lineage_empty_for_unknown_slot() {
 fn slot_lineage_step_has_validation_artifact_count() {
     let mut log = ReplacementLineageLog::new(LineageLogConfig::default());
     let r = test_receipt("slot-a", "old", "new", 100);
-    log.append(r, ReplacementKind::DelegateToNative, 100).unwrap();
+    log.append(r, ReplacementKind::DelegateToNative, 100)
+        .unwrap();
     let lineage = log.slot_lineage(&test_slot_id("slot-a"));
     assert_eq!(lineage.len(), 1);
     assert_eq!(lineage[0].validation_artifact_count, 1); // test_receipt adds 1 artifact
@@ -909,7 +955,8 @@ fn verify_slot_lineage_valid_chain() {
     let mut log = ReplacementLineageLog::new(LineageLogConfig::default());
     for i in 0..5 {
         let r = test_receipt("slot-a", &format!("old-{i}"), &format!("new-{i}"), i * 100);
-        log.append(r, ReplacementKind::DelegateToNative, i * 100).unwrap();
+        log.append(r, ReplacementKind::DelegateToNative, i * 100)
+            .unwrap();
     }
     let v = log.verify_slot_lineage(&test_slot_id("slot-a"));
     assert!(v.chain_valid);
@@ -941,7 +988,8 @@ fn audit_with_checkpoints_verifies_consistency() {
     let mut log = ReplacementLineageLog::new(config);
     for i in 0..9 {
         let r = test_receipt("slot-a", &format!("old-{i}"), &format!("new-{i}"), i * 100);
-        log.append(r, ReplacementKind::DelegateToNative, i * 100).unwrap();
+        log.append(r, ReplacementKind::DelegateToNative, i * 100)
+            .unwrap();
     }
     let audit = log.audit();
     assert!(audit.chain_valid);
@@ -956,8 +1004,14 @@ fn audit_multi_slot_counts_unique() {
     let mut log = ReplacementLineageLog::new(LineageLogConfig::default());
     let slots = ["alpha", "beta", "gamma", "alpha"]; // 3 unique
     for (i, slot) in slots.iter().enumerate() {
-        let r = test_receipt(slot, &format!("old-{i}"), &format!("new-{i}"), (i as u64) * 100);
-        log.append(r, ReplacementKind::DelegateToNative, (i as u64) * 100).unwrap();
+        let r = test_receipt(
+            slot,
+            &format!("old-{i}"),
+            &format!("new-{i}"),
+            (i as u64) * 100,
+        );
+        log.append(r, ReplacementKind::DelegateToNative, (i as u64) * 100)
+            .unwrap();
     }
     let audit = log.audit();
     assert_eq!(audit.total_slots, 3);
@@ -969,8 +1023,10 @@ fn audit_latest_checkpoint_seq() {
     let mut log = ReplacementLineageLog::new(LineageLogConfig::default());
     for i in 0..3 {
         let r = test_receipt("slot-a", &format!("old-{i}"), &format!("new-{i}"), i * 100);
-        log.append(r, ReplacementKind::DelegateToNative, i * 100).unwrap();
-        log.create_checkpoint(i * 100, SecurityEpoch::from_raw(1)).unwrap();
+        log.append(r, ReplacementKind::DelegateToNative, i * 100)
+            .unwrap();
+        log.create_checkpoint(i * 100, SecurityEpoch::from_raw(1))
+            .unwrap();
     }
     let audit = log.audit();
     assert_eq!(audit.latest_checkpoint_seq, Some(2));
@@ -991,8 +1047,14 @@ fn slot_ids_deduplicates_and_sorts() {
     let mut log = ReplacementLineageLog::new(LineageLogConfig::default());
     let slots = ["zebra", "apple", "zebra", "mango"];
     for (i, slot) in slots.iter().enumerate() {
-        let r = test_receipt(slot, &format!("old-{i}"), &format!("new-{i}"), (i as u64) * 100);
-        log.append(r, ReplacementKind::DelegateToNative, (i as u64) * 100).unwrap();
+        let r = test_receipt(
+            slot,
+            &format!("old-{i}"),
+            &format!("new-{i}"),
+            (i as u64) * 100,
+        );
+        log.append(r, ReplacementKind::DelegateToNative, (i as u64) * 100)
+            .unwrap();
     }
     let ids = log.slot_ids();
     assert_eq!(ids.len(), 3);
@@ -1009,21 +1071,31 @@ fn slot_ids_deduplicates_and_sorts() {
 fn consistency_proof_equal_seqs_fails() {
     let mut log = ReplacementLineageLog::new(LineageLogConfig::default());
     let r = test_receipt("slot-a", "old", "new", 100);
-    log.append(r, ReplacementKind::DelegateToNative, 100).unwrap();
-    log.create_checkpoint(100, SecurityEpoch::from_raw(1)).unwrap();
+    log.append(r, ReplacementKind::DelegateToNative, 100)
+        .unwrap();
+    log.create_checkpoint(100, SecurityEpoch::from_raw(1))
+        .unwrap();
     let err = log.consistency_proof(0, 0).unwrap_err();
-    assert!(matches!(err, LineageLogError::InvalidCheckpointOrder { .. }));
+    assert!(matches!(
+        err,
+        LineageLogError::InvalidCheckpointOrder { .. }
+    ));
 }
 
 #[test]
 fn consistency_proof_missing_older_fails() {
     let mut log = ReplacementLineageLog::new(LineageLogConfig::default());
     let r = test_receipt("slot-a", "old", "new", 100);
-    log.append(r, ReplacementKind::DelegateToNative, 100).unwrap();
-    log.create_checkpoint(100, SecurityEpoch::from_raw(1)).unwrap();
+    log.append(r, ReplacementKind::DelegateToNative, 100)
+        .unwrap();
+    log.create_checkpoint(100, SecurityEpoch::from_raw(1))
+        .unwrap();
     let err = log.consistency_proof(99, 0).unwrap_err();
     // 99 >= 0 triggers InvalidCheckpointOrder (not CheckpointNotFound).
-    assert!(matches!(err, LineageLogError::InvalidCheckpointOrder { .. }));
+    assert!(matches!(
+        err,
+        LineageLogError::InvalidCheckpointOrder { .. }
+    ));
 }
 
 #[test]
@@ -1031,9 +1103,11 @@ fn consistency_proof_verifies_after_many_entries() {
     let mut log = ReplacementLineageLog::new(LineageLogConfig::default());
     for i in 0..20 {
         let r = test_receipt("slot-a", &format!("old-{i}"), &format!("new-{i}"), i * 100);
-        log.append(r, ReplacementKind::DelegateToNative, i * 100).unwrap();
+        log.append(r, ReplacementKind::DelegateToNative, i * 100)
+            .unwrap();
         if i == 9 || i == 19 {
-            log.create_checkpoint(i * 100, SecurityEpoch::from_raw(1)).unwrap();
+            log.create_checkpoint(i * 100, SecurityEpoch::from_raw(1))
+                .unwrap();
         }
     }
     let proof = log.consistency_proof(0, 1).unwrap();
@@ -1050,7 +1124,8 @@ fn consistency_proof_verifies_after_many_entries() {
 fn append_emits_entry_appended_event() {
     let mut log = ReplacementLineageLog::new(LineageLogConfig::default());
     let r = test_receipt("slot-a", "old", "new", 100);
-    log.append(r, ReplacementKind::DelegateToNative, 100).unwrap();
+    log.append(r, ReplacementKind::DelegateToNative, 100)
+        .unwrap();
     assert!(!log.events().is_empty());
     assert_eq!(log.events()[0].event, "entry_appended");
     assert_eq!(log.events()[0].outcome, "ok");
@@ -1062,9 +1137,15 @@ fn append_emits_entry_appended_event() {
 fn checkpoint_emits_checkpoint_created_event() {
     let mut log = ReplacementLineageLog::new(LineageLogConfig::default());
     let r = test_receipt("slot-a", "old", "new", 100);
-    log.append(r, ReplacementKind::DelegateToNative, 100).unwrap();
-    log.create_checkpoint(100, SecurityEpoch::from_raw(1)).unwrap();
-    let cp_events: Vec<_> = log.events().iter().filter(|e| e.event == "checkpoint_created").collect();
+    log.append(r, ReplacementKind::DelegateToNative, 100)
+        .unwrap();
+    log.create_checkpoint(100, SecurityEpoch::from_raw(1))
+        .unwrap();
+    let cp_events: Vec<_> = log
+        .events()
+        .iter()
+        .filter(|e| e.event == "checkpoint_created")
+        .collect();
     assert_eq!(cp_events.len(), 1);
     assert_eq!(cp_events[0].outcome, "ok");
 }
@@ -1078,9 +1159,11 @@ fn full_log_serde_roundtrip() {
     let mut log = ReplacementLineageLog::new(LineageLogConfig::default());
     for i in 0..5 {
         let r = test_receipt("slot-a", &format!("old-{i}"), &format!("new-{i}"), i * 100);
-        log.append(r, ReplacementKind::DelegateToNative, i * 100).unwrap();
+        log.append(r, ReplacementKind::DelegateToNative, i * 100)
+            .unwrap();
     }
-    log.create_checkpoint(400, SecurityEpoch::from_raw(1)).unwrap();
+    log.create_checkpoint(400, SecurityEpoch::from_raw(1))
+        .unwrap();
     let json = serde_json::to_string(&log).unwrap();
     let back: ReplacementLineageLog = serde_json::from_str(&json).unwrap();
     assert_eq!(log.len(), back.len());
@@ -1113,9 +1196,18 @@ fn evidence_category_hash_five_distinct() {
 #[test]
 fn evidence_category_as_str_all_five() {
     assert_eq!(EvidenceCategory::GateResult.as_str(), "gate_result");
-    assert_eq!(EvidenceCategory::PerformanceBenchmark.as_str(), "performance_benchmark");
-    assert_eq!(EvidenceCategory::SentinelRiskScore.as_str(), "sentinel_risk_score");
-    assert_eq!(EvidenceCategory::DifferentialExecutionLog.as_str(), "differential_execution_log");
+    assert_eq!(
+        EvidenceCategory::PerformanceBenchmark.as_str(),
+        "performance_benchmark"
+    );
+    assert_eq!(
+        EvidenceCategory::SentinelRiskScore.as_str(),
+        "sentinel_risk_score"
+    );
+    assert_eq!(
+        EvidenceCategory::DifferentialExecutionLog.as_str(),
+        "differential_execution_log"
+    );
     assert_eq!(EvidenceCategory::Additional.as_str(), "additional");
 }
 
@@ -1239,11 +1331,19 @@ fn lineage_index_error_codes() {
         "FE-LIDX-0001"
     );
     assert_eq!(
-        LineageIndexError::Serialization { operation: "o".into(), detail: "d".into() }.code(),
+        LineageIndexError::Serialization {
+            operation: "o".into(),
+            detail: "d".into()
+        }
+        .code(),
         "FE-LIDX-0002"
     );
     assert_eq!(
-        LineageIndexError::CorruptRecord { key: "k".into(), detail: "d".into() }.code(),
+        LineageIndexError::CorruptRecord {
+            key: "k".into(),
+            detail: "d".into()
+        }
+        .code(),
         "FE-LIDX-0003"
     );
     assert_eq!(
@@ -1255,7 +1355,9 @@ fn lineage_index_error_codes() {
 #[test]
 fn lineage_index_error_is_std_error() {
     use frankenengine_engine::replacement_lineage_log::LineageIndexError;
-    let err = LineageIndexError::InvalidInput { detail: "test".into() };
+    let err = LineageIndexError::InvalidInput {
+        detail: "test".into(),
+    };
     let _: &dyn std::error::Error = &err;
 }
 
@@ -1305,7 +1407,9 @@ fn evidence_index_replacement_then_lookup_by_hash() {
 fn evidence_index_missing_hash_returns_none() {
     let mut idx = ReplacementLineageEvidenceIndex::new(InMemoryStorageAdapter::new());
     let ctx = test_context();
-    let found = idx.replacement_by_content_hash("nonexistent", &ctx).unwrap();
+    let found = idx
+        .replacement_by_content_hash("nonexistent", &ctx)
+        .unwrap();
     assert!(found.is_none());
 }
 
@@ -1355,8 +1459,14 @@ fn evidence_index_slot_lineage_with_limit() {
     let mut idx = ReplacementLineageEvidenceIndex::new(InMemoryStorageAdapter::new());
     let ctx = test_context();
     for i in 0..5 {
-        let r = test_receipt("slot-lim", &format!("old-{i}"), &format!("new-{i}"), (i + 1) * 100);
-        idx.index_replacement_receipt(&r, ReplacementKind::DelegateToNative, &[], &ctx).unwrap();
+        let r = test_receipt(
+            "slot-lim",
+            &format!("old-{i}"),
+            &format!("new-{i}"),
+            (i + 1) * 100,
+        );
+        idx.index_replacement_receipt(&r, ReplacementKind::DelegateToNative, &[], &ctx)
+            .unwrap();
     }
     let slot_id = test_slot_id("slot-lim");
     let query = SlotLineageQuery {
@@ -1500,7 +1610,8 @@ fn deterministic_100_iterations_append_and_audit() {
     for _ in 0..100 {
         let mut log = ReplacementLineageLog::new(LineageLogConfig::default());
         let r = test_receipt("slot-det", "old", "new", 42);
-        log.append(r, ReplacementKind::DelegateToNative, 42).unwrap();
+        log.append(r, ReplacementKind::DelegateToNative, 42)
+            .unwrap();
         let root = log.merkle_root();
         if let Some(ref expected) = reference_root {
             assert_eq!(&root, expected);
@@ -1545,11 +1656,14 @@ fn integration_full_lifecycle_log() {
     let r4 = test_receipt("slot-a", "delegate-v1", "native-v2", 400);
     let r5 = test_receipt("slot-c", "delegate-c1", "native-c1", 500);
 
-    log.append(r1, ReplacementKind::DelegateToNative, 100).unwrap();
-    log.append(r2, ReplacementKind::DelegateToNative, 200).unwrap();
+    log.append(r1, ReplacementKind::DelegateToNative, 100)
+        .unwrap();
+    log.append(r2, ReplacementKind::DelegateToNative, 200)
+        .unwrap();
     log.append(r3, ReplacementKind::Demotion, 300).unwrap();
     log.append(r4, ReplacementKind::RePromotion, 400).unwrap();
-    log.append(r5, ReplacementKind::DelegateToNative, 500).unwrap();
+    log.append(r5, ReplacementKind::DelegateToNative, 500)
+        .unwrap();
 
     // 2. Auto-checkpoint at 5 entries.
     assert_eq!(log.checkpoints().len(), 1);
@@ -1628,7 +1742,11 @@ fn integration_evidence_index_replacement_and_demotion_flow() {
 
     // 3. Query slot lineage.
     let chain = idx
-        .slot_lineage(&test_slot_id("slot-int"), &SlotLineageQuery::default(), &ctx)
+        .slot_lineage(
+            &test_slot_id("slot-int"),
+            &SlotLineageQuery::default(),
+            &ctx,
+        )
         .unwrap();
     assert_eq!(chain.len(), 2); // replacement + demotion
 

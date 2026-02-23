@@ -40,7 +40,10 @@ fn operation_type_serde_roundtrip_all_variants() {
 
 #[test]
 fn operation_type_display_all_variants() {
-    assert_eq!(OperationType::CheckpointWrite.to_string(), "checkpoint_write");
+    assert_eq!(
+        OperationType::CheckpointWrite.to_string(),
+        "checkpoint_write"
+    );
     assert_eq!(
         OperationType::RevocationPropagation.to_string(),
         "revocation_propagation"
@@ -55,10 +58,7 @@ fn operation_type_display_all_variants() {
         OperationType::ObligationCommit.to_string(),
         "obligation_commit"
     );
-    assert_eq!(
-        OperationType::TaskCompletion.to_string(),
-        "task_completion"
-    );
+    assert_eq!(OperationType::TaskCompletion.to_string(), "task_completion");
     assert_eq!(OperationType::FaultInjection.to_string(), "fault_injection");
     assert_eq!(
         OperationType::CancelInjection.to_string(),
@@ -138,9 +138,17 @@ fn empty_catalog() {
 fn default_catalog_has_known_races() {
     let catalog = RaceSurfaceCatalog::default_catalog();
     assert!(catalog.len() >= 5);
-    assert!(catalog.surfaces.contains_key("race-checkpoint-vs-revocation"));
+    assert!(
+        catalog
+            .surfaces
+            .contains_key("race-checkpoint-vs-revocation")
+    );
     assert!(catalog.surfaces.contains_key("race-policy-vs-evidence"));
-    assert!(catalog.surfaces.contains_key("race-checkpoint-vs-region-close"));
+    assert!(
+        catalog
+            .surfaces
+            .contains_key("race-checkpoint-vs-region-close")
+    );
     assert!(catalog.surfaces.contains_key("race-obligation-vs-cancel"));
     assert!(catalog.surfaces.contains_key("race-completion-vs-fault"));
 }

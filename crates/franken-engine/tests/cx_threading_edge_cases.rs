@@ -5,14 +5,15 @@
 //! dispatch, budget accounting, event tracking, audit log), receipt types,
 //! run_full_lifecycle helper, and cross-cutting integration scenarios.
 
-use frankenengine_engine::control_plane::mocks::{MockBudget, MockCx, trace_id_from_seed};
 use frankenengine_engine::control_plane::ContextAdapter;
+use frankenengine_engine::control_plane::mocks::{MockBudget, MockCx, trace_id_from_seed};
 use frankenengine_engine::cx_threading::{
     CxThreadedEvent, CxThreadedGateway, CxThreadingError, EffectAuditLog, EffectCategory,
-    HostcallDescriptor, HostcallReceipt, HostcallRegistration, LifecyclePhase, LifecycleReceipt,
-    PolicyCheckDescriptor, PolicyCheckResult, PolicyVerdict, TelemetryDescriptor, TelemetryLevel,
-    TelemetryReceipt, HOSTCALL_BUDGET_COST_MS, LIFECYCLE_TRANSITION_BUDGET_COST_MS,
-    POLICY_CHECK_BUDGET_COST_MS, TELEMETRY_EMIT_BUDGET_COST_MS, run_full_lifecycle,
+    HOSTCALL_BUDGET_COST_MS, HostcallDescriptor, HostcallReceipt, HostcallRegistration,
+    LIFECYCLE_TRANSITION_BUDGET_COST_MS, LifecyclePhase, LifecycleReceipt,
+    POLICY_CHECK_BUDGET_COST_MS, PolicyCheckDescriptor, PolicyCheckResult, PolicyVerdict,
+    TELEMETRY_EMIT_BUDGET_COST_MS, TelemetryDescriptor, TelemetryLevel, TelemetryReceipt,
+    run_full_lifecycle,
 };
 
 // ---------------------------------------------------------------------------
@@ -665,12 +666,13 @@ fn lifecycle_suspended_to_terminated() {
 #[test]
 fn lifecycle_receipt_fields() {
     let mut gw = make_gateway(5, 100);
-    let receipt = gw
-        .transition_lifecycle(LifecyclePhase::Loaded)
-        .unwrap();
+    let receipt = gw.transition_lifecycle(LifecyclePhase::Loaded).unwrap();
     assert_eq!(receipt.from, LifecyclePhase::Unloaded);
     assert_eq!(receipt.to, LifecyclePhase::Loaded);
-    assert_eq!(receipt.budget_consumed_ms, LIFECYCLE_TRANSITION_BUDGET_COST_MS);
+    assert_eq!(
+        receipt.budget_consumed_ms,
+        LIFECYCLE_TRANSITION_BUDGET_COST_MS
+    );
     assert_eq!(receipt.sequence_number, 1);
     assert_eq!(receipt.trace_id, trace_id_from_seed(5).to_string());
 }
@@ -706,7 +708,9 @@ fn hostcall_dispatch_registered() {
 #[test]
 fn hostcall_dispatch_unregistered_rejected() {
     let mut gw = make_gateway(1, 100);
-    let err = gw.dispatch_hostcall(&hostcall("not_registered")).unwrap_err();
+    let err = gw
+        .dispatch_hostcall(&hostcall("not_registered"))
+        .unwrap_err();
     match &err {
         CxThreadingError::HostcallRejected { reason, .. } => {
             assert!(reason.contains("not registered"), "{reason}");
@@ -825,7 +829,10 @@ fn policy_check_deny_returns_error() {
         })
         .unwrap_err();
     match &err {
-        CxThreadingError::PolicyDenied { check_name, verdict } => {
+        CxThreadingError::PolicyDenied {
+            check_name,
+            verdict,
+        } => {
             assert_eq!(check_name, "limit");
             assert_eq!(verdict, "exceeded");
         }
@@ -1050,10 +1057,7 @@ fn budget_exhaustion_event_has_error_code() {
     let _ = gw.dispatch_hostcall(&hostcall("op"));
     let evt = &gw.events()[0];
     assert_eq!(evt.outcome, "budget_exhausted");
-    assert_eq!(
-        evt.error_code.as_deref(),
-        Some("cx_budget_exhausted")
-    );
+    assert_eq!(evt.error_code.as_deref(), Some("cx_budget_exhausted"));
     assert_eq!(evt.budget_consumed_ms, 0);
 }
 
@@ -1223,9 +1227,7 @@ fn budget_exactly_sufficient() {
 fn budget_one_short() {
     // 2ms is not enough for lifecycle transition (needs 3ms)
     let mut gw = make_gateway(1, 2);
-    let err = gw
-        .transition_lifecycle(LifecyclePhase::Loaded)
-        .unwrap_err();
+    let err = gw.transition_lifecycle(LifecyclePhase::Loaded).unwrap_err();
     match &err {
         CxThreadingError::BudgetExhausted {
             requested_ms,
@@ -1256,8 +1258,7 @@ fn mixed_operations_interleaved() {
     gw.evaluate_policy_check(&policy_check("mid_check"), |_| PolicyVerdict::Allow)
         .unwrap();
     gw.dispatch_hostcall(&hostcall("kv_get")).unwrap();
-    gw.emit_telemetry(&telemetry("trace_span"), "data")
-        .unwrap();
+    gw.emit_telemetry(&telemetry("trace_span"), "data").unwrap();
     gw.evaluate_policy_check(&policy_check("post_check"), |_| PolicyVerdict::Allow)
         .unwrap();
 
@@ -1292,7 +1293,10 @@ fn deterministic_replay_produces_identical_audit_logs() {
     assert_eq!(log1.total_budget_consumed_ms, log2.total_budget_consumed_ms);
     assert_eq!(log1.hostcall_count, log2.hostcall_count);
     assert_eq!(log1.policy_check_count, log2.policy_check_count);
-    assert_eq!(log1.lifecycle_transition_count, log2.lifecycle_transition_count);
+    assert_eq!(
+        log1.lifecycle_transition_count,
+        log2.lifecycle_transition_count
+    );
     assert_eq!(log1.telemetry_count, log2.telemetry_count);
     assert_eq!(log1.events.len(), log2.events.len());
     for (e1, e2) in log1.events.iter().zip(log2.events.iter()) {
@@ -1385,9 +1389,7 @@ fn zero_budget_gateway_rejects_everything() {
     let mut gw = make_gateway(1, 0);
     gw.register_hostcall("op", None);
 
-    let err = gw
-        .transition_lifecycle(LifecyclePhase::Loaded)
-        .unwrap_err();
+    let err = gw.transition_lifecycle(LifecyclePhase::Loaded).unwrap_err();
     assert!(matches!(err, CxThreadingError::BudgetExhausted { .. }));
 
     let err = gw.dispatch_hostcall(&hostcall("op")).unwrap_err();

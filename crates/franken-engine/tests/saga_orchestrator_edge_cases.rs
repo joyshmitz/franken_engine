@@ -178,18 +178,24 @@ fn saga_state_serde_all_variants() {
 #[test]
 fn saga_state_display_includes_details() {
     assert_eq!(SagaState::Pending.to_string(), "pending");
-    assert!(SagaState::InProgress { step_index: 5 }
-        .to_string()
-        .contains("5"));
-    assert!(SagaState::Compensating { step_index: 2 }
-        .to_string()
-        .contains("2"));
+    assert!(
+        SagaState::InProgress { step_index: 5 }
+            .to_string()
+            .contains("5")
+    );
+    assert!(
+        SagaState::Compensating { step_index: 2 }
+            .to_string()
+            .contains("2")
+    );
     assert_eq!(SagaState::Completed.to_string(), "completed");
-    assert!(SagaState::Failed {
-        diagnostic: "reason".to_string()
-    }
-    .to_string()
-    .contains("reason"));
+    assert!(
+        SagaState::Failed {
+            diagnostic: "reason".to_string()
+        }
+        .to_string()
+        .contains("reason")
+    );
 }
 
 // ===========================================================================
@@ -614,9 +620,10 @@ fn create_saga_concurrency_limit_exact_boundary() {
     orch.create_saga("s2", SagaType::Revocation, simple_steps(), "t2", 0)
         .unwrap();
     // Third should fail.
-    assert!(orch
-        .create_saga("s3", SagaType::Eviction, simple_steps(), "t3", 0)
-        .is_err());
+    assert!(
+        orch.create_saga("s3", SagaType::Eviction, simple_steps(), "t3", 0)
+            .is_err()
+    );
     assert_eq!(orch.active_count(), 2);
 }
 
@@ -639,9 +646,10 @@ fn create_saga_after_completing_one_frees_slot() {
 #[test]
 fn create_saga_with_max_concurrent_zero() {
     let mut orch = SagaOrchestrator::new(epoch(1), 0);
-    assert!(orch
-        .create_saga("s1", SagaType::Publish, simple_steps(), "t", 0)
-        .is_err());
+    assert!(
+        orch.create_saga("s1", SagaType::Publish, simple_steps(), "t", 0)
+            .is_err()
+    );
 }
 
 // ===========================================================================
@@ -833,7 +841,9 @@ fn compensation_cancelled_is_terminal() {
     let state = orch
         .complete_compensation("s1", 0, cancelled("timeout"), "ck0", 300)
         .unwrap();
-    assert!(matches!(state, SagaState::Failed { diagnostic } if diagnostic.contains("compensation_cancelled")));
+    assert!(
+        matches!(state, SagaState::Failed { diagnostic } if diagnostic.contains("compensation_cancelled"))
+    );
 }
 
 #[test]
@@ -865,8 +875,14 @@ fn full_compensation_chain_three_steps() {
     // Steps 0, 1 succeed.
     for i in 0..2 {
         orch.begin_step("s1").unwrap();
-        orch.complete_step("s1", i, success("ok"), &format!("k{i}"), (i as u64 + 1) * 100)
-            .unwrap();
+        orch.complete_step(
+            "s1",
+            i,
+            success("ok"),
+            &format!("k{i}"),
+            (i as u64 + 1) * 100,
+        )
+        .unwrap();
     }
     // Step 2 fails.
     orch.begin_step("s1").unwrap();
@@ -1036,10 +1052,7 @@ fn resumable_includes_compensating() {
 
     let resumable = orch.resumable_sagas();
     assert_eq!(resumable.len(), 1);
-    assert!(matches!(
-        resumable[0].state,
-        SagaState::Compensating { .. }
-    ));
+    assert!(matches!(resumable[0].state, SagaState::Compensating { .. }));
 }
 
 #[test]
@@ -1170,7 +1183,11 @@ fn all_builder_steps_have_nonzero_timeout() {
         publish_saga_steps("x"),
     ] {
         for step in &steps {
-            assert!(step.timeout_ticks > 0, "step {} has zero timeout", step.step_name);
+            assert!(
+                step.timeout_ticks > 0,
+                "step {} has zero timeout",
+                step.step_name
+            );
         }
     }
 }
@@ -1198,16 +1215,34 @@ fn all_builder_steps_have_forward_and_compensating() {
 #[test]
 fn multiple_concurrent_sagas_independent_lifecycle() {
     let mut orch = SagaOrchestrator::new(epoch(1), 10);
-    orch.create_saga("q1", SagaType::Quarantine, quarantine_saga_steps("ext-a"), "t1", 0)
-        .unwrap();
-    orch.create_saga("p1", SagaType::Publish, publish_saga_steps("pkg-b"), "t2", 0)
-        .unwrap();
+    orch.create_saga(
+        "q1",
+        SagaType::Quarantine,
+        quarantine_saga_steps("ext-a"),
+        "t1",
+        0,
+    )
+    .unwrap();
+    orch.create_saga(
+        "p1",
+        SagaType::Publish,
+        publish_saga_steps("pkg-b"),
+        "t2",
+        0,
+    )
+    .unwrap();
 
     // Complete q1 fully.
     for i in 0..4 {
         orch.begin_step("q1").unwrap();
-        orch.complete_step("q1", i, success(&format!("ok-{i}")), &format!("qk{i}"), (i as u64 + 1) * 100)
-            .unwrap();
+        orch.complete_step(
+            "q1",
+            i,
+            success(&format!("ok-{i}")),
+            &format!("qk{i}"),
+            (i as u64 + 1) * 100,
+        )
+        .unwrap();
     }
 
     // p1 still in progress.
@@ -1232,11 +1267,23 @@ fn saga_failure_at_each_step_position() {
         for i in 0..=fail_at {
             orch.begin_step(&id).unwrap();
             if i == fail_at {
-                orch.complete_step(&id, i, failure("err"), &format!("k{i}"), (i as u64 + 1) * 100)
-                    .unwrap();
+                orch.complete_step(
+                    &id,
+                    i,
+                    failure("err"),
+                    &format!("k{i}"),
+                    (i as u64 + 1) * 100,
+                )
+                .unwrap();
             } else {
-                orch.complete_step(&id, i, success("ok"), &format!("k{i}"), (i as u64 + 1) * 100)
-                    .unwrap();
+                orch.complete_step(
+                    &id,
+                    i,
+                    success("ok"),
+                    &format!("k{i}"),
+                    (i as u64 + 1) * 100,
+                )
+                .unwrap();
             }
         }
 
@@ -1389,8 +1436,14 @@ fn full_revocation_saga_with_failure_and_compensation() {
     // Steps 0, 1, 2 succeed.
     for i in 0..3 {
         orch.begin_step("r1").unwrap();
-        orch.complete_step("r1", i, success("ok"), &format!("rk{i}"), (i as u64 + 1) * 100)
-            .unwrap();
+        orch.complete_step(
+            "r1",
+            i,
+            success("ok"),
+            &format!("rk{i}"),
+            (i as u64 + 1) * 100,
+        )
+        .unwrap();
     }
     // Step 3 (update_frontier) fails.
     orch.begin_step("r1").unwrap();

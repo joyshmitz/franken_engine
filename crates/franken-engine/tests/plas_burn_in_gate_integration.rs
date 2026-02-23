@@ -124,9 +124,11 @@ fn promotion_gate_rejects_when_success_rate_below_threshold() {
 
     let artifact = session.evaluate_promotion_gate(1_002_000).unwrap();
     assert_eq!(session.lifecycle_state(), BurnInLifecycleState::Rejection);
-    assert!(artifact
-        .failure_codes
-        .contains(&BurnInFailureCode::ShadowSuccessRateBelowThreshold));
+    assert!(
+        artifact
+            .failure_codes
+            .contains(&BurnInFailureCode::ShadowSuccessRateBelowThreshold)
+    );
 }
 
 #[test]
@@ -179,9 +181,11 @@ fn promotion_gate_rejects_when_rollback_artifacts_are_incomplete() {
 
     let artifact = session.evaluate_promotion_gate(1_002_000).unwrap();
     assert_eq!(session.lifecycle_state(), BurnInLifecycleState::Rejection);
-    assert!(artifact
-        .failure_codes
-        .contains(&BurnInFailureCode::RollbackProofArtifactsMissing));
+    assert!(
+        artifact
+            .failure_codes
+            .contains(&BurnInFailureCode::RollbackProofArtifactsMissing)
+    );
 }
 
 #[test]

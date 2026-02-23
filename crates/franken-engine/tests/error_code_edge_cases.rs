@@ -3,9 +3,9 @@
 use std::collections::{BTreeSet, HashSet};
 
 use frankenengine_engine::error_code::{
-    error_code_registry, ErrorCodeEntry, ErrorCodeRegistry, ErrorSeverity, ErrorSubsystem,
-    FrankenErrorCode, HasErrorCode, ALL_ERROR_CODES, ERROR_CODE_COMPATIBILITY_POLICY,
-    ERROR_CODE_REGISTRY_VERSION,
+    ALL_ERROR_CODES, ERROR_CODE_COMPATIBILITY_POLICY, ERROR_CODE_REGISTRY_VERSION, ErrorCodeEntry,
+    ErrorCodeRegistry, ErrorSeverity, ErrorSubsystem, FrankenErrorCode, HasErrorCode,
+    error_code_registry,
 };
 
 // ===========================================================================
@@ -23,21 +23,25 @@ fn franken_error_code_serde_all_codes() {
 
 #[test]
 fn franken_error_code_hash_deterministic() {
-    use std::hash::{Hash, Hasher};
     use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
     for code in ALL_ERROR_CODES {
         let mut h1 = DefaultHasher::new();
         let mut h2 = DefaultHasher::new();
         code.hash(&mut h1);
         code.hash(&mut h2);
-        assert_eq!(h1.finish(), h2.finish(), "hash not deterministic for {code:?}");
+        assert_eq!(
+            h1.finish(),
+            h2.finish(),
+            "hash not deterministic for {code:?}"
+        );
     }
 }
 
 #[test]
 fn franken_error_code_hash_unique_per_code() {
-    use std::hash::{Hash, Hasher};
     use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
     let hashes: HashSet<u64> = ALL_ERROR_CODES
         .iter()
         .map(|c| {
@@ -441,10 +445,22 @@ fn all_error_codes_monotonic_within_subsystem() {
 
 #[test]
 fn stable_code_specific_values() {
-    assert_eq!(FrankenErrorCode::NonCanonicalEncodingError.stable_code(), "FE-0001");
-    assert_eq!(FrankenErrorCode::DeterministicSerdeError.stable_code(), "FE-0002");
-    assert_eq!(FrankenErrorCode::EngineObjectIdError.stable_code(), "FE-1000");
-    assert_eq!(FrankenErrorCode::CapabilityDeniedError.stable_code(), "FE-2000");
+    assert_eq!(
+        FrankenErrorCode::NonCanonicalEncodingError.stable_code(),
+        "FE-0001"
+    );
+    assert_eq!(
+        FrankenErrorCode::DeterministicSerdeError.stable_code(),
+        "FE-0002"
+    );
+    assert_eq!(
+        FrankenErrorCode::EngineObjectIdError.stable_code(),
+        "FE-1000"
+    );
+    assert_eq!(
+        FrankenErrorCode::CapabilityDeniedError.stable_code(),
+        "FE-2000"
+    );
     assert_eq!(
         FrankenErrorCode::PolicyCheckpointValidationError.stable_code(),
         "FE-3000"
@@ -453,12 +469,18 @@ fn stable_code_specific_values() {
         FrankenErrorCode::RevocationChainIntegrityError.stable_code(),
         "FE-4000"
     );
-    assert_eq!(FrankenErrorCode::LeaseLifecycleError.stable_code(), "FE-5000");
+    assert_eq!(
+        FrankenErrorCode::LeaseLifecycleError.stable_code(),
+        "FE-5000"
+    );
     assert_eq!(
         FrankenErrorCode::AllocationDomainBudgetError.stable_code(),
         "FE-6000"
     );
-    assert_eq!(FrankenErrorCode::EvidenceContractError.stable_code(), "FE-7000");
+    assert_eq!(
+        FrankenErrorCode::EvidenceContractError.stable_code(),
+        "FE-7000"
+    );
     assert_eq!(
         FrankenErrorCode::EpochMonotonicityViolation.stable_code(),
         "FE-8000"
@@ -610,10 +632,7 @@ fn has_error_code_lease_empty_holder() {
 fn has_error_code_obligation_not_found() {
     use frankenengine_engine::obligation_channel::ObligationError;
     let err = ObligationError::NotFound { obligation_id: 42 };
-    assert_eq!(
-        err.error_code(),
-        FrankenErrorCode::ObligationChannelError
-    );
+    assert_eq!(err.error_code(), FrankenErrorCode::ObligationChannelError);
 }
 
 #[test]

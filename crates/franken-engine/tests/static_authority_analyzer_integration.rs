@@ -543,9 +543,7 @@ fn full_analysis_cache_pipeline() {
 
     // Analyze.
     let analyzer = StaticAuthorityAnalyzer::new(default_config());
-    let report = analyzer
-        .analyze(&graph, &manifest, epoch, 10_000)
-        .unwrap();
+    let report = analyzer.analyze(&graph, &manifest, epoch, 10_000).unwrap();
 
     // Cache.
     let mut cache = AnalysisCache::new(100);
@@ -560,7 +558,10 @@ fn full_analysis_cache_pipeline() {
     let cached = cache.get(&key).unwrap();
     assert_eq!(cached.report_id, report.report_id);
     assert_eq!(cached.content_hash(), report.content_hash());
-    assert_eq!(cached.upper_bound_capabilities, report.upper_bound_capabilities);
+    assert_eq!(
+        cached.upper_bound_capabilities,
+        report.upper_bound_capabilities
+    );
     assert_eq!(cached.extension_id, "ext-complex");
     assert_eq!(cached.epoch, epoch);
 

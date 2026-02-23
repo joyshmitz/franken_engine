@@ -153,7 +153,7 @@ fn critical_campaigns_promote_regression_fixtures() {
     let ctx = test_ctx();
 
     let outcomes = vec![
-        make_outcome(AttackDimension::Exfiltration, 0, 5, false),    // low score → Advisory
+        make_outcome(AttackDimension::Exfiltration, 0, 5, false), // low score → Advisory
         make_critical_outcome(AttackDimension::PrivilegeEscalation), // high score → Blocking
     ];
 
@@ -471,7 +471,11 @@ fn drain_events_returns_all_and_clears() {
     assert!(engine.events().is_empty());
 
     // All drained events should have the correct component.
-    assert!(drained.iter().all(|e| e.component == "guardplane_calibration"));
+    assert!(
+        drained
+            .iter()
+            .all(|e| e.component == "guardplane_calibration")
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -549,8 +553,8 @@ fn containment_escapes_tracked() {
     let ctx = test_ctx();
 
     let outcomes = vec![
-        make_outcome(AttackDimension::Exfiltration, 5, 10, true),  // escaped
-        make_outcome(AttackDimension::Exfiltration, 5, 10, true),  // escaped
+        make_outcome(AttackDimension::Exfiltration, 5, 10, true), // escaped
+        make_outcome(AttackDimension::Exfiltration, 5, 10, true), // escaped
         make_outcome(AttackDimension::Exfiltration, 5, 10, false), // contained
     ];
 
@@ -570,9 +574,7 @@ fn alert_has_correct_fields() {
     engine.set_evasion_alert_threshold(0); // any evasion triggers
     let ctx = test_ctx();
 
-    let outcomes = vec![
-        make_outcome(AttackDimension::Exfiltration, 5, 10, false),
-    ];
+    let outcomes = vec![make_outcome(AttackDimension::Exfiltration, 5, 10, false)];
     engine.run_calibration_cycle(&outcomes, &ctx).unwrap();
 
     let alerts = engine.alerts();

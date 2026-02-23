@@ -76,44 +76,31 @@ fn gate_verdict_pass_is_pass() {
 
 #[test]
 fn gate_verdict_fail_is_not_pass() {
-    assert!(!GateVerdict::Fail {
-        reason: "x".into()
-    }
-    .is_pass());
+    assert!(!GateVerdict::Fail { reason: "x".into() }.is_pass());
 }
 
 #[test]
 fn gate_verdict_infra_error_is_not_pass() {
-    assert!(!GateVerdict::InfrastructureError {
-        detail: "x".into()
-    }
-    .is_pass());
+    assert!(!GateVerdict::InfrastructureError { detail: "x".into() }.is_pass());
 }
 
 #[test]
 fn gate_verdict_timeout_is_not_pass() {
-    assert!(!GateVerdict::Timeout {
-        gate: "x".into(),
-        elapsed_ticks: 1,
-    }
-    .is_pass());
+    assert!(
+        !GateVerdict::Timeout {
+            gate: "x".into(),
+            elapsed_ticks: 1,
+        }
+        .is_pass()
+    );
 }
 
 #[test]
 fn gate_verdict_as_str() {
     assert_eq!(GateVerdict::Pass.as_str(), "pass");
+    assert_eq!(GateVerdict::Fail { reason: "x".into() }.as_str(), "fail");
     assert_eq!(
-        GateVerdict::Fail {
-            reason: "x".into()
-        }
-        .as_str(),
-        "fail"
-    );
-    assert_eq!(
-        GateVerdict::InfrastructureError {
-            detail: "x".into()
-        }
-        .as_str(),
+        GateVerdict::InfrastructureError { detail: "x".into() }.as_str(),
         "infrastructure_error"
     );
     assert_eq!(
@@ -201,7 +188,10 @@ fn overall_verdict_serde_round_trip() {
     for v in [
         OverallVerdict::Released,
         OverallVerdict::Blocked {
-            failing_gates: vec![GateKind::FrankenlabScenarios, GateKind::ObligationResolution],
+            failing_gates: vec![
+                GateKind::FrankenlabScenarios,
+                GateKind::ObligationResolution,
+            ],
         },
     ] {
         let json = serde_json::to_string(&v).unwrap();

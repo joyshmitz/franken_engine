@@ -11,9 +11,8 @@ use std::collections::{BTreeMap, HashSet};
 use frankenengine_engine::control_plane::mocks::{MockBudget, MockCx, trace_id_from_seed};
 use frankenengine_engine::lab_runtime::Verdict;
 use frankenengine_engine::release_gate::{
-    ExceptionPolicy, GateCheckKind, GateCheckResult, GateConfig, GateEvent,
-    GateFailureDetail, GateFailureReport, IdempotencyVerification, ReleaseGate,
-    ReleaseGateResult,
+    ExceptionPolicy, GateCheckKind, GateCheckResult, GateConfig, GateEvent, GateFailureDetail,
+    GateFailureReport, IdempotencyVerification, ReleaseGate, ReleaseGateResult,
 };
 
 // ---------------------------------------------------------------------------
@@ -82,22 +81,34 @@ fn gate_check_kind_serde_stable_strings() {
 
 #[test]
 fn gate_check_kind_display_frankenlab() {
-    assert_eq!(format!("{}", GateCheckKind::FrankenlabScenario), "frankenlab_scenario");
+    assert_eq!(
+        format!("{}", GateCheckKind::FrankenlabScenario),
+        "frankenlab_scenario"
+    );
 }
 
 #[test]
 fn gate_check_kind_display_evidence_replay() {
-    assert_eq!(format!("{}", GateCheckKind::EvidenceReplay), "evidence_replay");
+    assert_eq!(
+        format!("{}", GateCheckKind::EvidenceReplay),
+        "evidence_replay"
+    );
 }
 
 #[test]
 fn gate_check_kind_display_obligation() {
-    assert_eq!(format!("{}", GateCheckKind::ObligationTracking), "obligation_tracking");
+    assert_eq!(
+        format!("{}", GateCheckKind::ObligationTracking),
+        "obligation_tracking"
+    );
 }
 
 #[test]
 fn gate_check_kind_display_completeness() {
-    assert_eq!(format!("{}", GateCheckKind::EvidenceCompleteness), "evidence_completeness");
+    assert_eq!(
+        format!("{}", GateCheckKind::EvidenceCompleteness),
+        "evidence_completeness"
+    );
 }
 
 #[test]
@@ -372,7 +383,10 @@ fn gate_event_clone() {
 fn gate_failure_report_serde_blocked() {
     let report = GateFailureReport {
         blocked: true,
-        failing_gates: vec![GateCheckKind::FrankenlabScenario, GateCheckKind::EvidenceReplay],
+        failing_gates: vec![
+            GateCheckKind::FrankenlabScenario,
+            GateCheckKind::EvidenceReplay,
+        ],
         details: vec![GateFailureDetail {
             item_id: "item1".to_string(),
             failure_type: "ft".to_string(),
@@ -491,7 +505,9 @@ fn result_is_blocked_on_fail_verdict() {
     let result = ReleaseGateResult {
         seed: 1,
         checks: Vec::new(),
-        verdict: Verdict::Fail { reason: "test".to_string() },
+        verdict: Verdict::Fail {
+            reason: "test".to_string(),
+        },
         total_checks: 0,
         passed_checks: 0,
         exception_applied: false,
@@ -856,12 +872,15 @@ fn evaluate_check_kinds_in_expected_order() {
     let mut cx = mock_cx(200_000);
     let result = gate.evaluate(&mut cx);
     let kinds: Vec<GateCheckKind> = result.checks.iter().map(|c| c.kind).collect();
-    assert_eq!(kinds, vec![
-        GateCheckKind::FrankenlabScenario,
-        GateCheckKind::EvidenceReplay,
-        GateCheckKind::ObligationTracking,
-        GateCheckKind::EvidenceCompleteness,
-    ]);
+    assert_eq!(
+        kinds,
+        vec![
+            GateCheckKind::FrankenlabScenario,
+            GateCheckKind::EvidenceReplay,
+            GateCheckKind::ObligationTracking,
+            GateCheckKind::EvidenceCompleteness,
+        ]
+    );
 }
 
 #[test]
@@ -1133,7 +1152,8 @@ fn exception_succeeds_without_adr_when_not_required() {
     };
     let gate = ReleaseGate::with_exception_policy(42, policy);
     let mut result = make_failed_result();
-    gate.apply_exception(&mut result, "emergency", None).unwrap();
+    gate.apply_exception(&mut result, "emergency", None)
+        .unwrap();
     assert!(result.exception_applied);
     assert_eq!(result.verdict, Verdict::Pass);
 }
@@ -1269,7 +1289,11 @@ fn evaluate_events_include_individual_check_names() {
     let mut gate = ReleaseGate::new(42);
     let mut cx = mock_cx(200_000);
     let result = gate.evaluate(&mut cx);
-    let event_names: Vec<&str> = result.gate_events.iter().map(|e| e.event.as_str()).collect();
+    let event_names: Vec<&str> = result
+        .gate_events
+        .iter()
+        .map(|e| e.event.as_str())
+        .collect();
     assert!(event_names.contains(&"frankenlab_scenarios_checked"));
     assert!(event_names.contains(&"evidence_replay_checked"));
     assert!(event_names.contains(&"obligation_tracking_checked"));
@@ -1530,7 +1554,8 @@ fn exception_on_passing_result_still_sets_fields() {
         gate_events: Vec::new(),
         result_digest: "pre".to_string(),
     };
-    gate.apply_exception(&mut result, "preemptive", None).unwrap();
+    gate.apply_exception(&mut result, "preemptive", None)
+        .unwrap();
     assert!(result.exception_applied);
     assert_eq!(result.exception_justification, "preemptive");
     assert_eq!(result.verdict, Verdict::Pass);

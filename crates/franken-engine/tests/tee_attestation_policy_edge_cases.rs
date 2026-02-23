@@ -999,8 +999,10 @@ fn evaluate_quote_fail_closed_source_unavailable() {
     let p = sample_policy(1);
     let mut q = quote_for_sgx();
     // internal_ledger is fail_closed; make it unavailable
-    q.revocation_observations
-        .insert("internal_ledger".to_string(), RevocationProbeStatus::Unavailable);
+    q.revocation_observations.insert(
+        "internal_ledger".to_string(),
+        RevocationProbeStatus::Unavailable,
+    );
     let err = p
         .evaluate_quote(&q, DecisionImpact::Standard, SecurityEpoch::from_raw(1))
         .unwrap_err();
@@ -1019,10 +1021,14 @@ fn evaluate_quote_all_sources_unavailable_try_next_reaches_fail_closed() {
     q.revocation_observations.clear();
     q.revocation_observations
         .insert("intel_pcs".to_string(), RevocationProbeStatus::Unavailable);
-    q.revocation_observations
-        .insert("manufacturer_crl".to_string(), RevocationProbeStatus::Unavailable);
-    q.revocation_observations
-        .insert("internal_ledger".to_string(), RevocationProbeStatus::Unavailable);
+    q.revocation_observations.insert(
+        "manufacturer_crl".to_string(),
+        RevocationProbeStatus::Unavailable,
+    );
+    q.revocation_observations.insert(
+        "internal_ledger".to_string(),
+        RevocationProbeStatus::Unavailable,
+    );
     let err = p
         .evaluate_quote(&q, DecisionImpact::Standard, SecurityEpoch::from_raw(1))
         .unwrap_err();
@@ -1090,7 +1096,9 @@ fn override_artifact_create_and_verify_roundtrip() {
     let verifier = key.verification_key();
     let input = make_override_input("root-test", 5);
     let artifact = SignedTrustRootOverrideArtifact::create_signed(&key, input).unwrap();
-    artifact.verify(&verifier, SecurityEpoch::from_raw(5)).unwrap();
+    artifact
+        .verify(&verifier, SecurityEpoch::from_raw(5))
+        .unwrap();
 }
 
 #[test]
@@ -1222,7 +1230,9 @@ fn override_artifact_verify_at_exact_expiry_passes() {
     let input = make_override_input("r", 1);
     let artifact = SignedTrustRootOverrideArtifact::create_signed(&key, input).unwrap();
     // expires at epoch 6, verify at epoch 6 (at expiry is OK: > not >=)
-    artifact.verify(&verifier, SecurityEpoch::from_raw(6)).unwrap();
+    artifact
+        .verify(&verifier, SecurityEpoch::from_raw(6))
+        .unwrap();
 }
 
 #[test]
@@ -1273,9 +1283,7 @@ fn store_default_is_halted() {
 #[test]
 fn store_load_policy_success_clears_halt() {
     let mut store = TeeAttestationPolicyStore::default();
-    let policy_id = store
-        .load_policy(sample_policy(5), "t-1", "d-1")
-        .unwrap();
+    let policy_id = store.load_policy(sample_policy(5), "t-1", "d-1").unwrap();
     assert!(!store.receipt_emission_halted());
     assert!(store.last_error_code().is_none());
     assert!(store.active_policy().is_some());
@@ -1410,9 +1418,7 @@ fn store_evaluate_quote_rejection_appends_deny_event() {
 #[test]
 fn store_evaluate_quote_event_has_platform_metadata() {
     let mut store = TeeAttestationPolicyStore::default();
-    store
-        .load_policy(sample_policy(1), "t-l", "d-l")
-        .unwrap();
+    store.load_policy(sample_policy(1), "t-l", "d-l").unwrap();
     let q = quote_for_sgx();
     store
         .evaluate_quote(
@@ -1425,10 +1431,7 @@ fn store_evaluate_quote_event_has_platform_metadata() {
         .unwrap();
     let last = store.governance_ledger().last().unwrap();
     assert_eq!(last.metadata.get("platform").unwrap(), "intel_sgx");
-    assert_eq!(
-        last.metadata.get("trust_root_id").unwrap(),
-        "sgx-root-a"
-    );
+    assert_eq!(last.metadata.get("trust_root_id").unwrap(), "sgx-root-a");
 }
 
 #[test]
@@ -1436,11 +1439,9 @@ fn store_apply_temporary_override_no_active_policy_fails() {
     let mut store = TeeAttestationPolicyStore::default();
     let key = make_signing_key();
     let verifier = key.verification_key();
-    let artifact = SignedTrustRootOverrideArtifact::create_signed(
-        &key,
-        make_override_input("sgx-temp", 1),
-    )
-    .unwrap();
+    let artifact =
+        SignedTrustRootOverrideArtifact::create_signed(&key, make_override_input("sgx-temp", 1))
+            .unwrap();
     let request = TemporaryTrustRootOverride {
         override_id: "ovr-1".to_string(),
         trust_root: PlatformTrustRoot {
@@ -1465,26 +1466,19 @@ fn store_apply_temporary_override_no_active_policy_fails() {
             "d-1",
         )
         .unwrap_err();
-    assert!(matches!(
-        err,
-        TeeAttestationPolicyError::NoActivePolicy
-    ));
+    assert!(matches!(err, TeeAttestationPolicyError::NoActivePolicy));
 }
 
 #[test]
 fn store_apply_temporary_override_appends_event() {
     let mut store = TeeAttestationPolicyStore::default();
-    store
-        .load_policy(sample_policy(10), "t-l", "d-l")
-        .unwrap();
+    store.load_policy(sample_policy(10), "t-l", "d-l").unwrap();
 
     let key = make_signing_key();
     let verifier = key.verification_key();
-    let artifact = SignedTrustRootOverrideArtifact::create_signed(
-        &key,
-        make_override_input("sgx-temp", 10),
-    )
-    .unwrap();
+    let artifact =
+        SignedTrustRootOverrideArtifact::create_signed(&key, make_override_input("sgx-temp", 10))
+            .unwrap();
     let request = TemporaryTrustRootOverride {
         override_id: "ovr-1".to_string(),
         trust_root: PlatformTrustRoot {
@@ -1518,17 +1512,13 @@ fn store_apply_temporary_override_appends_event() {
 #[test]
 fn store_apply_override_sets_temporary_source_on_root() {
     let mut store = TeeAttestationPolicyStore::default();
-    store
-        .load_policy(sample_policy(10), "t-l", "d-l")
-        .unwrap();
+    store.load_policy(sample_policy(10), "t-l", "d-l").unwrap();
 
     let key = make_signing_key();
     let verifier = key.verification_key();
-    let artifact = SignedTrustRootOverrideArtifact::create_signed(
-        &key,
-        make_override_input("sgx-temp2", 10),
-    )
-    .unwrap();
+    let artifact =
+        SignedTrustRootOverrideArtifact::create_signed(&key, make_override_input("sgx-temp2", 10))
+            .unwrap();
     let artifact_id = artifact.artifact_id.clone();
     let request = TemporaryTrustRootOverride {
         override_id: "ovr-2".to_string(),
@@ -1576,15 +1566,10 @@ fn store_apply_override_sets_temporary_source_on_root() {
 #[test]
 fn store_serde_roundtrip() {
     let mut store = TeeAttestationPolicyStore::default();
-    store
-        .load_policy(sample_policy(5), "t-1", "d-1")
-        .unwrap();
+    store.load_policy(sample_policy(5), "t-1", "d-1").unwrap();
     let json = serde_json::to_string(&store).unwrap();
     let parsed: TeeAttestationPolicyStore = serde_json::from_str(&json).unwrap();
-    assert_eq!(
-        parsed.active_policy().unwrap().policy_epoch.as_u64(),
-        5
-    );
+    assert_eq!(parsed.active_policy().unwrap().policy_epoch.as_u64(), 5);
     assert!(!parsed.receipt_emission_halted());
 }
 
@@ -1830,11 +1815,7 @@ fn error_all_codes_unique() {
     ];
     let codes: Vec<&str> = variants.iter().map(|v| v.error_code()).collect();
     let unique: HashSet<&str> = codes.iter().copied().collect();
-    assert_eq!(
-        codes.len(),
-        unique.len(),
-        "some error codes are not unique"
-    );
+    assert_eq!(codes.len(), unique.len(), "some error codes are not unique");
 }
 
 #[test]
@@ -2030,18 +2011,14 @@ fn integration_full_lifecycle() {
 #[test]
 fn integration_epoch_regression_then_recovery() {
     let mut store = TeeAttestationPolicyStore::default();
-    store
-        .load_policy(sample_policy(10), "t-1", "d-1")
-        .unwrap();
+    store.load_policy(sample_policy(10), "t-1", "d-1").unwrap();
 
     // Regression halts
     let _ = store.load_policy(sample_policy(5), "t-2", "d-2");
     assert!(store.receipt_emission_halted());
 
     // Recovery with higher epoch
-    store
-        .load_policy(sample_policy(15), "t-3", "d-3")
-        .unwrap();
+    store.load_policy(sample_policy(15), "t-3", "d-3").unwrap();
     assert!(!store.receipt_emission_halted());
     assert_eq!(store.active_policy().unwrap().policy_epoch.as_u64(), 15);
 }
