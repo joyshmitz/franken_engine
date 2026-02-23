@@ -147,7 +147,6 @@ struct CallFrame {
     /// Register where the return value should be placed.
     return_reg: u32,
     /// Base register offset for this frame (reserved for frame isolation).
-    #[allow(dead_code)]
     register_base: usize,
     /// Function table index (reserved for frame-level diagnostics).
     #[allow(dead_code)]
@@ -334,6 +333,8 @@ pub struct InterpreterCore {
     witness_seq: u64,
     /// Trace ID for logging.
     trace_id: String,
+    /// Base register offset for current frame.
+    register_base: usize,
 }
 
 impl InterpreterCore {
@@ -352,6 +353,7 @@ impl InterpreterCore {
             events: Vec::new(),
             witness_seq: 0,
             trace_id: trace_id.into(),
+            register_base: 0,
         }
     }
 
@@ -494,18 +496,24 @@ impl InterpreterCore {
                                 });
                             }
 
+                            let mut arg_vals = Vec::new();
+                            for i in 0..args.count.min(func.arity) {
+                                arg_vals.push(self.read_reg(args.start + i)?);
+                            }
+
                             // Push frame.
                             self.call_stack.push(CallFrame {
                                 return_ip: self.ip + 1,
                                 return_reg: dst,
-                                register_base: 0,
+                                register_base: self.register_base,
                                 function_index: Some(func_idx),
                             });
 
+                            self.register_base += self.config.max_registers as usize;
+
                             // Copy arguments into registers for the callee.
-                            for i in 0..args.count.min(func.arity) {
-                                let arg_val = self.read_reg(args.start + i)?;
-                                self.write_reg(i, arg_val)?;
+                            for (i, val) in arg_vals.into_iter().enumerate() {
+                                self.write_reg(i as u32, val)?;
                             }
 
                             self.ip = func.entry as usize;
@@ -521,6 +529,7 @@ impl InterpreterCore {
                 Ir3Instruction::Return { value } => {
                     let return_val = self.read_reg(value)?;
                     if let Some(frame) = self.call_stack.pop() {
+                        self.register_base = frame.register_base;
                         self.write_reg(frame.return_reg, return_val)?;
                         self.ip = frame.return_ip;
                     } else {
@@ -690,24 +699,28 @@ impl InterpreterCore {
     // -- Register access ---------------------------------------------------
 
     fn read_reg(&self, reg: u32) -> Result<Value, InterpreterError> {
-        self.registers
-            .get(reg as usize)
-            .cloned()
-            .ok_or(InterpreterError::RegisterOutOfBounds {
+        if reg >= self.config.max_registers {
+            return Err(InterpreterError::RegisterOutOfBounds {
                 register: reg,
                 max: self.config.max_registers,
-            })
+            });
+        }
+        let actual_reg = self.register_base + reg as usize;
+        Ok(self.registers.get(actual_reg).cloned().unwrap_or(Value::Undefined))
     }
 
     fn write_reg(&mut self, reg: u32, value: Value) -> Result<(), InterpreterError> {
-        let slot =
-            self.registers
-                .get_mut(reg as usize)
-                .ok_or(InterpreterError::RegisterOutOfBounds {
-                    register: reg,
-                    max: self.config.max_registers,
-                })?;
-        *slot = value;
+        if reg >= self.config.max_registers {
+            return Err(InterpreterError::RegisterOutOfBounds {
+                register: reg,
+                max: self.config.max_registers,
+            });
+        }
+        let actual_reg = self.register_base + reg as usize;
+        if actual_reg >= self.registers.len() {
+            self.registers.resize(actual_reg + 1, Value::Undefined);
+        }
+        self.registers[actual_reg] = value;
         Ok(())
     }
 
