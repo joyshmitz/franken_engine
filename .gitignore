@@ -24,3 +24,12 @@ Thumbs.db
 *.log
 *.tmp
 *.bak
+
+# Runtime SQLite databases
+storage.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+*.sqlite3-journal
+
+# Stray single-character junk files (editor/tool artifacts)
+/=
