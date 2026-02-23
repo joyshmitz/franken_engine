@@ -1095,7 +1095,7 @@ mod tests {
         let mut det = ChangePointDetector::new(50_000, 50);
         // Feed stable evidence (likelihood = 1.0).
         for _ in 0..10 {
-            det.update(MILLION);
+            det.update(MILLION, MILLION);
         }
         // Run length should have grown, change point probability should decrease.
         assert!(
