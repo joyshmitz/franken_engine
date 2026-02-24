@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use crate::engine_object_id::EngineObjectId;
 use crate::hash_tiers::ContentHash;
 use crate::proof_specialization_receipt::{
-    OptimizationClass, ProofInput, ProofType, ReceiptSchemaVersion, SpecializationReceipt,
+    OptimizationClass, ProofInput, ReceiptSchemaVersion, SpecializationReceipt,
 };
 use crate::security_epoch::SecurityEpoch;
 
@@ -41,6 +41,7 @@ const MIN_EDGE_CASE_WORKLOADS: usize = 10;
 const MIN_EPOCH_TRANSITION_WORKLOADS: usize = 5;
 
 /// Determinism repetitions for confirming identical outcomes.
+#[cfg(test)]
 const DETERMINISM_REPETITIONS: usize = 5;
 
 // ---------------------------------------------------------------------------
@@ -892,9 +893,13 @@ impl SpecializationConformanceEngine {
             ));
         }
 
-        // Equivalence evidence hash match
-        let equiv_hash_matches =
-            receipt.equivalence_evidence.evidence_hash == *equivalence_evidence_hash;
+        // Equivalence evidence hash match: compare against the first
+        // differential-test hash (the canonical evidence hash for this suite).
+        let equiv_hash_matches = receipt
+            .equivalence_evidence
+            .differential_test_hashes
+            .first()
+            .is_some_and(|h| h == equivalence_evidence_hash);
         if !equiv_hash_matches {
             failure_reasons.push("equivalence evidence hash mismatch".to_string());
         }
@@ -1168,6 +1173,7 @@ pub struct PerformanceDelta {
 mod tests {
     use super::*;
     use crate::engine_object_id::{self, ObjectDomain, SchemaId};
+    use crate::proof_specialization_receipt::ProofType;
 
     fn schema_id() -> SchemaId {
         SchemaId::from_definition(b"SpecializationConformance.v1")

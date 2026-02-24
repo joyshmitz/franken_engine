@@ -170,6 +170,50 @@ pub struct RunResult {
     pub output_digest: String,
 }
 
+/// Deterministic replay-input validation failure classes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReplayInputErrorCode {
+    MissingModelSnapshot,
+    PartialTrace,
+    CorruptedTranscript,
+}
+
+/// Deterministic replay-input validation error.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReplayInputError {
+    pub code: ReplayInputErrorCode,
+    pub message: String,
+}
+
+impl fmt::Display for ReplayInputError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}: {}", self.code.as_str(), self.message)
+    }
+}
+
+impl Error for ReplayInputError {}
+
+impl ReplayInputErrorCode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::MissingModelSnapshot => "missing_model_snapshot",
+            Self::PartialTrace => "partial_trace",
+            Self::CorruptedTranscript => "corrupted_transcript",
+        }
+    }
+}
+
+/// Deterministic linkage row for replay evidence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EvidenceLinkageRecord {
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub event_sequence: u64,
+    pub evidence_hash: String,
+}
+
 /// Deterministic runner configuration.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeterministicRunnerConfig {
@@ -519,6 +563,103 @@ pub fn verify_replay(expected: &RunResult, actual: &RunResult) -> ReplayVerifica
         expected_transcript_len: expected.random_transcript.len(),
         actual_transcript_len: actual.random_transcript.len(),
     }
+}
+
+fn digest_harness_event(event: &HarnessEvent) -> String {
+    match serde_json::to_vec(event) {
+        Ok(bytes) => digest_hex(&bytes),
+        Err(_) => "digest-error".to_string(),
+    }
+}
+
+/// Builds deterministic evidence-linkage rows for all run events.
+pub fn build_evidence_linkage(events: &[HarnessEvent]) -> Vec<EvidenceLinkageRecord> {
+    events
+        .iter()
+        .map(|event| EvidenceLinkageRecord {
+            trace_id: event.trace_id.clone(),
+            decision_id: event.decision_id.clone(),
+            policy_id: event.policy_id.clone(),
+            event_sequence: event.sequence,
+            evidence_hash: digest_harness_event(event),
+        })
+        .collect()
+}
+
+/// Validates deterministic replay input requirements and emits stable error codes.
+pub fn validate_replay_input(
+    result: &RunResult,
+    model_snapshot_pointer: Option<&str>,
+) -> Result<(), ReplayInputError> {
+    match model_snapshot_pointer {
+        Some(pointer) if !pointer.trim().is_empty() => {}
+        _ => {
+            return Err(ReplayInputError {
+                code: ReplayInputErrorCode::MissingModelSnapshot,
+                message: "model snapshot pointer is required for replay".to_string(),
+            });
+        }
+    }
+
+    for (idx, event) in result.events.iter().enumerate() {
+        let expected_sequence = idx as u64;
+        if event.sequence != expected_sequence {
+            return Err(ReplayInputError {
+                code: ReplayInputErrorCode::PartialTrace,
+                message: format!(
+                    "event sequence gap at index {idx}: expected {expected_sequence}, got {}",
+                    event.sequence
+                ),
+            });
+        }
+        if event.trace_id.trim().is_empty() {
+            return Err(ReplayInputError {
+                code: ReplayInputErrorCode::PartialTrace,
+                message: format!("event at index {idx} missing trace_id"),
+            });
+        }
+        if event.decision_id.trim().is_empty() {
+            return Err(ReplayInputError {
+                code: ReplayInputErrorCode::PartialTrace,
+                message: format!("event at index {idx} missing decision_id"),
+            });
+        }
+        if event.policy_id.trim().is_empty() {
+            return Err(ReplayInputError {
+                code: ReplayInputErrorCode::PartialTrace,
+                message: format!("event at index {idx} missing policy_id"),
+            });
+        }
+    }
+
+    if result.random_transcript.len() != result.events.len() {
+        return Err(ReplayInputError {
+            code: ReplayInputErrorCode::CorruptedTranscript,
+            message: format!(
+                "random transcript length mismatch: expected {}, got {}",
+                result.events.len(),
+                result.random_transcript.len()
+            ),
+        });
+    }
+
+    let recomputed_digest = digest_run(
+        &result.fixture_id,
+        result.seed,
+        &result.random_transcript,
+        &result.events,
+    );
+    if recomputed_digest != result.output_digest {
+        return Err(ReplayInputError {
+            code: ReplayInputErrorCode::CorruptedTranscript,
+            message: format!(
+                "run digest mismatch: expected {}, got {}",
+                result.output_digest, recomputed_digest
+            ),
+        });
+    }
+
+    Ok(())
 }
 
 /// Produces explicit replay diagnosis for runs executed on potentially different machines.
@@ -901,6 +1042,8 @@ pub struct RunManifest {
     pub event_count: usize,
     pub output_digest: String,
     pub replay_pointer: String,
+    pub model_snapshot_pointer: String,
+    pub artifact_schema_version: u32,
     pub environment_fingerprint: ReplayEnvironmentFingerprint,
 }
 
@@ -946,6 +1089,7 @@ impl RunReport {
 pub struct CollectedArtifacts {
     pub manifest_path: PathBuf,
     pub events_path: PathBuf,
+    pub evidence_linkage_path: PathBuf,
     pub report_json_path: PathBuf,
     pub report_markdown_path: PathBuf,
 }
@@ -974,12 +1118,19 @@ impl ArtifactCollector {
             event_count: result.events.len(),
             output_digest: result.output_digest.clone(),
             replay_pointer: format!("replay://{}", result.run_id),
+            model_snapshot_pointer: format!(
+                "model://snapshot/{}/seed/{}",
+                result.fixture_id, result.seed
+            ),
+            artifact_schema_version: 1,
             environment_fingerprint: ReplayEnvironmentFingerprint::local(),
         };
         let report = RunReport::from_result(result);
+        let linkage = build_evidence_linkage(&result.events);
 
         let manifest_path = run_root.join("manifest.json");
         let events_path = run_root.join("events.jsonl");
+        let evidence_linkage_path = run_root.join("evidence_linkage.json");
         let report_json_path = run_root.join("report.json");
         let report_markdown_path = run_root.join("report.md");
 
@@ -993,6 +1144,7 @@ impl ArtifactCollector {
             jsonl.push('\n');
         }
         write_atomic(&events_path, jsonl.as_bytes())?;
+        write_atomic(&evidence_linkage_path, &canonical_json_bytes(&linkage)?)?;
 
         write_atomic(&report_json_path, &canonical_json_bytes(&report)?)?;
         write_atomic(&report_markdown_path, report.to_markdown().as_bytes())?;
@@ -1000,9 +1152,167 @@ impl ArtifactCollector {
         Ok(CollectedArtifacts {
             manifest_path,
             events_path,
+            evidence_linkage_path,
             report_json_path,
             report_markdown_path,
         })
+    }
+}
+
+/// Artifact completeness result for replay bundles.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ArtifactCompletenessReport {
+    pub complete: bool,
+    pub missing_files: Vec<String>,
+    pub diagnostics: Vec<String>,
+    pub event_count: usize,
+    pub linkage_count: usize,
+}
+
+/// Audits replay artifacts for minimal external-verifier completeness.
+pub fn audit_collected_artifacts(artifacts: &CollectedArtifacts) -> ArtifactCompletenessReport {
+    let mut missing_files = Vec::new();
+    let mut diagnostics = Vec::new();
+
+    let required = [
+        ("manifest", &artifacts.manifest_path),
+        ("events", &artifacts.events_path),
+        ("evidence_linkage", &artifacts.evidence_linkage_path),
+        ("report_json", &artifacts.report_json_path),
+        ("report_markdown", &artifacts.report_markdown_path),
+    ];
+    for (name, path) in required {
+        if !path.exists() {
+            missing_files.push(name.to_string());
+        }
+    }
+
+    let mut event_count = 0usize;
+    let mut linkage_count = 0usize;
+
+    if missing_files.is_empty() {
+        let manifest: Option<RunManifest> = match fs::read_to_string(&artifacts.manifest_path) {
+            Ok(raw) => match serde_json::from_str(&raw) {
+                Ok(value) => Some(value),
+                Err(err) => {
+                    diagnostics.push(format!("manifest parse error: {err}"));
+                    None
+                }
+            },
+            Err(err) => {
+                diagnostics.push(format!("manifest read error: {err}"));
+                None
+            }
+        };
+
+        let report: Option<RunReport> = match fs::read_to_string(&artifacts.report_json_path) {
+            Ok(raw) => match serde_json::from_str(&raw) {
+                Ok(value) => Some(value),
+                Err(err) => {
+                    diagnostics.push(format!("report parse error: {err}"));
+                    None
+                }
+            },
+            Err(err) => {
+                diagnostics.push(format!("report read error: {err}"));
+                None
+            }
+        };
+
+        let events: Option<Vec<HarnessEvent>> = match fs::read_to_string(&artifacts.events_path) {
+            Ok(raw) => {
+                let mut parsed = Vec::new();
+                for (line_idx, line) in raw.lines().enumerate() {
+                    if line.trim().is_empty() {
+                        continue;
+                    }
+                    match serde_json::from_str::<HarnessEvent>(line) {
+                        Ok(event) => parsed.push(event),
+                        Err(err) => {
+                            diagnostics
+                                .push(format!("events line {} parse error: {err}", line_idx + 1));
+                            return ArtifactCompletenessReport {
+                                complete: false,
+                                missing_files,
+                                diagnostics,
+                                event_count,
+                                linkage_count,
+                            };
+                        }
+                    }
+                }
+                Some(parsed)
+            }
+            Err(err) => {
+                diagnostics.push(format!("events read error: {err}"));
+                None
+            }
+        };
+
+        let linkage: Option<Vec<EvidenceLinkageRecord>> =
+            match fs::read_to_string(&artifacts.evidence_linkage_path) {
+                Ok(raw) => match serde_json::from_str(&raw) {
+                    Ok(value) => Some(value),
+                    Err(err) => {
+                        diagnostics.push(format!("evidence_linkage parse error: {err}"));
+                        None
+                    }
+                },
+                Err(err) => {
+                    diagnostics.push(format!("evidence_linkage read error: {err}"));
+                    None
+                }
+            };
+
+        if let (Some(manifest), Some(report), Some(events), Some(linkage)) =
+            (manifest, report, events, linkage)
+        {
+            event_count = events.len();
+            linkage_count = linkage.len();
+
+            if !manifest.replay_pointer.starts_with("replay://") {
+                diagnostics.push("manifest replay_pointer missing replay:// prefix".to_string());
+            }
+            if !manifest.model_snapshot_pointer.starts_with("model://") {
+                diagnostics
+                    .push("manifest model_snapshot_pointer missing model:// prefix".to_string());
+            }
+            if manifest.artifact_schema_version == 0 {
+                diagnostics.push("manifest artifact_schema_version must be non-zero".to_string());
+            }
+            if manifest.event_count != event_count {
+                diagnostics.push(format!(
+                    "manifest event_count mismatch: expected {}, got {}",
+                    manifest.event_count, event_count
+                ));
+            }
+            if report.event_count != event_count {
+                diagnostics.push(format!(
+                    "report event_count mismatch: expected {}, got {}",
+                    report.event_count, event_count
+                ));
+            }
+            if linkage_count != event_count {
+                diagnostics.push(format!(
+                    "evidence linkage count mismatch: expected {}, got {}",
+                    event_count, linkage_count
+                ));
+            }
+            if linkage
+                .iter()
+                .any(|row| row.evidence_hash.trim().is_empty())
+            {
+                diagnostics.push("evidence linkage contains empty evidence_hash".to_string());
+            }
+        }
+    }
+
+    ArtifactCompletenessReport {
+        complete: missing_files.is_empty() && diagnostics.is_empty(),
+        missing_files,
+        diagnostics,
+        event_count,
+        linkage_count,
     }
 }
 
@@ -1615,6 +1925,102 @@ mod tests {
         );
     }
 
+    #[test]
+    fn replay_input_validation_rejects_missing_model_snapshot() {
+        let run = make_run_result("abc", 1);
+        let err = validate_replay_input(&run, None).unwrap_err();
+        assert_eq!(err.code, ReplayInputErrorCode::MissingModelSnapshot);
+    }
+
+    #[test]
+    fn replay_input_validation_rejects_partial_trace_gap() {
+        let mut run = make_run_result("abc", 1);
+        run.events = vec![
+            HarnessEvent {
+                trace_id: "trace-a".into(),
+                decision_id: "decision-0000".into(),
+                policy_id: "policy-a".into(),
+                component: "scheduler".into(),
+                event: "dispatch".into(),
+                outcome: "ok".into(),
+                error_code: None,
+                sequence: 0,
+                virtual_time_micros: 100,
+            },
+            HarnessEvent {
+                trace_id: "trace-a".into(),
+                decision_id: "decision-0001".into(),
+                policy_id: "policy-a".into(),
+                component: "scheduler".into(),
+                event: "complete".into(),
+                outcome: "ok".into(),
+                error_code: None,
+                sequence: 2,
+                virtual_time_micros: 200,
+            },
+        ];
+        run.random_transcript = vec![10, 20];
+        run.output_digest = digest_run(
+            &run.fixture_id,
+            run.seed,
+            &run.random_transcript,
+            &run.events,
+        );
+
+        let err = validate_replay_input(&run, Some("model://snapshot/fix-1")).unwrap_err();
+        assert_eq!(err.code, ReplayInputErrorCode::PartialTrace);
+        assert!(err.message.contains("expected 1, got 2"));
+    }
+
+    #[test]
+    fn replay_input_validation_rejects_corrupted_transcript_length() {
+        let mut run = make_run_result("abc", 1);
+        run.events = vec![HarnessEvent {
+            trace_id: "trace-a".into(),
+            decision_id: "decision-0000".into(),
+            policy_id: "policy-a".into(),
+            component: "scheduler".into(),
+            event: "dispatch".into(),
+            outcome: "ok".into(),
+            error_code: None,
+            sequence: 0,
+            virtual_time_micros: 100,
+        }];
+        run.random_transcript.clear();
+        run.output_digest = digest_run(
+            &run.fixture_id,
+            run.seed,
+            &run.random_transcript,
+            &run.events,
+        );
+
+        let err = validate_replay_input(&run, Some("model://snapshot/fix-1")).unwrap_err();
+        assert_eq!(err.code, ReplayInputErrorCode::CorruptedTranscript);
+        assert!(err.message.contains("length mismatch"));
+    }
+
+    #[test]
+    fn replay_input_validation_rejects_corrupted_transcript_digest() {
+        let mut run = make_run_result("abc", 1);
+        run.events = vec![HarnessEvent {
+            trace_id: "trace-a".into(),
+            decision_id: "decision-0000".into(),
+            policy_id: "policy-a".into(),
+            component: "scheduler".into(),
+            event: "dispatch".into(),
+            outcome: "ok".into(),
+            error_code: None,
+            sequence: 0,
+            virtual_time_micros: 100,
+        }];
+        run.random_transcript = vec![10];
+        run.output_digest = "tampered".into();
+
+        let err = validate_replay_input(&run, Some("model://snapshot/fix-1")).unwrap_err();
+        assert_eq!(err.code, ReplayInputErrorCode::CorruptedTranscript);
+        assert!(err.message.contains("run digest mismatch"));
+    }
+
     // ── compare_counterfactual ────────────────────────────────────
 
     #[test]
@@ -1757,6 +2163,8 @@ mod tests {
             event_count: 5,
             output_digest: "abc".into(),
             replay_pointer: "replay://r".into(),
+            model_snapshot_pointer: "model://snapshot/f/seed/10".into(),
+            artifact_schema_version: 1,
             environment_fingerprint: ReplayEnvironmentFingerprint {
                 os: "linux".into(),
                 architecture: "x86_64".into(),
@@ -2168,8 +2576,13 @@ mod tests {
         let artifacts = collector.collect(&result).unwrap();
         assert!(artifacts.manifest_path.exists());
         assert!(artifacts.events_path.exists());
+        assert!(artifacts.evidence_linkage_path.exists());
         assert!(artifacts.report_json_path.exists());
         assert!(artifacts.report_markdown_path.exists());
+        let completeness = audit_collected_artifacts(&artifacts);
+        assert!(completeness.complete);
+        assert_eq!(completeness.event_count, result.events.len());
+        assert_eq!(completeness.linkage_count, result.events.len());
         let _ = fs::remove_dir_all(&dir);
     }
 }

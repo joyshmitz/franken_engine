@@ -8,7 +8,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use e2e_harness::{
     ArtifactCollector, DeterministicRunner, FixtureStore, GoldenStore, GoldenVerificationError,
-    LogExpectation, ScenarioStep, TestFixture, assert_structured_logs, verify_replay,
+    LogExpectation, ReplayInputErrorCode, ScenarioStep, TestFixture, assert_structured_logs,
+    audit_collected_artifacts, validate_replay_input, verify_replay,
 };
 
 fn test_temp_dir(suffix: &str) -> PathBuf {
@@ -137,6 +138,7 @@ fn artifact_collector_writes_manifest_events_and_reports() {
 
     assert!(artifacts.manifest_path.exists());
     assert!(artifacts.events_path.exists());
+    assert!(artifacts.evidence_linkage_path.exists());
     assert!(artifacts.report_json_path.exists());
     assert!(artifacts.report_markdown_path.exists());
 
@@ -147,6 +149,36 @@ fn artifact_collector_writes_manifest_events_and_reports() {
     let report_md = fs::read_to_string(&artifacts.report_markdown_path).expect("report md");
     assert!(report_md.contains("# E2E Run Report"));
     assert!(report_md.contains("fixture-hello"));
+
+    let completeness = audit_collected_artifacts(&artifacts);
+    assert!(completeness.complete);
+    assert_eq!(completeness.event_count, run.events.len());
+    assert_eq!(completeness.linkage_count, run.events.len());
+}
+
+#[test]
+fn replay_input_validation_surfaces_deterministic_edge_codes() {
+    let runner = DeterministicRunner::default();
+    let fixture = sample_fixture();
+    let run = runner.run_fixture(&fixture).expect("run");
+
+    let missing_snapshot_err = validate_replay_input(&run, None).expect_err("missing snapshot");
+    assert_eq!(
+        missing_snapshot_err.code,
+        ReplayInputErrorCode::MissingModelSnapshot
+    );
+
+    let mut transcript_corrupted = run.clone();
+    transcript_corrupted.random_transcript.pop();
+    let transcript_err = validate_replay_input(
+        &transcript_corrupted,
+        Some("model://snapshot/fixture-hello/seed/42"),
+    )
+    .expect_err("corrupted transcript");
+    assert_eq!(
+        transcript_err.code,
+        ReplayInputErrorCode::CorruptedTranscript
+    );
 }
 
 #[test]

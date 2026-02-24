@@ -7,7 +7,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use e2e_harness::{
     ArtifactCollector, DeterministicRunner, FixtureStore, ReplayEnvironmentFingerprint,
-    compare_counterfactual, diagnose_cross_machine_replay, verify_replay,
+    ReplayInputErrorCode, audit_collected_artifacts, compare_counterfactual,
+    diagnose_cross_machine_replay, validate_replay_input, verify_replay,
 };
 
 fn test_temp_dir(suffix: &str) -> PathBuf {
@@ -77,12 +78,22 @@ fn replay_artifacts_include_replay_pointer_and_reports() {
     let manifest_json = fs::read_to_string(&artifacts.manifest_path).expect("manifest json");
     let report_json = fs::read_to_string(&artifacts.report_json_path).expect("report json");
     let events_jsonl = fs::read_to_string(&artifacts.events_path).expect("events jsonl");
+    let evidence_linkage_json =
+        fs::read_to_string(&artifacts.evidence_linkage_path).expect("evidence linkage json");
 
     assert!(manifest_json.contains("\"replay_pointer\":\"replay://"));
+    assert!(manifest_json.contains("\"model_snapshot_pointer\":\"model://snapshot/"));
+    assert!(manifest_json.contains("\"artifact_schema_version\":1"));
     assert!(manifest_json.contains("\"environment_fingerprint\""));
     assert!(manifest_json.contains("\"pointer_width_bits\""));
     assert!(report_json.contains("\"output_digest\""));
     assert!(!events_jsonl.trim().is_empty());
+    assert!(evidence_linkage_json.contains("\"evidence_hash\""));
+
+    let completeness = audit_collected_artifacts(&artifacts);
+    assert!(completeness.complete);
+    assert_eq!(completeness.event_count, baseline.events.len());
+    assert_eq!(completeness.linkage_count, baseline.events.len());
 }
 
 #[test]
@@ -134,6 +145,21 @@ fn transcript_fault_injection_reports_diagnostic_index() {
         replay_verification.actual_transcript_len,
         baseline.events.len()
     );
+}
+
+#[test]
+fn replay_input_validation_detects_missing_model_snapshot() {
+    let runner = DeterministicRunner::default();
+    let fixture_store =
+        FixtureStore::new(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures"))
+            .expect("fixture store");
+    let fixture = fixture_store
+        .load_fixture(replay_fixture_path())
+        .expect("load replay fixture");
+
+    let baseline = runner.run_fixture(&fixture).expect("baseline run");
+    let err = validate_replay_input(&baseline, None).expect_err("missing snapshot pointer");
+    assert_eq!(err.code, ReplayInputErrorCode::MissingModelSnapshot);
 }
 
 #[test]

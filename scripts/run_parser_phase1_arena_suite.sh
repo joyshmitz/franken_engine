@@ -4,6 +4,9 @@ set -euo pipefail
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root_dir"
 
+source "${root_dir}/scripts/e2e/parser_deterministic_env.sh"
+parser_frontier_bootstrap_env
+
 mode="${1:-ci}"
 toolchain="${RUSTUP_TOOLCHAIN:-nightly}"
 target_dir="${CARGO_TARGET_DIR:-/tmp/rch_target_franken_engine_parser_phase1_arena}"
@@ -134,6 +137,7 @@ write_manifest() {
     echo "{"
     echo '  "schema_version": "franken-engine.parser-phase1-arena-suite.run-manifest.v1",'
     echo '  "bead_id": "bd-drjd",'
+    echo '  "deterministic_env_schema_version": "franken-engine.parser-frontier.env-contract.v1",'
     echo "  \"component\": \"${component}\","
     echo "  \"mode\": \"${mode}\","
     echo "  \"scenario\": \"${scenario}\","
@@ -149,6 +153,19 @@ write_manifest() {
     if [[ -n "$failed_command" ]]; then
       echo "  \"failed_command\": \"${failed_command}\","
     fi
+    echo '  "deterministic_environment": {'
+    echo "    \"timezone\": \"${TZ}\","
+    echo "    \"lang\": \"${LANG}\","
+    echo "    \"lc_all\": \"${LC_ALL}\","
+    echo "    \"source_date_epoch\": \"${SOURCE_DATE_EPOCH}\","
+    echo "    \"rustc_version\": \"${PARSER_FRONTIER_RUSTC_VERSION}\","
+    echo "    \"cargo_version\": \"${PARSER_FRONTIER_CARGO_VERSION}\","
+    echo "    \"rust_host\": \"${PARSER_FRONTIER_RUST_HOST}\","
+    echo "    \"cpu_fingerprint\": \"${PARSER_FRONTIER_CPU_FINGERPRINT}\","
+    echo "    \"rustc_verbose_hash\": \"${PARSER_FRONTIER_RUSTC_VERBOSE_HASH}\","
+    echo "    \"toolchain_fingerprint\": \"${PARSER_FRONTIER_TOOLCHAIN_FINGERPRINT}\","
+    echo '    "seed_transcript_checksum": null'
+    echo "  },"
     echo '  "commands": ['
     for idx in "${!commands_run[@]}"; do
       comma=","

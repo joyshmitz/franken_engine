@@ -28,9 +28,7 @@ use serde::{Deserialize, Serialize};
 use crate::engine_object_id::{self, EngineObjectId, ObjectDomain, SchemaId};
 use crate::hash_tiers::ContentHash;
 use crate::policy_checkpoint::DeterministicTimestamp;
-use crate::signature_preimage::{
-    Signature, SigningKey, VerificationKey, sign_preimage, verify_signature,
-};
+use crate::signature_preimage::{Signature, VerificationKey, verify_signature};
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -459,7 +457,7 @@ pub struct RegistryEvent {
     /// Event type.
     pub event_type: RegistryEventType,
     /// Component that emitted the event.
-    pub component: &'static str,
+    pub component: String,
     /// Outcome of the operation.
     pub outcome: EventOutcome,
     /// Associated publisher ID, if applicable.
@@ -1086,10 +1084,21 @@ impl ExtensionRegistry {
             && package_active
             && signature_valid;
 
+        // Extract values from pkg before releasing the immutable borrow on self.
+        let pkg_publisher_id = pkg.manifest.publisher_id.clone();
+        let pkg_package_id = pkg.package_id.clone();
+        let pkg_publisher_key = pkg.manifest.publisher_key.clone();
+
         let outcome = if valid {
             EventOutcome::Success
         } else {
             EventOutcome::Denied
+        };
+
+        let error_detail = if errors.is_empty() {
+            None
+        } else {
+            Some(errors.join("; "))
         };
 
         self.emit_event(
@@ -1099,22 +1108,18 @@ impl ExtensionRegistry {
                 RegistryEventType::VerificationFailed
             },
             outcome,
-            Some(pkg.manifest.publisher_id.clone()),
-            Some(pkg.package_id.clone()),
+            Some(pkg_publisher_id),
+            Some(pkg_package_id.clone()),
             Some(scope.to_string()),
             Some(name.to_string()),
             Some(version),
-            if errors.is_empty() {
-                None
-            } else {
-                Some(errors.join("; "))
-            },
+            error_detail,
         );
 
         Ok(VerificationResult {
             valid,
-            package_id: pkg.package_id.clone(),
-            publisher_key: pkg.manifest.publisher_key.clone(),
+            package_id: pkg_package_id,
+            publisher_key: pkg_publisher_key,
             publisher_active,
             package_active,
             structure_valid,
@@ -1250,7 +1255,7 @@ impl ExtensionRegistry {
     ) {
         self.events.push(RegistryEvent {
             event_type,
-            component: "extension_registry",
+            component: "extension_registry".to_string(),
             outcome,
             publisher_id,
             package_id,
