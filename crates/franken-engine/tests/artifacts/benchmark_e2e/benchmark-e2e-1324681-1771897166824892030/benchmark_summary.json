@@ -1,0 +1,21 @@
+{
+  "blocked": false,
+  "families": [
+    {
+      "avg_throughput_ops_per_sec": 84047.73911581778,
+      "family": "boot-storm",
+      "profiles_run": 1,
+      "total_invariant_violations": 0
+    },
+    {
+      "avg_throughput_ops_per_sec": 787401.5748031497,
+      "family": "capability-churn",
+      "profiles_run": 1,
+      "total_invariant_violations": 0
+    }
+  ],
+  "measurement_count": 2,
+  "regression_count": 0,
+  "run_id": "evidence-test",
+  "schema_version": "franken-engine.benchmark-e2e.v1"
+}
