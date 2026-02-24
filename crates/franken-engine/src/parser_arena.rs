@@ -143,6 +143,7 @@ pub enum ArenaError {
     MissingSpan {
         index: u32,
     },
+    HandleAuditSerialization,
 }
 
 impl fmt::Display for ArenaError {
@@ -175,6 +176,9 @@ impl fmt::Display for ArenaError {
             }
             Self::MissingSpan { index } => {
                 write!(f, "span handle points to missing index {}", index)
+            }
+            Self::HandleAuditSerialization => {
+                write!(f, "failed to serialize parser arena handle-audit entry")
             }
         }
     }
@@ -213,6 +217,22 @@ pub enum ArenaExpression {
     UndefinedLiteral,
     Await(ExpressionHandle),
     Raw(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HandleAuditKind {
+    Node,
+    Expression,
+    Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HandleAuditEntry {
+    pub handle_kind: HandleAuditKind,
+    pub index: u32,
+    pub generation: u32,
+    pub descriptor: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -305,6 +325,50 @@ impl ParserArena {
 
     pub fn canonical_hash(&self) -> Result<String, ArenaError> {
         Ok(self.to_syntax_tree()?.canonical_hash())
+    }
+
+    pub fn handle_audit_entries(&self) -> Vec<HandleAuditEntry> {
+        let mut entries =
+            Vec::with_capacity(self.nodes.len() + self.expressions.len() + self.spans.len());
+
+        for (index, node) in self.nodes.iter().enumerate() {
+            entries.push(HandleAuditEntry {
+                handle_kind: HandleAuditKind::Node,
+                index: index as u32,
+                generation: HANDLE_GENERATION,
+                descriptor: node_audit_descriptor(node),
+            });
+        }
+
+        for (index, expression) in self.expressions.iter().enumerate() {
+            entries.push(HandleAuditEntry {
+                handle_kind: HandleAuditKind::Expression,
+                index: index as u32,
+                generation: HANDLE_GENERATION,
+                descriptor: expression_audit_descriptor(expression),
+            });
+        }
+
+        for (index, span) in self.spans.iter().enumerate() {
+            entries.push(HandleAuditEntry {
+                handle_kind: HandleAuditKind::Span,
+                index: index as u32,
+                generation: HANDLE_GENERATION,
+                descriptor: span_audit_descriptor(span),
+            });
+        }
+
+        entries
+    }
+
+    pub fn handle_audit_jsonl(&self) -> Result<String, ArenaError> {
+        let mut lines = Vec::new();
+        for entry in self.handle_audit_entries() {
+            let line =
+                serde_json::to_string(&entry).map_err(|_| ArenaError::HandleAuditSerialization)?;
+            lines.push(line);
+        }
+        Ok(lines.join("\n"))
     }
 
     fn alloc_statement(&mut self, statement: &Statement) -> Result<NodeHandle, ArenaError> {
@@ -536,4 +600,61 @@ const fn index_to_usize(value: u32) -> usize {
 
 fn string_bytes(value: &str) -> u64 {
     u64::try_from(value.len()).unwrap_or(u64::MAX)
+}
+
+fn node_audit_descriptor(node: &ArenaNode) -> String {
+    match node {
+        ArenaNode::Import {
+            binding,
+            source,
+            span,
+        } => format!(
+            "import binding={} source={} span={}",
+            binding.as_deref().unwrap_or("_"),
+            source,
+            span.index()
+        ),
+        ArenaNode::ExportDefault { expression, span } => {
+            format!(
+                "export_default expr={} span={}",
+                expression.index(),
+                span.index()
+            )
+        }
+        ArenaNode::ExportNamedClause { clause, span } => {
+            format!("export_named clause={} span={}", clause, span.index())
+        }
+        ArenaNode::ExpressionStatement { expression, span } => {
+            format!(
+                "expression_statement expr={} span={}",
+                expression.index(),
+                span.index()
+            )
+        }
+    }
+}
+
+fn expression_audit_descriptor(expression: &ArenaExpression) -> String {
+    match expression {
+        ArenaExpression::Identifier(value) => format!("identifier {}", value),
+        ArenaExpression::StringLiteral(value) => format!("string {}", value),
+        ArenaExpression::NumericLiteral(value) => format!("number {}", value),
+        ArenaExpression::BooleanLiteral(value) => format!("boolean {}", value),
+        ArenaExpression::NullLiteral => "null".to_string(),
+        ArenaExpression::UndefinedLiteral => "undefined".to_string(),
+        ArenaExpression::Await(inner) => format!("await {}", inner.index()),
+        ArenaExpression::Raw(value) => format!("raw {}", value),
+    }
+}
+
+fn span_audit_descriptor(span: &SourceSpan) -> String {
+    format!(
+        "{}:{}-{}:{} offsets {}..{}",
+        span.start_line,
+        span.start_column,
+        span.end_line,
+        span.end_column,
+        span.start_offset,
+        span.end_offset
+    )
 }

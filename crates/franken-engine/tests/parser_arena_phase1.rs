@@ -10,8 +10,8 @@ use ast::{
     SourceSpan, Statement, SyntaxTree,
 };
 use parser_arena::{
-    ArenaBudget, ArenaBudgetKind, ArenaError, ArenaNode, ExpressionHandle, NodeHandle, ParserArena,
-    SpanHandle,
+    ArenaBudget, ArenaBudgetKind, ArenaError, ArenaNode, ExpressionHandle, HandleAuditEntry,
+    HandleAuditKind, NodeHandle, ParserArena, SpanHandle,
 };
 
 fn span(start: u64, end: u64, line: u64, col: u64) -> SourceSpan {
@@ -43,7 +43,7 @@ fn fixture_tree() -> SyntaxTree {
 }
 
 #[test]
-fn arena_allocation_is_deterministic_for_identical_inputs() {
+fn arena_alloc_order_is_deterministic() {
     let tree = fixture_tree();
 
     let a = ParserArena::from_syntax_tree(&tree, ArenaBudget::default()).expect("first arena");
@@ -83,7 +83,7 @@ fn arena_allocation_is_deterministic_for_identical_inputs() {
 }
 
 #[test]
-fn arena_round_trip_preserves_canonical_semantics() {
+fn semantic_roundtrip_preserves_hash() {
     let tree = fixture_tree();
     let arena = ParserArena::from_syntax_tree(&tree, ArenaBudget::default()).expect("arena");
 
@@ -92,7 +92,7 @@ fn arena_round_trip_preserves_canonical_semantics() {
 }
 
 #[test]
-fn arena_reports_deterministic_budget_failures() {
+fn budget_enforcement_is_deterministic() {
     let tree = fixture_tree();
     let budget = ArenaBudget {
         max_nodes: 32,
@@ -142,4 +142,40 @@ fn arena_rejects_out_of_bounds_handles() {
     let missing = NodeHandle::from_parts(99_999, 1);
     let err = arena.node(missing).expect_err("missing handle should fail");
     assert!(matches!(err, ArenaError::MissingNode { .. }));
+}
+
+#[test]
+fn handle_audit_entries_are_deterministic() {
+    let tree = fixture_tree();
+    let a = ParserArena::from_syntax_tree(&tree, ArenaBudget::default()).expect("arena a");
+    let b = ParserArena::from_syntax_tree(&tree, ArenaBudget::default()).expect("arena b");
+
+    let entries_a = a.handle_audit_entries();
+    let entries_b = b.handle_audit_entries();
+
+    assert_eq!(entries_a, entries_b);
+    assert!(!entries_a.is_empty());
+    assert!(entries_a
+        .iter()
+        .any(|entry| entry.handle_kind == HandleAuditKind::Node));
+    assert!(entries_a
+        .iter()
+        .any(|entry| entry.handle_kind == HandleAuditKind::Expression));
+    assert!(entries_a
+        .iter()
+        .any(|entry| entry.handle_kind == HandleAuditKind::Span));
+}
+
+#[test]
+fn handle_audit_jsonl_is_parseable_and_stable() {
+    let tree = fixture_tree();
+    let arena = ParserArena::from_syntax_tree(&tree, ArenaBudget::default()).expect("arena");
+
+    let jsonl = arena.handle_audit_jsonl().expect("audit jsonl");
+    let parsed: Vec<HandleAuditEntry> = jsonl
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("valid audit entry json"))
+        .collect();
+
+    assert_eq!(parsed, arena.handle_audit_entries());
 }

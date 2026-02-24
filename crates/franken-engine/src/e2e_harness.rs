@@ -397,6 +397,74 @@ pub struct ReplayVerification {
     pub actual_transcript_len: usize,
 }
 
+/// Minimal target-environment fingerprint for cross-machine replay diagnosis.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReplayEnvironmentFingerprint {
+    pub os: String,
+    pub architecture: String,
+    pub family: String,
+    pub pointer_width_bits: u8,
+    pub endian: String,
+}
+
+impl ReplayEnvironmentFingerprint {
+    pub fn local() -> Self {
+        Self {
+            os: std::env::consts::OS.to_string(),
+            architecture: std::env::consts::ARCH.to_string(),
+            family: std::env::consts::FAMILY.to_string(),
+            pointer_width_bits: if cfg!(target_pointer_width = "64") {
+                64
+            } else if cfg!(target_pointer_width = "32") {
+                32
+            } else if cfg!(target_pointer_width = "16") {
+                16
+            } else {
+                0
+            },
+            endian: if cfg!(target_endian = "little") {
+                "little".to_string()
+            } else {
+                "big".to_string()
+            },
+        }
+    }
+}
+
+/// Cross-machine replay diagnosis with explicit environment deltas.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CrossMachineReplayDiagnosis {
+    pub cross_machine_match: bool,
+    pub replay_verification: ReplayVerification,
+    pub expected_environment: ReplayEnvironmentFingerprint,
+    pub actual_environment: ReplayEnvironmentFingerprint,
+    pub environment_mismatches: Vec<String>,
+    pub diagnosis: Option<String>,
+}
+
+fn environment_mismatch_fields(
+    expected: &ReplayEnvironmentFingerprint,
+    actual: &ReplayEnvironmentFingerprint,
+) -> Vec<String> {
+    let mut mismatches = Vec::new();
+    if expected.os != actual.os {
+        mismatches.push("os".to_string());
+    }
+    if expected.architecture != actual.architecture {
+        mismatches.push("architecture".to_string());
+    }
+    if expected.family != actual.family {
+        mismatches.push("family".to_string());
+    }
+    if expected.pointer_width_bits != actual.pointer_width_bits {
+        mismatches.push("pointer_width_bits".to_string());
+    }
+    if expected.endian != actual.endian {
+        mismatches.push("endian".to_string());
+    }
+    mismatches
+}
+
 fn first_event_mismatch_index(expected: &[HarnessEvent], actual: &[HarnessEvent]) -> Option<u64> {
     let max_len = expected.len().max(actual.len());
     (0..max_len)
@@ -450,6 +518,50 @@ pub fn verify_replay(expected: &RunResult, actual: &RunResult) -> ReplayVerifica
         actual_event_count: actual.events.len(),
         expected_transcript_len: expected.random_transcript.len(),
         actual_transcript_len: actual.random_transcript.len(),
+    }
+}
+
+/// Produces explicit replay diagnosis for runs executed on potentially different machines.
+pub fn diagnose_cross_machine_replay(
+    expected: &RunResult,
+    actual: &RunResult,
+    expected_environment: &ReplayEnvironmentFingerprint,
+    actual_environment: &ReplayEnvironmentFingerprint,
+) -> CrossMachineReplayDiagnosis {
+    let replay_verification = verify_replay(expected, actual);
+    let environment_mismatches =
+        environment_mismatch_fields(expected_environment, actual_environment);
+    let diagnosis = if replay_verification.matches {
+        if environment_mismatches.is_empty() {
+            None
+        } else {
+            Some(format!(
+                "replay matched across environment deltas: {}",
+                environment_mismatches.join(", ")
+            ))
+        }
+    } else {
+        let replay_reason = replay_verification
+            .reason
+            .clone()
+            .unwrap_or_else(|| "unknown replay mismatch".to_string());
+        if environment_mismatches.is_empty() {
+            Some(format!("replay mismatch: {replay_reason}"))
+        } else {
+            Some(format!(
+                "replay mismatch: {replay_reason}; environment mismatch fields: {}",
+                environment_mismatches.join(", ")
+            ))
+        }
+    };
+
+    CrossMachineReplayDiagnosis {
+        cross_machine_match: replay_verification.matches,
+        replay_verification,
+        expected_environment: expected_environment.clone(),
+        actual_environment: actual_environment.clone(),
+        environment_mismatches,
+        diagnosis,
     }
 }
 
@@ -789,6 +901,7 @@ pub struct RunManifest {
     pub event_count: usize,
     pub output_digest: String,
     pub replay_pointer: String,
+    pub environment_fingerprint: ReplayEnvironmentFingerprint,
 }
 
 /// Human/machine report summary.
@@ -861,6 +974,7 @@ impl ArtifactCollector {
             event_count: result.events.len(),
             output_digest: result.output_digest.clone(),
             replay_pointer: format!("replay://{}", result.run_id),
+            environment_fingerprint: ReplayEnvironmentFingerprint::local(),
         };
         let report = RunReport::from_result(result);
 
@@ -1441,6 +1555,66 @@ mod tests {
         assert_eq!(v.actual_transcript_len, 1);
     }
 
+    #[test]
+    fn cross_machine_replay_diag_environment_delta_with_match() {
+        let a = make_run_result("abc", 1);
+        let b = make_run_result("abc", 1);
+        let expected_env = ReplayEnvironmentFingerprint {
+            os: "linux".into(),
+            architecture: "x86_64".into(),
+            family: "unix".into(),
+            pointer_width_bits: 64,
+            endian: "little".into(),
+        };
+        let actual_env = ReplayEnvironmentFingerprint {
+            os: "linux".into(),
+            architecture: "aarch64".into(),
+            family: "unix".into(),
+            pointer_width_bits: 64,
+            endian: "little".into(),
+        };
+        let diag = diagnose_cross_machine_replay(&a, &b, &expected_env, &actual_env);
+        assert!(diag.cross_machine_match);
+        assert_eq!(
+            diag.environment_mismatches,
+            vec!["architecture".to_string()]
+        );
+        assert_eq!(
+            diag.diagnosis.as_deref(),
+            Some("replay matched across environment deltas: architecture")
+        );
+    }
+
+    #[test]
+    fn cross_machine_replay_diag_mismatch_includes_environment_context() {
+        let a = make_run_result("abc", 1);
+        let b = make_run_result("xyz", 1);
+        let expected_env = ReplayEnvironmentFingerprint {
+            os: "linux".into(),
+            architecture: "x86_64".into(),
+            family: "unix".into(),
+            pointer_width_bits: 64,
+            endian: "little".into(),
+        };
+        let actual_env = ReplayEnvironmentFingerprint {
+            os: "windows".into(),
+            architecture: "x86_64".into(),
+            family: "windows".into(),
+            pointer_width_bits: 64,
+            endian: "little".into(),
+        };
+        let diag = diagnose_cross_machine_replay(&a, &b, &expected_env, &actual_env);
+        assert!(!diag.cross_machine_match);
+        assert_eq!(
+            diag.environment_mismatches,
+            vec!["os".to_string(), "family".to_string()]
+        );
+        assert_eq!(
+            diag.diagnosis.as_deref(),
+            Some("replay mismatch: digest mismatch; environment mismatch fields: os, family")
+        );
+    }
+
     // ── compare_counterfactual ────────────────────────────────────
 
     #[test]
@@ -1583,6 +1757,13 @@ mod tests {
             event_count: 5,
             output_digest: "abc".into(),
             replay_pointer: "replay://r".into(),
+            environment_fingerprint: ReplayEnvironmentFingerprint {
+                os: "linux".into(),
+                architecture: "x86_64".into(),
+                family: "unix".into(),
+                pointer_width_bits: 64,
+                endian: "little".into(),
+            },
         };
         let json = serde_json::to_string(&m).unwrap();
         let back: RunManifest = serde_json::from_str(&json).unwrap();
@@ -1638,6 +1819,47 @@ mod tests {
         let json = serde_json::to_string(&v).unwrap();
         let back: ReplayVerification = serde_json::from_str(&json).unwrap();
         assert_eq!(v, back);
+    }
+
+    #[test]
+    fn cross_machine_replay_diagnosis_serde_round_trip() {
+        let d = CrossMachineReplayDiagnosis {
+            cross_machine_match: false,
+            replay_verification: ReplayVerification {
+                matches: false,
+                expected_digest: "a".into(),
+                actual_digest: "b".into(),
+                reason: Some("digest mismatch".into()),
+                mismatch_kind: Some(ReplayMismatchKind::Digest),
+                diverged_event_sequence: None,
+                transcript_mismatch_index: None,
+                expected_event_count: 0,
+                actual_event_count: 0,
+                expected_transcript_len: 0,
+                actual_transcript_len: 0,
+            },
+            expected_environment: ReplayEnvironmentFingerprint {
+                os: "linux".into(),
+                architecture: "x86_64".into(),
+                family: "unix".into(),
+                pointer_width_bits: 64,
+                endian: "little".into(),
+            },
+            actual_environment: ReplayEnvironmentFingerprint {
+                os: "windows".into(),
+                architecture: "x86_64".into(),
+                family: "windows".into(),
+                pointer_width_bits: 64,
+                endian: "little".into(),
+            },
+            environment_mismatches: vec!["os".into(), "family".into()],
+            diagnosis: Some(
+                "replay mismatch: digest mismatch; environment mismatch fields: os, family".into(),
+            ),
+        };
+        let json = serde_json::to_string(&d).unwrap();
+        let back: CrossMachineReplayDiagnosis = serde_json::from_str(&json).unwrap();
+        assert_eq!(d, back);
     }
 
     // ── CounterfactualDelta serde ─────────────────────────────────

@@ -966,7 +966,7 @@ impl SpecializationConformanceEngine {
             };
 
             let rollback_token = entry
-                .map(|e| e.rollback_token_hash)
+                .map(|e| e.rollback_token_hash.clone())
                 .unwrap_or_else(|| ContentHash::compute(b"missing"));
 
             evidence.push(InvalidationEvidence {

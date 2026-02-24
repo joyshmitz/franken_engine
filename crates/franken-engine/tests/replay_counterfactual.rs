@@ -6,7 +6,8 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use e2e_harness::{
-    ArtifactCollector, DeterministicRunner, FixtureStore, compare_counterfactual, verify_replay,
+    ArtifactCollector, DeterministicRunner, FixtureStore, ReplayEnvironmentFingerprint,
+    compare_counterfactual, diagnose_cross_machine_replay, verify_replay,
 };
 
 fn test_temp_dir(suffix: &str) -> PathBuf {
@@ -78,6 +79,8 @@ fn replay_artifacts_include_replay_pointer_and_reports() {
     let events_jsonl = fs::read_to_string(&artifacts.events_path).expect("events jsonl");
 
     assert!(manifest_json.contains("\"replay_pointer\":\"replay://"));
+    assert!(manifest_json.contains("\"environment_fingerprint\""));
+    assert!(manifest_json.contains("\"pointer_width_bits\""));
     assert!(report_json.contains("\"output_digest\""));
     assert!(!events_jsonl.trim().is_empty());
 }
@@ -130,5 +133,42 @@ fn transcript_fault_injection_reports_diagnostic_index() {
     assert_eq!(
         replay_verification.actual_transcript_len,
         baseline.events.len()
+    );
+}
+
+#[test]
+fn cross_machine_replay_diagnosis_surfaces_environment_deltas() {
+    let runner = DeterministicRunner::default();
+    let fixture_store =
+        FixtureStore::new(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures"))
+            .expect("fixture store");
+    let fixture = fixture_store
+        .load_fixture(replay_fixture_path())
+        .expect("load replay fixture");
+
+    let baseline = runner.run_fixture(&fixture).expect("baseline run");
+    let replay = runner.run_fixture(&fixture).expect("replay run");
+
+    let expected_env = ReplayEnvironmentFingerprint {
+        os: "linux".to_string(),
+        architecture: "x86_64".to_string(),
+        family: "unix".to_string(),
+        pointer_width_bits: 64,
+        endian: "little".to_string(),
+    };
+    let actual_env = ReplayEnvironmentFingerprint {
+        os: "linux".to_string(),
+        architecture: "aarch64".to_string(),
+        family: "unix".to_string(),
+        pointer_width_bits: 64,
+        endian: "little".to_string(),
+    };
+
+    let diagnosis = diagnose_cross_machine_replay(&baseline, &replay, &expected_env, &actual_env);
+    assert!(diagnosis.cross_machine_match);
+    assert_eq!(diagnosis.environment_mismatches, vec!["architecture"]);
+    assert_eq!(
+        diagnosis.diagnosis.as_deref(),
+        Some("replay matched across environment deltas: architecture")
     );
 }
