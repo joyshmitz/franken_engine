@@ -329,6 +329,102 @@ impl fmt::Display for FixtureValidationError {
 
 impl Error for FixtureValidationError {}
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct LegacyFixtureV0 {
+    fixture_id: String,
+    fixture_version: u32,
+    seed: u64,
+    virtual_time_start_micros: u64,
+    policy_id: String,
+    steps: Vec<ScenarioStep>,
+}
+
+/// Fixture migration failures for schema-evolution replay support.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FixtureMigrationError {
+    InvalidFixturePayload { message: String },
+    UnsupportedVersion { expected: u32, actual: u32 },
+    InvalidMigratedFixture { message: String },
+}
+
+impl fmt::Display for FixtureMigrationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidFixturePayload { message } => {
+                write!(f, "invalid fixture payload: {message}")
+            }
+            Self::UnsupportedVersion { expected, actual } => write!(
+                f,
+                "unsupported fixture version: expected {expected} (or migratable 0), got {actual}"
+            ),
+            Self::InvalidMigratedFixture { message } => {
+                write!(f, "invalid migrated fixture: {message}")
+            }
+        }
+    }
+}
+
+impl Error for FixtureMigrationError {}
+
+/// Parses fixture payloads and migrates legacy schema versions when supported.
+pub fn parse_fixture_with_migration(bytes: &[u8]) -> Result<TestFixture, FixtureMigrationError> {
+    let value: serde_json::Value = serde_json::from_slice(bytes).map_err(|err| {
+        FixtureMigrationError::InvalidFixturePayload {
+            message: err.to_string(),
+        }
+    })?;
+
+    let version = value
+        .get("fixture_version")
+        .and_then(|raw| raw.as_u64())
+        .ok_or_else(|| FixtureMigrationError::InvalidFixturePayload {
+            message: "missing fixture_version".to_string(),
+        })? as u32;
+
+    if version == TestFixture::CURRENT_VERSION {
+        let fixture: TestFixture = serde_json::from_value(value).map_err(|err| {
+            FixtureMigrationError::InvalidFixturePayload {
+                message: err.to_string(),
+            }
+        })?;
+        fixture
+            .validate()
+            .map_err(|err| FixtureMigrationError::InvalidMigratedFixture {
+                message: err.to_string(),
+            })?;
+        return Ok(fixture);
+    }
+
+    if version == 0 {
+        let legacy: LegacyFixtureV0 = serde_json::from_value(value).map_err(|err| {
+            FixtureMigrationError::InvalidFixturePayload {
+                message: err.to_string(),
+            }
+        })?;
+        let migrated = TestFixture {
+            fixture_id: legacy.fixture_id,
+            fixture_version: TestFixture::CURRENT_VERSION,
+            seed: legacy.seed,
+            virtual_time_start_micros: legacy.virtual_time_start_micros,
+            policy_id: legacy.policy_id,
+            steps: legacy.steps,
+            expected_events: Vec::new(),
+            determinism_check: true,
+        };
+        migrated
+            .validate()
+            .map_err(|err| FixtureMigrationError::InvalidMigratedFixture {
+                message: err.to_string(),
+            })?;
+        return Ok(migrated);
+    }
+
+    Err(FixtureMigrationError::UnsupportedVersion {
+        expected: TestFixture::CURRENT_VERSION,
+        actual: version,
+    })
+}
+
 /// Content-addressed fixture store.
 #[derive(Debug, Clone)]
 pub struct FixtureStore {
@@ -361,12 +457,8 @@ impl FixtureStore {
 
     pub fn load_fixture(&self, path: impl AsRef<Path>) -> io::Result<TestFixture> {
         let bytes = fs::read(path.as_ref())?;
-        let fixture: TestFixture = serde_json::from_slice(&bytes)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-        fixture
-            .validate()
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-        Ok(fixture)
+        parse_fixture_with_migration(&bytes)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
     }
 }
 
@@ -1570,6 +1662,51 @@ mod tests {
         let json = serde_json::to_string(&f).unwrap();
         let back: TestFixture = serde_json::from_str(&json).unwrap();
         assert_eq!(f, back);
+    }
+
+    #[test]
+    fn parse_fixture_with_migration_supports_legacy_v0() {
+        let legacy = serde_json::json!({
+            "fixture_id": "legacy-fix",
+            "fixture_version": 0,
+            "seed": 7,
+            "virtual_time_start_micros": 123,
+            "policy_id": "policy-legacy",
+            "steps": [
+                {
+                    "component": "scheduler",
+                    "event": "dispatch",
+                    "advance_micros": 5
+                }
+            ]
+        });
+        let bytes = serde_json::to_vec(&legacy).unwrap();
+        let migrated = parse_fixture_with_migration(&bytes).unwrap();
+        assert_eq!(migrated.fixture_version, TestFixture::CURRENT_VERSION);
+        assert_eq!(migrated.fixture_id, "legacy-fix");
+        assert!(migrated.expected_events.is_empty());
+        assert!(migrated.determinism_check);
+    }
+
+    #[test]
+    fn parse_fixture_with_migration_rejects_unknown_version() {
+        let payload = serde_json::json!({
+            "fixture_id": "future-fix",
+            "fixture_version": 99,
+            "seed": 1,
+            "virtual_time_start_micros": 0,
+            "policy_id": "policy",
+            "steps": [{"component":"c","event":"e"}]
+        });
+        let bytes = serde_json::to_vec(&payload).unwrap();
+        let err = parse_fixture_with_migration(&bytes).unwrap_err();
+        assert!(matches!(
+            err,
+            FixtureMigrationError::UnsupportedVersion {
+                expected: 1,
+                actual: 99
+            }
+        ));
     }
 
     // ── FixtureValidationError Display ────────────────────────────

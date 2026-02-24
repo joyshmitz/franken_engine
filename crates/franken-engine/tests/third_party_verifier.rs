@@ -5,8 +5,8 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use frankenengine_engine::benchmark_denominator::{
-    evaluate_publication_gate, BenchmarkCase, NativeCoveragePoint, PublicationContext,
-    PublicationGateInput,
+    BenchmarkCase, NativeCoveragePoint, PublicationContext, PublicationGateInput,
+    evaluate_publication_gate,
 };
 use frankenengine_engine::causal_replay::{
     DecisionSnapshot, NondeterminismSource, RecorderConfig, RecordingMode, TraceRecord,
@@ -20,9 +20,10 @@ use frankenengine_engine::quarantine_mesh_gate::{
 use frankenengine_engine::security_epoch::SecurityEpoch;
 use frankenengine_engine::signature_preimage::SigningKey;
 use frankenengine_engine::third_party_verifier::{
+    BenchmarkClaimBundle, ClaimedBenchmarkOutcome, ContainmentClaimBundle, ReplayClaimBundle,
+    VerificationAttestation, VerificationAttestationInput, VerificationVerdict,
     generate_attestation, verify_attestation, verify_benchmark_claim, verify_containment_claim,
-    verify_replay_claim, BenchmarkClaimBundle, ClaimedBenchmarkOutcome, ContainmentClaimBundle,
-    ReplayClaimBundle, VerificationAttestation, VerificationAttestationInput, VerificationVerdict,
+    verify_replay_claim,
 };
 
 fn temp_json_path(prefix: &str) -> PathBuf {
@@ -238,10 +239,12 @@ fn benchmark_claim_detects_tampered_score() {
     bundle.claimed.score_vs_node += 0.25;
     let report = verify_benchmark_claim(&bundle);
     assert_eq!(report.verdict, VerificationVerdict::Failed);
-    assert!(report
-        .checks
-        .iter()
-        .any(|check| check.name == "score_vs_node_matches" && !check.passed));
+    assert!(
+        report
+            .checks
+            .iter()
+            .any(|check| check.name == "score_vs_node_matches" && !check.passed)
+    );
 }
 
 #[test]
@@ -266,10 +269,12 @@ fn containment_claim_fails_when_latency_exceeds_sla() {
     bundle.result.scenarios[0].detection_latency_ns = 600_000_000;
     let report = verify_containment_claim(&bundle);
     assert_eq!(report.verdict, VerificationVerdict::Failed);
-    assert!(report
-        .checks
-        .iter()
-        .any(|check| check.name.contains("latency_sla:scenario-1") && !check.passed));
+    assert!(
+        report
+            .checks
+            .iter()
+            .any(|check| check.name.contains("latency_sla:scenario-1") && !check.passed)
+    );
 }
 
 #[test]
@@ -305,10 +310,12 @@ fn attestation_verification_detects_digest_tampering() {
 
     let verification = verify_attestation(&attestation);
     assert_eq!(verification.verdict, VerificationVerdict::Failed);
-    assert!(verification
-        .checks
-        .iter()
-        .any(|check| check.name == "report_digest_matches" && !check.passed));
+    assert!(
+        verification
+            .checks
+            .iter()
+            .any(|check| check.name == "report_digest_matches" && !check.passed)
+    );
 }
 
 #[test]

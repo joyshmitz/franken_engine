@@ -37,7 +37,6 @@ use crate::signature_preimage::{Signature, VerificationKey, verify_signature};
 const REGISTRY_ZONE: &str = "extension-registry";
 const PACKAGE_SCHEMA_DEF: &[u8] = b"ExtensionPackage.v1";
 const PUBLISHER_SCHEMA_DEF: &[u8] = b"ExtensionPublisher.v1";
-const REVOCATION_SCHEMA_DEF: &[u8] = b"ExtensionRegistryRevocation.v1";
 
 /// Maximum number of capabilities an extension may declare.
 const MAX_CAPABILITIES: usize = 256;
@@ -651,14 +650,14 @@ pub struct VerificationResult {
 /// Signed extension registry providing publish, query, verify, and revoke.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtensionRegistry {
-    /// Registered publishers by ID.
-    publishers: BTreeMap<EngineObjectId, PublisherIdentity>,
+    /// Registered publishers (each entry carries its own `id` field).
+    publishers: Vec<PublisherIdentity>,
     /// Scope ownership: scope name -> publisher ID.
     scope_owners: BTreeMap<String, EngineObjectId>,
-    /// Published packages by key.
-    packages: BTreeMap<PackageKey, SignedPackage>,
-    /// Package index by ID for revocation lookups.
-    package_index: BTreeMap<EngineObjectId, PackageKey>,
+    /// Published packages (linear scan by key fields in manifest).
+    packages: Vec<SignedPackage>,
+    /// Package index by ID for revocation lookups: (package_id, PackageKey) pairs.
+    package_index: Vec<(EngineObjectId, PackageKey)>,
     /// Audit event log.
     events: Vec<RegistryEvent>,
     /// Current logical timestamp.
@@ -669,10 +668,10 @@ impl ExtensionRegistry {
     /// Create a new empty registry.
     pub fn new(start_tick: DeterministicTimestamp) -> Self {
         Self {
-            publishers: BTreeMap::new(),
+            publishers: Vec::new(),
             scope_owners: BTreeMap::new(),
-            packages: BTreeMap::new(),
-            package_index: BTreeMap::new(),
+            packages: Vec::new(),
+            package_index: Vec::new(),
             events: Vec::new(),
             current_tick: start_tick,
         }
@@ -730,7 +729,7 @@ impl ExtensionRegistry {
             revocation_reason: None,
         };
 
-        self.publishers.insert(publisher_id.clone(), identity);
+        self.publishers.push(identity);
         self.emit_event(
             RegistryEventType::PublisherRegistered,
             EventOutcome::Success,
@@ -753,8 +752,11 @@ impl ExtensionRegistry {
     ) -> Result<(), RegistryError> {
         let publisher = self
             .publishers
-            .get_mut(&publisher_id)
-            .ok_or(RegistryError::PublisherNotFound { publisher_id: publisher_id.clone() })?;
+            .iter_mut()
+            .find(|p| p.id == publisher_id)
+            .ok_or(RegistryError::PublisherNotFound {
+                publisher_id: publisher_id.clone(),
+            })?;
 
         publisher.revoked = true;
         publisher.revoked_at = Some(self.current_tick);
@@ -775,13 +777,14 @@ impl ExtensionRegistry {
 
     /// Look up a publisher by ID.
     pub fn get_publisher(&self, publisher_id: &EngineObjectId) -> Option<&PublisherIdentity> {
-        self.publishers.get(publisher_id)
+        self.publishers.iter().find(|p| &p.id == publisher_id)
     }
 
     /// Check if a publisher is active (registered and not revoked).
     pub fn is_publisher_active(&self, publisher_id: &EngineObjectId) -> bool {
         self.publishers
-            .get(publisher_id)
+            .iter()
+            .find(|p| &p.id == publisher_id)
             .is_some_and(|p| !p.revoked)
     }
 
@@ -797,15 +800,10 @@ impl ExtensionRegistry {
     ) -> Result<(), RegistryError> {
         validate_scope(scope)?;
 
-        if !self.publishers.contains_key(&publisher_id) {
-            return Err(RegistryError::PublisherNotFound { publisher_id });
-        }
-        if self
-            .publishers
-            .get(&publisher_id)
-            .is_some_and(|p| p.revoked)
-        {
-            return Err(RegistryError::PublisherRevoked { publisher_id });
+        match self.publishers.iter().find(|p| p.id == publisher_id) {
+            None => return Err(RegistryError::PublisherNotFound { publisher_id }),
+            Some(p) if p.revoked => return Err(RegistryError::PublisherRevoked { publisher_id }),
+            Some(_) => {}
         }
 
         // Check if scope is already owned by someone else.
@@ -820,8 +818,9 @@ impl ExtensionRegistry {
             return Ok(());
         }
 
-        self.scope_owners.insert(scope.to_string(), publisher_id.clone());
-        if let Some(pub_entry) = self.publishers.get_mut(&publisher_id) {
+        self.scope_owners
+            .insert(scope.to_string(), publisher_id.clone());
+        if let Some(pub_entry) = self.publishers.iter_mut().find(|p| p.id == publisher_id) {
             pub_entry.owned_scopes.insert(scope.to_string());
         }
 
@@ -864,7 +863,7 @@ impl ExtensionRegistry {
         let pub_id = manifest.publisher_id.clone();
 
         // 2. Check publisher exists and is active.
-        let publisher = self.publishers.get(&pub_id).ok_or(
+        let publisher = self.publishers.iter().find(|p| p.id == pub_id).ok_or(
             RegistryError::PublisherNotFound {
                 publisher_id: pub_id.clone(),
             },
@@ -890,7 +889,11 @@ impl ExtensionRegistry {
             name: manifest.name.clone(),
             version: manifest.version,
         };
-        if self.packages.contains_key(&key) {
+        if self.packages.iter().any(|p| {
+            p.manifest.scope == key.scope
+                && p.manifest.name == key.name
+                && p.manifest.version == key.version
+        }) {
             return Err(RegistryError::PackageAlreadyExists {
                 scope: manifest.scope.clone(),
                 name: manifest.name.clone(),
@@ -933,8 +936,8 @@ impl ExtensionRegistry {
         let name = package.manifest.name.clone();
         let version = package.manifest.version;
 
-        self.package_index.insert(package_id.clone(), key.clone());
-        self.packages.insert(key, package);
+        self.package_index.push((package_id.clone(), key.clone()));
+        self.packages.push(package);
 
         self.emit_event(
             RegistryEventType::PackagePublished,
@@ -961,44 +964,48 @@ impl ExtensionRegistry {
         name: &str,
         version: PackageVersion,
     ) -> Option<&SignedPackage> {
-        let key = PackageKey {
-            scope: scope.to_string(),
-            name: name.to_string(),
-            version,
-        };
-        self.packages.get(&key)
+        self.packages.iter().find(|p| {
+            p.manifest.scope == scope && p.manifest.name == name && p.manifest.version == version
+        })
     }
 
     /// Look up a package by its ID.
     pub fn get_package_by_id(&self, package_id: &EngineObjectId) -> Option<&SignedPackage> {
         self.package_index
-            .get(package_id)
-            .and_then(|key| self.packages.get(key))
+            .iter()
+            .find(|(id, _)| id == package_id)
+            .and_then(|(_, key)| {
+                self.packages.iter().find(|p| {
+                    p.manifest.scope == key.scope
+                        && p.manifest.name == key.name
+                        && p.manifest.version == key.version
+                })
+            })
     }
 
     /// Search packages using a query.
     pub fn search(&self, query: &PackageQuery) -> Vec<&SignedPackage> {
         let mut results: Vec<&SignedPackage> = self
             .packages
-            .values()
+            .iter()
             .filter(|pkg| {
                 if !query.include_revoked && pkg.revoked {
                     return false;
                 }
-                if let Some(ref scope) = query.scope {
-                    if pkg.manifest.scope != *scope {
-                        return false;
-                    }
+                if let Some(ref scope) = query.scope
+                    && pkg.manifest.scope != *scope
+                {
+                    return false;
                 }
-                if let Some(ref name) = query.name {
-                    if pkg.manifest.name != *name {
-                        return false;
-                    }
+                if let Some(ref name) = query.name
+                    && pkg.manifest.name != *name
+                {
+                    return false;
                 }
-                if let Some(ref pub_id) = query.publisher_id {
-                    if pkg.manifest.publisher_id != *pub_id {
-                        return false;
-                    }
+                if let Some(ref pub_id) = query.publisher_id
+                    && pkg.manifest.publisher_id != *pub_id
+                {
+                    return false;
                 }
                 true
             })
@@ -1017,9 +1024,9 @@ impl ExtensionRegistry {
     /// List all versions of a named package.
     pub fn list_versions(&self, scope: &str, name: &str) -> Vec<PackageVersion> {
         self.packages
-            .keys()
-            .filter(|k| k.scope == scope && k.name == name)
-            .map(|k| k.version)
+            .iter()
+            .filter(|p| p.manifest.scope == scope && p.manifest.name == name)
+            .map(|p| p.manifest.version)
             .collect()
     }
 
@@ -1042,7 +1049,12 @@ impl ExtensionRegistry {
         };
         let pkg = self
             .packages
-            .get(&key)
+            .iter()
+            .find(|p| {
+                p.manifest.scope == key.scope
+                    && p.manifest.name == key.name
+                    && p.manifest.version == key.version
+            })
             .ok_or(RegistryError::PackageNotFound {
                 scope: scope.to_string(),
                 name: name.to_string(),
@@ -1141,14 +1153,14 @@ impl ExtensionRegistry {
         version: PackageVersion,
         reason: &str,
     ) -> Result<(), RegistryError> {
-        let key = PackageKey {
-            scope: scope.to_string(),
-            name: name.to_string(),
-            version,
-        };
         let pkg = self
             .packages
-            .get_mut(&key)
+            .iter_mut()
+            .find(|p| {
+                p.manifest.scope == scope
+                    && p.manifest.name == name
+                    && p.manifest.version == version
+            })
             .ok_or(RegistryError::PackageNotFound {
                 scope: scope.to_string(),
                 name: name.to_string(),
@@ -1181,11 +1193,14 @@ impl ExtensionRegistry {
         package_id: EngineObjectId,
         reason: &str,
     ) -> Result<(), RegistryError> {
-        let key = self.package_index.get(&package_id).cloned().ok_or(
-            RegistryError::RevocationTargetUnknown {
+        let key = self
+            .package_index
+            .iter()
+            .find(|(id, _)| id == &package_id)
+            .map(|(_, k)| k.clone())
+            .ok_or(RegistryError::RevocationTargetUnknown {
                 target_id: package_id,
-            },
-        )?;
+            })?;
         let scope = key.scope.clone();
         let name = key.name.clone();
         let version = key.version;
@@ -1194,12 +1209,9 @@ impl ExtensionRegistry {
 
     /// Check if a package is revoked (directly or transitively via publisher).
     pub fn is_package_revoked(&self, scope: &str, name: &str, version: PackageVersion) -> bool {
-        let key = PackageKey {
-            scope: scope.to_string(),
-            name: name.to_string(),
-            version,
-        };
-        match self.packages.get(&key) {
+        match self.packages.iter().find(|p| {
+            p.manifest.scope == scope && p.manifest.name == name && p.manifest.version == version
+        }) {
             None => false,
             Some(pkg) => {
                 // Direct package revocation.
@@ -1218,7 +1230,7 @@ impl ExtensionRegistry {
         publisher_id: &EngineObjectId,
     ) -> Vec<&SignedPackage> {
         self.packages
-            .values()
+            .iter()
             .filter(|pkg| pkg.manifest.publisher_id == *publisher_id)
             .collect()
     }
@@ -1275,14 +1287,14 @@ impl ExtensionRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::signature_preimage::SigningKey;
+    use crate::signature_preimage::{SigningKey, sign_preimage};
 
     // -----------------------------------------------------------------------
     // Test helpers
     // -----------------------------------------------------------------------
 
     fn test_signing_key() -> SigningKey {
-        let mut bytes = [0u8; 64];
+        let mut bytes = [0u8; 32];
         for (i, b) in bytes.iter_mut().enumerate() {
             *b = (i as u8).wrapping_mul(7).wrapping_add(3);
         }
@@ -1294,7 +1306,7 @@ mod tests {
     }
 
     fn second_signing_key() -> SigningKey {
-        let mut bytes = [0u8; 64];
+        let mut bytes = [0u8; 32];
         for (i, b) in bytes.iter_mut().enumerate() {
             *b = (i as u8).wrapping_mul(13).wrapping_add(17);
         }
@@ -1375,8 +1387,8 @@ mod tests {
         let mut reg = ExtensionRegistry::new(DeterministicTimestamp(100));
         let sk = test_signing_key();
         let vk = test_verification_key_from(&sk);
-        let pub_id = reg.register_publisher("TestOrg", vk).unwrap();
-        reg.claim_scope(pub_id, "testorg").unwrap();
+        let pub_id = reg.register_publisher("TestOrg", vk.clone()).unwrap();
+        reg.claim_scope(pub_id.clone(), "testorg").unwrap();
         (reg, pub_id, sk, vk)
     }
 
@@ -1386,7 +1398,7 @@ mod tests {
         sk: &SigningKey,
     ) -> Result<EngineObjectId, RegistryError> {
         let unsigned = manifest.unsigned_bytes();
-        let sig = sign_preimage(sk, &unsigned);
+        let sig = sign_preimage(sk, &unsigned).expect("test signing should not fail");
         reg.publish(manifest.clone(), sig)
     }
 
@@ -1415,7 +1427,8 @@ mod tests {
         assert!(reg.is_publisher_active(&pub_id));
 
         reg.advance_tick(DeterministicTimestamp(10));
-        reg.revoke_publisher(pub_id, "compromised key").unwrap();
+        reg.revoke_publisher(pub_id.clone(), "compromised key")
+            .unwrap();
         assert!(!reg.is_publisher_active(&pub_id));
 
         let p = reg.get_publisher(&pub_id).unwrap();
@@ -1443,7 +1456,7 @@ mod tests {
     fn claim_scope_succeeds() {
         let (mut reg, pub_id, _, _) = setup_registry_with_publisher();
         // Already claimed "testorg" in setup — idempotent re-claim.
-        assert!(reg.claim_scope(pub_id, "testorg").is_ok());
+        assert!(reg.claim_scope(pub_id.clone(), "testorg").is_ok());
         assert!(reg.publisher_owns_scope(&pub_id, "testorg"));
     }
 
@@ -1461,7 +1474,7 @@ mod tests {
     fn claim_scope_invalid_name_fails() {
         let (mut reg, pub_id, _, _) = setup_registry_with_publisher();
         assert!(matches!(
-            reg.claim_scope(pub_id, ""),
+            reg.claim_scope(pub_id.clone(), ""),
             Err(RegistryError::InvalidScope { .. })
         ));
         assert!(matches!(
@@ -1473,7 +1486,7 @@ mod tests {
     #[test]
     fn claim_scope_revoked_publisher_fails() {
         let (mut reg, pub_id, _, _) = setup_registry_with_publisher();
-        reg.revoke_publisher(pub_id, "test").unwrap();
+        reg.revoke_publisher(pub_id.clone(), "test").unwrap();
         let result = reg.claim_scope(pub_id, "newscope");
         assert!(matches!(
             result,
@@ -1522,7 +1535,7 @@ mod tests {
     #[test]
     fn publish_revoked_publisher_fails() {
         let (mut reg, pub_id, sk, vk) = setup_registry_with_publisher();
-        reg.revoke_publisher(pub_id, "compromised").unwrap();
+        reg.revoke_publisher(pub_id.clone(), "compromised").unwrap();
         let version = PackageVersion::new(1, 0, 0);
         let manifest = build_manifest("testorg", "ext", version, &pub_id, &vk);
         let result = sign_and_publish(&mut reg, &manifest, &sk);
@@ -1689,7 +1702,7 @@ mod tests {
         let v = PackageVersion::new(1, 0, 0);
         let m = build_manifest("testorg", "ext", v, &pub_id, &vk);
         sign_and_publish(&mut reg, &m, &sk).unwrap();
-        reg.revoke_publisher(pub_id, "compromised").unwrap();
+        reg.revoke_publisher(pub_id.clone(), "compromised").unwrap();
 
         let result = reg.verify_package("testorg", "ext", v).unwrap();
         assert!(!result.valid);
@@ -1764,7 +1777,8 @@ mod tests {
 
         // Package not directly revoked, but publisher is revoked.
         assert!(!reg.is_package_revoked("testorg", "ext", v));
-        reg.revoke_publisher(pub_id, "key compromise").unwrap();
+        reg.revoke_publisher(pub_id.clone(), "key compromise")
+            .unwrap();
         assert!(reg.is_package_revoked("testorg", "ext", v));
     }
 

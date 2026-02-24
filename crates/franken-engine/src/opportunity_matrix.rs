@@ -843,4 +843,605 @@ mod tests {
         assert_eq!(derived[0].opportunity_id, "opp:vm-core:dispatch_loop");
         assert_eq!(derived[1].opportunity_id, "opp:gc:scan");
     }
+
+    // ── OpportunityStatus serde ──────────────────────────────────────
+
+    #[test]
+    fn opportunity_status_serde_roundtrip() {
+        for status in [
+            OpportunityStatus::Selected,
+            OpportunityStatus::RejectedLowScore,
+            OpportunityStatus::RejectedSecurityClearance,
+            OpportunityStatus::RejectedMissingHotspot,
+        ] {
+            let json = serde_json::to_string(&status).unwrap();
+            let back: OpportunityStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, status);
+        }
+    }
+
+    #[test]
+    fn opportunity_status_snake_case_rename() {
+        let json = serde_json::to_string(&OpportunityStatus::RejectedLowScore).unwrap();
+        assert!(json.contains("rejected_low_score"));
+        let json2 = serde_json::to_string(&OpportunityStatus::RejectedSecurityClearance).unwrap();
+        assert!(json2.contains("rejected_security_clearance"));
+    }
+
+    // ── OpportunityMatrixError ───────────────────────────────────────
+
+    #[test]
+    fn error_stable_codes() {
+        let e1 = OpportunityMatrixError::InvalidRequest {
+            field: "f".into(),
+            detail: "d".into(),
+        };
+        assert_eq!(e1.stable_code(), "FE-OPPM-1001");
+        let e2 = OpportunityMatrixError::DuplicateOpportunityId {
+            opportunity_id: "x".into(),
+        };
+        assert_eq!(e2.stable_code(), "FE-OPPM-1002");
+        let e3 = OpportunityMatrixError::InvalidTimestamp {
+            value: "bad".into(),
+        };
+        assert_eq!(e3.stable_code(), "FE-OPPM-1003");
+    }
+
+    #[test]
+    fn error_display_messages() {
+        let e1 = OpportunityMatrixError::InvalidRequest {
+            field: "trace_id".into(),
+            detail: "must not be empty".into(),
+        };
+        assert!(e1.to_string().contains("trace_id"));
+        assert!(e1.to_string().contains("must not be empty"));
+        let e2 = OpportunityMatrixError::DuplicateOpportunityId {
+            opportunity_id: "opp-1".into(),
+        };
+        assert!(e2.to_string().contains("opp-1"));
+        let e3 = OpportunityMatrixError::InvalidTimestamp {
+            value: "not-a-date".into(),
+        };
+        assert!(e3.to_string().contains("not-a-date"));
+    }
+
+    // ── Validation errors ────────────────────────────────────────────
+
+    #[test]
+    fn validation_empty_trace_id() {
+        let mut req = base_request();
+        req.trace_id = "  ".into();
+        let d = run_opportunity_matrix_scoring(&req);
+        assert_eq!(d.outcome, "fail");
+        assert_eq!(d.error_code.as_deref(), Some("FE-OPPM-1001"));
+    }
+
+    #[test]
+    fn validation_empty_decision_id() {
+        let mut req = base_request();
+        req.decision_id = "".into();
+        let d = run_opportunity_matrix_scoring(&req);
+        assert_eq!(d.outcome, "fail");
+        assert_eq!(d.error_code.as_deref(), Some("FE-OPPM-1001"));
+    }
+
+    #[test]
+    fn validation_empty_policy_id() {
+        let mut req = base_request();
+        req.policy_id = "".into();
+        let d = run_opportunity_matrix_scoring(&req);
+        assert_eq!(d.outcome, "fail");
+        assert_eq!(d.error_code.as_deref(), Some("FE-OPPM-1001"));
+    }
+
+    #[test]
+    fn validation_empty_optimization_run_id() {
+        let mut req = base_request();
+        req.optimization_run_id = "".into();
+        let d = run_opportunity_matrix_scoring(&req);
+        assert_eq!(d.outcome, "fail");
+        assert_eq!(d.error_code.as_deref(), Some("FE-OPPM-1001"));
+    }
+
+    #[test]
+    fn validation_empty_candidates() {
+        let mut req = base_request();
+        req.candidates.clear();
+        let d = run_opportunity_matrix_scoring(&req);
+        assert_eq!(d.outcome, "fail");
+        assert_eq!(d.error_code.as_deref(), Some("FE-OPPM-1001"));
+    }
+
+    #[test]
+    fn validation_non_positive_benchmark_pressure() {
+        let mut req = base_request();
+        req.benchmark_pressure_millionths = 0;
+        let d = run_opportunity_matrix_scoring(&req);
+        assert_eq!(d.outcome, "fail");
+        assert_eq!(d.error_code.as_deref(), Some("FE-OPPM-1001"));
+    }
+
+    #[test]
+    fn validation_empty_opportunity_id() {
+        let mut req = base_request();
+        req.candidates[0].opportunity_id = "  ".into();
+        let d = run_opportunity_matrix_scoring(&req);
+        assert_eq!(d.outcome, "fail");
+        assert_eq!(d.error_code.as_deref(), Some("FE-OPPM-1001"));
+    }
+
+    #[test]
+    fn validation_duplicate_opportunity_id() {
+        let mut req = base_request();
+        req.candidates[1].opportunity_id = req.candidates[0].opportunity_id.clone();
+        let d = run_opportunity_matrix_scoring(&req);
+        assert_eq!(d.outcome, "fail");
+        assert_eq!(d.error_code.as_deref(), Some("FE-OPPM-1002"));
+    }
+
+    #[test]
+    fn validation_invalid_timestamp() {
+        let mut req = base_request();
+        req.historical_outcomes[0].completed_at_utc = "not-a-date".into();
+        let d = run_opportunity_matrix_scoring(&req);
+        assert_eq!(d.outcome, "fail");
+        assert_eq!(d.error_code.as_deref(), Some("FE-OPPM-1003"));
+    }
+
+    // ── hotspot_profile_from_flamegraphs ─────────────────────────────
+
+    fn test_flamegraph(kind: FlamegraphKind, stacks: Vec<(&str, u64)>) -> FlamegraphArtifact {
+        use crate::flamegraph_pipeline::{
+            FlamegraphEvidenceLink, FlamegraphMetadata,
+        };
+        FlamegraphArtifact {
+            schema_version: "v1".into(),
+            artifact_id: "art-1".into(),
+            kind,
+            metadata: FlamegraphMetadata {
+                benchmark_run_id: "br-1".into(),
+                baseline_benchmark_run_id: None,
+                workload_id: "w1".into(),
+                benchmark_profile: "profile".into(),
+                config_fingerprint: "fp".into(),
+                git_commit: "abc123".into(),
+                generated_at_utc: "2026-01-01T00:00:00Z".into(),
+            },
+            evidence_link: FlamegraphEvidenceLink {
+                trace_id: "t".into(),
+                decision_id: "d".into(),
+                policy_id: "p".into(),
+                benchmark_run_id: "br-1".into(),
+                optimization_decision_id: "od".into(),
+                evidence_node_id: "en".into(),
+            },
+            folded_stacks: stacks
+                .into_iter()
+                .map(|(stack, count)| crate::flamegraph_pipeline::FoldedStackSample {
+                    stack: stack.to_string(),
+                    sample_count: count,
+                })
+                .collect(),
+            folded_stacks_text: String::new(),
+            svg: String::new(),
+            total_samples: 0,
+            diff_from_artifact_id: None,
+            diff_entries: Vec::new(),
+            warnings: Vec::new(),
+            storage_integration_point: String::new(),
+        }
+    }
+
+    #[test]
+    fn hotspot_profile_from_cpu_flamegraph() {
+        let fg = test_flamegraph(
+            FlamegraphKind::Cpu,
+            vec![("vm;dispatch", 80), ("vm;gc_tick", 20)],
+        );
+        let profile = hotspot_profile_from_flamegraphs(&[fg]);
+        assert_eq!(profile.len(), 2);
+        assert_eq!(profile[0].function, "dispatch");
+        assert_eq!(profile[0].sample_count, 80);
+        assert_eq!(profile[1].function, "gc_tick");
+        assert_eq!(profile[1].sample_count, 20);
+    }
+
+    #[test]
+    fn hotspot_profile_aggregates_across_artifacts() {
+        let fg1 = test_flamegraph(
+            FlamegraphKind::Cpu,
+            vec![("vm;dispatch", 50)],
+        );
+        let fg2 = test_flamegraph(
+            FlamegraphKind::Allocation,
+            vec![("vm;dispatch", 30), ("gc;collect", 20)],
+        );
+        let profile = hotspot_profile_from_flamegraphs(&[fg1, fg2]);
+        let dispatch = profile.iter().find(|e| e.function == "dispatch").unwrap();
+        assert_eq!(dispatch.sample_count, 80);
+        assert_eq!(profile.len(), 2);
+    }
+
+    #[test]
+    fn hotspot_profile_empty_stacks_skipped() {
+        let fg = test_flamegraph(
+            FlamegraphKind::Cpu,
+            vec![("  ", 100), ("vm;run", 50)],
+        );
+        let profile = hotspot_profile_from_flamegraphs(&[fg]);
+        assert_eq!(profile.len(), 1);
+        assert_eq!(profile[0].function, "run");
+    }
+
+    #[test]
+    fn hotspot_profile_sorted_by_sample_count_desc() {
+        let fg = test_flamegraph(
+            FlamegraphKind::DiffCpu,
+            vec![("a;low", 10), ("b;high", 90), ("c;mid", 50)],
+        );
+        let profile = hotspot_profile_from_flamegraphs(&[fg]);
+        assert_eq!(profile[0].sample_count, 90);
+        assert_eq!(profile[1].sample_count, 50);
+        assert_eq!(profile[2].sample_count, 10);
+    }
+
+    #[test]
+    fn hotspot_profile_empty_artifacts() {
+        let profile = hotspot_profile_from_flamegraphs(&[]);
+        assert!(profile.is_empty());
+    }
+
+    // ── benchmark_pressure_from_cases ────────────────────────────────
+
+    #[test]
+    fn benchmark_pressure_neutral_when_above_target() {
+        let fast = BenchmarkCase {
+            workload_id: "w1".into(),
+            throughput_franken_tps: 400.0,
+            throughput_baseline_tps: 100.0,
+            weight: None,
+            behavior_equivalent: true,
+            latency_envelope_ok: true,
+            error_envelope_ok: true,
+        };
+        let pressure = benchmark_pressure_from_cases(&[fast], &[]);
+        assert_eq!(pressure, 1_000_000);
+    }
+
+    #[test]
+    fn benchmark_pressure_empty_cases_returns_neutral() {
+        assert_eq!(benchmark_pressure_from_cases(&[], &[]), 1_000_000);
+    }
+
+    #[test]
+    fn benchmark_pressure_zero_baseline_skipped() {
+        let bad = BenchmarkCase {
+            workload_id: "w1".into(),
+            throughput_franken_tps: 100.0,
+            throughput_baseline_tps: 0.0,
+            weight: None,
+            behavior_equivalent: true,
+            latency_envelope_ok: true,
+            error_envelope_ok: true,
+        };
+        assert_eq!(benchmark_pressure_from_cases(&[bad], &[]), 1_000_000);
+    }
+
+    #[test]
+    fn benchmark_pressure_clamped_to_2x() {
+        let very_slow = BenchmarkCase {
+            workload_id: "w1".into(),
+            throughput_franken_tps: 100.0,
+            throughput_baseline_tps: 100.0,
+            weight: None,
+            behavior_equivalent: true,
+            latency_envelope_ok: true,
+            error_envelope_ok: true,
+        };
+        let pressure = benchmark_pressure_from_cases(&[very_slow], &[]);
+        assert!(pressure > 1_000_000);
+        assert!(pressure <= 2_000_000);
+    }
+
+    // ── derive_candidates_from_hotspots ──────────────────────────────
+
+    #[test]
+    fn derive_candidates_max_candidates_limit() {
+        let hotspots = (0..10)
+            .map(|i| HotspotProfileEntry {
+                module: format!("mod{i}"),
+                function: "f".into(),
+                sample_count: 100 - i as u64,
+            })
+            .collect::<Vec<_>>();
+        let derived = derive_candidates_from_hotspots(
+            &hotspots, 1_000_000, 1, 100_000, 1_000_000, 1_000_000, 3,
+        );
+        assert_eq!(derived.len(), 3);
+    }
+
+    #[test]
+    fn derive_candidates_hotpath_weight_sums_correctly() {
+        let hotspots = vec![
+            HotspotProfileEntry {
+                module: "a".into(),
+                function: "f".into(),
+                sample_count: 100,
+            },
+        ];
+        let derived = derive_candidates_from_hotspots(
+            &hotspots, 1_000_000, 1, 100_000, 1_000_000, 1_000_000, 10,
+        );
+        assert_eq!(derived.len(), 1);
+        // Sole hotspot gets weight 1_000_000 (100%)
+        assert_eq!(derived[0].hotpath_weight_override_millionths, Some(1_000_000));
+    }
+
+    // ── Missing hotspot rejection ────────────────────────────────────
+
+    #[test]
+    fn missing_hotspot_weight_rejects_candidate() {
+        let mut req = base_request();
+        // Clear hotspots so no weight can be derived
+        req.hotspots.clear();
+        // Also clear override so weight falls to 0
+        req.candidates[0].hotpath_weight_override_millionths = None;
+        req.candidates[1].hotpath_weight_override_millionths = None;
+        let d = run_opportunity_matrix_scoring(&req);
+        for opp in &d.ranked_opportunities {
+            assert_eq!(opp.status, OpportunityStatus::RejectedMissingHotspot);
+        }
+        assert!(d.selected_opportunity_ids.is_empty());
+    }
+
+    // ── Historical tracking ──────────────────────────────────────────
+
+    #[test]
+    fn historical_tracking_computes_errors() {
+        let req = base_request();
+        let d = run_opportunity_matrix_scoring(&req);
+        assert_eq!(d.historical_tracking.len(), 1);
+        let h = &d.historical_tracking[0];
+        assert_eq!(h.predicted_gain_millionths, 400_000);
+        assert_eq!(h.actual_gain_millionths, 350_000);
+        assert_eq!(h.signed_error_millionths, -50_000);
+        assert_eq!(h.absolute_error_millionths, 50_000);
+    }
+
+    #[test]
+    fn historical_tracking_sorted_by_timestamp() {
+        let mut req = base_request();
+        req.historical_outcomes.push(OpportunityOutcomeObservation {
+            opportunity_id: "opp-2".into(),
+            predicted_gain_millionths: 100_000,
+            actual_gain_millionths: 200_000,
+            completed_at_utc: "2026-01-01T00:00:00Z".into(),
+        });
+        let d = run_opportunity_matrix_scoring(&req);
+        assert_eq!(d.historical_tracking.len(), 2);
+        assert!(d.historical_tracking[0].completed_at_utc <= d.historical_tracking[1].completed_at_utc);
+    }
+
+    // ── Events ───────────────────────────────────────────────────────
+
+    #[test]
+    fn events_include_start_scoring_and_completion() {
+        let req = base_request();
+        let d = run_opportunity_matrix_scoring(&req);
+        let event_names: Vec<&str> = d.events.iter().map(|e| e.event.as_str()).collect();
+        assert!(event_names.contains(&"opportunity_matrix_started"));
+        assert!(event_names.contains(&"opportunity_matrix_completed"));
+    }
+
+    #[test]
+    fn events_include_per_candidate_scoring() {
+        let req = base_request();
+        let d = run_opportunity_matrix_scoring(&req);
+        let scored_events = d
+            .events
+            .iter()
+            .filter(|e| e.event == "opportunity_scored")
+            .count();
+        assert_eq!(scored_events, req.candidates.len());
+    }
+
+    #[test]
+    fn events_carry_request_ids() {
+        let req = base_request();
+        let d = run_opportunity_matrix_scoring(&req);
+        for event in &d.events {
+            assert_eq!(event.trace_id, req.trace_id);
+            assert_eq!(event.decision_id, req.decision_id);
+            assert_eq!(event.policy_id, req.policy_id);
+            assert_eq!(event.component, OPPORTUNITY_MATRIX_COMPONENT);
+        }
+    }
+
+    // ── Decision metadata ────────────────────────────────────────────
+
+    #[test]
+    fn decision_schema_version() {
+        let d = run_opportunity_matrix_scoring(&base_request());
+        assert_eq!(d.schema_version, OPPORTUNITY_MATRIX_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn decision_matrix_id_deterministic() {
+        let req = base_request();
+        let a = run_opportunity_matrix_scoring(&req);
+        let b = run_opportunity_matrix_scoring(&req);
+        assert_eq!(a.matrix_id, b.matrix_id);
+        assert!(a.matrix_id.starts_with("opm-"));
+    }
+
+    #[test]
+    fn decision_matrix_id_changes_with_input() {
+        let req = base_request();
+        let a = run_opportunity_matrix_scoring(&req);
+        let mut req2 = base_request();
+        req2.trace_id = "different-trace".into();
+        let b = run_opportunity_matrix_scoring(&req2);
+        assert_ne!(a.matrix_id, b.matrix_id);
+    }
+
+    #[test]
+    fn decision_has_selected_opportunities_false_on_deny() {
+        let mut req = base_request();
+        req.candidates[0].security_clearance_millionths = 0;
+        req.candidates[1].security_clearance_millionths = 0;
+        let d = run_opportunity_matrix_scoring(&req);
+        assert!(!d.has_selected_opportunities());
+    }
+
+    // ── Score computation edge cases ─────────────────────────────────
+
+    #[test]
+    fn negative_speedup_clamped_to_zero() {
+        let mut req = base_request();
+        req.candidates[0].estimated_speedup_millionths = -500_000;
+        let d = run_opportunity_matrix_scoring(&req);
+        let opp = d
+            .ranked_opportunities
+            .iter()
+            .find(|o| o.opportunity_id == "opp-vm-dispatch")
+            .unwrap();
+        assert_eq!(opp.estimated_speedup_millionths, 0);
+    }
+
+    #[test]
+    fn hotpath_weight_override_used_when_present() {
+        let mut req = base_request();
+        req.candidates[0].hotpath_weight_override_millionths = Some(500_000);
+        let d = run_opportunity_matrix_scoring(&req);
+        let opp = d
+            .ranked_opportunities
+            .iter()
+            .find(|o| o.opportunity_id == "opp-vm-dispatch")
+            .unwrap();
+        assert_eq!(opp.hotpath_weight_millionths, 500_000);
+    }
+
+    // ── Serde roundtrips ─────────────────────────────────────────────
+
+    #[test]
+    fn scored_opportunity_serde_roundtrip() {
+        let req = base_request();
+        let d = run_opportunity_matrix_scoring(&req);
+        for opp in &d.ranked_opportunities {
+            let json = serde_json::to_string(opp).unwrap();
+            let back: ScoredOpportunity = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, opp);
+        }
+    }
+
+    #[test]
+    fn opportunity_history_record_serde_roundtrip() {
+        let req = base_request();
+        let d = run_opportunity_matrix_scoring(&req);
+        for h in &d.historical_tracking {
+            let json = serde_json::to_string(h).unwrap();
+            let back: OpportunityHistoryRecord = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, h);
+        }
+    }
+
+    #[test]
+    fn decision_serde_roundtrip() {
+        let d = run_opportunity_matrix_scoring(&base_request());
+        let json = serde_json::to_string(&d).unwrap();
+        let back: OpportunityMatrixDecision = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.matrix_id, d.matrix_id);
+        assert_eq!(back.ranked_opportunities, d.ranked_opportunities);
+        assert_eq!(back.selected_opportunity_ids, d.selected_opportunity_ids);
+    }
+
+    #[test]
+    fn event_serde_roundtrip() {
+        let req = base_request();
+        let d = run_opportunity_matrix_scoring(&req);
+        for event in &d.events {
+            let json = serde_json::to_string(event).unwrap();
+            let back: OpportunityMatrixEvent = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, event);
+        }
+    }
+
+    // ── Helper functions ─────────────────────────────────────────────
+
+    #[test]
+    fn hotspot_profile_entry_key_format() {
+        let entry = HotspotProfileEntry {
+            module: "vm".into(),
+            function: "dispatch".into(),
+            sample_count: 100,
+        };
+        assert_eq!(entry.key(), "vm::dispatch");
+    }
+
+    #[test]
+    fn sanitize_token_replaces_special_chars() {
+        assert_eq!(sanitize_token("hello.world"), "hello_world");
+        assert_eq!(sanitize_token("vm-core_1"), "vm-core_1");
+        assert_eq!(sanitize_token("a b/c"), "a_b_c");
+    }
+
+    #[test]
+    fn clamp_i128_handles_overflow() {
+        assert_eq!(clamp_i128_to_i64(i128::MAX), i64::MAX);
+        assert_eq!(clamp_i128_to_i64(i128::MIN), i64::MIN);
+        assert_eq!(clamp_i128_to_i64(42), 42);
+    }
+
+    // ── Constants ────────────────────────────────────────────────────
+
+    #[test]
+    fn score_threshold_is_2x() {
+        assert_eq!(OPPORTUNITY_SCORE_THRESHOLD_MILLIONTHS, 2_000_000);
+    }
+
+    // ── Ranked output ordering ───────────────────────────────────────
+
+    #[test]
+    fn ranked_opportunities_sorted_by_score_desc() {
+        let req = base_request();
+        let d = run_opportunity_matrix_scoring(&req);
+        for window in d.ranked_opportunities.windows(2) {
+            assert!(window[0].score_millionths >= window[1].score_millionths);
+        }
+    }
+
+    // ── Failure decision structure ───────────────────────────────────
+
+    #[test]
+    fn failure_decision_has_empty_collections() {
+        let mut req = base_request();
+        req.trace_id = "".into();
+        let d = run_opportunity_matrix_scoring(&req);
+        assert_eq!(d.outcome, "fail");
+        assert!(d.ranked_opportunities.is_empty());
+        assert!(d.selected_opportunity_ids.is_empty());
+        assert!(d.historical_tracking.is_empty());
+        assert!(d.error_code.is_some());
+    }
+
+    #[test]
+    fn failure_decision_still_has_events() {
+        let mut req = base_request();
+        req.policy_id = "".into();
+        let d = run_opportunity_matrix_scoring(&req);
+        assert!(!d.events.is_empty());
+        let last = d.events.last().unwrap();
+        assert_eq!(last.outcome, "fail");
+        assert!(last.error_code.is_some());
+    }
+
+    // ── Negative benchmark pressure ──────────────────────────────────
+
+    #[test]
+    fn negative_benchmark_pressure_rejected() {
+        let mut req = base_request();
+        req.benchmark_pressure_millionths = -1;
+        let d = run_opportunity_matrix_scoring(&req);
+        assert_eq!(d.outcome, "fail");
+    }
 }

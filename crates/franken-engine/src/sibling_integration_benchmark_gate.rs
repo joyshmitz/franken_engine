@@ -1018,4 +1018,501 @@ mod tests {
             Err(BaselineLedgerError::DuplicateSnapshotHash { .. })
         ));
     }
+
+    // ── SiblingIntegration ───────────────────────────────────────────
+
+    #[test]
+    fn sibling_integration_as_str() {
+        assert_eq!(SiblingIntegration::Frankentui.as_str(), "frankentui");
+        assert_eq!(SiblingIntegration::Frankensqlite.as_str(), "frankensqlite");
+        assert_eq!(SiblingIntegration::SqlmodelRust.as_str(), "sqlmodel_rust");
+        assert_eq!(SiblingIntegration::FastapiRust.as_str(), "fastapi_rust");
+    }
+
+    #[test]
+    fn sibling_integration_display() {
+        assert_eq!(SiblingIntegration::Frankentui.to_string(), "frankentui");
+    }
+
+    #[test]
+    fn sibling_integration_ordering() {
+        assert!(SiblingIntegration::Frankentui < SiblingIntegration::SqlmodelRust);
+    }
+
+    #[test]
+    fn sibling_integration_serde_roundtrip() {
+        for integration in [
+            SiblingIntegration::Frankentui,
+            SiblingIntegration::Frankensqlite,
+            SiblingIntegration::SqlmodelRust,
+            SiblingIntegration::FastapiRust,
+        ] {
+            let json = serde_json::to_string(&integration).unwrap();
+            let back: SiblingIntegration = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, integration);
+        }
+    }
+
+    // ── ControlPlaneOperation ────────────────────────────────────────
+
+    #[test]
+    fn control_plane_operation_as_str() {
+        assert_eq!(ControlPlaneOperation::EvidenceWrite.as_str(), "evidence_write");
+        assert_eq!(ControlPlaneOperation::PolicyQuery.as_str(), "policy_query");
+        assert_eq!(ControlPlaneOperation::TelemetryIngestion.as_str(), "telemetry_ingestion");
+        assert_eq!(ControlPlaneOperation::TuiDataUpdate.as_str(), "tui_data_update");
+    }
+
+    #[test]
+    fn control_plane_operation_display() {
+        assert_eq!(ControlPlaneOperation::TuiDataUpdate.to_string(), "tui_data_update");
+    }
+
+    #[test]
+    fn control_plane_operation_serde_roundtrip() {
+        for op in [
+            ControlPlaneOperation::EvidenceWrite,
+            ControlPlaneOperation::PolicyQuery,
+            ControlPlaneOperation::TelemetryIngestion,
+            ControlPlaneOperation::TuiDataUpdate,
+        ] {
+            let json = serde_json::to_string(&op).unwrap();
+            let back: ControlPlaneOperation = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, op);
+        }
+    }
+
+    // ── BenchmarkGateFailureCode ─────────────────────────────────────
+
+    #[test]
+    fn failure_code_display_all_variants() {
+        assert_eq!(
+            BenchmarkGateFailureCode::MissingRequiredIntegration.to_string(),
+            "missing_required_integration"
+        );
+        assert_eq!(
+            BenchmarkGateFailureCode::MissingOperationSamples.to_string(),
+            "missing_operation_samples"
+        );
+        assert_eq!(
+            BenchmarkGateFailureCode::EmptySamples.to_string(),
+            "empty_samples"
+        );
+        assert_eq!(
+            BenchmarkGateFailureCode::SloThresholdExceeded.to_string(),
+            "slo_threshold_exceeded"
+        );
+        assert_eq!(
+            BenchmarkGateFailureCode::RegressionThresholdExceeded.to_string(),
+            "regression_threshold_exceeded"
+        );
+        assert_eq!(
+            BenchmarkGateFailureCode::IntegrationOverheadExceeded.to_string(),
+            "integration_overhead_exceeded"
+        );
+    }
+
+    #[test]
+    fn failure_code_ordering() {
+        assert!(
+            BenchmarkGateFailureCode::MissingRequiredIntegration
+                < BenchmarkGateFailureCode::IntegrationOverheadExceeded
+        );
+    }
+
+    #[test]
+    fn failure_code_serde_roundtrip() {
+        for code in [
+            BenchmarkGateFailureCode::MissingRequiredIntegration,
+            BenchmarkGateFailureCode::MissingOperationSamples,
+            BenchmarkGateFailureCode::EmptySamples,
+            BenchmarkGateFailureCode::SloThresholdExceeded,
+            BenchmarkGateFailureCode::RegressionThresholdExceeded,
+            BenchmarkGateFailureCode::IntegrationOverheadExceeded,
+        ] {
+            let json = serde_json::to_string(&code).unwrap();
+            let back: BenchmarkGateFailureCode = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, code);
+        }
+    }
+
+    // ── BenchmarkGateThresholds default ──────────────────────────────
+
+    #[test]
+    fn thresholds_default_has_all_integrations() {
+        let t = BenchmarkGateThresholds::default();
+        assert_eq!(t.required_integrations.len(), 4);
+        assert!(t.required_integrations.contains(&SiblingIntegration::Frankentui));
+        assert!(t.required_integrations.contains(&SiblingIntegration::FastapiRust));
+    }
+
+    #[test]
+    fn thresholds_default_has_all_operations() {
+        let t = BenchmarkGateThresholds::default();
+        assert_eq!(t.per_operation.len(), 4);
+        assert!(t.per_operation.contains_key(&ControlPlaneOperation::EvidenceWrite));
+        assert!(t.per_operation.contains_key(&ControlPlaneOperation::TuiDataUpdate));
+    }
+
+    #[test]
+    fn thresholds_serde_roundtrip() {
+        let t = BenchmarkGateThresholds::default();
+        let json = serde_json::to_string(&t).unwrap();
+        let back: BenchmarkGateThresholds = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, t);
+    }
+
+    // ── Empty samples finding ────────────────────────────────────────
+
+    #[test]
+    fn gate_fails_on_empty_samples() {
+        let mut candidate = candidate_snapshot_pass();
+        candidate.operation_samples.insert(
+            ControlPlaneOperation::PolicyQuery,
+            make_samples(&[], &[1_000_000]),
+        );
+        let input = BenchmarkGateInput {
+            trace_id: "t".into(),
+            policy_id: "p".into(),
+            baseline: base_snapshot(),
+            candidate,
+        };
+        let d = evaluate_sibling_integration_benchmark(&input, &BenchmarkGateThresholds::default());
+        assert!(!d.pass);
+        assert!(d.findings.iter().any(|f| {
+            f.code == BenchmarkGateFailureCode::EmptySamples
+                && f.operation == Some(ControlPlaneOperation::PolicyQuery)
+        }));
+    }
+
+    // ── Missing operation samples ────────────────────────────────────
+
+    #[test]
+    fn gate_fails_on_missing_operation_samples() {
+        let mut candidate = candidate_snapshot_pass();
+        candidate
+            .operation_samples
+            .remove(&ControlPlaneOperation::EvidenceWrite);
+        let input = BenchmarkGateInput {
+            trace_id: "t".into(),
+            policy_id: "p".into(),
+            baseline: base_snapshot(),
+            candidate,
+        };
+        let d = evaluate_sibling_integration_benchmark(&input, &BenchmarkGateThresholds::default());
+        assert!(!d.pass);
+        assert!(d.findings.iter().any(|f| {
+            f.code == BenchmarkGateFailureCode::MissingOperationSamples
+                && f.operation == Some(ControlPlaneOperation::EvidenceWrite)
+        }));
+    }
+
+    // ── SLO threshold exceeded ───────────────────────────────────────
+
+    #[test]
+    fn gate_fails_when_slo_exceeded() {
+        let mut candidate = candidate_snapshot_pass();
+        // Set p95 above SLO of 3_000_000 for PolicyQuery
+        candidate.operation_samples.insert(
+            ControlPlaneOperation::PolicyQuery,
+            make_samples(
+                &[810_000, 820_000, 830_000, 840_000, 850_000],
+                &[3_100_000, 3_200_000, 3_300_000, 3_400_000, 3_500_000],
+            ),
+        );
+        let input = BenchmarkGateInput {
+            trace_id: "t".into(),
+            policy_id: "p".into(),
+            baseline: base_snapshot(),
+            candidate,
+        };
+        let d = evaluate_sibling_integration_benchmark(&input, &BenchmarkGateThresholds::default());
+        assert!(!d.pass);
+        assert!(d.findings.iter().any(|f| {
+            f.code == BenchmarkGateFailureCode::SloThresholdExceeded
+                && f.operation == Some(ControlPlaneOperation::PolicyQuery)
+        }));
+    }
+
+    // ── BaselineLedgerError display ──────────────────────────────────
+
+    #[test]
+    fn baseline_ledger_error_display_non_monotonic() {
+        let err = BaselineLedgerError::NonMonotonicEpoch {
+            previous_epoch: 5,
+            next_epoch: 3,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("strictly increasing"));
+        assert!(msg.contains("5"));
+        assert!(msg.contains("3"));
+    }
+
+    #[test]
+    fn baseline_ledger_error_display_duplicate_hash() {
+        let err = BaselineLedgerError::DuplicateSnapshotHash {
+            snapshot_hash: [0xab; 32],
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("abababab"));
+    }
+
+    #[test]
+    fn baseline_ledger_error_serde_roundtrip() {
+        let err = BaselineLedgerError::NonMonotonicEpoch {
+            previous_epoch: 10,
+            next_epoch: 5,
+        };
+        let json = serde_json::to_string(&err).unwrap();
+        let back: BaselineLedgerError = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, err);
+    }
+
+    // ── BaselineLedger ───────────────────────────────────────────────
+
+    #[test]
+    fn baseline_ledger_latest_empty_returns_none() {
+        let ledger = BaselineLedger::default();
+        assert!(ledger.latest().is_none());
+    }
+
+    #[test]
+    fn baseline_ledger_multiple_entries() {
+        let mut ledger = BaselineLedger::default();
+        ledger.record(1, base_snapshot()).unwrap();
+        ledger.record(2, candidate_snapshot_pass()).unwrap();
+        assert_eq!(ledger.entries.len(), 2);
+        assert_eq!(ledger.latest().unwrap().epoch, 2);
+    }
+
+    // ── Snapshot hash ────────────────────────────────────────────────
+
+    #[test]
+    fn snapshot_hash_deterministic() {
+        let snap = base_snapshot();
+        assert_eq!(snap.snapshot_hash(), snap.snapshot_hash());
+    }
+
+    #[test]
+    fn snapshot_hash_changes_with_data() {
+        let a = base_snapshot();
+        let b = candidate_snapshot_pass();
+        assert_ne!(a.snapshot_hash(), b.snapshot_hash());
+    }
+
+    // ── pass/rollback symmetry ───────────────────────────────────────
+
+    #[test]
+    fn pass_and_rollback_are_inverse() {
+        let input = BenchmarkGateInput {
+            trace_id: "t".into(),
+            policy_id: "p".into(),
+            baseline: base_snapshot(),
+            candidate: candidate_snapshot_pass(),
+        };
+        let d = evaluate_sibling_integration_benchmark(&input, &BenchmarkGateThresholds::default());
+        assert_eq!(d.pass, !d.rollback_required);
+    }
+
+    // ── Logs ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn logs_carry_trace_and_policy_ids() {
+        let input = BenchmarkGateInput {
+            trace_id: "my-trace".into(),
+            policy_id: "my-policy".into(),
+            baseline: base_snapshot(),
+            candidate: candidate_snapshot_pass(),
+        };
+        let d = evaluate_sibling_integration_benchmark(&input, &BenchmarkGateThresholds::default());
+        for log in &d.logs {
+            assert_eq!(log.trace_id, "my-trace");
+            assert_eq!(log.policy_id, "my-policy");
+            assert_eq!(log.component, "sibling_integration_benchmark_gate");
+        }
+    }
+
+    #[test]
+    fn logs_final_event_is_benchmark_gate_decision() {
+        let input = BenchmarkGateInput {
+            trace_id: "t".into(),
+            policy_id: "p".into(),
+            baseline: base_snapshot(),
+            candidate: candidate_snapshot_pass(),
+        };
+        let d = evaluate_sibling_integration_benchmark(&input, &BenchmarkGateThresholds::default());
+        let last = d.logs.last().unwrap();
+        assert_eq!(last.event, "benchmark_gate_decision");
+        assert_eq!(last.outcome, "pass");
+        assert!(last.error_code.is_none());
+    }
+
+    #[test]
+    fn logs_final_event_fail_on_failure() {
+        let mut candidate = candidate_snapshot_pass();
+        candidate.integrations.remove(&SiblingIntegration::Frankensqlite);
+        let input = BenchmarkGateInput {
+            trace_id: "t".into(),
+            policy_id: "p".into(),
+            baseline: base_snapshot(),
+            candidate,
+        };
+        let d = evaluate_sibling_integration_benchmark(&input, &BenchmarkGateThresholds::default());
+        let last = d.logs.last().unwrap();
+        assert_eq!(last.outcome, "fail");
+        assert_eq!(last.error_code.as_deref(), Some("benchmark_gate_failed"));
+    }
+
+    // ── Helper functions ─────────────────────────────────────────────
+
+    #[test]
+    fn percentile_edge_cases() {
+        assert_eq!(percentile(&[], 95), 0);
+        assert_eq!(percentile(&[42], 95), 42);
+        assert_eq!(percentile(&[42], 99), 42);
+        let sorted = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
+        assert!(percentile(&sorted, 95) >= 90);
+    }
+
+    #[test]
+    fn ratio_millionths_zero_denominator() {
+        assert_eq!(ratio_millionths(100, 0), u64::MAX);
+    }
+
+    #[test]
+    fn ratio_millionths_normal() {
+        assert_eq!(ratio_millionths(200, 100), 2_000_000);
+    }
+
+    #[test]
+    fn overhead_millionths_zero_denominator() {
+        assert_eq!(overhead_millionths(100, 0), u64::MAX);
+    }
+
+    #[test]
+    fn overhead_millionths_no_overhead() {
+        assert_eq!(overhead_millionths(100, 200), 0);
+    }
+
+    #[test]
+    fn overhead_millionths_normal() {
+        // 200 vs 100 = 100% overhead = 1_000_000 ppm
+        assert_eq!(overhead_millionths(200, 100), 1_000_000);
+    }
+
+    // ── Serde roundtrips ─────────────────────────────────────────────
+
+    #[test]
+    fn benchmark_snapshot_serde_roundtrip() {
+        let snap = base_snapshot();
+        let json = serde_json::to_string(&snap).unwrap();
+        let back: BenchmarkSnapshot = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, snap);
+    }
+
+    #[test]
+    fn decision_serde_roundtrip() {
+        let input = BenchmarkGateInput {
+            trace_id: "t".into(),
+            policy_id: "p".into(),
+            baseline: base_snapshot(),
+            candidate: candidate_snapshot_pass(),
+        };
+        let d = evaluate_sibling_integration_benchmark(&input, &BenchmarkGateThresholds::default());
+        let json = serde_json::to_string(&d).unwrap();
+        let back: BenchmarkGateDecision = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.decision_id, d.decision_id);
+        assert_eq!(back.pass, d.pass);
+        assert_eq!(back.evaluations, d.evaluations);
+        assert_eq!(back.findings, d.findings);
+    }
+
+    #[test]
+    fn finding_serde_roundtrip() {
+        let finding = BenchmarkGateFinding {
+            code: BenchmarkGateFailureCode::SloThresholdExceeded,
+            operation: Some(ControlPlaneOperation::PolicyQuery),
+            detail: "test".into(),
+        };
+        let json = serde_json::to_string(&finding).unwrap();
+        let back: BenchmarkGateFinding = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, finding);
+    }
+
+    #[test]
+    fn log_event_serde_roundtrip() {
+        let input = BenchmarkGateInput {
+            trace_id: "t".into(),
+            policy_id: "p".into(),
+            baseline: base_snapshot(),
+            candidate: candidate_snapshot_pass(),
+        };
+        let d = evaluate_sibling_integration_benchmark(&input, &BenchmarkGateThresholds::default());
+        for log in &d.logs {
+            let json = serde_json::to_string(log).unwrap();
+            let back: BenchmarkGateLogEvent = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, log);
+        }
+    }
+
+    #[test]
+    fn operation_evaluation_serde_roundtrip() {
+        let input = BenchmarkGateInput {
+            trace_id: "t".into(),
+            policy_id: "p".into(),
+            baseline: base_snapshot(),
+            candidate: candidate_snapshot_pass(),
+        };
+        let d = evaluate_sibling_integration_benchmark(&input, &BenchmarkGateThresholds::default());
+        for eval in &d.evaluations {
+            let json = serde_json::to_string(eval).unwrap();
+            let back: OperationBenchmarkEvaluation = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, eval);
+        }
+    }
+
+    // ── Baseline missing integration ─────────────────────────────────
+
+    #[test]
+    fn gate_fails_when_baseline_missing_integration() {
+        let mut baseline = base_snapshot();
+        baseline.integrations.remove(&SiblingIntegration::Frankentui);
+        let input = BenchmarkGateInput {
+            trace_id: "t".into(),
+            policy_id: "p".into(),
+            baseline,
+            candidate: candidate_snapshot_pass(),
+        };
+        let d = evaluate_sibling_integration_benchmark(&input, &BenchmarkGateThresholds::default());
+        assert!(!d.pass);
+        assert!(d.findings.iter().any(|f| {
+            f.code == BenchmarkGateFailureCode::MissingRequiredIntegration
+                && f.detail.contains("baseline")
+        }));
+    }
+
+    // ── Decision ID changes with input ───────────────────────────────
+
+    #[test]
+    fn decision_id_changes_with_different_trace() {
+        let d1 = evaluate_sibling_integration_benchmark(
+            &BenchmarkGateInput {
+                trace_id: "trace-1".into(),
+                policy_id: "p".into(),
+                baseline: base_snapshot(),
+                candidate: candidate_snapshot_pass(),
+            },
+            &BenchmarkGateThresholds::default(),
+        );
+        let d2 = evaluate_sibling_integration_benchmark(
+            &BenchmarkGateInput {
+                trace_id: "trace-2".into(),
+                policy_id: "p".into(),
+                baseline: base_snapshot(),
+                candidate: candidate_snapshot_pass(),
+            },
+            &BenchmarkGateThresholds::default(),
+        );
+        assert_ne!(d1.decision_id, d2.decision_id);
+    }
 }

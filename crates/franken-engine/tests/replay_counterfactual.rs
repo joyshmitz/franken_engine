@@ -117,6 +117,42 @@ fn schema_version_mismatch_is_deterministic_error() {
 }
 
 #[test]
+fn schema_legacy_fixture_v0_migrates_and_runs() {
+    let fixture_root = test_temp_dir("legacy-fixture");
+    let legacy_fixture_path = fixture_root.join("legacy_fixture_v0.json");
+    fs::write(
+        &legacy_fixture_path,
+        r#"{
+  "fixture_id": "legacy-replay-fixture",
+  "fixture_version": 0,
+  "seed": 123,
+  "virtual_time_start_micros": 1000,
+  "policy_id": "policy-legacy",
+  "steps": [
+    {"component": "scheduler", "event": "dispatch", "advance_micros": 10},
+    {"component": "guardplane", "event": "challenge", "advance_micros": 20}
+  ]
+}"#,
+    )
+    .expect("write legacy fixture");
+
+    let fixture_store = FixtureStore::new(&fixture_root).expect("fixture store");
+    let fixture = fixture_store
+        .load_fixture(&legacy_fixture_path)
+        .expect("legacy fixture should migrate");
+    assert_eq!(fixture.fixture_version, 1);
+    assert!(fixture.determinism_check);
+
+    let runner = DeterministicRunner::default();
+    let baseline = runner.run_fixture(&fixture).expect("baseline run");
+    let replay = runner.run_fixture(&fixture).expect("replay run");
+    let replay_verification = verify_replay(&baseline, &replay);
+    assert!(replay_verification.matches);
+
+    fs::remove_dir_all(fixture_root).ok();
+}
+
+#[test]
 fn transcript_fault_injection_reports_diagnostic_index() {
     let runner = DeterministicRunner::default();
     let fixture_store =

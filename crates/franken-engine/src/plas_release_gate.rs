@@ -930,3 +930,524 @@ fn compute_decision_hash(
     })?;
     Ok(ContentHash::compute(&payload))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── helpers ──────────────────────────────────────────────────────
+
+    fn ext_id(n: u8) -> EngineObjectId {
+        EngineObjectId([n; 32])
+    }
+
+    fn trust_anchors() -> PlasReleaseGateTrustAnchors {
+        PlasReleaseGateTrustAnchors {
+            witness_verification_key: VerificationKey::from_bytes([1u8; 32]),
+            transparency_log_verification_key: VerificationKey::from_bytes([2u8; 32]),
+        }
+    }
+
+    fn minimal_extension(n: u8, mode: PlasActivationMode) -> PlasCohortExtension {
+        PlasCohortExtension {
+            extension_id: ext_id(n),
+            activation_mode: mode,
+            manifest_capabilities: BTreeSet::new(),
+            active_capabilities: BTreeSet::new(),
+            grants: Vec::new(),
+            revocations: Vec::new(),
+        }
+    }
+
+    fn make_input(extensions: Vec<PlasCohortExtension>) -> PlasReleaseGateInput {
+        PlasReleaseGateInput {
+            trace_id: "t1".to_string(),
+            decision_id: "d1".to_string(),
+            policy_id: "p1".to_string(),
+            cohort_id: "c1".to_string(),
+            extensions,
+        }
+    }
+
+    // ── PlasActivationMode ──────────────────────────────────────────
+
+    #[test]
+    fn activation_mode_as_str() {
+        assert_eq!(PlasActivationMode::Active.as_str(), "active");
+        assert_eq!(PlasActivationMode::Shadow.as_str(), "shadow");
+        assert_eq!(PlasActivationMode::AuditOnly.as_str(), "audit_only");
+        assert_eq!(PlasActivationMode::Disabled.as_str(), "disabled");
+    }
+
+    #[test]
+    fn activation_mode_display() {
+        assert_eq!(format!("{}", PlasActivationMode::Active), "active");
+        assert_eq!(format!("{}", PlasActivationMode::AuditOnly), "audit_only");
+    }
+
+    #[test]
+    fn activation_mode_ordering() {
+        assert!(PlasActivationMode::Active < PlasActivationMode::Shadow);
+        assert!(PlasActivationMode::Shadow < PlasActivationMode::AuditOnly);
+        assert!(PlasActivationMode::AuditOnly < PlasActivationMode::Disabled);
+    }
+
+    #[test]
+    fn activation_mode_serde_roundtrip() {
+        for variant in [
+            PlasActivationMode::Active,
+            PlasActivationMode::Shadow,
+            PlasActivationMode::AuditOnly,
+            PlasActivationMode::Disabled,
+        ] {
+            let json = serde_json::to_string(&variant).unwrap();
+            let back: PlasActivationMode = serde_json::from_str(&json).unwrap();
+            assert_eq!(variant, back);
+        }
+    }
+
+    // ── PlasReleaseGateFailureCode ──────────────────────────────────
+
+    #[test]
+    fn failure_code_error_code() {
+        assert_eq!(
+            PlasReleaseGateFailureCode::CohortPlasNotActive.error_code(),
+            "cohort_plas_not_active"
+        );
+        assert_eq!(
+            PlasReleaseGateFailureCode::CohortCoverageMissingGrantExercise.error_code(),
+            "cohort_coverage_missing_grant_exercise"
+        );
+        assert_eq!(
+            PlasReleaseGateFailureCode::MissingCapabilityWitness.error_code(),
+            "missing_capability_witness"
+        );
+        assert_eq!(
+            PlasReleaseGateFailureCode::WitnessSignatureVerificationFailed.error_code(),
+            "witness_signature_verification_failed"
+        );
+        assert_eq!(
+            PlasReleaseGateFailureCode::EscrowReplayEvidenceMissing.error_code(),
+            "escrow_replay_evidence_missing"
+        );
+        assert_eq!(
+            PlasReleaseGateFailureCode::EscrowReplayMismatch.error_code(),
+            "escrow_replay_mismatch"
+        );
+        assert_eq!(
+            PlasReleaseGateFailureCode::RevocationWitnessMissing.error_code(),
+            "revocation_witness_missing"
+        );
+        assert_eq!(
+            PlasReleaseGateFailureCode::RevocationEscrowEventMissing.error_code(),
+            "revocation_escrow_event_missing"
+        );
+        assert_eq!(
+            PlasReleaseGateFailureCode::AmbientAuthorityDetected.error_code(),
+            "ambient_authority_detected"
+        );
+    }
+
+    #[test]
+    fn failure_code_display() {
+        for variant in [
+            PlasReleaseGateFailureCode::CohortPlasNotActive,
+            PlasReleaseGateFailureCode::AmbientAuthorityDetected,
+        ] {
+            assert_eq!(format!("{variant}"), variant.error_code());
+        }
+    }
+
+    #[test]
+    fn failure_code_serde_roundtrip() {
+        for variant in [
+            PlasReleaseGateFailureCode::CohortPlasNotActive,
+            PlasReleaseGateFailureCode::CohortCoverageMissingGrantExercise,
+            PlasReleaseGateFailureCode::MissingCapabilityWitness,
+            PlasReleaseGateFailureCode::WitnessSignatureVerificationFailed,
+            PlasReleaseGateFailureCode::EscrowReplayEvidenceMissing,
+            PlasReleaseGateFailureCode::EscrowReplayMismatch,
+            PlasReleaseGateFailureCode::RevocationWitnessMissing,
+            PlasReleaseGateFailureCode::RevocationEscrowEventMissing,
+            PlasReleaseGateFailureCode::AmbientAuthorityDetected,
+        ] {
+            let json = serde_json::to_string(&variant).unwrap();
+            let back: PlasReleaseGateFailureCode = serde_json::from_str(&json).unwrap();
+            assert_eq!(variant, back);
+        }
+    }
+
+    // ── PlasReleaseGateError ────────────────────────────────────────
+
+    #[test]
+    fn error_display_invalid_input() {
+        let err = PlasReleaseGateError::InvalidInput {
+            detail: "bad".to_string(),
+        };
+        assert_eq!(format!("{err}"), "invalid PLAS release gate input: bad");
+    }
+
+    #[test]
+    fn error_display_serialization() {
+        let err = PlasReleaseGateError::Serialization {
+            detail: "oops".to_string(),
+        };
+        assert_eq!(format!("{err}"), "serialization failure: oops");
+    }
+
+    #[test]
+    fn error_serde_roundtrip() {
+        let err = PlasReleaseGateError::InvalidInput {
+            detail: "test".to_string(),
+        };
+        let json = serde_json::to_string(&err).unwrap();
+        let back: PlasReleaseGateError = serde_json::from_str(&json).unwrap();
+        assert_eq!(err, back);
+    }
+
+    // ── PlasEscrowReplayEvidence ────────────────────────────────────
+
+    #[test]
+    fn replay_evidence_normalize_trims() {
+        let mut e = PlasEscrowReplayEvidence {
+            receipt_id: "  r1  ".to_string(),
+            replay_decision_kind: "  grant  ".to_string(),
+            replay_outcome: "  allow  ".to_string(),
+            replay_policy_id: "  p1  ".to_string(),
+            deterministic_replay: true,
+            replay_trace_id: "  t1  ".to_string(),
+        };
+        e.normalize();
+        assert_eq!(e.receipt_id, "r1");
+        assert_eq!(e.replay_decision_kind, "grant");
+        assert_eq!(e.replay_outcome, "allow");
+        assert_eq!(e.replay_policy_id, "p1");
+        assert_eq!(e.replay_trace_id, "t1");
+    }
+
+    #[test]
+    fn replay_evidence_serde_roundtrip() {
+        let e = PlasEscrowReplayEvidence {
+            receipt_id: "r1".to_string(),
+            replay_decision_kind: "grant".to_string(),
+            replay_outcome: "allow".to_string(),
+            replay_policy_id: "p1".to_string(),
+            deterministic_replay: true,
+            replay_trace_id: "t1".to_string(),
+        };
+        let json = serde_json::to_string(&e).unwrap();
+        let back: PlasEscrowReplayEvidence = serde_json::from_str(&json).unwrap();
+        assert_eq!(e, back);
+    }
+
+    // ── PlasReleaseGateInput validation ─────────────────────────────
+
+    #[test]
+    fn input_validate_empty_trace_id() {
+        let mut input = make_input(vec![minimal_extension(1, PlasActivationMode::Active)]);
+        input.trace_id = "".to_string();
+        let err = evaluate_plas_release_gate(&input, &trust_anchors()).unwrap_err();
+        assert!(err.to_string().contains("trace_id"));
+    }
+
+    #[test]
+    fn input_validate_empty_decision_id() {
+        let mut input = make_input(vec![minimal_extension(1, PlasActivationMode::Active)]);
+        input.decision_id = "".to_string();
+        let err = evaluate_plas_release_gate(&input, &trust_anchors()).unwrap_err();
+        assert!(err.to_string().contains("decision_id"));
+    }
+
+    #[test]
+    fn input_validate_empty_policy_id() {
+        let mut input = make_input(vec![minimal_extension(1, PlasActivationMode::Active)]);
+        input.policy_id = "".to_string();
+        let err = evaluate_plas_release_gate(&input, &trust_anchors()).unwrap_err();
+        assert!(err.to_string().contains("policy_id"));
+    }
+
+    #[test]
+    fn input_validate_empty_cohort_id() {
+        let mut input = make_input(vec![minimal_extension(1, PlasActivationMode::Active)]);
+        input.cohort_id = "".to_string();
+        let err = evaluate_plas_release_gate(&input, &trust_anchors()).unwrap_err();
+        assert!(err.to_string().contains("cohort_id"));
+    }
+
+    #[test]
+    fn input_validate_no_extensions() {
+        let input = make_input(vec![]);
+        let err = evaluate_plas_release_gate(&input, &trust_anchors()).unwrap_err();
+        assert!(err.to_string().contains("at least one"));
+    }
+
+    #[test]
+    fn input_validate_duplicate_extension() {
+        let input = make_input(vec![
+            minimal_extension(1, PlasActivationMode::Active),
+            minimal_extension(1, PlasActivationMode::Active),
+        ]);
+        let err = evaluate_plas_release_gate(&input, &trust_anchors()).unwrap_err();
+        assert!(err.to_string().contains("duplicate"));
+    }
+
+    #[test]
+    fn input_normalize_trims_ids() {
+        let mut input = make_input(vec![minimal_extension(1, PlasActivationMode::Active)]);
+        input.trace_id = "  t1  ".to_string();
+        input.decision_id = "  d1  ".to_string();
+        // This should not error — normalization trims before validation
+        let result = evaluate_plas_release_gate(&input, &trust_anchors());
+        assert!(result.is_ok());
+    }
+
+    // ── evaluate: CohortPlasNotActive ───────────────────────────────
+
+    #[test]
+    fn evaluate_not_active_shadow() {
+        let input = make_input(vec![minimal_extension(1, PlasActivationMode::Shadow)]);
+        let result = evaluate_plas_release_gate(&input, &trust_anchors()).unwrap();
+        assert!(!result.pass);
+        assert!(
+            result
+                .findings
+                .iter()
+                .any(|f| f.code == PlasReleaseGateFailureCode::CohortPlasNotActive)
+        );
+    }
+
+    #[test]
+    fn evaluate_not_active_disabled() {
+        let input = make_input(vec![minimal_extension(1, PlasActivationMode::Disabled)]);
+        let result = evaluate_plas_release_gate(&input, &trust_anchors()).unwrap();
+        assert!(!result.pass);
+        assert!(
+            result
+                .findings
+                .iter()
+                .any(|f| f.code == PlasReleaseGateFailureCode::CohortPlasNotActive)
+        );
+    }
+
+    #[test]
+    fn evaluate_not_active_audit_only() {
+        let input = make_input(vec![minimal_extension(1, PlasActivationMode::AuditOnly)]);
+        let result = evaluate_plas_release_gate(&input, &trust_anchors()).unwrap();
+        assert!(!result.pass);
+        let finding = result
+            .findings
+            .iter()
+            .find(|f| f.code == PlasReleaseGateFailureCode::CohortPlasNotActive)
+            .unwrap();
+        assert!(finding.detail.contains("audit_only"));
+    }
+
+    // ── evaluate: CohortCoverageMissingGrantExercise ────────────────
+
+    #[test]
+    fn evaluate_empty_grants() {
+        let input = make_input(vec![minimal_extension(1, PlasActivationMode::Active)]);
+        let result = evaluate_plas_release_gate(&input, &trust_anchors()).unwrap();
+        assert!(!result.pass);
+        assert!(
+            result
+                .findings
+                .iter()
+                .any(|f| f.code == PlasReleaseGateFailureCode::CohortCoverageMissingGrantExercise)
+        );
+    }
+
+    // ── evaluate: AmbientAuthorityDetected ──────────────────────────
+
+    #[test]
+    fn evaluate_ambient_authority_no_grants() {
+        let mut ext = minimal_extension(1, PlasActivationMode::Active);
+        ext.active_capabilities
+            .insert(Capability::new("net.connect"));
+        let input = make_input(vec![ext]);
+        let result = evaluate_plas_release_gate(&input, &trust_anchors()).unwrap();
+        assert!(!result.pass);
+        assert!(
+            result
+                .findings
+                .iter()
+                .any(|f| f.code == PlasReleaseGateFailureCode::AmbientAuthorityDetected)
+        );
+    }
+
+    // ── evaluate: decision artifact fields ──────────────────────────
+
+    #[test]
+    fn evaluate_decision_artifact_ids() {
+        let input = make_input(vec![minimal_extension(1, PlasActivationMode::Active)]);
+        let result = evaluate_plas_release_gate(&input, &trust_anchors()).unwrap();
+        assert_eq!(result.decision_id, "d1");
+        assert_eq!(result.cohort_id, "c1");
+        assert_eq!(result.checked_extensions, 1);
+        assert_eq!(result.checked_grants, 0);
+        assert_eq!(result.checked_revocations, 0);
+    }
+
+    #[test]
+    fn evaluate_decision_hash_deterministic() {
+        let input = make_input(vec![minimal_extension(1, PlasActivationMode::Active)]);
+        let r1 = evaluate_plas_release_gate(&input, &trust_anchors()).unwrap();
+        let r2 = evaluate_plas_release_gate(&input, &trust_anchors()).unwrap();
+        assert_eq!(r1.decision_hash, r2.decision_hash);
+    }
+
+    #[test]
+    fn evaluate_decision_hash_differs_on_different_input() {
+        let input1 = make_input(vec![minimal_extension(1, PlasActivationMode::Active)]);
+        let input2 = make_input(vec![minimal_extension(2, PlasActivationMode::Active)]);
+        let r1 = evaluate_plas_release_gate(&input1, &trust_anchors()).unwrap();
+        let r2 = evaluate_plas_release_gate(&input2, &trust_anchors()).unwrap();
+        assert_ne!(r1.decision_hash, r2.decision_hash);
+    }
+
+    // ── evaluate: logs ──────────────────────────────────────────────
+
+    #[test]
+    fn evaluate_produces_logs() {
+        let input = make_input(vec![minimal_extension(1, PlasActivationMode::Active)]);
+        let result = evaluate_plas_release_gate(&input, &trust_anchors()).unwrap();
+        assert!(!result.logs.is_empty());
+        // Should have a release_gate_decision log
+        assert!(
+            result
+                .logs
+                .iter()
+                .any(|l| l.event == "release_gate_decision")
+        );
+        // All logs should have component = plas_release_gate
+        assert!(
+            result
+                .logs
+                .iter()
+                .all(|l| l.component == "plas_release_gate")
+        );
+    }
+
+    #[test]
+    fn evaluate_fail_log_has_error_code() {
+        let input = make_input(vec![minimal_extension(1, PlasActivationMode::Active)]);
+        let result = evaluate_plas_release_gate(&input, &trust_anchors()).unwrap();
+        let decision_log = result
+            .logs
+            .iter()
+            .find(|l| l.event == "release_gate_decision")
+            .unwrap();
+        assert_eq!(decision_log.outcome, "fail");
+        assert_eq!(
+            decision_log.error_code.as_deref(),
+            Some("plas_release_gate_failed")
+        );
+    }
+
+    // ── evaluate: multiple extensions ───────────────────────────────
+
+    #[test]
+    fn evaluate_multiple_extensions_all_checked() {
+        let input = make_input(vec![
+            minimal_extension(1, PlasActivationMode::Active),
+            minimal_extension(2, PlasActivationMode::Shadow),
+            minimal_extension(3, PlasActivationMode::Active),
+        ]);
+        let result = evaluate_plas_release_gate(&input, &trust_anchors()).unwrap();
+        assert_eq!(result.checked_extensions, 3);
+        assert!(!result.pass);
+    }
+
+    // ── PlasReleaseGateFinding serde ────────────────────────────────
+
+    #[test]
+    fn finding_serde_roundtrip() {
+        let f = PlasReleaseGateFinding {
+            code: PlasReleaseGateFailureCode::CohortPlasNotActive,
+            extension_id: "ext-1".to_string(),
+            receipt_id: Some("r-1".to_string()),
+            detail: "not active".to_string(),
+        };
+        let json = serde_json::to_string(&f).unwrap();
+        let back: PlasReleaseGateFinding = serde_json::from_str(&json).unwrap();
+        assert_eq!(f, back);
+    }
+
+    // ── PlasReleaseGateLogEvent serde ───────────────────────────────
+
+    #[test]
+    fn log_event_serde_roundtrip() {
+        let le = PlasReleaseGateLogEvent {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            component: "c".to_string(),
+            event: "e".to_string(),
+            outcome: "pass".to_string(),
+            error_code: None,
+            extension_id: Some("ext".to_string()),
+            receipt_id: None,
+            capability: Some("net.connect".to_string()),
+        };
+        let json = serde_json::to_string(&le).unwrap();
+        let back: PlasReleaseGateLogEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(le, back);
+    }
+
+    // ── PlasReleaseGateDecisionArtifact serde ───────────────────────
+
+    #[test]
+    fn decision_artifact_serde_roundtrip() {
+        let input = make_input(vec![minimal_extension(1, PlasActivationMode::Active)]);
+        let artifact = evaluate_plas_release_gate(&input, &trust_anchors()).unwrap();
+        let json = serde_json::to_string(&artifact).unwrap();
+        let back: PlasReleaseGateDecisionArtifact = serde_json::from_str(&json).unwrap();
+        assert_eq!(artifact, back);
+    }
+
+    // ── PlasReleaseGateInput serde ──────────────────────────────────
+
+    #[test]
+    fn input_serde_roundtrip() {
+        let input = make_input(vec![minimal_extension(1, PlasActivationMode::Active)]);
+        let json = serde_json::to_string(&input).unwrap();
+        let back: PlasReleaseGateInput = serde_json::from_str(&json).unwrap();
+        assert_eq!(input, back);
+    }
+
+    // ── PlasReleaseGateTrustAnchors serde ───────────────────────────
+
+    #[test]
+    fn trust_anchors_serde_roundtrip() {
+        let ta = trust_anchors();
+        let json = serde_json::to_string(&ta).unwrap();
+        let back: PlasReleaseGateTrustAnchors = serde_json::from_str(&json).unwrap();
+        assert_eq!(ta, back);
+    }
+
+    // ── PlasCohortExtension serde ───────────────────────────────────
+
+    #[test]
+    fn cohort_extension_serde_roundtrip() {
+        let ext = minimal_extension(1, PlasActivationMode::Active);
+        let json = serde_json::to_string(&ext).unwrap();
+        let back: PlasCohortExtension = serde_json::from_str(&json).unwrap();
+        assert_eq!(ext, back);
+    }
+
+    // ── findings sorted deterministically ───────────────────────────
+
+    #[test]
+    fn findings_sorted_by_code_then_extension() {
+        let input = make_input(vec![
+            minimal_extension(2, PlasActivationMode::Shadow),
+            minimal_extension(1, PlasActivationMode::Disabled),
+        ]);
+        let result = evaluate_plas_release_gate(&input, &trust_anchors()).unwrap();
+        let codes: Vec<_> = result.findings.iter().map(|f| f.code).collect();
+        // All CohortPlasNotActive codes should be grouped (sorted)
+        let mut sorted_codes = codes.clone();
+        sorted_codes.sort();
+        assert_eq!(codes, sorted_codes);
+    }
+}

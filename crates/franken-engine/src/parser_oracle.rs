@@ -402,14 +402,11 @@ pub fn run_parser_oracle(
     }
 
     let total_fixtures = u64::try_from(fixture_results.len()).unwrap_or(u64::MAX);
-    let drift_rate_millionths = if total_fixtures == 0 {
-        0
-    } else {
-        minor_drift_count
-            .saturating_add(critical_drift_count)
-            .saturating_mul(1_000_000)
-            / total_fixtures
-    };
+    let drift_rate_millionths = minor_drift_count
+        .saturating_add(critical_drift_count)
+        .saturating_mul(1_000_000)
+        .checked_div(total_fixtures)
+        .unwrap_or(0);
 
     let summary = OracleSummary {
         total_fixtures,
@@ -646,4 +643,823 @@ fn normalize_hash(raw: &str) -> String {
 
 fn hash_bytes(bytes: &[u8]) -> String {
     format!("sha256:{}", hex::encode(Sha256::digest(bytes)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -----------------------------------------------------------------------
+    // OraclePartition
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn partition_as_str() {
+        assert_eq!(OraclePartition::Smoke.as_str(), "smoke");
+        assert_eq!(OraclePartition::Full.as_str(), "full");
+        assert_eq!(OraclePartition::Nightly.as_str(), "nightly");
+    }
+
+    #[test]
+    fn partition_fixture_limit() {
+        assert_eq!(OraclePartition::Smoke.fixture_limit(), Some(4));
+        assert_eq!(OraclePartition::Full.fixture_limit(), None);
+        assert_eq!(OraclePartition::Nightly.fixture_limit(), None);
+    }
+
+    #[test]
+    fn partition_metamorphic_pairs() {
+        assert_eq!(OraclePartition::Smoke.metamorphic_pairs(), 64);
+        assert_eq!(OraclePartition::Full.metamorphic_pairs(), 256);
+        assert_eq!(OraclePartition::Nightly.metamorphic_pairs(), 1024);
+    }
+
+    #[test]
+    fn partition_from_str_valid() {
+        assert_eq!(
+            "smoke".parse::<OraclePartition>().unwrap(),
+            OraclePartition::Smoke
+        );
+        assert_eq!(
+            "full".parse::<OraclePartition>().unwrap(),
+            OraclePartition::Full
+        );
+        assert_eq!(
+            "nightly".parse::<OraclePartition>().unwrap(),
+            OraclePartition::Nightly
+        );
+    }
+
+    #[test]
+    fn partition_from_str_invalid() {
+        let err = "unknown".parse::<OraclePartition>().unwrap_err();
+        assert!(err.contains("unsupported partition"));
+    }
+
+    #[test]
+    fn partition_serde_roundtrip() {
+        for partition in [
+            OraclePartition::Smoke,
+            OraclePartition::Full,
+            OraclePartition::Nightly,
+        ] {
+            let json = serde_json::to_string(&partition).unwrap();
+            let back: OraclePartition = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, partition);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // OracleGateMode
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn gate_mode_as_str() {
+        assert_eq!(OracleGateMode::ReportOnly.as_str(), "report_only");
+        assert_eq!(OracleGateMode::FailClosed.as_str(), "fail_closed");
+    }
+
+    #[test]
+    fn gate_mode_from_str_valid() {
+        assert_eq!(
+            "report_only".parse::<OracleGateMode>().unwrap(),
+            OracleGateMode::ReportOnly
+        );
+        assert_eq!(
+            "fail_closed".parse::<OracleGateMode>().unwrap(),
+            OracleGateMode::FailClosed
+        );
+    }
+
+    #[test]
+    fn gate_mode_from_str_invalid() {
+        let err = "bad".parse::<OracleGateMode>().unwrap_err();
+        assert!(err.contains("unsupported gate mode"));
+    }
+
+    #[test]
+    fn gate_mode_serde_roundtrip() {
+        for mode in [OracleGateMode::ReportOnly, OracleGateMode::FailClosed] {
+            let json = serde_json::to_string(&mode).unwrap();
+            let back: OracleGateMode = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, mode);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // DriftClass
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn drift_class_comparator_decision() {
+        assert_eq!(DriftClass::Equivalent.comparator_decision(), "equivalent");
+        assert_eq!(
+            DriftClass::DiagnosticsDrift.comparator_decision(),
+            "drift_minor"
+        );
+        assert_eq!(
+            DriftClass::SemanticDrift.comparator_decision(),
+            "drift_critical"
+        );
+        assert_eq!(
+            DriftClass::HarnessNondeterminism.comparator_decision(),
+            "drift_critical"
+        );
+        assert_eq!(
+            DriftClass::ArtifactIntegrityFailure.comparator_decision(),
+            "drift_critical"
+        );
+    }
+
+    #[test]
+    fn drift_class_is_critical() {
+        assert!(!DriftClass::Equivalent.is_critical());
+        assert!(!DriftClass::DiagnosticsDrift.is_critical());
+        assert!(DriftClass::SemanticDrift.is_critical());
+        assert!(DriftClass::HarnessNondeterminism.is_critical());
+        assert!(DriftClass::ArtifactIntegrityFailure.is_critical());
+    }
+
+    #[test]
+    fn drift_class_is_minor() {
+        assert!(DriftClass::DiagnosticsDrift.is_minor());
+        assert!(!DriftClass::Equivalent.is_minor());
+        assert!(!DriftClass::SemanticDrift.is_minor());
+        assert!(!DriftClass::HarnessNondeterminism.is_minor());
+        assert!(!DriftClass::ArtifactIntegrityFailure.is_minor());
+    }
+
+    #[test]
+    fn drift_class_serde_roundtrip() {
+        for class in [
+            DriftClass::Equivalent,
+            DriftClass::SemanticDrift,
+            DriftClass::DiagnosticsDrift,
+            DriftClass::HarnessNondeterminism,
+            DriftClass::ArtifactIntegrityFailure,
+        ] {
+            let json = serde_json::to_string(&class).unwrap();
+            let back: DriftClass = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, class);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // GateAction
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn gate_action_rank_ordering() {
+        assert!(GateAction::Promote.rank() < GateAction::Hold.rank());
+        assert!(GateAction::Hold.rank() < GateAction::Reject.rank());
+    }
+
+    #[test]
+    fn gate_action_serde_roundtrip() {
+        for action in [GateAction::Promote, GateAction::Hold, GateAction::Reject] {
+            let json = serde_json::to_string(&action).unwrap();
+            let back: GateAction = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, action);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // ParseObservation
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_observation_hash_hex_some() {
+        let mut hash = [0u8; 32];
+        hash[0] = 0xab;
+        hash[31] = 0xcd;
+        let obs = ParseObservation::Hash(hash);
+        let hex_str = obs.hash_hex().unwrap();
+        assert!(hex_str.starts_with("sha256:"));
+        assert!(hex_str.contains("ab"));
+        assert!(hex_str.contains("cd"));
+    }
+
+    #[test]
+    fn parse_observation_hash_hex_none_for_error() {
+        let obs = ParseObservation::Error(ParseErrorCode::UnsupportedSyntax);
+        assert!(obs.hash_hex().is_none());
+    }
+
+    #[test]
+    fn parse_observation_error_code_some() {
+        let obs = ParseObservation::Error(ParseErrorCode::UnsupportedSyntax);
+        let code = obs.error_code().unwrap();
+        assert!(!code.is_empty());
+    }
+
+    #[test]
+    fn parse_observation_error_code_none_for_hash() {
+        let obs = ParseObservation::Hash([0u8; 32]);
+        assert!(obs.error_code().is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // normalize_hash
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn normalize_hash_with_prefix() {
+        let result = normalize_hash("sha256:ABCDEF");
+        assert_eq!(result, "sha256:abcdef");
+    }
+
+    #[test]
+    fn normalize_hash_without_prefix() {
+        let result = normalize_hash("ABCDEF");
+        assert_eq!(result, "sha256:abcdef");
+    }
+
+    #[test]
+    fn normalize_hash_already_lowercase() {
+        let result = normalize_hash("sha256:0123abcdef");
+        assert_eq!(result, "sha256:0123abcdef");
+    }
+
+    // -----------------------------------------------------------------------
+    // hash_bytes
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn hash_bytes_deterministic() {
+        let a = hash_bytes(b"hello");
+        let b = hash_bytes(b"hello");
+        assert_eq!(a, b);
+        assert!(a.starts_with("sha256:"));
+    }
+
+    #[test]
+    fn hash_bytes_different_inputs_differ() {
+        let a = hash_bytes(b"hello");
+        let b = hash_bytes(b"world");
+        assert_ne!(a, b);
+    }
+
+    // -----------------------------------------------------------------------
+    // derive_seed
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn derive_seed_deterministic() {
+        let a = derive_seed(42, "fixture-1", ParserMode::ScalarReference);
+        let b = derive_seed(42, "fixture-1", ParserMode::ScalarReference);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn derive_seed_different_fixture_ids() {
+        let a = derive_seed(42, "fixture-1", ParserMode::ScalarReference);
+        let b = derive_seed(42, "fixture-2", ParserMode::ScalarReference);
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn derive_seed_different_master_seeds() {
+        let a = derive_seed(1, "fixture-1", ParserMode::ScalarReference);
+        let b = derive_seed(2, "fixture-1", ParserMode::ScalarReference);
+        assert_ne!(a, b);
+    }
+
+    // -----------------------------------------------------------------------
+    // classify_observation
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn classify_matching_hashes_equivalent() {
+        let hash = [0xabu8; 32];
+        let expected = format!("sha256:{}", hex::encode(hash));
+        let class = classify_observation(
+            &expected,
+            ParseObservation::Hash(hash),
+            ParseObservation::Hash(hash),
+        );
+        assert_eq!(class, DriftClass::Equivalent);
+    }
+
+    #[test]
+    fn classify_nondeterministic_hashes() {
+        let hash1 = [0xabu8; 32];
+        let mut hash2 = hash1;
+        hash2[0] = 0xcd;
+        let expected = format!("sha256:{}", hex::encode(hash1));
+        let class = classify_observation(
+            &expected,
+            ParseObservation::Hash(hash1),
+            ParseObservation::Hash(hash2),
+        );
+        assert_eq!(class, DriftClass::HarnessNondeterminism);
+    }
+
+    #[test]
+    fn classify_deterministic_but_wrong_hash() {
+        let hash = [0xabu8; 32];
+        let expected = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+        let class = classify_observation(
+            expected,
+            ParseObservation::Hash(hash),
+            ParseObservation::Hash(hash),
+        );
+        assert_eq!(class, DriftClass::ArtifactIntegrityFailure);
+    }
+
+    #[test]
+    fn classify_matching_errors_diagnostics_drift() {
+        let class = classify_observation(
+            "sha256:0000",
+            ParseObservation::Error(ParseErrorCode::UnsupportedSyntax),
+            ParseObservation::Error(ParseErrorCode::UnsupportedSyntax),
+        );
+        assert_eq!(class, DriftClass::DiagnosticsDrift);
+    }
+
+    #[test]
+    fn classify_different_errors_nondeterminism() {
+        let class = classify_observation(
+            "sha256:0000",
+            ParseObservation::Error(ParseErrorCode::UnsupportedSyntax),
+            ParseObservation::Error(ParseErrorCode::InvalidGoal),
+        );
+        assert_eq!(class, DriftClass::HarnessNondeterminism);
+    }
+
+    #[test]
+    fn classify_hash_then_error_semantic_drift() {
+        let class = classify_observation(
+            "sha256:0000",
+            ParseObservation::Hash([0u8; 32]),
+            ParseObservation::Error(ParseErrorCode::UnsupportedSyntax),
+        );
+        assert_eq!(class, DriftClass::SemanticDrift);
+    }
+
+    #[test]
+    fn classify_error_then_hash_semantic_drift() {
+        let class = classify_observation(
+            "sha256:0000",
+            ParseObservation::Error(ParseErrorCode::UnsupportedSyntax),
+            ParseObservation::Hash([0u8; 32]),
+        );
+        assert_eq!(class, DriftClass::SemanticDrift);
+    }
+
+    // -----------------------------------------------------------------------
+    // expected_loss_model
+    // -----------------------------------------------------------------------
+
+    fn make_summary(equivalent: u64, minor: u64, critical: u64) -> OracleSummary {
+        let total = equivalent + minor + critical;
+        let mut counts_by_class = BTreeMap::new();
+        if equivalent > 0 {
+            counts_by_class.insert("Equivalent".to_string(), equivalent);
+        }
+        if minor > 0 {
+            counts_by_class.insert("DiagnosticsDrift".to_string(), minor);
+        }
+        if critical > 0 {
+            counts_by_class.insert("SemanticDrift".to_string(), critical);
+        }
+        let drift_rate_millionths = (minor + critical)
+            .saturating_mul(1_000_000)
+            .checked_div(total)
+            .unwrap_or(0);
+        OracleSummary {
+            total_fixtures: total,
+            equivalent_count: equivalent,
+            minor_drift_count: minor,
+            critical_drift_count: critical,
+            drift_rate_millionths,
+            counts_by_class,
+        }
+    }
+
+    #[test]
+    fn expected_loss_all_equivalent_recommends_promote() {
+        let summary = make_summary(100, 0, 0);
+        let model = expected_loss_model(&summary);
+        assert_eq!(model.recommended_action, GateAction::Promote);
+        assert!(model.promote_loss < model.hold_loss);
+        assert!(model.promote_loss < model.reject_loss);
+    }
+
+    #[test]
+    fn expected_loss_all_critical_recommends_reject() {
+        let summary = make_summary(0, 0, 100);
+        let model = expected_loss_model(&summary);
+        assert_eq!(model.recommended_action, GateAction::Reject);
+        assert!(model.reject_loss < model.promote_loss);
+    }
+
+    #[test]
+    fn expected_loss_mixed_drift() {
+        let summary = make_summary(80, 15, 5);
+        let model = expected_loss_model(&summary);
+        // With some critical drift, promote should have high loss
+        assert!(model.promote_loss > 0.0);
+    }
+
+    #[test]
+    fn expected_loss_all_minor_recommends_hold_or_reject() {
+        let summary = make_summary(0, 100, 0);
+        let model = expected_loss_model(&summary);
+        // promote_loss = 1.0*35 = 35, hold_loss = 1.0*18 = 18, reject_loss = 1.0*7 = 7
+        assert_eq!(model.recommended_action, GateAction::Reject);
+    }
+
+    // -----------------------------------------------------------------------
+    // decide
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn decide_report_only_no_drift_promotes() {
+        let summary = make_summary(100, 0, 0);
+        let decision = decide(OracleGateMode::ReportOnly, &summary, GateAction::Promote);
+        assert_eq!(decision.action, GateAction::Promote);
+        assert!(!decision.promotion_blocked);
+        assert!(!decision.fallback_triggered);
+        assert!(decision.fallback_reason.is_none());
+    }
+
+    #[test]
+    fn decide_report_only_with_critical_drift() {
+        let summary = make_summary(90, 0, 10);
+        let decision = decide(OracleGateMode::ReportOnly, &summary, GateAction::Reject);
+        // ReportOnly uses recommended_action but never blocks
+        assert_eq!(decision.action, GateAction::Reject);
+        assert!(!decision.promotion_blocked);
+        assert!(decision.fallback_triggered);
+        assert!(
+            decision
+                .fallback_reason
+                .as_deref()
+                .unwrap()
+                .contains("critical")
+        );
+    }
+
+    #[test]
+    fn decide_report_only_with_minor_drift() {
+        let summary = make_summary(90, 10, 0);
+        let decision = decide(OracleGateMode::ReportOnly, &summary, GateAction::Hold);
+        assert_eq!(decision.action, GateAction::Hold);
+        assert!(!decision.promotion_blocked);
+        assert!(!decision.fallback_triggered);
+        assert!(
+            decision
+                .fallback_reason
+                .as_deref()
+                .unwrap()
+                .contains("minor")
+        );
+    }
+
+    #[test]
+    fn decide_fail_closed_no_drift_promotes() {
+        let summary = make_summary(100, 0, 0);
+        let decision = decide(OracleGateMode::FailClosed, &summary, GateAction::Promote);
+        assert_eq!(decision.action, GateAction::Promote);
+        assert!(!decision.promotion_blocked);
+        assert!(!decision.fallback_triggered);
+        assert!(decision.fallback_reason.is_none());
+    }
+
+    #[test]
+    fn decide_fail_closed_critical_drift_rejects() {
+        let summary = make_summary(90, 0, 10);
+        let decision = decide(OracleGateMode::FailClosed, &summary, GateAction::Promote);
+        assert_eq!(decision.action, GateAction::Reject);
+        assert!(decision.promotion_blocked);
+        assert!(decision.fallback_triggered);
+    }
+
+    #[test]
+    fn decide_fail_closed_minor_drift_holds() {
+        let summary = make_summary(90, 10, 0);
+        let decision = decide(OracleGateMode::FailClosed, &summary, GateAction::Promote);
+        assert_eq!(decision.action, GateAction::Hold);
+        assert!(decision.promotion_blocked);
+        assert!(!decision.fallback_triggered);
+    }
+
+    // -----------------------------------------------------------------------
+    // validate_fixture_catalog
+    // -----------------------------------------------------------------------
+
+    fn valid_catalog() -> OracleFixtureCatalog {
+        OracleFixtureCatalog {
+            schema_version: "franken-engine.parser-phase0.semantic-fixtures.v1".to_string(),
+            parser_mode: "scalar_reference".to_string(),
+            fixtures: vec![OracleFixtureSpec {
+                id: "fixture-1".to_string(),
+                family_id: "fam-1".to_string(),
+                goal: "script".to_string(),
+                source: "var x = 1;".to_string(),
+                expected_hash: "sha256:0000".to_string(),
+            }],
+        }
+    }
+
+    #[test]
+    fn validate_catalog_ok() {
+        assert!(validate_fixture_catalog(&valid_catalog()).is_ok());
+    }
+
+    #[test]
+    fn validate_catalog_wrong_schema() {
+        let mut catalog = valid_catalog();
+        catalog.schema_version = "wrong".to_string();
+        let err = validate_fixture_catalog(&catalog).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("invalid parser oracle catalog schema")
+        );
+    }
+
+    #[test]
+    fn validate_catalog_wrong_parser_mode() {
+        let mut catalog = valid_catalog();
+        catalog.parser_mode = "parallel_chunked".to_string();
+        let err = validate_fixture_catalog(&catalog).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("invalid parser oracle catalog parser_mode")
+        );
+    }
+
+    #[test]
+    fn validate_catalog_empty_fixtures() {
+        let mut catalog = valid_catalog();
+        catalog.fixtures.clear();
+        let err = validate_fixture_catalog(&catalog).unwrap_err();
+        assert!(err.to_string().contains("must not be empty"));
+    }
+
+    // -----------------------------------------------------------------------
+    // parse_goal_from_fixture
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_goal_script() {
+        let fixture = OracleFixtureSpec {
+            id: "f1".to_string(),
+            family_id: "fam".to_string(),
+            goal: "script".to_string(),
+            source: String::new(),
+            expected_hash: String::new(),
+        };
+        assert_eq!(
+            parse_goal_from_fixture(&fixture).unwrap(),
+            ParseGoal::Script
+        );
+    }
+
+    #[test]
+    fn parse_goal_module() {
+        let fixture = OracleFixtureSpec {
+            id: "f1".to_string(),
+            family_id: "fam".to_string(),
+            goal: "module".to_string(),
+            source: String::new(),
+            expected_hash: String::new(),
+        };
+        assert_eq!(
+            parse_goal_from_fixture(&fixture).unwrap(),
+            ParseGoal::Module
+        );
+    }
+
+    #[test]
+    fn parse_goal_unknown() {
+        let fixture = OracleFixtureSpec {
+            id: "f1".to_string(),
+            family_id: "fam".to_string(),
+            goal: "expression".to_string(),
+            source: String::new(),
+            expected_hash: String::new(),
+        };
+        let err = parse_goal_from_fixture(&fixture).unwrap_err();
+        assert!(err.to_string().contains("unknown parse goal"));
+    }
+
+    // -----------------------------------------------------------------------
+    // partition_fixtures
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn partition_fixtures_smoke_limits() {
+        let catalog = OracleFixtureCatalog {
+            schema_version: "franken-engine.parser-phase0.semantic-fixtures.v1".to_string(),
+            parser_mode: "scalar_reference".to_string(),
+            fixtures: (0..10)
+                .map(|i| OracleFixtureSpec {
+                    id: format!("f-{i:02}"),
+                    family_id: "fam".to_string(),
+                    goal: "script".to_string(),
+                    source: format!("var x = {i};"),
+                    expected_hash: "sha256:00".to_string(),
+                })
+                .collect(),
+        };
+        let result = partition_fixtures(&catalog, OraclePartition::Smoke);
+        assert_eq!(result.len(), 4);
+    }
+
+    #[test]
+    fn partition_fixtures_full_no_limit() {
+        let catalog = OracleFixtureCatalog {
+            schema_version: "franken-engine.parser-phase0.semantic-fixtures.v1".to_string(),
+            parser_mode: "scalar_reference".to_string(),
+            fixtures: (0..10)
+                .map(|i| OracleFixtureSpec {
+                    id: format!("f-{i:02}"),
+                    family_id: "fam".to_string(),
+                    goal: "script".to_string(),
+                    source: format!("var x = {i};"),
+                    expected_hash: "sha256:00".to_string(),
+                })
+                .collect(),
+        };
+        let result = partition_fixtures(&catalog, OraclePartition::Full);
+        assert_eq!(result.len(), 10);
+    }
+
+    #[test]
+    fn partition_fixtures_sorted_by_id() {
+        let catalog = OracleFixtureCatalog {
+            schema_version: "franken-engine.parser-phase0.semantic-fixtures.v1".to_string(),
+            parser_mode: "scalar_reference".to_string(),
+            fixtures: vec![
+                OracleFixtureSpec {
+                    id: "z-last".to_string(),
+                    family_id: "fam".to_string(),
+                    goal: "script".to_string(),
+                    source: "1".to_string(),
+                    expected_hash: "sha256:00".to_string(),
+                },
+                OracleFixtureSpec {
+                    id: "a-first".to_string(),
+                    family_id: "fam".to_string(),
+                    goal: "script".to_string(),
+                    source: "2".to_string(),
+                    expected_hash: "sha256:00".to_string(),
+                },
+            ],
+        };
+        let result = partition_fixtures(&catalog, OraclePartition::Full);
+        assert_eq!(result[0].id, "a-first");
+        assert_eq!(result[1].id, "z-last");
+    }
+
+    // -----------------------------------------------------------------------
+    // ParserOracleConfig
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn config_with_defaults() {
+        let config = ParserOracleConfig::with_defaults(
+            OraclePartition::Smoke,
+            OracleGateMode::ReportOnly,
+            42,
+        );
+        assert_eq!(config.partition, OraclePartition::Smoke);
+        assert_eq!(config.gate_mode, OracleGateMode::ReportOnly);
+        assert_eq!(config.seed, 42);
+        assert!(config.trace_id.starts_with("trace-parser-oracle-"));
+        assert!(config.decision_id.starts_with("decision-parser-oracle-"));
+        assert_eq!(config.policy_id, "policy-parser-oracle-v1");
+    }
+
+    // -----------------------------------------------------------------------
+    // ParserOracleError Display
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn error_display_io() {
+        let err = ParserOracleError::Io {
+            path: "/nonexistent".to_string(),
+            source: std::io::Error::new(std::io::ErrorKind::NotFound, "not found"),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("/nonexistent"));
+        assert!(msg.contains("not found"));
+    }
+
+    #[test]
+    fn error_display_decode_catalog() {
+        let err = ParserOracleError::DecodeCatalog("bad json".to_string());
+        assert!(err.to_string().contains("bad json"));
+    }
+
+    #[test]
+    fn error_display_invalid_schema() {
+        let err = ParserOracleError::InvalidCatalogSchema {
+            expected: "v1".to_string(),
+            actual: "v2".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("v2"));
+        assert!(msg.contains("v1"));
+    }
+
+    #[test]
+    fn error_display_invalid_parser_mode() {
+        let err = ParserOracleError::InvalidCatalogParserMode {
+            expected: "scalar_reference".to_string(),
+            actual: "parallel".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("parallel"));
+    }
+
+    #[test]
+    fn error_display_empty_catalog() {
+        let err = ParserOracleError::EmptyFixtureCatalog;
+        assert!(err.to_string().contains("must not be empty"));
+    }
+
+    #[test]
+    fn error_display_unknown_goal() {
+        let err = ParserOracleError::UnknownGoal {
+            fixture_id: "f1".to_string(),
+            goal: "bad".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("f1"));
+        assert!(msg.contains("bad"));
+    }
+
+    // -----------------------------------------------------------------------
+    // OracleFixtureResult serde
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn fixture_result_serde_roundtrip() {
+        let result = OracleFixtureResult {
+            fixture_id: "f-01".to_string(),
+            family_id: "fam-1".to_string(),
+            goal: "script".to_string(),
+            parser_mode: "scalar_reference".to_string(),
+            derived_seed: 12345,
+            input_hash: "sha256:abc".to_string(),
+            expected_hash: "sha256:abc".to_string(),
+            observed_hash: Some("sha256:abc".to_string()),
+            repeated_hash: Some("sha256:abc".to_string()),
+            parse_error_code: None,
+            repeated_error_code: None,
+            drift_class: DriftClass::Equivalent,
+            comparator_decision: "equivalent".to_string(),
+            latency_ns: 1000,
+            replay_command: "cargo run ...".to_string(),
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("f-01"));
+        assert!(json.contains("equivalent"));
+    }
+
+    // -----------------------------------------------------------------------
+    // OracleSummary
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn oracle_summary_drift_rate_calculation() {
+        let summary = make_summary(90, 5, 5);
+        // (5 + 5) * 1_000_000 / 100 = 100_000
+        assert_eq!(summary.drift_rate_millionths, 100_000);
+    }
+
+    #[test]
+    fn oracle_summary_zero_drift_rate() {
+        let summary = make_summary(100, 0, 0);
+        assert_eq!(summary.drift_rate_millionths, 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // OracleDecision serde
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn oracle_decision_serde() {
+        let decision = OracleDecision {
+            action: GateAction::Hold,
+            promotion_blocked: true,
+            fallback_triggered: false,
+            fallback_reason: Some("minor drift".to_string()),
+        };
+        let json = serde_json::to_string(&decision).unwrap();
+        assert!(json.contains("hold"));
+        assert!(json.contains("minor drift"));
+    }
+
+    // -----------------------------------------------------------------------
+    // load_fixture_catalog (file I/O tests)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn load_fixture_catalog_nonexistent() {
+        let err = load_fixture_catalog(Path::new("/nonexistent/catalog.json")).unwrap_err();
+        assert!(err.to_string().contains("failed to read"));
+    }
 }

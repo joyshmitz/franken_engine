@@ -619,19 +619,34 @@ pub fn build_repro(
 // evaluate_slot — run differential gate for a single slot
 // ---------------------------------------------------------------------------
 
+/// Input bundle for [`evaluate_slot`].
+pub struct EvaluateSlotInput<'a> {
+    pub slot_id: &'a SlotId,
+    pub slot_kind: SlotKind,
+    pub authority: &'a AuthorityEnvelope,
+    pub workloads: &'a [Workload],
+    pub native_executor: &'a dyn Fn(&Workload) -> Result<CellOutput, SlotDifferentialError>,
+    pub delegate_executor: &'a dyn Fn(&Workload) -> Result<CellOutput, SlotDifferentialError>,
+    pub config: &'a DifferentialConfig,
+    pub was_previously_ready: bool,
+}
+
 /// Run the differential gate for a single slot against its workload corpus.
 ///
 /// Returns the list of per-workload results and the overall verdict.
 pub fn evaluate_slot(
-    slot_id: &SlotId,
-    slot_kind: SlotKind,
-    _authority: &AuthorityEnvelope,
-    workloads: &[Workload],
-    native_executor: &dyn Fn(&Workload) -> Result<CellOutput, SlotDifferentialError>,
-    delegate_executor: &dyn Fn(&Workload) -> Result<CellOutput, SlotDifferentialError>,
-    config: &DifferentialConfig,
-    was_previously_ready: bool,
+    input: &EvaluateSlotInput<'_>,
 ) -> Result<(Vec<WorkloadResult>, PromotionReadiness), SlotDifferentialError> {
+    let EvaluateSlotInput {
+        slot_id,
+        slot_kind,
+        authority: _authority,
+        workloads,
+        native_executor,
+        delegate_executor,
+        config,
+        was_previously_ready,
+    } = input;
     if workloads.is_empty() {
         return Err(SlotDifferentialError::EmptyCorpus {
             slot_id: slot_id.as_str().to_string(),
@@ -648,7 +663,7 @@ pub fn evaluate_slot(
     let mut has_blocking = false;
     let mut has_demotion_trigger = false;
 
-    for workload in workloads {
+    for workload in *workloads {
         let native_output = native_executor(workload)?;
         let delegate_output = delegate_executor(workload)?;
 
@@ -699,7 +714,7 @@ pub fn evaluate_slot(
     }
 
     let verdict = if has_blocking {
-        if was_previously_ready {
+        if *was_previously_ready {
             PromotionReadiness::Regressed {
                 divergence_counts,
                 repro_hashes,
@@ -789,16 +804,16 @@ impl SlotDifferentialGate {
                 slot_id: slot_id.as_str().to_string(),
             })?;
 
-        let (results, verdict) = evaluate_slot(
-            &entry.slot_id,
-            entry.kind,
-            &entry.authority,
+        let (results, verdict) = evaluate_slot(&EvaluateSlotInput {
+            slot_id: &entry.slot_id,
+            slot_kind: entry.kind,
+            authority: &entry.authority,
             workloads,
             native_executor,
             delegate_executor,
-            &self.config,
-            entry.was_previously_ready,
-        )?;
+            config: &self.config,
+            was_previously_ready: entry.was_previously_ready,
+        })?;
 
         // Update evidence.
         for r in &results {
@@ -1195,9 +1210,11 @@ mod tests {
     fn classify_zero_duration_delegate_no_panic() {
         let native = make_output("ok", 100, 1000, &[]);
         let delegate = make_output("ok", 0, 1000, &[]);
-        // Should not panic on division by zero.
+        // Should not panic on division by zero.  Delegate=0 means perf check
+        // is skipped.  Native is 100us vs delegate 0us, so native is not
+        // faster → no benign improvement.  Result is None.
         let result = classify_divergence(&native, &delegate, &default_config());
-        assert!(result.is_some()); // native_faster is false (100 > 0), but 0 duration → skip perf check
+        assert_eq!(result, None);
     }
 
     #[test]
@@ -1314,16 +1331,16 @@ mod tests {
         let output = make_output("ok", 100, 1000, &[]);
         let output_clone = output.clone();
 
-        let (results, verdict) = evaluate_slot(
-            &slot,
-            SlotKind::Parser,
-            &make_authority(),
-            &workloads,
-            &|_| Ok(output.clone()),
-            &|_| Ok(output_clone.clone()),
-            &default_config(),
-            false,
-        )
+        let (results, verdict) = evaluate_slot(&EvaluateSlotInput {
+            slot_id: &slot,
+            slot_kind: SlotKind::Parser,
+            authority: &make_authority(),
+            workloads: &workloads,
+            native_executor: &|_| Ok(output.clone()),
+            delegate_executor: &|_| Ok(output_clone.clone()),
+            config: &default_config(),
+            was_previously_ready: false,
+        })
         .unwrap();
 
         assert_eq!(results.len(), 2);
@@ -1340,16 +1357,16 @@ mod tests {
         let slot = make_slot_id("interpreter");
         let workloads = vec![make_workload("w1", WorkloadCategory::SemanticEquivalence)];
 
-        let (results, verdict) = evaluate_slot(
-            &slot,
-            SlotKind::Interpreter,
-            &make_authority(),
-            &workloads,
-            &|_| Ok(make_output("native-result", 100, 1000, &[])),
-            &|_| Ok(make_output("delegate-result", 100, 1000, &[])),
-            &default_config(),
-            false,
-        )
+        let (results, verdict) = evaluate_slot(&EvaluateSlotInput {
+            slot_id: &slot,
+            slot_kind: SlotKind::Interpreter,
+            authority: &make_authority(),
+            workloads: &workloads,
+            native_executor: &|_| Ok(make_output("native-result", 100, 1000, &[])),
+            delegate_executor: &|_| Ok(make_output("delegate-result", 100, 1000, &[])),
+            config: &default_config(),
+            was_previously_ready: false,
+        })
         .unwrap();
 
         assert_eq!(results.len(), 1);
@@ -1366,16 +1383,16 @@ mod tests {
         let slot = make_slot_id("object-model");
         let workloads = vec![make_workload("w1", WorkloadCategory::SemanticEquivalence)];
 
-        let (_, verdict) = evaluate_slot(
-            &slot,
-            SlotKind::ObjectModel,
-            &make_authority(),
-            &workloads,
-            &|_| Ok(make_output("a", 100, 1000, &[])),
-            &|_| Ok(make_output("b", 100, 1000, &[])),
-            &default_config(),
-            true, // was previously ready
-        )
+        let (_, verdict) = evaluate_slot(&EvaluateSlotInput {
+            slot_id: &slot,
+            slot_kind: SlotKind::ObjectModel,
+            authority: &make_authority(),
+            workloads: &workloads,
+            native_executor: &|_| Ok(make_output("a", 100, 1000, &[])),
+            delegate_executor: &|_| Ok(make_output("b", 100, 1000, &[])),
+            config: &default_config(),
+            was_previously_ready: true, // was previously ready
+        })
         .unwrap();
 
         assert!(verdict.is_regressed());
@@ -1392,16 +1409,16 @@ mod tests {
     #[test]
     fn evaluate_slot_empty_corpus_errors() {
         let slot = make_slot_id("gc");
-        let result = evaluate_slot(
-            &slot,
-            SlotKind::GarbageCollector,
-            &make_authority(),
-            &[],
-            &|_| Ok(make_output("ok", 100, 1000, &[])),
-            &|_| Ok(make_output("ok", 100, 1000, &[])),
-            &default_config(),
-            false,
-        );
+        let result = evaluate_slot(&EvaluateSlotInput {
+            slot_id: &slot,
+            slot_kind: SlotKind::GarbageCollector,
+            authority: &make_authority(),
+            workloads: &[],
+            native_executor: &|_| Ok(make_output("ok", 100, 1000, &[])),
+            delegate_executor: &|_| Ok(make_output("ok", 100, 1000, &[])),
+            config: &default_config(),
+            was_previously_ready: false,
+        });
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
@@ -1414,16 +1431,16 @@ mod tests {
         let slot = make_slot_id("scope-model");
         let workloads = vec![make_workload("w1", WorkloadCategory::SemanticEquivalence)];
 
-        let (_, verdict) = evaluate_slot(
-            &slot,
-            SlotKind::ScopeModel,
-            &make_authority(),
-            &workloads,
-            &|_| Ok(make_output("ok", 200, 1000, &[])), // 100% slower
-            &|_| Ok(make_output("ok", 100, 1000, &[])),
-            &default_config(),
-            true,
-        )
+        let (_, verdict) = evaluate_slot(&EvaluateSlotInput {
+            slot_id: &slot,
+            slot_kind: SlotKind::ScopeModel,
+            authority: &make_authority(),
+            workloads: &workloads,
+            native_executor: &|_| Ok(make_output("ok", 200, 1000, &[])), // 100% slower
+            delegate_executor: &|_| Ok(make_output("ok", 100, 1000, &[])),
+            config: &default_config(),
+            was_previously_ready: true,
+        })
         .unwrap();
 
         assert!(verdict.is_regressed());
@@ -1446,16 +1463,16 @@ mod tests {
             make_workload("w2", WorkloadCategory::SemanticEquivalence),
         ];
 
-        let (_, verdict) = evaluate_slot(
-            &slot,
-            SlotKind::AsyncRuntime,
-            &make_authority(),
-            &workloads,
-            &|_| Ok(make_output("ok", 80, 800, &[])), // faster + lighter
-            &|_| Ok(make_output("ok", 100, 1000, &[])),
-            &default_config(),
-            false,
-        )
+        let (_, verdict) = evaluate_slot(&EvaluateSlotInput {
+            slot_id: &slot,
+            slot_kind: SlotKind::AsyncRuntime,
+            authority: &make_authority(),
+            workloads: &workloads,
+            native_executor: &|_| Ok(make_output("ok", 80, 800, &[])), // faster + lighter
+            delegate_executor: &|_| Ok(make_output("ok", 100, 1000, &[])),
+            config: &default_config(),
+            was_previously_ready: false,
+        })
         .unwrap();
 
         if let PromotionReadiness::Ready {
@@ -1475,22 +1492,22 @@ mod tests {
         let slot = make_slot_id("builtins");
         let workloads = vec![make_workload("w1", WorkloadCategory::SemanticEquivalence)];
 
-        let result = evaluate_slot(
-            &slot,
-            SlotKind::Builtins,
-            &make_authority(),
-            &workloads,
-            &|_| {
+        let result = evaluate_slot(&EvaluateSlotInput {
+            slot_id: &slot,
+            slot_kind: SlotKind::Builtins,
+            authority: &make_authority(),
+            workloads: &workloads,
+            native_executor: &|_| {
                 Err(SlotDifferentialError::CellExecutionFailed {
                     slot_id: "builtins".to_string(),
                     cell_type: "native".to_string(),
                     detail: "segfault".to_string(),
                 })
             },
-            &|_| Ok(make_output("ok", 100, 1000, &[])),
-            &default_config(),
-            false,
-        );
+            delegate_executor: &|_| Ok(make_output("ok", 100, 1000, &[])),
+            config: &default_config(),
+            was_previously_ready: false,
+        });
         assert!(result.is_err());
     }
 

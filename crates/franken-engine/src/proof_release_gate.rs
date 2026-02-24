@@ -618,4 +618,313 @@ mod tests {
         assert_eq!(a.decision_id, b.decision_id);
         assert_eq!(a, b);
     }
+
+    // ── GateFailureCode ─────────────────────────────────────────────
+
+    #[test]
+    fn gate_failure_code_display() {
+        assert_eq!(
+            format!("{}", GateFailureCode::MissingProofArtifact),
+            "missing_proof_artifact"
+        );
+        assert_eq!(
+            format!("{}", GateFailureCode::MissingBundleField),
+            "missing_bundle_field"
+        );
+        assert_eq!(
+            format!("{}", GateFailureCode::ProofVerificationFailed),
+            "proof_verification_failed"
+        );
+        assert_eq!(
+            format!("{}", GateFailureCode::FallbackPathInvalid),
+            "fallback_path_invalid"
+        );
+        assert_eq!(
+            format!("{}", GateFailureCode::IndependentReplayFailed),
+            "independent_replay_failed"
+        );
+        assert_eq!(
+            format!("{}", GateFailureCode::ReplayMultiplierExceeded),
+            "replay_multiplier_exceeded"
+        );
+        assert_eq!(
+            format!("{}", GateFailureCode::ArchiveNotContentAddressed),
+            "archive_not_content_addressed"
+        );
+    }
+
+    #[test]
+    fn gate_failure_code_ordering() {
+        assert!(GateFailureCode::MissingProofArtifact < GateFailureCode::MissingBundleField);
+        assert!(
+            GateFailureCode::ReplayMultiplierExceeded
+                < GateFailureCode::ArchiveNotContentAddressed
+        );
+    }
+
+    #[test]
+    fn gate_failure_code_serde_roundtrip() {
+        for code in [
+            GateFailureCode::MissingProofArtifact,
+            GateFailureCode::MissingBundleField,
+            GateFailureCode::ProofVerificationFailed,
+            GateFailureCode::FallbackPathInvalid,
+            GateFailureCode::IndependentReplayFailed,
+            GateFailureCode::ReplayMultiplierExceeded,
+            GateFailureCode::ArchiveNotContentAddressed,
+        ] {
+            let json = serde_json::to_string(&code).unwrap();
+            let back: GateFailureCode = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, code);
+        }
+    }
+
+    // ── ReleaseGateThresholds ───────────────────────────────────────
+
+    #[test]
+    fn thresholds_default() {
+        let t = ReleaseGateThresholds::default();
+        assert_eq!(t.max_replay_multiplier_millionths, 5_000_000);
+    }
+
+    #[test]
+    fn thresholds_serde_roundtrip() {
+        let t = ReleaseGateThresholds {
+            max_replay_multiplier_millionths: 3_000_000,
+        };
+        let json = serde_json::to_string(&t).unwrap();
+        let back: ReleaseGateThresholds = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, t);
+    }
+
+    // ── compute_replay_multiplier ───────────────────────────────────
+
+    #[test]
+    fn replay_multiplier_normal() {
+        assert_eq!(
+            compute_replay_multiplier_millionths(200_000_000, 50_000_000),
+            4_000_000
+        );
+    }
+
+    #[test]
+    fn replay_multiplier_zero_compile_time() {
+        assert_eq!(
+            compute_replay_multiplier_millionths(100, 0),
+            u64::MAX
+        );
+    }
+
+    #[test]
+    fn replay_multiplier_one_to_one() {
+        assert_eq!(
+            compute_replay_multiplier_millionths(100, 100),
+            1_000_000
+        );
+    }
+
+    // ── is_content_addressed_archive ────────────────────────────────
+
+    #[test]
+    fn content_addressed_archive_valid() {
+        assert!(is_content_addressed_archive("cas://foo", &hash("x")));
+    }
+
+    #[test]
+    fn content_addressed_archive_wrong_scheme() {
+        assert!(!is_content_addressed_archive("https://foo", &hash("x")));
+    }
+
+    #[test]
+    fn content_addressed_archive_zero_root() {
+        assert!(!is_content_addressed_archive("cas://foo", &[0u8; 32]));
+    }
+
+    // ── artifact validation ─────────────────────────────────────────
+
+    #[test]
+    fn artifact_missing_bundle_fields_detected() {
+        let mut input = base_input();
+        input.bundle.artifacts[0].optimization_pass = "  ".to_string();
+        let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
+        assert!(!decision.pass);
+        assert!(
+            decision
+                .findings
+                .iter()
+                .any(|f| f.code == GateFailureCode::MissingBundleField)
+        );
+    }
+
+    #[test]
+    fn artifact_zero_proof_hash_is_missing_field() {
+        let mut input = base_input();
+        input.bundle.artifacts[0].proof_hash = [0u8; 32];
+        let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
+        assert!(!decision.pass);
+        assert!(
+            decision
+                .findings
+                .iter()
+                .any(|f| f.code == GateFailureCode::MissingBundleField)
+        );
+    }
+
+    #[test]
+    fn independent_replay_not_verified_fails() {
+        let mut input = base_input();
+        input.bundle.artifacts[0].proof_verified = true;
+        input.bundle.artifacts[0].independent_replay_verified = false;
+        let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
+        assert!(!decision.pass);
+        assert!(
+            decision
+                .findings
+                .iter()
+                .any(|f| f.code == GateFailureCode::IndependentReplayFailed)
+        );
+    }
+
+    #[test]
+    fn archive_not_content_addressed_fails() {
+        let mut input = base_input();
+        input.bundle.archive_uri = "https://not-cas".to_string();
+        let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
+        assert!(!decision.pass);
+        assert!(
+            decision
+                .findings
+                .iter()
+                .any(|f| f.code == GateFailureCode::ArchiveNotContentAddressed)
+        );
+    }
+
+    // ── valid fallback path ─────────────────────────────────────────
+
+    #[test]
+    fn valid_fallback_with_receipt_passes() {
+        let mut input = base_input();
+        // Proof failed but correct fallback
+        input.bundle.artifacts[0].proof_verified = false;
+        input.bundle.artifacts[0].optimization_applied = false;
+        input.bundle.artifacts[0].fallback_triggered = true;
+        input.bundle.artifacts[0].fallback_receipt_id = Some("receipt-001".to_string());
+        // This still has independent_replay_verified=true but proof_verified=false
+        // → IndependentReplayFailed won't fire because the check is `proof_verified && !independent_replay_verified`
+        let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
+        // Should not have FallbackPathInvalid or ProofVerificationFailed
+        assert!(
+            !decision
+                .findings
+                .iter()
+                .any(|f| f.code == GateFailureCode::FallbackPathInvalid)
+        );
+        assert!(
+            !decision
+                .findings
+                .iter()
+                .any(|f| f.code == GateFailureCode::ProofVerificationFailed)
+        );
+    }
+
+    // ── decision artifact structure ─────────────────────────────────
+
+    #[test]
+    fn decision_has_rollback_token() {
+        let input = base_input();
+        let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
+        assert!(decision.rollback_token.starts_with("rollback-"));
+        assert_eq!(decision.rollback_token.len(), "rollback-".len() + 16);
+    }
+
+    #[test]
+    fn decision_candidate_version() {
+        let input = base_input();
+        let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
+        assert_eq!(decision.candidate_version, "candidate-2026-02-20");
+    }
+
+    #[test]
+    fn decision_logs_include_per_artifact_and_summary() {
+        let input = base_input();
+        let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
+        // 2 artifacts + 1 summary
+        assert_eq!(decision.logs.len(), 3);
+        let summary = &decision.logs[2];
+        assert_eq!(summary.event, "release_gate_decision");
+        assert_eq!(summary.outcome, "pass");
+    }
+
+    #[test]
+    fn decision_log_failed_proof_has_error_code() {
+        let mut input = base_input();
+        input.bundle.artifacts[0].proof_verified = false;
+        input.bundle.artifacts[0].optimization_applied = false;
+        input.bundle.artifacts[0].fallback_triggered = true;
+        input.bundle.artifacts[0].fallback_receipt_id = Some("r".to_string());
+        let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
+        let log = &decision.logs[0];
+        assert_eq!(log.outcome, "failed");
+        assert_eq!(
+            log.error_code.as_deref(),
+            Some("proof_verification_failed")
+        );
+    }
+
+    // ── serde roundtrips ────────────────────────────────────────────
+
+    #[test]
+    fn optimization_proof_artifact_serde() {
+        let artifact = ok_artifact("inline");
+        let json = serde_json::to_string(&artifact).unwrap();
+        let back: OptimizationProofArtifact = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, artifact);
+    }
+
+    #[test]
+    fn proof_chain_bundle_serde() {
+        let input = base_input();
+        let json = serde_json::to_string(&input.bundle).unwrap();
+        let back: ProofChainBundle = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, input.bundle);
+    }
+
+    #[test]
+    fn promotion_decision_artifact_serde() {
+        let input = base_input();
+        let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
+        let json = serde_json::to_string(&decision).unwrap();
+        let back: PromotionDecisionArtifact = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, decision);
+    }
+
+    #[test]
+    fn gate_finding_serde() {
+        let finding = GateFinding {
+            code: GateFailureCode::MissingProofArtifact,
+            optimization_pass: Some("inline".to_string()),
+            detail: "missing artifact".to_string(),
+        };
+        let json = serde_json::to_string(&finding).unwrap();
+        let back: GateFinding = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, finding);
+    }
+
+    // ── custom thresholds ───────────────────────────────────────────
+
+    #[test]
+    fn custom_replay_threshold_allows_higher_multiplier() {
+        let mut input = base_input();
+        input.bundle.replay_time_ns = 700_000_000; // 14x > 5x default
+        let thresholds = ReleaseGateThresholds {
+            max_replay_multiplier_millionths: 15_000_000, // 15x
+        };
+        let decision = evaluate_release_gate(&input, &thresholds);
+        assert!(
+            !decision
+                .findings
+                .iter()
+                .any(|f| f.code == GateFailureCode::ReplayMultiplierExceeded)
+        );
+    }
 }

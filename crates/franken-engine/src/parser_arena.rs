@@ -658,3 +658,743 @@ fn span_audit_descriptor(span: &SourceSpan) -> String {
         span.end_offset
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_span() -> SourceSpan {
+        SourceSpan::new(0, 10, 1, 1, 1, 11)
+    }
+
+    fn simple_tree() -> SyntaxTree {
+        SyntaxTree {
+            goal: ParseGoal::Script,
+            body: vec![Statement::Expression(ExpressionStatement {
+                expression: Expression::NumericLiteral(42),
+                span: test_span(),
+            })],
+            span: test_span(),
+        }
+    }
+
+    fn import_tree() -> SyntaxTree {
+        SyntaxTree {
+            goal: ParseGoal::Module,
+            body: vec![Statement::Import(ImportDeclaration {
+                binding: Some("foo".to_string()),
+                source: "./foo.js".to_string(),
+                span: test_span(),
+            })],
+            span: test_span(),
+        }
+    }
+
+    fn export_default_tree() -> SyntaxTree {
+        SyntaxTree {
+            goal: ParseGoal::Module,
+            body: vec![Statement::Export(ExportDeclaration {
+                kind: ExportKind::Default(Expression::Identifier("bar".to_string())),
+                span: test_span(),
+            })],
+            span: test_span(),
+        }
+    }
+
+    fn export_named_tree() -> SyntaxTree {
+        SyntaxTree {
+            goal: ParseGoal::Module,
+            body: vec![Statement::Export(ExportDeclaration {
+                kind: ExportKind::NamedClause("{ baz }".to_string()),
+                span: test_span(),
+            })],
+            span: test_span(),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // NodeHandle
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn node_handle_parts() {
+        let handle = NodeHandle::from_parts(5, 7);
+        assert_eq!(handle.index(), 5);
+        assert_eq!(handle.generation(), 7);
+    }
+
+    #[test]
+    fn node_handle_serde_roundtrip() {
+        let handle = NodeHandle::from_parts(10, 1);
+        let json = serde_json::to_string(&handle).unwrap();
+        let back: NodeHandle = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, handle);
+    }
+
+    #[test]
+    fn node_handle_ord() {
+        let a = NodeHandle::from_parts(1, 1);
+        let b = NodeHandle::from_parts(2, 1);
+        assert!(a < b);
+    }
+
+    // -----------------------------------------------------------------------
+    // ExpressionHandle
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn expression_handle_parts() {
+        let handle = ExpressionHandle::from_parts(3, 2);
+        assert_eq!(handle.index(), 3);
+        assert_eq!(handle.generation(), 2);
+    }
+
+    #[test]
+    fn expression_handle_serde_roundtrip() {
+        let handle = ExpressionHandle::from_parts(8, 1);
+        let json = serde_json::to_string(&handle).unwrap();
+        let back: ExpressionHandle = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, handle);
+    }
+
+    // -----------------------------------------------------------------------
+    // SpanHandle
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn span_handle_parts() {
+        let handle = SpanHandle::from_parts(0, 1);
+        assert_eq!(handle.index(), 0);
+        assert_eq!(handle.generation(), 1);
+    }
+
+    #[test]
+    fn span_handle_serde_roundtrip() {
+        let handle = SpanHandle::from_parts(99, 1);
+        let json = serde_json::to_string(&handle).unwrap();
+        let back: SpanHandle = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, handle);
+    }
+
+    // -----------------------------------------------------------------------
+    // ArenaBudget
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn arena_budget_default() {
+        let budget = ArenaBudget::default();
+        assert_eq!(budget.max_nodes, 262_144);
+        assert_eq!(budget.max_expressions, 524_288);
+        assert_eq!(budget.max_spans, 524_288);
+        assert_eq!(budget.max_bytes, 64 * 1024 * 1024);
+    }
+
+    #[test]
+    fn arena_budget_serde_roundtrip() {
+        let budget = ArenaBudget::default();
+        let json = serde_json::to_string(&budget).unwrap();
+        let back: ArenaBudget = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, budget);
+    }
+
+    // -----------------------------------------------------------------------
+    // ArenaBudgetKind
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn arena_budget_kind_serde_roundtrip() {
+        for kind in [
+            ArenaBudgetKind::Nodes,
+            ArenaBudgetKind::Expressions,
+            ArenaBudgetKind::Spans,
+            ArenaBudgetKind::Bytes,
+        ] {
+            let json = serde_json::to_string(&kind).unwrap();
+            let back: ArenaBudgetKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, kind);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // ArenaError
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn arena_error_display_budget_exceeded() {
+        let err = ArenaError::BudgetExceeded {
+            kind: ArenaBudgetKind::Nodes,
+            limit: 100,
+            attempted: 101,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("budget exceeded"));
+        assert!(msg.contains("100"));
+        assert!(msg.contains("101"));
+    }
+
+    #[test]
+    fn arena_error_display_invalid_generation() {
+        let err = ArenaError::InvalidGeneration {
+            handle_kind: "node",
+            expected: 1,
+            actual: 2,
+            index: 5,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("node"));
+        assert!(msg.contains("index 5"));
+    }
+
+    #[test]
+    fn arena_error_display_missing_node() {
+        let err = ArenaError::MissingNode { index: 42 };
+        assert!(err.to_string().contains("42"));
+    }
+
+    #[test]
+    fn arena_error_display_missing_expression() {
+        let err = ArenaError::MissingExpression { index: 7 };
+        assert!(err.to_string().contains("7"));
+    }
+
+    #[test]
+    fn arena_error_display_missing_span() {
+        let err = ArenaError::MissingSpan { index: 3 };
+        assert!(err.to_string().contains("3"));
+    }
+
+    #[test]
+    fn arena_error_display_handle_audit_serialization() {
+        let err = ArenaError::HandleAuditSerialization;
+        assert!(err.to_string().contains("serialize"));
+    }
+
+    // -----------------------------------------------------------------------
+    // ParserArena — construction
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn from_syntax_tree_simple_expression() {
+        let tree = simple_tree();
+        let arena = ParserArena::from_syntax_tree(&tree, ArenaBudget::default()).unwrap();
+        assert_eq!(arena.statement_handles().len(), 1);
+        assert!(arena.bytes_used() > 0);
+    }
+
+    #[test]
+    fn from_syntax_tree_import() {
+        let tree = import_tree();
+        let arena = ParserArena::from_syntax_tree(&tree, ArenaBudget::default()).unwrap();
+        assert_eq!(arena.statement_handles().len(), 1);
+    }
+
+    #[test]
+    fn from_syntax_tree_export_default() {
+        let tree = export_default_tree();
+        let arena = ParserArena::from_syntax_tree(&tree, ArenaBudget::default()).unwrap();
+        assert_eq!(arena.statement_handles().len(), 1);
+    }
+
+    #[test]
+    fn from_syntax_tree_export_named() {
+        let tree = export_named_tree();
+        let arena = ParserArena::from_syntax_tree(&tree, ArenaBudget::default()).unwrap();
+        assert_eq!(arena.statement_handles().len(), 1);
+    }
+
+    #[test]
+    fn from_syntax_tree_empty_body() {
+        let tree = SyntaxTree {
+            goal: ParseGoal::Script,
+            body: vec![],
+            span: test_span(),
+        };
+        let arena = ParserArena::from_syntax_tree(&tree, ArenaBudget::default()).unwrap();
+        assert_eq!(arena.statement_handles().len(), 0);
+    }
+
+    #[test]
+    fn from_syntax_tree_all_expression_types() {
+        let expressions = vec![
+            Expression::Identifier("x".to_string()),
+            Expression::StringLiteral("hello".to_string()),
+            Expression::NumericLiteral(123),
+            Expression::BooleanLiteral(true),
+            Expression::NullLiteral,
+            Expression::UndefinedLiteral,
+            Expression::Await(Box::new(Expression::Identifier("p".to_string()))),
+            Expression::Raw("raw code".to_string()),
+        ];
+        let tree = SyntaxTree {
+            goal: ParseGoal::Script,
+            body: expressions
+                .into_iter()
+                .map(|e| {
+                    Statement::Expression(ExpressionStatement {
+                        expression: e,
+                        span: test_span(),
+                    })
+                })
+                .collect(),
+            span: test_span(),
+        };
+        let arena = ParserArena::from_syntax_tree(&tree, ArenaBudget::default()).unwrap();
+        assert_eq!(arena.statement_handles().len(), 8);
+    }
+
+    // -----------------------------------------------------------------------
+    // ParserArena — roundtrip
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn roundtrip_simple_expression() {
+        let tree = simple_tree();
+        let arena = ParserArena::from_syntax_tree(&tree, ArenaBudget::default()).unwrap();
+        let recovered = arena.to_syntax_tree().unwrap();
+        assert_eq!(recovered, tree);
+    }
+
+    #[test]
+    fn roundtrip_import() {
+        let tree = import_tree();
+        let arena = ParserArena::from_syntax_tree(&tree, ArenaBudget::default()).unwrap();
+        let recovered = arena.to_syntax_tree().unwrap();
+        assert_eq!(recovered, tree);
+    }
+
+    #[test]
+    fn roundtrip_export_default() {
+        let tree = export_default_tree();
+        let arena = ParserArena::from_syntax_tree(&tree, ArenaBudget::default()).unwrap();
+        let recovered = arena.to_syntax_tree().unwrap();
+        assert_eq!(recovered, tree);
+    }
+
+    #[test]
+    fn roundtrip_export_named() {
+        let tree = export_named_tree();
+        let arena = ParserArena::from_syntax_tree(&tree, ArenaBudget::default()).unwrap();
+        let recovered = arena.to_syntax_tree().unwrap();
+        assert_eq!(recovered, tree);
+    }
+
+    #[test]
+    fn roundtrip_await_expression() {
+        let tree = SyntaxTree {
+            goal: ParseGoal::Module,
+            body: vec![Statement::Expression(ExpressionStatement {
+                expression: Expression::Await(Box::new(Expression::Identifier(
+                    "fetch".to_string(),
+                ))),
+                span: test_span(),
+            })],
+            span: test_span(),
+        };
+        let arena = ParserArena::from_syntax_tree(&tree, ArenaBudget::default()).unwrap();
+        let recovered = arena.to_syntax_tree().unwrap();
+        assert_eq!(recovered, tree);
+    }
+
+    // -----------------------------------------------------------------------
+    // ParserArena — canonical hash
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn canonical_hash_deterministic() {
+        let tree = simple_tree();
+        let arena = ParserArena::from_syntax_tree(&tree, ArenaBudget::default()).unwrap();
+        let hash1 = arena.canonical_hash().unwrap();
+        let hash2 = arena.canonical_hash().unwrap();
+        assert_eq!(hash1, hash2);
+        assert!(!hash1.is_empty());
+    }
+
+    #[test]
+    fn canonical_hash_different_trees_differ() {
+        let tree1 = simple_tree();
+        let tree2 = import_tree();
+        let arena1 = ParserArena::from_syntax_tree(&tree1, ArenaBudget::default()).unwrap();
+        let arena2 = ParserArena::from_syntax_tree(&tree2, ArenaBudget::default()).unwrap();
+        assert_ne!(
+            arena1.canonical_hash().unwrap(),
+            arena2.canonical_hash().unwrap()
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // ParserArena — handle lookups
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn node_lookup_valid() {
+        let tree = simple_tree();
+        let arena = ParserArena::from_syntax_tree(&tree, ArenaBudget::default()).unwrap();
+        let handle = arena.statement_handles()[0];
+        let node = arena.node(handle).unwrap();
+        matches!(node, ArenaNode::ExpressionStatement { .. });
+    }
+
+    #[test]
+    fn node_lookup_invalid_generation() {
+        let tree = simple_tree();
+        let arena = ParserArena::from_syntax_tree(&tree, ArenaBudget::default()).unwrap();
+        let bad_handle = NodeHandle::from_parts(0, 999);
+        let err = arena.node(bad_handle).unwrap_err();
+        matches!(err, ArenaError::InvalidGeneration { .. });
+    }
+
+    #[test]
+    fn node_lookup_missing_index() {
+        let tree = simple_tree();
+        let arena = ParserArena::from_syntax_tree(&tree, ArenaBudget::default()).unwrap();
+        let bad_handle = NodeHandle::from_parts(999, HANDLE_GENERATION);
+        let err = arena.node(bad_handle).unwrap_err();
+        matches!(err, ArenaError::MissingNode { .. });
+    }
+
+    #[test]
+    fn span_lookup_invalid_generation() {
+        let tree = simple_tree();
+        let arena = ParserArena::from_syntax_tree(&tree, ArenaBudget::default()).unwrap();
+        let bad_handle = SpanHandle::from_parts(0, 999);
+        let err = arena.span(bad_handle).unwrap_err();
+        matches!(err, ArenaError::InvalidGeneration { .. });
+    }
+
+    #[test]
+    fn expression_lookup_invalid_generation() {
+        let tree = simple_tree();
+        let arena = ParserArena::from_syntax_tree(&tree, ArenaBudget::default()).unwrap();
+        let bad_handle = ExpressionHandle::from_parts(0, 999);
+        let err = arena.expression(bad_handle).unwrap_err();
+        matches!(err, ArenaError::InvalidGeneration { .. });
+    }
+
+    // -----------------------------------------------------------------------
+    // ParserArena — budget enforcement
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn budget_exceeded_nodes() {
+        let budget = ArenaBudget {
+            max_nodes: 0,
+            ..ArenaBudget::default()
+        };
+        let tree = simple_tree();
+        let err = ParserArena::from_syntax_tree(&tree, budget).unwrap_err();
+        matches!(
+            err,
+            ArenaError::BudgetExceeded {
+                kind: ArenaBudgetKind::Nodes,
+                ..
+            }
+        );
+    }
+
+    #[test]
+    fn budget_exceeded_bytes() {
+        let budget = ArenaBudget {
+            max_bytes: 1,
+            ..ArenaBudget::default()
+        };
+        let tree = simple_tree();
+        let err = ParserArena::from_syntax_tree(&tree, budget).unwrap_err();
+        matches!(
+            err,
+            ArenaError::BudgetExceeded {
+                kind: ArenaBudgetKind::Bytes,
+                ..
+            }
+        );
+    }
+
+    #[test]
+    fn budget_exceeded_spans() {
+        let budget = ArenaBudget {
+            max_spans: 0,
+            ..ArenaBudget::default()
+        };
+        let tree = simple_tree();
+        let err = ParserArena::from_syntax_tree(&tree, budget).unwrap_err();
+        matches!(
+            err,
+            ArenaError::BudgetExceeded {
+                kind: ArenaBudgetKind::Spans,
+                ..
+            }
+        );
+    }
+
+    #[test]
+    fn budget_exceeded_expressions() {
+        let budget = ArenaBudget {
+            max_expressions: 0,
+            ..ArenaBudget::default()
+        };
+        let tree = simple_tree();
+        let err = ParserArena::from_syntax_tree(&tree, budget).unwrap_err();
+        matches!(
+            err,
+            ArenaError::BudgetExceeded {
+                kind: ArenaBudgetKind::Expressions,
+                ..
+            }
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Handle audit
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn handle_audit_entries_nonempty() {
+        let tree = simple_tree();
+        let arena = ParserArena::from_syntax_tree(&tree, ArenaBudget::default()).unwrap();
+        let entries = arena.handle_audit_entries();
+        assert!(!entries.is_empty());
+        // Should have at least 1 node, 1 expression, 2 spans (tree + statement)
+        let node_count = entries
+            .iter()
+            .filter(|e| e.handle_kind == HandleAuditKind::Node)
+            .count();
+        let expr_count = entries
+            .iter()
+            .filter(|e| e.handle_kind == HandleAuditKind::Expression)
+            .count();
+        let span_count = entries
+            .iter()
+            .filter(|e| e.handle_kind == HandleAuditKind::Span)
+            .count();
+        assert!(node_count >= 1);
+        assert!(expr_count >= 1);
+        assert!(span_count >= 1);
+    }
+
+    #[test]
+    fn handle_audit_entry_serde_roundtrip() {
+        let entry = HandleAuditEntry {
+            handle_kind: HandleAuditKind::Node,
+            index: 0,
+            generation: 1,
+            descriptor: "test descriptor".to_string(),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let back: HandleAuditEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, entry);
+    }
+
+    #[test]
+    fn handle_audit_jsonl_format() {
+        let tree = simple_tree();
+        let arena = ParserArena::from_syntax_tree(&tree, ArenaBudget::default()).unwrap();
+        let jsonl = arena.handle_audit_jsonl().unwrap();
+        assert!(!jsonl.is_empty());
+        for line in jsonl.lines() {
+            let parsed: HandleAuditEntry = serde_json::from_str(line).unwrap();
+            assert!(!parsed.descriptor.is_empty());
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Audit descriptors
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn node_audit_descriptor_import() {
+        let node = ArenaNode::Import {
+            binding: Some("foo".to_string()),
+            source: "./bar.js".to_string(),
+            span: SpanHandle::new(0),
+        };
+        let desc = node_audit_descriptor(&node);
+        assert!(desc.contains("import"));
+        assert!(desc.contains("foo"));
+        assert!(desc.contains("./bar.js"));
+    }
+
+    #[test]
+    fn node_audit_descriptor_import_no_binding() {
+        let node = ArenaNode::Import {
+            binding: None,
+            source: "./side.js".to_string(),
+            span: SpanHandle::new(0),
+        };
+        let desc = node_audit_descriptor(&node);
+        assert!(desc.contains("_"));
+    }
+
+    #[test]
+    fn node_audit_descriptor_export_default() {
+        let node = ArenaNode::ExportDefault {
+            expression: ExpressionHandle::new(3),
+            span: SpanHandle::new(1),
+        };
+        let desc = node_audit_descriptor(&node);
+        assert!(desc.contains("export_default"));
+        assert!(desc.contains("3"));
+    }
+
+    #[test]
+    fn node_audit_descriptor_export_named() {
+        let node = ArenaNode::ExportNamedClause {
+            clause: "{ x, y }".to_string(),
+            span: SpanHandle::new(0),
+        };
+        let desc = node_audit_descriptor(&node);
+        assert!(desc.contains("export_named"));
+        assert!(desc.contains("{ x, y }"));
+    }
+
+    #[test]
+    fn node_audit_descriptor_expression_statement() {
+        let node = ArenaNode::ExpressionStatement {
+            expression: ExpressionHandle::new(2),
+            span: SpanHandle::new(1),
+        };
+        let desc = node_audit_descriptor(&node);
+        assert!(desc.contains("expression_statement"));
+    }
+
+    #[test]
+    fn expression_audit_descriptor_all_types() {
+        assert!(
+            expression_audit_descriptor(&ArenaExpression::Identifier("x".to_string()))
+                .contains("identifier")
+        );
+        assert!(
+            expression_audit_descriptor(&ArenaExpression::StringLiteral("hi".to_string()))
+                .contains("string")
+        );
+        assert!(expression_audit_descriptor(&ArenaExpression::NumericLiteral(42)).contains("42"));
+        assert!(
+            expression_audit_descriptor(&ArenaExpression::BooleanLiteral(true)).contains("true")
+        );
+        assert_eq!(
+            expression_audit_descriptor(&ArenaExpression::NullLiteral),
+            "null"
+        );
+        assert_eq!(
+            expression_audit_descriptor(&ArenaExpression::UndefinedLiteral),
+            "undefined"
+        );
+        assert!(
+            expression_audit_descriptor(&ArenaExpression::Await(ExpressionHandle::new(5)))
+                .contains("await")
+        );
+        assert!(
+            expression_audit_descriptor(&ArenaExpression::Raw("code".to_string())).contains("raw")
+        );
+    }
+
+    #[test]
+    fn span_audit_descriptor_format() {
+        let span = SourceSpan::new(10, 20, 1, 5, 1, 15);
+        let desc = span_audit_descriptor(&span);
+        assert!(desc.contains("1:5-1:15"));
+        assert!(desc.contains("10..20"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Helper functions
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn string_bytes_measurement() {
+        assert_eq!(string_bytes("hello"), 5);
+        assert_eq!(string_bytes(""), 0);
+    }
+
+    #[test]
+    fn usize_to_index_valid() {
+        assert_eq!(usize_to_index(0, ArenaBudgetKind::Nodes).unwrap(), 0);
+        assert_eq!(usize_to_index(100, ArenaBudgetKind::Nodes).unwrap(), 100);
+    }
+
+    #[test]
+    fn index_to_usize_conversion() {
+        assert_eq!(index_to_usize(0), 0);
+        assert_eq!(index_to_usize(42), 42);
+    }
+
+    // -----------------------------------------------------------------------
+    // HandleAuditKind
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn handle_audit_kind_serde_roundtrip() {
+        for kind in [
+            HandleAuditKind::Node,
+            HandleAuditKind::Expression,
+            HandleAuditKind::Span,
+        ] {
+            let json = serde_json::to_string(&kind).unwrap();
+            let back: HandleAuditKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, kind);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Multi-statement roundtrip
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn roundtrip_mixed_statements() {
+        let tree = SyntaxTree {
+            goal: ParseGoal::Module,
+            body: vec![
+                Statement::Import(ImportDeclaration {
+                    binding: Some("fs".to_string()),
+                    source: "node:fs".to_string(),
+                    span: test_span(),
+                }),
+                Statement::Export(ExportDeclaration {
+                    kind: ExportKind::Default(Expression::StringLiteral("default".to_string())),
+                    span: test_span(),
+                }),
+                Statement::Expression(ExpressionStatement {
+                    expression: Expression::BooleanLiteral(false),
+                    span: test_span(),
+                }),
+            ],
+            span: test_span(),
+        };
+        let arena = ParserArena::from_syntax_tree(&tree, ArenaBudget::default()).unwrap();
+        let recovered = arena.to_syntax_tree().unwrap();
+        assert_eq!(recovered, tree);
+        assert_eq!(arena.statement_handles().len(), 3);
+    }
+
+    #[test]
+    fn import_without_binding_roundtrip() {
+        let tree = SyntaxTree {
+            goal: ParseGoal::Module,
+            body: vec![Statement::Import(ImportDeclaration {
+                binding: None,
+                source: "./side-effects.js".to_string(),
+                span: test_span(),
+            })],
+            span: test_span(),
+        };
+        let arena = ParserArena::from_syntax_tree(&tree, ArenaBudget::default()).unwrap();
+        let recovered = arena.to_syntax_tree().unwrap();
+        assert_eq!(recovered, tree);
+    }
+
+    #[test]
+    fn budget_accessor() {
+        let budget = ArenaBudget {
+            max_nodes: 10,
+            max_expressions: 20,
+            max_spans: 30,
+            max_bytes: 128,
+        };
+        let tree = SyntaxTree {
+            goal: ParseGoal::Script,
+            body: vec![],
+            span: test_span(),
+        };
+        let arena = ParserArena::from_syntax_tree(&tree, budget).unwrap();
+        assert_eq!(arena.budget().max_nodes, 10);
+        assert_eq!(arena.budget().max_expressions, 20);
+    }
+}

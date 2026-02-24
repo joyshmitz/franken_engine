@@ -517,6 +517,102 @@ fn hash_optional_field(hasher: &mut Sha256, field: &Option<String>) {
 mod tests {
     use super::*;
 
+    // ── helpers ──────────────────────────────────────────────────────
+
+    fn non_opt_request() -> OneLeverPolicyRequest {
+        // Changes only docs → not an optimization change
+        OneLeverPolicyRequest {
+            trace_id: "t-1".to_string(),
+            decision_id: "d-1".to_string(),
+            policy_id: "p-1".to_string(),
+            commit_sha: "abc123".to_string(),
+            commit_message: "docs: update readme".to_string(),
+            changed_paths: vec!["docs/design.md".to_string()],
+            evidence: OneLeverEvidenceRefs::default(),
+        }
+    }
+
+    fn full_evidence(score: i64) -> OneLeverEvidenceRefs {
+        OneLeverEvidenceRefs {
+            baseline_benchmark_run_id: Some("baseline-001".to_string()),
+            post_change_benchmark_run_id: Some("post-001".to_string()),
+            delta_report_ref: Some("delta-001".to_string()),
+            semantic_equivalence_ref: Some("equiv-001".to_string()),
+            trace_replay_ref: Some("replay-001".to_string()),
+            isomorphism_ledger_ref: Some("iso-001".to_string()),
+            rollback_instructions_ref: Some("rollback-001".to_string()),
+            reprofile_after_merge_ref: Some("reprofile-001".to_string()),
+            opportunity_score_millionths: Some(score),
+        }
+    }
+
+    fn single_lever_opt_request(score: i64) -> OneLeverPolicyRequest {
+        OneLeverPolicyRequest {
+            trace_id: "t-1".to_string(),
+            decision_id: "d-1".to_string(),
+            policy_id: "p-1".to_string(),
+            commit_sha: "abc123".to_string(),
+            commit_message: "perf: optimize interpreter".to_string(),
+            changed_paths: vec![
+                "crates/franken-engine/src/baseline_interpreter.rs".to_string(),
+            ],
+            evidence: full_evidence(score),
+        }
+    }
+
+    // ── LeverCategory ───────────────────────────────────────────────
+
+    #[test]
+    fn lever_category_as_str() {
+        assert_eq!(LeverCategory::Execution.as_str(), "execution");
+        assert_eq!(LeverCategory::Memory.as_str(), "memory");
+        assert_eq!(LeverCategory::Security.as_str(), "security");
+        assert_eq!(LeverCategory::Benchmark.as_str(), "benchmark");
+        assert_eq!(LeverCategory::Config.as_str(), "config");
+    }
+
+    #[test]
+    fn lever_category_display() {
+        assert_eq!(format!("{}", LeverCategory::Execution), "execution");
+        assert_eq!(format!("{}", LeverCategory::Config), "config");
+    }
+
+    #[test]
+    fn lever_category_ordering() {
+        assert!(LeverCategory::Execution < LeverCategory::Memory);
+        assert!(LeverCategory::Memory < LeverCategory::Security);
+        assert!(LeverCategory::Security < LeverCategory::Benchmark);
+        assert!(LeverCategory::Benchmark < LeverCategory::Config);
+    }
+
+    #[test]
+    fn lever_category_serde_roundtrip() {
+        for cat in [
+            LeverCategory::Execution,
+            LeverCategory::Memory,
+            LeverCategory::Security,
+            LeverCategory::Benchmark,
+            LeverCategory::Config,
+        ] {
+            let json = serde_json::to_string(&cat).unwrap();
+            let back: LeverCategory = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, cat);
+        }
+    }
+
+    // ── constants ───────────────────────────────────────────────────
+
+    #[test]
+    fn constants_stable() {
+        assert_eq!(ONE_LEVER_SCORE_THRESHOLD_MILLIONTHS, 2_000_000);
+        assert_eq!(ERROR_INVALID_REQUEST, "FE-1LEV-1001");
+        assert_eq!(ERROR_MULTI_LEVER_VIOLATION, "FE-1LEV-1002");
+        assert_eq!(ERROR_MISSING_EVIDENCE, "FE-1LEV-1003");
+        assert_eq!(ERROR_SCORE_BELOW_THRESHOLD, "FE-1LEV-1004");
+    }
+
+    // ── classify_changed_path ───────────────────────────────────────
+
     #[test]
     fn classify_docs_and_tests_as_exempt() {
         assert_eq!(classify_changed_path("docs/design.md"), None);
@@ -547,6 +643,52 @@ mod tests {
     }
 
     #[test]
+    fn classify_config_files() {
+        assert_eq!(
+            classify_changed_path("Cargo.toml"),
+            Some(LeverCategory::Config)
+        );
+        assert_eq!(
+            classify_changed_path("settings.yaml"),
+            Some(LeverCategory::Config)
+        );
+        assert_eq!(
+            classify_changed_path("config.json"),
+            Some(LeverCategory::Config)
+        );
+    }
+
+    #[test]
+    fn classify_artifacts_beads_workflows_exempt() {
+        assert_eq!(classify_changed_path("artifacts/report.txt"), None);
+        assert_eq!(classify_changed_path(".beads/issues.jsonl"), None);
+        assert_eq!(
+            classify_changed_path(".github/workflows/ci.yml"),
+            None
+        );
+    }
+
+    #[test]
+    fn classify_scripts_benchmark_is_benchmark() {
+        assert_eq!(
+            classify_changed_path("scripts/run_benchmark.sh"),
+            Some(LeverCategory::Benchmark)
+        );
+    }
+
+    #[test]
+    fn classify_scripts_check_exempt() {
+        assert_eq!(classify_changed_path("scripts/check_lint.sh"), None);
+    }
+
+    #[test]
+    fn classify_unknown_path_none() {
+        assert_eq!(classify_changed_path("random/unknown.txt"), None);
+    }
+
+    // ── extract_override_reason ─────────────────────────────────────
+
+    #[test]
     fn extract_override_reason_parses_tag() {
         let message = "perf: coupled fix [multi-lever: scheduler and gc are inseparable]";
         assert_eq!(
@@ -554,5 +696,352 @@ mod tests {
             Some("scheduler and gc are inseparable".to_string())
         );
         assert_eq!(extract_override_reason("perf: single lever"), None);
+    }
+
+    #[test]
+    fn extract_override_reason_empty_reason_returns_none() {
+        assert_eq!(
+            extract_override_reason("[multi-lever: ]"),
+            None
+        );
+    }
+
+    #[test]
+    fn extract_override_reason_case_insensitive_marker() {
+        let message = "fix: [MULTI-LEVER: both needed]";
+        assert_eq!(
+            extract_override_reason(message),
+            Some("both needed".to_string())
+        );
+    }
+
+    // ── normalize_request ───────────────────────────────────────────
+
+    #[test]
+    fn normalize_trims_fields() {
+        let mut req = OneLeverPolicyRequest {
+            trace_id: "  t-1  ".to_string(),
+            decision_id: " d-1 ".to_string(),
+            policy_id: " p-1 ".to_string(),
+            commit_sha: " abc ".to_string(),
+            commit_message: " msg ".to_string(),
+            changed_paths: vec!["  docs/a.md  ".to_string()],
+            evidence: OneLeverEvidenceRefs {
+                baseline_benchmark_run_id: Some("  x  ".to_string()),
+                ..OneLeverEvidenceRefs::default()
+            },
+        };
+        normalize_request(&mut req);
+        assert_eq!(req.trace_id, "t-1");
+        assert_eq!(req.commit_sha, "abc");
+        assert_eq!(req.changed_paths, vec!["docs/a.md"]);
+        assert_eq!(
+            req.evidence.baseline_benchmark_run_id,
+            Some("x".to_string())
+        );
+    }
+
+    #[test]
+    fn normalize_empty_opt_field_becomes_none() {
+        let mut req = non_opt_request();
+        req.evidence.baseline_benchmark_run_id = Some("  ".to_string());
+        normalize_request(&mut req);
+        assert!(req.evidence.baseline_benchmark_run_id.is_none());
+    }
+
+    #[test]
+    fn normalize_deduplicates_paths() {
+        let mut req = non_opt_request();
+        req.changed_paths = vec![
+            "docs/a.md".to_string(),
+            "docs/a.md".to_string(),
+            "docs/b.md".to_string(),
+        ];
+        normalize_request(&mut req);
+        assert_eq!(req.changed_paths.len(), 2);
+    }
+
+    // ── evaluate_one_lever_policy: validation ───────────────────────
+
+    #[test]
+    fn validation_empty_trace_id() {
+        let mut req = non_opt_request();
+        req.trace_id = "".to_string();
+        let decision = evaluate_one_lever_policy(&req);
+        assert!(decision.blocked);
+        assert_eq!(
+            decision.error_code.as_deref(),
+            Some(ERROR_INVALID_REQUEST)
+        );
+        assert!(decision.missing_requirements[0].contains("trace_id"));
+    }
+
+    #[test]
+    fn validation_empty_decision_id() {
+        let mut req = non_opt_request();
+        req.decision_id = "  ".to_string();
+        let decision = evaluate_one_lever_policy(&req);
+        assert!(decision.blocked);
+    }
+
+    #[test]
+    fn validation_empty_commit_sha() {
+        let mut req = non_opt_request();
+        req.commit_sha = "".to_string();
+        let decision = evaluate_one_lever_policy(&req);
+        assert!(decision.blocked);
+    }
+
+    #[test]
+    fn validation_empty_changed_paths() {
+        let mut req = non_opt_request();
+        req.changed_paths = Vec::new();
+        let decision = evaluate_one_lever_policy(&req);
+        assert!(decision.blocked);
+    }
+
+    #[test]
+    fn validation_whitespace_only_paths_removed() {
+        let mut req = non_opt_request();
+        req.changed_paths = vec!["  ".to_string()];
+        // After normalization, changed_paths is empty → validation fails
+        let decision = evaluate_one_lever_policy(&req);
+        assert!(decision.blocked);
+    }
+
+    // ── evaluate_one_lever_policy: non-optimization ─────────────────
+
+    #[test]
+    fn non_optimization_change_allowed() {
+        let req = non_opt_request();
+        let decision = evaluate_one_lever_policy(&req);
+        assert!(decision.allows_change());
+        assert!(!decision.blocked);
+        assert_eq!(decision.outcome, "allow");
+        assert!(!decision.optimization_change);
+        assert!(decision.missing_requirements.is_empty());
+    }
+
+    // ── evaluate_one_lever_policy: single lever ─────────────────────
+
+    #[test]
+    fn single_lever_with_full_evidence_above_threshold() {
+        let req = single_lever_opt_request(3_000_000); // 3.0 > 2.0
+        let decision = evaluate_one_lever_policy(&req);
+        assert!(decision.allows_change());
+        assert!(decision.optimization_change);
+        assert!(!decision.is_multi_lever);
+        assert_eq!(decision.lever_categories, vec![LeverCategory::Execution]);
+    }
+
+    #[test]
+    fn single_lever_exactly_at_threshold() {
+        let req = single_lever_opt_request(2_000_000); // exactly 2.0
+        let decision = evaluate_one_lever_policy(&req);
+        assert!(decision.allows_change());
+    }
+
+    #[test]
+    fn single_lever_below_threshold_denied() {
+        let req = single_lever_opt_request(1_999_999); // just below 2.0
+        let decision = evaluate_one_lever_policy(&req);
+        assert!(!decision.allows_change());
+        assert!(decision.blocked);
+        assert_eq!(
+            decision.error_code.as_deref(),
+            Some(ERROR_SCORE_BELOW_THRESHOLD)
+        );
+    }
+
+    #[test]
+    fn single_lever_missing_evidence_denied() {
+        let mut req = single_lever_opt_request(3_000_000);
+        req.evidence.baseline_benchmark_run_id = None;
+        req.evidence.delta_report_ref = None;
+        let decision = evaluate_one_lever_policy(&req);
+        assert!(!decision.allows_change());
+        assert_eq!(
+            decision.error_code.as_deref(),
+            Some(ERROR_MISSING_EVIDENCE)
+        );
+        assert!(
+            decision
+                .missing_requirements
+                .contains(&"baseline_benchmark_run_id".to_string())
+        );
+        assert!(
+            decision
+                .missing_requirements
+                .contains(&"delta_report_ref".to_string())
+        );
+    }
+
+    #[test]
+    fn single_lever_no_score_denied() {
+        let mut req = single_lever_opt_request(3_000_000);
+        req.evidence.opportunity_score_millionths = None;
+        let decision = evaluate_one_lever_policy(&req);
+        assert!(!decision.allows_change());
+        assert_eq!(
+            decision.error_code.as_deref(),
+            Some(ERROR_MISSING_EVIDENCE)
+        );
+    }
+
+    // ── evaluate_one_lever_policy: multi-lever ──────────────────────
+
+    #[test]
+    fn multi_lever_without_override_denied() {
+        let req = OneLeverPolicyRequest {
+            trace_id: "t-1".to_string(),
+            decision_id: "d-1".to_string(),
+            policy_id: "p-1".to_string(),
+            commit_sha: "abc".to_string(),
+            commit_message: "perf: touches multiple levers".to_string(),
+            changed_paths: vec![
+                "crates/franken-engine/src/baseline_interpreter.rs".to_string(), // Execution
+                "crates/franken-engine/src/gc_pause.rs".to_string(),             // Memory
+            ],
+            evidence: full_evidence(5_000_000),
+        };
+        let decision = evaluate_one_lever_policy(&req);
+        assert!(!decision.allows_change());
+        assert!(decision.is_multi_lever);
+        assert_eq!(
+            decision.error_code.as_deref(),
+            Some(ERROR_MULTI_LEVER_VIOLATION)
+        );
+    }
+
+    #[test]
+    fn multi_lever_with_override_allowed() {
+        let req = OneLeverPolicyRequest {
+            trace_id: "t-1".to_string(),
+            decision_id: "d-1".to_string(),
+            policy_id: "p-1".to_string(),
+            commit_sha: "abc".to_string(),
+            commit_message:
+                "perf: coupled fix [multi-lever: gc and interpreter are inseparable]".to_string(),
+            changed_paths: vec![
+                "crates/franken-engine/src/baseline_interpreter.rs".to_string(),
+                "crates/franken-engine/src/gc_pause.rs".to_string(),
+            ],
+            evidence: full_evidence(5_000_000),
+        };
+        let decision = evaluate_one_lever_policy(&req);
+        assert!(decision.allows_change());
+        assert!(decision.is_multi_lever);
+        assert_eq!(
+            decision.override_reason.as_deref(),
+            Some("gc and interpreter are inseparable")
+        );
+    }
+
+    // ── evaluate_one_lever_policy: metadata ─────────────────────────
+
+    #[test]
+    fn decision_has_schema_version() {
+        let decision = evaluate_one_lever_policy(&non_opt_request());
+        assert_eq!(decision.schema_version, ONE_LEVER_POLICY_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn decision_has_change_id() {
+        let decision = evaluate_one_lever_policy(&non_opt_request());
+        assert!(decision.change_id.is_some());
+        assert!(decision.change_id.unwrap().starts_with("olp-"));
+    }
+
+    #[test]
+    fn decision_change_id_deterministic() {
+        let req = non_opt_request();
+        let d1 = evaluate_one_lever_policy(&req);
+        let d2 = evaluate_one_lever_policy(&req);
+        assert_eq!(d1.change_id, d2.change_id);
+    }
+
+    #[test]
+    fn decision_has_events() {
+        let decision = evaluate_one_lever_policy(&non_opt_request());
+        assert!(decision.events.len() >= 2); // started + completed
+        assert_eq!(decision.events[0].component, ONE_LEVER_POLICY_COMPONENT);
+        assert_eq!(decision.events[0].event, "one_lever_policy_started");
+    }
+
+    #[test]
+    fn decision_lever_classification_populated() {
+        let req = single_lever_opt_request(3_000_000);
+        let decision = evaluate_one_lever_policy(&req);
+        assert_eq!(decision.lever_classification.len(), 1);
+        assert_eq!(
+            decision.lever_classification[0].category,
+            Some(LeverCategory::Execution)
+        );
+    }
+
+    #[test]
+    fn decision_score_threshold_always_set() {
+        let decision = evaluate_one_lever_policy(&non_opt_request());
+        assert_eq!(
+            decision.score_threshold_millionths,
+            ONE_LEVER_SCORE_THRESHOLD_MILLIONTHS
+        );
+    }
+
+    // ── serde roundtrips ────────────────────────────────────────────
+
+    #[test]
+    fn evidence_refs_serde() {
+        let ev = full_evidence(3_000_000);
+        let json = serde_json::to_string(&ev).unwrap();
+        let back: OneLeverEvidenceRefs = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, ev);
+    }
+
+    #[test]
+    fn policy_request_serde() {
+        let req = single_lever_opt_request(3_000_000);
+        let json = serde_json::to_string(&req).unwrap();
+        let back: OneLeverPolicyRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, req);
+    }
+
+    #[test]
+    fn policy_decision_serde() {
+        let decision = evaluate_one_lever_policy(&non_opt_request());
+        let json = serde_json::to_string(&decision).unwrap();
+        let back: OneLeverPolicyDecision = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.outcome, decision.outcome);
+        assert_eq!(back.blocked, decision.blocked);
+    }
+
+    #[test]
+    fn path_lever_classification_serde() {
+        let plc = PathLeverClassification {
+            path: "src/foo.rs".to_string(),
+            category: Some(LeverCategory::Execution),
+        };
+        let json = serde_json::to_string(&plc).unwrap();
+        let back: PathLeverClassification = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, plc);
+    }
+
+    #[test]
+    fn policy_event_serde() {
+        let ev = OneLeverPolicyEvent {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            component: "c".to_string(),
+            event: "e".to_string(),
+            outcome: "pass".to_string(),
+            error_code: None,
+            change_id: Some("change".to_string()),
+            path: None,
+            lever_category: None,
+        };
+        let json = serde_json::to_string(&ev).unwrap();
+        let back: OneLeverPolicyEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, ev);
     }
 }

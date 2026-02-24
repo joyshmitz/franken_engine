@@ -1104,3 +1104,774 @@ fn format_scaled_rate(millionths: u64) -> String {
 fn pass_mark(pass: bool) -> &'static str {
     if pass { "yes" } else { "no" }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── helpers ──────────────────────────────────────────────────────
+
+    fn sample(id: &str, cohort: PlasBenchmarkCohort) -> PlasBenchmarkExtensionSample {
+        PlasBenchmarkExtensionSample {
+            extension_id: id.to_string(),
+            cohort,
+            synthesized_capability_count: 5,
+            empirically_required_capability_count: 5,
+            manual_authoring_time_ms: 1000,
+            plas_authoring_time_ms: 200,
+            benign_request_count: 10000,
+            benign_false_deny_count: 0,
+            escrow_event_count: 10,
+            observation_window_ns: 3_600_000_000_000, // 1 hour
+            witness_present: true,
+        }
+    }
+
+    fn all_cohort_samples() -> Vec<PlasBenchmarkExtensionSample> {
+        vec![
+            sample("ext-simple", PlasBenchmarkCohort::Simple),
+            sample("ext-complex", PlasBenchmarkCohort::Complex),
+            sample("ext-high-risk", PlasBenchmarkCohort::HighRisk),
+            sample("ext-boundary", PlasBenchmarkCohort::Boundary),
+        ]
+    }
+
+    fn make_request() -> PlasBenchmarkBundleRequest {
+        PlasBenchmarkBundleRequest {
+            trace_id: "t1".to_string(),
+            decision_id: "d1".to_string(),
+            policy_id: "p1".to_string(),
+            benchmark_run_id: "run-1".to_string(),
+            generated_at_ns: 1_000_000,
+            samples: all_cohort_samples(),
+            historical_runs: Vec::new(),
+            thresholds: None,
+        }
+    }
+
+    fn trend_point(
+        run_id: &str,
+        over_priv: u64,
+        authoring: i64,
+        false_deny: u64,
+        witness: u64,
+    ) -> PlasBenchmarkTrendPoint {
+        PlasBenchmarkTrendPoint {
+            benchmark_run_id: run_id.to_string(),
+            generated_at_ns: 1_000_000,
+            mean_over_privilege_ratio_millionths: over_priv,
+            mean_authoring_time_reduction_millionths: authoring,
+            mean_false_deny_rate_millionths: false_deny,
+            mean_escrow_event_rate_per_hour_millionths: 0,
+            witness_coverage_millionths: witness,
+        }
+    }
+
+    // ── PlasBenchmarkCohort ─────────────────────────────────────────
+
+    #[test]
+    fn cohort_as_str() {
+        assert_eq!(PlasBenchmarkCohort::Simple.as_str(), "simple");
+        assert_eq!(PlasBenchmarkCohort::Complex.as_str(), "complex");
+        assert_eq!(PlasBenchmarkCohort::HighRisk.as_str(), "high_risk");
+        assert_eq!(PlasBenchmarkCohort::Boundary.as_str(), "boundary");
+    }
+
+    #[test]
+    fn cohort_all() {
+        let all = PlasBenchmarkCohort::all();
+        assert_eq!(all.len(), 4);
+    }
+
+    #[test]
+    fn cohort_ordering() {
+        assert!(PlasBenchmarkCohort::Simple < PlasBenchmarkCohort::Complex);
+        assert!(PlasBenchmarkCohort::Complex < PlasBenchmarkCohort::HighRisk);
+        assert!(PlasBenchmarkCohort::HighRisk < PlasBenchmarkCohort::Boundary);
+    }
+
+    #[test]
+    fn cohort_serde_roundtrip() {
+        for variant in PlasBenchmarkCohort::all() {
+            let json = serde_json::to_string(&variant).unwrap();
+            let back: PlasBenchmarkCohort = serde_json::from_str(&json).unwrap();
+            assert_eq!(variant, back);
+        }
+    }
+
+    // ── PlasBenchmarkBundleError ────────────────────────────────────
+
+    #[test]
+    fn error_display_invalid_input() {
+        let err = PlasBenchmarkBundleError::InvalidInput {
+            field: "trace_id".to_string(),
+            detail: "empty".to_string(),
+        };
+        let msg = format!("{err}");
+        assert!(msg.contains("trace_id"));
+        assert!(msg.contains("empty"));
+    }
+
+    #[test]
+    fn error_display_duplicate() {
+        let err = PlasBenchmarkBundleError::DuplicateExtensionId {
+            extension_id: "ext-1".to_string(),
+        };
+        assert!(format!("{err}").contains("ext-1"));
+    }
+
+    #[test]
+    fn error_stable_codes() {
+        assert_eq!(
+            PlasBenchmarkBundleError::InvalidInput {
+                field: "x".to_string(),
+                detail: "y".to_string()
+            }
+            .stable_code(),
+            "FE-PLAS-BENCH-2001"
+        );
+        assert_eq!(
+            PlasBenchmarkBundleError::DuplicateExtensionId {
+                extension_id: "x".to_string()
+            }
+            .stable_code(),
+            "FE-PLAS-BENCH-2002"
+        );
+        assert_eq!(
+            PlasBenchmarkBundleError::SerializationFailure("x".to_string()).stable_code(),
+            "FE-PLAS-BENCH-2001"
+        );
+    }
+
+    // ── PlasBenchmarkThresholds ─────────────────────────────────────
+
+    #[test]
+    fn thresholds_default_values() {
+        let t = PlasBenchmarkThresholds::default();
+        assert_eq!(t.max_over_privilege_ratio_millionths, 1_100_000);
+        assert_eq!(t.min_authoring_time_reduction_millionths, 700_000);
+        assert_eq!(t.max_false_deny_rate_millionths, 5_000);
+        assert_eq!(t.min_witness_coverage_millionths, 900_000);
+        assert!(t.max_escrow_event_rate_per_hour_millionths.is_none());
+        assert!(!t.fail_on_trend_regression);
+    }
+
+    #[test]
+    fn thresholds_validate_zero_over_privilege() {
+        let mut t = PlasBenchmarkThresholds::default();
+        t.max_over_privilege_ratio_millionths = 0;
+        assert!(t.validate().is_err());
+    }
+
+    #[test]
+    fn thresholds_validate_false_deny_over_million() {
+        let mut t = PlasBenchmarkThresholds::default();
+        t.max_false_deny_rate_millionths = 1_000_001;
+        assert!(t.validate().is_err());
+    }
+
+    #[test]
+    fn thresholds_validate_witness_coverage_over_million() {
+        let mut t = PlasBenchmarkThresholds::default();
+        t.min_witness_coverage_millionths = 1_000_001;
+        assert!(t.validate().is_err());
+    }
+
+    #[test]
+    fn thresholds_validate_escrow_rate_zero() {
+        let mut t = PlasBenchmarkThresholds::default();
+        t.max_escrow_event_rate_per_hour_millionths = Some(0);
+        assert!(t.validate().is_err());
+    }
+
+    #[test]
+    fn thresholds_serde_roundtrip() {
+        let t = PlasBenchmarkThresholds::default();
+        let json = serde_json::to_string(&t).unwrap();
+        let back: PlasBenchmarkThresholds = serde_json::from_str(&json).unwrap();
+        assert_eq!(t, back);
+    }
+
+    // ── PlasBenchmarkExtensionSample validation ─────────────────────
+
+    #[test]
+    fn sample_validate_empty_extension_id() {
+        let mut s = sample("ext-1", PlasBenchmarkCohort::Simple);
+        s.extension_id = "".to_string();
+        assert!(s.validate().is_err());
+    }
+
+    #[test]
+    fn sample_validate_zero_synth_count() {
+        let mut s = sample("ext-1", PlasBenchmarkCohort::Simple);
+        s.synthesized_capability_count = 0;
+        assert!(s.validate().is_err());
+    }
+
+    #[test]
+    fn sample_validate_zero_empirical_count() {
+        let mut s = sample("ext-1", PlasBenchmarkCohort::Simple);
+        s.empirically_required_capability_count = 0;
+        assert!(s.validate().is_err());
+    }
+
+    #[test]
+    fn sample_validate_zero_manual_time() {
+        let mut s = sample("ext-1", PlasBenchmarkCohort::Simple);
+        s.manual_authoring_time_ms = 0;
+        assert!(s.validate().is_err());
+    }
+
+    #[test]
+    fn sample_validate_zero_benign_requests() {
+        let mut s = sample("ext-1", PlasBenchmarkCohort::Simple);
+        s.benign_request_count = 0;
+        assert!(s.validate().is_err());
+    }
+
+    #[test]
+    fn sample_validate_false_deny_exceeds_requests() {
+        let mut s = sample("ext-1", PlasBenchmarkCohort::Simple);
+        s.benign_false_deny_count = 20000;
+        assert!(s.validate().is_err());
+    }
+
+    #[test]
+    fn sample_validate_zero_observation_window() {
+        let mut s = sample("ext-1", PlasBenchmarkCohort::Simple);
+        s.observation_window_ns = 0;
+        assert!(s.validate().is_err());
+    }
+
+    #[test]
+    fn sample_serde_roundtrip() {
+        let s = sample("ext-1", PlasBenchmarkCohort::Simple);
+        let json = serde_json::to_string(&s).unwrap();
+        let back: PlasBenchmarkExtensionSample = serde_json::from_str(&json).unwrap();
+        assert_eq!(s, back);
+    }
+
+    // ── PlasBenchmarkBundleRequest validation ───────────────────────
+
+    #[test]
+    fn request_validate_empty_trace_id() {
+        let mut r = make_request();
+        r.trace_id = "".to_string();
+        assert!(build_plas_benchmark_bundle(&r).is_err());
+    }
+
+    #[test]
+    fn request_validate_empty_decision_id() {
+        let mut r = make_request();
+        r.decision_id = "".to_string();
+        assert!(build_plas_benchmark_bundle(&r).is_err());
+    }
+
+    #[test]
+    fn request_validate_empty_policy_id() {
+        let mut r = make_request();
+        r.policy_id = "".to_string();
+        assert!(build_plas_benchmark_bundle(&r).is_err());
+    }
+
+    #[test]
+    fn request_validate_empty_benchmark_run_id() {
+        let mut r = make_request();
+        r.benchmark_run_id = "".to_string();
+        assert!(build_plas_benchmark_bundle(&r).is_err());
+    }
+
+    #[test]
+    fn request_validate_no_samples() {
+        let mut r = make_request();
+        r.samples = Vec::new();
+        assert!(build_plas_benchmark_bundle(&r).is_err());
+    }
+
+    #[test]
+    fn request_validate_duplicate_extension() {
+        let mut r = make_request();
+        r.samples
+            .push(sample("ext-simple", PlasBenchmarkCohort::Simple));
+        let err = build_plas_benchmark_bundle(&r).unwrap_err();
+        assert!(matches!(
+            err,
+            PlasBenchmarkBundleError::DuplicateExtensionId { .. }
+        ));
+    }
+
+    // ── Metric calculation helpers ──────────────────────────────────
+
+    #[test]
+    fn ratio_millionths_floor_basic() {
+        assert_eq!(ratio_millionths_floor(1, 2), 500_000);
+        assert_eq!(ratio_millionths_floor(5, 5), 1_000_000);
+        assert_eq!(ratio_millionths_floor(0, 1), 0);
+    }
+
+    #[test]
+    fn ratio_millionths_floor_zero_denominator() {
+        assert_eq!(ratio_millionths_floor(1, 0), u64::MAX);
+    }
+
+    #[test]
+    fn ratio_millionths_ceil_basic() {
+        assert_eq!(ratio_millionths_ceil(5, 5), 1_000_000);
+        assert_eq!(ratio_millionths_ceil(0, 1), 0);
+    }
+
+    #[test]
+    fn ratio_millionths_ceil_rounds_up() {
+        // 1/3 = 333333.33... → ceil = 333334
+        assert_eq!(ratio_millionths_ceil(1, 3), 333_334);
+    }
+
+    #[test]
+    fn authoring_time_reduction_basic() {
+        // manual=1000, plas=200 → (1000-200)/1000 = 80% = 800_000 millionths
+        assert_eq!(authoring_time_reduction_millionths(1000, 200), 800_000);
+    }
+
+    #[test]
+    fn authoring_time_reduction_no_change() {
+        assert_eq!(authoring_time_reduction_millionths(1000, 1000), 0);
+    }
+
+    #[test]
+    fn authoring_time_reduction_negative() {
+        // plas takes LONGER: manual=1000, plas=2000 → -100% = -1_000_000
+        assert_eq!(authoring_time_reduction_millionths(1000, 2000), -1_000_000);
+    }
+
+    #[test]
+    fn authoring_time_reduction_zero_manual() {
+        assert_eq!(authoring_time_reduction_millionths(0, 100), i64::MIN);
+    }
+
+    #[test]
+    fn escrow_event_rate_basic() {
+        // 10 events in 1 hour = 10.0 events/hour = 10_000_000 millionths
+        let one_hour = 3_600_000_000_000u64;
+        assert_eq!(
+            escrow_event_rate_per_hour_millionths(10, one_hour),
+            10_000_000
+        );
+    }
+
+    #[test]
+    fn escrow_event_rate_zero_window() {
+        assert_eq!(escrow_event_rate_per_hour_millionths(10, 0), u64::MAX);
+    }
+
+    #[test]
+    fn mean_u64_basic() {
+        assert_eq!(mean_u64(&[100, 200, 300]), 200);
+    }
+
+    #[test]
+    fn mean_u64_empty() {
+        assert_eq!(mean_u64(&[]), 0);
+    }
+
+    #[test]
+    fn mean_i64_basic() {
+        assert_eq!(mean_i64(&[-100, 0, 100]), 0);
+    }
+
+    #[test]
+    fn mean_i64_empty() {
+        assert_eq!(mean_i64(&[]), 0);
+    }
+
+    // ── is_regression ───────────────────────────────────────────────
+
+    #[test]
+    fn regression_detected_over_privilege_worse() {
+        let prev = trend_point("run-0", 1_000_000, 800_000, 1_000, 1_000_000);
+        let curr = trend_point("run-1", 1_100_000, 800_000, 1_000, 1_000_000);
+        assert!(is_regression(&prev, &curr));
+    }
+
+    #[test]
+    fn regression_detected_authoring_worse() {
+        let prev = trend_point("run-0", 1_000_000, 800_000, 1_000, 1_000_000);
+        let curr = trend_point("run-1", 1_000_000, 700_000, 1_000, 1_000_000);
+        assert!(is_regression(&prev, &curr));
+    }
+
+    #[test]
+    fn regression_detected_false_deny_worse() {
+        let prev = trend_point("run-0", 1_000_000, 800_000, 1_000, 1_000_000);
+        let curr = trend_point("run-1", 1_000_000, 800_000, 2_000, 1_000_000);
+        assert!(is_regression(&prev, &curr));
+    }
+
+    #[test]
+    fn regression_detected_witness_coverage_worse() {
+        let prev = trend_point("run-0", 1_000_000, 800_000, 1_000, 1_000_000);
+        let curr = trend_point("run-1", 1_000_000, 800_000, 1_000, 900_000);
+        assert!(is_regression(&prev, &curr));
+    }
+
+    #[test]
+    fn no_regression_when_same() {
+        let prev = trend_point("run-0", 1_000_000, 800_000, 1_000, 1_000_000);
+        let curr = trend_point("run-1", 1_000_000, 800_000, 1_000, 1_000_000);
+        assert!(!is_regression(&prev, &curr));
+    }
+
+    #[test]
+    fn no_regression_when_better() {
+        let prev = trend_point("run-0", 1_100_000, 700_000, 2_000, 900_000);
+        let curr = trend_point("run-1", 1_000_000, 800_000, 1_000, 1_000_000);
+        assert!(!is_regression(&prev, &curr));
+    }
+
+    // ── build_plas_benchmark_bundle: passing case ───────────────────
+
+    #[test]
+    fn build_passing_bundle() {
+        let r = make_request();
+        let decision = build_plas_benchmark_bundle(&r).unwrap();
+        assert!(decision.publish_allowed);
+        assert!(decision.blockers.is_empty());
+        assert_eq!(decision.extension_results.len(), 4);
+        assert_eq!(decision.cohort_summaries.len(), 4);
+        assert_eq!(
+            decision.schema_version,
+            "franken-engine.plas-benchmark-bundle.v1"
+        );
+        assert!(!decision.trend_regression_detected);
+    }
+
+    #[test]
+    fn build_passing_bundle_ids() {
+        let r = make_request();
+        let decision = build_plas_benchmark_bundle(&r).unwrap();
+        assert_eq!(decision.benchmark_run_id, "run-1");
+        assert_eq!(decision.generated_at_ns, 1_000_000);
+        assert!(decision.bundle_id.starts_with("plas-bundle-"));
+    }
+
+    #[test]
+    fn build_bundle_deterministic() {
+        let r = make_request();
+        let d1 = build_plas_benchmark_bundle(&r).unwrap();
+        let d2 = build_plas_benchmark_bundle(&r).unwrap();
+        assert_eq!(d1.bundle_id, d2.bundle_id);
+    }
+
+    #[test]
+    fn build_bundle_events_present() {
+        let r = make_request();
+        let decision = build_plas_benchmark_bundle(&r).unwrap();
+        assert!(
+            decision
+                .events
+                .iter()
+                .any(|e| e.event == "plas_benchmark_bundle_started")
+        );
+        assert!(
+            decision
+                .events
+                .iter()
+                .any(|e| e.event == "plas_benchmark_bundle_decision")
+        );
+        assert!(
+            decision
+                .events
+                .iter()
+                .any(|e| e.event == "trend_regression_check")
+        );
+        assert!(
+            decision
+                .events
+                .iter()
+                .all(|e| e.component == "plas_benchmark_bundle")
+        );
+    }
+
+    // ── build: missing cohort coverage ──────────────────────────────
+
+    #[test]
+    fn build_missing_cohorts_blocked() {
+        let mut r = make_request();
+        r.samples = vec![sample("ext-1", PlasBenchmarkCohort::Simple)];
+        let decision = build_plas_benchmark_bundle(&r).unwrap();
+        assert!(!decision.publish_allowed);
+        assert!(
+            decision
+                .blockers
+                .iter()
+                .any(|b| b.contains("missing representative cohort"))
+        );
+    }
+
+    // ── build: over-privilege ratio failure ──────────────────────────
+
+    #[test]
+    fn build_over_privilege_ratio_fails() {
+        let mut r = make_request();
+        // Make all samples have over-privilege: synth=20, empirical=5 → ratio = 4.0
+        for s in &mut r.samples {
+            s.synthesized_capability_count = 20;
+            s.empirically_required_capability_count = 5;
+        }
+        let decision = build_plas_benchmark_bundle(&r).unwrap();
+        assert!(!decision.publish_allowed);
+        assert!(
+            decision
+                .blockers
+                .iter()
+                .any(|b| b.contains("over-privilege ratio"))
+        );
+    }
+
+    // ── build: authoring time reduction failure ─────────────────────
+
+    #[test]
+    fn build_authoring_time_reduction_fails() {
+        let mut r = make_request();
+        // PLAS slower than manual
+        for s in &mut r.samples {
+            s.plas_authoring_time_ms = 2000;
+            s.manual_authoring_time_ms = 1000;
+        }
+        let decision = build_plas_benchmark_bundle(&r).unwrap();
+        assert!(!decision.publish_allowed);
+        assert!(
+            decision
+                .blockers
+                .iter()
+                .any(|b| b.contains("authoring-time reduction"))
+        );
+    }
+
+    // ── build: false deny rate failure ──────────────────────────────
+
+    #[test]
+    fn build_false_deny_rate_fails() {
+        let mut r = make_request();
+        for s in &mut r.samples {
+            s.benign_false_deny_count = 500; // 5% of 10000 = 50_000 millionths > 5_000
+        }
+        let decision = build_plas_benchmark_bundle(&r).unwrap();
+        assert!(!decision.publish_allowed);
+        assert!(
+            decision
+                .blockers
+                .iter()
+                .any(|b| b.contains("false-deny rate"))
+        );
+    }
+
+    // ── build: witness coverage failure ─────────────────────────────
+
+    #[test]
+    fn build_witness_coverage_fails() {
+        let mut r = make_request();
+        for s in &mut r.samples {
+            s.witness_present = false;
+        }
+        let decision = build_plas_benchmark_bundle(&r).unwrap();
+        assert!(!decision.publish_allowed);
+        assert!(
+            decision
+                .blockers
+                .iter()
+                .any(|b| b.contains("witness coverage"))
+        );
+    }
+
+    // ── build: escrow event rate threshold ──────────────────────────
+
+    #[test]
+    fn build_escrow_rate_passes_when_no_threshold() {
+        let r = make_request();
+        let decision = build_plas_benchmark_bundle(&r).unwrap();
+        assert!(decision.overall_summary.escrow_event_rate_threshold_pass);
+    }
+
+    #[test]
+    fn build_escrow_rate_fails_when_exceeded() {
+        let mut r = make_request();
+        r.thresholds = Some(PlasBenchmarkThresholds {
+            max_escrow_event_rate_per_hour_millionths: Some(1), // basically 0
+            ..PlasBenchmarkThresholds::default()
+        });
+        let decision = build_plas_benchmark_bundle(&r).unwrap();
+        assert!(!decision.overall_summary.escrow_event_rate_threshold_pass);
+    }
+
+    // ── build: trend regression ─────────────────────────────────────
+
+    #[test]
+    fn build_trend_regression_warn_no_block() {
+        let mut r = make_request();
+        // Previous run was better across the board
+        r.historical_runs = vec![PlasBenchmarkTrendPoint {
+            benchmark_run_id: "run-0".to_string(),
+            generated_at_ns: 500_000,
+            mean_over_privilege_ratio_millionths: 500_000, // better (lower)
+            mean_authoring_time_reduction_millionths: 900_000, // better (higher)
+            mean_false_deny_rate_millionths: 0,            // better (lower)
+            mean_escrow_event_rate_per_hour_millionths: 0,
+            witness_coverage_millionths: 1_000_000, // same
+        }];
+        let decision = build_plas_benchmark_bundle(&r).unwrap();
+        assert!(decision.trend_regression_detected);
+        // Default fail_on_trend_regression = false, so should still pass
+        assert!(decision.publish_allowed);
+    }
+
+    #[test]
+    fn build_trend_regression_blocks_when_fail_on_regression() {
+        let mut r = make_request();
+        r.thresholds = Some(PlasBenchmarkThresholds {
+            fail_on_trend_regression: true,
+            ..PlasBenchmarkThresholds::default()
+        });
+        r.historical_runs = vec![PlasBenchmarkTrendPoint {
+            benchmark_run_id: "run-0".to_string(),
+            generated_at_ns: 500_000,
+            mean_over_privilege_ratio_millionths: 500_000,
+            mean_authoring_time_reduction_millionths: 900_000,
+            mean_false_deny_rate_millionths: 0,
+            mean_escrow_event_rate_per_hour_millionths: 0,
+            witness_coverage_millionths: 1_000_000,
+        }];
+        let decision = build_plas_benchmark_bundle(&r).unwrap();
+        assert!(decision.trend_regression_detected);
+        assert!(!decision.publish_allowed);
+        assert!(
+            decision
+                .blockers
+                .iter()
+                .any(|b| b.contains("trend regression"))
+        );
+    }
+
+    #[test]
+    fn build_no_trend_regression_when_no_history() {
+        let r = make_request();
+        let decision = build_plas_benchmark_bundle(&r).unwrap();
+        assert!(!decision.trend_regression_detected);
+    }
+
+    // ── build: trend includes current point ─────────────────────────
+
+    #[test]
+    fn build_trend_includes_current_run() {
+        let r = make_request();
+        let decision = build_plas_benchmark_bundle(&r).unwrap();
+        assert_eq!(decision.trend.len(), 1);
+        assert_eq!(decision.trend[0].benchmark_run_id, "run-1");
+    }
+
+    // ── markdown report ─────────────────────────────────────────────
+
+    #[test]
+    fn markdown_report_contains_key_sections() {
+        let r = make_request();
+        let decision = build_plas_benchmark_bundle(&r).unwrap();
+        let md = decision.to_markdown_report();
+        assert!(md.contains("# PLAS Benchmark Bundle"));
+        assert!(md.contains("## Overall Metrics"));
+        assert!(md.contains("## Cohort Summary"));
+        assert!(md.contains("## Extension Metrics"));
+        assert!(md.contains("## Trend"));
+        assert!(md.contains("ALLOW"));
+    }
+
+    #[test]
+    fn markdown_report_deny_case() {
+        let mut r = make_request();
+        r.samples = vec![sample("ext-1", PlasBenchmarkCohort::Simple)];
+        let decision = build_plas_benchmark_bundle(&r).unwrap();
+        let md = decision.to_markdown_report();
+        assert!(md.contains("DENY"));
+        assert!(md.contains("## Blockers"));
+    }
+
+    // ── to_json_pretty ──────────────────────────────────────────────
+
+    #[test]
+    fn to_json_pretty_roundtrips() {
+        let r = make_request();
+        let decision = build_plas_benchmark_bundle(&r).unwrap();
+        let json = decision.to_json_pretty().unwrap();
+        let back: PlasBenchmarkBundleDecision = serde_json::from_str(&json).unwrap();
+        assert_eq!(decision, back);
+    }
+
+    // ── format helpers ──────────────────────────────────────────────
+
+    #[test]
+    fn format_ratio_basic() {
+        assert_eq!(format_ratio(1_000_000), "1.000x");
+        assert_eq!(format_ratio(1_100_000), "1.100x");
+    }
+
+    #[test]
+    fn format_pct_basic() {
+        assert_eq!(format_pct(1_000_000), "100.000%");
+        assert_eq!(format_pct(5_000), "0.500%");
+    }
+
+    #[test]
+    fn format_pct_signed_negative() {
+        assert_eq!(format_pct_signed(-1_000_000), "-100.000%");
+    }
+
+    #[test]
+    fn pass_mark_values() {
+        assert_eq!(pass_mark(true), "yes");
+        assert_eq!(pass_mark(false), "no");
+    }
+
+    // ── overall summary cohorts_present ─────────────────────────────
+
+    #[test]
+    fn overall_summary_cohorts_present() {
+        let r = make_request();
+        let decision = build_plas_benchmark_bundle(&r).unwrap();
+        assert!(decision.overall_summary.required_cohorts_present);
+        assert_eq!(decision.overall_summary.cohorts_present.len(), 4);
+    }
+
+    // ── cohort summary pass/fail ────────────────────────────────────
+
+    #[test]
+    fn cohort_summary_all_pass() {
+        let r = make_request();
+        let decision = build_plas_benchmark_bundle(&r).unwrap();
+        for summary in &decision.cohort_summaries {
+            assert!(summary.pass);
+        }
+    }
+
+    // ── extension results computed ──────────────────────────────────
+
+    #[test]
+    fn extension_result_over_privilege_ratio() {
+        let s = sample("ext-1", PlasBenchmarkCohort::Simple);
+        let result = sample_to_result(&s);
+        // synth=5, empirical=5 → ratio = 1.0 = 1_000_000 millionths
+        assert_eq!(result.over_privilege_ratio_millionths, 1_000_000);
+    }
+
+    #[test]
+    fn extension_result_authoring_time_reduction() {
+        let s = sample("ext-1", PlasBenchmarkCohort::Simple);
+        let result = sample_to_result(&s);
+        // manual=1000, plas=200 → (1000-200)/1000 = 80% = 800_000
+        assert_eq!(result.authoring_time_reduction_millionths, 800_000);
+    }
+
+    #[test]
+    fn extension_result_false_deny_rate_zero() {
+        let s = sample("ext-1", PlasBenchmarkCohort::Simple);
+        let result = sample_to_result(&s);
+        assert_eq!(result.false_deny_rate_millionths, 0);
+    }
+}

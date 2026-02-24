@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use crate::benchmark_denominator::{
-    evaluate_publication_gate, PublicationContext, PublicationGateInput,
+    PublicationContext, PublicationGateInput, evaluate_publication_gate,
 };
 use crate::causal_replay::CounterfactualConfig;
 use crate::engine_object_id::EngineObjectId;
@@ -18,8 +18,8 @@ use crate::incident_replay_bundle::{BundleVerifier, CheckOutcome, IncidentReplay
 use crate::quarantine_mesh_gate::GateValidationResult;
 use crate::security_epoch::SecurityEpoch;
 use crate::signature_preimage::{
-    sign_preimage, verify_signature, Signature, SigningKey, VerificationKey, SIGNATURE_LEN,
-    SIGNING_KEY_LEN, VERIFICATION_KEY_LEN,
+    SIGNATURE_LEN, SIGNING_KEY_LEN, Signature, SigningKey, VERIFICATION_KEY_LEN, VerificationKey,
+    sign_preimage, verify_signature,
 };
 
 pub const THIRD_PARTY_VERIFIER_COMPONENT: &str = "third_party_verifier";
@@ -554,17 +554,17 @@ pub fn generate_attestation(
     let methodology = required_field(input.methodology.trim(), "methodology")?;
     let scope_limitations = normalize_strings(&input.scope_limitations);
     let report_digest_hex = digest_report_hex(&input.report)?;
-    let statement = format_attestation_statement(
+    let statement = format_attestation_statement(&AttestationStatementInput {
         verifier_name,
         verifier_version,
-        &input.report.trace_id,
-        &input.report.claim_type,
-        input.report.verdict,
+        trace_id: &input.report.trace_id,
+        claim_type: &input.report.claim_type,
+        verdict: input.report.verdict,
         issued_at_utc,
         methodology,
         verifier_environment,
-        &scope_limitations,
-    );
+        scope_limitations: &scope_limitations,
+    });
 
     let mut attestation = VerificationAttestation {
         claim_type: input.report.claim_type.clone(),
@@ -715,17 +715,17 @@ pub fn verify_attestation(attestation: &VerificationAttestation) -> ThirdPartyVe
         ),
     }
 
-    let expected_statement = format_attestation_statement(
-        attestation.verifier_name.trim(),
-        attestation.verifier_version.trim(),
-        attestation.trace_id.trim(),
-        &attestation.claim_type,
-        attestation.verdict,
-        attestation.issued_at_utc.trim(),
-        attestation.methodology.trim(),
-        attestation.verifier_environment.trim(),
-        &attestation.scope_limitations,
-    );
+    let expected_statement = format_attestation_statement(&AttestationStatementInput {
+        verifier_name: attestation.verifier_name.trim(),
+        verifier_version: attestation.verifier_version.trim(),
+        trace_id: attestation.trace_id.trim(),
+        claim_type: &attestation.claim_type,
+        verdict: attestation.verdict,
+        issued_at_utc: attestation.issued_at_utc.trim(),
+        methodology: attestation.methodology.trim(),
+        verifier_environment: attestation.verifier_environment.trim(),
+        scope_limitations: &attestation.scope_limitations,
+    });
     if attestation.statement == expected_statement {
         pass_check(
             &mut checks,
@@ -967,17 +967,30 @@ fn digest_report_hex(report: &ThirdPartyVerificationReport) -> Result<String, St
     Ok(ContentHash::compute(&bytes).to_hex())
 }
 
-fn format_attestation_statement(
-    verifier_name: &str,
-    verifier_version: &str,
-    trace_id: &str,
-    claim_type: &str,
+struct AttestationStatementInput<'a> {
+    verifier_name: &'a str,
+    verifier_version: &'a str,
+    trace_id: &'a str,
+    claim_type: &'a str,
     verdict: VerificationVerdict,
-    issued_at_utc: &str,
-    methodology: &str,
-    verifier_environment: &str,
-    scope_limitations: &[String],
-) -> String {
+    issued_at_utc: &'a str,
+    methodology: &'a str,
+    verifier_environment: &'a str,
+    scope_limitations: &'a [String],
+}
+
+fn format_attestation_statement(input: &AttestationStatementInput<'_>) -> String {
+    let AttestationStatementInput {
+        verifier_name,
+        verifier_version,
+        trace_id,
+        claim_type,
+        verdict,
+        issued_at_utc,
+        methodology,
+        verifier_environment,
+        scope_limitations,
+    } = input;
     let scope_text = if scope_limitations.is_empty() {
         "none".to_string()
     } else {
@@ -985,7 +998,7 @@ fn format_attestation_statement(
     };
     format!(
         "{verifier_name} {verifier_version} attests that {claim_type} claims for trace {trace_id} are {verdict} as of {issued_at_utc} using {methodology}. Environment: {verifier_environment}. Scope limitations: {scope_text}.",
-        verdict = verdict_label(verdict),
+        verdict = verdict_label(*verdict),
     )
 }
 
@@ -1208,5 +1221,822 @@ impl ClaimContext for VerificationAttestation {
 
     fn policy_id(&self) -> &str {
         &self.policy_id
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::quarantine_mesh_gate::{CriterionResult, FaultScenarioResult, GateValidationResult};
+
+    // ── helpers ──────────────────────────────────────────────────────
+
+    fn make_scenario(id: &str, passed: bool, latency_ns: u64) -> FaultScenarioResult {
+        let criteria = vec![CriterionResult {
+            name: "crit_a".to_string(),
+            passed,
+            detail: "detail".to_string(),
+        }];
+        FaultScenarioResult {
+            scenario_id: id.to_string(),
+            fault_type: crate::quarantine_mesh_gate::FaultType::NetworkPartition,
+            passed,
+            criteria,
+            receipts_emitted: 1,
+            final_state: None,
+            detection_latency_ns: latency_ns,
+            isolation_verified: passed,
+            recovery_verified: passed,
+        }
+    }
+
+    fn make_gate_result(scenarios: Vec<FaultScenarioResult>) -> GateValidationResult {
+        let total = scenarios.len();
+        let passed_count = scenarios.iter().filter(|s| s.passed).count();
+        let all_pass = passed_count == total;
+        GateValidationResult {
+            seed: 42,
+            scenarios,
+            passed: all_pass,
+            total_scenarios: total,
+            passed_scenarios: passed_count,
+            events: Vec::new(),
+            result_digest: "digest-test".to_string(),
+        }
+    }
+
+    fn make_containment_bundle(result: GateValidationResult) -> ContainmentClaimBundle {
+        ContainmentClaimBundle {
+            trace_id: "t-1".to_string(),
+            decision_id: "d-1".to_string(),
+            policy_id: "p-1".to_string(),
+            result,
+            detection_latency_sla_ns: DEFAULT_CONTAINMENT_LATENCY_SLA_NS,
+        }
+    }
+
+    fn make_report(verdict: VerificationVerdict) -> ThirdPartyVerificationReport {
+        ThirdPartyVerificationReport {
+            claim_type: "containment".to_string(),
+            trace_id: "t-1".to_string(),
+            decision_id: "d-1".to_string(),
+            policy_id: "p-1".to_string(),
+            component: THIRD_PARTY_VERIFIER_COMPONENT.to_string(),
+            verdict,
+            checks: vec![VerificationCheckResult {
+                name: "check1".to_string(),
+                passed: true,
+                error_code: None,
+                detail: "ok".to_string(),
+            }],
+            events: Vec::new(),
+        }
+    }
+
+    fn make_attestation_input(
+        report: ThirdPartyVerificationReport,
+        signing_key_hex: Option<String>,
+    ) -> VerificationAttestationInput {
+        VerificationAttestationInput {
+            report,
+            issued_at_utc: "2026-02-24T00:00:00Z".to_string(),
+            verifier_name: "acme-verifier".to_string(),
+            verifier_version: "1.0.0".to_string(),
+            verifier_environment: "production".to_string(),
+            methodology: "deterministic-replay".to_string(),
+            scope_limitations: Vec::new(),
+            signing_key_hex,
+        }
+    }
+
+    // ── VerificationVerdict ─────────────────────────────────────────
+
+    #[test]
+    fn verdict_exit_code_verified() {
+        assert_eq!(VerificationVerdict::Verified.exit_code(), EXIT_CODE_VERIFIED);
+    }
+
+    #[test]
+    fn verdict_exit_code_partially_verified() {
+        assert_eq!(
+            VerificationVerdict::PartiallyVerified.exit_code(),
+            EXIT_CODE_PARTIALLY_VERIFIED
+        );
+    }
+
+    #[test]
+    fn verdict_exit_code_failed() {
+        assert_eq!(VerificationVerdict::Failed.exit_code(), EXIT_CODE_FAILED);
+    }
+
+    #[test]
+    fn verdict_exit_code_inconclusive() {
+        assert_eq!(
+            VerificationVerdict::Inconclusive.exit_code(),
+            EXIT_CODE_INCONCLUSIVE
+        );
+    }
+
+    #[test]
+    fn verdict_serde_roundtrip() {
+        for verdict in [
+            VerificationVerdict::Verified,
+            VerificationVerdict::PartiallyVerified,
+            VerificationVerdict::Failed,
+            VerificationVerdict::Inconclusive,
+        ] {
+            let json = serde_json::to_string(&verdict).unwrap();
+            let back: VerificationVerdict = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, verdict);
+        }
+    }
+
+    // ── constants ───────────────────────────────────────────────────
+
+    #[test]
+    fn exit_code_constants() {
+        assert_eq!(EXIT_CODE_VERIFIED, 0);
+        assert_eq!(EXIT_CODE_PARTIALLY_VERIFIED, 24);
+        assert_eq!(EXIT_CODE_FAILED, 25);
+        assert_eq!(EXIT_CODE_INCONCLUSIVE, 26);
+    }
+
+    #[test]
+    fn default_containment_sla() {
+        assert_eq!(DEFAULT_CONTAINMENT_LATENCY_SLA_NS, 500_000_000);
+    }
+
+    // ── verify_containment_claim ────────────────────────────────────
+
+    #[test]
+    fn containment_all_pass_verified() {
+        let scenarios = vec![
+            make_scenario("s1", true, 100_000),
+            make_scenario("s2", true, 200_000),
+        ];
+        let result = make_gate_result(scenarios);
+        let bundle = make_containment_bundle(result);
+        let report = verify_containment_claim(&bundle);
+        assert_eq!(report.verdict, VerificationVerdict::Verified);
+        assert_eq!(report.claim_type, "containment");
+        assert!(report.checks.iter().all(|c| c.passed));
+    }
+
+    #[test]
+    fn containment_scenario_count_mismatch() {
+        let scenarios = vec![make_scenario("s1", true, 100_000)];
+        let mut result = make_gate_result(scenarios);
+        result.total_scenarios = 5; // mismatch: 1 scenario but total says 5
+        let bundle = make_containment_bundle(result);
+        let report = verify_containment_claim(&bundle);
+        assert_eq!(report.verdict, VerificationVerdict::Failed);
+        let failed = report.checks.iter().find(|c| c.name == "scenario_count_matches").unwrap();
+        assert!(!failed.passed);
+        assert_eq!(failed.error_code.as_deref(), Some(CODE_CONTAINMENT_COUNTS));
+    }
+
+    #[test]
+    fn containment_passed_count_mismatch() {
+        let scenarios = vec![make_scenario("s1", true, 100_000)];
+        let mut result = make_gate_result(scenarios);
+        result.passed_scenarios = 0; // says 0 passed but actually 1
+        let bundle = make_containment_bundle(result);
+        let report = verify_containment_claim(&bundle);
+        assert_eq!(report.verdict, VerificationVerdict::Failed);
+        let failed = report.checks.iter().find(|c| c.name == "passed_count_matches").unwrap();
+        assert!(!failed.passed);
+    }
+
+    #[test]
+    fn containment_overall_pass_flag_mismatch() {
+        let scenarios = vec![make_scenario("s1", true, 100_000)];
+        let mut result = make_gate_result(scenarios);
+        result.passed = false; // 1/1 passed but overall says false
+        let bundle = make_containment_bundle(result);
+        let report = verify_containment_claim(&bundle);
+        assert_eq!(report.verdict, VerificationVerdict::Failed);
+        let failed = report
+            .checks
+            .iter()
+            .find(|c| c.name == "overall_pass_flag_matches")
+            .unwrap();
+        assert!(!failed.passed);
+    }
+
+    #[test]
+    fn containment_criteria_consistency_mismatch() {
+        // Scenario says passed=true but its criterion says passed=false
+        let mut scenario = make_scenario("s1", true, 100_000);
+        scenario.criteria = vec![CriterionResult {
+            name: "bad_crit".to_string(),
+            passed: false,
+            detail: "fail".to_string(),
+        }];
+        // Keep scenario.passed = true, creating an inconsistency
+        let result = make_gate_result(vec![scenario]);
+        let bundle = make_containment_bundle(result);
+        let report = verify_containment_claim(&bundle);
+        assert_eq!(report.verdict, VerificationVerdict::Failed);
+        let failed = report
+            .checks
+            .iter()
+            .find(|c| c.name == "criteria_consistency:s1")
+            .unwrap();
+        assert!(!failed.passed);
+        assert_eq!(
+            failed.error_code.as_deref(),
+            Some(CODE_CONTAINMENT_CRITERIA)
+        );
+    }
+
+    #[test]
+    fn containment_latency_sla_exceeded() {
+        let scenarios = vec![make_scenario("s1", true, 999_999_999)]; // way over 500ms SLA
+        let result = make_gate_result(scenarios);
+        let bundle = make_containment_bundle(result);
+        let report = verify_containment_claim(&bundle);
+        assert_eq!(report.verdict, VerificationVerdict::Failed);
+        let failed = report
+            .checks
+            .iter()
+            .find(|c| c.name == "latency_sla:s1")
+            .unwrap();
+        assert!(!failed.passed);
+        assert_eq!(failed.error_code.as_deref(), Some(CODE_CONTAINMENT_SLA));
+    }
+
+    #[test]
+    fn containment_latency_sla_within_limit() {
+        let scenarios = vec![make_scenario("s1", true, 100_000_000)]; // 100ms < 500ms
+        let result = make_gate_result(scenarios);
+        let bundle = make_containment_bundle(result);
+        let report = verify_containment_claim(&bundle);
+        let check = report
+            .checks
+            .iter()
+            .find(|c| c.name == "latency_sla:s1")
+            .unwrap();
+        assert!(check.passed);
+    }
+
+    #[test]
+    fn containment_isolation_not_verified() {
+        let mut scenario = make_scenario("s1", true, 100_000);
+        scenario.isolation_verified = false;
+        let result = make_gate_result(vec![scenario]);
+        let bundle = make_containment_bundle(result);
+        let report = verify_containment_claim(&bundle);
+        assert_eq!(report.verdict, VerificationVerdict::Failed);
+        let failed = report
+            .checks
+            .iter()
+            .find(|c| c.name == "isolation_verified:s1")
+            .unwrap();
+        assert!(!failed.passed);
+        assert_eq!(
+            failed.error_code.as_deref(),
+            Some(CODE_CONTAINMENT_INVARIANT)
+        );
+    }
+
+    #[test]
+    fn containment_recovery_not_verified() {
+        let mut scenario = make_scenario("s1", true, 100_000);
+        scenario.recovery_verified = false;
+        let result = make_gate_result(vec![scenario]);
+        let bundle = make_containment_bundle(result);
+        let report = verify_containment_claim(&bundle);
+        assert_eq!(report.verdict, VerificationVerdict::Failed);
+        let failed = report
+            .checks
+            .iter()
+            .find(|c| c.name == "recovery_verified:s1")
+            .unwrap();
+        assert!(!failed.passed);
+    }
+
+    #[test]
+    fn containment_empty_scenarios_verified() {
+        let result = make_gate_result(Vec::new());
+        let bundle = make_containment_bundle(result);
+        let report = verify_containment_claim(&bundle);
+        assert_eq!(report.verdict, VerificationVerdict::Verified);
+    }
+
+    #[test]
+    fn containment_failed_scenario_not_checked_for_sla() {
+        // Failed scenarios don't trigger SLA/isolation/recovery failures
+        let mut scenario = make_scenario("s1", false, 999_999_999);
+        scenario.isolation_verified = false;
+        scenario.recovery_verified = false;
+        let result = make_gate_result(vec![scenario]);
+        let bundle = make_containment_bundle(result);
+        let report = verify_containment_claim(&bundle);
+        // Scenario says passed=false and criteria say passed=false → consistent
+        // SLA/isolation/recovery only checked when scenario.passed=true
+        let latency_check = report
+            .checks
+            .iter()
+            .find(|c| c.name == "latency_sla:s1")
+            .unwrap();
+        assert!(latency_check.passed);
+        let isolation_check = report
+            .checks
+            .iter()
+            .find(|c| c.name == "isolation_verified:s1")
+            .unwrap();
+        assert!(isolation_check.passed);
+    }
+
+    #[test]
+    fn containment_multiple_scenarios_mixed() {
+        let scenarios = vec![
+            make_scenario("s1", true, 100_000),
+            make_scenario("s2", false, 200_000),
+        ];
+        let result = make_gate_result(scenarios);
+        let bundle = make_containment_bundle(result);
+        let report = verify_containment_claim(&bundle);
+        assert_eq!(report.verdict, VerificationVerdict::Verified);
+    }
+
+    #[test]
+    fn containment_report_has_events() {
+        let result = make_gate_result(vec![make_scenario("s1", true, 100_000)]);
+        let bundle = make_containment_bundle(result);
+        let report = verify_containment_claim(&bundle);
+        assert!(report.events.len() >= 2); // started + completed
+        assert_eq!(report.events[0].trace_id, "t-1");
+        assert_eq!(report.events[0].component, THIRD_PARTY_VERIFIER_COMPONENT);
+    }
+
+    #[test]
+    fn containment_report_exit_code_matches_verdict() {
+        let result = make_gate_result(vec![make_scenario("s1", true, 100_000)]);
+        let bundle = make_containment_bundle(result);
+        let report = verify_containment_claim(&bundle);
+        assert_eq!(report.exit_code(), report.verdict.exit_code());
+    }
+
+    #[test]
+    fn containment_custom_sla_ns() {
+        let mut bundle =
+            make_containment_bundle(make_gate_result(vec![make_scenario("s1", true, 50)]));
+        bundle.detection_latency_sla_ns = 10; // very tight SLA
+        let report = verify_containment_claim(&bundle);
+        assert_eq!(report.verdict, VerificationVerdict::Failed);
+        let sla_check = report
+            .checks
+            .iter()
+            .find(|c| c.name == "latency_sla:s1")
+            .unwrap();
+        assert!(!sla_check.passed);
+    }
+
+    // ── generate_attestation ────────────────────────────────────────
+
+    #[test]
+    fn generate_attestation_unsigned() {
+        let report = make_report(VerificationVerdict::Verified);
+        let input = make_attestation_input(report.clone(), None);
+        let attestation = generate_attestation(&input).unwrap();
+        assert_eq!(attestation.claim_type, "containment");
+        assert_eq!(attestation.verdict, VerificationVerdict::Verified);
+        assert_eq!(attestation.verifier_name, "acme-verifier");
+        assert!(!attestation.report_digest_hex.is_empty());
+        assert!(attestation.signature_hex.is_none());
+        assert!(attestation.signer_verification_key_hex.is_none());
+    }
+
+    #[test]
+    fn generate_attestation_signed() {
+        let report = make_report(VerificationVerdict::Verified);
+        let key = SigningKey::from_bytes([42u8; SIGNING_KEY_LEN]);
+        let key_hex = hex::encode(key.as_bytes());
+        let input = make_attestation_input(report.clone(), Some(key_hex));
+        let attestation = generate_attestation(&input).unwrap();
+        assert!(attestation.signature_hex.is_some());
+        assert!(attestation.signer_verification_key_hex.is_some());
+    }
+
+    #[test]
+    fn generate_attestation_empty_verifier_name_error() {
+        let report = make_report(VerificationVerdict::Verified);
+        let mut input = make_attestation_input(report, None);
+        input.verifier_name = "".to_string();
+        let result = generate_attestation(&input);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("verifier_name"));
+    }
+
+    #[test]
+    fn generate_attestation_empty_issued_at_error() {
+        let report = make_report(VerificationVerdict::Verified);
+        let mut input = make_attestation_input(report, None);
+        input.issued_at_utc = "  ".to_string();
+        let result = generate_attestation(&input);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("issued_at_utc"));
+    }
+
+    #[test]
+    fn generate_attestation_empty_methodology_error() {
+        let report = make_report(VerificationVerdict::Verified);
+        let mut input = make_attestation_input(report, None);
+        input.methodology = "".to_string();
+        let result = generate_attestation(&input);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn generate_attestation_invalid_signing_key_error() {
+        let report = make_report(VerificationVerdict::Verified);
+        let input = make_attestation_input(report, Some("not-hex".to_string()));
+        let result = generate_attestation(&input);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("signing key"));
+    }
+
+    #[test]
+    fn generate_attestation_wrong_length_signing_key_error() {
+        let report = make_report(VerificationVerdict::Verified);
+        let input = make_attestation_input(report, Some(hex::encode([0u8; 16])));
+        let result = generate_attestation(&input);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("bytes"));
+    }
+
+    #[test]
+    fn generate_attestation_scope_limitations_included() {
+        let report = make_report(VerificationVerdict::Verified);
+        let mut input = make_attestation_input(report, None);
+        input.scope_limitations = vec!["no-crypto-audit".to_string(), "sandbox-only".to_string()];
+        let attestation = generate_attestation(&input).unwrap();
+        assert!(attestation.statement.contains("no-crypto-audit"));
+        assert!(attestation.statement.contains("sandbox-only"));
+    }
+
+    #[test]
+    fn generate_attestation_statement_format() {
+        let report = make_report(VerificationVerdict::Verified);
+        let input = make_attestation_input(report, None);
+        let attestation = generate_attestation(&input).unwrap();
+        assert!(attestation.statement.contains("acme-verifier"));
+        assert!(attestation.statement.contains("1.0.0"));
+        assert!(attestation.statement.contains("verified"));
+        assert!(attestation.statement.contains("deterministic-replay"));
+        assert!(attestation.statement.contains("Scope limitations: none"));
+    }
+
+    // ── verify_attestation ──────────────────────────────────────────
+
+    #[test]
+    fn verify_attestation_unsigned_partially_verified() {
+        let report = make_report(VerificationVerdict::Verified);
+        let input = make_attestation_input(report, None);
+        let attestation = generate_attestation(&input).unwrap();
+        let verification = verify_attestation(&attestation);
+        // Unsigned → skipped signature check → PartiallyVerified
+        assert_eq!(verification.verdict, VerificationVerdict::PartiallyVerified);
+        assert!(verification.checks.iter().all(|c| c.passed));
+    }
+
+    #[test]
+    fn verify_attestation_signed_verified() {
+        let report = make_report(VerificationVerdict::Verified);
+        let key = SigningKey::from_bytes([42u8; SIGNING_KEY_LEN]);
+        let key_hex = hex::encode(key.as_bytes());
+        let input = make_attestation_input(report, Some(key_hex));
+        let attestation = generate_attestation(&input).unwrap();
+        let verification = verify_attestation(&attestation);
+        assert_eq!(verification.verdict, VerificationVerdict::Verified);
+        assert!(verification.checks.iter().all(|c| c.passed));
+    }
+
+    #[test]
+    fn verify_attestation_mismatched_claim_type() {
+        let report = make_report(VerificationVerdict::Verified);
+        let input = make_attestation_input(report, None);
+        let mut attestation = generate_attestation(&input).unwrap();
+        attestation.claim_type = "wrong_type".to_string();
+        let verification = verify_attestation(&attestation);
+        assert_eq!(verification.verdict, VerificationVerdict::Failed);
+        let failed = verification
+            .checks
+            .iter()
+            .find(|c| c.name == "claim_type_matches_report")
+            .unwrap();
+        assert!(!failed.passed);
+    }
+
+    #[test]
+    fn verify_attestation_mismatched_verdict() {
+        let report = make_report(VerificationVerdict::Verified);
+        let input = make_attestation_input(report, None);
+        let mut attestation = generate_attestation(&input).unwrap();
+        attestation.verdict = VerificationVerdict::Failed;
+        let verification = verify_attestation(&attestation);
+        assert_eq!(verification.verdict, VerificationVerdict::Failed);
+    }
+
+    #[test]
+    fn verify_attestation_mismatched_context() {
+        let report = make_report(VerificationVerdict::Verified);
+        let input = make_attestation_input(report, None);
+        let mut attestation = generate_attestation(&input).unwrap();
+        attestation.trace_id = "wrong-trace".to_string();
+        let verification = verify_attestation(&attestation);
+        assert_eq!(verification.verdict, VerificationVerdict::Failed);
+        let failed = verification
+            .checks
+            .iter()
+            .find(|c| c.name == "context_matches_report")
+            .unwrap();
+        assert!(!failed.passed);
+    }
+
+    #[test]
+    fn verify_attestation_tampered_digest() {
+        let report = make_report(VerificationVerdict::Verified);
+        let input = make_attestation_input(report, None);
+        let mut attestation = generate_attestation(&input).unwrap();
+        attestation.report_digest_hex = "0000000000000000".to_string();
+        let verification = verify_attestation(&attestation);
+        assert_eq!(verification.verdict, VerificationVerdict::Failed);
+        let failed = verification
+            .checks
+            .iter()
+            .find(|c| c.name == "report_digest_matches")
+            .unwrap();
+        assert!(!failed.passed);
+    }
+
+    #[test]
+    fn verify_attestation_tampered_statement() {
+        let report = make_report(VerificationVerdict::Verified);
+        let input = make_attestation_input(report, None);
+        let mut attestation = generate_attestation(&input).unwrap();
+        attestation.statement = "tampered statement".to_string();
+        let verification = verify_attestation(&attestation);
+        assert_eq!(verification.verdict, VerificationVerdict::Failed);
+        let failed = verification
+            .checks
+            .iter()
+            .find(|c| c.name == "statement_matches_canonical_template")
+            .unwrap();
+        assert!(!failed.passed);
+    }
+
+    #[test]
+    fn verify_attestation_empty_required_fields() {
+        let report = make_report(VerificationVerdict::Verified);
+        let input = make_attestation_input(report, None);
+        let mut attestation = generate_attestation(&input).unwrap();
+        attestation.verifier_name = "".to_string();
+        let verification = verify_attestation(&attestation);
+        assert_eq!(verification.verdict, VerificationVerdict::Failed);
+        let failed = verification
+            .checks
+            .iter()
+            .find(|c| c.name == "attestation_required_fields")
+            .unwrap();
+        assert!(!failed.passed);
+    }
+
+    #[test]
+    fn verify_attestation_only_sig_key_no_sig() {
+        let report = make_report(VerificationVerdict::Verified);
+        let input = make_attestation_input(report, None);
+        let mut attestation = generate_attestation(&input).unwrap();
+        attestation.signer_verification_key_hex = Some("abcd".to_string());
+        // signature_hex is still None → inconsistent
+        let verification = verify_attestation(&attestation);
+        assert_eq!(verification.verdict, VerificationVerdict::Failed);
+        let failed = verification
+            .checks
+            .iter()
+            .find(|c| c.name == "signature_presence_consistent")
+            .unwrap();
+        assert!(!failed.passed);
+    }
+
+    #[test]
+    fn verify_attestation_tampered_signature_fails() {
+        let report = make_report(VerificationVerdict::Verified);
+        let key = SigningKey::from_bytes([42u8; SIGNING_KEY_LEN]);
+        let key_hex = hex::encode(key.as_bytes());
+        let input = make_attestation_input(report, Some(key_hex));
+        let mut attestation = generate_attestation(&input).unwrap();
+        // Tamper with signature
+        attestation.signature_hex = Some(hex::encode([0u8; SIGNATURE_LEN]));
+        let verification = verify_attestation(&attestation);
+        assert_eq!(verification.verdict, VerificationVerdict::Failed);
+        let failed = verification
+            .checks
+            .iter()
+            .find(|c| c.name == "signature_valid")
+            .unwrap();
+        assert!(!failed.passed);
+    }
+
+    // ── render functions ────────────────────────────────────────────
+
+    #[test]
+    fn render_report_summary_format() {
+        let mut report = make_report(VerificationVerdict::Verified);
+        report.checks.push(VerificationCheckResult {
+            name: "bad_check".to_string(),
+            passed: false,
+            error_code: Some("ERR".to_string()),
+            detail: "something failed".to_string(),
+        });
+        let summary = render_report_summary(&report);
+        assert!(summary.contains("claim_type=containment"));
+        assert!(summary.contains("checks=2"));
+        assert!(summary.contains("failed=1"));
+        assert!(summary.contains("exit_code="));
+    }
+
+    #[test]
+    fn render_attestation_summary_format() {
+        let report = make_report(VerificationVerdict::Verified);
+        let input = make_attestation_input(report, None);
+        let attestation = generate_attestation(&input).unwrap();
+        let summary = render_attestation_summary(&attestation);
+        assert!(summary.contains("claim_type=containment"));
+        assert!(summary.contains("signed=false"));
+        assert!(summary.contains("verifier=1.0.0"));
+    }
+
+    #[test]
+    fn render_attestation_summary_signed() {
+        let report = make_report(VerificationVerdict::Verified);
+        let key = SigningKey::from_bytes([42u8; SIGNING_KEY_LEN]);
+        let key_hex = hex::encode(key.as_bytes());
+        let input = make_attestation_input(report, Some(key_hex));
+        let attestation = generate_attestation(&input).unwrap();
+        let summary = render_attestation_summary(&attestation);
+        assert!(summary.contains("signed=true"));
+    }
+
+    // ── serde roundtrips ────────────────────────────────────────────
+
+    #[test]
+    fn verification_check_result_serde() {
+        let check = VerificationCheckResult {
+            name: "test_check".to_string(),
+            passed: false,
+            error_code: Some("ERR-001".to_string()),
+            detail: "detail text".to_string(),
+        };
+        let json = serde_json::to_string(&check).unwrap();
+        let back: VerificationCheckResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, check);
+    }
+
+    #[test]
+    fn verifier_event_serde() {
+        let ev = VerifierEvent {
+            trace_id: "t1".to_string(),
+            decision_id: "d1".to_string(),
+            policy_id: "p1".to_string(),
+            component: "comp".to_string(),
+            event: "ev".to_string(),
+            outcome: "pass".to_string(),
+            error_code: None,
+        };
+        let json = serde_json::to_string(&ev).unwrap();
+        let back: VerifierEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, ev);
+    }
+
+    #[test]
+    fn third_party_verification_report_serde() {
+        let report = make_report(VerificationVerdict::Failed);
+        let json = serde_json::to_string(&report).unwrap();
+        let back: ThirdPartyVerificationReport = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, report);
+    }
+
+    #[test]
+    fn containment_claim_bundle_serde() {
+        let result = make_gate_result(vec![make_scenario("s1", true, 100)]);
+        let bundle = make_containment_bundle(result);
+        let json = serde_json::to_string(&bundle).unwrap();
+        let back: ContainmentClaimBundle = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, bundle);
+    }
+
+    #[test]
+    fn attestation_input_serde() {
+        let report = make_report(VerificationVerdict::Verified);
+        let input = make_attestation_input(report, None);
+        let json = serde_json::to_string(&input).unwrap();
+        let back: VerificationAttestationInput = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, input);
+    }
+
+    #[test]
+    fn attestation_unsigned_serde() {
+        let report = make_report(VerificationVerdict::Verified);
+        let input = make_attestation_input(report, None);
+        let attestation = generate_attestation(&input).unwrap();
+        let json = serde_json::to_string(&attestation).unwrap();
+        let back: VerificationAttestation = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, attestation);
+    }
+
+    #[test]
+    fn attestation_signed_serde() {
+        let report = make_report(VerificationVerdict::Verified);
+        let key = SigningKey::from_bytes([42u8; SIGNING_KEY_LEN]);
+        let input = make_attestation_input(report, Some(hex::encode(key.as_bytes())));
+        let attestation = generate_attestation(&input).unwrap();
+        let json = serde_json::to_string(&attestation).unwrap();
+        let back: VerificationAttestation = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, attestation);
+    }
+
+    // ── attestation digest determinism ──────────────────────────────
+
+    #[test]
+    fn attestation_digest_deterministic() {
+        let report = make_report(VerificationVerdict::Verified);
+        let input = make_attestation_input(report, None);
+        let a1 = generate_attestation(&input).unwrap();
+        let a2 = generate_attestation(&input).unwrap();
+        assert_eq!(a1.report_digest_hex, a2.report_digest_hex);
+    }
+
+    #[test]
+    fn attestation_digest_changes_with_report() {
+        let report1 = make_report(VerificationVerdict::Verified);
+        let report2 = make_report(VerificationVerdict::Failed);
+        let a1 = generate_attestation(&make_attestation_input(report1, None)).unwrap();
+        let a2 = generate_attestation(&make_attestation_input(report2, None)).unwrap();
+        assert_ne!(a1.report_digest_hex, a2.report_digest_hex);
+    }
+
+    // ── end-to-end containment → attestation → verify ───────────────
+
+    #[test]
+    fn end_to_end_containment_attestation_unsigned() {
+        let result = make_gate_result(vec![make_scenario("s1", true, 100_000)]);
+        let bundle = make_containment_bundle(result);
+        let report = verify_containment_claim(&bundle);
+        assert_eq!(report.verdict, VerificationVerdict::Verified);
+
+        let input = make_attestation_input(report, None);
+        let attestation = generate_attestation(&input).unwrap();
+        assert_eq!(attestation.verdict, VerificationVerdict::Verified);
+
+        let verification = verify_attestation(&attestation);
+        assert_eq!(verification.verdict, VerificationVerdict::PartiallyVerified);
+        assert!(verification.checks.iter().all(|c| c.passed));
+    }
+
+    #[test]
+    fn end_to_end_containment_attestation_signed() {
+        let result = make_gate_result(vec![make_scenario("s1", true, 100_000)]);
+        let bundle = make_containment_bundle(result);
+        let report = verify_containment_claim(&bundle);
+
+        let key = SigningKey::from_bytes([99u8; SIGNING_KEY_LEN]);
+        let input = make_attestation_input(report, Some(hex::encode(key.as_bytes())));
+        let attestation = generate_attestation(&input).unwrap();
+
+        let verification = verify_attestation(&attestation);
+        assert_eq!(verification.verdict, VerificationVerdict::Verified);
+        assert!(verification.checks.iter().all(|c| c.passed));
+    }
+
+    // ── report.exit_code() delegation ───────────────────────────────
+
+    #[test]
+    fn report_exit_code_delegates_to_verdict() {
+        let report = make_report(VerificationVerdict::Failed);
+        assert_eq!(report.exit_code(), EXIT_CODE_FAILED);
+    }
+
+    // ── default containment sla deserialization ─────────────────────
+
+    #[test]
+    fn containment_bundle_default_sla_from_json() {
+        let json = r#"{
+            "trace_id": "t",
+            "decision_id": "d",
+            "policy_id": "p",
+            "result": {
+                "seed": 0,
+                "scenarios": [],
+                "passed": true,
+                "total_scenarios": 0,
+                "passed_scenarios": 0,
+                "events": [],
+                "result_digest": ""
+            }
+        }"#;
+        let bundle: ContainmentClaimBundle = serde_json::from_str(json).unwrap();
+        assert_eq!(bundle.detection_latency_sla_ns, DEFAULT_CONTAINMENT_LATENCY_SLA_NS);
     }
 }

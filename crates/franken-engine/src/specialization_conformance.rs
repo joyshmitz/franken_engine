@@ -12,7 +12,7 @@
 //! Program), 10.9 release gate (proof-specialized lanes require 100%
 //! specialization-receipt coverage and deterministic fallback correctness).
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
@@ -352,6 +352,26 @@ impl FallbackOutcome {
 }
 
 // ---------------------------------------------------------------------------
+// CompareOutcomesInput — input struct for differential comparison
+// ---------------------------------------------------------------------------
+
+/// Input parameters for a single differential-execution comparison.
+/// Extracted from `compare_outcomes` to satisfy the 7-argument limit.
+#[derive(Debug, Clone)]
+pub struct CompareOutcomesInput<'a> {
+    pub specialization_id: &'a EngineObjectId,
+    pub workload_id: &'a str,
+    pub category: CorpusCategory,
+    pub specialized: &'a WorkloadOutcome,
+    pub unspecialized: &'a WorkloadOutcome,
+    pub specialized_duration_us: u64,
+    pub unspecialized_duration_us: u64,
+    pub epoch_transition_tested: bool,
+    pub fallback_outcome: Option<FallbackOutcome>,
+    pub receipt_valid: bool,
+}
+
+// ---------------------------------------------------------------------------
 // EpochTransitionSimulation — simulated epoch change parameters
 // ---------------------------------------------------------------------------
 
@@ -675,10 +695,7 @@ impl SpecializationConformanceEngine {
     }
 
     pub fn total_matches(&self) -> usize {
-        self.results
-            .iter()
-            .filter(|r| r.outcome.is_match())
-            .count()
+        self.results.iter().filter(|r| r.outcome.is_match()).count()
     }
 
     // --- Registration ---
@@ -709,20 +726,18 @@ impl SpecializationConformanceEngine {
     // --- Differential execution ---
 
     /// Compare two workload outcomes and produce a differential result.
-    pub fn compare_outcomes(
-        &mut self,
-        specialization_id: &EngineObjectId,
-        workload_id: &str,
-        category: CorpusCategory,
-        specialized: &WorkloadOutcome,
-        unspecialized: &WorkloadOutcome,
-        specialized_duration_us: u64,
-        unspecialized_duration_us: u64,
-        epoch_transition_tested: bool,
-        fallback_outcome: Option<FallbackOutcome>,
-        receipt_valid: bool,
-    ) -> DifferentialResult {
+    pub fn compare_outcomes(&mut self, input: &CompareOutcomesInput<'_>) -> DifferentialResult {
         let trace_id = self.next_trace_id();
+        let specialization_id = input.specialization_id;
+        let workload_id = input.workload_id;
+        let category = input.category;
+        let specialized = input.specialized;
+        let unspecialized = input.unspecialized;
+        let specialized_duration_us = input.specialized_duration_us;
+        let unspecialized_duration_us = input.unspecialized_duration_us;
+        let epoch_transition_tested = input.epoch_transition_tested;
+        let fallback_outcome = input.fallback_outcome.clone();
+        let receipt_valid = input.receipt_valid;
 
         let divergence_detail = if specialized.return_value != unspecialized.return_value {
             Some(DivergenceDetail {
@@ -734,10 +749,7 @@ impl SpecializationConformanceEngine {
             Some(DivergenceDetail {
                 divergence_kind: DivergenceKind::SideEffectTrace,
                 specialized_summary: format!("{} effects", specialized.side_effect_trace.len()),
-                unspecialized_summary: format!(
-                    "{} effects",
-                    unspecialized.side_effect_trace.len()
-                ),
+                unspecialized_summary: format!("{} effects", unspecialized.side_effect_trace.len()),
             })
         } else if specialized.exceptions != unspecialized.exceptions {
             Some(DivergenceDetail {
@@ -749,10 +761,7 @@ impl SpecializationConformanceEngine {
             Some(DivergenceDetail {
                 divergence_kind: DivergenceKind::EvidenceEmission,
                 specialized_summary: format!("{} entries", specialized.evidence_entries.len()),
-                unspecialized_summary: format!(
-                    "{} entries",
-                    unspecialized.evidence_entries.len()
-                ),
+                unspecialized_summary: format!("{} entries", unspecialized.evidence_entries.len()),
             })
         } else {
             None
@@ -870,8 +879,7 @@ impl SpecializationConformanceEngine {
         let mut failure_reasons = Vec::new();
 
         // Schema version compatibility
-        let schema_ok =
-            ReceiptSchemaVersion::CURRENT.is_compatible_with(&receipt.schema_version);
+        let schema_ok = ReceiptSchemaVersion::CURRENT.is_compatible_with(&receipt.schema_version);
         if !schema_ok {
             failure_reasons.push(format!(
                 "incompatible schema version: {}",
@@ -880,8 +888,8 @@ impl SpecializationConformanceEngine {
         }
 
         // Receipt well-formedness
-        let well_formed = !receipt.proof_inputs.is_empty()
-            && receipt.validity_epoch == self.current_epoch;
+        let well_formed =
+            !receipt.proof_inputs.is_empty() && receipt.validity_epoch == self.current_epoch;
         if receipt.proof_inputs.is_empty() {
             failure_reasons.push("empty proof inputs".to_string());
         }
@@ -951,8 +959,7 @@ impl SpecializationConformanceEngine {
                     FallbackOutcome::Success {
                         invalidation_evidence_id: format!(
                             "inv-{}-{}",
-                            spec_id,
-                            simulation.transition_timestamp_ns
+                            spec_id, simulation.transition_timestamp_ns
                         ),
                     }
                 } else {
@@ -1073,8 +1080,7 @@ impl SpecializationConformanceEngine {
                 },
             };
 
-            let passed =
-                divergence_count == 0 && fallback_failures == 0 && receipt_valid;
+            let passed = divergence_count == 0 && fallback_failures == 0 && receipt_valid;
 
             verdicts.push(PerSpecializationVerdict {
                 specialization_id: _entry.specialization_id.clone(),
@@ -1090,7 +1096,10 @@ impl SpecializationConformanceEngine {
 
         let total_divergences = self.total_divergences();
         let total_fallback_failures = verdicts.iter().map(|v| v.fallback_failures).sum::<usize>();
-        let total_receipt_failures = verdicts.iter().filter(|v| !v.receipt_validation.valid).count();
+        let total_receipt_failures = verdicts
+            .iter()
+            .filter(|v| !v.receipt_validation.valid)
+            .count();
         let ci_gate_passed =
             total_divergences == 0 && total_fallback_failures == 0 && total_receipt_failures == 0;
 
@@ -1114,14 +1123,15 @@ impl SpecializationConformanceEngine {
     // --- Determinism check ---
 
     /// Run the same workload N times and confirm identical outcomes.
-    pub fn check_determinism(
-        outcomes: &[WorkloadOutcome],
-    ) -> bool {
+    pub fn check_determinism(outcomes: &[WorkloadOutcome]) -> bool {
         if outcomes.len() < 2 {
             return true;
         }
         let first_hash = outcomes[0].content_hash();
-        outcomes.iter().skip(1).all(|o| o.content_hash() == first_hash)
+        outcomes
+            .iter()
+            .skip(1)
+            .all(|o| o.content_hash() == first_hash)
     }
 
     // --- Performance delta tracking ---
@@ -1208,12 +1218,8 @@ mod tests {
             slot_id: format!("slot-{tag}"),
             proof_inputs: vec![test_proof_input(tag)],
             transformation_type: TransformationType::HostcallDispatchElision,
-            optimization_receipt_hash: ContentHash::compute(
-                format!("receipt-{tag}").as_bytes(),
-            ),
-            rollback_token_hash: ContentHash::compute(
-                format!("rollback-{tag}").as_bytes(),
-            ),
+            optimization_receipt_hash: ContentHash::compute(format!("receipt-{tag}").as_bytes()),
+            rollback_token_hash: ContentHash::compute(format!("rollback-{tag}").as_bytes()),
             validity_epoch: test_epoch(),
             fallback_path: format!("fallback-{tag}"),
         }
@@ -1276,9 +1282,7 @@ mod tests {
             TransformationType::PathRemoval
         );
         assert_eq!(
-            TransformationType::from_optimization_class(
-                OptimizationClass::SuperinstructionFusion
-            ),
+            TransformationType::from_optimization_class(OptimizationClass::SuperinstructionFusion),
             TransformationType::SuperinstructionFusion
         );
     }
@@ -1322,7 +1326,10 @@ mod tests {
 
     #[test]
     fn corpus_category_display() {
-        assert_eq!(CorpusCategory::SemanticParity.to_string(), "semantic_parity");
+        assert_eq!(
+            CorpusCategory::SemanticParity.to_string(),
+            "semantic_parity"
+        );
         assert_eq!(CorpusCategory::EdgeCase.to_string(), "edge_case");
         assert_eq!(
             CorpusCategory::EpochTransition.to_string(),
@@ -1508,7 +1515,10 @@ mod tests {
     #[test]
     fn engine_register_corpus() {
         let mut engine = SpecializationConformanceEngine::new("p", test_epoch());
-        engine.register_corpus("spec-a", vec![make_workload("w1", CorpusCategory::SemanticParity)]);
+        engine.register_corpus(
+            "spec-a",
+            vec![make_workload("w1", CorpusCategory::SemanticParity)],
+        );
         // Corpus is stored
         assert!(engine.corpora.contains_key("spec-a"));
     }
@@ -1524,10 +1534,18 @@ mod tests {
         let specialized = matching_outcome();
         let unspecialized = matching_outcome();
 
-        let result = engine.compare_outcomes(
-            &spec_id, "w1", CorpusCategory::SemanticParity,
-            &specialized, &unspecialized, 100, 150, false, None, true,
-        );
+        let result = engine.compare_outcomes(&CompareOutcomesInput {
+            specialization_id: &spec_id,
+            workload_id: "w1",
+            category: CorpusCategory::SemanticParity,
+            specialized: &specialized,
+            unspecialized: &unspecialized,
+            specialized_duration_us: 100,
+            unspecialized_duration_us: 150,
+            epoch_transition_tested: false,
+            fallback_outcome: None,
+            receipt_valid: true,
+        });
 
         assert!(result.outcome.is_match());
         assert!(result.divergence_detail.is_none());
@@ -1550,10 +1568,18 @@ mod tests {
         let specialized = matching_outcome();
         let unspecialized = diverging_outcome();
 
-        let result = engine.compare_outcomes(
-            &spec_id, "w2", CorpusCategory::SemanticParity,
-            &specialized, &unspecialized, 100, 100, false, None, true,
-        );
+        let result = engine.compare_outcomes(&CompareOutcomesInput {
+            specialization_id: &spec_id,
+            workload_id: "w2",
+            category: CorpusCategory::SemanticParity,
+            specialized: &specialized,
+            unspecialized: &unspecialized,
+            specialized_duration_us: 100,
+            unspecialized_duration_us: 100,
+            epoch_transition_tested: false,
+            fallback_outcome: None,
+            receipt_valid: true,
+        });
 
         assert!(result.outcome.is_diverge());
         let detail = result.divergence_detail.as_ref().unwrap();
@@ -1579,10 +1605,18 @@ mod tests {
             sequence: 1,
         });
 
-        let result = engine.compare_outcomes(
-            &spec_id, "w3", CorpusCategory::EdgeCase,
-            &specialized, &unspecialized, 50, 60, false, None, true,
-        );
+        let result = engine.compare_outcomes(&CompareOutcomesInput {
+            specialization_id: &spec_id,
+            workload_id: "w3",
+            category: CorpusCategory::EdgeCase,
+            specialized: &specialized,
+            unspecialized: &unspecialized,
+            specialized_duration_us: 50,
+            unspecialized_duration_us: 60,
+            epoch_transition_tested: false,
+            fallback_outcome: None,
+            receipt_valid: true,
+        });
 
         assert!(result.outcome.is_diverge());
         let detail = result.divergence_detail.as_ref().unwrap();
@@ -1601,10 +1635,18 @@ mod tests {
         let mut unspecialized = matching_outcome();
         unspecialized.exceptions.push("TypeError".to_string());
 
-        let result = engine.compare_outcomes(
-            &spec_id, "w4", CorpusCategory::SemanticParity,
-            &specialized, &unspecialized, 30, 35, false, None, true,
-        );
+        let result = engine.compare_outcomes(&CompareOutcomesInput {
+            specialization_id: &spec_id,
+            workload_id: "w4",
+            category: CorpusCategory::SemanticParity,
+            specialized: &specialized,
+            unspecialized: &unspecialized,
+            specialized_duration_us: 30,
+            unspecialized_duration_us: 35,
+            epoch_transition_tested: false,
+            fallback_outcome: None,
+            receipt_valid: true,
+        });
 
         assert!(result.outcome.is_diverge());
         let detail = result.divergence_detail.as_ref().unwrap();
@@ -1623,10 +1665,18 @@ mod tests {
         let mut unspecialized = matching_outcome();
         unspecialized.evidence_entries.push("ev-extra".to_string());
 
-        let result = engine.compare_outcomes(
-            &spec_id, "w5", CorpusCategory::SemanticParity,
-            &specialized, &unspecialized, 20, 25, false, None, true,
-        );
+        let result = engine.compare_outcomes(&CompareOutcomesInput {
+            specialization_id: &spec_id,
+            workload_id: "w5",
+            category: CorpusCategory::SemanticParity,
+            specialized: &specialized,
+            unspecialized: &unspecialized,
+            specialized_duration_us: 20,
+            unspecialized_duration_us: 25,
+            epoch_transition_tested: false,
+            fallback_outcome: None,
+            receipt_valid: true,
+        });
 
         assert!(result.outcome.is_diverge());
         let detail = result.divergence_detail.as_ref().unwrap();
@@ -1646,10 +1696,18 @@ mod tests {
             invalidation_evidence_id: "inv-1".to_string(),
         };
 
-        let result = engine.compare_outcomes(
-            &spec_id, "w6", CorpusCategory::EpochTransition,
-            &outcome, &outcome, 100, 100, true, Some(fb), true,
-        );
+        let result = engine.compare_outcomes(&CompareOutcomesInput {
+            specialization_id: &spec_id,
+            workload_id: "w6",
+            category: CorpusCategory::EpochTransition,
+            specialized: &outcome,
+            unspecialized: &outcome,
+            specialized_duration_us: 100,
+            unspecialized_duration_us: 100,
+            epoch_transition_tested: true,
+            fallback_outcome: Some(fb),
+            receipt_valid: true,
+        });
 
         assert!(result.outcome.is_match());
         assert!(result.epoch_transition_tested);
@@ -1665,10 +1723,18 @@ mod tests {
             reason: "crash".to_string(),
         };
 
-        let result = engine.compare_outcomes(
-            &spec_id, "w7", CorpusCategory::EpochTransition,
-            &outcome, &outcome, 100, 100, true, Some(fb), true,
-        );
+        let result = engine.compare_outcomes(&CompareOutcomesInput {
+            specialization_id: &spec_id,
+            workload_id: "w7",
+            category: CorpusCategory::EpochTransition,
+            specialized: &outcome,
+            unspecialized: &outcome,
+            specialized_duration_us: 100,
+            unspecialized_duration_us: 100,
+            epoch_transition_tested: true,
+            fallback_outcome: Some(fb),
+            receipt_valid: true,
+        });
 
         assert!(result.outcome.is_match()); // Outcomes match but fallback failed
         assert!(result.fallback_outcome.as_ref().unwrap().is_failure());
@@ -1695,7 +1761,7 @@ mod tests {
         engine.register_corpus("spec-x", workloads);
 
         let errors = engine.validate_corpus("spec-x");
-        assert!(errors.len() >= 1);
+        assert!(!errors.is_empty());
         // Should flag insufficient parity (5 < 30) and missing edge/epoch
     }
 
@@ -1867,17 +1933,21 @@ mod tests {
         engine.register_specialization(entry);
 
         let outcome = matching_outcome();
-        engine.compare_outcomes(
-            &spec_id, "w1", CorpusCategory::SemanticParity,
-            &outcome, &outcome, 100, 150, false, None, true,
-        );
+        engine.compare_outcomes(&CompareOutcomesInput {
+            specialization_id: &spec_id,
+            workload_id: "w1",
+            category: CorpusCategory::SemanticParity,
+            specialized: &outcome,
+            unspecialized: &outcome,
+            specialized_duration_us: 100,
+            unspecialized_duration_us: 150,
+            epoch_transition_tested: false,
+            fallback_outcome: None,
+            receipt_valid: true,
+        });
 
-        let artifact = engine.produce_evidence(
-            "run-2",
-            ContentHash::compute(b"reg"),
-            "env",
-            2_000_000,
-        );
+        let artifact =
+            engine.produce_evidence("run-2", ContentHash::compute(b"reg"), "env", 2_000_000);
 
         assert_eq!(artifact.total_specializations, 1);
         assert_eq!(artifact.total_workloads, 1);
@@ -1896,17 +1966,21 @@ mod tests {
 
         let specialized = matching_outcome();
         let unspecialized = diverging_outcome();
-        engine.compare_outcomes(
-            &spec_id, "w1", CorpusCategory::SemanticParity,
-            &specialized, &unspecialized, 100, 100, false, None, true,
-        );
+        engine.compare_outcomes(&CompareOutcomesInput {
+            specialization_id: &spec_id,
+            workload_id: "w1",
+            category: CorpusCategory::SemanticParity,
+            specialized: &specialized,
+            unspecialized: &unspecialized,
+            specialized_duration_us: 100,
+            unspecialized_duration_us: 100,
+            epoch_transition_tested: false,
+            fallback_outcome: None,
+            receipt_valid: true,
+        });
 
-        let artifact = engine.produce_evidence(
-            "run-3",
-            ContentHash::compute(b"reg"),
-            "env",
-            3_000_000,
-        );
+        let artifact =
+            engine.produce_evidence("run-3", ContentHash::compute(b"reg"), "env", 3_000_000);
 
         assert!(!artifact.ci_gate_passed);
         assert_eq!(artifact.total_divergences, 1);
@@ -1924,17 +1998,21 @@ mod tests {
         let fb = FallbackOutcome::Failure {
             reason: "crash".to_string(),
         };
-        engine.compare_outcomes(
-            &spec_id, "w1", CorpusCategory::EpochTransition,
-            &outcome, &outcome, 100, 100, true, Some(fb), true,
-        );
+        engine.compare_outcomes(&CompareOutcomesInput {
+            specialization_id: &spec_id,
+            workload_id: "w1",
+            category: CorpusCategory::EpochTransition,
+            specialized: &outcome,
+            unspecialized: &outcome,
+            specialized_duration_us: 100,
+            unspecialized_duration_us: 100,
+            epoch_transition_tested: true,
+            fallback_outcome: Some(fb),
+            receipt_valid: true,
+        });
 
-        let artifact = engine.produce_evidence(
-            "run-4",
-            ContentHash::compute(b"reg"),
-            "env",
-            4_000_000,
-        );
+        let artifact =
+            engine.produce_evidence("run-4", ContentHash::compute(b"reg"), "env", 4_000_000);
 
         assert!(!artifact.ci_gate_passed);
         assert_eq!(artifact.total_fallback_failures, 1);
@@ -1948,17 +2026,21 @@ mod tests {
         engine.register_specialization(entry);
 
         let outcome = matching_outcome();
-        engine.compare_outcomes(
-            &spec_id, "w1", CorpusCategory::SemanticParity,
-            &outcome, &outcome, 100, 100, false, None, false, // receipt_valid = false
-        );
+        engine.compare_outcomes(&CompareOutcomesInput {
+            specialization_id: &spec_id,
+            workload_id: "w1",
+            category: CorpusCategory::SemanticParity,
+            specialized: &outcome,
+            unspecialized: &outcome,
+            specialized_duration_us: 100,
+            unspecialized_duration_us: 100,
+            epoch_transition_tested: false,
+            fallback_outcome: None,
+            receipt_valid: false,
+        });
 
-        let artifact = engine.produce_evidence(
-            "run-5",
-            ContentHash::compute(b"reg"),
-            "env",
-            5_000_000,
-        );
+        let artifact =
+            engine.produce_evidence("run-5", ContentHash::compute(b"reg"), "env", 5_000_000);
 
         assert!(!artifact.ci_gate_passed);
         assert_eq!(artifact.total_receipt_failures, 1);
@@ -1971,12 +2053,7 @@ mod tests {
     #[test]
     fn evidence_artifact_to_jsonl() {
         let engine = SpecializationConformanceEngine::new("p", test_epoch());
-        let artifact = engine.produce_evidence(
-            "run-1",
-            ContentHash::compute(b"reg"),
-            "env",
-            1_000,
-        );
+        let artifact = engine.produce_evidence("run-1", ContentHash::compute(b"reg"), "env", 1_000);
         let jsonl = artifact.to_jsonl();
         assert!(!jsonl.is_empty());
         let back: ConformanceEvidenceArtifact = serde_json::from_str(&jsonl).unwrap();
@@ -1990,25 +2067,33 @@ mod tests {
     #[test]
     fn check_determinism_identical_outcomes() {
         let outcomes = vec![matching_outcome(); 5];
-        assert!(SpecializationConformanceEngine::check_determinism(&outcomes));
+        assert!(SpecializationConformanceEngine::check_determinism(
+            &outcomes
+        ));
     }
 
     #[test]
     fn check_determinism_divergent_outcomes() {
         let outcomes = vec![matching_outcome(), diverging_outcome()];
-        assert!(!SpecializationConformanceEngine::check_determinism(&outcomes));
+        assert!(!SpecializationConformanceEngine::check_determinism(
+            &outcomes
+        ));
     }
 
     #[test]
     fn check_determinism_single_outcome() {
         let outcomes = vec![matching_outcome()];
-        assert!(SpecializationConformanceEngine::check_determinism(&outcomes));
+        assert!(SpecializationConformanceEngine::check_determinism(
+            &outcomes
+        ));
     }
 
     #[test]
     fn check_determinism_empty() {
         let outcomes: Vec<WorkloadOutcome> = vec![];
-        assert!(SpecializationConformanceEngine::check_determinism(&outcomes));
+        assert!(SpecializationConformanceEngine::check_determinism(
+            &outcomes
+        ));
     }
 
     // -----------------------------------------------------------------------
@@ -2017,8 +2102,7 @@ mod tests {
 
     #[test]
     fn performance_delta_speedup() {
-        let delta =
-            SpecializationConformanceEngine::compute_performance_delta(80, 100);
+        let delta = SpecializationConformanceEngine::compute_performance_delta(80, 100);
         assert_eq!(delta.specialized_duration_us, 80);
         assert_eq!(delta.unspecialized_duration_us, 100);
         assert_eq!(delta.speedup_millionths, 200_000); // 20% speedup
@@ -2026,8 +2110,7 @@ mod tests {
 
     #[test]
     fn performance_delta_slowdown() {
-        let delta =
-            SpecializationConformanceEngine::compute_performance_delta(120, 100);
+        let delta = SpecializationConformanceEngine::compute_performance_delta(120, 100);
         assert_eq!(delta.speedup_millionths, -200_000); // 20% slower
     }
 
@@ -2039,8 +2122,7 @@ mod tests {
 
     #[test]
     fn performance_delta_equal() {
-        let delta =
-            SpecializationConformanceEngine::compute_performance_delta(100, 100);
+        let delta = SpecializationConformanceEngine::compute_performance_delta(100, 100);
         assert_eq!(delta.speedup_millionths, 0);
     }
 
@@ -2116,10 +2198,18 @@ mod tests {
         let mut engine = SpecializationConformanceEngine::new("p", test_epoch());
         let spec_id = test_id("spec-1");
         let outcome = matching_outcome();
-        let result = engine.compare_outcomes(
-            &spec_id, "w1", CorpusCategory::SemanticParity,
-            &outcome, &outcome, 100, 150, false, None, true,
-        );
+        let result = engine.compare_outcomes(&CompareOutcomesInput {
+            specialization_id: &spec_id,
+            workload_id: "w1",
+            category: CorpusCategory::SemanticParity,
+            specialized: &outcome,
+            unspecialized: &outcome,
+            specialized_duration_us: 100,
+            unspecialized_duration_us: 150,
+            epoch_transition_tested: false,
+            fallback_outcome: None,
+            receipt_valid: true,
+        });
 
         let json = serde_json::to_string(&result).unwrap();
         let back: DifferentialResult = serde_json::from_str(&json).unwrap();
@@ -2293,24 +2383,36 @@ mod tests {
 
         // spec_a: all match
         let ok = matching_outcome();
-        engine.compare_outcomes(
-            &spec_id_a, "w1", CorpusCategory::SemanticParity,
-            &ok, &ok, 100, 100, false, None, true,
-        );
+        engine.compare_outcomes(&CompareOutcomesInput {
+            specialization_id: &spec_id_a,
+            workload_id: "w1",
+            category: CorpusCategory::SemanticParity,
+            specialized: &ok,
+            unspecialized: &ok,
+            specialized_duration_us: 100,
+            unspecialized_duration_us: 100,
+            epoch_transition_tested: false,
+            fallback_outcome: None,
+            receipt_valid: true,
+        });
 
         // spec_b: diverge
         let bad = diverging_outcome();
-        engine.compare_outcomes(
-            &spec_id_b, "w2", CorpusCategory::SemanticParity,
-            &ok, &bad, 100, 100, false, None, true,
-        );
+        engine.compare_outcomes(&CompareOutcomesInput {
+            specialization_id: &spec_id_b,
+            workload_id: "w2",
+            category: CorpusCategory::SemanticParity,
+            specialized: &ok,
+            unspecialized: &bad,
+            specialized_duration_us: 100,
+            unspecialized_duration_us: 100,
+            epoch_transition_tested: false,
+            fallback_outcome: None,
+            receipt_valid: true,
+        });
 
-        let artifact = engine.produce_evidence(
-            "run-multi",
-            ContentHash::compute(b"reg"),
-            "env",
-            6_000_000,
-        );
+        let artifact =
+            engine.produce_evidence("run-multi", ContentHash::compute(b"reg"), "env", 6_000_000);
 
         assert_eq!(artifact.total_specializations, 2);
         assert_eq!(artifact.total_workloads, 2);
@@ -2344,18 +2446,22 @@ mod tests {
             evidence_entries: vec![],
         };
 
-        let result = engine.compare_outcomes(
-            &spec_id, "meta-w1", CorpusCategory::SemanticParity,
-            &specialized, &unspecialized, 50, 50, false, None, true,
-        );
+        let result = engine.compare_outcomes(&CompareOutcomesInput {
+            specialization_id: &spec_id,
+            workload_id: "meta-w1",
+            category: CorpusCategory::SemanticParity,
+            specialized: &specialized,
+            unspecialized: &unspecialized,
+            specialized_duration_us: 50,
+            unspecialized_duration_us: 50,
+            epoch_transition_tested: false,
+            fallback_outcome: None,
+            receipt_valid: true,
+        });
 
         assert!(result.outcome.is_diverge());
-        let artifact = engine.produce_evidence(
-            "meta-run",
-            ContentHash::compute(b"reg"),
-            "env",
-            7_000_000,
-        );
+        let artifact =
+            engine.produce_evidence("meta-run", ContentHash::compute(b"reg"), "env", 7_000_000);
         assert!(!artifact.ci_gate_passed);
     }
 
@@ -2375,10 +2481,18 @@ mod tests {
             reason: "wrong output after invalidation".into(),
         };
 
-        engine.compare_outcomes(
-            &spec_id, "meta-w2", CorpusCategory::EpochTransition,
-            &outcome, &outcome, 50, 50, true, Some(fb), true,
-        );
+        engine.compare_outcomes(&CompareOutcomesInput {
+            specialization_id: &spec_id,
+            workload_id: "meta-w2",
+            category: CorpusCategory::EpochTransition,
+            specialized: &outcome,
+            unspecialized: &outcome,
+            specialized_duration_us: 50,
+            unspecialized_duration_us: 50,
+            epoch_transition_tested: true,
+            fallback_outcome: Some(fb),
+            receipt_valid: true,
+        });
 
         let artifact = engine.produce_evidence(
             "meta-fb-run",
@@ -2402,10 +2516,18 @@ mod tests {
         engine.register_specialization(entry);
 
         let outcome = matching_outcome();
-        engine.compare_outcomes(
-            &spec_id, "meta-w3", CorpusCategory::SemanticParity,
-            &outcome, &outcome, 50, 50, false, None, false, // invalid receipt
-        );
+        engine.compare_outcomes(&CompareOutcomesInput {
+            specialization_id: &spec_id,
+            workload_id: "meta-w3",
+            category: CorpusCategory::SemanticParity,
+            specialized: &outcome,
+            unspecialized: &outcome,
+            specialized_duration_us: 50,
+            unspecialized_duration_us: 50,
+            epoch_transition_tested: false,
+            fallback_outcome: None,
+            receipt_valid: false,
+        });
 
         let artifact = engine.produce_evidence(
             "meta-rcpt-run",
@@ -2425,6 +2547,8 @@ mod tests {
     fn meta_test_determinism_5_runs() {
         let outcome = matching_outcome();
         let outcomes = vec![outcome; DETERMINISM_REPETITIONS];
-        assert!(SpecializationConformanceEngine::check_determinism(&outcomes));
+        assert!(SpecializationConformanceEngine::check_determinism(
+            &outcomes
+        ));
     }
 }
