@@ -358,7 +358,8 @@ impl PromiseStore {
         let seq = self.next_seq;
         self.next_seq += 1;
         self.promises.push(PromiseRecord::new(handle, seq));
-        self.witness.push(WitnessEvent::PromiseCreated { handle, seq });
+        self.witness
+            .push(WitnessEvent::PromiseCreated { handle, seq });
         handle
     }
 
@@ -623,8 +624,7 @@ impl MicrotaskQueue {
         let index = self.enqueue_count;
         self.enqueue_count += 1;
         self.tasks.push(task);
-        self.witness
-            .push(WitnessEvent::MicrotaskEnqueued { index });
+        self.witness.push(WitnessEvent::MicrotaskEnqueued { index });
     }
 
     /// Dequeue the next microtask (FIFO).
@@ -633,8 +633,7 @@ impl MicrotaskQueue {
             let task = self.tasks[self.cursor].clone();
             let index = self.cursor as u64;
             self.cursor += 1;
-            self.witness
-                .push(WitnessEvent::MicrotaskDequeued { index });
+            self.witness.push(WitnessEvent::MicrotaskDequeued { index });
             Some(task)
         } else {
             None
@@ -851,12 +850,7 @@ impl EventLoop {
     }
 
     /// Schedule a timer macrotask. Returns the registration sequence.
-    pub fn set_timeout(
-        &mut self,
-        handler: ClosureHandle,
-        delay_ms: u64,
-        label: Label,
-    ) -> u64 {
+    pub fn set_timeout(&mut self, handler: ClosureHandle, delay_ms: u64, label: Label) -> u64 {
         let fire_at = self.clock.now_ms() + delay_ms;
         self.macrotasks
             .schedule(MacrotaskSource::Timer, handler, fire_at, label)
@@ -924,12 +918,7 @@ impl PromiseAllTracker {
     /// Collect the resolved values in input order.
     pub fn collect_values(&self) -> Vec<JsValue> {
         (0..self.total)
-            .map(|i| {
-                self.values
-                    .get(&i)
-                    .cloned()
-                    .unwrap_or(JsValue::Undefined)
-            })
+            .map(|i| self.values.get(&i).cloned().unwrap_or(JsValue::Undefined))
             .collect()
     }
 }
@@ -1038,12 +1027,7 @@ impl PromiseAnyTracker {
     /// Collect errors in input order for AggregateError.
     pub fn collect_errors(&self) -> Vec<JsValue> {
         (0..self.total)
-            .map(|i| {
-                self.errors
-                    .get(&i)
-                    .cloned()
-                    .unwrap_or(JsValue::Undefined)
-            })
+            .map(|i| self.errors.get(&i).cloned().unwrap_or(JsValue::Undefined))
             .collect()
     }
 }
@@ -1080,7 +1064,9 @@ mod tests {
         let mut store = PromiseStore::new();
         let mut queue = MicrotaskQueue::new();
         let h = store.create();
-        store.fulfill(h, js_int(42), Label::Public, &mut queue).unwrap();
+        store
+            .fulfill(h, js_int(42), Label::Public, &mut queue)
+            .unwrap();
         let p = store.get(h).unwrap();
         assert_eq!(p.state, PromiseState::Fulfilled(js_int(42)));
         assert!(p.state.is_fulfilled());
@@ -1104,7 +1090,9 @@ mod tests {
         let mut store = PromiseStore::new();
         let mut queue = MicrotaskQueue::new();
         let h = store.create();
-        store.fulfill(h, js_int(1), Label::Public, &mut queue).unwrap();
+        store
+            .fulfill(h, js_int(1), Label::Public, &mut queue)
+            .unwrap();
         let result = store.fulfill(h, js_int(2), Label::Public, &mut queue);
         assert!(matches!(result, Err(PromiseError::AlreadySettled { .. })));
     }
@@ -1114,7 +1102,9 @@ mod tests {
         let mut store = PromiseStore::new();
         let mut queue = MicrotaskQueue::new();
         let h = store.create();
-        store.fulfill(h, js_int(1), Label::Public, &mut queue).unwrap();
+        store
+            .fulfill(h, js_int(1), Label::Public, &mut queue)
+            .unwrap();
         let result = store.reject(h, js_str("err"), Label::Public, &mut queue);
         assert!(matches!(result, Err(PromiseError::AlreadySettled { .. })));
     }
@@ -1167,7 +1157,9 @@ mod tests {
         let mut store = PromiseStore::new();
         let mut queue = MicrotaskQueue::new();
         let h = store.create();
-        store.fulfill(h, js_int(10), Label::Public, &mut queue).unwrap();
+        store
+            .fulfill(h, js_int(10), Label::Public, &mut queue)
+            .unwrap();
 
         let handler = ClosureHandle(1);
         let _result_h = store
@@ -1206,7 +1198,9 @@ mod tests {
             .unwrap();
         assert!(queue.is_empty());
 
-        store.fulfill(h, js_int(99), Label::Public, &mut queue).unwrap();
+        store
+            .fulfill(h, js_int(99), Label::Public, &mut queue)
+            .unwrap();
         // Two reactions registered (fulfill + reject), both become microtasks.
         assert_eq!(queue.pending_count(), 2);
     }
@@ -1315,12 +1309,7 @@ mod tests {
     fn macrotask_priority_ordering() {
         let mut queue = MacrotaskQueue::new();
         // Timer first, then message channel.
-        queue.schedule(
-            MacrotaskSource::Timer,
-            ClosureHandle(0),
-            0,
-            Label::Public,
-        );
+        queue.schedule(MacrotaskSource::Timer, ClosureHandle(0), 0, Label::Public);
         queue.schedule(
             MacrotaskSource::MessageChannel,
             ClosureHandle(1),
@@ -1340,26 +1329,11 @@ mod tests {
     fn macrotask_timer_ordering_by_time_then_seq() {
         let mut queue = MacrotaskQueue::new();
         // Timer at 100ms (registered first).
-        queue.schedule(
-            MacrotaskSource::Timer,
-            ClosureHandle(0),
-            100,
-            Label::Public,
-        );
+        queue.schedule(MacrotaskSource::Timer, ClosureHandle(0), 100, Label::Public);
         // Timer at 50ms (registered second).
-        queue.schedule(
-            MacrotaskSource::Timer,
-            ClosureHandle(1),
-            50,
-            Label::Public,
-        );
+        queue.schedule(MacrotaskSource::Timer, ClosureHandle(1), 50, Label::Public);
         // Timer at 50ms (registered third — tie-break by seq).
-        queue.schedule(
-            MacrotaskSource::Timer,
-            ClosureHandle(2),
-            50,
-            Label::Public,
-        );
+        queue.schedule(MacrotaskSource::Timer, ClosureHandle(2), 50, Label::Public);
 
         let first = queue.dequeue_ready(100).unwrap();
         assert_eq!(first.handler, ClosureHandle(1)); // 50ms, seq=1
@@ -1372,12 +1346,7 @@ mod tests {
     #[test]
     fn macrotask_not_ready_before_time() {
         let mut queue = MacrotaskQueue::new();
-        queue.schedule(
-            MacrotaskSource::Timer,
-            ClosureHandle(0),
-            100,
-            Label::Public,
-        );
+        queue.schedule(MacrotaskSource::Timer, ClosureHandle(0), 100, Label::Public);
         assert!(queue.dequeue_ready(99).is_none());
         assert!(queue.dequeue_ready(100).is_some());
     }
@@ -1395,12 +1364,9 @@ mod tests {
             label: Label::Public,
         });
         // Schedule a macrotask at time 0.
-        event_loop.macrotasks.schedule(
-            MacrotaskSource::Timer,
-            ClosureHandle(0),
-            0,
-            Label::Public,
-        );
+        event_loop
+            .macrotasks
+            .schedule(MacrotaskSource::Timer, ClosureHandle(0), 0, Label::Public);
 
         let result = event_loop.turn();
         // Microtask drained first.
@@ -1538,14 +1504,8 @@ mod tests {
         assert!(!tracker.record_fulfillment(0, js_int(1)));
         assert!(tracker.record_rejection(1, js_str("err")));
 
-        assert_eq!(
-            tracker.outcomes.get(&0).unwrap().status,
-            "fulfilled"
-        );
-        assert_eq!(
-            tracker.outcomes.get(&1).unwrap().status,
-            "rejected"
-        );
+        assert_eq!(tracker.outcomes.get(&0).unwrap().status, "fulfilled");
+        assert_eq!(tracker.outcomes.get(&1).unwrap().status, "rejected");
     }
 
     #[test]
@@ -1664,7 +1624,9 @@ mod tests {
         let mut store = PromiseStore::new();
         let mut queue = MicrotaskQueue::new();
         let h = store.create();
-        store.fulfill(h, js_int(1), Label::Public, &mut queue).unwrap();
+        store
+            .fulfill(h, js_int(1), Label::Public, &mut queue)
+            .unwrap();
 
         let log = store.witness_log();
         assert_eq!(log.len(), 2);
@@ -1685,8 +1647,14 @@ mod tests {
 
         let log = queue.witness_log();
         assert_eq!(log.len(), 2);
-        assert!(matches!(log[0], WitnessEvent::MicrotaskEnqueued { index: 0 }));
-        assert!(matches!(log[1], WitnessEvent::MicrotaskDequeued { index: 0 }));
+        assert!(matches!(
+            log[0],
+            WitnessEvent::MicrotaskEnqueued { index: 0 }
+        ));
+        assert!(matches!(
+            log[1],
+            WitnessEvent::MicrotaskDequeued { index: 0 }
+        ));
     }
 
     // ----- Serde round-trips -----
@@ -1755,14 +1723,8 @@ mod tests {
     #[test]
     fn promise_state_display() {
         assert_eq!(PromiseState::Pending.to_string(), "pending");
-        assert_eq!(
-            PromiseState::Fulfilled(js_int(1)).to_string(),
-            "fulfilled"
-        );
-        assert_eq!(
-            PromiseState::Rejected(js_str("e")).to_string(),
-            "rejected"
-        );
+        assert_eq!(PromiseState::Fulfilled(js_int(1)).to_string(), "fulfilled");
+        assert_eq!(PromiseState::Rejected(js_str("e")).to_string(), "rejected");
     }
 
     // ----- Error Display -----
@@ -1880,7 +1842,9 @@ mod tests {
         store
             .then(p, Some(ClosureHandle(1)), None, Label::Public, &mut queue)
             .unwrap();
-        store.fulfill(p, js_int(42), Label::Public, &mut queue).unwrap();
+        store
+            .fulfill(p, js_int(42), Label::Public, &mut queue)
+            .unwrap();
         // 4 reactions (2 fulfill + 2 reject) -> 4 microtasks.
         assert_eq!(queue.pending_count(), 4);
     }
@@ -1948,7 +1912,12 @@ mod tests {
     #[test]
     fn io_completion_lower_priority_than_timer() {
         let mut queue = MacrotaskQueue::new();
-        queue.schedule(MacrotaskSource::IoCompletion, ClosureHandle(0), 0, Label::Public);
+        queue.schedule(
+            MacrotaskSource::IoCompletion,
+            ClosureHandle(0),
+            0,
+            Label::Public,
+        );
         queue.schedule(MacrotaskSource::Timer, ClosureHandle(1), 0, Label::Public);
 
         let first = queue.dequeue_ready(0).unwrap();
@@ -1964,10 +1933,15 @@ mod tests {
         let mut el = EventLoop::new();
         el.set_timeout(ClosureHandle(0), 500, Label::Public);
         el.turn();
-        let has_clock_advance = el
-            .witness
-            .iter()
-            .any(|e| matches!(e, WitnessEvent::ClockAdvanced { from_ms: 0, to_ms: 500 }));
+        let has_clock_advance = el.witness.iter().any(|e| {
+            matches!(
+                e,
+                WitnessEvent::ClockAdvanced {
+                    from_ms: 0,
+                    to_ms: 500
+                }
+            )
+        });
         assert!(has_clock_advance);
     }
 

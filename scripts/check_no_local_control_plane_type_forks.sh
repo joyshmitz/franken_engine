@@ -9,9 +9,6 @@ mapfile -t matches < <(rg -n "$pattern" crates --glob '*.rs' || true)
 
 # Explicit migration debt that must be removed over time.
 allowlist_substrings=(
-  "crates/franken-engine/src/remote_computation_registry.rs:"
-  "crates/franken-engine/src/proof_schema.rs:"
-  "crates/franken-engine/src/evidence_ledger.rs:"
 )
 
 violations=()

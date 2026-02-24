@@ -12,7 +12,7 @@ use frankenengine_engine::hash_tiers::{AuthenticityHash, ContentHash};
 use frankenengine_engine::mmr_proof::MerkleMountainRange;
 use frankenengine_engine::proof_schema::{
     AttestationValidityWindow, OptReceipt, OptimizationClass, ReceiptAttestationBindings,
-    SchemaVersion,
+    proof_schema_version_current,
 };
 use frankenengine_engine::receipt_verifier_pipeline::{
     AttestationLayerInput, ConsistencyProofInput, LogOperatorKey, ReceiptVerifierCliInput,
@@ -175,7 +175,7 @@ fn build_cli_input(wrong_signature_key: bool) -> ReceiptVerifierCliInput {
     };
 
     let unsigned_receipt = OptReceipt {
-        schema_version: SchemaVersion::CURRENT,
+        schema_version: proof_schema_version_current(),
         optimization_id: "opt-01".to_string(),
         optimization_class: OptimizationClass::Superinstruction,
         baseline_ir_hash: ContentHash::compute(b"baseline"),

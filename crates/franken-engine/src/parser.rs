@@ -26,6 +26,126 @@ pub enum ParseErrorCode {
     IoReadFailed,
     InvalidUtf8,
     SourceTooLarge,
+    BudgetExceeded,
+}
+
+/// Parser mode selector.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ParserMode {
+    /// Deterministic scalar reference parser used as the oracle baseline.
+    ScalarReference,
+}
+
+impl ParserMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ScalarReference => "scalar_reference",
+        }
+    }
+}
+
+/// Deterministic parser budget limits.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ParserBudget {
+    pub max_source_bytes: u64,
+    pub max_token_count: u64,
+    pub max_recursion_depth: u64,
+}
+
+impl Default for ParserBudget {
+    fn default() -> Self {
+        Self {
+            max_source_bytes: 1_048_576,
+            max_token_count: 65_536,
+            max_recursion_depth: 256,
+        }
+    }
+}
+
+/// Parser options controlling mode and deterministic budgets.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ParserOptions {
+    pub mode: ParserMode,
+    pub budget: ParserBudget,
+}
+
+impl Default for ParserOptions {
+    fn default() -> Self {
+        Self {
+            mode: ParserMode::ScalarReference,
+            budget: ParserBudget::default(),
+        }
+    }
+}
+
+/// Which budget category exhausted during parsing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ParseBudgetKind {
+    SourceBytes,
+    TokenCount,
+    RecursionDepth,
+}
+
+/// Deterministic parse failure witness emitted for budget failures.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ParseFailureWitness {
+    pub mode: ParserMode,
+    pub budget_kind: Option<ParseBudgetKind>,
+    pub source_bytes: u64,
+    pub token_count: u64,
+    pub max_recursion_observed: u64,
+    pub max_source_bytes: u64,
+    pub max_token_count: u64,
+    pub max_recursion_depth: u64,
+}
+
+/// Coverage status for a grammar family in Script/Module goals.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GrammarCoverageStatus {
+    Supported,
+    Partial,
+    Unsupported,
+    NotApplicable,
+}
+
+impl GrammarCoverageStatus {
+    fn score_numer(self) -> u64 {
+        match self {
+            Self::Supported | Self::NotApplicable => 1000,
+            Self::Partial => 500,
+            Self::Unsupported => 0,
+        }
+    }
+}
+
+/// Single grammar-family row for completeness tracking.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GrammarFamilyCoverage {
+    pub family_id: String,
+    pub es2020_clause: String,
+    pub script_goal: GrammarCoverageStatus,
+    pub module_goal: GrammarCoverageStatus,
+    pub notes: String,
+}
+
+/// Full scalar parser completeness matrix for ES2020 families.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GrammarCompletenessMatrix {
+    pub schema_version: String,
+    pub parser_mode: ParserMode,
+    pub families: Vec<GrammarFamilyCoverage>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GrammarCompletenessSummary {
+    pub family_count: u64,
+    pub supported_families: u64,
+    pub partially_supported_families: u64,
+    pub unsupported_families: u64,
+    pub completeness_millionths: u64,
 }
 
 /// Deterministic parse error envelope.
@@ -35,6 +155,8 @@ pub struct ParseError {
     pub message: String,
     pub source_label: String,
     pub span: Option<SourceSpan>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub witness: Option<Box<ParseFailureWitness>>,
 }
 
 impl ParseError {
@@ -49,6 +171,23 @@ impl ParseError {
             message: message.into(),
             source_label: source_label.into(),
             span,
+            witness: None,
+        }
+    }
+
+    fn with_witness(
+        code: ParseErrorCode,
+        message: impl Into<String>,
+        source_label: impl Into<String>,
+        span: Option<SourceSpan>,
+        witness: ParseFailureWitness,
+    ) -> Self {
+        Self {
+            code,
+            message: message.into(),
+            source_label: source_label.into(),
+            span,
+            witness: Some(Box::new(witness)),
         }
     }
 }
@@ -71,6 +210,208 @@ impl fmt::Display for ParseError {
 }
 
 impl std::error::Error for ParseError {}
+
+impl GrammarCompletenessMatrix {
+    pub const SCHEMA_VERSION: &'static str = "franken-engine.parser-grammar-completeness.v1";
+
+    pub fn scalar_reference_es2020() -> Self {
+        Self {
+            schema_version: Self::SCHEMA_VERSION.to_string(),
+            parser_mode: ParserMode::ScalarReference,
+            families: vec![
+                GrammarFamilyCoverage {
+                    family_id: "program.statement_list".to_string(),
+                    es2020_clause: "ECMA-262 §14.2".to_string(),
+                    script_goal: GrammarCoverageStatus::Supported,
+                    module_goal: GrammarCoverageStatus::Supported,
+                    notes: "Line/semicolon segmented statement list is deterministic.".to_string(),
+                },
+                GrammarFamilyCoverage {
+                    family_id: "statement.expression".to_string(),
+                    es2020_clause: "ECMA-262 §14.5".to_string(),
+                    script_goal: GrammarCoverageStatus::Supported,
+                    module_goal: GrammarCoverageStatus::Supported,
+                    notes: "Expression statements are canonicalized with stable whitespace handling."
+                        .to_string(),
+                },
+                GrammarFamilyCoverage {
+                    family_id: "literal.numeric_signed_i64".to_string(),
+                    es2020_clause: "ECMA-262 §12.8.3".to_string(),
+                    script_goal: GrammarCoverageStatus::Partial,
+                    module_goal: GrammarCoverageStatus::Partial,
+                    notes:
+                        "Deterministic signed i64 subset; full ECMAScript Number grammar pending."
+                            .to_string(),
+                },
+                GrammarFamilyCoverage {
+                    family_id: "literal.string_single_double_quote".to_string(),
+                    es2020_clause: "ECMA-262 §12.8.4".to_string(),
+                    script_goal: GrammarCoverageStatus::Partial,
+                    module_goal: GrammarCoverageStatus::Partial,
+                    notes:
+                        "Single/double quoted literals supported; full escape/template coverage pending."
+                            .to_string(),
+                },
+                GrammarFamilyCoverage {
+                    family_id: "literal.boolean".to_string(),
+                    es2020_clause: "ECMA-262 §12.9.3".to_string(),
+                    script_goal: GrammarCoverageStatus::Supported,
+                    module_goal: GrammarCoverageStatus::Supported,
+                    notes: "true/false recognized as dedicated literals.".to_string(),
+                },
+                GrammarFamilyCoverage {
+                    family_id: "literal.null".to_string(),
+                    es2020_clause: "ECMA-262 §12.9.4".to_string(),
+                    script_goal: GrammarCoverageStatus::Supported,
+                    module_goal: GrammarCoverageStatus::Supported,
+                    notes: "null recognized as dedicated literal.".to_string(),
+                },
+                GrammarFamilyCoverage {
+                    family_id: "literal.undefined".to_string(),
+                    es2020_clause: "ECMA-262 Annex B / runtime literal".to_string(),
+                    script_goal: GrammarCoverageStatus::Supported,
+                    module_goal: GrammarCoverageStatus::Supported,
+                    notes: "undefined token preserved as dedicated literal for deterministic lowering."
+                        .to_string(),
+                },
+                GrammarFamilyCoverage {
+                    family_id: "expression.await".to_string(),
+                    es2020_clause: "ECMA-262 §14.8".to_string(),
+                    script_goal: GrammarCoverageStatus::Partial,
+                    module_goal: GrammarCoverageStatus::Partial,
+                    notes:
+                        "Prefix await expression handled recursively without full precedence parser."
+                            .to_string(),
+                },
+                GrammarFamilyCoverage {
+                    family_id: "module.import_default".to_string(),
+                    es2020_clause: "ECMA-262 §15.2.2".to_string(),
+                    script_goal: GrammarCoverageStatus::NotApplicable,
+                    module_goal: GrammarCoverageStatus::Supported,
+                    notes: "Supports `import x from \"m\"`.".to_string(),
+                },
+                GrammarFamilyCoverage {
+                    family_id: "module.import_side_effect".to_string(),
+                    es2020_clause: "ECMA-262 §15.2.2".to_string(),
+                    script_goal: GrammarCoverageStatus::NotApplicable,
+                    module_goal: GrammarCoverageStatus::Supported,
+                    notes: "Supports `import \"m\"`.".to_string(),
+                },
+                GrammarFamilyCoverage {
+                    family_id: "module.export_default".to_string(),
+                    es2020_clause: "ECMA-262 §15.2.3".to_string(),
+                    script_goal: GrammarCoverageStatus::NotApplicable,
+                    module_goal: GrammarCoverageStatus::Supported,
+                    notes: "Supports `export default <expr>`.".to_string(),
+                },
+                GrammarFamilyCoverage {
+                    family_id: "module.export_named_clause".to_string(),
+                    es2020_clause: "ECMA-262 §15.2.3".to_string(),
+                    script_goal: GrammarCoverageStatus::NotApplicable,
+                    module_goal: GrammarCoverageStatus::Partial,
+                    notes:
+                        "Named clause stored canonically as clause text; binding-level semantics pending."
+                            .to_string(),
+                },
+                GrammarFamilyCoverage {
+                    family_id: "statement.variable_declaration".to_string(),
+                    es2020_clause: "ECMA-262 §14.3".to_string(),
+                    script_goal: GrammarCoverageStatus::Unsupported,
+                    module_goal: GrammarCoverageStatus::Unsupported,
+                    notes: "No dedicated declaration AST yet.".to_string(),
+                },
+                GrammarFamilyCoverage {
+                    family_id: "statement.function_declaration".to_string(),
+                    es2020_clause: "ECMA-262 §14.1".to_string(),
+                    script_goal: GrammarCoverageStatus::Unsupported,
+                    module_goal: GrammarCoverageStatus::Unsupported,
+                    notes: "Function/class declaration families remain unimplemented.".to_string(),
+                },
+                GrammarFamilyCoverage {
+                    family_id: "expression.binary_precedence".to_string(),
+                    es2020_clause: "ECMA-262 §13.15".to_string(),
+                    script_goal: GrammarCoverageStatus::Unsupported,
+                    module_goal: GrammarCoverageStatus::Unsupported,
+                    notes: "Binary operators currently preserved as raw canonical expressions."
+                        .to_string(),
+                },
+                GrammarFamilyCoverage {
+                    family_id: "expression.call_member_chain".to_string(),
+                    es2020_clause: "ECMA-262 §13.3".to_string(),
+                    script_goal: GrammarCoverageStatus::Partial,
+                    module_goal: GrammarCoverageStatus::Partial,
+                    notes:
+                        "Call/member surface retained as raw fallback without full parse structure."
+                            .to_string(),
+                },
+                GrammarFamilyCoverage {
+                    family_id: "expression.object_array_literal".to_string(),
+                    es2020_clause: "ECMA-262 §13.2".to_string(),
+                    script_goal: GrammarCoverageStatus::Unsupported,
+                    module_goal: GrammarCoverageStatus::Unsupported,
+                    notes: "Object/array literal structure not yet represented in AST.".to_string(),
+                },
+                GrammarFamilyCoverage {
+                    family_id: "expression.template_literal".to_string(),
+                    es2020_clause: "ECMA-262 §13.2.8".to_string(),
+                    script_goal: GrammarCoverageStatus::Unsupported,
+                    module_goal: GrammarCoverageStatus::Unsupported,
+                    notes: "Template literal grammar is pending.".to_string(),
+                },
+                GrammarFamilyCoverage {
+                    family_id: "expression.arrow_function".to_string(),
+                    es2020_clause: "ECMA-262 §14.2".to_string(),
+                    script_goal: GrammarCoverageStatus::Unsupported,
+                    module_goal: GrammarCoverageStatus::Unsupported,
+                    notes: "Arrow/function expressions are pending.".to_string(),
+                },
+                GrammarFamilyCoverage {
+                    family_id: "statement.control_flow".to_string(),
+                    es2020_clause: "ECMA-262 §14".to_string(),
+                    script_goal: GrammarCoverageStatus::Unsupported,
+                    module_goal: GrammarCoverageStatus::Unsupported,
+                    notes: "if/for/while/switch/try grammar families are pending.".to_string(),
+                },
+            ],
+        }
+    }
+
+    pub fn summary(&self) -> GrammarCompletenessSummary {
+        let mut supported = 0u64;
+        let mut partial = 0u64;
+        let mut unsupported = 0u64;
+        let mut score = 0u64;
+
+        for family in &self.families {
+            let family_score =
+                (family.script_goal.score_numer() + family.module_goal.score_numer()) / 2;
+            score = score.saturating_add(family_score);
+
+            if family_score == 1000 {
+                supported = supported.saturating_add(1);
+            } else if family_score == 0 {
+                unsupported = unsupported.saturating_add(1);
+            } else {
+                partial = partial.saturating_add(1);
+            }
+        }
+
+        let family_count = self.families.len() as u64;
+        let completeness_millionths = if family_count == 0 {
+            0
+        } else {
+            score.saturating_mul(1_000_000) / family_count.saturating_mul(1000)
+        };
+
+        GrammarCompletenessSummary {
+            family_count,
+            supported_families: supported,
+            partially_supported_families: partial,
+            unsupported_families: unsupported,
+            completeness_millionths,
+        }
+    }
+}
 
 /// Concrete source text resolved from a parser input.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -181,23 +522,112 @@ pub trait Es2020Parser {
 #[derive(Debug, Default, Clone, Copy)]
 pub struct CanonicalEs2020Parser;
 
+impl CanonicalEs2020Parser {
+    pub fn parse_with_options<I>(
+        &self,
+        input: I,
+        goal: ParseGoal,
+        options: &ParserOptions,
+    ) -> ParseResult<SyntaxTree>
+    where
+        I: ParserInput,
+    {
+        let source = input.into_source()?;
+        parse_source(&source.text, &source.label, goal, options)
+    }
+
+    pub fn scalar_reference_grammar_matrix(&self) -> GrammarCompletenessMatrix {
+        GrammarCompletenessMatrix::scalar_reference_es2020()
+    }
+}
+
 impl Es2020Parser for CanonicalEs2020Parser {
     fn parse<I>(&self, input: I, goal: ParseGoal) -> ParseResult<SyntaxTree>
     where
         I: ParserInput,
     {
-        let source = input.into_source()?;
-        parse_source(&source.text, &source.label, goal)
+        self.parse_with_options(input, goal, &ParserOptions::default())
     }
 }
 
-fn parse_source(text: &str, source_label: &str, goal: ParseGoal) -> ParseResult<SyntaxTree> {
+#[derive(Debug)]
+struct ParseExecutionContext<'a> {
+    source_label: &'a str,
+    options: &'a ParserOptions,
+    source_bytes: u64,
+    token_count: u64,
+    max_recursion_observed: u64,
+}
+
+impl<'a> ParseExecutionContext<'a> {
+    fn next_depth(&mut self, depth: u64) {
+        if depth > self.max_recursion_observed {
+            self.max_recursion_observed = depth;
+        }
+    }
+
+    fn witness(&self, budget_kind: Option<ParseBudgetKind>) -> ParseFailureWitness {
+        ParseFailureWitness {
+            mode: self.options.mode,
+            budget_kind,
+            source_bytes: self.source_bytes,
+            token_count: self.token_count,
+            max_recursion_observed: self.max_recursion_observed,
+            max_source_bytes: self.options.budget.max_source_bytes,
+            max_token_count: self.options.budget.max_token_count,
+            max_recursion_depth: self.options.budget.max_recursion_depth,
+        }
+    }
+}
+
+fn parse_source(
+    text: &str,
+    source_label: &str,
+    goal: ParseGoal,
+    options: &ParserOptions,
+) -> ParseResult<SyntaxTree> {
     if text.trim().is_empty() {
         return Err(ParseError::new(
             ParseErrorCode::EmptySource,
             "source is empty after whitespace normalization",
             source_label.to_string(),
             None,
+        ));
+    }
+
+    let source_bytes = to_u64(text.len(), source_label, None)?;
+    let token_count = count_lexical_tokens(text);
+    let mut context = ParseExecutionContext {
+        source_label,
+        options,
+        source_bytes,
+        token_count,
+        max_recursion_observed: 0,
+    };
+
+    if source_bytes > options.budget.max_source_bytes {
+        return Err(ParseError::with_witness(
+            ParseErrorCode::BudgetExceeded,
+            format!(
+                "source byte budget exceeded: source_bytes={} max_source_bytes={}",
+                source_bytes, options.budget.max_source_bytes
+            ),
+            source_label.to_string(),
+            None,
+            context.witness(Some(ParseBudgetKind::SourceBytes)),
+        ));
+    }
+
+    if token_count > options.budget.max_token_count {
+        return Err(ParseError::with_witness(
+            ParseErrorCode::BudgetExceeded,
+            format!(
+                "token budget exceeded: token_count={} max_token_count={}",
+                token_count, options.budget.max_token_count
+            ),
+            source_label.to_string(),
+            None,
+            context.witness(Some(ParseBudgetKind::TokenCount)),
         ));
     }
 
@@ -221,7 +651,7 @@ fn parse_source(text: &str, source_label: &str, goal: ParseGoal) -> ParseResult<
                 end_in_line,
                 source_label,
             )?;
-            statements.push(parse_statement(statement_text, goal, source_label, span)?);
+            statements.push(parse_statement(statement_text, goal, span, &mut context)?);
         }
 
         offset = offset.saturating_add(segment.len());
@@ -249,11 +679,41 @@ fn line_count(source: &str) -> u64 {
 fn split_statement_segments(line: &str) -> Vec<(usize, usize, &str)> {
     let mut out = Vec::new();
     let mut segment_start = 0usize;
+    let mut in_quote: Option<char> = None;
+    let mut escaped = false;
+    let mut paren_depth = 0usize;
+    let mut bracket_depth = 0usize;
+    let mut brace_depth = 0usize;
 
     for (index, ch) in line.char_indices() {
-        if ch == ';' {
-            push_segment(&mut out, line, segment_start, index);
-            segment_start = index.saturating_add(ch.len_utf8());
+        if let Some(quote) = in_quote {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if ch == quote {
+                in_quote = None;
+            }
+            continue;
+        }
+
+        match ch {
+            '\'' | '"' => in_quote = Some(ch),
+            '(' => paren_depth = paren_depth.saturating_add(1),
+            ')' => paren_depth = paren_depth.saturating_sub(1),
+            '[' => bracket_depth = bracket_depth.saturating_add(1),
+            ']' => bracket_depth = bracket_depth.saturating_sub(1),
+            '{' => brace_depth = brace_depth.saturating_add(1),
+            '}' => brace_depth = brace_depth.saturating_sub(1),
+            ';' if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 => {
+                push_segment(&mut out, line, segment_start, index);
+                segment_start = index.saturating_add(ch.len_utf8());
+            }
+            _ => {}
         }
     }
     push_segment(&mut out, line, segment_start, line.len());
@@ -325,19 +785,19 @@ fn span_for_segment(
 fn parse_statement(
     statement: &str,
     goal: ParseGoal,
-    source_label: &str,
     span: SourceSpan,
+    context: &mut ParseExecutionContext<'_>,
 ) -> ParseResult<Statement> {
     if statement.starts_with("import ") || statement == "import" {
         if goal == ParseGoal::Script {
             return Err(ParseError::new(
                 ParseErrorCode::InvalidGoal,
                 "import declarations are only valid in module goal",
-                source_label.to_string(),
+                context.source_label.to_string(),
                 Some(span),
             ));
         }
-        return parse_import(statement, source_label, span).map(Statement::Import);
+        return parse_import(statement, context.source_label, span).map(Statement::Import);
     }
 
     if statement.starts_with("export ") || statement == "export" {
@@ -345,14 +805,14 @@ fn parse_statement(
             return Err(ParseError::new(
                 ParseErrorCode::InvalidGoal,
                 "export declarations are only valid in module goal",
-                source_label.to_string(),
+                context.source_label.to_string(),
                 Some(span),
             ));
         }
-        return parse_export(statement, source_label, span).map(Statement::Export);
+        return parse_export(statement, span, context).map(Statement::Export);
     }
 
-    let expression = parse_expression(statement, source_label, &span)?;
+    let expression = parse_expression(statement, &span, context, 1)?;
     Ok(Statement::Expression(ExpressionStatement {
         expression,
         span,
@@ -421,8 +881,8 @@ fn parse_import(
 
 fn parse_export(
     statement: &str,
-    source_label: &str,
     span: SourceSpan,
+    context: &mut ParseExecutionContext<'_>,
 ) -> ParseResult<ExportDeclaration> {
     let body = statement
         .get("export ".len()..)
@@ -432,13 +892,13 @@ fn parse_export(
         return Err(ParseError::new(
             ParseErrorCode::UnsupportedSyntax,
             "export declaration is missing clause",
-            source_label.to_string(),
+            context.source_label.to_string(),
             Some(span),
         ));
     }
 
     let kind = if let Some(default_expr) = body.strip_prefix("default ") {
-        ExportKind::Default(parse_expression(default_expr.trim(), source_label, &span)?)
+        ExportKind::Default(parse_expression(default_expr.trim(), &span, context, 1)?)
     } else {
         ExportKind::NamedClause(canonicalize_whitespace(body))
     };
@@ -447,15 +907,30 @@ fn parse_export(
 
 fn parse_expression(
     expression: &str,
-    source_label: &str,
     span: &SourceSpan,
+    context: &mut ParseExecutionContext<'_>,
+    recursion_depth: u64,
 ) -> ParseResult<Expression> {
+    context.next_depth(recursion_depth);
+    if recursion_depth > context.options.budget.max_recursion_depth {
+        return Err(ParseError::with_witness(
+            ParseErrorCode::BudgetExceeded,
+            format!(
+                "recursion budget exceeded: depth={} max_recursion_depth={}",
+                recursion_depth, context.options.budget.max_recursion_depth
+            ),
+            context.source_label.to_string(),
+            Some(span.clone()),
+            context.witness(Some(ParseBudgetKind::RecursionDepth)),
+        ));
+    }
+
     let expression = expression.trim();
     if expression.is_empty() {
         return Err(ParseError::new(
             ParseErrorCode::UnsupportedSyntax,
             "empty expression statement",
-            source_label.to_string(),
+            context.source_label.to_string(),
             Some(span.clone()),
         ));
     }
@@ -463,19 +938,51 @@ fn parse_expression(
     if let Some(value) = parse_quoted_string(expression) {
         return Ok(Expression::StringLiteral(value));
     }
-    if !expression.starts_with('-')
-        && let Ok(value) = expression.parse::<i64>()
-    {
+
+    if let Some(value) = parse_i64_numeric_literal(expression) {
         return Ok(Expression::NumericLiteral(value));
     }
+
+    if expression == "true" {
+        return Ok(Expression::BooleanLiteral(true));
+    }
+    if expression == "false" {
+        return Ok(Expression::BooleanLiteral(false));
+    }
+    if expression == "null" {
+        return Ok(Expression::NullLiteral);
+    }
+    if expression == "undefined" {
+        return Ok(Expression::UndefinedLiteral);
+    }
+
     if let Some(rest) = expression.strip_prefix("await ") {
-        let nested = parse_expression(rest.trim(), source_label, span)?;
+        let nested = parse_expression(rest.trim(), span, context, recursion_depth + 1)?;
         return Ok(Expression::Await(Box::new(nested)));
     }
     if is_identifier(expression) {
         return Ok(Expression::Identifier(expression.to_string()));
     }
     Ok(Expression::Raw(canonicalize_whitespace(expression)))
+}
+
+fn parse_i64_numeric_literal(input: &str) -> Option<i64> {
+    let mut chars = input.chars();
+    let first = chars.next()?;
+
+    if first == '-' {
+        let rest = chars.as_str();
+        if rest.is_empty() || !rest.chars().all(|ch| ch.is_ascii_digit()) {
+            return None;
+        }
+        return input.parse::<i64>().ok();
+    }
+
+    if first.is_ascii_digit() && input.chars().all(|ch| ch.is_ascii_digit()) {
+        return input.parse::<i64>().ok();
+    }
+
+    None
 }
 
 fn parse_quoted_string(input: &str) -> Option<String> {
@@ -494,15 +1001,113 @@ fn parse_quoted_string(input: &str) -> Option<String> {
     None
 }
 
+fn count_lexical_tokens(input: &str) -> u64 {
+    let bytes = input.as_bytes();
+    let mut index = 0usize;
+    let mut token_count = 0u64;
+
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if byte.is_ascii_whitespace() {
+            index = index.saturating_add(1);
+            continue;
+        }
+
+        let ch = byte as char;
+        if is_identifier_start(ch) {
+            index = index.saturating_add(1);
+            while index < bytes.len() && is_identifier_continue(bytes[index] as char) {
+                index = index.saturating_add(1);
+            }
+            token_count = token_count.saturating_add(1);
+            continue;
+        }
+
+        if byte.is_ascii_digit() {
+            index = index.saturating_add(1);
+            while index < bytes.len() && bytes[index].is_ascii_digit() {
+                index = index.saturating_add(1);
+            }
+            token_count = token_count.saturating_add(1);
+            continue;
+        }
+
+        if byte == b'\'' || byte == b'"' {
+            let quote = byte;
+            index = index.saturating_add(1);
+            let mut terminated = false;
+
+            while index < bytes.len() {
+                let current = bytes[index];
+                if current == b'\\' {
+                    index = index.saturating_add(2);
+                    continue;
+                }
+                if current == quote {
+                    index = index.saturating_add(1);
+                    terminated = true;
+                    break;
+                }
+                if current == b'\n' || current == b'\r' {
+                    break;
+                }
+                index = index.saturating_add(1);
+            }
+
+            if !terminated {
+                // Token budget accounting must not force stricter syntax acceptance
+                // than the parser surface itself; keep unmatched quotes tokenized.
+                token_count = token_count.saturating_add(1);
+                continue;
+            }
+
+            token_count = token_count.saturating_add(1);
+            continue;
+        }
+
+        if index + 1 < bytes.len() {
+            let two = (bytes[index], bytes[index + 1]);
+            if matches!(
+                two,
+                (b'=', b'=')
+                    | (b'!', b'=')
+                    | (b'<', b'=')
+                    | (b'>', b'=')
+                    | (b'&', b'&')
+                    | (b'|', b'|')
+                    | (b'?', b'?')
+                    | (b'=', b'>')
+            ) {
+                index = index.saturating_add(2);
+                token_count = token_count.saturating_add(1);
+                continue;
+            }
+        }
+
+        index = index.saturating_add(1);
+        token_count = token_count.saturating_add(1);
+    }
+
+    token_count
+}
+
+fn is_identifier_start(ch: char) -> bool {
+    ch.is_ascii_alphabetic() || ch == '_' || ch == '$'
+}
+
+fn is_identifier_continue(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || ch == '_' || ch == '$'
+}
+
 fn is_identifier(input: &str) -> bool {
     let mut chars = input.chars();
     let Some(first) = chars.next() else {
         return false;
     };
-    if !(first.is_ascii_alphabetic() || first == '_' || first == '$') {
+    if !is_identifier_start(first) {
         return false;
     }
-    chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
+    chars.all(is_identifier_continue)
 }
 
 fn canonicalize_whitespace(input: &str) -> String {
@@ -645,13 +1250,13 @@ mod tests {
     }
 
     #[test]
-    fn negative_numeric_literal_parses_as_raw() {
+    fn negative_numeric_literal_is_parsed() {
         let parser = CanonicalEs2020Parser;
         let tree = parser.parse("-7", ParseGoal::Script).expect("parse");
         match &tree.body[0] {
             Statement::Expression(expr) => match &expr.expression {
-                Expression::Raw(_) => {} // negative literals are not parsed directly
-                _ => panic!("expected raw expression for -7"),
+                Expression::NumericLiteral(v) => assert_eq!(*v, -7),
+                _ => panic!("expected numeric expression for -7"),
             },
             _ => panic!("expected expression statement"),
         }
@@ -744,6 +1349,54 @@ mod tests {
     }
 
     #[test]
+    fn boolean_literal_true_is_parsed() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser.parse("true", ParseGoal::Script).expect("parse");
+        match &tree.body[0] {
+            Statement::Expression(expr) => {
+                assert_eq!(expr.expression, Expression::BooleanLiteral(true));
+            }
+            _ => panic!("expected expression statement"),
+        }
+    }
+
+    #[test]
+    fn boolean_literal_false_is_parsed() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser.parse("false", ParseGoal::Script).expect("parse");
+        match &tree.body[0] {
+            Statement::Expression(expr) => {
+                assert_eq!(expr.expression, Expression::BooleanLiteral(false));
+            }
+            _ => panic!("expected expression statement"),
+        }
+    }
+
+    #[test]
+    fn null_literal_is_parsed() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser.parse("null", ParseGoal::Script).expect("parse");
+        match &tree.body[0] {
+            Statement::Expression(expr) => {
+                assert_eq!(expr.expression, Expression::NullLiteral);
+            }
+            _ => panic!("expected expression statement"),
+        }
+    }
+
+    #[test]
+    fn undefined_literal_is_parsed() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser.parse("undefined", ParseGoal::Script).expect("parse");
+        match &tree.body[0] {
+            Statement::Expression(expr) => {
+                assert_eq!(expr.expression, Expression::UndefinedLiteral);
+            }
+            _ => panic!("expected expression statement"),
+        }
+    }
+
+    #[test]
     fn complex_expression_parses_as_raw() {
         let parser = CanonicalEs2020Parser;
         let tree = parser.parse("a + b * c", ParseGoal::Script).expect("parse");
@@ -767,6 +1420,13 @@ mod tests {
             .parse("x;42;'hello'", ParseGoal::Script)
             .expect("parse");
         assert_eq!(tree.body.len(), 3);
+    }
+
+    #[test]
+    fn semicolon_inside_string_does_not_split_statement() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser.parse("'a;b';x", ParseGoal::Script).expect("parse");
+        assert_eq!(tree.body.len(), 2);
     }
 
     #[test]
@@ -931,6 +1591,66 @@ mod tests {
         let json = serde_json::to_string(&err).expect("serialize");
         let decoded: ParseError = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(decoded, err);
+    }
+
+    #[test]
+    fn budget_exhaustion_returns_stable_witness() {
+        let parser = CanonicalEs2020Parser;
+        let options = ParserOptions {
+            mode: ParserMode::ScalarReference,
+            budget: ParserBudget {
+                max_source_bytes: 1024,
+                max_token_count: 1,
+                max_recursion_depth: 32,
+            },
+        };
+
+        let err = parser
+            .parse_with_options("alpha beta gamma", ParseGoal::Script, &options)
+            .expect_err("token budget should fail");
+        assert_eq!(err.code, ParseErrorCode::BudgetExceeded);
+        let witness = err.witness.expect("budget failures should carry witness");
+        assert_eq!(witness.mode, ParserMode::ScalarReference);
+        assert_eq!(witness.budget_kind, Some(ParseBudgetKind::TokenCount));
+        assert_eq!(witness.max_token_count, 1);
+        assert!(witness.token_count > witness.max_token_count);
+    }
+
+    #[test]
+    fn recursion_budget_exhaustion_is_deterministic() {
+        let parser = CanonicalEs2020Parser;
+        let options = ParserOptions {
+            mode: ParserMode::ScalarReference,
+            budget: ParserBudget {
+                max_source_bytes: 1024,
+                max_token_count: 1024,
+                max_recursion_depth: 1,
+            },
+        };
+        let source = "await await work";
+        let left = parser
+            .parse_with_options(source, ParseGoal::Script, &options)
+            .expect_err("left parse should fail");
+        let right = parser
+            .parse_with_options(source, ParseGoal::Script, &options)
+            .expect_err("right parse should fail");
+        assert_eq!(left.code, ParseErrorCode::BudgetExceeded);
+        assert_eq!(left, right);
+    }
+
+    #[test]
+    fn scalar_reference_grammar_matrix_has_non_zero_coverage() {
+        let parser = CanonicalEs2020Parser;
+        let matrix = parser.scalar_reference_grammar_matrix();
+        let summary = matrix.summary();
+        assert_eq!(
+            matrix.schema_version,
+            GrammarCompletenessMatrix::SCHEMA_VERSION
+        );
+        assert!(summary.family_count > 0);
+        assert!(summary.supported_families > 0);
+        assert!(summary.completeness_millionths > 0);
+        assert!(summary.completeness_millionths <= 1_000_000);
     }
 
     // -----------------------------------------------------------------------

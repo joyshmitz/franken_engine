@@ -65,7 +65,7 @@ fn make_proof(seed: u64, capability: &Capability) -> ProofObligation {
 }
 
 fn rebind_witness(witness: &mut CapabilityWitness, signing_key: &SigningKey) {
-    let unsigned = witness.unsigned_bytes();
+    let unsigned = witness.synthesis_unsigned_bytes();
     witness.content_hash = ContentHash::compute(&unsigned);
 
     let mut canonical = Vec::new();

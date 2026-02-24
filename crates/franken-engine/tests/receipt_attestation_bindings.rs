@@ -5,7 +5,8 @@ use frankenengine_engine::hash_tiers::{AuthenticityHash, ContentHash};
 use frankenengine_engine::proof_schema::{
     AttestationRequirementPolicy, AttestationValidityWindow, OptReceipt, OptimizationClass,
     ProofSchemaError, ReceiptAttestationBindings, ReceiptNonceRegistry, SchemaVersion,
-    validate_receipt, validate_receipt_with_policy,
+    proof_schema_version_current, proof_schema_version_v1_0, validate_receipt,
+    validate_receipt_with_policy,
 };
 use frankenengine_engine::security_epoch::SecurityEpoch;
 use frankenengine_engine::tee_attestation_policy::DecisionImpact;
@@ -71,7 +72,7 @@ fn attestation_bindings() -> ReceiptAttestationBindings {
 
 #[test]
 fn attested_receipt_round_trip_through_transparency_log_and_verifier() {
-    let mut receipt = base_receipt(SchemaVersion::CURRENT, DecisionImpact::HighImpact);
+    let mut receipt = base_receipt(proof_schema_version_current(), DecisionImpact::HighImpact);
     receipt.attestation_bindings = Some(attestation_bindings());
     let signed = receipt.sign(TEST_KEY);
 
@@ -92,7 +93,7 @@ fn attested_receipt_round_trip_through_transparency_log_and_verifier() {
 
 #[test]
 fn verifier_rejects_tampered_attestation_binding() {
-    let mut receipt = base_receipt(SchemaVersion::CURRENT, DecisionImpact::HighImpact);
+    let mut receipt = base_receipt(proof_schema_version_current(), DecisionImpact::HighImpact);
     receipt.attestation_bindings = Some(attestation_bindings());
     let mut signed = receipt.sign(TEST_KEY);
     signed.attestation_bindings.as_mut().unwrap().quote_digest = ContentHash::compute(b"tampered");
@@ -111,7 +112,7 @@ fn verifier_rejects_tampered_attestation_binding() {
 
 #[test]
 fn legacy_format_receipt_parseable_and_distinguishable() {
-    let legacy = base_receipt(SchemaVersion::V1_0, DecisionImpact::Standard).sign(TEST_KEY);
+    let legacy = base_receipt(proof_schema_version_v1_0(), DecisionImpact::Standard).sign(TEST_KEY);
     let mut legacy_json_value = serde_json::to_value(&legacy).expect("to value");
     let serde_json::Value::Object(ref mut map) = legacy_json_value else {
         panic!("expected object");
@@ -121,12 +122,12 @@ fn legacy_format_receipt_parseable_and_distinguishable() {
     let legacy_json = serde_json::to_string(&legacy_json_value).expect("to json");
 
     let parsed_legacy: OptReceipt = serde_json::from_str(&legacy_json).expect("parse legacy");
-    assert_eq!(parsed_legacy.schema_version, SchemaVersion::V1_0);
+    assert_eq!(parsed_legacy.schema_version, proof_schema_version_v1_0());
     assert_eq!(parsed_legacy.decision_impact, DecisionImpact::Standard);
     assert!(parsed_legacy.attestation_bindings.is_none());
     assert!(validate_receipt(&parsed_legacy, TEST_KEY, SecurityEpoch::from_raw(42)).is_ok());
 
-    let mut attested = base_receipt(SchemaVersion::CURRENT, DecisionImpact::HighImpact);
+    let mut attested = base_receipt(proof_schema_version_current(), DecisionImpact::HighImpact);
     attested.attestation_bindings = Some(attestation_bindings());
     let attested = attested.sign(TEST_KEY);
     assert_ne!(parsed_legacy.schema_version, attested.schema_version);
@@ -135,7 +136,7 @@ fn legacy_format_receipt_parseable_and_distinguishable() {
 
 #[test]
 fn serialization_is_byte_identical_for_identical_inputs() {
-    let mut receipt = base_receipt(SchemaVersion::CURRENT, DecisionImpact::HighImpact);
+    let mut receipt = base_receipt(proof_schema_version_current(), DecisionImpact::HighImpact);
     receipt.attestation_bindings = Some(attestation_bindings());
     let signed = receipt.sign(TEST_KEY);
 

@@ -50,6 +50,9 @@ jobs:
       - name: Run test262 ES2020 release-blocker suite
         run: ./scripts/run_test262_es2020_gate.sh ci
 
+      - name: Run parser phase0 scalar-reference gate suite
+        run: ./scripts/run_parser_phase0_gate.sh ci
+
       - name: Run version-matrix lane script
         run: ./scripts/run_version_matrix_lane.sh ci
 

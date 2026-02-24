@@ -861,7 +861,7 @@ fn append_length_prefixed(buf: &mut Vec<u8>, data: &[u8]) {
 mod tests {
     use super::*;
     use crate::engine_object_id::{self, ObjectDomain, SchemaId};
-    use crate::proof_schema::{OptimizationClass, SchemaVersion};
+    use crate::proof_schema::{OptimizationClass, proof_schema_version_current};
     use std::collections::BTreeMap;
 
     const TEST_KEY: &[u8] = b"test-signing-key-32-bytes-long!!";
@@ -879,7 +879,7 @@ mod tests {
         .unwrap();
 
         OptReceipt {
-            schema_version: SchemaVersion::CURRENT,
+            schema_version: proof_schema_version_current(),
             optimization_id: opt_id.to_string(),
             optimization_class: OptimizationClass::Superinstruction,
             baseline_ir_hash: ContentHash::compute(b"baseline-ir"),
@@ -909,7 +909,7 @@ mod tests {
         .unwrap();
 
         RollbackToken {
-            schema_version: SchemaVersion::CURRENT,
+            schema_version: proof_schema_version_current(),
             token_id: format!("token-{opt_id}"),
             optimization_id: opt_id.to_string(),
             baseline_snapshot_hash: ContentHash::compute(b"baseline-snapshot"),

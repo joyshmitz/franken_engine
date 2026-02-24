@@ -9,14 +9,18 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use crate::benchmark_denominator::{
-    PublicationContext, PublicationGateInput, evaluate_publication_gate,
+    evaluate_publication_gate, PublicationContext, PublicationGateInput,
 };
 use crate::causal_replay::CounterfactualConfig;
 use crate::engine_object_id::EngineObjectId;
+use crate::hash_tiers::ContentHash;
 use crate::incident_replay_bundle::{BundleVerifier, CheckOutcome, IncidentReplayBundle};
 use crate::quarantine_mesh_gate::GateValidationResult;
 use crate::security_epoch::SecurityEpoch;
-use crate::signature_preimage::{VERIFICATION_KEY_LEN, VerificationKey};
+use crate::signature_preimage::{
+    sign_preimage, verify_signature, Signature, SigningKey, VerificationKey, SIGNATURE_LEN,
+    SIGNING_KEY_LEN, VERIFICATION_KEY_LEN,
+};
 
 pub const THIRD_PARTY_VERIFIER_COMPONENT: &str = "third_party_verifier";
 pub const DEFAULT_CONTAINMENT_LATENCY_SLA_NS: u64 = 500_000_000;
@@ -38,6 +42,10 @@ const CODE_CONTAINMENT_COUNTS: &str = "FE-TPV-CONT-0001";
 const CODE_CONTAINMENT_CRITERIA: &str = "FE-TPV-CONT-0002";
 const CODE_CONTAINMENT_SLA: &str = "FE-TPV-CONT-0003";
 const CODE_CONTAINMENT_INVARIANT: &str = "FE-TPV-CONT-0004";
+const CODE_ATTESTATION_ENVELOPE: &str = "FE-TPV-ATTEST-0001";
+const CODE_ATTESTATION_DIGEST: &str = "FE-TPV-ATTEST-0002";
+const CODE_ATTESTATION_PARSE: &str = "FE-TPV-ATTEST-0003";
+const CODE_ATTESTATION_SIGNATURE: &str = "FE-TPV-ATTEST-0004";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -142,6 +150,61 @@ pub struct ContainmentClaimBundle {
 
 fn default_containment_latency_sla_ns() -> u64 {
     DEFAULT_CONTAINMENT_LATENCY_SLA_NS
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VerificationAttestationInput {
+    pub report: ThirdPartyVerificationReport,
+    pub issued_at_utc: String,
+    pub verifier_name: String,
+    pub verifier_version: String,
+    pub verifier_environment: String,
+    pub methodology: String,
+    #[serde(default)]
+    pub scope_limitations: Vec<String>,
+    #[serde(default)]
+    pub signing_key_hex: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VerificationAttestation {
+    pub claim_type: String,
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub verdict: VerificationVerdict,
+    pub issued_at_utc: String,
+    pub verifier_name: String,
+    pub verifier_version: String,
+    pub verifier_environment: String,
+    pub methodology: String,
+    #[serde(default)]
+    pub scope_limitations: Vec<String>,
+    pub report_digest_hex: String,
+    pub statement: String,
+    #[serde(default)]
+    pub signer_verification_key_hex: Option<String>,
+    #[serde(default)]
+    pub signature_hex: Option<String>,
+    pub report: ThirdPartyVerificationReport,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct VerificationAttestationPayload {
+    claim_type: String,
+    trace_id: String,
+    decision_id: String,
+    policy_id: String,
+    verdict: VerificationVerdict,
+    issued_at_utc: String,
+    verifier_name: String,
+    verifier_version: String,
+    verifier_environment: String,
+    methodology: String,
+    scope_limitations: Vec<String>,
+    report_digest_hex: String,
+    statement: String,
+    report: ThirdPartyVerificationReport,
 }
 
 pub fn verify_benchmark_claim(bundle: &BenchmarkClaimBundle) -> ThirdPartyVerificationReport {
@@ -480,6 +543,298 @@ pub fn verify_containment_claim(bundle: &ContainmentClaimBundle) -> ThirdPartyVe
     build_report(bundle, "containment", verdict, checks, events)
 }
 
+pub fn generate_attestation(
+    input: &VerificationAttestationInput,
+) -> Result<VerificationAttestation, String> {
+    let issued_at_utc = required_field(input.issued_at_utc.trim(), "issued_at_utc")?;
+    let verifier_name = required_field(input.verifier_name.trim(), "verifier_name")?;
+    let verifier_version = required_field(input.verifier_version.trim(), "verifier_version")?;
+    let verifier_environment =
+        required_field(input.verifier_environment.trim(), "verifier_environment")?;
+    let methodology = required_field(input.methodology.trim(), "methodology")?;
+    let scope_limitations = normalize_strings(&input.scope_limitations);
+    let report_digest_hex = digest_report_hex(&input.report)?;
+    let statement = format_attestation_statement(
+        verifier_name,
+        verifier_version,
+        &input.report.trace_id,
+        &input.report.claim_type,
+        input.report.verdict,
+        issued_at_utc,
+        methodology,
+        verifier_environment,
+        &scope_limitations,
+    );
+
+    let mut attestation = VerificationAttestation {
+        claim_type: input.report.claim_type.clone(),
+        trace_id: input.report.trace_id.clone(),
+        decision_id: input.report.decision_id.clone(),
+        policy_id: input.report.policy_id.clone(),
+        verdict: input.report.verdict,
+        issued_at_utc: issued_at_utc.to_string(),
+        verifier_name: verifier_name.to_string(),
+        verifier_version: verifier_version.to_string(),
+        verifier_environment: verifier_environment.to_string(),
+        methodology: methodology.to_string(),
+        scope_limitations,
+        report_digest_hex,
+        statement,
+        signer_verification_key_hex: None,
+        signature_hex: None,
+        report: input.report.clone(),
+    };
+
+    if let Some(signing_key_hex) = &input.signing_key_hex {
+        let signing_key = parse_signing_key_hex(signing_key_hex)?;
+        let payload = attestation_payload(&attestation);
+        let payload_bytes = encode_attestation_payload(&payload)?;
+        let signature = sign_preimage(&signing_key, &payload_bytes)
+            .map_err(|error| format!("failed to sign attestation payload: {error}"))?;
+        attestation.signer_verification_key_hex = Some(signing_key.verification_key().to_hex());
+        attestation.signature_hex = Some(encode_signature_hex(&signature));
+    }
+
+    Ok(attestation)
+}
+
+pub fn verify_attestation(attestation: &VerificationAttestation) -> ThirdPartyVerificationReport {
+    let mut checks = Vec::new();
+    let mut events = vec![event(
+        attestation,
+        "attestation_verification_started",
+        "pass",
+        None,
+    )];
+    let mut saw_skipped = false;
+
+    if attestation.claim_type.trim().is_empty()
+        || attestation.trace_id.trim().is_empty()
+        || attestation.decision_id.trim().is_empty()
+        || attestation.policy_id.trim().is_empty()
+        || attestation.issued_at_utc.trim().is_empty()
+        || attestation.verifier_name.trim().is_empty()
+        || attestation.verifier_version.trim().is_empty()
+        || attestation.verifier_environment.trim().is_empty()
+        || attestation.methodology.trim().is_empty()
+    {
+        fail_check(
+            &mut checks,
+            "attestation_required_fields",
+            CODE_ATTESTATION_ENVELOPE,
+            "one or more required attestation fields are empty".to_string(),
+        );
+    } else {
+        pass_check(
+            &mut checks,
+            "attestation_required_fields",
+            "all required attestation fields are present".to_string(),
+        );
+    }
+
+    if attestation.claim_type == attestation.report.claim_type {
+        pass_check(
+            &mut checks,
+            "claim_type_matches_report",
+            format!("claim_type={}", attestation.claim_type),
+        );
+    } else {
+        fail_check(
+            &mut checks,
+            "claim_type_matches_report",
+            CODE_ATTESTATION_ENVELOPE,
+            format!(
+                "attestation claim_type={} differs from embedded report claim_type={}",
+                attestation.claim_type, attestation.report.claim_type
+            ),
+        );
+    }
+
+    if attestation.trace_id == attestation.report.trace_id
+        && attestation.decision_id == attestation.report.decision_id
+        && attestation.policy_id == attestation.report.policy_id
+    {
+        pass_check(
+            &mut checks,
+            "context_matches_report",
+            "trace_id/decision_id/policy_id match embedded report".to_string(),
+        );
+    } else {
+        fail_check(
+            &mut checks,
+            "context_matches_report",
+            CODE_ATTESTATION_ENVELOPE,
+            "trace_id/decision_id/policy_id differ from embedded report".to_string(),
+        );
+    }
+
+    if attestation.verdict == attestation.report.verdict {
+        pass_check(
+            &mut checks,
+            "verdict_matches_report",
+            format!("verdict={}", verdict_label(attestation.verdict)),
+        );
+    } else {
+        fail_check(
+            &mut checks,
+            "verdict_matches_report",
+            CODE_ATTESTATION_ENVELOPE,
+            format!(
+                "attestation verdict={} differs from report verdict={}",
+                verdict_label(attestation.verdict),
+                verdict_label(attestation.report.verdict)
+            ),
+        );
+    }
+
+    match digest_report_hex(&attestation.report) {
+        Ok(recomputed_digest) => {
+            if recomputed_digest == attestation.report_digest_hex {
+                pass_check(
+                    &mut checks,
+                    "report_digest_matches",
+                    format!("report_digest_hex={}", attestation.report_digest_hex),
+                );
+            } else {
+                fail_check(
+                    &mut checks,
+                    "report_digest_matches",
+                    CODE_ATTESTATION_DIGEST,
+                    format!(
+                        "attestation report_digest_hex={} differs from recomputed={}",
+                        attestation.report_digest_hex, recomputed_digest
+                    ),
+                );
+            }
+        }
+        Err(error) => fail_check(
+            &mut checks,
+            "report_digest_matches",
+            CODE_ATTESTATION_DIGEST,
+            error,
+        ),
+    }
+
+    let expected_statement = format_attestation_statement(
+        attestation.verifier_name.trim(),
+        attestation.verifier_version.trim(),
+        attestation.trace_id.trim(),
+        &attestation.claim_type,
+        attestation.verdict,
+        attestation.issued_at_utc.trim(),
+        attestation.methodology.trim(),
+        attestation.verifier_environment.trim(),
+        &attestation.scope_limitations,
+    );
+    if attestation.statement == expected_statement {
+        pass_check(
+            &mut checks,
+            "statement_matches_canonical_template",
+            "statement matches canonical attestation template".to_string(),
+        );
+    } else {
+        fail_check(
+            &mut checks,
+            "statement_matches_canonical_template",
+            CODE_ATTESTATION_ENVELOPE,
+            "statement does not match canonical attestation template".to_string(),
+        );
+    }
+
+    match (
+        &attestation.signer_verification_key_hex,
+        &attestation.signature_hex,
+    ) {
+        (Some(verification_key_hex), Some(signature_hex)) => {
+            let payload = attestation_payload(attestation);
+            match (
+                encode_attestation_payload(&payload),
+                parse_verification_key_hex(verification_key_hex),
+                parse_signature_hex(signature_hex),
+            ) {
+                (Ok(payload_bytes), Ok(verification_key), Ok(signature)) => {
+                    match verify_signature(&verification_key, &payload_bytes, &signature) {
+                        Ok(()) => pass_check(
+                            &mut checks,
+                            "signature_valid",
+                            "attestation payload signature verified".to_string(),
+                        ),
+                        Err(error) => fail_check(
+                            &mut checks,
+                            "signature_valid",
+                            CODE_ATTESTATION_SIGNATURE,
+                            format!("signature verification failed: {error}"),
+                        ),
+                    }
+                }
+                (payload_result, key_result, signature_result) => {
+                    if let Err(error) = payload_result {
+                        fail_check(
+                            &mut checks,
+                            "signature_payload_encode",
+                            CODE_ATTESTATION_PARSE,
+                            error,
+                        );
+                    }
+                    if let Err(error) = key_result {
+                        fail_check(
+                            &mut checks,
+                            "signature_key_parse",
+                            CODE_ATTESTATION_PARSE,
+                            error,
+                        );
+                    }
+                    if let Err(error) = signature_result {
+                        fail_check(
+                            &mut checks,
+                            "signature_parse",
+                            CODE_ATTESTATION_PARSE,
+                            error,
+                        );
+                    }
+                }
+            }
+        }
+        (None, None) => {
+            saw_skipped = true;
+            checks.push(VerificationCheckResult {
+                name: "signature_valid".to_string(),
+                passed: true,
+                error_code: None,
+                detail: "skipped: unsigned attestation".to_string(),
+            });
+        }
+        _ => fail_check(
+            &mut checks,
+            "signature_presence_consistent",
+            CODE_ATTESTATION_ENVELOPE,
+            "signer_verification_key_hex and signature_hex must both be set or both be empty"
+                .to_string(),
+        ),
+    }
+
+    let verdict = verdict_from_checks(&checks, saw_skipped);
+    events.push(event_with_verdict(
+        attestation,
+        "attestation_verification_completed",
+        verdict,
+    ));
+    append_failure_events(attestation, &checks, &mut events);
+
+    build_report(attestation, "attestation", verdict, checks, events)
+}
+
+pub fn render_attestation_summary(attestation: &VerificationAttestation) -> String {
+    format!(
+        "claim_type={} verdict={} signed={} verifier={} issued_at={}",
+        attestation.claim_type,
+        verdict_label(attestation.verdict),
+        attestation.signature_hex.is_some(),
+        attestation.verifier_version,
+        attestation.issued_at_utc,
+    )
+}
+
 pub fn render_report_summary(report: &ThirdPartyVerificationReport) -> String {
     let failed = report.checks.iter().filter(|check| !check.passed).count();
     format!(
@@ -599,6 +954,80 @@ fn workload_id_set(cases: &[crate::benchmark_denominator::BenchmarkCase]) -> BTr
         .collect()
 }
 
+fn required_field<'a>(value: &'a str, field_name: &str) -> Result<&'a str, String> {
+    if value.is_empty() {
+        return Err(format!("{field_name} must not be empty"));
+    }
+    Ok(value)
+}
+
+fn digest_report_hex(report: &ThirdPartyVerificationReport) -> Result<String, String> {
+    let bytes = serde_json::to_vec(report)
+        .map_err(|error| format!("failed to encode verification report for digest: {error}"))?;
+    Ok(ContentHash::compute(&bytes).to_hex())
+}
+
+fn format_attestation_statement(
+    verifier_name: &str,
+    verifier_version: &str,
+    trace_id: &str,
+    claim_type: &str,
+    verdict: VerificationVerdict,
+    issued_at_utc: &str,
+    methodology: &str,
+    verifier_environment: &str,
+    scope_limitations: &[String],
+) -> String {
+    let scope_text = if scope_limitations.is_empty() {
+        "none".to_string()
+    } else {
+        scope_limitations.join("; ")
+    };
+    format!(
+        "{verifier_name} {verifier_version} attests that {claim_type} claims for trace {trace_id} are {verdict} as of {issued_at_utc} using {methodology}. Environment: {verifier_environment}. Scope limitations: {scope_text}.",
+        verdict = verdict_label(verdict),
+    )
+}
+
+fn attestation_payload(attestation: &VerificationAttestation) -> VerificationAttestationPayload {
+    VerificationAttestationPayload {
+        claim_type: attestation.claim_type.clone(),
+        trace_id: attestation.trace_id.clone(),
+        decision_id: attestation.decision_id.clone(),
+        policy_id: attestation.policy_id.clone(),
+        verdict: attestation.verdict,
+        issued_at_utc: attestation.issued_at_utc.clone(),
+        verifier_name: attestation.verifier_name.clone(),
+        verifier_version: attestation.verifier_version.clone(),
+        verifier_environment: attestation.verifier_environment.clone(),
+        methodology: attestation.methodology.clone(),
+        scope_limitations: attestation.scope_limitations.clone(),
+        report_digest_hex: attestation.report_digest_hex.clone(),
+        statement: attestation.statement.clone(),
+        report: attestation.report.clone(),
+    }
+}
+
+fn encode_attestation_payload(payload: &VerificationAttestationPayload) -> Result<Vec<u8>, String> {
+    serde_json::to_vec(payload)
+        .map_err(|error| format!("failed to encode attestation payload for signing: {error}"))
+}
+
+fn parse_signing_key_hex(raw_hex: &str) -> Result<SigningKey, String> {
+    let trimmed = raw_hex.trim();
+    let bytes = hex::decode(trimmed)
+        .map_err(|error| format!("failed to decode signing key hex '{trimmed}': {error}"))?;
+    if bytes.len() != SIGNING_KEY_LEN {
+        return Err(format!(
+            "signing key hex must decode to {SIGNING_KEY_LEN} bytes, got {}",
+            bytes.len()
+        ));
+    }
+    let mut key = [0u8; SIGNING_KEY_LEN];
+    key.copy_from_slice(&bytes);
+    Ok(SigningKey::from_bytes(key))
+}
+
 fn parse_verification_key_hex(raw_hex: &str) -> Result<VerificationKey, String> {
     let trimmed = raw_hex.trim();
     let bytes = hex::decode(trimmed)
@@ -625,6 +1054,34 @@ fn parse_receipt_verification_keys(
         parsed.insert(signer_id, key);
     }
     Ok(parsed)
+}
+
+fn parse_signature_hex(raw_hex: &str) -> Result<Signature, String> {
+    let trimmed = raw_hex.trim();
+    let bytes = hex::decode(trimmed)
+        .map_err(|error| format!("failed to decode signature hex '{trimmed}': {error}"))?;
+    if bytes.len() != SIGNATURE_LEN {
+        return Err(format!(
+            "signature hex must decode to {SIGNATURE_LEN} bytes, got {}",
+            bytes.len()
+        ));
+    }
+    let mut signature = [0u8; SIGNATURE_LEN];
+    signature.copy_from_slice(&bytes);
+    Ok(Signature::from_bytes(signature))
+}
+
+fn encode_signature_hex(signature: &Signature) -> String {
+    hex::encode(signature.to_bytes())
+}
+
+fn verdict_label(verdict: VerificationVerdict) -> &'static str {
+    match verdict {
+        VerificationVerdict::Verified => "verified",
+        VerificationVerdict::PartiallyVerified => "partially_verified",
+        VerificationVerdict::Failed => "failed",
+        VerificationVerdict::Inconclusive => "inconclusive",
+    }
 }
 
 fn event<T: ClaimContext>(
@@ -727,6 +1184,20 @@ impl ClaimContext for ReplayClaimBundle {
 }
 
 impl ClaimContext for ContainmentClaimBundle {
+    fn trace_id(&self) -> &str {
+        &self.trace_id
+    }
+
+    fn decision_id(&self) -> &str {
+        &self.decision_id
+    }
+
+    fn policy_id(&self) -> &str {
+        &self.policy_id
+    }
+}
+
+impl ClaimContext for VerificationAttestation {
     fn trace_id(&self) -> &str {
         &self.trace_id
     }

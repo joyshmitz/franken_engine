@@ -431,7 +431,7 @@ fn decision_multi_party_signing() {
 
 #[test]
 fn decision_empty_gates_is_approved() {
-    // create_unsigned with empty gates: all() on empty iterator returns true
+    // create_unsigned with empty gates: production code returns Inconclusive
     let decision = PromotionDecision::create_unsigned(CreateDecisionInput {
         slot_id: &test_slot_id(),
         candidate_cell_digest: "candidate-001",
@@ -446,8 +446,8 @@ fn decision_empty_gates_is_approved() {
         required_signatures: 0,
     })
     .unwrap();
-    assert!(decision.is_approved());
-    assert_eq!(decision.verdict, GateVerdict::Approved);
+    assert!(!decision.is_approved());
+    assert_eq!(decision.verdict, GateVerdict::Inconclusive);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

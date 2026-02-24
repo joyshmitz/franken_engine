@@ -3191,7 +3191,7 @@ impl CapabilityEscrowGateway {
             replay_seed,
             context.decision_id,
             context.policy_id,
-            trace_ref,
+            context.policy_id.to_string(),
             contract_chain,
             conditions,
             outcome,

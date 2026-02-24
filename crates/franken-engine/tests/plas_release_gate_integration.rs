@@ -78,7 +78,7 @@ fn passing_theorem_input(witness: &CapabilityWitness) -> PromotionTheoremInput {
 }
 
 fn rebind_witness(witness: &mut CapabilityWitness, synthesizer_key: &SigningKey) {
-    let unsigned = witness.unsigned_bytes();
+    let unsigned = witness.synthesis_unsigned_bytes();
     witness.content_hash = ContentHash::compute(&unsigned);
     let mut canonical = Vec::new();
     canonical.extend_from_slice(witness.extension_id.as_bytes());

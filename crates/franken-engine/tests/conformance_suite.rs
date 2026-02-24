@@ -17,7 +17,7 @@ use frankenengine_engine::engine_object_id::{
 };
 use frankenengine_engine::evidence_ledger::{
     ChosenAction, DecisionType, EvidenceEmitter, EvidenceEntryBuilder, InMemoryLedger,
-    SchemaVersion,
+    SchemaVersionExt,
 };
 use frankenengine_engine::fork_detection::ForkDetector;
 use frankenengine_engine::hash_tiers::{AuthenticityHash, ContentHash, IntegrityHash};
@@ -1011,7 +1011,10 @@ fn conformance_evidence_ledger_build_entry() {
 
     assert_eq!(entry.decision_id, "decision-1");
     assert_eq!(entry.decision_type, DecisionType::SecurityAction);
-    assert_eq!(entry.schema_version, SchemaVersion::CURRENT);
+    assert_eq!(
+        entry.schema_version,
+        frankenengine_engine::evidence_ledger::current_schema_version()
+    );
 }
 
 #[test]
@@ -1043,7 +1046,7 @@ fn conformance_evidence_ledger_in_memory_emit_and_query() {
 
 #[test]
 fn conformance_evidence_ledger_schema_version_current() {
-    let v = SchemaVersion::CURRENT;
+    let v = frankenengine_engine::evidence_ledger::current_schema_version();
     assert_eq!(v.major, 1, "current schema must be major version 1");
     assert!(v.is_compatible_with(&v), "version must be self-compatible");
 }

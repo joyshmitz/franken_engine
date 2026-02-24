@@ -21,7 +21,9 @@ use frankenengine_engine::incident_replay_bundle::{
     CounterfactualResult, IncidentReplayBundle, PolicySnapshot, RedactionPolicy,
     VerificationCategory, build_merkle_proof, compute_merkle_root, verify_merkle_proof,
 };
-use frankenengine_engine::proof_schema::{OptReceipt, OptimizationClass, SchemaVersion};
+use frankenengine_engine::proof_schema::{
+    OptReceipt, OptimizationClass, proof_schema_version_v1_0,
+};
 use frankenengine_engine::security_epoch::SecurityEpoch;
 use frankenengine_engine::signature_preimage::SigningKey;
 use frankenengine_engine::tee_attestation_policy::DecisionImpact;
@@ -134,7 +136,7 @@ fn derive_signer_key_id(label: &str) -> EngineObjectId {
 
 fn make_opt_receipt(opt_id: &str, signer_key_id: EngineObjectId, signing_key: &[u8]) -> OptReceipt {
     OptReceipt {
-        schema_version: SchemaVersion::V1_0,
+        schema_version: proof_schema_version_v1_0(),
         optimization_id: opt_id.to_string(),
         optimization_class: OptimizationClass::Superinstruction,
         baseline_ir_hash: ContentHash::compute(format!("baseline-{opt_id}").as_bytes()),

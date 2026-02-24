@@ -8,6 +8,7 @@ Current verifier surfaces:
 - `benchmark`: verify benchmark claim consistency and cross-runtime workload fairness
 - `replay`: verify incident replay bundle integrity/fidelity and optional signature/receipt/counterfactual checks
 - `containment`: verify containment gate result invariants and latency-SLA compliance
+- `attestation`: create signed publication-ready verifier attestations and verify attestation integrity/signatures
 - `receipt`: existing unified receipt verifier pipeline
 
 ## Build
@@ -29,6 +30,8 @@ franken-verify receipt <receipt_id> --input <path> [--summary]
 franken-verify benchmark --input <path> [--summary]
 franken-verify replay --input <path> [--summary]
 franken-verify containment --input <path> [--summary]
+franken-verify attestation create --input <path> [--summary]
+franken-verify attestation verify --input <path> [--summary]
 ```
 
 `--summary` emits a compact line suitable for CI gates.
@@ -157,12 +160,52 @@ Notes:
 }
 ```
 
+### Attestation Create (`attestation create --input`)
+
+This input wraps a previously produced verifier report plus publication metadata.
+If `signing_key_hex` is provided, output includes a deterministic signature and signer verification key.
+
+```json
+{
+  "report": {
+    "claim_type": "benchmark",
+    "trace_id": "trace-bench-001",
+    "decision_id": "decision-bench-001",
+    "policy_id": "policy-bench-001",
+    "component": "third_party_verifier",
+    "verdict": "verified",
+    "checks": [],
+    "events": []
+  },
+  "issued_at_utc": "2026-02-24T00:00:00Z",
+  "verifier_name": "Verifier",
+  "verifier_version": "v1.2.0",
+  "verifier_environment": "linux-x86_64",
+  "methodology": "benchmark_recompute_v1",
+  "scope_limitations": ["requires equivalent workload environment"],
+  "signing_key_hex": "<64 hex chars>"
+}
+```
+
+### Attestation Verify (`attestation verify --input`)
+
+Verifier checks:
+- required attestation envelope fields
+- context/verdict consistency against embedded report
+- report digest integrity
+- canonical statement template integrity
+- signature validity (if signature fields are present)
+
+Unsigned attestations verify as `partially_verified` (exit code `24`) with explicit `skipped: unsigned attestation`.
+
 ## Example Commands
 
 ```bash
 franken-verify benchmark --input artifacts/claims/benchmark_claim.json --summary
 franken-verify replay --input artifacts/claims/replay_claim.json --summary
 franken-verify containment --input artifacts/claims/containment_claim.json --summary
+franken-verify attestation create --input artifacts/claims/attestation_input.json > artifacts/claims/attestation.json
+franken-verify attestation verify --input artifacts/claims/attestation.json --summary
 ```
 
 For machine ingestion:
@@ -190,6 +233,10 @@ franken-verify replay --input artifacts/claims/replay_claim.json > artifacts/cla
   - per-scenario criteria consistency
   - latency-SLA checks
   - isolation and recovery invariant checks for passing scenarios
+- Attestation:
+  - canonical statement + report digest determinism
+  - optional signature validation with embedded verifier key
+  - embedded report linkage (claim type, context, verdict)
 
 ## CI Integration
 

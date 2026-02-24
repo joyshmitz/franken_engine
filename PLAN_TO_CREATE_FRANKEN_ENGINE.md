@@ -975,6 +975,42 @@ These eight additions are intentionally selected as non-trivial upgrades that de
 - [ ] Implement deterministic Promise jobs/microtask ordering and async semantics.
 - [ ] Implement TS-front-end normalization contract proving TS authoring lowers to ES2020-equivalent behavior before runtime.
 
+### 10.2A Parser Frontier Checklist (Living, Granular)
+Status key:
+- `[x]` complete
+- `[~]` in progress
+- `[ ]` pending
+
+Last updated: `2026-02-24`.
+
+- [x] Phase0.1 scalar parser mode + deterministic budgets (`ParserMode`, `ParserOptions`, `ParserBudget`).
+- [x] Phase0.2 deterministic budget-failure witness contract (`ParseFailureWitness`, stable `BudgetExceeded` errors).
+- [x] Phase0.3 grammar completeness matrix + summary scalar (`GrammarCompletenessMatrix`, `GrammarCompletenessSummary`).
+- [x] Phase0.4 scalar parse-family expansion (signed numeric, boolean, null, undefined, await recursion budget checks).
+- [x] Phase0.5 robust statement segmentation for semicolons under nesting/quotes.
+- [x] Phase0.6 semantic fixture-hash gate (`tests/parser_phase0_semantic_fixtures.rs` + pinned fixture catalog).
+- [x] Phase0.7 canonical artifact bundle generator (`scripts/generate_parser_phase0_artifacts.sh` + `franken_parser_phase0_report`).
+- [x] Phase0.8 orchestrator wiring for parser options and deterministic budget enforcement.
+- [~] Phase0.9 parser oracle/metamorphic gate bootstrap (`bd-1b70`).
+- [ ] Phase0.10 cross-host determinism matrix validation in CI (same fixture hashes across host matrix).
+- [ ] Phase0.11 evidence-ledger publication for parser claim/demo linkage (claim + artifact-hash attestations).
+
+Immediate open parser correctness gaps (ES2020):
+- [ ] Declarations: `var`/`let`/`const`, functions, classes.
+- [ ] Control-flow statements: `if`, loops, `switch`, `try`/`catch`/`finally`, `throw`, `return`.
+- [ ] Expression grammar with precedence/associativity (binary/unary/logical/conditional/assignment).
+- [ ] Literal/object model front-end coverage (arrays, objects, templates, regex literals, bigint semantics decision).
+- [ ] Module grammar breadth (named imports/exports, namespace import/export, re-export forms).
+- [ ] Full lexical grammar and trivia handling (comments, escapes, unicode id escapes, line terminator edge cases).
+
+Parser frontier beads (execution queue):
+- [ ] `bd-1b70` parser oracle semantic-equivalence + metamorphic proof gate.
+- [ ] `bd-drjd` parser phase 1 arena/cache-oblivious AST+token definitions.
+- [ ] `bd-19ba` parser phase 2 SIMD lexical analysis (SWAR) under scalar oracle.
+- [ ] `bd-1vfi` parser phase 3 parallel parsing via asupersync structured concurrency.
+- [ ] `bd-3rjg` parser phase 3.5 parallel interference determinism gate.
+- [ ] `bd-1gfn` parser phase 4 mathematical error recovery/diagnostics.
+
 ### 10.3 Memory + GC
 - [ ] Define allocation domains and lifetime classes.
 - [ ] Implement initial GC with deterministic test mode.

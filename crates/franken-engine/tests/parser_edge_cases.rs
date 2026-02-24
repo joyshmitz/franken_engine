@@ -290,6 +290,19 @@ fn large_numeric_literal() {
 }
 
 #[test]
+fn negative_numeric_literal_is_parsed() {
+    let tree = parser()
+        .parse("-7", ParseGoal::Script)
+        .expect("negative number");
+    match &tree.body[0] {
+        Statement::Expression(expr) => {
+            assert!(matches!(&expr.expression, Expression::NumericLiteral(-7)));
+        }
+        _ => panic!("expected expression"),
+    }
+}
+
+#[test]
 fn string_literal_single_quotes() {
     let tree = parser()
         .parse("'hello world'", ParseGoal::Script)
@@ -388,6 +401,47 @@ fn await_string_literal() {
 }
 
 #[test]
+fn boolean_literals_are_parsed() {
+    let tree_true = parser().parse("true", ParseGoal::Script).expect("true");
+    let tree_false = parser().parse("false", ParseGoal::Script).expect("false");
+    match &tree_true.body[0] {
+        Statement::Expression(expr) => {
+            assert!(matches!(&expr.expression, Expression::BooleanLiteral(true)));
+        }
+        _ => panic!("expected expression"),
+    }
+    match &tree_false.body[0] {
+        Statement::Expression(expr) => {
+            assert!(matches!(
+                &expr.expression,
+                Expression::BooleanLiteral(false)
+            ));
+        }
+        _ => panic!("expected expression"),
+    }
+}
+
+#[test]
+fn null_and_undefined_literals_are_parsed() {
+    let tree_null = parser().parse("null", ParseGoal::Script).expect("null");
+    let tree_undef = parser()
+        .parse("undefined", ParseGoal::Script)
+        .expect("undefined");
+    match &tree_null.body[0] {
+        Statement::Expression(expr) => {
+            assert!(matches!(&expr.expression, Expression::NullLiteral));
+        }
+        _ => panic!("expected expression"),
+    }
+    match &tree_undef.body[0] {
+        Statement::Expression(expr) => {
+            assert!(matches!(&expr.expression, Expression::UndefinedLiteral));
+        }
+        _ => panic!("expected expression"),
+    }
+}
+
+#[test]
 fn raw_expression_for_complex_syntax() {
     let tree = parser()
         .parse("a + b * c", ParseGoal::Script)
@@ -410,6 +464,14 @@ fn multiple_statements_on_one_line() {
         .parse("a;b;c", ParseGoal::Script)
         .expect("semicolon-separated statements");
     assert_eq!(tree.body.len(), 3);
+}
+
+#[test]
+fn semicolon_inside_quotes_does_not_split() {
+    let tree = parser()
+        .parse("'a;b';x", ParseGoal::Script)
+        .expect("quoted semicolon");
+    assert_eq!(tree.body.len(), 2);
 }
 
 #[test]

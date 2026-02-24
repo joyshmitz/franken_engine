@@ -5,8 +5,8 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use frankenengine_engine::benchmark_denominator::{
-    BenchmarkCase, NativeCoveragePoint, PublicationContext, PublicationGateInput,
-    evaluate_publication_gate,
+    evaluate_publication_gate, BenchmarkCase, NativeCoveragePoint, PublicationContext,
+    PublicationGateInput,
 };
 use frankenengine_engine::causal_replay::{
     DecisionSnapshot, NondeterminismSource, RecorderConfig, RecordingMode, TraceRecord,
@@ -20,8 +20,9 @@ use frankenengine_engine::quarantine_mesh_gate::{
 use frankenengine_engine::security_epoch::SecurityEpoch;
 use frankenengine_engine::signature_preimage::SigningKey;
 use frankenengine_engine::third_party_verifier::{
-    BenchmarkClaimBundle, ClaimedBenchmarkOutcome, ContainmentClaimBundle, ReplayClaimBundle,
-    VerificationVerdict, verify_benchmark_claim, verify_containment_claim, verify_replay_claim,
+    generate_attestation, verify_attestation, verify_benchmark_claim, verify_containment_claim,
+    verify_replay_claim, BenchmarkClaimBundle, ClaimedBenchmarkOutcome, ContainmentClaimBundle,
+    ReplayClaimBundle, VerificationAttestation, VerificationAttestationInput, VerificationVerdict,
 };
 
 fn temp_json_path(prefix: &str) -> PathBuf {
@@ -208,6 +209,21 @@ fn make_containment_claim_bundle() -> ContainmentClaimBundle {
     }
 }
 
+fn make_attestation_input(sign: bool) -> VerificationAttestationInput {
+    let report = verify_benchmark_claim(&make_benchmark_claim_bundle());
+    let signing_key = make_signing_key(27);
+    VerificationAttestationInput {
+        report,
+        issued_at_utc: "2026-02-24T00:00:00Z".to_string(),
+        verifier_name: "Verifier".to_string(),
+        verifier_version: "v1.2.0".to_string(),
+        verifier_environment: "linux-x86_64".to_string(),
+        methodology: "benchmark_recompute_v1".to_string(),
+        scope_limitations: vec!["requires equivalent workload environment".to_string()],
+        signing_key_hex: sign.then(|| hex::encode(signing_key.as_bytes())),
+    }
+}
+
 #[test]
 fn benchmark_claim_verifies_when_claim_matches_computation() {
     let bundle = make_benchmark_claim_bundle();
@@ -222,12 +238,10 @@ fn benchmark_claim_detects_tampered_score() {
     bundle.claimed.score_vs_node += 0.25;
     let report = verify_benchmark_claim(&bundle);
     assert_eq!(report.verdict, VerificationVerdict::Failed);
-    assert!(
-        report
-            .checks
-            .iter()
-            .any(|check| check.name == "score_vs_node_matches" && !check.passed)
-    );
+    assert!(report
+        .checks
+        .iter()
+        .any(|check| check.name == "score_vs_node_matches" && !check.passed));
 }
 
 #[test]
@@ -252,12 +266,49 @@ fn containment_claim_fails_when_latency_exceeds_sla() {
     bundle.result.scenarios[0].detection_latency_ns = 600_000_000;
     let report = verify_containment_claim(&bundle);
     assert_eq!(report.verdict, VerificationVerdict::Failed);
-    assert!(
-        report
-            .checks
-            .iter()
-            .any(|check| check.name.contains("latency_sla:scenario-1") && !check.passed)
-    );
+    assert!(report
+        .checks
+        .iter()
+        .any(|check| check.name.contains("latency_sla:scenario-1") && !check.passed));
+}
+
+#[test]
+fn attestation_generation_signs_and_verifies_report() {
+    let input = make_attestation_input(true);
+    let attestation = generate_attestation(&input).expect("attestation generation should succeed");
+    assert!(attestation.signer_verification_key_hex.is_some());
+    assert!(attestation.signature_hex.is_some());
+
+    let verification = verify_attestation(&attestation);
+    assert_eq!(verification.claim_type, "attestation");
+    assert_eq!(verification.verdict, VerificationVerdict::Verified);
+    assert_eq!(verification.exit_code(), 0);
+}
+
+#[test]
+fn attestation_verification_is_partial_when_unsigned() {
+    let input = make_attestation_input(false);
+    let attestation = generate_attestation(&input).expect("attestation generation should succeed");
+    assert!(attestation.signer_verification_key_hex.is_none());
+    assert!(attestation.signature_hex.is_none());
+
+    let verification = verify_attestation(&attestation);
+    assert_eq!(verification.verdict, VerificationVerdict::PartiallyVerified);
+    assert_eq!(verification.exit_code(), 24);
+}
+
+#[test]
+fn attestation_verification_detects_digest_tampering() {
+    let input = make_attestation_input(true);
+    let mut attestation = generate_attestation(&input).expect("attestation generation should work");
+    attestation.report_digest_hex = "00".repeat(32);
+
+    let verification = verify_attestation(&attestation);
+    assert_eq!(verification.verdict, VerificationVerdict::Failed);
+    assert!(verification
+        .checks
+        .iter()
+        .any(|check| check.name == "report_digest_matches" && !check.passed));
 }
 
 #[test]
@@ -305,4 +356,45 @@ fn franken_verify_containment_command_surfaces_failure_exit_code() {
     assert!(stdout.contains("verdict=Failed"));
 
     let _ = fs::remove_file(input_path);
+}
+
+#[test]
+fn franken_verify_attestation_create_and_verify_commands() {
+    let input = make_attestation_input(true);
+    let input_path = write_json("tpv_attestation_input", &input);
+
+    let create_output = Command::new(env!("CARGO_BIN_EXE_franken-verify"))
+        .args([
+            "attestation",
+            "create",
+            "--input",
+            input_path.to_str().expect("utf8 path"),
+        ])
+        .output()
+        .expect("attestation create command should execute");
+
+    assert_eq!(create_output.status.code(), Some(0));
+    let attestation: VerificationAttestation =
+        serde_json::from_slice(&create_output.stdout).expect("attestation json");
+    assert!(attestation.signature_hex.is_some());
+
+    let attestation_path = write_json("tpv_attestation", &attestation);
+    let verify_output = Command::new(env!("CARGO_BIN_EXE_franken-verify"))
+        .args([
+            "attestation",
+            "verify",
+            "--input",
+            attestation_path.to_str().expect("utf8 path"),
+            "--summary",
+        ])
+        .output()
+        .expect("attestation verify command should execute");
+
+    assert_eq!(verify_output.status.code(), Some(0));
+    let stdout = String::from_utf8(verify_output.stdout).expect("utf8 stdout");
+    assert!(stdout.contains("claim_type=attestation"));
+    assert!(stdout.contains("verdict=Verified"));
+
+    let _ = fs::remove_file(input_path);
+    let _ = fs::remove_file(attestation_path);
 }

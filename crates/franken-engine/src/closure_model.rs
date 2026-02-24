@@ -296,7 +296,10 @@ impl std::fmt::Display for ScopeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::TemporalDeadZone { name } => {
-                write!(f, "ReferenceError: cannot access '{name}' before initialization")
+                write!(
+                    f,
+                    "ReferenceError: cannot access '{name}' before initialization"
+                )
             }
             Self::ConstAssignment { name } => {
                 write!(f, "TypeError: assignment to constant variable '{name}'")
@@ -316,7 +319,10 @@ impl std::fmt::Display for ScopeError {
                 )
             }
             Self::DuplicateBinding { name } => {
-                write!(f, "SyntaxError: identifier '{name}' has already been declared")
+                write!(
+                    f,
+                    "SyntaxError: identifier '{name}' has already been declared"
+                )
             }
             Self::InvalidEnvironment { handle } => {
                 write!(f, "InternalError: invalid environment handle {}", handle.0)
@@ -367,11 +373,7 @@ impl ScopeChain {
     }
 
     /// Push a new scope onto the chain. Returns the handle.
-    pub fn push_scope(
-        &mut self,
-        scope_id: ScopeId,
-        scope_kind: ScopeKind,
-    ) -> EnvironmentHandle {
+    pub fn push_scope(&mut self, scope_id: ScopeId, scope_kind: ScopeKind) -> EnvironmentHandle {
         let env_kind = match scope_kind {
             ScopeKind::Global => EnvironmentKind::Global,
             ScopeKind::Module => EnvironmentKind::Module,
@@ -396,7 +398,10 @@ impl ScopeChain {
 
     /// Current (innermost) environment handle.
     pub fn current_handle(&self) -> Result<EnvironmentHandle, ScopeError> {
-        self.chain.last().copied().ok_or(ScopeError::EmptyScopeChain)
+        self.chain
+            .last()
+            .copied()
+            .ok_or(ScopeError::EmptyScopeChain)
     }
 
     /// Number of environments in the chain stack.
@@ -426,11 +431,7 @@ impl ScopeChain {
     // -----------------------------------------------------------------------
 
     /// Declare a `var` — hoisted to the nearest function/global scope.
-    pub fn declare_var(
-        &mut self,
-        name: String,
-        binding_id: BindingId,
-    ) -> Result<(), ScopeError> {
+    pub fn declare_var(&mut self, name: String, binding_id: BindingId) -> Result<(), ScopeError> {
         // Walk outward to find the var-scope.
         let target_handle = self.find_var_scope()?;
         let env = self.get_env_mut(target_handle)?;
@@ -443,11 +444,7 @@ impl ScopeChain {
     }
 
     /// Declare a `let` binding in the current scope (TDZ until initialized).
-    pub fn declare_let(
-        &mut self,
-        name: String,
-        binding_id: BindingId,
-    ) -> Result<(), ScopeError> {
+    pub fn declare_let(&mut self, name: String, binding_id: BindingId) -> Result<(), ScopeError> {
         let handle = self.current_handle()?;
         let env = self.get_env_mut(handle)?;
         if env.bindings.contains_key(&name) {
@@ -459,11 +456,7 @@ impl ScopeChain {
     }
 
     /// Declare a `const` binding in the current scope (TDZ until initialized).
-    pub fn declare_const(
-        &mut self,
-        name: String,
-        binding_id: BindingId,
-    ) -> Result<(), ScopeError> {
+    pub fn declare_const(&mut self, name: String, binding_id: BindingId) -> Result<(), ScopeError> {
         let handle = self.current_handle()?;
         let env = self.get_env_mut(handle)?;
         if env.bindings.contains_key(&name) {
@@ -484,7 +477,8 @@ impl ScopeChain {
         let target_handle = self.find_var_scope()?;
         let env = self.get_env_mut(target_handle)?;
         // Function declarations overwrite previous var/function of the same name.
-        let mut slot = BindingSlot::new_hoisted(name.clone(), binding_id, BindingKind::FunctionDecl);
+        let mut slot =
+            BindingSlot::new_hoisted(name.clone(), binding_id, BindingKind::FunctionDecl);
         slot.value = value;
         env.bindings.insert(name, slot);
         Ok(())
@@ -536,9 +530,11 @@ impl ScopeChain {
     pub fn get_value(&self, name: &str) -> Result<&EnvValue, ScopeError> {
         let (handle, _) = self.resolve_binding(name)?;
         let env = self.get_env(handle)?;
-        let slot = env.get_binding(name).ok_or_else(|| ScopeError::UndeclaredVariable {
-            name: name.to_string(),
-        })?;
+        let slot = env
+            .get_binding(name)
+            .ok_or_else(|| ScopeError::UndeclaredVariable {
+                name: name.to_string(),
+            })?;
         if !slot.initialized {
             return Err(ScopeError::TemporalDeadZone {
                 name: name.to_string(),
@@ -556,9 +552,11 @@ impl ScopeChain {
     ) -> Result<(), ScopeError> {
         let (handle, _) = self.resolve_binding(name)?;
         let env = self.get_env_mut(handle)?;
-        let slot = env.get_binding_mut(name).ok_or_else(|| ScopeError::UndeclaredVariable {
-            name: name.to_string(),
-        })?;
+        let slot = env
+            .get_binding_mut(name)
+            .ok_or_else(|| ScopeError::UndeclaredVariable {
+                name: name.to_string(),
+            })?;
         if !slot.initialized {
             return Err(ScopeError::TemporalDeadZone {
                 name: name.to_string(),
@@ -578,10 +576,7 @@ impl ScopeChain {
     }
 
     /// Resolve which environment contains a binding. Returns (handle, scope_id).
-    pub fn resolve_binding(
-        &self,
-        name: &str,
-    ) -> Result<(EnvironmentHandle, ScopeId), ScopeError> {
+    pub fn resolve_binding(&self, name: &str) -> Result<(EnvironmentHandle, ScopeId), ScopeError> {
         for &handle in self.chain.iter().rev() {
             let env = self.get_env(handle)?;
             if env.bindings.contains_key(name) {
@@ -609,11 +604,11 @@ impl ScopeChain {
         for var_name in free_vars {
             let (handle, scope_id) = self.resolve_binding(var_name)?;
             let env = self.get_env(handle)?;
-            let slot = env.get_binding(var_name).ok_or_else(|| {
-                ScopeError::UndeclaredVariable {
+            let slot = env
+                .get_binding(var_name)
+                .ok_or_else(|| ScopeError::UndeclaredVariable {
                     name: var_name.clone(),
-                }
-            })?;
+                })?;
             captures.push(ClosureCapture {
                 name: var_name.clone(),
                 binding_id: slot.binding_id,
@@ -914,10 +909,7 @@ mod tests {
     fn undeclared_variable_error() {
         let chain = fresh_chain();
         let result = chain.get_value("nope");
-        assert!(matches!(
-            result,
-            Err(ScopeError::UndeclaredVariable { .. })
-        ));
+        assert!(matches!(result, Err(ScopeError::UndeclaredVariable { .. })));
     }
 
     // ----- closure capture -----
@@ -965,10 +957,7 @@ mod tests {
     fn capture_undeclared_fails() {
         let chain = fresh_chain();
         let result = chain.compute_captures(&["missing".into()]);
-        assert!(matches!(
-            result,
-            Err(ScopeError::UndeclaredVariable { .. })
-        ));
+        assert!(matches!(result, Err(ScopeError::UndeclaredVariable { .. })));
     }
 
     // ----- function declaration hoisting -----
@@ -1039,7 +1028,11 @@ mod tests {
         let mut chain = fresh_chain();
         chain.declare_var("data".into(), 1).unwrap();
         chain
-            .set_value("data", EnvValue::Str("classified".into()), Label::Confidential)
+            .set_value(
+                "data",
+                EnvValue::Str("classified".into()),
+                Label::Confidential,
+            )
             .unwrap();
         let global = chain.get_env(EnvironmentHandle(0)).unwrap();
         assert!(global.max_label >= Label::Confidential);
@@ -1050,7 +1043,11 @@ mod tests {
         let mut chain = fresh_chain();
         chain.declare_let("classified".into(), 1).unwrap();
         chain
-            .initialize_binding("classified", EnvValue::Str("data".into()), Label::Confidential)
+            .initialize_binding(
+                "classified",
+                EnvValue::Str("data".into()),
+                Label::Confidential,
+            )
             .unwrap();
 
         let fn_id = ScopeId { depth: 1, index: 0 };
@@ -1132,13 +1129,7 @@ mod tests {
             source_scope: ScopeId { depth: 0, index: 0 },
             label: Label::Public,
         }];
-        let h = store.create_closure(
-            "add".into(),
-            2,
-            true,
-            captures,
-            EnvironmentHandle(0),
-        );
+        let h = store.create_closure("add".into(), 2, true, captures, EnvironmentHandle(0));
         assert_eq!(store.len(), 1);
         let closure = store.get(h).unwrap();
         assert_eq!(closure.name, "add");
@@ -1224,24 +1215,16 @@ mod tests {
 
     #[test]
     fn scope_error_messages() {
-        let tdz = ScopeError::TemporalDeadZone {
-            name: "x".into(),
-        };
+        let tdz = ScopeError::TemporalDeadZone { name: "x".into() };
         assert!(tdz.to_string().contains("before initialization"));
 
-        let const_err = ScopeError::ConstAssignment {
-            name: "PI".into(),
-        };
+        let const_err = ScopeError::ConstAssignment { name: "PI".into() };
         assert!(const_err.to_string().contains("constant variable"));
 
-        let undecl = ScopeError::UndeclaredVariable {
-            name: "y".into(),
-        };
+        let undecl = ScopeError::UndeclaredVariable { name: "y".into() };
         assert!(undecl.to_string().contains("not defined"));
 
-        let dup = ScopeError::DuplicateBinding {
-            name: "z".into(),
-        };
+        let dup = ScopeError::DuplicateBinding { name: "z".into() };
         assert!(dup.to_string().contains("already been declared"));
     }
 

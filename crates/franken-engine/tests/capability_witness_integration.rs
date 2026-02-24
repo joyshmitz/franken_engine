@@ -108,7 +108,7 @@ fn apply_passing_theorems(witness: &mut CapabilityWitness, sk: &SigningKey) {
 
 fn rebind(witness: &mut CapabilityWitness, sk: &SigningKey) {
     use frankenengine_engine::signature_preimage::sign_preimage;
-    let unsigned = witness.unsigned_bytes();
+    let unsigned = witness.synthesis_unsigned_bytes();
     witness.content_hash = ContentHash::compute(&unsigned);
     let mut canonical = Vec::new();
     canonical.extend_from_slice(witness.extension_id.as_bytes());
@@ -144,7 +144,7 @@ fn build_draft_witness() -> CapabilityWitness {
     .deny(cap_a, "not needed")
     .proof(make_proof(&cap_r))
     .proof(make_proof(&cap_w))
-    .confidence(ConfidenceInterval::from_trials(100, 95))
+    .confidence(ConfidenceInterval::from_trials(200, 195))
     .replay_seed(42)
     .transcript_hash(ContentHash::compute(b"synthesis-transcript"))
     .meta("synthesizer", "plas-v1")

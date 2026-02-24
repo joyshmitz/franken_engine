@@ -4,8 +4,10 @@ use frankenengine_engine::receipt_verifier_pipeline::{
     ReceiptVerifierCliInput, render_verdict_summary, verify_receipt_by_id,
 };
 use frankenengine_engine::third_party_verifier::{
-    BenchmarkClaimBundle, ContainmentClaimBundle, ReplayClaimBundle, render_report_summary,
-    verify_benchmark_claim, verify_containment_claim, verify_replay_claim,
+    BenchmarkClaimBundle, ContainmentClaimBundle, ReplayClaimBundle, VerificationAttestation,
+    VerificationAttestationInput, generate_attestation, render_attestation_summary,
+    render_report_summary, verify_attestation, verify_benchmark_claim, verify_containment_claim,
+    verify_replay_claim,
 };
 use serde::de::DeserializeOwned;
 
@@ -30,6 +32,7 @@ fn run(args: Vec<String>) -> Result<i32, String> {
         "benchmark" => run_benchmark(&args[1..]),
         "replay" => run_replay(&args[1..]),
         "containment" => run_containment(&args[1..]),
+        "attestation" => run_attestation(&args[1..]),
         "help" | "--help" | "-h" => {
             println!("{}", usage());
             Ok(0)
@@ -45,6 +48,8 @@ fn usage() -> String {
         "  franken-verify benchmark --input <path> [--summary]",
         "  franken-verify replay --input <path> [--summary]",
         "  franken-verify containment --input <path> [--summary]",
+        "  franken-verify attestation create --input <path> [--summary]",
+        "  franken-verify attestation verify --input <path> [--summary]",
         "",
         "exit codes:",
         "  0   verification passed",
@@ -120,6 +125,46 @@ fn run_containment(args: &[String]) -> Result<i32, String> {
     let (input_path, summary) = parse_input_flags(args, "containment")?;
     let input = load_json::<ContainmentClaimBundle>(input_path, "containment bundle")?;
     let report = verify_containment_claim(&input);
+    print_report(&report, summary)?;
+    Ok(report.exit_code())
+}
+
+fn run_attestation(args: &[String]) -> Result<i32, String> {
+    let mode = args.first().ok_or_else(|| {
+        format!(
+            "attestation subcommand requires 'create' or 'verify'\n\n{}",
+            usage()
+        )
+    })?;
+    match mode.as_str() {
+        "create" => run_attestation_create(&args[1..]),
+        "verify" => run_attestation_verify(&args[1..]),
+        other => Err(format!(
+            "unknown attestation mode '{other}' (expected 'create' or 'verify')"
+        )),
+    }
+}
+
+fn run_attestation_create(args: &[String]) -> Result<i32, String> {
+    let (input_path, summary) = parse_input_flags(args, "attestation create")?;
+    let input = load_json::<VerificationAttestationInput>(input_path, "attestation input")?;
+    let attestation = generate_attestation(&input)?;
+    if summary {
+        println!("{}", render_attestation_summary(&attestation));
+    } else {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&attestation)
+                .map_err(|error| format!("failed to encode attestation output: {error}"))?
+        );
+    }
+    Ok(0)
+}
+
+fn run_attestation_verify(args: &[String]) -> Result<i32, String> {
+    let (input_path, summary) = parse_input_flags(args, "attestation verify")?;
+    let input = load_json::<VerificationAttestation>(input_path, "attestation")?;
+    let report = verify_attestation(&input);
     print_report(&report, summary)?;
     Ok(report.exit_code())
 }

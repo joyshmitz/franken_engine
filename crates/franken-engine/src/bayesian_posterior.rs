@@ -565,7 +565,8 @@ impl BayesianPosteriorUpdater {
             + (prior.p_malicious * likelihoods[2] / MILLION)
             + (prior.p_unknown * likelihoods[3] / MILLION);
 
-        self.change_detector.update(predictive_continuation, predictive_new);
+        self.change_detector
+            .update(predictive_continuation, predictive_new);
 
         // Track evidence hash.
         let evidence_bytes = format!(

@@ -53,6 +53,10 @@ fn baseline_replay_and_counterfactual_delta_are_reported() {
     assert_eq!(delta.diverged_at_sequence, Some(0));
     assert!(delta.changed_events >= 1);
     assert!(delta.changed_outcomes >= 1);
+    assert!(!delta.transcript_changed);
+    assert!(delta.transcript_diverged_at_index.is_none());
+    assert!(!delta.divergence_samples.is_empty());
+    assert_eq!(delta.divergence_samples[0].sequence, 0);
 }
 
 #[test]
@@ -95,5 +99,36 @@ fn schema_version_mismatch_is_deterministic_error() {
     assert!(
         err.to_string()
             .starts_with("unsupported fixture version: expected")
+    );
+}
+
+#[test]
+fn transcript_fault_injection_reports_diagnostic_index() {
+    let runner = DeterministicRunner::default();
+    let fixture_store =
+        FixtureStore::new(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures"))
+            .expect("fixture store");
+    let fixture = fixture_store
+        .load_fixture(replay_fixture_path())
+        .expect("load replay fixture");
+
+    let baseline = runner.run_fixture(&fixture).expect("baseline run");
+    let mut faulted = baseline.clone();
+    faulted.random_transcript[0] = faulted.random_transcript[0].wrapping_add(1);
+
+    let replay_verification = verify_replay(&baseline, &faulted);
+    assert!(!replay_verification.matches);
+    assert_eq!(
+        replay_verification.reason.as_deref(),
+        Some("random transcript mismatch")
+    );
+    assert_eq!(replay_verification.transcript_mismatch_index, Some(0));
+    assert_eq!(
+        replay_verification.expected_transcript_len,
+        baseline.events.len()
+    );
+    assert_eq!(
+        replay_verification.actual_transcript_len,
+        baseline.events.len()
     );
 }

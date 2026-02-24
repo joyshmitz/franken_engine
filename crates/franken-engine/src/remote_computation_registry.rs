@@ -65,38 +65,15 @@ impl fmt::Display for ComputationName {
     }
 }
 
-// ---------------------------------------------------------------------------
-// SchemaVersion — semver-like version with compatibility rules
-// ---------------------------------------------------------------------------
+use crate::control_plane::SchemaVersion;
 
-/// Schema version with major.minor semver-compatible semantics.
-///
-/// Rules:
-/// - Minor version bumps are backward-compatible (1.0 accepts 1.1 inputs).
-/// - Major version bumps require explicit migration (1.x rejects 2.x).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub struct SchemaVersion {
-    pub major: u32,
-    pub minor: u32,
+pub trait SchemaVersionExt {
+    fn is_compatible_with(&self, other: &Self) -> bool;
 }
 
-impl SchemaVersion {
-    /// Create a new schema version.
-    pub fn new(major: u32, minor: u32) -> Self {
-        Self { major, minor }
-    }
-
-    /// Check if `other` is compatible with `self` (semver rules).
-    ///
-    /// Compatible means: same major version and other's minor >= self's minor.
-    pub fn is_compatible_with(&self, other: &SchemaVersion) -> bool {
+impl SchemaVersionExt for SchemaVersion {
+    fn is_compatible_with(&self, other: &Self) -> bool {
         self.major == other.major && other.minor >= self.minor
-    }
-}
-
-impl fmt::Display for SchemaVersion {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}.{}", self.major, self.minor)
     }
 }
 
@@ -658,7 +635,7 @@ mod tests {
             name: ComputationName::new(name).unwrap(),
             input_schema: test_input_schema(),
             output_schema: test_output_schema(),
-            version: SchemaVersion::new(1, 0),
+            version: SchemaVersion::new(1, 0, 0),
             capability_required: ProfileKind::Remote,
             idempotency_class: IdempotencyClass::RequiresKey,
         }
@@ -746,31 +723,31 @@ mod tests {
 
     #[test]
     fn schema_version_compatible_same() {
-        let v = SchemaVersion::new(1, 0);
-        assert!(v.is_compatible_with(&SchemaVersion::new(1, 0)));
+        let v = SchemaVersion::new(1, 0, 0);
+        assert!(v.is_compatible_with(&SchemaVersion::new(1, 0, 0)));
     }
 
     #[test]
     fn schema_version_compatible_minor_bump() {
-        let v = SchemaVersion::new(1, 0);
-        assert!(v.is_compatible_with(&SchemaVersion::new(1, 2)));
+        let v = SchemaVersion::new(1, 0, 0);
+        assert!(v.is_compatible_with(&SchemaVersion::new(1, 2, 0)));
     }
 
     #[test]
     fn schema_version_incompatible_major_bump() {
-        let v = SchemaVersion::new(1, 0);
-        assert!(!v.is_compatible_with(&SchemaVersion::new(2, 0)));
+        let v = SchemaVersion::new(1, 0, 0);
+        assert!(!v.is_compatible_with(&SchemaVersion::new(2, 0, 0)));
     }
 
     #[test]
     fn schema_version_incompatible_lower_minor() {
-        let v = SchemaVersion::new(1, 3);
-        assert!(!v.is_compatible_with(&SchemaVersion::new(1, 2)));
+        let v = SchemaVersion::new(1, 3, 0);
+        assert!(!v.is_compatible_with(&SchemaVersion::new(1, 2, 0)));
     }
 
     #[test]
     fn schema_version_display() {
-        assert_eq!(SchemaVersion::new(2, 5).to_string(), "2.5");
+        assert_eq!(SchemaVersion::new(2, 5, 0).to_string(), "2.5.0");
     }
 
     // -- IdempotencyClass --
@@ -830,7 +807,7 @@ mod tests {
         let name = ComputationName::new("evidence_sync").unwrap();
         let found = reg.lookup(&name).unwrap();
         assert_eq!(found.name.as_str(), "evidence_sync");
-        assert_eq!(found.version, SchemaVersion::new(1, 0));
+        assert_eq!(found.version, SchemaVersion::new(1, 0, 0));
     }
 
     #[test]
@@ -1059,11 +1036,11 @@ mod tests {
         reg.register(test_registration("test_comp")).unwrap();
         let name = ComputationName::new("test_comp").unwrap();
         let result = reg
-            .negotiate_version(&name, SchemaVersion::new(1, 2))
+            .negotiate_version(&name, SchemaVersion::new(1, 2, 0))
             .unwrap();
         assert!(result.compatible);
-        assert_eq!(result.local_version, SchemaVersion::new(1, 0));
-        assert_eq!(result.remote_version, SchemaVersion::new(1, 2));
+        assert_eq!(result.local_version, SchemaVersion::new(1, 0, 0));
+        assert_eq!(result.remote_version, SchemaVersion::new(1, 2, 0));
     }
 
     #[test]
@@ -1072,7 +1049,7 @@ mod tests {
         reg.register(test_registration("test_comp")).unwrap();
         let name = ComputationName::new("test_comp").unwrap();
         let result = reg
-            .negotiate_version(&name, SchemaVersion::new(1, 0))
+            .negotiate_version(&name, SchemaVersion::new(1, 0, 0))
             .unwrap();
         assert!(result.compatible);
     }
@@ -1083,7 +1060,7 @@ mod tests {
         reg.register(test_registration("test_comp")).unwrap();
         let name = ComputationName::new("test_comp").unwrap();
         let result = reg
-            .negotiate_version(&name, SchemaVersion::new(2, 0))
+            .negotiate_version(&name, SchemaVersion::new(2, 0, 0))
             .unwrap();
         assert!(!result.compatible);
     }
@@ -1092,11 +1069,11 @@ mod tests {
     fn version_negotiation_incompatible_lower_minor() {
         let mut reg = RemoteComputationRegistry::new();
         let mut comp = test_registration("test_comp");
-        comp.version = SchemaVersion::new(1, 3);
+        comp.version = SchemaVersion::new(1, 3, 0);
         reg.register(comp).unwrap();
         let name = ComputationName::new("test_comp").unwrap();
         let result = reg
-            .negotiate_version(&name, SchemaVersion::new(1, 1))
+            .negotiate_version(&name, SchemaVersion::new(1, 1, 0))
             .unwrap();
         assert!(!result.compatible);
     }
@@ -1106,7 +1083,7 @@ mod tests {
         let reg = RemoteComputationRegistry::new();
         let name = ComputationName::new("missing").unwrap();
         assert!(matches!(
-            reg.negotiate_version(&name, SchemaVersion::new(1, 0)),
+            reg.negotiate_version(&name, SchemaVersion::new(1, 0, 0)),
             Err(RegistryError::ComputationNotFound { .. })
         ));
     }
@@ -1196,7 +1173,7 @@ mod tests {
 
     #[test]
     fn schema_version_serialization_round_trip() {
-        let v = SchemaVersion::new(2, 5);
+        let v = SchemaVersion::new(2, 5, 0);
         let json = serde_json::to_string(&v).expect("serialize");
         let restored: SchemaVersion = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(v, restored);
@@ -1267,8 +1244,8 @@ mod tests {
         let result = VersionNegotiationResult {
             computation_name: ComputationName::new("test_comp").unwrap(),
             compatible: true,
-            local_version: SchemaVersion::new(1, 0),
-            remote_version: SchemaVersion::new(1, 2),
+            local_version: SchemaVersion::new(1, 0, 0),
+            remote_version: SchemaVersion::new(1, 2, 0),
         };
         let json = serde_json::to_string(&result).expect("serialize");
         let restored: VersionNegotiationResult = serde_json::from_str(&json).expect("deserialize");
@@ -1335,7 +1312,7 @@ mod tests {
 
         // 4. Negotiate version
         let negotiation = reg
-            .negotiate_version(&name, SchemaVersion::new(1, 1))
+            .negotiate_version(&name, SchemaVersion::new(1, 1, 0))
             .unwrap();
         assert!(negotiation.compatible);
 

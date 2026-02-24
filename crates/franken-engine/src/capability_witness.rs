@@ -702,7 +702,7 @@ impl CapabilityWitness {
     }
 
     /// Canonical unsigned bytes for synthesis-bound signatures/integrity checks.
-    fn synthesis_unsigned_bytes(&self) -> Vec<u8> {
+    pub fn synthesis_unsigned_bytes(&self) -> Vec<u8> {
         let mut synthesis_view = self.clone();
         synthesis_view.lifecycle_state = LifecycleState::Draft;
         // Strip metadata added during theorem evaluation
@@ -3445,7 +3445,7 @@ mod tests {
     }
 
     fn rebind_witness(witness: &mut CapabilityWitness, signing_key: &SigningKey) {
-        let unsigned = witness.unsigned_bytes();
+        let unsigned = witness.synthesis_unsigned_bytes();
         witness.content_hash = ContentHash::compute(&unsigned);
 
         let mut canonical = Vec::new();
@@ -3483,7 +3483,7 @@ mod tests {
         .deny(cap_admin, "Extension does not require admin access")
         .proof(make_proof(&cap_read))
         .proof(make_proof(&cap_write))
-        .confidence(ConfidenceInterval::from_trials(100, 95))
+        .confidence(ConfidenceInterval::from_trials(200, 195))
         .replay_seed(42)
         .transcript_hash(ContentHash::compute(b"synthesis-transcript"))
         .meta("synthesizer", "plas-v1")

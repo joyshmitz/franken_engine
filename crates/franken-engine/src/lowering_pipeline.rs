@@ -651,6 +651,21 @@ fn lower_expression_to_ir1(
                 value: Ir1Literal::Integer(*value),
             });
         }
+        Expression::BooleanLiteral(value) => {
+            ops.push(Ir1Op::LoadLiteral {
+                value: Ir1Literal::Boolean(*value),
+            });
+        }
+        Expression::NullLiteral => {
+            ops.push(Ir1Op::LoadLiteral {
+                value: Ir1Literal::Null,
+            });
+        }
+        Expression::UndefinedLiteral => {
+            ops.push(Ir1Op::LoadLiteral {
+                value: Ir1Literal::Undefined,
+            });
+        }
         Expression::Await(inner) => {
             lower_expression_to_ir1(
                 inner,

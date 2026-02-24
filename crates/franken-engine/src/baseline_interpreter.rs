@@ -1291,13 +1291,13 @@ mod tests {
                 // Load function ref and call
                 Ir3Instruction::Call {
                     callee: 0,
-                    args: RegRange { start: 1, count: 0 },
+                    args: RegRange { start: 0, count: 1 },
                     dst: 0,
                 }, // 0 (entry)
             ],
             vec![Ir3FunctionDesc {
                 entry: 0,
-                arity: 0,
+                arity: 1,
                 frame_size: 1,
                 name: Some("recurse".to_string()),
             }],

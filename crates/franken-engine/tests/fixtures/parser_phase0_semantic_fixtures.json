@@ -1,0 +1,90 @@
+{
+  "schema_version": "franken-engine.parser-phase0.semantic-fixtures.v1",
+  "parser_mode": "scalar_reference",
+  "fixtures": [
+    {
+      "id": "script_identifier",
+      "family_id": "statement.expression",
+      "goal": "script",
+      "source": "alpha",
+      "expected_hash": "sha256:5a07edc8a5c638cc207bd432c9023fe49638763bdc29835f5f058064d688ff8a"
+    },
+    {
+      "id": "script_numeric_signed",
+      "family_id": "literal.numeric_signed_i64",
+      "goal": "script",
+      "source": "-7",
+      "expected_hash": "sha256:d959b7cbce9a409871d9a288d6feb3c043bdf3ce6ee54ff39051909db432adc4"
+    },
+    {
+      "id": "script_string",
+      "family_id": "literal.string_single_double_quote",
+      "goal": "script",
+      "source": "\"hello\"",
+      "expected_hash": "sha256:2d22eb6cf286e1c9df2260a49d1fd7fd3d49fd78b5a768522203402fa466b125"
+    },
+    {
+      "id": "script_boolean",
+      "family_id": "literal.boolean",
+      "goal": "script",
+      "source": "true",
+      "expected_hash": "sha256:e8563a21efb68e6939c9a81f736ab6009cc99ce19daca3e7bc620aba847b7855"
+    },
+    {
+      "id": "script_null",
+      "family_id": "literal.null",
+      "goal": "script",
+      "source": "null",
+      "expected_hash": "sha256:5a9979b7cad676cb459bd03b7c2cfa43c6b94fde2bc6a7c3e00a430b4d0a5b2a"
+    },
+    {
+      "id": "script_undefined",
+      "family_id": "literal.undefined",
+      "goal": "script",
+      "source": "undefined",
+      "expected_hash": "sha256:0c28b681a522f99cebea13bc3b803fb92c22422c05b13927f734f475008a688f"
+    },
+    {
+      "id": "script_await",
+      "family_id": "expression.await",
+      "goal": "script",
+      "source": "await work",
+      "expected_hash": "sha256:b4edc109d6bcd04a494a18133607b2b4a68a707834d11228ca0a09c05ce1e8e7"
+    },
+    {
+      "id": "script_raw_binary",
+      "family_id": "expression.binary_precedence",
+      "goal": "script",
+      "source": "a + b * c",
+      "expected_hash": "sha256:62a4e52514327b26c52adc6fc35c648bc3ebede50e821c9d72c8e9e2ab75100d"
+    },
+    {
+      "id": "module_import_default",
+      "family_id": "module.import_default",
+      "goal": "module",
+      "source": "import dep from \"pkg\"",
+      "expected_hash": "sha256:6f9b81a8dfbaad70c345e5508dd1fae29d3d6cfdc1d18954d3486abd00d75f6c"
+    },
+    {
+      "id": "module_import_side_effect",
+      "family_id": "module.import_side_effect",
+      "goal": "module",
+      "source": "import \"side-effect\"",
+      "expected_hash": "sha256:03ca17913981d5341b4be41808fe71ef06d4f0369c86877e0b128ad6a3008e05"
+    },
+    {
+      "id": "module_export_default",
+      "family_id": "module.export_default",
+      "goal": "module",
+      "source": "export default true",
+      "expected_hash": "sha256:ebb993de589945a2cf22f17db58200599ae3e1e6c21cd33a0fc59eab99fd8ef6"
+    },
+    {
+      "id": "module_export_named",
+      "family_id": "module.export_named_clause",
+      "goal": "module",
+      "source": "export { a, b }",
+      "expected_hash": "sha256:f940dbb1f8280ad3221c4876048cb6e2aacfbde2126e80209d6b0c1f1506f413"
+    }
+  ]
+}

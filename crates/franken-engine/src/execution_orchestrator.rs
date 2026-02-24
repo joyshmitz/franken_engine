@@ -40,7 +40,7 @@ use crate::ir_contract::{Ir0Module, Ir3Module};
 use crate::lowering_pipeline::{
     LoweringContext, LoweringEvent, LoweringPipelineError, PassWitness, lower_ir0_to_ir3,
 };
-use crate::parser::{CanonicalEs2020Parser, Es2020Parser, ParseError};
+use crate::parser::{CanonicalEs2020Parser, ParseError, ParserOptions};
 use crate::region_lifecycle::{CancelReason, DrainDeadline, FinalizeResult};
 use crate::saga_orchestrator::{
     SagaError, SagaOrchestrator, SagaType, eviction_saga_steps, quarantine_saga_steps,
@@ -89,6 +89,8 @@ pub struct OrchestratorConfig {
     pub epoch: SecurityEpoch,
     /// Parse goal (Script or Module).
     pub parse_goal: ParseGoal,
+    /// Parser mode + deterministic budget configuration.
+    pub parser_options: ParserOptions,
     /// Prefix for generated trace IDs.
     pub trace_id_prefix: String,
     /// Policy ID for decision context.
@@ -104,6 +106,7 @@ impl Default for OrchestratorConfig {
             max_concurrent_sagas: 4,
             epoch: SecurityEpoch::from_raw(1),
             parse_goal: ParseGoal::Script,
+            parser_options: ParserOptions::default(),
             trace_id_prefix: "orch".to_string(),
             policy_id: "default-policy".to_string(),
         }
@@ -183,7 +186,7 @@ pub struct OrchestratorResult {
 /// Errors produced by the orchestrator pipeline.
 #[derive(Debug)]
 pub enum OrchestratorError {
-    Parse(ParseError),
+    Parse(Box<ParseError>),
     Lowering(LoweringPipelineError),
     Interpreter(InterpreterError),
     Ledger(LedgerError),
@@ -214,7 +217,7 @@ impl std::error::Error for OrchestratorError {}
 
 impl From<ParseError> for OrchestratorError {
     fn from(e: ParseError) -> Self {
-        Self::Parse(e)
+        Self::Parse(Box::new(e))
     }
 }
 
@@ -335,9 +338,11 @@ impl ExecutionOrchestrator {
         self.containment_executor.register(&package.extension_id);
 
         // Step 4: Parse source.
-        let syntax_tree = self
-            .parser
-            .parse(package.source.as_str(), self.config.parse_goal)?;
+        let syntax_tree = self.parser.parse_with_options(
+            package.source.as_str(),
+            self.config.parse_goal,
+            &self.config.parser_options,
+        )?;
 
         // Step 5: Lower IR0 → IR3.
         let ir0 = Ir0Module::from_syntax_tree(syntax_tree, &source_label);

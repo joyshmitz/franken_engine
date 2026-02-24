@@ -895,7 +895,8 @@ mod tests {
     use crate::hash_tiers::AuthenticityHash;
     use crate::mmr_proof::MerkleMountainRange;
     use crate::proof_schema::{
-        AttestationValidityWindow, OptimizationClass, ReceiptAttestationBindings, SchemaVersion,
+        AttestationValidityWindow, OptimizationClass, ReceiptAttestationBindings,
+        proof_schema_version_current,
     };
     use crate::signature_preimage::{SigningKey, sign_preimage};
     use crate::tee_attestation_policy::{
@@ -1050,7 +1051,7 @@ mod tests {
         };
 
         let unsigned_receipt = OptReceipt {
-            schema_version: SchemaVersion::CURRENT,
+            schema_version: proof_schema_version_current(),
             optimization_id: "opt-01".to_string(),
             optimization_class: OptimizationClass::Superinstruction,
             baseline_ir_hash: ContentHash::compute(b"baseline"),

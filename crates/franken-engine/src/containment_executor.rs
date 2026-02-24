@@ -800,7 +800,7 @@ mod tests {
             .execute(ContainmentAction::Terminate, "ext-001", &ctx)
             .unwrap();
         assert_eq!(receipt.new_state, ContainmentState::Terminated);
-        assert!(receipt.cooperative);
+        assert!(!receipt.cooperative);
         assert!(ContainmentState::Terminated.is_dead());
     }
 

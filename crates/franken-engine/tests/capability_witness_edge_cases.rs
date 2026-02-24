@@ -99,7 +99,7 @@ fn make_proof(cap: &Capability) -> ProofObligation {
 }
 
 fn rebind_witness(witness: &mut CapabilityWitness, signing_key: &SigningKey) {
-    let unsigned = witness.unsigned_bytes();
+    let unsigned = witness.synthesis_unsigned_bytes();
     witness.content_hash = ContentHash::compute(&unsigned);
 
     let mut canonical = Vec::new();
@@ -159,7 +159,7 @@ fn build_test_witness() -> CapabilityWitness {
     .deny(cap_admin, "Extension does not require admin access")
     .proof(make_proof(&cap_read))
     .proof(make_proof(&cap_write))
-    .confidence(ConfidenceInterval::from_trials(100, 95))
+    .confidence(ConfidenceInterval::from_trials(200, 195))
     .replay_seed(42)
     .transcript_hash(ContentHash::compute(b"synthesis-transcript"))
     .meta("synthesizer", "plas-v1")

@@ -17,39 +17,46 @@ use crate::hash_tiers::{AuthenticityHash, ContentHash};
 use crate::security_epoch::SecurityEpoch;
 use crate::tee_attestation_policy::DecisionImpact;
 
-// ---------------------------------------------------------------------------
-// Schema version
-// ---------------------------------------------------------------------------
+pub use crate::control_plane::SchemaVersion;
 
-/// Schema version for forward/backward compatibility.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct SchemaVersion {
-    pub major: u16,
-    pub minor: u16,
+pub trait SchemaVersionExt {
+    fn is_compatible_with(&self, other: &Self) -> bool;
+    fn supports_attestation_bindings(&self) -> bool;
+    fn major_val(&self) -> u32;
+    fn minor_val(&self) -> u32;
 }
 
-impl SchemaVersion {
-    pub const V1_0: Self = Self { major: 1, minor: 0 };
-    pub const V1_1: Self = Self { major: 1, minor: 1 };
-    pub const ATTESTATION_BINDING_INTRO: Self = Self::V1_1;
-    pub const CURRENT: Self = Self::V1_1;
+pub fn proof_schema_version_v1_0() -> SchemaVersion {
+    SchemaVersion::new(1, 0, 0)
+}
 
-    /// Whether this version is compatible with `other` (same major version).
-    pub fn is_compatible_with(&self, other: &Self) -> bool {
+pub fn proof_schema_version_v1_1() -> SchemaVersion {
+    SchemaVersion::new(1, 1, 0)
+}
+
+pub fn proof_schema_version_current() -> SchemaVersion {
+    proof_schema_version_v1_1()
+}
+
+pub fn proof_schema_attestation_binding_intro() -> SchemaVersion {
+    proof_schema_version_v1_1()
+}
+
+impl SchemaVersionExt for SchemaVersion {
+    fn is_compatible_with(&self, other: &Self) -> bool {
         self.major == other.major
     }
 
-    /// Whether this schema supports attestation binding fields.
-    pub fn supports_attestation_bindings(&self) -> bool {
-        self.major > Self::ATTESTATION_BINDING_INTRO.major
-            || (self.major == Self::ATTESTATION_BINDING_INTRO.major
-                && self.minor >= Self::ATTESTATION_BINDING_INTRO.minor)
+    fn supports_attestation_bindings(&self) -> bool {
+        let intro = proof_schema_attestation_binding_intro();
+        self.major > intro.major || (self.major == intro.major && self.minor >= intro.minor)
     }
-}
 
-impl fmt::Display for SchemaVersion {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}.{}", self.major, self.minor)
+    fn major_val(&self) -> u32 {
+        self.major
+    }
+    fn minor_val(&self) -> u32 {
+        self.minor
     }
 }
 
@@ -580,7 +587,7 @@ pub enum ProofSchemaError {
     InvalidSignature { artifact: String },
     /// Schema version is incompatible.
     IncompatibleVersion {
-        expected_major: u16,
+        expected_major: u32,
         actual: SchemaVersion,
     },
     /// Rollback token has expired.
@@ -704,10 +711,10 @@ pub fn validate_receipt_with_policy(
     // Version compatibility.
     if !receipt
         .schema_version
-        .is_compatible_with(&SchemaVersion::CURRENT)
+        .is_compatible_with(&proof_schema_version_current())
     {
         return Err(ProofSchemaError::IncompatibleVersion {
-            expected_major: SchemaVersion::CURRENT.major,
+            expected_major: proof_schema_version_current().major,
             actual: receipt.schema_version,
         });
     }
@@ -785,10 +792,10 @@ pub fn validate_rollback_token(
     // Version compatibility.
     if !token
         .schema_version
-        .is_compatible_with(&SchemaVersion::CURRENT)
+        .is_compatible_with(&proof_schema_version_current())
     {
         return Err(ProofSchemaError::IncompatibleVersion {
-            expected_major: SchemaVersion::CURRENT.major,
+            expected_major: proof_schema_version_current().major,
             actual: token.schema_version,
         });
     }
@@ -896,7 +903,7 @@ mod tests {
 
     fn test_invariance_digest() -> InvarianceDigest {
         InvarianceDigest {
-            schema_version: SchemaVersion::CURRENT,
+            schema_version: proof_schema_version_current(),
             golden_corpus_hash: ContentHash::compute(b"golden-corpus"),
             trace_comparison_methodology: TraceComparisonMethodology::DeterministicReplay,
             equivalence_verdict: EquivalenceVerdict::Equivalent,
@@ -926,7 +933,7 @@ mod tests {
     fn test_receipt_unsigned() -> OptReceipt {
         let digest = test_invariance_digest();
         OptReceipt {
-            schema_version: SchemaVersion::CURRENT,
+            schema_version: proof_schema_version_current(),
             optimization_id: "opt-001".to_string(),
             optimization_class: OptimizationClass::Superinstruction,
             baseline_ir_hash: ContentHash::compute(b"baseline-ir"),
@@ -954,7 +961,7 @@ mod tests {
 
     fn test_rollback_unsigned() -> RollbackToken {
         RollbackToken {
-            schema_version: SchemaVersion::CURRENT,
+            schema_version: proof_schema_version_current(),
             token_id: "rtk-001".to_string(),
             optimization_id: "opt-001".to_string(),
             baseline_snapshot_hash: ContentHash::compute(b"baseline-snapshot"),
@@ -973,9 +980,9 @@ mod tests {
 
     #[test]
     fn schema_version_compatibility() {
-        let v1_0 = SchemaVersion { major: 1, minor: 0 };
-        let v1_1 = SchemaVersion { major: 1, minor: 1 };
-        let v2_0 = SchemaVersion { major: 2, minor: 0 };
+        let v1_0 = SchemaVersion::new(1, 0, 0);
+        let v1_1 = SchemaVersion::new(1, 1, 0);
+        let v2_0 = SchemaVersion::new(2, 0, 0);
 
         assert!(v1_0.is_compatible_with(&v1_1));
         assert!(!v1_0.is_compatible_with(&v2_0));
@@ -983,7 +990,7 @@ mod tests {
 
     #[test]
     fn schema_version_display() {
-        assert_eq!(SchemaVersion::CURRENT.to_string(), "1.1");
+        assert_eq!(proof_schema_version_current().to_string(), "1.1.0");
     }
 
     // -- InvarianceDigest --
@@ -1109,10 +1116,7 @@ mod tests {
     #[test]
     fn validate_receipt_incompatible_version() {
         let mut receipt = test_receipt_unsigned();
-        receipt.schema_version = SchemaVersion {
-            major: 99,
-            minor: 0,
-        };
+        receipt.schema_version = SchemaVersion::new(99, 0, 0);
         let receipt = receipt.sign(TEST_KEY);
         assert!(matches!(
             validate_receipt(&receipt, TEST_KEY, test_epoch()),
@@ -1189,7 +1193,7 @@ mod tests {
     #[test]
     fn validate_legacy_high_impact_without_attestation_is_policy_controlled() {
         let mut receipt = test_receipt_unsigned();
-        receipt.schema_version = SchemaVersion::V1_0;
+        receipt.schema_version = proof_schema_version_v1_0();
         receipt.decision_impact = DecisionImpact::HighImpact;
         let receipt = receipt.sign(TEST_KEY);
 
@@ -1208,7 +1212,7 @@ mod tests {
     #[test]
     fn validate_attestation_bindings_not_allowed_before_v1_1() {
         let mut receipt = test_receipt_unsigned();
-        receipt.schema_version = SchemaVersion::V1_0;
+        receipt.schema_version = proof_schema_version_v1_0();
         receipt.attestation_bindings = Some(test_attestation_bindings());
         let receipt = receipt.sign(TEST_KEY);
         assert!(matches!(
@@ -1279,10 +1283,7 @@ mod tests {
     #[test]
     fn validate_token_incompatible_version() {
         let mut token = test_rollback_unsigned();
-        token.schema_version = SchemaVersion {
-            major: 99,
-            minor: 0,
-        };
+        token.schema_version = SchemaVersion::new(99, 0, 0);
         let token = token.sign(TEST_KEY);
         assert!(matches!(
             validate_rollback_token(&token, TEST_KEY, test_epoch()),
@@ -1385,7 +1386,7 @@ mod tests {
     #[test]
     fn legacy_preimage_ignores_attestation_fields_by_version() {
         let mut legacy_a = test_receipt_unsigned();
-        legacy_a.schema_version = SchemaVersion::V1_0;
+        legacy_a.schema_version = proof_schema_version_v1_0();
         legacy_a.decision_impact = DecisionImpact::Standard;
         legacy_a.attestation_bindings = None;
 

@@ -592,7 +592,7 @@ impl CanonicalEvidenceEmitter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::evidence_ledger::SchemaVersion;
+    use crate::evidence_ledger::current_schema_version;
 
     // -----------------------------------------------------------------------
     // Test helpers
@@ -798,7 +798,7 @@ mod tests {
         assert_eq!(entry.policy_id, "pol-001");
         assert_eq!(entry.epoch_id, SecurityEpoch::GENESIS);
         assert_eq!(entry.timestamp_ns, 1_000_000);
-        assert_eq!(entry.schema_version, SchemaVersion::CURRENT);
+        assert_eq!(entry.schema_version, current_schema_version());
     }
 
     #[test]

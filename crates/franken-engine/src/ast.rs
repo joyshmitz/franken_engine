@@ -253,6 +253,9 @@ pub enum Expression {
     Identifier(String),
     StringLiteral(String),
     NumericLiteral(i64),
+    BooleanLiteral(bool),
+    NullLiteral,
+    UndefinedLiteral,
     Await(Box<Expression>),
     Raw(String),
 }
@@ -281,6 +284,27 @@ impl Expression {
                     CanonicalValue::String("numeric".to_string()),
                 );
                 map.insert("value".to_string(), CanonicalValue::I64(*value));
+            }
+            Self::BooleanLiteral(value) => {
+                map.insert(
+                    "kind".to_string(),
+                    CanonicalValue::String("boolean".to_string()),
+                );
+                map.insert("value".to_string(), CanonicalValue::Bool(*value));
+            }
+            Self::NullLiteral => {
+                map.insert(
+                    "kind".to_string(),
+                    CanonicalValue::String("null".to_string()),
+                );
+                map.insert("value".to_string(), CanonicalValue::Null);
+            }
+            Self::UndefinedLiteral => {
+                map.insert(
+                    "kind".to_string(),
+                    CanonicalValue::String("undefined".to_string()),
+                );
+                map.insert("value".to_string(), CanonicalValue::Null);
             }
             Self::Await(value) => {
                 map.insert(
@@ -731,6 +755,51 @@ mod tests {
     }
 
     #[test]
+    fn expression_boolean_literal_canonical_value() {
+        let expr = Expression::BooleanLiteral(true);
+        match expr.canonical_value() {
+            CanonicalValue::Map(map) => {
+                assert_eq!(
+                    map.get("kind"),
+                    Some(&CanonicalValue::String("boolean".to_string()))
+                );
+                assert_eq!(map.get("value"), Some(&CanonicalValue::Bool(true)));
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn expression_null_literal_canonical_value() {
+        let expr = Expression::NullLiteral;
+        match expr.canonical_value() {
+            CanonicalValue::Map(map) => {
+                assert_eq!(
+                    map.get("kind"),
+                    Some(&CanonicalValue::String("null".to_string()))
+                );
+                assert_eq!(map.get("value"), Some(&CanonicalValue::Null));
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn expression_undefined_literal_canonical_value() {
+        let expr = Expression::UndefinedLiteral;
+        match expr.canonical_value() {
+            CanonicalValue::Map(map) => {
+                assert_eq!(
+                    map.get("kind"),
+                    Some(&CanonicalValue::String("undefined".to_string()))
+                );
+                assert_eq!(map.get("value"), Some(&CanonicalValue::Null));
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
     fn expression_await_wraps_nested_expression() {
         let inner = Expression::Identifier("work".to_string());
         let expr = Expression::Await(Box::new(inner.clone()));
@@ -786,6 +855,9 @@ mod tests {
             Expression::Identifier("x".to_string()),
             Expression::StringLiteral("hello".to_string()),
             Expression::NumericLiteral(42),
+            Expression::BooleanLiteral(true),
+            Expression::NullLiteral,
+            Expression::UndefinedLiteral,
             Expression::Await(Box::new(Expression::Identifier("work".to_string()))),
             Expression::Raw("a + b".to_string()),
         ];

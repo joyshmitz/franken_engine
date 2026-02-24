@@ -65,7 +65,7 @@ impl DeterministicRng {
         x ^= x >> 7;
         x ^= x << 17;
         self.state = x;
-        x
+        x.wrapping_mul(0x2545F4914F6CDD1D)
     }
 }
 
@@ -374,12 +374,39 @@ pub fn assert_structured_logs(
 }
 
 /// Replay-verification result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReplayMismatchKind {
+    Digest,
+    EventStream,
+    RandomTranscript,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReplayVerification {
     pub matches: bool,
     pub expected_digest: String,
     pub actual_digest: String,
     pub reason: Option<String>,
+    pub mismatch_kind: Option<ReplayMismatchKind>,
+    pub diverged_event_sequence: Option<u64>,
+    pub transcript_mismatch_index: Option<usize>,
+    pub expected_event_count: usize,
+    pub actual_event_count: usize,
+    pub expected_transcript_len: usize,
+    pub actual_transcript_len: usize,
+}
+
+fn first_event_mismatch_index(expected: &[HarnessEvent], actual: &[HarnessEvent]) -> Option<u64> {
+    let max_len = expected.len().max(actual.len());
+    (0..max_len)
+        .find(|&idx| expected.get(idx) != actual.get(idx))
+        .map(|idx| idx as u64)
+}
+
+fn first_transcript_mismatch(expected: &[u64], actual: &[u64]) -> Option<usize> {
+    let max_len = expected.len().max(actual.len());
+    (0..max_len).find(|&idx| expected.get(idx) != actual.get(idx))
 }
 
 /// Verifies deterministic replay equivalence between two run outputs.
@@ -387,16 +414,28 @@ pub fn verify_replay(expected: &RunResult, actual: &RunResult) -> ReplayVerifica
     let digest_matches = expected.output_digest == actual.output_digest;
     let events_match = expected.events == actual.events;
     let transcript_matches = expected.random_transcript == actual.random_transcript;
+    let diverged_event_sequence = first_event_mismatch_index(&expected.events, &actual.events);
+    let transcript_mismatch_index =
+        first_transcript_mismatch(&expected.random_transcript, &actual.random_transcript);
     let matches = digest_matches && events_match && transcript_matches;
 
-    let reason = if matches {
-        None
+    let (reason, mismatch_kind) = if matches {
+        (None, None)
     } else if !digest_matches {
-        Some("digest mismatch".to_string())
+        (
+            Some("digest mismatch".to_string()),
+            Some(ReplayMismatchKind::Digest),
+        )
     } else if !events_match {
-        Some("event stream mismatch".to_string())
+        (
+            Some("event stream mismatch".to_string()),
+            Some(ReplayMismatchKind::EventStream),
+        )
     } else {
-        Some("random transcript mismatch".to_string())
+        (
+            Some("random transcript mismatch".to_string()),
+            Some(ReplayMismatchKind::RandomTranscript),
+        )
     };
 
     ReplayVerification {
@@ -404,10 +443,39 @@ pub fn verify_replay(expected: &RunResult, actual: &RunResult) -> ReplayVerifica
         expected_digest: expected.output_digest.clone(),
         actual_digest: actual.output_digest.clone(),
         reason,
+        mismatch_kind,
+        diverged_event_sequence,
+        transcript_mismatch_index,
+        expected_event_count: expected.events.len(),
+        actual_event_count: actual.events.len(),
+        expected_transcript_len: expected.random_transcript.len(),
+        actual_transcript_len: actual.random_transcript.len(),
     }
 }
 
 /// Counterfactual replay delta summary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CounterfactualDivergenceKind {
+    EventMismatch,
+    MissingBaselineEvent,
+    MissingCounterfactualEvent,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CounterfactualDivergenceSample {
+    pub sequence: u64,
+    pub kind: CounterfactualDivergenceKind,
+    pub baseline_component: Option<String>,
+    pub counterfactual_component: Option<String>,
+    pub baseline_event: Option<String>,
+    pub counterfactual_event: Option<String>,
+    pub baseline_outcome: Option<String>,
+    pub counterfactual_outcome: Option<String>,
+    pub baseline_error_code: Option<String>,
+    pub counterfactual_error_code: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CounterfactualDelta {
     pub baseline_run_id: String,
@@ -416,6 +484,12 @@ pub struct CounterfactualDelta {
     pub diverged_at_sequence: Option<u64>,
     pub changed_events: usize,
     pub changed_outcomes: usize,
+    pub changed_error_codes: usize,
+    pub baseline_event_count: usize,
+    pub counterfactual_event_count: usize,
+    pub transcript_changed: bool,
+    pub transcript_diverged_at_index: Option<usize>,
+    pub divergence_samples: Vec<CounterfactualDivergenceSample>,
 }
 
 /// Compares baseline and counterfactual runs and summarizes divergences.
@@ -423,26 +497,92 @@ pub fn compare_counterfactual(
     baseline: &RunResult,
     counterfactual: &RunResult,
 ) -> CounterfactualDelta {
+    const MAX_DIVERGENCE_SAMPLES: usize = 8;
+
     let mut diverged_at_sequence = None;
     let mut changed_events = 0usize;
     let mut changed_outcomes = 0usize;
+    let mut changed_error_codes = 0usize;
+    let mut divergence_samples = Vec::new();
+    let transcript_diverged_at_index = first_transcript_mismatch(
+        &baseline.random_transcript,
+        &counterfactual.random_transcript,
+    );
 
     let max_len = baseline.events.len().max(counterfactual.events.len());
     for idx in 0..max_len {
         let base = baseline.events.get(idx);
         let alt = counterfactual.events.get(idx);
-        if base != alt {
-            changed_events += 1;
-            if diverged_at_sequence.is_none() {
-                diverged_at_sequence = Some(idx as u64);
+        match (base, alt) {
+            (Some(base_event), Some(alt_event)) => {
+                if base_event != alt_event {
+                    changed_events += 1;
+                    if diverged_at_sequence.is_none() {
+                        diverged_at_sequence = Some(idx as u64);
+                    }
+                    if divergence_samples.len() < MAX_DIVERGENCE_SAMPLES {
+                        divergence_samples.push(CounterfactualDivergenceSample {
+                            sequence: idx as u64,
+                            kind: CounterfactualDivergenceKind::EventMismatch,
+                            baseline_component: Some(base_event.component.clone()),
+                            counterfactual_component: Some(alt_event.component.clone()),
+                            baseline_event: Some(base_event.event.clone()),
+                            counterfactual_event: Some(alt_event.event.clone()),
+                            baseline_outcome: Some(base_event.outcome.clone()),
+                            counterfactual_outcome: Some(alt_event.outcome.clone()),
+                            baseline_error_code: base_event.error_code.clone(),
+                            counterfactual_error_code: alt_event.error_code.clone(),
+                        });
+                    }
+                }
+                if base_event.outcome != alt_event.outcome {
+                    changed_outcomes += 1;
+                }
+                if base_event.error_code != alt_event.error_code {
+                    changed_error_codes += 1;
+                }
             }
-        }
-
-        if let (Some(base_event), Some(alt_event)) = (base, alt)
-            && (base_event.outcome != alt_event.outcome
-                || base_event.error_code != alt_event.error_code)
-        {
-            changed_outcomes += 1;
+            (Some(base_event), None) => {
+                changed_events += 1;
+                if diverged_at_sequence.is_none() {
+                    diverged_at_sequence = Some(idx as u64);
+                }
+                if divergence_samples.len() < MAX_DIVERGENCE_SAMPLES {
+                    divergence_samples.push(CounterfactualDivergenceSample {
+                        sequence: idx as u64,
+                        kind: CounterfactualDivergenceKind::MissingCounterfactualEvent,
+                        baseline_component: Some(base_event.component.clone()),
+                        counterfactual_component: None,
+                        baseline_event: Some(base_event.event.clone()),
+                        counterfactual_event: None,
+                        baseline_outcome: Some(base_event.outcome.clone()),
+                        counterfactual_outcome: None,
+                        baseline_error_code: base_event.error_code.clone(),
+                        counterfactual_error_code: None,
+                    });
+                }
+            }
+            (None, Some(alt_event)) => {
+                changed_events += 1;
+                if diverged_at_sequence.is_none() {
+                    diverged_at_sequence = Some(idx as u64);
+                }
+                if divergence_samples.len() < MAX_DIVERGENCE_SAMPLES {
+                    divergence_samples.push(CounterfactualDivergenceSample {
+                        sequence: idx as u64,
+                        kind: CounterfactualDivergenceKind::MissingBaselineEvent,
+                        baseline_component: None,
+                        counterfactual_component: Some(alt_event.component.clone()),
+                        baseline_event: None,
+                        counterfactual_event: Some(alt_event.event.clone()),
+                        baseline_outcome: None,
+                        counterfactual_outcome: Some(alt_event.outcome.clone()),
+                        baseline_error_code: None,
+                        counterfactual_error_code: alt_event.error_code.clone(),
+                    });
+                }
+            }
+            (None, None) => {}
         }
     }
 
@@ -453,6 +593,12 @@ pub fn compare_counterfactual(
         diverged_at_sequence,
         changed_events,
         changed_outcomes,
+        changed_error_codes,
+        baseline_event_count: baseline.events.len(),
+        counterfactual_event_count: counterfactual.events.len(),
+        transcript_changed: transcript_diverged_at_index.is_some(),
+        transcript_diverged_at_index,
+        divergence_samples,
     }
 }
 
@@ -1232,6 +1378,9 @@ mod tests {
         let v = verify_replay(&a, &b);
         assert!(v.matches);
         assert!(v.reason.is_none());
+        assert!(v.mismatch_kind.is_none());
+        assert!(v.diverged_event_sequence.is_none());
+        assert!(v.transcript_mismatch_index.is_none());
     }
 
     #[test]
@@ -1241,6 +1390,41 @@ mod tests {
         let v = verify_replay(&a, &b);
         assert!(!v.matches);
         assert_eq!(v.reason.as_deref(), Some("digest mismatch"));
+        assert_eq!(v.mismatch_kind, Some(ReplayMismatchKind::Digest));
+    }
+
+    #[test]
+    fn replay_event_stream_mismatch() {
+        let mut a = make_run_result("abc", 1);
+        let mut b = make_run_result("abc", 1);
+        a.events.push(HarnessEvent {
+            trace_id: "t".into(),
+            decision_id: "d".into(),
+            policy_id: "p".into(),
+            component: "scheduler".into(),
+            event: "dispatch".into(),
+            outcome: "ok".into(),
+            error_code: None,
+            sequence: 0,
+            virtual_time_micros: 0,
+        });
+        b.events.push(HarnessEvent {
+            trace_id: "t".into(),
+            decision_id: "d".into(),
+            policy_id: "p".into(),
+            component: "scheduler".into(),
+            event: "dispatch".into(),
+            outcome: "error".into(),
+            error_code: Some("FE-E2E-9999".into()),
+            sequence: 0,
+            virtual_time_micros: 0,
+        });
+        let v = verify_replay(&a, &b);
+        assert!(!v.matches);
+        assert_eq!(v.reason.as_deref(), Some("event stream mismatch"));
+        assert_eq!(v.mismatch_kind, Some(ReplayMismatchKind::EventStream));
+        assert_eq!(v.diverged_event_sequence, Some(0));
+        assert!(v.transcript_mismatch_index.is_none());
     }
 
     #[test]
@@ -1251,6 +1435,10 @@ mod tests {
         let v = verify_replay(&a, &b);
         assert!(!v.matches);
         assert_eq!(v.reason.as_deref(), Some("random transcript mismatch"));
+        assert_eq!(v.mismatch_kind, Some(ReplayMismatchKind::RandomTranscript));
+        assert_eq!(v.transcript_mismatch_index, Some(0));
+        assert_eq!(v.expected_transcript_len, 1);
+        assert_eq!(v.actual_transcript_len, 1);
     }
 
     // ── compare_counterfactual ────────────────────────────────────
@@ -1265,7 +1453,11 @@ mod tests {
         assert!(!delta.digest_changed);
         assert_eq!(delta.changed_events, 0);
         assert_eq!(delta.changed_outcomes, 0);
+        assert_eq!(delta.changed_error_codes, 0);
         assert!(delta.diverged_at_sequence.is_none());
+        assert!(!delta.transcript_changed);
+        assert!(delta.transcript_diverged_at_index.is_none());
+        assert!(delta.divergence_samples.is_empty());
     }
 
     #[test]
@@ -1299,6 +1491,13 @@ mod tests {
         let delta = compare_counterfactual(&a, &b);
         assert_eq!(delta.changed_events, 1);
         assert_eq!(delta.diverged_at_sequence, Some(0));
+        assert_eq!(delta.baseline_event_count, 1);
+        assert_eq!(delta.counterfactual_event_count, 0);
+        assert_eq!(delta.divergence_samples.len(), 1);
+        assert_eq!(
+            delta.divergence_samples[0].kind,
+            CounterfactualDivergenceKind::MissingCounterfactualEvent
+        );
     }
 
     #[test]
@@ -1319,9 +1518,13 @@ mod tests {
         a.events.push(evt.clone());
         let mut evt2 = evt;
         evt2.outcome = "fail".into();
+        evt2.error_code = Some("FE-E2E-FAIL".into());
         b.events.push(evt2);
         let delta = compare_counterfactual(&a, &b);
         assert_eq!(delta.changed_outcomes, 1);
+        assert_eq!(delta.changed_error_codes, 1);
+        assert_eq!(delta.divergence_samples.len(), 1);
+        assert_eq!(delta.divergence_samples[0].sequence, 0);
     }
 
     // ── RunReport ─────────────────────────────────────────────────
@@ -1424,6 +1627,13 @@ mod tests {
             expected_digest: "e".into(),
             actual_digest: "a".into(),
             reason: None,
+            mismatch_kind: None,
+            diverged_event_sequence: None,
+            transcript_mismatch_index: None,
+            expected_event_count: 0,
+            actual_event_count: 0,
+            expected_transcript_len: 0,
+            actual_transcript_len: 0,
         };
         let json = serde_json::to_string(&v).unwrap();
         let back: ReplayVerification = serde_json::from_str(&json).unwrap();
@@ -1441,6 +1651,23 @@ mod tests {
             diverged_at_sequence: Some(3),
             changed_events: 5,
             changed_outcomes: 2,
+            changed_error_codes: 1,
+            baseline_event_count: 6,
+            counterfactual_event_count: 5,
+            transcript_changed: true,
+            transcript_diverged_at_index: Some(2),
+            divergence_samples: vec![CounterfactualDivergenceSample {
+                sequence: 3,
+                kind: CounterfactualDivergenceKind::EventMismatch,
+                baseline_component: Some("baseline".into()),
+                counterfactual_component: Some("counterfactual".into()),
+                baseline_event: Some("evaluate".into()),
+                counterfactual_event: Some("evaluate".into()),
+                baseline_outcome: Some("ok".into()),
+                counterfactual_outcome: Some("error".into()),
+                baseline_error_code: None,
+                counterfactual_error_code: Some("FE-ERR".into()),
+            }],
         };
         let json = serde_json::to_string(&d).unwrap();
         let back: CounterfactualDelta = serde_json::from_str(&json).unwrap();

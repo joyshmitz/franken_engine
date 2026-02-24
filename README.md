@@ -378,6 +378,17 @@ Create a signed golden-update artifact when intentionally accepting an output di
 The command writes a deterministic JSON artifact under
 `crates/franken-engine/tests/artifacts/golden-updates/`.
 
+## Parser Phase0 Gate
+
+`bd-3spt` parser phase0 gate validates scalar-reference parser determinism, semantic fixture hashes, and artifact-bundle generation.
+
+```bash
+# parser phase0 CI gate (check + focused parser tests + artifact bundle)
+./scripts/run_parser_phase0_gate.sh ci
+```
+
+Gate run manifests are written under `artifacts/parser_phase0_gate/<timestamp>/run_manifest.json`.
+
 ## Troubleshooting
 
 | Symptom | Likely Cause | Fix |

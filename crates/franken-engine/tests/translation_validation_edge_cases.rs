@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use frankenengine_engine::engine_object_id::{self, ObjectDomain, SchemaId};
 use frankenengine_engine::hash_tiers::{AuthenticityHash, ContentHash};
 use frankenengine_engine::proof_schema::{
-    ActivationStage, OptReceipt, OptimizationClass, RollbackToken, SchemaVersion,
+    ActivationStage, OptReceipt, OptimizationClass, RollbackToken, proof_schema_version_current,
 };
 use frankenengine_engine::security_epoch::SecurityEpoch;
 use frankenengine_engine::tee_attestation_policy::DecisionImpact;
@@ -44,7 +44,7 @@ fn opt_receipt(id: &str) -> OptReceipt {
     compat.insert("engine_version".into(), "0.1.0".into());
 
     OptReceipt {
-        schema_version: SchemaVersion::CURRENT,
+        schema_version: proof_schema_version_current(),
         optimization_id: id.to_string(),
         optimization_class: OptimizationClass::Superinstruction,
         baseline_ir_hash: ContentHash::compute(b"baseline-ir"),
@@ -66,7 +66,7 @@ fn opt_receipt(id: &str) -> OptReceipt {
 
 fn rollback_token(id: &str) -> RollbackToken {
     RollbackToken {
-        schema_version: SchemaVersion::CURRENT,
+        schema_version: proof_schema_version_current(),
         token_id: format!("token-{id}"),
         optimization_id: id.to_string(),
         baseline_snapshot_hash: ContentHash::compute(b"baseline-snapshot"),
