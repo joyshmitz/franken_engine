@@ -90,6 +90,7 @@ pub mod governance_mechanism;
 pub mod governance_scorecard;
 pub mod guardplane_calibration;
 pub mod hash_tiers;
+pub mod hook_effect_contract;
 pub mod hostcall_telemetry;
 pub mod idempotency_key;
 pub mod ifc_artifacts;
