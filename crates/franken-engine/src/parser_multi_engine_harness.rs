@@ -25,6 +25,9 @@ const EXTERNAL_DIAGNOSTIC_TAXONOMY_VERSION: &str = "external.engine-diagnostic.v
 const DRIFT_CLASSIFICATION_TAXONOMY_VERSION: &str =
     "franken-engine.parser-multi-engine-drift-taxonomy.v1";
 const REPORT_SCHEMA_VERSION: &str = "franken-engine.parser-multi-engine.report.v2";
+const DRIFT_REPRO_PACK_SCHEMA_VERSION: &str = "franken-engine.parser-drift-repro-pack.v1";
+const MAX_SOURCE_MINIMIZATION_ROUNDS: u32 = 32;
+const MAX_SOURCE_MINIMIZATION_CANDIDATES: u32 = 256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -121,7 +124,7 @@ pub struct HarnessFixtureSpec {
     pub expected_hash: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EngineOutcomeKind {
     Hash,
@@ -161,6 +164,8 @@ pub struct FixtureComparisonResult {
     pub divergence_reason: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub drift_classification: Option<DriftClassification>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repro_pack: Option<DriftReproPack>,
     pub replay_command: String,
     pub engine_results: Vec<EngineFixtureResult>,
 }
@@ -287,6 +292,32 @@ pub struct DriftClassification {
     pub comparator_decision: String,
     pub owner_hint: String,
     pub remediation_hint: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DriftMinimizationStats {
+    pub attempted: bool,
+    pub rounds: u32,
+    pub candidates_evaluated: u32,
+    pub bytes_removed: u64,
+    pub original_bytes: u64,
+    pub minimized_bytes: u64,
+    pub fixed_point: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DriftReproPack {
+    pub schema_version: String,
+    pub fixture_id: String,
+    pub family_id: String,
+    pub source_hash: String,
+    pub minimized_source: String,
+    pub minimized_source_hash: String,
+    pub replay_command: String,
+    pub drift_classification: DriftClassification,
+    pub minimization: DriftMinimizationStats,
+    pub promotion_hooks: Vec<String>,
+    pub provenance_hash: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -437,6 +468,42 @@ impl fmt::Display for MultiEngineHarnessError {
 
 impl std::error::Error for MultiEngineHarnessError {}
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FixtureEvaluation {
+    engine_results: Vec<EngineFixtureResult>,
+    equivalent_across_engines: bool,
+    nondeterministic_engine_count: u64,
+    divergence_reason: Option<String>,
+    drift_classification: Option<DriftClassification>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DriftSignature {
+    classification: DriftClassification,
+    engine_kinds: Vec<EngineOutcomeKind>,
+}
+
+impl DriftSignature {
+    fn from_fixture_result(result: &FixtureComparisonResult) -> Option<Self> {
+        let classification = result.drift_classification.clone()?;
+        let engine_kinds = result
+            .engine_results
+            .iter()
+            .map(|engine| engine.first_run.kind.clone())
+            .collect::<Vec<_>>();
+        Some(Self {
+            classification,
+            engine_kinds,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SourceMinimizationResult {
+    minimized_source: String,
+    stats: DriftMinimizationStats,
+}
+
 pub fn run_multi_engine_harness(
     config: &MultiEngineHarnessConfig,
 ) -> Result<MultiEngineHarnessReport, MultiEngineHarnessError> {
@@ -488,86 +555,17 @@ pub fn run_multi_engine_harness(
             config.decision_id,
             config.policy_id,
         );
+        let evaluation = evaluate_fixture(config, fixture, goal, fixture.source.as_str())?;
 
-        let mut engine_results = Vec::with_capacity(config.engines.len());
-        let mut outcome_signatures = BTreeMap::<String, Vec<String>>::new();
-        let mut nondeterministic_engine_count = 0_u64;
-
-        for engine in &config.engines {
-            let derived_seed =
-                derive_engine_seed(config.seed, fixture.id.as_str(), engine.engine_id.as_str());
-            let first = execute_engine(engine, fixture, goal, derived_seed, config)?;
-            let second = execute_engine(engine, fixture, goal, derived_seed, config)?;
-            let first_normalized =
-                normalize_engine_observation(engine.engine_id.as_str(), &first.observation)?;
-            let second_normalized =
-                normalize_engine_observation(engine.engine_id.as_str(), &second.observation)?;
-            let deterministic =
-                first.observation == second.observation && first_normalized == second_normalized;
-            if !deterministic {
-                nondeterministic_engine_count += 1;
-            }
-
-            let first_run = EngineRunOutcome {
-                kind: first.observation.kind(),
-                value: first.observation.value().to_string(),
-                deterministic,
-                duration_us: first.duration_us,
-                normalized_ast: first_normalized.normalized_ast.clone(),
-                normalized_diagnostic: first_normalized.normalized_diagnostic.clone(),
-            };
-            let second_run = EngineRunOutcome {
-                kind: second.observation.kind(),
-                value: second.observation.value().to_string(),
-                deterministic,
-                duration_us: second.duration_us,
-                normalized_ast: second_normalized.normalized_ast.clone(),
-                normalized_diagnostic: second_normalized.normalized_diagnostic.clone(),
-            };
-
-            outcome_signatures
-                .entry(first_normalized.signature())
-                .or_default()
-                .push(engine.engine_id.clone());
-
-            engine_results.push(EngineFixtureResult {
-                engine_id: engine.engine_id.clone(),
-                display_name: engine.display_name.clone(),
-                version_pin: engine.version_pin.clone(),
-                derived_seed,
-                first_run,
-                second_run,
-            });
-        }
-
-        let equivalent_across_engines =
-            outcome_signatures.len() == 1 && nondeterministic_engine_count == 0;
-        let divergence_reason = if equivalent_across_engines {
-            None
-        } else {
-            Some(format_divergence_reason(
-                &outcome_signatures,
-                nondeterministic_engine_count,
-            ))
-        };
-        let drift_classification = if equivalent_across_engines {
-            None
-        } else {
-            Some(classify_fixture_drift(
-                &engine_results,
-                nondeterministic_engine_count,
-            ))
-        };
-
-        if equivalent_across_engines {
+        if evaluation.equivalent_across_engines {
             equivalent_count += 1;
         } else {
             divergent_count += 1;
         }
-        if nondeterministic_engine_count > 0 {
+        if evaluation.nondeterministic_engine_count > 0 {
             fixtures_with_nondeterminism += 1;
         }
-        if let Some(classification) = drift_classification.as_ref() {
+        if let Some(classification) = evaluation.drift_classification.as_ref() {
             *drift_counts_by_category
                 .entry(format!("{:?}", classification.category).to_ascii_lowercase())
                 .or_insert(0) += 1;
@@ -577,18 +575,49 @@ pub fn run_multi_engine_harness(
             }
         }
 
-        fixture_results.push(FixtureComparisonResult {
+        let mut fixture_result = FixtureComparisonResult {
             fixture_id: fixture.id.clone(),
             family_id: fixture.family_id.clone(),
             goal: fixture.goal.clone(),
             source_hash,
-            equivalent_across_engines,
-            nondeterministic_engine_count,
-            divergence_reason,
-            drift_classification,
+            equivalent_across_engines: evaluation.equivalent_across_engines,
+            nondeterministic_engine_count: evaluation.nondeterministic_engine_count,
+            divergence_reason: evaluation.divergence_reason,
+            drift_classification: evaluation.drift_classification,
+            repro_pack: None,
             replay_command,
-            engine_results,
-        });
+            engine_results: evaluation.engine_results,
+        };
+
+        if let Some(signature) = DriftSignature::from_fixture_result(&fixture_result) {
+            let minimization = if fixture_result.nondeterministic_engine_count == 0 {
+                minimize_fixture_source(config, fixture, goal, &signature)?
+            } else {
+                SourceMinimizationResult {
+                    minimized_source: fixture.source.clone(),
+                    stats: DriftMinimizationStats {
+                        attempted: false,
+                        rounds: 0,
+                        candidates_evaluated: 0,
+                        bytes_removed: 0,
+                        original_bytes: fixture.source.len() as u64,
+                        minimized_bytes: fixture.source.len() as u64,
+                        fixed_point: true,
+                    },
+                }
+            };
+
+            fixture_result.repro_pack = Some(build_drift_repro_pack(
+                config,
+                fixture,
+                fixture_result.source_hash.as_str(),
+                fixture_result.replay_command.as_str(),
+                &signature.classification,
+                minimization,
+            ));
+        }
+
+        fixture_results.push(fixture_result);
     }
 
     Ok(MultiEngineHarnessReport {
@@ -664,6 +693,331 @@ fn format_divergence_reason(
         ));
     }
     parts.join("; ")
+}
+
+fn evaluate_fixture(
+    config: &MultiEngineHarnessConfig,
+    fixture: &HarnessFixtureSpec,
+    goal: ParseGoal,
+    source: &str,
+) -> Result<FixtureEvaluation, MultiEngineHarnessError> {
+    let mut source_fixture = fixture.clone();
+    source_fixture.source = source.to_string();
+
+    let mut engine_results = Vec::with_capacity(config.engines.len());
+    let mut outcome_signatures = BTreeMap::<String, Vec<String>>::new();
+    let mut nondeterministic_engine_count = 0_u64;
+
+    for engine in &config.engines {
+        let derived_seed =
+            derive_engine_seed(config.seed, fixture.id.as_str(), engine.engine_id.as_str());
+        let first = execute_engine(engine, &source_fixture, goal, derived_seed, config)?;
+        let second = execute_engine(engine, &source_fixture, goal, derived_seed, config)?;
+        let first_normalized =
+            normalize_engine_observation(engine.engine_id.as_str(), &first.observation)?;
+        let second_normalized =
+            normalize_engine_observation(engine.engine_id.as_str(), &second.observation)?;
+        let deterministic =
+            first.observation == second.observation && first_normalized == second_normalized;
+        if !deterministic {
+            nondeterministic_engine_count += 1;
+        }
+
+        let first_run = EngineRunOutcome {
+            kind: first.observation.kind(),
+            value: first.observation.value().to_string(),
+            deterministic,
+            duration_us: first.duration_us,
+            normalized_ast: first_normalized.normalized_ast.clone(),
+            normalized_diagnostic: first_normalized.normalized_diagnostic.clone(),
+        };
+        let second_run = EngineRunOutcome {
+            kind: second.observation.kind(),
+            value: second.observation.value().to_string(),
+            deterministic,
+            duration_us: second.duration_us,
+            normalized_ast: second_normalized.normalized_ast.clone(),
+            normalized_diagnostic: second_normalized.normalized_diagnostic.clone(),
+        };
+
+        outcome_signatures
+            .entry(first_normalized.signature())
+            .or_default()
+            .push(engine.engine_id.clone());
+
+        engine_results.push(EngineFixtureResult {
+            engine_id: engine.engine_id.clone(),
+            display_name: engine.display_name.clone(),
+            version_pin: engine.version_pin.clone(),
+            derived_seed,
+            first_run,
+            second_run,
+        });
+    }
+
+    let equivalent_across_engines =
+        outcome_signatures.len() == 1 && nondeterministic_engine_count == 0;
+    let divergence_reason = if equivalent_across_engines {
+        None
+    } else {
+        Some(format_divergence_reason(
+            &outcome_signatures,
+            nondeterministic_engine_count,
+        ))
+    };
+    let drift_classification = if equivalent_across_engines {
+        None
+    } else {
+        Some(classify_fixture_drift(
+            &engine_results,
+            nondeterministic_engine_count,
+        ))
+    };
+
+    Ok(FixtureEvaluation {
+        engine_results,
+        equivalent_across_engines,
+        nondeterministic_engine_count,
+        divergence_reason,
+        drift_classification,
+    })
+}
+
+fn minimize_fixture_source(
+    config: &MultiEngineHarnessConfig,
+    fixture: &HarnessFixtureSpec,
+    goal: ParseGoal,
+    signature: &DriftSignature,
+) -> Result<SourceMinimizationResult, MultiEngineHarnessError> {
+    let mut captured_error = None::<MultiEngineHarnessError>;
+    let minimization = minimize_source_with(fixture.source.as_str(), |candidate| {
+        match candidate_preserves_drift_signature(config, fixture, goal, candidate, signature) {
+            Ok(preserves) => preserves,
+            Err(error) => {
+                if captured_error.is_none() {
+                    captured_error = Some(error);
+                }
+                false
+            }
+        }
+    });
+
+    if let Some(error) = captured_error {
+        return Err(error);
+    }
+
+    Ok(minimization)
+}
+
+fn candidate_preserves_drift_signature(
+    config: &MultiEngineHarnessConfig,
+    fixture: &HarnessFixtureSpec,
+    goal: ParseGoal,
+    candidate_source: &str,
+    signature: &DriftSignature,
+) -> Result<bool, MultiEngineHarnessError> {
+    let evaluation = evaluate_fixture(config, fixture, goal, candidate_source)?;
+    if evaluation.equivalent_across_engines || evaluation.nondeterministic_engine_count > 0 {
+        return Ok(false);
+    }
+    let Some(classification) = evaluation.drift_classification else {
+        return Ok(false);
+    };
+    if classification != signature.classification {
+        return Ok(false);
+    }
+    let candidate_kinds = evaluation
+        .engine_results
+        .iter()
+        .map(|engine| engine.first_run.kind.clone())
+        .collect::<Vec<_>>();
+    Ok(candidate_kinds == signature.engine_kinds)
+}
+
+fn minimize_source_with<F>(source: &str, mut still_fails: F) -> SourceMinimizationResult
+where
+    F: FnMut(&str) -> bool,
+{
+    let original_bytes = source.len() as u64;
+    if source.trim().is_empty() {
+        return SourceMinimizationResult {
+            minimized_source: source.to_string(),
+            stats: DriftMinimizationStats {
+                attempted: false,
+                rounds: 0,
+                candidates_evaluated: 0,
+                bytes_removed: 0,
+                original_bytes,
+                minimized_bytes: original_bytes,
+                fixed_point: true,
+            },
+        };
+    }
+    if !still_fails(source) {
+        return SourceMinimizationResult {
+            minimized_source: source.to_string(),
+            stats: DriftMinimizationStats {
+                attempted: false,
+                rounds: 0,
+                candidates_evaluated: 0,
+                bytes_removed: 0,
+                original_bytes,
+                minimized_bytes: original_bytes,
+                fixed_point: true,
+            },
+        };
+    }
+
+    let mut fragments = split_source_fragments(source);
+    let mut chunk_size = std::cmp::max(fragments.len() / 2, 1);
+    let mut rounds = 0_u32;
+    let mut candidates_evaluated = 0_u32;
+    let mut bytes_removed = 0_u64;
+    let mut fixed_point = false;
+
+    while rounds < MAX_SOURCE_MINIMIZATION_ROUNDS
+        && candidates_evaluated < MAX_SOURCE_MINIMIZATION_CANDIDATES
+    {
+        rounds += 1;
+        let mut improved = false;
+        let mut idx = 0_usize;
+        while idx < fragments.len()
+            && candidates_evaluated < MAX_SOURCE_MINIMIZATION_CANDIDATES
+            && fragments.len() > 1
+        {
+            if chunk_size > fragments.len() {
+                break;
+            }
+            let end = std::cmp::min(idx + chunk_size, fragments.len());
+            if end <= idx || fragments.len() - (end - idx) == 0 {
+                break;
+            }
+            let candidate = join_fragments_without_range(&fragments, idx, end);
+            if candidate.trim().is_empty() {
+                idx += chunk_size;
+                continue;
+            }
+            if candidate.len() >= fragments.concat().len() {
+                idx += chunk_size;
+                continue;
+            }
+
+            candidates_evaluated += 1;
+            if still_fails(candidate.as_str()) {
+                let current_len = fragments.concat().len();
+                let removed = current_len.saturating_sub(candidate.len()) as u64;
+                bytes_removed += removed;
+                fragments = split_source_fragments(candidate.as_str());
+                improved = true;
+                idx = 0;
+            } else {
+                idx += chunk_size;
+            }
+        }
+
+        if !improved {
+            if chunk_size == 1 {
+                fixed_point = true;
+                break;
+            }
+            chunk_size = std::cmp::max(chunk_size / 2, 1);
+        }
+    }
+
+    let minimized_source = fragments.concat();
+    let minimized_bytes = minimized_source.len() as u64;
+
+    SourceMinimizationResult {
+        minimized_source,
+        stats: DriftMinimizationStats {
+            attempted: true,
+            rounds,
+            candidates_evaluated,
+            bytes_removed,
+            original_bytes,
+            minimized_bytes,
+            fixed_point,
+        },
+    }
+}
+
+fn split_source_fragments(source: &str) -> Vec<String> {
+    let mut fragments = source
+        .split_inclusive('\n')
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>();
+    if fragments.is_empty() {
+        fragments.push(source.to_string());
+    }
+    fragments
+}
+
+fn join_fragments_without_range(fragments: &[String], start: usize, end: usize) -> String {
+    fragments
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, value)| {
+            if idx >= start && idx < end {
+                None
+            } else {
+                Some(value.as_str())
+            }
+        })
+        .collect::<String>()
+}
+
+fn build_drift_repro_pack(
+    config: &MultiEngineHarnessConfig,
+    fixture: &HarnessFixtureSpec,
+    source_hash: &str,
+    replay_command: &str,
+    classification: &DriftClassification,
+    minimization: SourceMinimizationResult,
+) -> DriftReproPack {
+    let minimized_source_hash = hash_bytes(minimization.minimized_source.as_bytes());
+    let promotion_hooks = vec![
+        format!(
+            "tests/fixtures/parser_drift_minimized/{}.json",
+            fixture.id.as_str()
+        ),
+        format!(
+            "tests/property/parser_drift_minimized/{}.json",
+            fixture.id.as_str()
+        ),
+        format!(
+            "scripts/e2e/parser_drift_repro_replay.sh --fixture-id {}",
+            fixture.id.as_str()
+        ),
+    ];
+    let provenance_input = format!(
+        "{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
+        DRIFT_REPRO_PACK_SCHEMA_VERSION,
+        fixture.id,
+        fixture.family_id,
+        source_hash,
+        minimized_source_hash,
+        classification.comparator_decision,
+        config.seed,
+        config.trace_id,
+        config.decision_id,
+        config.policy_id,
+        config.locale,
+        config.timezone,
+    );
+
+    DriftReproPack {
+        schema_version: DRIFT_REPRO_PACK_SCHEMA_VERSION.to_string(),
+        fixture_id: fixture.id.clone(),
+        family_id: fixture.family_id.clone(),
+        source_hash: source_hash.to_string(),
+        minimized_source: minimization.minimized_source,
+        minimized_source_hash,
+        replay_command: replay_command.to_string(),
+        drift_classification: classification.clone(),
+        minimization: minimization.stats,
+        promotion_hooks,
+        provenance_hash: hash_bytes(provenance_input.as_bytes()),
+    }
 }
 
 fn classify_fixture_drift(
@@ -1314,6 +1668,7 @@ mod tests {
             nondeterministic_engine_count: 0,
             divergence_reason: None,
             drift_classification: None,
+            repro_pack: None,
             replay_command: "replay f-1".to_string(),
             engine_results: vec![EngineFixtureResult {
                 engine_id: "e1".to_string(),
