@@ -215,6 +215,9 @@ mod hex_bytes {
 
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<u8>, D::Error> {
         let hex_str = String::deserialize(d)?;
+        if hex_str.len() % 2 != 0 {
+            return Err(serde::de::Error::custom("hex string must have even length"));
+        }
         (0..hex_str.len())
             .step_by(2)
             .map(|i| u8::from_str_radix(&hex_str[i..i + 2], 16).map_err(serde::de::Error::custom))
@@ -1685,6 +1688,26 @@ mod tests {
         let deser: EphemeralSecret = serde_json::from_str(&json).unwrap();
         assert_eq!(secret.key_name, deser.key_name);
         assert_eq!(secret.value(), deser.value());
+    }
+
+    #[test]
+    fn ephemeral_secret_serde_rejects_odd_hex_length() {
+        let err = serde_json::from_str::<EphemeralSecret>(r#"{"key_name":"key1","value":"abc"}"#)
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("even length"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn ephemeral_secret_serde_rejects_non_hex_characters() {
+        let err = serde_json::from_str::<EphemeralSecret>(r#"{"key_name":"key1","value":"zz"}"#)
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("invalid digit"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
