@@ -1554,4 +1554,23 @@ mod tests {
         }
         assert_eq!(displays.len(), 9, "all 9 tested variants produce distinct messages");
     }
+
+    #[test]
+    fn proof_type_ord() {
+        assert!(ProofType::CapabilityWitness < ProofType::FlowProof);
+        assert!(ProofType::FlowProof < ProofType::ReplayMotif);
+    }
+
+    #[test]
+    fn optimization_class_ord() {
+        assert!(OptimizationClass::HostcallDispatchSpecialization < OptimizationClass::IfcCheckElision);
+        assert!(OptimizationClass::IfcCheckElision < OptimizationClass::SuperinstructionFusion);
+        assert!(OptimizationClass::SuperinstructionFusion < OptimizationClass::PathElimination);
+    }
+
+    #[test]
+    fn equivalence_method_ord() {
+        assert!(EquivalenceMethod::DifferentialTesting < EquivalenceMethod::TranslationValidation);
+        assert!(EquivalenceMethod::TranslationValidation < EquivalenceMethod::Bisimulation);
+    }
 }

@@ -1954,4 +1954,18 @@ mod tests {
         let back: LexerArtifact = serde_json::from_str(&json).unwrap();
         assert_eq!(artifact, back);
     }
+
+    #[test]
+    fn token_kind_ord() {
+        assert!(TokenKind::Identifier < TokenKind::NumericLiteral);
+        assert!(TokenKind::NumericLiteral < TokenKind::StringLiteral);
+        assert!(TokenKind::StringLiteral < TokenKind::UnterminatedString);
+        assert!(TokenKind::TwoCharOperator < TokenKind::Punctuation);
+    }
+
+    #[test]
+    fn lexer_mode_ord() {
+        assert!(LexerMode::Swar < LexerMode::Scalar);
+        assert!(LexerMode::Scalar < LexerMode::Differential);
+    }
 }

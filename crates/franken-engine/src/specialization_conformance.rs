@@ -2551,4 +2551,29 @@ mod tests {
             &outcomes
         ));
     }
+
+    #[test]
+    fn transformation_type_ord() {
+        assert!(TransformationType::HostcallDispatchElision < TransformationType::LabelCheckElision);
+        assert!(TransformationType::LabelCheckElision < TransformationType::PathRemoval);
+        assert!(TransformationType::PathRemoval < TransformationType::SuperinstructionFusion);
+    }
+
+    #[test]
+    fn corpus_category_ord() {
+        assert!(CorpusCategory::SemanticParity < CorpusCategory::EdgeCase);
+        assert!(CorpusCategory::EdgeCase < CorpusCategory::EpochTransition);
+    }
+
+    #[test]
+    fn comparison_verdict_ord() {
+        assert!(ComparisonVerdict::Match < ComparisonVerdict::Diverge);
+    }
+
+    #[test]
+    fn divergence_kind_ord() {
+        assert!(DivergenceKind::ReturnValue < DivergenceKind::SideEffectTrace);
+        assert!(DivergenceKind::SideEffectTrace < DivergenceKind::ExceptionSequence);
+        assert!(DivergenceKind::ExceptionSequence < DivergenceKind::EvidenceEmission);
+    }
 }

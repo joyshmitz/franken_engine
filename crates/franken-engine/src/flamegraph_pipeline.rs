@@ -2013,4 +2013,11 @@ mod tests {
         let decision = run_flamegraph_pipeline(&mut adapter, &req);
         assert!(!decision.is_success());
     }
+
+    #[test]
+    fn flamegraph_kind_ord() {
+        assert!(FlamegraphKind::Cpu < FlamegraphKind::Allocation);
+        assert!(FlamegraphKind::Allocation < FlamegraphKind::DiffCpu);
+        assert!(FlamegraphKind::DiffCpu < FlamegraphKind::DiffAllocation);
+    }
 }

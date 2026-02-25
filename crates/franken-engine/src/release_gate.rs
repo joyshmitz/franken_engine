@@ -1588,4 +1588,11 @@ mod tests {
         };
         assert!(!result.is_blocked());
     }
+
+    #[test]
+    fn gate_check_kind_ord() {
+        assert!(GateCheckKind::FrankenlabScenario < GateCheckKind::EvidenceReplay);
+        assert!(GateCheckKind::EvidenceReplay < GateCheckKind::ObligationTracking);
+        assert!(GateCheckKind::ObligationTracking < GateCheckKind::EvidenceCompleteness);
+    }
 }

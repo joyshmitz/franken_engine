@@ -2371,4 +2371,24 @@ mod tests {
             assert!(!actual.is_empty());
         }
     }
+
+    #[test]
+    fn synthesis_strategy_ord() {
+        assert!(SynthesisStrategy::CompilerExtraction < SynthesisStrategy::Enumeration);
+        assert!(SynthesisStrategy::Enumeration < SynthesisStrategy::Mutation);
+        assert!(SynthesisStrategy::Mutation < SynthesisStrategy::TimeBounded);
+    }
+
+    #[test]
+    fn interference_kind_ord() {
+        assert!(InterferenceKind::InvariantInvalidation < InterferenceKind::Oscillation);
+        assert!(InterferenceKind::Oscillation < InterferenceKind::TimescaleConflict);
+    }
+
+    #[test]
+    fn mutation_kind_ord() {
+        assert!(MutationKind::ChangeMergeOp < MutationKind::AddGrant);
+        assert!(MutationKind::AddGrant < MutationKind::RemovePropertyClaim);
+        assert!(MutationKind::RemoveConstraint < MutationKind::DuplicateNode);
+    }
 }

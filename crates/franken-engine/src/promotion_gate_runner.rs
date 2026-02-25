@@ -1342,4 +1342,11 @@ mod tests {
         let decoded: EvidenceArtifact = serde_json::from_slice(&json).expect("deserialize");
         assert_eq!(artifact, decoded);
     }
+
+    #[test]
+    fn gate_kind_ord() {
+        assert!(GateKind::Equivalence < GateKind::CapabilityPreservation);
+        assert!(GateKind::CapabilityPreservation < GateKind::PerformanceThreshold);
+        assert!(GateKind::PerformanceThreshold < GateKind::AdversarialSurvival);
+    }
 }

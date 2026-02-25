@@ -2735,4 +2735,23 @@ mod tests {
             "ablation_budget_exhausted"
         );
     }
+
+    #[test]
+    fn ablation_search_strategy_ord() {
+        assert!(AblationSearchStrategy::LatticeGreedy < AblationSearchStrategy::BinaryGuided);
+    }
+
+    #[test]
+    fn ablation_search_stage_ord() {
+        assert!(AblationSearchStage::SingleCapability < AblationSearchStage::CorrelatedPair);
+        assert!(AblationSearchStage::CorrelatedPair < AblationSearchStage::BinaryBlock);
+    }
+
+    #[test]
+    fn ablation_failure_class_ord() {
+        assert!(AblationFailureClass::CorrectnessRegression < AblationFailureClass::InvariantViolation);
+        assert!(AblationFailureClass::InvariantViolation < AblationFailureClass::RiskBudgetExceeded);
+        assert!(AblationFailureClass::ExecutionFailure < AblationFailureClass::OracleError);
+        assert!(AblationFailureClass::InvalidOracleResult < AblationFailureClass::BudgetExhausted);
+    }
 }

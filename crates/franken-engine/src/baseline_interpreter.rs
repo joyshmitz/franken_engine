@@ -1813,4 +1813,15 @@ mod tests {
         let result = quickjs_execute(&m).unwrap();
         assert_eq!(result.value, Value::Str("answer: 42".to_string()));
     }
+
+    #[test]
+    fn value_ord() {
+        assert!(Value::Undefined < Value::Null);
+        assert!(Value::Null < Value::Bool(false));
+        assert!(Value::Bool(false) < Value::Bool(true));
+        assert!(Value::Bool(true) < Value::Int(0));
+        assert!(Value::Int(0) < Value::Str(String::new()));
+        assert!(Value::Str(String::new()) < Value::Object(ObjectId(0)));
+        assert!(Value::Object(ObjectId(0)) < Value::Function(0));
+    }
 }

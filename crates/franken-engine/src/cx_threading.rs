@@ -1846,4 +1846,26 @@ mod tests {
         }
         assert_eq!(displays.len(), 6);
     }
+
+    #[test]
+    fn effect_category_ord() {
+        assert!(EffectCategory::Hostcall < EffectCategory::PolicyCheck);
+        assert!(EffectCategory::PolicyCheck < EffectCategory::LifecycleTransition);
+        assert!(EffectCategory::LifecycleTransition < EffectCategory::TelemetryEmit);
+    }
+
+    #[test]
+    fn lifecycle_phase_ord() {
+        assert!(LifecyclePhase::Unloaded < LifecyclePhase::Loaded);
+        assert!(LifecyclePhase::Loaded < LifecyclePhase::Running);
+        assert!(LifecyclePhase::Running < LifecyclePhase::Suspended);
+        assert!(LifecyclePhase::Quarantined < LifecyclePhase::Unloading);
+    }
+
+    #[test]
+    fn telemetry_level_ord() {
+        assert!(TelemetryLevel::Debug < TelemetryLevel::Info);
+        assert!(TelemetryLevel::Info < TelemetryLevel::Warn);
+        assert!(TelemetryLevel::Warn < TelemetryLevel::Error);
+    }
 }

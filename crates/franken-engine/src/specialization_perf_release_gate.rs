@@ -1358,4 +1358,17 @@ mod tests {
                 .any(|f| f.code == GateFailureCode::InsufficientReceiptCoverage)
         );
     }
+
+    #[test]
+    fn lane_type_ord() {
+        assert!(LaneType::ProofSpecialized < LaneType::AmbientAuthority);
+    }
+
+    #[test]
+    fn gate_failure_code_ord() {
+        assert!(GateFailureCode::NoPositiveDelta < GateFailureCode::InsufficientSignificance);
+        assert!(GateFailureCode::InsufficientSignificance < GateFailureCode::InsufficientReceiptCoverage);
+        assert!(GateFailureCode::FallbackCrashed < GateFailureCode::FallbackHung);
+        assert!(GateFailureCode::InsufficientSamples < GateFailureCode::EmptyInput);
+    }
 }

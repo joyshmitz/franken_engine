@@ -1933,4 +1933,25 @@ mod tests {
         assert!(msg.contains("running"));
         assert!(msg.contains("validate"));
     }
+
+    #[test]
+    fn extension_state_ord() {
+        assert!(ExtensionState::Unloaded < ExtensionState::Validating);
+        assert!(ExtensionState::Validating < ExtensionState::Loading);
+        assert!(ExtensionState::Loading < ExtensionState::Starting);
+        assert!(ExtensionState::Starting < ExtensionState::Running);
+        assert!(ExtensionState::Running < ExtensionState::Suspending);
+        assert!(ExtensionState::Suspended < ExtensionState::Resuming);
+        assert!(ExtensionState::Terminating < ExtensionState::Terminated);
+        assert!(ExtensionState::Terminated < ExtensionState::Quarantined);
+    }
+
+    #[test]
+    fn lifecycle_transition_ord() {
+        assert!(LifecycleTransition::Validate < LifecycleTransition::Load);
+        assert!(LifecycleTransition::Load < LifecycleTransition::Start);
+        assert!(LifecycleTransition::Start < LifecycleTransition::Activate);
+        assert!(LifecycleTransition::Terminate < LifecycleTransition::Finalize);
+        assert!(LifecycleTransition::Finalize < LifecycleTransition::Quarantine);
+    }
 }

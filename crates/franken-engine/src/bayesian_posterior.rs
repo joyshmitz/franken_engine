@@ -1341,4 +1341,11 @@ mod tests {
             updater.log_likelihood_ratio()
         );
     }
+
+    #[test]
+    fn risk_state_ord() {
+        assert!(RiskState::Benign < RiskState::Anomalous);
+        assert!(RiskState::Anomalous < RiskState::Malicious);
+        assert!(RiskState::Malicious < RiskState::Unknown);
+    }
 }

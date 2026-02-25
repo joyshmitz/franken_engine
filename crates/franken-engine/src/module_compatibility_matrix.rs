@@ -1859,4 +1859,29 @@ mod tests {
             assert_eq!(event.seq, i as u64);
         }
     }
+
+    #[test]
+    fn module_feature_ord() {
+        assert!(ModuleFeature::Esm < ModuleFeature::Cjs);
+        assert!(ModuleFeature::Cjs < ModuleFeature::DualMode);
+        assert!(ModuleFeature::DualMode < ModuleFeature::ConditionalExports);
+        assert!(ModuleFeature::ConditionalExports < ModuleFeature::PackageJsonFields);
+    }
+
+    #[test]
+    fn compatibility_runtime_ord() {
+        assert!(CompatibilityRuntime::FrankenEngine < CompatibilityRuntime::Node);
+        assert!(CompatibilityRuntime::Node < CompatibilityRuntime::Bun);
+    }
+
+    #[test]
+    fn compatibility_mode_ord() {
+        assert!(CompatibilityMode::Native < CompatibilityMode::NodeCompat);
+        assert!(CompatibilityMode::NodeCompat < CompatibilityMode::BunCompat);
+    }
+
+    #[test]
+    fn reference_runtime_ord() {
+        assert!(ReferenceRuntime::Node < ReferenceRuntime::Bun);
+    }
 }

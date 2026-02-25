@@ -1420,4 +1420,15 @@ mod tests {
         }
         assert_eq!(displays.len(), 5);
     }
+
+    #[test]
+    fn high_impact_action_ord() {
+        assert!(HighImpactAction::Sandbox < HighImpactAction::Suspend);
+        assert!(HighImpactAction::Suspend < HighImpactAction::Terminate);
+        assert!(HighImpactAction::Terminate < HighImpactAction::Quarantine);
+        assert!(HighImpactAction::ExtensionLoad < HighImpactAction::ExtensionUnload);
+        assert!(HighImpactAction::PolicyUpdate < HighImpactAction::EpochTransition);
+        assert!(HighImpactAction::Cancellation < HighImpactAction::ContractEvaluation);
+        assert!(HighImpactAction::ContractEvaluation < HighImpactAction::RemoteAuthorization);
+    }
 }

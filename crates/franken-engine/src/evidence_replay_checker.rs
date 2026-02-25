@@ -2059,4 +2059,20 @@ mod tests {
         // Events should be identical between runs (cleared before each).
         assert_eq!(art1.events.len(), art2.events.len());
     }
+
+    #[test]
+    fn replay_error_code_ord() {
+        assert!(ReplayErrorCode::HashMismatch < ReplayErrorCode::ChainBroken);
+        assert!(ReplayErrorCode::ChainBroken < ReplayErrorCode::EntryTruncated);
+        assert!(ReplayErrorCode::SequenceGap < ReplayErrorCode::TimestampMonotonicityViolation);
+        assert!(ReplayErrorCode::SchemaMigrationDetected < ReplayErrorCode::PolicyVersionDiscontinuity);
+        assert!(ReplayErrorCode::PolicyVersionDiscontinuity < ReplayErrorCode::EpochRegression);
+    }
+
+    #[test]
+    fn replay_violation_type_ord() {
+        assert!(ReplayViolationType::OutcomeDivergence < ReplayViolationType::ArtifactHashMismatch);
+        assert!(ReplayViolationType::ArtifactHashMismatch < ReplayViolationType::ChainHashMismatch);
+        assert!(ReplayViolationType::SequenceGap < ReplayViolationType::TimestampMonotonicityViolation);
+    }
 }
