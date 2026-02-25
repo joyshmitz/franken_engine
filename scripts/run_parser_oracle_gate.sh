@@ -231,7 +231,7 @@ write_manifest() {
 
   printf '%s\n' "${commands_run[@]}" >"$commands_path"
   {
-    echo "{\"trace_id\":\"${trace_id}\",\"decision_id\":\"${decision_id}\",\"policy_id\":\"${policy_id}\",\"component\":\"parser_oracle_gate\",\"event\":\"gate_completed\",\"outcome\":\"${outcome}\",\"error_code\":${error_code_json}}"
+    echo "{\"schema_version\":\"franken-engine.parser-log-event.v1\",\"trace_id\":\"${trace_id}\",\"decision_id\":\"${decision_id}\",\"policy_id\":\"${policy_id}\",\"component\":\"parser_oracle_gate\",\"event\":\"gate_completed\",\"outcome\":\"${outcome}\",\"error_code\":${error_code_json}}"
   } >"$events_path"
 
   {
@@ -353,6 +353,15 @@ run_mode() {
   esac
 }
 
-trap 'write_manifest $?' EXIT
-run_mode
+main_exit=0
+run_mode || main_exit=$?
+write_manifest "$main_exit"
 
+if ! "${root_dir}/scripts/validate_parser_log_schema.sh" --events "$events_path"; then
+  failed_command="${failed_command:-validate_parser_log_schema.sh --events ${events_path}}"
+  manifest_written=false
+  write_manifest 3
+  main_exit=3
+fi
+
+exit "$main_exit"

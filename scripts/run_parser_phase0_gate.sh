@@ -51,18 +51,18 @@ run_mode() {
         cargo check -p frankenengine-engine --lib
       ;;
     test)
-      run_step "cargo test -p frankenengine-engine --test parser_trait_ast --test parser_edge_cases --test parser_phase0_semantic_fixtures --test parser_phase0_metamorphic" \
-        cargo test -p frankenengine-engine --test parser_trait_ast --test parser_edge_cases --test parser_phase0_semantic_fixtures --test parser_phase0_metamorphic
+      run_step "cargo test -p frankenengine-engine --test parser_trait_ast --test parser_edge_cases --test parser_phase0_semantic_fixtures --test parser_grammar_closure_backlog --test parser_phase0_metamorphic --test parser_property_regression" \
+        cargo test -p frankenengine-engine --test parser_trait_ast --test parser_edge_cases --test parser_phase0_semantic_fixtures --test parser_grammar_closure_backlog --test parser_phase0_metamorphic --test parser_property_regression
       ;;
     clippy)
-      run_step "cargo clippy -p frankenengine-engine --test parser_trait_ast --test parser_edge_cases --test parser_phase0_semantic_fixtures --test parser_phase0_metamorphic -- -D warnings" \
-        cargo clippy -p frankenengine-engine --test parser_trait_ast --test parser_edge_cases --test parser_phase0_semantic_fixtures --test parser_phase0_metamorphic -- -D warnings
+      run_step "cargo clippy -p frankenengine-engine --test parser_trait_ast --test parser_edge_cases --test parser_phase0_semantic_fixtures --test parser_grammar_closure_backlog --test parser_phase0_metamorphic --test parser_property_regression -- -D warnings" \
+        cargo clippy -p frankenengine-engine --test parser_trait_ast --test parser_edge_cases --test parser_phase0_semantic_fixtures --test parser_grammar_closure_backlog --test parser_phase0_metamorphic --test parser_property_regression -- -D warnings
       ;;
     ci)
       run_step "cargo check -p frankenengine-engine --lib" \
         cargo check -p frankenengine-engine --lib
-      run_step "cargo test -p frankenengine-engine --test parser_trait_ast --test parser_edge_cases --test parser_phase0_semantic_fixtures --test parser_phase0_metamorphic" \
-        cargo test -p frankenengine-engine --test parser_trait_ast --test parser_edge_cases --test parser_phase0_semantic_fixtures --test parser_phase0_metamorphic
+      run_step "cargo test -p frankenengine-engine --test parser_trait_ast --test parser_edge_cases --test parser_phase0_semantic_fixtures --test parser_grammar_closure_backlog --test parser_phase0_metamorphic --test parser_property_regression" \
+        cargo test -p frankenengine-engine --test parser_trait_ast --test parser_edge_cases --test parser_phase0_semantic_fixtures --test parser_grammar_closure_backlog --test parser_phase0_metamorphic --test parser_property_regression
       run_step "./scripts/generate_parser_phase0_artifacts.sh" \
         ./scripts/generate_parser_phase0_artifacts.sh
       ;;
@@ -100,7 +100,7 @@ write_manifest() {
   printf '%s\n' "${commands_run[@]}" >"$commands_path"
 
   {
-    echo "{\"trace_id\":\"${trace_id}\",\"decision_id\":\"${decision_id}\",\"policy_id\":\"${policy_id}\",\"component\":\"${component}\",\"event\":\"gate_completed\",\"outcome\":\"${outcome}\",\"error_code\":${error_code_json}}"
+    echo "{\"schema_version\":\"franken-engine.parser-log-event.v1\",\"trace_id\":\"${trace_id}\",\"decision_id\":\"${decision_id}\",\"policy_id\":\"${policy_id}\",\"component\":\"${component}\",\"event\":\"gate_completed\",\"outcome\":\"${outcome}\",\"error_code\":${error_code_json}}"
   } >"$events_path"
 
   {
@@ -146,5 +146,15 @@ write_manifest() {
   echo "parser phase0 gate manifest: $manifest_path"
 }
 
-trap 'write_manifest $?' EXIT
-run_mode
+main_exit=0
+run_mode || main_exit=$?
+write_manifest "$main_exit"
+
+if ! "${root_dir}/scripts/validate_parser_log_schema.sh" --events "$events_path"; then
+  failed_command="${failed_command:-validate_parser_log_schema.sh --events ${events_path}}"
+  manifest_written=false
+  write_manifest 3
+  main_exit=3
+fi
+
+exit "$main_exit"
