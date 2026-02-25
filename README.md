@@ -393,6 +393,16 @@ with machine-checked catalog + replay coverage in:
 - `crates/franken-engine/tests/fixtures/parser_grammar_closure_backlog.json`
 - `crates/franken-engine/tests/parser_grammar_closure_backlog.rs`
 
+Normative/adversarial corpus expansion + deterministic reducer promotion policy
+(`bd-2mds.1.1.4`) is tracked in
+[`docs/PARSER_GRAMMAR_CLOSURE_BACKLOG.md`](./docs/PARSER_GRAMMAR_CLOSURE_BACKLOG.md)
+with contract vectors in:
+- `crates/franken-engine/tests/fixtures/parser_phase0_semantic_fixtures.json`
+- `crates/franken-engine/tests/fixtures/parser_phase0_adversarial_fixtures.json`
+- `crates/franken-engine/tests/fixtures/parser_reducer_promotion_policy.json`
+- `crates/franken-engine/tests/parser_corpus_promotion_policy.rs`
+- `scripts/run_parser_reducer_promotion_gate.sh` + `scripts/e2e/parser_reducer_promotion_replay.sh`
+
 Canonical AST schema/hash contract (`bd-2mds.1.1.2`) is tracked in
 [`docs/PARSER_CANONICAL_AST_SCHEMA.md`](./docs/PARSER_CANONICAL_AST_SCHEMA.md)
 with compatibility vectors in:
@@ -441,14 +451,25 @@ rch exec -- env RUSTUP_TOOLCHAIN=nightly \
   CARGO_TARGET_DIR=/tmp/rch_target_franken_engine_parser_diagnostics_contract \
   cargo test -p frankenengine-engine --test parser_trait_ast
 
+# run normative/adversarial corpus + reducer promotion policy vectors (via rch)
+rch exec -- env RUSTUP_TOOLCHAIN=nightly \
+  CARGO_TARGET_DIR=/tmp/rch_target_franken_engine_parser_reducer_promotion \
+  cargo test -p frankenengine-engine --test parser_corpus_promotion_policy
+
 # run deterministic parser event->AST materializer lane (rch-backed)
 ./scripts/run_parser_event_materializer_lane.sh ci
 
 # one-command deterministic replay for materializer lane
 ./scripts/e2e/parser_event_materializer_replay.sh
+
+# run deterministic reducer-promotion gate + one-command replay lane
+./scripts/run_parser_reducer_promotion_gate.sh ci
+./scripts/e2e/parser_reducer_promotion_replay.sh
 ```
 
 Gate run manifests are written under `artifacts/parser_phase0_gate/<timestamp>/run_manifest.json`.
+Reducer promotion manifests are written under
+`artifacts/parser_reducer_promotion/<timestamp>/run_manifest.json`.
 
 ## Phase-A Exit Gate
 
