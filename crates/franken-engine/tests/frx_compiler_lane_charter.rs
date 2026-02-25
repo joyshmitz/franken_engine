@@ -59,6 +59,11 @@ fn frx_compiler_lane_contract_is_machine_readable_and_fail_closed() {
         value["schema_version"].as_str(),
         Some("frx.compiler.lane.contract.v1")
     );
+    assert_eq!(value["generated_by"].as_str(), Some("bd-mjh3.10.2"));
+    assert_eq!(
+        value["generated_at_utc"].as_str(),
+        Some("2026-02-25T00:00:00Z")
+    );
     assert_eq!(value["lane"]["id"].as_str(), Some("FRX-10.2"));
     assert_eq!(value["primary_bead"].as_str(), Some("bd-mjh3.10.2"));
     assert_eq!(

@@ -42,7 +42,7 @@ Each subsystem must have at least one active lane in each applicable layer.
 | Event IR + AST materialization | `src/ast.rs` tests | parser oracle semantic drift taxonomy | `tests/parser_trait_ast.rs`, `tests/parser_phase0_semantic_fixtures.rs` | parser oracle `ci` and replay-failure e2e | oracle `relation_events.jsonl`, `minimized_failures/`, `golden_checksums.txt` |
 | Diagnostics + recovery | `src/parser_error_recovery.rs` tests | diagnostics drift checks in oracle | `tests/parser_error_recovery_integration.rs`, `tests/runtime_diagnostics_cli.rs` | parser oracle full/nightly e2e | oracle `proof_note.md` + replay command envelope |
 | Arena allocator / memory determinism | `src/parser_arena.rs` tests | deterministic scenario replay (smoke/parity/budget/corruption) | `tests/parser_arena_integration.rs`, `tests/parser_arena_phase1.rs` | `scripts/run_parser_phase1_arena_suite.sh` and `scripts/e2e/parser_phase1_arena_*.sh` | phase1 `run_manifest.json`, `events.jsonl`, `commands.txt` |
-| Parallel scheduler / merge | `src/parallel_parser.rs` tests | deterministic partition replay assertions | `tests/parallel_parser_integration.rs`, `tests/parallel_interference_gate_integration.rs` | phase0 + oracle lanes as semantic backstops | gate manifest/event linkage with parser trace ids |
+| Parallel scheduler / merge | `src/parallel_parser.rs` tests | deterministic depth-aware split-point, scheduler-transcript replay, and transcript-hash assertions | `tests/parallel_parser_integration.rs`, `tests/parallel_interference_gate_integration.rs` | `scripts/run_parser_depth_partitioner_gate.sh`, `scripts/run_parser_scheduler_transcript_gate.sh` + phase0/oracle backstops | parser-depth-partitioner + parser-scheduler-transcript `run_manifest.json`, `events.jsonl`, `commands.txt` |
 | Oracle + differential harness | `src/parser_oracle.rs` tests | semantic/drift/metamorphic relation coverage | `tests/parser_oracle_integration.rs`, `tests/parser_oracle_gate.rs` | `scripts/run_parser_oracle_gate.sh`, `scripts/e2e/parser_oracle_*.sh` | `manifest.json`, `env.json`, `repro.lock`, `metamorphic_evidence.jsonl` |
 
 ## Boundary Definitions
@@ -121,6 +121,8 @@ Primary parser verification entrypoints:
 ./scripts/run_parser_oracle_gate.sh ci
 ./scripts/run_parser_phase1_arena_suite.sh ci
 ./scripts/run_parser_benchmark_protocol.sh ci
+./scripts/run_parser_depth_partitioner_gate.sh ci
+./scripts/run_parser_scheduler_transcript_gate.sh ci
 ```
 
 E2E wrappers:

@@ -2,6 +2,8 @@
   "schema_version": "frx.compiler.lane.contract.v1",
   "status": "active",
   "primary_bead": "bd-mjh3.10.2",
+  "generated_by": "bd-mjh3.10.2",
+  "generated_at_utc": "2026-02-25T00:00:00Z",
   "lane": {
     "id": "FRX-10.2",
     "name": "Compiler/FRIR Ownership Surface"
