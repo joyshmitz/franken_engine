@@ -132,6 +132,8 @@ pub enum SerialReason {
     ParityMismatch { mismatch_index: u64 },
     /// Merge buffer exceeded.
     MergeBufferExceeded { buffer_bytes: u64, limit: u64 },
+    /// Deterministic schedule transcript replay diverged from invariants.
+    TranscriptDivergence { detail: String },
 }
 
 impl fmt::Display for SerialReason {
@@ -153,6 +155,9 @@ impl fmt::Display for SerialReason {
                 buffer_bytes,
                 limit,
             } => write!(f, "merge buffer {buffer_bytes}B exceeds {limit}B"),
+            Self::TranscriptDivergence { detail } => {
+                write!(f, "transcript divergence: {detail}")
+            }
         }
     }
 }
@@ -951,6 +956,8 @@ pub enum FallbackCause {
     ParityFailure { mismatch_index: u64 },
     /// Budget/resource limit.
     ResourceLimit(SerialReason),
+    /// Deterministic transcript replay divergence.
+    TranscriptDivergence { detail: String },
 }
 
 impl fmt::Display for FallbackCause {
@@ -961,8 +968,71 @@ impl fmt::Display for FallbackCause {
                 write!(f, "parity failure at token {mismatch_index}")
             }
             Self::ResourceLimit(r) => write!(f, "resource limit: {r}"),
+            Self::TranscriptDivergence { detail } => {
+                write!(f, "transcript divergence: {detail}")
+            }
         }
     }
+}
+
+/// Stable trigger taxonomy for deterministic serial failover controls.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum FailoverTriggerClass {
+    Timeout,
+    TranscriptDivergence,
+    WitnessMismatch,
+    SafetyPolicyViolation,
+    ParityMismatch,
+    ResourceLimit,
+}
+
+impl fmt::Display for FailoverTriggerClass {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Timeout => write!(f, "timeout"),
+            Self::TranscriptDivergence => write!(f, "transcript-divergence"),
+            Self::WitnessMismatch => write!(f, "witness-mismatch"),
+            Self::SafetyPolicyViolation => write!(f, "safety-policy-violation"),
+            Self::ParityMismatch => write!(f, "parity-mismatch"),
+            Self::ResourceLimit => write!(f, "resource-limit"),
+        }
+    }
+}
+
+/// Classified failover trigger with deterministic detail payload.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FailoverTrigger {
+    pub class: FailoverTriggerClass,
+    pub detail: String,
+}
+
+/// Deterministic transition path taken by the serial failover controller.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum FailoverState {
+    ParallelAttempted,
+    TriggerClassified,
+    SerialFallbackRequested,
+    SerialFallbackCompleted,
+}
+
+impl fmt::Display for FailoverState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ParallelAttempted => write!(f, "parallel-attempted"),
+            Self::TriggerClassified => write!(f, "trigger-classified"),
+            Self::SerialFallbackRequested => write!(f, "serial-fallback-requested"),
+            Self::SerialFallbackCompleted => write!(f, "serial-fallback-completed"),
+        }
+    }
+}
+
+/// Replayable decision artifact emitted whenever failover is triggered.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FailoverDecision {
+    pub trigger: FailoverTrigger,
+    pub transition_path: Vec<FailoverState>,
+    pub witness_ids: Vec<String>,
+    pub replay_command: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -1199,6 +1269,8 @@ pub struct ReplayEnvelope {
     pub routing_digest: RoutingDigest,
     /// Cancellation record (if any).
     pub cancellation: Option<CancellationRecord>,
+    /// Deterministic failover decision (if fallback triggered).
+    pub failover_decision: Option<FailoverDecision>,
     /// Output hash for verification.
     pub output_hash: ContentHash,
     /// Replay command hint.
@@ -1230,6 +1302,7 @@ pub fn build_replay_envelope(
         parity_result: output.parity_result.clone(),
         routing_digest: routing_digest.clone(),
         cancellation: None,
+        failover_decision: output.failover_decision.clone(),
         output_hash: output.output_hash.clone(),
         replay_command: format!(
             "franken-engine parallel-parse --trace-id {} --run-id {} --seed {} --workers {} --transcript-hash {}",
@@ -1339,6 +1412,8 @@ pub struct ParseOutput {
     pub schedule_transcript: Option<ScheduleTranscript>,
     /// Parity result (if parity check was performed).
     pub parity_result: Option<ParityResult>,
+    /// Deterministic failover decision log (if fallback triggered).
+    pub failover_decision: Option<FailoverDecision>,
     /// Content hash of the output token stream.
     pub output_hash: ContentHash,
 }
@@ -1359,6 +1434,10 @@ pub struct ParseLogEntry {
     pub input_bytes: Option<u64>,
     pub token_count: Option<u64>,
     pub fallback_reason: Option<String>,
+    pub failover_trigger: Option<String>,
+    pub failover_transition_path: Option<Vec<String>>,
+    pub failover_witness_ids: Option<Vec<String>>,
+    pub replay_command: Option<String>,
     pub parity_result: Option<String>,
     pub error_code: Option<String>,
 }
@@ -1410,6 +1489,43 @@ pub struct ParseInput<'a> {
     pub epoch: SecurityEpoch,
     /// Configuration.
     pub config: &'a ParallelConfig,
+}
+
+fn build_failover_decision(
+    input: &ParseInput<'_>,
+    trigger: FailoverTrigger,
+    schedule_transcript: Option<&ScheduleTranscript>,
+    merge_witness: Option<&MergeWitness>,
+    output_hash: &ContentHash,
+) -> FailoverDecision {
+    let mut witness_ids = Vec::new();
+    if let Some(transcript) = schedule_transcript {
+        witness_ids.push(format!(
+            "schedule_transcript:{}",
+            transcript.transcript_hash.to_hex()
+        ));
+    }
+    if let Some(witness) = merge_witness {
+        witness_ids.push(format!("merge_witness:{}", witness.witness_hash.to_hex()));
+    }
+    witness_ids.push(format!("output_hash:{}", output_hash.to_hex()));
+
+    let replay_command = format!(
+        "franken-engine parallel-parse --trace-id {} --run-id {} --seed {} --workers {}",
+        input.trace_id, input.run_id, input.config.schedule_seed, input.config.max_workers
+    );
+
+    FailoverDecision {
+        trigger,
+        transition_path: vec![
+            FailoverState::ParallelAttempted,
+            FailoverState::TriggerClassified,
+            FailoverState::SerialFallbackRequested,
+            FailoverState::SerialFallbackCompleted,
+        ],
+        witness_ids,
+        replay_command,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1468,12 +1584,42 @@ pub fn parse(input: &ParseInput<'_>) -> Result<ParseOutput, ParseError> {
 
     // 2. Build deterministic schedule transcript and self-validate replay invariants.
     let schedule_transcript = build_schedule_transcript(&chunk_plan, config.schedule_seed);
-    let replay_order =
-        replay_schedule_transcript(&schedule_transcript, &chunk_plan).map_err(|err| {
-            ParseError::InvalidConfig {
-                detail: format!("invalid deterministic schedule transcript: {err}"),
-            }
-        })?;
+    let replay_order = match replay_schedule_transcript(&schedule_transcript, &chunk_plan) {
+        Ok(order) => order,
+        Err(err) => {
+            let detail = err.to_string();
+            let serial = serial_parse_inner(source, &config.lexer_config)?;
+            let output_hash = compute_token_hash(&serial.tokens);
+            let trigger = FailoverTrigger {
+                class: FailoverTriggerClass::TranscriptDivergence,
+                detail: detail.clone(),
+            };
+            let failover_decision = build_failover_decision(
+                input,
+                trigger,
+                Some(&schedule_transcript),
+                None,
+                &output_hash,
+            );
+            return Ok(ParseOutput {
+                schema_version: SCHEMA_VERSION.to_string(),
+                mode: ParserMode::Serial,
+                serial_reason: Some(SerialReason::TranscriptDivergence {
+                    detail: detail.clone(),
+                }),
+                fallback_cause: Some(FallbackCause::TranscriptDivergence { detail }),
+                tokens: serial.tokens,
+                token_count: serial.token_count,
+                bytes_scanned: serial.bytes_scanned,
+                chunk_plan: Some(chunk_plan),
+                merge_witness: None,
+                schedule_transcript: Some(schedule_transcript),
+                parity_result: None,
+                failover_decision: Some(failover_decision),
+                output_hash,
+            });
+        }
+    };
 
     // 3. Lex each chunk independently using transcripted execution order.
     let mut chunk_results = Vec::new();
@@ -1509,17 +1655,6 @@ pub fn parse(input: &ParseInput<'_>) -> Result<ParseOutput, ParseError> {
     repair_boundary_tokens(&mut merged_tokens);
     let post_repair_count = merged_tokens.len() as u64;
     let boundary_repairs = pre_repair_count.saturating_sub(post_repair_count);
-
-    // Check merge buffer.
-    let merge_buffer_size = merged_tokens.len() as u64 * 24; // approximate Token size
-    if merge_buffer_size > config.merge_buffer_bytes {
-        let reason = SerialReason::MergeBufferExceeded {
-            buffer_bytes: merge_buffer_size,
-            limit: config.merge_buffer_bytes,
-        };
-        return serial_parse(source, &config.lexer_config, Some(reason));
-    }
-
     let merged_hash = compute_token_hash(&merged_tokens);
     let witness_hash = compute_merge_witness_hash(
         &chunk_results,
@@ -1534,6 +1669,43 @@ pub fn parse(input: &ParseInput<'_>) -> Result<ParseOutput, ParseError> {
         boundary_repairs,
         total_tokens: merged_tokens.len() as u64,
     };
+
+    // Check merge buffer.
+    let merge_buffer_size = merged_tokens.len() as u64 * 24; // approximate Token size
+    if merge_buffer_size > config.merge_buffer_bytes {
+        let reason = SerialReason::MergeBufferExceeded {
+            buffer_bytes: merge_buffer_size,
+            limit: config.merge_buffer_bytes,
+        };
+        let serial = serial_parse_inner(source, &config.lexer_config)?;
+        let output_hash = compute_token_hash(&serial.tokens);
+        let trigger = FailoverTrigger {
+            class: FailoverTriggerClass::ResourceLimit,
+            detail: reason.to_string(),
+        };
+        let failover_decision = build_failover_decision(
+            input,
+            trigger,
+            Some(&schedule_transcript),
+            Some(&merge_witness),
+            &output_hash,
+        );
+        return Ok(ParseOutput {
+            schema_version: SCHEMA_VERSION.to_string(),
+            mode: ParserMode::Serial,
+            serial_reason: Some(reason.clone()),
+            fallback_cause: Some(FallbackCause::ResourceLimit(reason)),
+            tokens: serial.tokens,
+            token_count: serial.token_count,
+            bytes_scanned: serial.bytes_scanned,
+            chunk_plan: Some(chunk_plan),
+            merge_witness: Some(merge_witness),
+            schedule_transcript: Some(schedule_transcript),
+            parity_result: None,
+            failover_decision: Some(failover_decision),
+            output_hash,
+        });
+    }
 
     // 5. Parity check against serial reference.
     let parity_result = if config.always_check_parity {
@@ -1552,6 +1724,17 @@ pub fn parse(input: &ParseInput<'_>) -> Result<ParseOutput, ParseError> {
         // Fall back to serial output.
         let serial = serial_parse_inner(source, &config.lexer_config)?;
         let output_hash = compute_token_hash(&serial.tokens);
+        let trigger = FailoverTrigger {
+            class: FailoverTriggerClass::ParityMismatch,
+            detail: format!("mismatch_index={mismatch_index}"),
+        };
+        let failover_decision = build_failover_decision(
+            input,
+            trigger,
+            Some(&schedule_transcript),
+            Some(&merge_witness),
+            &output_hash,
+        );
         return Ok(ParseOutput {
             schema_version: SCHEMA_VERSION.to_string(),
             mode: ParserMode::Serial,
@@ -1564,6 +1747,7 @@ pub fn parse(input: &ParseInput<'_>) -> Result<ParseOutput, ParseError> {
             merge_witness: Some(merge_witness),
             schedule_transcript: Some(schedule_transcript),
             parity_result: Some(pr.clone()),
+            failover_decision: Some(failover_decision),
             output_hash,
         });
     }
@@ -1582,6 +1766,7 @@ pub fn parse(input: &ParseInput<'_>) -> Result<ParseOutput, ParseError> {
         merge_witness: Some(merge_witness),
         schedule_transcript: Some(schedule_transcript),
         parity_result,
+        failover_decision: None,
         output_hash,
     })
 }
@@ -1606,6 +1791,7 @@ fn serial_parse(
         merge_witness: None,
         schedule_transcript: None,
         parity_result: None,
+        failover_decision: None,
         output_hash,
     })
 }
@@ -1720,6 +1906,7 @@ pub fn compute_routing_digest(source: &str, config: &ParallelConfig) -> RoutingD
 /// Generate structured log entries from a parse output.
 pub fn generate_log_entries(trace_id: &str, output: &ParseOutput) -> Vec<ParseLogEntry> {
     let mut entries = Vec::new();
+    let failover = output.failover_decision.as_ref();
 
     entries.push(ParseLogEntry {
         trace_id: trace_id.to_string(),
@@ -1735,6 +1922,15 @@ pub fn generate_log_entries(trace_id: &str, output: &ParseOutput) -> Vec<ParseLo
         input_bytes: Some(output.bytes_scanned),
         token_count: Some(output.token_count),
         fallback_reason: output.fallback_cause.as_ref().map(|c| format!("{c}")),
+        failover_trigger: failover.map(|d| format!("{}: {}", d.trigger.class, d.trigger.detail)),
+        failover_transition_path: failover.map(|d| {
+            d.transition_path
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        }),
+        failover_witness_ids: failover.map(|d| d.witness_ids.clone()),
+        replay_command: failover.map(|d| d.replay_command.clone()),
         parity_result: output
             .parity_result
             .as_ref()
@@ -1753,6 +1949,16 @@ pub fn generate_log_entries(trace_id: &str, output: &ParseOutput) -> Vec<ParseLo
             input_bytes: None,
             token_count: None,
             fallback_reason: Some(format!("{cause}")),
+            failover_trigger: failover
+                .map(|d| format!("{}: {}", d.trigger.class, d.trigger.detail)),
+            failover_transition_path: failover.map(|d| {
+                d.transition_path
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+            }),
+            failover_witness_ids: failover.map(|d| d.witness_ids.clone()),
+            replay_command: failover.map(|d| d.replay_command.clone()),
             parity_result: None,
             error_code: Some("fallback".to_string()),
         });

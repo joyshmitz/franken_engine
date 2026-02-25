@@ -16,9 +16,10 @@ use frankenengine_engine::parallel_parser::{
     self, BackpressureLevel, BackpressureSnapshot, COMPONENT, CancellationRecord,
     CancellationState, ChunkResult, ChunkTiming, DEFAULT_CHUNK_BUDGET_US, DEFAULT_MAX_WORKERS,
     DEFAULT_MERGE_BUFFER_BYTES, DEFAULT_MIN_PARALLEL_BYTES, DEFAULT_OVERHEAD_THRESHOLD_MILLIONTHS,
-    FallbackCause, MergeWitness, ParallelConfig, ParityResult, ParseError, ParseInput,
-    ParseLogEntry, ParserMode, PerformanceReport, RollbackControl, SCHEMA_VERSION,
-    ScheduleDispatch, ScheduleTranscript, SerialReason, ThroughputSample, TimeoutPolicy,
+    FailoverDecision, FailoverState, FailoverTrigger, FailoverTriggerClass, FallbackCause,
+    MergeWitness, ParallelConfig, ParityResult, ParseError, ParseInput, ParseLogEntry, ParserMode,
+    PerformanceReport, RollbackControl, SCHEMA_VERSION, ScheduleDispatch, ScheduleTranscript,
+    SerialReason, ThroughputSample, TimeoutPolicy,
 };
 use frankenengine_engine::security_epoch::SecurityEpoch;
 use frankenengine_engine::simd_lexer::{LexerConfig, Token, TokenKind};
@@ -950,6 +951,52 @@ fn fallback_cause_resource_limit_merge_buffer() {
     serde_roundtrip(&c);
 }
 
+#[test]
+fn fallback_cause_transcript_divergence() {
+    let c = FallbackCause::TranscriptDivergence {
+        detail: "plan hash mismatch".to_string(),
+    };
+    assert!(c.to_string().contains("transcript divergence"));
+    serde_roundtrip(&c);
+}
+
+#[test]
+fn failover_trigger_class_display() {
+    assert_eq!(FailoverTriggerClass::Timeout.to_string(), "timeout");
+    assert_eq!(
+        FailoverTriggerClass::TranscriptDivergence.to_string(),
+        "transcript-divergence"
+    );
+    assert_eq!(
+        FailoverTriggerClass::SafetyPolicyViolation.to_string(),
+        "safety-policy-violation"
+    );
+}
+
+#[test]
+fn failover_decision_serde_roundtrip() {
+    let decision = FailoverDecision {
+        trigger: FailoverTrigger {
+            class: FailoverTriggerClass::ResourceLimit,
+            detail: "merge buffer exceeded".to_string(),
+        },
+        transition_path: vec![
+            FailoverState::ParallelAttempted,
+            FailoverState::TriggerClassified,
+            FailoverState::SerialFallbackRequested,
+            FailoverState::SerialFallbackCompleted,
+        ],
+        witness_ids: vec![
+            "schedule_transcript:abc".to_string(),
+            "merge_witness:def".to_string(),
+            "output_hash:ghi".to_string(),
+        ],
+        replay_command:
+            "franken-engine parallel-parse --trace-id t --run-id r --seed 1 --workers 4".to_string(),
+    };
+    serde_roundtrip(&decision);
+}
+
 // =======================================================================
 // 13. TimeoutPolicy
 // =======================================================================
@@ -1322,6 +1369,10 @@ fn parse_log_entry_serde_roundtrip() {
         input_bytes: Some(100),
         token_count: Some(10),
         fallback_reason: None,
+        failover_trigger: None,
+        failover_transition_path: None,
+        failover_witness_ids: None,
+        replay_command: None,
         parity_result: None,
         error_code: None,
     };
@@ -1340,6 +1391,10 @@ fn parse_log_entry_all_none_fields() {
         input_bytes: None,
         token_count: None,
         fallback_reason: None,
+        failover_trigger: None,
+        failover_transition_path: None,
+        failover_witness_ids: None,
+        replay_command: None,
         parity_result: None,
         error_code: None,
     };
@@ -1915,6 +1970,31 @@ fn replay_envelope_fields_populated() {
     assert!(envelope.replay_command.contains("my-run"));
 }
 
+#[test]
+fn replay_envelope_includes_failover_decision() {
+    let config = ParallelConfig {
+        min_parallel_bytes: 10,
+        max_workers: 2,
+        merge_buffer_bytes: 1,
+        always_check_parity: true,
+        ..default_config()
+    };
+    let source = generate_source(40);
+    let input = make_input(&source, &config);
+    let output = parallel_parser::parse(&input).unwrap();
+    assert!(output.fallback_cause.is_some());
+
+    let digest = parallel_parser::compute_routing_digest(input.source, &config);
+    let envelope = parallel_parser::build_replay_envelope(&input, &output, &digest);
+    let decision = envelope
+        .failover_decision
+        .as_ref()
+        .expect("failover decision should be projected into replay envelope");
+    assert_eq!(decision.trigger.class, FailoverTriggerClass::ResourceLimit);
+    assert!(!decision.witness_ids.is_empty());
+    assert!(decision.replay_command.contains("--trace-id"));
+}
+
 // =======================================================================
 // 29. generate_log_entries
 // =======================================================================
@@ -1966,6 +2046,30 @@ fn log_entries_no_fallback_single_entry() {
     // Only parse_complete, no fallback_triggered.
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].event, "parse_complete");
+}
+
+#[test]
+fn log_entries_failover_include_trigger_transition_and_replay() {
+    let config = ParallelConfig {
+        min_parallel_bytes: 10,
+        max_workers: 2,
+        merge_buffer_bytes: 1,
+        always_check_parity: true,
+        ..default_config()
+    };
+    let source = generate_source(40);
+    let input = make_input(&source, &config);
+    let output = parallel_parser::parse(&input).unwrap();
+    let entries = parallel_parser::generate_log_entries("trace-fallback", &output);
+    assert!(entries.iter().any(|e| e.event == "fallback_triggered"));
+    let fallback = entries
+        .iter()
+        .find(|e| e.event == "fallback_triggered")
+        .expect("fallback entry should exist");
+    assert!(fallback.failover_trigger.is_some());
+    assert!(fallback.failover_transition_path.is_some());
+    assert!(fallback.failover_witness_ids.is_some());
+    assert!(fallback.replay_command.is_some());
 }
 
 #[test]
@@ -2173,6 +2277,18 @@ fn parse_merge_buffer_exceeded_falls_back_serial() {
         output.serial_reason,
         Some(SerialReason::MergeBufferExceeded { .. })
     ));
+    assert!(matches!(
+        output.fallback_cause,
+        Some(FallbackCause::ResourceLimit(_))
+    ));
+    let decision = output
+        .failover_decision
+        .as_ref()
+        .expect("failover decision should be present for serial failover");
+    assert_eq!(decision.trigger.class, FailoverTriggerClass::ResourceLimit);
+    assert_eq!(decision.transition_path.len(), 4);
+    assert!(!decision.witness_ids.is_empty());
+    assert!(decision.replay_command.contains("--trace-id"));
 }
 
 // =======================================================================
