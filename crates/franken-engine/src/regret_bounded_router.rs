@@ -11,13 +11,13 @@
 //!   stochastic regime, O(√(T·ln K)) regret bound — tighter when the
 //!   environment is not adversarial.
 //!
-//! The router automatically detects regime shifts (via `regime_detector`)
-//! and switches between EXP3 and FTRL, maintaining regret bounds across
-//! regime transitions through restart with warm prior.
+//! The router automatically detects regime shifts and switches between EXP3
+//! and FTRL.
 //!
-//! **Formal guarantee**: For any sequence of lane rewards (including
-//! adversarially chosen), the total reward of the router is at most
-//! O(√(T·K·ln K)) less than the best single lane in hindsight.
+//! If full-information counterfactual rewards are provided per round, the
+//! module can report exact realized regret against the best single arm in
+//! hindsight. Without counterfactuals, it reports an empirical pseudo-regret
+//! estimate derived from observed pulls.
 //!
 //! All arithmetic uses fixed-point millionths for deterministic replay.
 //! No floating point.  Deterministic given the same reward sequence.
@@ -88,6 +88,9 @@ pub struct RewardSignal {
     pub success: bool,
     /// Epoch at which this reward was observed.
     pub epoch: SecurityEpoch,
+    /// Optional full-information rewards for all arms for this round.
+    /// If present and sized to `num_arms`, enables exact regret accounting.
+    pub counterfactual_rewards_millionths: Option<Vec<i64>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -120,6 +123,8 @@ pub enum RouterError {
     ArmOutOfBounds { index: usize, count: usize },
     /// Reward out of valid range.
     RewardOutOfRange { reward: i64 },
+    /// Exploration parameter is outside (0, 1].
+    InvalidGamma { gamma_millionths: i64 },
     /// Cannot route with zero total weight.
     ZeroWeight,
 }
@@ -136,6 +141,9 @@ impl fmt::Display for RouterError {
             }
             Self::RewardOutOfRange { reward } => {
                 write!(f, "reward {reward} outside [0, 1_000_000]")
+            }
+            Self::InvalidGamma { gamma_millionths } => {
+                write!(f, "gamma {gamma_millionths} outside (0, 1_000_000]")
             }
             Self::ZeroWeight => write!(f, "cannot route with zero total weight"),
         }
@@ -180,6 +188,9 @@ impl Exp3State {
                 count: num_arms,
                 max: MAX_ARMS,
             });
+        }
+        if !(1..=MILLION).contains(&gamma_millionths) {
+            return Err(RouterError::InvalidGamma { gamma_millionths });
         }
         Ok(Self {
             num_arms,
@@ -245,6 +256,7 @@ impl Exp3State {
 
     /// Select an arm deterministically given a random seed in [0, MILLION).
     pub fn select_arm(&self, random_millionths: i64) -> usize {
+        let random_millionths = random_millionths.clamp(0, MILLION - 1);
         let probs = self.arm_probabilities();
         let mut cumulative = 0i64;
         for (i, &p) in probs.iter().enumerate() {
@@ -390,6 +402,7 @@ impl FtrlState {
 
     /// Select an arm deterministically given a random seed.
     pub fn select_arm(&self, random_millionths: i64) -> usize {
+        let random_millionths = random_millionths.clamp(0, MILLION - 1);
         let probs = self.arm_probabilities();
         let mut cumulative = 0i64;
         for (i, &p) in probs.iter().enumerate() {
@@ -470,6 +483,11 @@ pub struct RegretBoundedRouter {
     pub cumulative_reward_millionths: i64,
     /// Best single-arm cumulative reward in hindsight (millionths).
     pub best_arm_cumulative_millionths: i64,
+    /// Exact cumulative reward of best arm per round, when counterfactual
+    /// full-information rewards are supplied.
+    best_counterfactual_cumulative_millionths: i64,
+    /// Number of rounds for which full-information counterfactuals were supplied.
+    counterfactual_rounds: u64,
     /// Per-arm cumulative rewards for best-arm tracking.
     per_arm_cumulative: Vec<i64>,
     /// Per-arm pull counts for mean reward estimation.
@@ -543,6 +561,8 @@ impl RegretBoundedRouter {
             active_regime: RegimeKind::Unknown,
             cumulative_reward_millionths: 0,
             best_arm_cumulative_millionths: 0,
+            best_counterfactual_cumulative_millionths: 0,
+            counterfactual_rounds: 0,
             per_arm_cumulative: vec![0; n],
             per_arm_count: vec![0; n],
             regime_history: Vec::new(),
@@ -583,6 +603,28 @@ impl RegretBoundedRouter {
     ) -> Result<RoutingDecisionReceipt, RouterError> {
         let arm = signal.arm_index;
         let reward = signal.reward_millionths;
+
+        if let Some(counterfactual) = &signal.counterfactual_rewards_millionths {
+            if counterfactual.len() != self.arms.len() {
+                return Err(RouterError::ArmOutOfBounds {
+                    index: counterfactual.len(),
+                    count: self.arms.len(),
+                });
+            }
+            let mut best_round_reward = 0i64;
+            for &r in counterfactual {
+                if !(0..=MILLION).contains(&r) {
+                    return Err(RouterError::RewardOutOfRange { reward: r });
+                }
+                if r > best_round_reward {
+                    best_round_reward = r;
+                }
+            }
+            self.counterfactual_rounds = self.counterfactual_rounds.saturating_add(1);
+            self.best_counterfactual_cumulative_millionths = self
+                .best_counterfactual_cumulative_millionths
+                .saturating_add(best_round_reward);
+        }
 
         // Update both algorithms (they run in parallel).
         self.exp3.update(arm, reward)?;
@@ -628,11 +670,18 @@ impl RegretBoundedRouter {
         }
     }
 
-    /// Realized regret: T × max_mean_reward - cumulative_reward.
+    /// Realized regret.
     ///
-    /// The standard multi-armed bandit regret compares the router's total
-    /// reward against the counterfactual of always playing the best arm.
+    /// - If per-round counterfactual rewards were supplied, this is exact
+    ///   regret against the best single arm in hindsight.
+    /// - Otherwise this is an empirical pseudo-regret estimate:
+    ///   T × max_observed_mean_reward - cumulative_reward.
     pub fn realized_regret_millionths(&self) -> i64 {
+        if self.rounds() > 0 && self.counterfactual_rounds == self.rounds() {
+            return (self.best_counterfactual_cumulative_millionths
+                - self.cumulative_reward_millionths)
+                .max(0);
+        }
         let t = self.rounds() as i64;
         if t == 0 {
             return 0;
@@ -665,8 +714,10 @@ impl RegretBoundedRouter {
         let variance = self.reward_variance_estimator.variance_millionths();
         let mean = self.reward_variance_estimator.mean_millionths.max(1);
 
-        // Coefficient of variation (CV) in millionths.
-        let cv_sq = variance * MILLION / mean;
+        // Squared coefficient of variation (CV^2) in millionths:
+        // variance / mean^2
+        let mean_sq = ((mean as i128 * mean as i128) / MILLION as i128).max(1);
+        let cv_sq = (variance as i128 * MILLION as i128 / mean_sq) as i64;
 
         // If CV² < 0.5 → stochastic; else → adversarial.
         let new_regime = if cv_sq < 500_000 {
@@ -771,7 +822,7 @@ impl RegretBoundedRouter {
 
         let growth_class = if per_round == 0 {
             "zero".to_string()
-        } else if per_round * (rounds as i64) < bound {
+        } else if realized <= bound {
             "sublinear_verified".to_string()
         } else {
             "needs_investigation".to_string()
@@ -793,14 +844,47 @@ impl RegretBoundedRouter {
 // Integer math helpers (no floating point)
 // ---------------------------------------------------------------------------
 
-/// Integer approximation of ln(n) in millionths.
-/// Uses the identity: ln(n) ≈ log₂(n) × ln(2), where ln(2) ≈ 693_147 millionths.
-fn integer_ln_millionths(n: u64) -> i64 {
+/// Integer log₂(n) in millionths using fractional-bit extraction.
+fn integer_log2_millionths(n: u64) -> i64 {
     if n <= 1 {
         return 0;
     }
     let bits = 64 - n.leading_zeros();
-    bits as i64 * 693_147
+    let integer_part = (bits - 1) as i64 * MILLION;
+
+    let power_of_two = 1u64 << (bits - 1);
+    if n == power_of_two {
+        return integer_part;
+    }
+
+    let mut mantissa: u64 = if bits - 1 <= 32 {
+        n << (32 - (bits - 1))
+    } else {
+        n >> ((bits - 1) - 32)
+    };
+    let threshold: u64 = 1u64 << 33;
+
+    let mut frac = 0i64;
+    let mut bit_value = 500_000i64;
+    for _ in 0..20 {
+        mantissa = ((mantissa as u128 * mantissa as u128) >> 32) as u64;
+        if mantissa >= threshold {
+            frac += bit_value;
+            mantissa >>= 1;
+        }
+        bit_value /= 2;
+        if bit_value == 0 {
+            break;
+        }
+    }
+
+    integer_part + frac
+}
+
+/// Integer approximation of ln(n) in millionths.
+fn integer_ln_millionths(n: u64) -> i64 {
+    const LN_2_MILLIONTHS: i64 = 693_147;
+    integer_log2_millionths(n) * LN_2_MILLIONTHS / MILLION
 }
 
 /// Integer approximation of √n in millionths.
@@ -997,6 +1081,7 @@ mod tests {
             latency_us: 100,
             success: true,
             epoch: SecurityEpoch::from_raw(1),
+            counterfactual_rewards_millionths: None,
         };
         let receipt = router.observe_reward(&signal).unwrap();
         assert_eq!(receipt.round, 1);
@@ -1018,6 +1103,7 @@ mod tests {
                 latency_us: 50,
                 success: true,
                 epoch: SecurityEpoch::from_raw(i),
+                counterfactual_rewards_millionths: None,
             };
             router.observe_reward(&signal).unwrap();
         }
@@ -1043,6 +1129,7 @@ mod tests {
                 latency_us: 50,
                 success: true,
                 epoch: SecurityEpoch::from_raw(i),
+                counterfactual_rewards_millionths: None,
             };
             router.observe_reward(&signal).unwrap();
         }
@@ -1171,6 +1258,7 @@ mod tests {
             latency_us: 42,
             success: true,
             epoch: SecurityEpoch::from_raw(99),
+            counterfactual_rewards_millionths: None,
         };
         let json = serde_json::to_string(&signal).unwrap();
         let restored: RewardSignal = serde_json::from_str(&json).unwrap();
