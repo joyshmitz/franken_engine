@@ -1663,11 +1663,13 @@ fn hash_bytes(input: &[u8]) -> String {
 }
 
 fn estimate_lexical_token_count(source: &str) -> u64 {
-    let mut config = LexerConfig::default();
-    config.mode = LexerMode::Scalar;
-    config.emit_tokens = false;
-    config.max_tokens = u64::MAX;
-    config.max_source_bytes = u64::MAX;
+    let config = LexerConfig {
+        mode: LexerMode::Scalar,
+        emit_tokens: false,
+        max_tokens: u64::MAX,
+        max_source_bytes: u64::MAX,
+        ..LexerConfig::default()
+    };
     lex_tokens(source, &config)
         .map(|output| output.token_count)
         .unwrap_or_else(|_| source.split_whitespace().count() as u64)
@@ -1739,7 +1741,9 @@ fn quantile(sorted: &[u64], q_percent: usize) -> u64 {
     if sorted.is_empty() {
         return 0;
     }
-    let idx = (sorted.len() - 1).saturating_mul(q_percent) / 100;
+    let capped = q_percent.min(100);
+    // Use ceil-style indexing so high quantiles (p95/p99) select the upper tail.
+    let idx = ((sorted.len() - 1).saturating_mul(capped).saturating_add(99)) / 100;
     sorted[idx]
 }
 

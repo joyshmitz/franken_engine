@@ -9,6 +9,7 @@ use frankenengine_engine::parser_multi_engine_harness::{
 
 type EngineSignature = (String, String, bool, bool);
 type FixtureSignature = (String, Vec<EngineSignature>);
+type TelemetryDeterministicSignature = (String, u64, u64, u64, u64);
 
 fn test_config(seed: u64) -> MultiEngineHarnessConfig {
     let mut config = MultiEngineHarnessConfig::with_defaults(seed);
@@ -74,6 +75,18 @@ fn stable_fixture_signatures(
         .collect()
 }
 
+fn stable_telemetry_signature(
+    report: &frankenengine_engine::parser_multi_engine_harness::MultiEngineHarnessReport,
+) -> TelemetryDeterministicSignature {
+    (
+        report.parser_telemetry.schema_version.clone(),
+        report.parser_telemetry.sample_count,
+        report.parser_telemetry.bytes_per_source_avg,
+        report.parser_telemetry.tokens_per_source_avg,
+        report.parser_telemetry.allocs_per_token_millionths,
+    )
+}
+
 #[test]
 fn harness_report_is_stable_for_same_seed_and_fixture_slice() {
     let config = test_config(7);
@@ -86,6 +99,10 @@ fn harness_report_is_stable_for_same_seed_and_fixture_slice() {
     assert_eq!(
         stable_fixture_signatures(&left),
         stable_fixture_signatures(&right)
+    );
+    assert_eq!(
+        stable_telemetry_signature(&left),
+        stable_telemetry_signature(&right)
     );
 
     for fixture in &left.fixture_results {
@@ -102,6 +119,27 @@ fn harness_report_is_stable_for_same_seed_and_fixture_slice() {
             fixture.fixture_id
         );
     }
+}
+
+#[test]
+fn harness_report_exposes_parser_telemetry_contract() {
+    let config = test_config(17);
+    let report = run_multi_engine_harness(&config).expect("run should succeed");
+    let telemetry = &report.parser_telemetry;
+
+    assert_eq!(
+        telemetry.schema_version,
+        "franken-engine.parser-telemetry.v1"
+    );
+    assert_eq!(telemetry.sample_count, report.fixture_count * 2);
+    assert_eq!(report.trace_id, config.trace_id);
+    assert_eq!(report.decision_id, config.decision_id);
+    assert_eq!(report.policy_id, config.policy_id);
+    assert!(telemetry.bytes_per_source_avg > 0);
+    assert!(telemetry.tokens_per_source_avg > 0);
+    assert!(telemetry.allocs_per_token_millionths > 0);
+    assert!(telemetry.latency_ns_p50 <= telemetry.latency_ns_p95);
+    assert!(telemetry.latency_ns_p95 <= telemetry.latency_ns_p99);
 }
 
 #[test]
