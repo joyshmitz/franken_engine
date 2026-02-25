@@ -1,0 +1,18 @@
+{
+  "schema_version": "frx.c0-freeze-manifest.v1",
+  "milestone": "C0",
+  "generated_by": "bd-mjh3.12.1",
+  "artifacts": {
+    "objective_function_version": "frx.objective.v1",
+    "compatibility_constitution": "docs/FRX_COMPATIBILITY_CONSTITUTION_V1.md",
+    "forbidden_regressions": "docs/frx_forbidden_regressions_v1.json",
+    "compile_vs_fallback": "docs/frx_compile_vs_fallback_v1.json",
+    "semantics_lane_charter": "docs/FRX_SEMANTICS_LANE_CHARTER_V1.md"
+  },
+  "promotion_block_rule": {
+    "rule_id": "C0-BLOCK-001",
+    "condition": "any_required_artifact_missing_or_inconsistent",
+    "action": "deny_c1_progress"
+  },
+  "downstream_reference_required": true
+}
