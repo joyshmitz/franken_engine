@@ -1082,4 +1082,325 @@ mod tests {
         assert_eq!(report1.total_checks, report2.total_checks);
         assert_eq!(report1.total_passed, report2.total_passed);
     }
+
+    // -- Enrichment: GateVerdict as_str --
+
+    #[test]
+    fn gate_verdict_as_str_values() {
+        assert_eq!(GateVerdict::Pass.as_str(), "pass");
+        assert_eq!(GateVerdict::Fail { reason: "x".into() }.as_str(), "fail");
+        assert_eq!(
+            GateVerdict::InfrastructureError { detail: "x".into() }.as_str(),
+            "infrastructure_error"
+        );
+        assert_eq!(
+            GateVerdict::Timeout {
+                gate: "x".into(),
+                elapsed_ticks: 1
+            }
+            .as_str(),
+            "timeout"
+        );
+    }
+
+    // -- Enrichment: OverallVerdict accessors --
+
+    #[test]
+    fn overall_verdict_is_released_and_as_str() {
+        assert!(OverallVerdict::Released.is_released());
+        assert_eq!(OverallVerdict::Released.as_str(), "released");
+        let blocked = OverallVerdict::Blocked {
+            failing_gates: vec![GateKind::FrankenlabScenarios],
+        };
+        assert!(!blocked.is_released());
+        assert_eq!(blocked.as_str(), "blocked");
+    }
+
+    // -- Enrichment: runner config accessor --
+
+    #[test]
+    fn runner_config_accessor() {
+        let config = GateConfig {
+            seed: 99,
+            replay_iterations: 5,
+            ..Default::default()
+        };
+        let runner = ReleaseGateRunner::new(config.clone());
+        assert_eq!(runner.config().seed, 99);
+        assert_eq!(runner.config().replay_iterations, 5);
+    }
+
+    // -- Enrichment: runner events empty before run --
+
+    #[test]
+    fn runner_events_empty_before_run() {
+        let runner = ReleaseGateRunner::new(GateConfig::default());
+        assert!(runner.events().is_empty());
+    }
+
+    // -- Enrichment: GateKind all contains all variants --
+
+    #[test]
+    fn gate_kind_all_contains_all_variants() {
+        let all = GateKind::all();
+        assert!(all.contains(&GateKind::FrankenlabScenarios));
+        assert!(all.contains(&GateKind::ReplayDeterminism));
+        assert!(all.contains(&GateKind::ObligationResolution));
+        assert!(all.contains(&GateKind::EvidenceCompleteness));
+    }
+
+    // -- Enrichment: full report failure_summary empty on pass --
+
+    #[test]
+    fn full_report_failure_summary_empty_on_pass() {
+        let config = GateConfig {
+            seed: 42,
+            replay_iterations: 2,
+            check_replay: false,
+            ..Default::default()
+        };
+        let mut runner = ReleaseGateRunner::new(config);
+        let mut cx = mock_cx(500_000);
+        let report = runner.run(&mut cx);
+
+        assert!(report.overall_verdict.is_released());
+        assert!(report.failure_summary.is_empty());
+    }
+
+    // -- Enrichment: GateResult pass checks match --
+
+    #[test]
+    fn gate_result_pass_checks_performed_equals_passed() {
+        let result = GateResult::pass(GateKind::FrankenlabScenarios, 42);
+        assert_eq!(result.checks_performed, 42);
+        assert_eq!(result.checks_passed, 42);
+        assert!(result.verdict.is_pass());
+        assert!(result.events.is_empty());
+    }
+
+    // -- Enrichment: config timeout default value --
+
+    #[test]
+    fn config_default_timeout_ticks() {
+        let cfg = GateConfig::default();
+        assert_eq!(cfg.timeout_ticks, 600);
+    }
+
+    // -- Enrichment: GateEvent with error_code --
+
+    #[test]
+    fn gate_event_with_error_code_serde() {
+        let event = GateEvent {
+            component: COMPONENT_NAME.to_string(),
+            gate: "replay_determinism".to_string(),
+            event: "gate_fail".to_string(),
+            outcome: "fail".to_string(),
+            error_code: Some("replay_divergence".to_string()),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let restored: GateEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, restored);
+        assert_eq!(restored.error_code.as_deref(), Some("replay_divergence"));
+    }
+
+    // -- Enrichment: selective gate combos --
+
+    #[test]
+    fn run_only_replay_gate() {
+        let config = GateConfig {
+            seed: 42,
+            replay_iterations: 2,
+            check_replay: true,
+            check_obligations: false,
+            check_evidence: false,
+            ..Default::default()
+        };
+        let mut runner = ReleaseGateRunner::new(config);
+        let mut cx = mock_cx(500_000);
+        let report = runner.run(&mut cx);
+        assert_eq!(report.gates.len(), 2);
+        assert_eq!(report.gates[0].kind, GateKind::FrankenlabScenarios);
+        assert_eq!(report.gates[1].kind, GateKind::ReplayDeterminism);
+    }
+
+    #[test]
+    fn run_only_obligations_gate() {
+        let config = GateConfig {
+            seed: 42,
+            check_replay: false,
+            check_obligations: true,
+            check_evidence: false,
+            ..Default::default()
+        };
+        let mut runner = ReleaseGateRunner::new(config);
+        let mut cx = mock_cx(500_000);
+        let report = runner.run(&mut cx);
+        assert_eq!(report.gates.len(), 2);
+        assert_eq!(report.gates[1].kind, GateKind::ObligationResolution);
+    }
+
+    #[test]
+    fn run_only_evidence_gate() {
+        let config = GateConfig {
+            seed: 42,
+            check_replay: false,
+            check_obligations: false,
+            check_evidence: true,
+            ..Default::default()
+        };
+        let mut runner = ReleaseGateRunner::new(config);
+        let mut cx = mock_cx(500_000);
+        let report = runner.run(&mut cx);
+        assert_eq!(report.gates.len(), 2);
+        assert_eq!(report.gates[1].kind, GateKind::EvidenceCompleteness);
+    }
+
+    // -- Enrichment: GateResult serde for fail/infra --
+
+    #[test]
+    fn gate_result_fail_serde_roundtrip() {
+        let result = GateResult::fail(
+            GateKind::EvidenceCompleteness,
+            "evidence gap".to_string(),
+            20,
+            18,
+        );
+        let json = serde_json::to_string(&result).unwrap();
+        let restored: GateResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(result, restored);
+    }
+
+    #[test]
+    fn gate_result_infra_error_serde_roundtrip() {
+        let result = GateResult::infra_error(
+            GateKind::ObligationResolution,
+            "harness unavailable".to_string(),
+        );
+        let json = serde_json::to_string(&result).unwrap();
+        let restored: GateResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(result, restored);
+    }
+
+    // -- Enrichment: Display detail tests --
+
+    #[test]
+    fn gate_verdict_fail_display_contains_reason() {
+        let v = GateVerdict::Fail {
+            reason: "scenario xyz diverged".into(),
+        };
+        let s = v.to_string();
+        assert!(s.contains("FAIL"));
+        assert!(s.contains("scenario xyz diverged"));
+    }
+
+    #[test]
+    fn gate_verdict_timeout_display_contains_ticks() {
+        let v = GateVerdict::Timeout {
+            gate: "replay_determinism".into(),
+            elapsed_ticks: 600,
+        };
+        let s = v.to_string();
+        assert!(s.contains("600"));
+        assert!(s.contains("replay_determinism"));
+    }
+
+    #[test]
+    fn gate_verdict_infra_error_display_contains_detail() {
+        let v = GateVerdict::InfrastructureError {
+            detail: "missing harness binary".into(),
+        };
+        let s = v.to_string();
+        assert!(s.contains("INFRASTRUCTURE_ERROR"));
+        assert!(s.contains("missing harness binary"));
+    }
+
+    #[test]
+    fn overall_verdict_blocked_display_lists_gates() {
+        let blocked = OverallVerdict::Blocked {
+            failing_gates: vec![GateKind::ReplayDeterminism, GateKind::EvidenceCompleteness],
+        };
+        let display = blocked.to_string();
+        assert!(display.contains("replay_determinism"));
+        assert!(display.contains("evidence_completeness"));
+    }
+
+    // -- Enrichment: report totals correctness --
+
+    #[test]
+    fn report_totals_equal_sum_of_gates() {
+        let config = GateConfig {
+            seed: 42,
+            replay_iterations: 2,
+            ..Default::default()
+        };
+        let mut runner = ReleaseGateRunner::new(config);
+        let mut cx = mock_cx(500_000);
+        let report = runner.run(&mut cx);
+
+        let sum_checks: u64 = report.gates.iter().map(|g| g.checks_performed).sum();
+        let sum_passed: u64 = report.gates.iter().map(|g| g.checks_passed).sum();
+        assert_eq!(report.total_checks, sum_checks);
+        assert_eq!(report.total_passed, sum_passed);
+    }
+
+    // -- Enrichment: seed in report --
+
+    #[test]
+    fn report_seed_matches_config() {
+        let config = GateConfig {
+            seed: 999,
+            check_replay: false,
+            check_obligations: false,
+            check_evidence: false,
+            ..Default::default()
+        };
+        let mut runner = ReleaseGateRunner::new(config);
+        let mut cx = mock_cx(500_000);
+        let report = runner.run(&mut cx);
+        assert_eq!(report.seed, 999);
+    }
+
+    // -- Enrichment: events accumulate --
+
+    #[test]
+    fn events_accumulate_across_multiple_runs() {
+        let config = GateConfig {
+            seed: 42,
+            check_replay: false,
+            check_obligations: false,
+            check_evidence: false,
+            ..Default::default()
+        };
+        let mut runner = ReleaseGateRunner::new(config);
+
+        let mut cx1 = mock_cx(500_000);
+        let _ = runner.run(&mut cx1);
+        let count_after_first = runner.events().len();
+        assert!(count_after_first >= 2);
+
+        let mut cx2 = mock_cx(500_000);
+        let _ = runner.run(&mut cx2);
+        assert!(runner.events().len() > count_after_first);
+    }
+
+    // -- Enrichment: all gates pass with full config --
+
+    #[test]
+    fn different_seeds_with_full_gates_all_pass() {
+        for seed in [1, 42, 255] {
+            let config = GateConfig {
+                seed,
+                replay_iterations: 2,
+                ..Default::default()
+            };
+            let mut runner = ReleaseGateRunner::new(config);
+            let mut cx = mock_cx(500_000);
+            let report = runner.run(&mut cx);
+            assert!(
+                report.overall_verdict.is_released(),
+                "seed {seed} should release with all gates"
+            );
+            assert_eq!(report.gates.len(), 4);
+        }
+    }
 }

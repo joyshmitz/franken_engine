@@ -380,13 +380,14 @@ impl ArithmeticCoder {
 
         let original_bits =
             symbols.len() as i64 * integer_log2_millionths(self.alphabet_size as u64) / MILLION;
+        let compressed_bytes = output_bytes.len();
         let compressed_bits = output_bytes.len() as i64 * 8;
 
         Ok(CompressedEvidence {
             schema: ENTROPY_SCHEMA_VERSION.to_string(),
             compressed_data: output_bytes,
             original_symbol_count: symbols.len(),
-            compressed_bytes: compressed_bits as usize / 8,
+            compressed_bytes,
             original_bits_estimate: original_bits,
             compressed_bits,
             compression_ratio_millionths: if original_bits > 0 {
@@ -453,7 +454,7 @@ pub struct CompressedEvidence {
     pub original_symbol_count: usize,
     /// Compressed size in bytes.
     pub compressed_bytes: usize,
-    /// Original size estimate in bits (millionths).
+    /// Original size estimate in raw bits.
     pub original_bits_estimate: i64,
     /// Compressed size in bits.
     pub compressed_bits: i64,
@@ -512,8 +513,13 @@ impl CompressionCertificate {
         let overhead_ratio = if lower_bound_millionths > 0 {
             let ratio = achieved_bits_millionths * MILLION as i128 / lower_bound_millionths;
             ratio.min(i64::MAX as i128) as i64
-        } else {
+        } else if achieved <= 0 {
+            // Degenerate zero/zero case: treat as exact.
             MILLION
+        } else {
+            // Positive achieved size over a zero theoretical lower bound is
+            // effectively unbounded overhead; fail closed in ratio checks.
+            i64::MAX
         };
 
         let cert_data = format!(
@@ -862,7 +868,7 @@ mod tests {
             compressed_data: vec![1, 2, 3, 4],
             original_symbol_count: 100,
             compressed_bytes: 4,
-            original_bits_estimate: 200 * MILLION,
+            original_bits_estimate: 200,
             compressed_bits: 32,
             compression_ratio_millionths: 160_000,
             content_hash: ContentHash::compute(b"test"),
@@ -896,7 +902,7 @@ mod tests {
         let cert = CompressionCertificate {
             schema: ENTROPY_SCHEMA_VERSION.to_string(),
             entropy_millibits_per_symbol: MILLION,
-            shannon_lower_bound_bits: 100 * MILLION,
+            shannon_lower_bound_bits: 100,
             achieved_bits: 120,
             overhead_bits_millionths: 20 * MILLION,
             overhead_ratio_millionths: 1_200_000,
@@ -969,6 +975,21 @@ mod tests {
             let expected_ratio = cert.achieved_bits * MILLION / cert.shannon_lower_bound_bits;
             assert_eq!(cert.overhead_ratio_millionths, expected_ratio);
         }
+    }
+
+    #[test]
+    fn compression_certificate_zero_lower_bound_fails_closed() {
+        let mut est = EntropyEstimator::new();
+        est.observe(7);
+        let coder = ArithmeticCoder::from_estimator(&est).unwrap();
+        let compressed = coder.encode(&[7]).unwrap();
+        let kraft = coder.verify_kraft_inequality().unwrap();
+        let cert = CompressionCertificate::build(&est, &compressed, kraft);
+
+        assert_eq!(cert.shannon_lower_bound_bits, 0);
+        assert!(cert.achieved_bits > 0);
+        assert_eq!(cert.overhead_ratio_millionths, i64::MAX);
+        assert!(!cert.is_within_factor(10_000_000));
     }
 
     // === Error display ===

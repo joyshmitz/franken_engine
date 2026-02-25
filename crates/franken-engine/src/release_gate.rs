@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::control_plane::ContextAdapter;
 use crate::evidence_replay_checker::{EvidenceReplayChecker, ReplayConfig};
-use crate::frankenlab_extension_lifecycle::run_all_scenarios;
+use crate::frankenlab_extension_lifecycle::{ScenarioSuiteResult, run_all_scenarios};
 use crate::lab_runtime::Verdict;
 
 // ---------------------------------------------------------------------------
@@ -317,9 +317,10 @@ impl ReleaseGate {
 
         let mut checks = Vec::new();
         let mut budget_consumed_ms = 0_u64;
+        let scenario_suite = run_all_scenarios(self.seed, cx);
 
         // 1. Frankenlab scenarios
-        let check = self.check_frankenlab_scenarios(cx);
+        let check = self.check_frankenlab_scenarios(&scenario_suite);
         budget_consumed_ms = budget_consumed_ms.saturating_add(self.estimate_check_cost(&check));
         checks.push(check);
 
@@ -329,12 +330,12 @@ impl ReleaseGate {
         checks.push(check);
 
         // 3. Obligation tracking
-        let check = self.check_obligation_tracking(cx);
+        let check = self.check_obligation_tracking(&scenario_suite);
         budget_consumed_ms = budget_consumed_ms.saturating_add(self.estimate_check_cost(&check));
         checks.push(check);
 
         // 4. Evidence completeness
-        let check = self.check_evidence_completeness(cx);
+        let check = self.check_evidence_completeness(&scenario_suite);
         budget_consumed_ms = budget_consumed_ms.saturating_add(self.estimate_check_cost(&check));
         checks.push(check);
 
@@ -516,8 +517,7 @@ impl ReleaseGate {
     // Individual checks
     // -----------------------------------------------------------------------
 
-    fn check_frankenlab_scenarios<C: ContextAdapter>(&mut self, cx: &mut C) -> GateCheckResult {
-        let suite = run_all_scenarios(self.seed, cx);
+    fn check_frankenlab_scenarios(&mut self, suite: &ScenarioSuiteResult) -> GateCheckResult {
         let total = suite.scenarios.len();
         let passed = suite.scenarios.iter().filter(|s| s.passed).count();
         let all_passed = suite.verdict == Verdict::Pass;
@@ -607,8 +607,7 @@ impl ReleaseGate {
         }
     }
 
-    fn check_obligation_tracking<C: ContextAdapter>(&mut self, cx: &mut C) -> GateCheckResult {
-        let suite = run_all_scenarios(self.seed, cx);
+    fn check_obligation_tracking(&mut self, suite: &ScenarioSuiteResult) -> GateCheckResult {
         let all_scenarios_passed = suite.verdict == Verdict::Pass;
 
         self.push_event(
@@ -635,9 +634,7 @@ impl ReleaseGate {
         }
     }
 
-    fn check_evidence_completeness<C: ContextAdapter>(&mut self, cx: &mut C) -> GateCheckResult {
-        let suite = run_all_scenarios(self.seed, cx);
-
+    fn check_evidence_completeness(&mut self, suite: &ScenarioSuiteResult) -> GateCheckResult {
         let mut total = 0;
         let mut passed = 0;
         let mut failure_details = Vec::new();
@@ -799,6 +796,25 @@ mod tests {
         let mut cx = mock_cx(200000);
         let result = gate.evaluate(&mut cx);
         assert_eq!(result.total_checks, 4);
+    }
+
+    #[test]
+    fn gate_runs_frankenlab_suite_once_per_evaluation() {
+        let mut baseline_cx = mock_cx(200000);
+        let _ = run_all_scenarios(42, &mut baseline_cx);
+        let baseline_consumed = baseline_cx.budget_state().consumed_ms();
+        assert!(baseline_consumed > 0, "baseline run should consume budget");
+
+        let mut gate = ReleaseGate::new(42);
+        let mut gate_cx = mock_cx(200000);
+        let result = gate.evaluate(&mut gate_cx);
+
+        assert_eq!(result.verdict, Verdict::Pass);
+        assert_eq!(
+            gate_cx.budget_state().consumed_ms(),
+            baseline_consumed,
+            "gate should reuse a single scenario suite per evaluation"
+        );
     }
 
     // -----------------------------------------------------------------------

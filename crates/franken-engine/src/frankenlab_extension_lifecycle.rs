@@ -898,4 +898,137 @@ mod tests {
             );
         }
     }
+
+    // -- Enrichment: ScenarioKind ordering --
+
+    #[test]
+    fn scenario_kind_ordering_deterministic() {
+        let mut kinds = [
+            ScenarioKind::MultiExtension,
+            ScenarioKind::Startup,
+            ScenarioKind::Quarantine,
+        ];
+        kinds.sort();
+        // Derived Ord follows declaration order: Startup < Quarantine < MultiExtension
+        assert_eq!(kinds[0], ScenarioKind::Startup);
+        assert_eq!(kinds[2], ScenarioKind::MultiExtension);
+    }
+
+    // -- Enrichment: ScenarioAssertion detail --
+
+    #[test]
+    fn scenario_assertion_passed_has_empty_detail() {
+        let a = ScenarioAssertion {
+            description: "check".to_string(),
+            passed: true,
+            detail: String::new(),
+        };
+        assert!(a.detail.is_empty());
+        assert!(a.passed);
+    }
+
+    #[test]
+    fn scenario_assertion_failed_has_non_empty_detail() {
+        let a = ScenarioAssertion {
+            description: "check".to_string(),
+            passed: false,
+            detail: "expected true, got false".to_string(),
+        };
+        assert!(!a.detail.is_empty());
+        assert!(!a.passed);
+    }
+
+    // -- Enrichment: ScenarioResult new defaults --
+
+    #[test]
+    fn scenario_result_new_starts_passed() {
+        let result = ScenarioResult::new(ScenarioKind::Startup, 42);
+        assert!(result.passed);
+        assert!(result.assertions.is_empty());
+        assert!(result.lifecycle_events.is_empty());
+        assert!(result.extensions_loaded.is_empty());
+        assert!(result.final_states.is_empty());
+        assert_eq!(result.total_events_emitted, 0);
+        assert_eq!(result.seed, 42);
+        assert_eq!(result.kind, ScenarioKind::Startup);
+    }
+
+    // -- Enrichment: suite total_assertions accumulates correctly --
+
+    #[test]
+    fn suite_total_assertions_matches_sum_of_scenarios() {
+        let mut cx = mock_cx(100000);
+        let suite = run_all_scenarios(42, &mut cx);
+        let sum: usize = suite.scenarios.iter().map(|s| s.assertions.len()).sum();
+        assert_eq!(suite.total_assertions, sum);
+    }
+
+    // -- Enrichment: each scenario has correct kind --
+
+    #[test]
+    fn each_scenario_result_has_matching_kind() {
+        let mut cx = mock_cx(100000);
+        let suite = run_all_scenarios(42, &mut cx);
+        let expected_kinds = [
+            ScenarioKind::Startup,
+            ScenarioKind::NormalShutdown,
+            ScenarioKind::ForcedCancel,
+            ScenarioKind::Quarantine,
+            ScenarioKind::Revocation,
+            ScenarioKind::DegradedMode,
+            ScenarioKind::MultiExtension,
+        ];
+        for (scenario, expected) in suite.scenarios.iter().zip(expected_kinds.iter()) {
+            assert_eq!(scenario.kind, *expected);
+        }
+    }
+
+    // -- Enrichment: scenario suite 7 scenarios --
+
+    #[test]
+    fn suite_always_runs_seven_scenarios() {
+        let mut cx = mock_cx(100000);
+        let suite = run_all_scenarios(1, &mut cx);
+        assert_eq!(suite.scenarios.len(), 7);
+    }
+
+    // -- Enrichment: ScenarioKind Display roundtrips --
+
+    #[test]
+    fn scenario_kind_display_all_unique() {
+        let kinds = [
+            ScenarioKind::Startup,
+            ScenarioKind::NormalShutdown,
+            ScenarioKind::ForcedCancel,
+            ScenarioKind::Quarantine,
+            ScenarioKind::Revocation,
+            ScenarioKind::DegradedMode,
+            ScenarioKind::MultiExtension,
+        ];
+        let displays: std::collections::BTreeSet<String> =
+            kinds.iter().map(|k| k.to_string()).collect();
+        assert_eq!(
+            displays.len(),
+            7,
+            "all ScenarioKind Display values are unique"
+        );
+    }
+
+    // -- Enrichment: startup seed is propagated --
+
+    #[test]
+    fn scenario_result_seed_propagated() {
+        let mut cx = mock_cx(5000);
+        let result = run_scenario(ScenarioKind::Startup, 12345, &mut cx);
+        assert_eq!(result.seed, 12345);
+    }
+
+    // -- Enrichment: multi_extension loads 4 extensions --
+
+    #[test]
+    fn multi_extension_loads_four_extensions() {
+        let mut cx = mock_cx(50000);
+        let result = run_scenario(ScenarioKind::MultiExtension, 7, &mut cx);
+        assert_eq!(result.extensions_loaded.len(), 4);
+    }
 }

@@ -887,4 +887,122 @@ mod tests {
         assert_eq!(event, back);
         assert_eq!(back.error_code.as_deref(), Some("DG_TIMEOUT"));
     }
+
+    // -- Enrichment: MockBudget --
+
+    #[test]
+    fn mock_budget_zero_consume_succeeds_on_zero_budget() {
+        let mut b = MockBudget::new(0);
+        b.consume(0)
+            .expect("zero consume on zero budget should succeed");
+        assert_eq!(b.remaining_ms(), 0);
+        assert_eq!(b.consumed_ms(), 0);
+    }
+
+    #[test]
+    fn mock_budget_tracks_cumulative_consumption() {
+        let mut b = MockBudget::new(100);
+        b.consume(30).unwrap();
+        b.consume(20).unwrap();
+        assert_eq!(b.remaining_ms(), 50);
+        assert_eq!(b.consumed_ms(), 50);
+    }
+
+    #[test]
+    fn mock_budget_returns_error_on_overspend_without_panic() {
+        let mut b = MockBudget::new(10);
+        let err = b.consume(11).unwrap_err();
+        assert!(matches!(
+            err,
+            ControlPlaneAdapterError::BudgetExhausted { requested_ms: 11 }
+        ));
+    }
+
+    // -- Enrichment: MockCx --
+
+    #[test]
+    fn mock_cx_budget_state_accessor() {
+        let trace = trace_id_from_seed(99);
+        let cx = MockCx::new(trace, MockBudget::new(42));
+        assert_eq!(cx.budget_state().remaining_ms(), 42);
+        assert_eq!(cx.budget_state().consumed_ms(), 0);
+    }
+
+    // -- Enrichment: mock helpers --
+
+    #[test]
+    fn trace_id_from_different_seeds_differ() {
+        let t1 = trace_id_from_seed(1);
+        let t2 = trace_id_from_seed(2);
+        assert_ne!(t1, t2);
+    }
+
+    #[test]
+    fn decision_id_from_different_seeds_differ() {
+        let d1 = decision_id_from_seed(1);
+        let d2 = decision_id_from_seed(2);
+        assert_ne!(d1, d2);
+    }
+
+    #[test]
+    fn policy_id_from_seed_deterministic() {
+        let p1 = policy_id_from_seed(5);
+        let p2 = policy_id_from_seed(5);
+        assert_eq!(p1, p2);
+    }
+
+    // -- Enrichment: MockDecisionContract panic mode --
+
+    #[test]
+    fn mock_decision_contract_panic_on_call() {
+        let req = request(50);
+        let mut contract = MockDecisionContract::new([DecisionVerdict::Allow])
+            .with_failure_mode(MockFailureMode::PanicOnCall);
+        let panicked = panic::catch_unwind(AssertUnwindSafe(|| {
+            let _ = contract.evaluate(&req);
+        }));
+        assert!(panicked.is_err());
+    }
+
+    // -- Enrichment: MockEvidenceEmitter fail_after_n --
+
+    #[test]
+    fn mock_evidence_emitter_fail_after_n() {
+        let req = request(60);
+        let mut emitter =
+            MockEvidenceEmitter::new().with_failure_mode(MockFailureMode::FailAfterN {
+                remaining_successes: 1,
+                code: "emit_fail_after_1",
+            });
+        emitter
+            .emit(&req, evidence(req.ts_unix_ms, "allow"))
+            .expect("first emit should pass");
+        let err = emitter
+            .emit(&req, evidence(req.ts_unix_ms + 1, "deny"))
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            ControlPlaneAdapterError::EvidenceEmission {
+                code: "emit_fail_after_1"
+            }
+        ));
+    }
+
+    // -- Enrichment: DecisionVerdict equality --
+
+    #[test]
+    fn decision_verdict_equality_and_clone() {
+        let v = DecisionVerdict::Allow;
+        let v2 = v;
+        assert_eq!(v, v2);
+    }
+
+    // -- Enrichment: DecisionRequest same seed identical --
+
+    #[test]
+    fn decision_request_same_seed_identical() {
+        let r1 = request(100);
+        let r2 = request(100);
+        assert_eq!(r1, r2);
+    }
 }

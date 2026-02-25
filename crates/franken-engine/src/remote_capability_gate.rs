@@ -850,4 +850,180 @@ mod tests {
             "distributed_state_mutation"
         );
     }
+
+    // -- Enrichment: gate starts empty --
+
+    #[test]
+    fn gate_starts_empty() {
+        let gate = RemoteOperationGate::new(test_epoch());
+        assert_eq!(gate.total_permitted(), 0);
+        assert_eq!(gate.total_denied(), 0);
+        assert!(gate.permitted_counts().is_empty());
+        assert!(gate.denied_counts().is_empty());
+    }
+
+    #[test]
+    fn gate_epoch_accessor() {
+        let epoch = SecurityEpoch::from_raw(42);
+        let gate = RemoteOperationGate::new(epoch);
+        assert_eq!(gate.epoch(), epoch);
+    }
+
+    // -- Enrichment: transport error display all variants --
+
+    #[test]
+    fn transport_error_display_all_variants() {
+        let denied = RemoteCapabilityDenied {
+            operation: RemoteOperationType::HttpRequest,
+            component: "test".to_string(),
+            held_profile: ProfileKind::ComputeOnly,
+            required_capabilities: vec![RuntimeCapability::NetworkEgress],
+            trace_id: "t".to_string(),
+        };
+        let errors: Vec<RemoteTransportError> = vec![
+            RemoteTransportError::ConnectionFailed {
+                endpoint: "http://host".to_string(),
+                reason: "refused".to_string(),
+            },
+            RemoteTransportError::RemoteError {
+                status: 503,
+                message: "service unavailable".to_string(),
+            },
+            RemoteTransportError::Timeout {
+                endpoint: "http://host".to_string(),
+                duration_ms: 3000,
+            },
+            RemoteTransportError::CapabilityDenied(denied),
+        ];
+        assert_eq!(errors.len(), 4, "must cover all RemoteTransportError variants");
+        for err in &errors {
+            let msg = err.to_string();
+            assert!(!msg.is_empty());
+        }
+        assert!(errors[0].to_string().contains("refused"));
+        assert!(errors[1].to_string().contains("503"));
+        assert!(errors[2].to_string().contains("3000"));
+        assert!(errors[3].to_string().contains("http_request"));
+    }
+
+    // -- Enrichment: denied error is std::error --
+
+    #[test]
+    fn remote_capability_denied_is_std_error() {
+        let err: Box<dyn std::error::Error> = Box::new(RemoteCapabilityDenied {
+            operation: RemoteOperationType::GrpcCall,
+            component: "test".to_string(),
+            held_profile: ProfileKind::ComputeOnly,
+            required_capabilities: vec![RuntimeCapability::NetworkEgress],
+            trace_id: "t".to_string(),
+        });
+        assert!(!err.to_string().is_empty());
+    }
+
+    // -- Enrichment: mock transport default --
+
+    #[test]
+    fn mock_remote_transport_default_empty() {
+        let transport = MockRemoteTransport::default();
+        assert!(transport.recorded.is_empty());
+        assert!(transport.response.is_empty());
+        assert!(transport.fail_with.is_none());
+    }
+
+    // -- Enrichment: operation type ordering --
+
+    #[test]
+    fn operation_type_ordering_deterministic() {
+        let mut ops = [
+            RemoteOperationType::RemoteIpc,
+            RemoteOperationType::HttpRequest,
+            RemoteOperationType::DnsResolution,
+        ];
+        ops.sort();
+        // HttpRequest < DnsResolution < RemoteIpc (derived Ord)
+        assert_eq!(ops[0], RemoteOperationType::HttpRequest);
+    }
+
+    // -- Enrichment: display all operation types --
+
+    #[test]
+    fn operation_type_display_all_variants() {
+        let all = [
+            (RemoteOperationType::HttpRequest, "http_request"),
+            (RemoteOperationType::GrpcCall, "grpc_call"),
+            (RemoteOperationType::DnsResolution, "dns_resolution"),
+            (
+                RemoteOperationType::DistributedStateMutation,
+                "distributed_state_mutation",
+            ),
+            (RemoteOperationType::LeaseRenewal, "lease_renewal"),
+            (RemoteOperationType::RemoteIpc, "remote_ipc"),
+        ];
+        for (op, expected) in all {
+            assert_eq!(op.to_string(), expected);
+        }
+    }
+
+    // -- Enrichment: remote error serde --
+
+    #[test]
+    fn remote_error_serde_roundtrip() {
+        let err = RemoteTransportError::RemoteError {
+            status: 500,
+            message: "internal server error".to_string(),
+        };
+        let json = serde_json::to_string(&err).unwrap();
+        let restored: RemoteTransportError = serde_json::from_str(&json).unwrap();
+        assert_eq!(err, restored);
+    }
+
+    // -- Enrichment: sanitize no credentials --
+
+    #[test]
+    fn sanitize_no_at_sign_in_url() {
+        assert_eq!(
+            sanitize_endpoint("https://example.com:8080/path"),
+            "https://example.com:8080/path"
+        );
+    }
+
+    // -- Enrichment: counters per-type tracking --
+
+    #[test]
+    fn counters_track_multiple_operation_types() {
+        let mut gate = RemoteOperationGate::new(test_epoch());
+        gate.check(
+            &remote_profile(),
+            RemoteOperationType::HttpRequest,
+            "s",
+            "e",
+            "t1",
+            0,
+        )
+        .unwrap();
+        gate.check(
+            &remote_profile(),
+            RemoteOperationType::GrpcCall,
+            "s",
+            "e",
+            "t2",
+            0,
+        )
+        .unwrap();
+        gate.check(
+            &remote_profile(),
+            RemoteOperationType::DnsResolution,
+            "s",
+            "e",
+            "t3",
+            0,
+        )
+        .unwrap();
+
+        assert_eq!(gate.total_permitted(), 3);
+        assert_eq!(gate.permitted_counts().len(), 3);
+        assert_eq!(gate.permitted_counts().get("http_request"), Some(&1));
+        assert_eq!(gate.permitted_counts().get("grpc_call"), Some(&1));
+        assert_eq!(gate.permitted_counts().get("dns_resolution"), Some(&1));
+    }
 }

@@ -771,4 +771,135 @@ mod tests {
         assert_eq!(snap.p50_ns, 1000); // deterministic mode sentinel
         assert!(tracker.within_budget()); // 1000 ns < 500_000 ns p50 budget
     }
+
+    // -- Enrichment: PauseBudget --
+
+    #[test]
+    fn pause_budget_new_values() {
+        let b = PauseBudget::new(111, 222, 333);
+        assert_eq!(b.p50_ns, 111);
+        assert_eq!(b.p95_ns, 222);
+        assert_eq!(b.p99_ns, 333);
+    }
+
+    #[test]
+    fn pause_budget_equality() {
+        let b1 = PauseBudget::new(1, 2, 3);
+        let b2 = PauseBudget::new(1, 2, 3);
+        assert_eq!(b1, b2);
+        let b3 = PauseBudget::new(1, 2, 4);
+        assert_ne!(b1, b3);
+    }
+
+    // -- Enrichment: PauseTracker --
+
+    #[test]
+    fn tracker_default_starts_empty() {
+        let tracker = PauseTracker::default();
+        assert_eq!(tracker.count(), 0);
+        assert!(tracker.records().is_empty());
+        assert!(tracker.extensions().is_empty());
+        assert_eq!(tracker.total_bytes_reclaimed(), 0);
+        assert_eq!(tracker.total_objects_collected(), 0);
+    }
+
+    #[test]
+    fn tracker_extension_count_unknown_extension() {
+        let tracker = PauseTracker::default();
+        assert_eq!(tracker.extension_count("nonexistent"), 0);
+    }
+
+    #[test]
+    fn tracker_ring_buffer_multi_extension_eviction() {
+        let mut tracker = PauseTracker::with_capacity(PauseBudget::default(), 2);
+        tracker.record(&make_event(1, "ext-a", 100, 0, 0));
+        tracker.record(&make_event(2, "ext-b", 200, 0, 0));
+        assert_eq!(tracker.count(), 2);
+        assert_eq!(tracker.extension_count("ext-a"), 1);
+
+        // Evicts ext-a's record
+        tracker.record(&make_event(3, "ext-b", 300, 0, 0));
+        assert_eq!(tracker.count(), 2);
+        assert_eq!(tracker.extension_count("ext-a"), 0);
+        assert_eq!(tracker.extension_count("ext-b"), 2);
+        // ext-a should be removed from extensions list
+        assert!(!tracker.extensions().contains(&"ext-a"));
+    }
+
+    // -- Enrichment: Percentile edge cases --
+
+    #[test]
+    fn percentile_two_values() {
+        let data = [10u64, 20];
+        let snap = PercentileSnapshot::from_sorted(&data);
+        assert_eq!(snap.count, 2);
+        assert_eq!(snap.min_ns, 10);
+        assert_eq!(snap.max_ns, 20);
+        // p50 of 2 items: ceil(0.5*2)=1 → index 0 → 10
+        assert_eq!(snap.p50_ns, 10);
+        // p95 of 2 items: ceil(0.95*2)=2 → index 1 → 20
+        assert_eq!(snap.p95_ns, 20);
+    }
+
+    // -- Enrichment: Budget violation specific percentile --
+
+    #[test]
+    fn p95_only_violation() {
+        let budget = PauseBudget::new(1000, 100, 50_000);
+        let snap = PercentileSnapshot {
+            count: 10,
+            min_ns: 50,
+            max_ns: 900,
+            p50_ns: 80,  // within p50 budget of 1000
+            p95_ns: 200, // exceeds p95 budget of 100
+            p99_ns: 900, // within p99 budget of 50_000
+        };
+        let violations = snap.check_budget(&budget, "test");
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].percentile, Percentile::P95);
+    }
+
+    #[test]
+    fn p99_only_violation() {
+        let budget = PauseBudget::new(1000, 2000, 100);
+        let snap = PercentileSnapshot {
+            count: 10,
+            min_ns: 50,
+            max_ns: 900,
+            p50_ns: 500, // within p50 budget of 1000
+            p95_ns: 800, // within p95 budget of 2000
+            p99_ns: 900, // exceeds p99 budget of 100
+        };
+        let violations = snap.check_budget(&budget, "test");
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].percentile, Percentile::P99);
+    }
+
+    // -- Enrichment: Percentile ordering --
+
+    #[test]
+    fn percentile_ordering() {
+        // Percentile enum should be serializable and distinguishable
+        let p50 = Percentile::P50;
+        let p95 = Percentile::P95;
+        let p99 = Percentile::P99;
+        assert_ne!(p50, p95);
+        assert_ne!(p95, p99);
+        assert_ne!(p50, p99);
+    }
+
+    // -- Enrichment: BudgetViolation scope --
+
+    #[test]
+    fn budget_violation_scope_preserved() {
+        let v = BudgetViolation {
+            percentile: Percentile::P50,
+            observed_ns: 1000,
+            budget_ns: 500,
+            scope: "my-ext".to_string(),
+        };
+        assert!(v.to_string().contains("my-ext"));
+        assert!(v.to_string().contains("1000"));
+        assert!(v.to_string().contains("500"));
+    }
 }

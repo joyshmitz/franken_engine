@@ -66,6 +66,8 @@ pub enum StoppingError {
     HorizonTooLarge { horizon: usize, max: usize },
     /// Invalid threshold.
     InvalidThreshold { threshold: i64 },
+    /// Invalid discount factor.
+    InvalidDiscount { discount: i64 },
     /// Empty observation sequence.
     EmptyObservations,
     /// KL divergence is zero or negative (indistinguishable hypotheses).
@@ -82,6 +84,9 @@ impl fmt::Display for StoppingError {
             }
             Self::InvalidThreshold { threshold } => {
                 write!(f, "invalid threshold: {threshold}")
+            }
+            Self::InvalidDiscount { discount } => {
+                write!(f, "invalid discount factor: {discount}")
             }
             Self::EmptyObservations => write!(f, "empty observation sequence"),
             Self::DegenerateKL => {
@@ -209,8 +214,8 @@ impl CusumChart {
         self.observations += 1;
 
         // S_n = max(0, S_{n-1} + X_n - k)
-        let increment = obs.llr_millionths - self.reference_millionths;
-        self.statistic_millionths = (self.statistic_millionths + increment).max(0);
+        let increment = obs.llr_millionths.saturating_sub(self.reference_millionths);
+        self.statistic_millionths = self.statistic_millionths.saturating_add(increment).max(0);
 
         if self.statistic_millionths > self.high_water_mark_millionths {
             self.high_water_mark_millionths = self.statistic_millionths;
@@ -239,14 +244,16 @@ impl CusumChart {
     /// ARL₀ ≥ exp(h/μ₁) where μ₁ is the post-change mean.
     pub fn arl0_lower_bound(&self, post_change_mean_millionths: i64) -> i64 {
         if post_change_mean_millionths <= 0 {
-            return MILLION * 1000; // very large
+            return i64::MAX;
         }
-        let ratio = self.threshold_millionths * MILLION / post_change_mean_millionths;
+        let ratio = (i128::from(self.threshold_millionths) * i128::from(MILLION))
+            / i128::from(post_change_mean_millionths);
         // Approximate exp(ratio/MILLION) ≈ 1 + ratio/MILLION + ...
         // For large ratios, this grows exponentially.
-        let x = ratio;
-        let x2 = x * x / MILLION;
-        (MILLION + x + x2 / 2).max(MILLION)
+        let x = ratio.max(0);
+        let x2 = x.saturating_mul(x) / i128::from(MILLION);
+        let approx = i128::from(MILLION) + x + x2 / 2;
+        approx.clamp(i128::from(MILLION), i128::from(i64::MAX)) as i64
     }
 }
 
@@ -301,6 +308,11 @@ impl GittinsIndexComputer {
                 max: MAX_DP_HORIZON,
             });
         }
+        if discount_millionths <= 0 || discount_millionths >= MILLION {
+            return Err(StoppingError::InvalidDiscount {
+                discount: discount_millionths,
+            });
+        }
 
         let arms = arm_ids
             .into_iter()
@@ -347,21 +359,25 @@ impl GittinsIndexComputer {
     /// we use the Whittle approximation which is within O(1/n) of optimal.
     fn recompute_index(&mut self, arm_index: usize) {
         let arm = &mut self.arms[arm_index];
-        let s = arm.successes as i64;
-        let f = arm.failures as i64;
-        let n = s + f;
+        let s = i64::try_from(arm.successes).unwrap_or(i64::MAX);
+        let f = i64::try_from(arm.failures).unwrap_or(i64::MAX);
+        let n = s.saturating_add(f);
+        let n_plus_two = n.saturating_add(2);
 
         // Beta posterior mean: (s + 1) / (s + f + 2).
-        let posterior_mean = (s + 1) * MILLION / (n + 2);
+        let posterior_mean = (((i128::from(s) + 1) * i128::from(MILLION)) / i128::from(n_plus_two))
+            .clamp(0, i128::from(MILLION)) as i64;
 
         // Whittle correction for discounted Gittins index:
         // λ* ≈ μ + σ² / (2 · (1 - γ)) where σ² = α·β / ((α+β)²·(α+β+1))
         // α = s+1, β = f+1.
-        let alpha = s + 1;
-        let beta = f + 1;
+        let alpha = i128::from(s) + 1;
+        let beta = i128::from(f) + 1;
         let ab = alpha + beta;
-        let variance_numerator = alpha * beta * MILLION;
-        let variance_denominator = ab * ab * (ab + 1);
+        let variance_numerator = alpha
+            .saturating_mul(beta)
+            .saturating_mul(i128::from(MILLION));
+        let variance_denominator = ab.saturating_mul(ab).saturating_mul(ab + 1);
         let variance = if variance_denominator > 0 {
             variance_numerator / variance_denominator
         } else {
@@ -370,12 +386,14 @@ impl GittinsIndexComputer {
 
         let discount_complement = MILLION - arm.discount_millionths;
         let correction = if discount_complement > 0 {
-            variance * MILLION / (2 * discount_complement)
+            variance.saturating_mul(i128::from(MILLION))
+                / i128::from(2_i64.saturating_mul(discount_complement))
         } else {
             0
         };
 
-        arm.gittins_index_millionths = (posterior_mean + correction).min(MILLION);
+        arm.gittins_index_millionths =
+            (i128::from(posterior_mean) + correction).clamp(0, i128::from(MILLION)) as i64;
     }
 
     /// Select the arm with the highest Gittins index.
@@ -440,6 +458,11 @@ impl SnellEnvelope {
     ) -> Result<Self, StoppingError> {
         if payoffs_millionths.is_empty() {
             return Err(StoppingError::EmptyObservations);
+        }
+        if !(0..=MILLION).contains(&discount_millionths) {
+            return Err(StoppingError::InvalidDiscount {
+                discount: discount_millionths,
+            });
         }
         if payoffs_millionths.len() > MAX_DP_HORIZON {
             return Err(StoppingError::HorizonTooLarge {
@@ -780,6 +803,27 @@ mod tests {
     }
 
     #[test]
+    fn cusum_arl0_lower_bound_saturates_for_extreme_inputs() {
+        let chart = CusumChart::new(i64::MAX, 500_000).unwrap();
+        let arl0 = chart.arl0_lower_bound(1);
+        assert_eq!(arl0, i64::MAX);
+    }
+
+    #[test]
+    fn cusum_observe_extreme_negative_llr_does_not_overflow() {
+        let mut chart = CusumChart::new(1_000_000, 500_000).unwrap();
+        let obs = Observation {
+            llr_millionths: i64::MIN,
+            risk_score_millionths: 0,
+            timestamp_us: 0,
+            source: "extreme".to_string(),
+        };
+        let decision = chart.observe(&obs);
+        assert_eq!(decision, StoppingDecision::Continue);
+        assert_eq!(chart.statistic_millionths, 0);
+    }
+
+    #[test]
     fn cusum_serde_roundtrip() {
         let chart = CusumChart::with_defaults();
         let json = serde_json::to_string(&chart).unwrap();
@@ -802,6 +846,29 @@ mod tests {
             GittinsIndexComputer::new(vec![], 900_000, 100),
             Err(StoppingError::EmptyObservations)
         ));
+    }
+
+    #[test]
+    fn gittins_invalid_discount_rejected() {
+        assert!(matches!(
+            GittinsIndexComputer::new(vec!["a".into()], 0, 100),
+            Err(StoppingError::InvalidDiscount { .. })
+        ));
+        assert!(matches!(
+            GittinsIndexComputer::new(vec!["a".into()], MILLION, 100),
+            Err(StoppingError::InvalidDiscount { .. })
+        ));
+    }
+
+    #[test]
+    fn gittins_large_counts_do_not_overflow_recompute() {
+        let mut computer = GittinsIndexComputer::new(vec!["a".into()], 950_000, 100).unwrap();
+        computer.arms[0].successes = u64::MAX;
+        computer.arms[0].failures = u64::MAX;
+
+        computer.recompute_index(0);
+
+        assert!((0..=MILLION).contains(&computer.arms[0].gittins_index_millionths));
     }
 
     #[test]
@@ -898,6 +965,18 @@ mod tests {
         assert!(matches!(
             SnellEnvelope::compute(vec![], MILLION),
             Err(StoppingError::EmptyObservations)
+        ));
+    }
+
+    #[test]
+    fn snell_invalid_discount_rejected() {
+        assert!(matches!(
+            SnellEnvelope::compute(vec![1_000_000], -1),
+            Err(StoppingError::InvalidDiscount { .. })
+        ));
+        assert!(matches!(
+            SnellEnvelope::compute(vec![1_000_000], MILLION + 1),
+            Err(StoppingError::InvalidDiscount { .. })
         ));
     }
 

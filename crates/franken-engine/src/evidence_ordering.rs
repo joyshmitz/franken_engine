@@ -764,4 +764,287 @@ mod tests {
             assert_eq!(*v, restored);
         }
     }
+
+    // -- Enrichment: edge cases and boundary conditions --
+
+    #[test]
+    fn empty_entry_passes_validation() {
+        let entry = make_entry_with(vec![], vec![], vec![]);
+        assert!(validate_entry_ordering(&entry, &SizeBounds::default()).is_ok());
+    }
+
+    #[test]
+    fn single_candidate_passes_validation() {
+        let entry = make_entry_with(vec![CandidateAction::new("only", 100)], vec![], vec![]);
+        assert!(validate_entry_ordering(&entry, &SizeBounds::default()).is_ok());
+    }
+
+    #[test]
+    fn already_sorted_candidates_unchanged_by_sort() {
+        let mut candidates = vec![
+            CandidateAction::new("alpha", 100),
+            CandidateAction::new("beta", 200),
+            CandidateAction::new("gamma", 300),
+        ];
+        let before: Vec<String> = candidates.iter().map(|c| c.action_name.clone()).collect();
+        sort_candidates(&mut candidates);
+        let after: Vec<String> = candidates.iter().map(|c| c.action_name.clone()).collect();
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn normalize_is_idempotent() {
+        let mut entry = make_entry_with(
+            vec![
+                CandidateAction::new("z", 500),
+                CandidateAction::new("a", 100),
+            ],
+            vec![
+                Witness {
+                    witness_id: "w-b".to_string(),
+                    witness_type: "t".to_string(),
+                    value: "1".to_string(),
+                },
+                Witness {
+                    witness_id: "w-a".to_string(),
+                    witness_type: "t".to_string(),
+                    value: "2".to_string(),
+                },
+            ],
+            vec![],
+        );
+        let bounds = SizeBounds::default();
+        normalize_entry(&mut entry, &bounds);
+        let json_first = serde_json::to_string(&entry).unwrap();
+        let result2 = normalize_entry(&mut entry, &bounds);
+        let json_second = serde_json::to_string(&entry).unwrap();
+        assert_eq!(json_first, json_second, "normalize should be idempotent");
+        assert_eq!(result2.duplicates_removed, 0);
+        assert!(result2.truncations.is_empty());
+    }
+
+    #[test]
+    fn normalize_constraints_truncation() {
+        let constraints: Vec<Constraint> = (0..20)
+            .rev()
+            .map(|i| Constraint {
+                constraint_id: format!("c-{i:03}"),
+                description: "d".to_string(),
+                active: true,
+            })
+            .collect();
+        let mut entry = make_entry_with(vec![], vec![], constraints);
+        let bounds = SizeBounds {
+            max_candidates: 64,
+            max_witnesses: 256,
+            max_constraints: 5,
+        };
+        let result = normalize_entry(&mut entry, &bounds);
+        assert_eq!(result.truncations.len(), 1);
+        assert_eq!(result.truncations[0].list_name, "constraints");
+        assert_eq!(entry.constraints.len(), 5);
+        // Sorted, so first 5 should be c-000 through c-004
+        assert_eq!(entry.constraints[0].constraint_id, "c-000");
+        assert_eq!(entry.constraints[4].constraint_id, "c-004");
+    }
+
+    #[test]
+    fn witnesses_truncation() {
+        let witnesses: Vec<Witness> = (0..10)
+            .map(|i| Witness {
+                witness_id: format!("w-{i:03}"),
+                witness_type: "t".to_string(),
+                value: format!("{i}"),
+            })
+            .collect();
+        let mut entry = make_entry_with(vec![], witnesses, vec![]);
+        let bounds = SizeBounds {
+            max_candidates: 64,
+            max_witnesses: 3,
+            max_constraints: 32,
+        };
+        let result = normalize_entry(&mut entry, &bounds);
+        assert_eq!(result.truncations.len(), 1);
+        assert_eq!(entry.witnesses.len(), 3);
+    }
+
+    #[test]
+    fn validate_catches_unsorted_constraints() {
+        let entry = make_entry_with(
+            vec![],
+            vec![],
+            vec![
+                Constraint {
+                    constraint_id: "z-rule".to_string(),
+                    description: "d".to_string(),
+                    active: true,
+                },
+                Constraint {
+                    constraint_id: "a-rule".to_string(),
+                    description: "d".to_string(),
+                    active: false,
+                },
+            ],
+        );
+        let errors = validate_entry_ordering(&entry, &SizeBounds::default()).unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, OrderingViolation::ConstraintsNotSorted { .. }))
+        );
+    }
+
+    #[test]
+    fn validate_catches_witnesses_exceed_bound() {
+        let witnesses: Vec<Witness> = (0..5)
+            .map(|i| Witness {
+                witness_id: format!("w-{i:03}"),
+                witness_type: "t".to_string(),
+                value: "v".to_string(),
+            })
+            .collect();
+        let entry = make_entry_with(vec![], witnesses, vec![]);
+        let bounds = SizeBounds {
+            max_candidates: 64,
+            max_witnesses: 3,
+            max_constraints: 32,
+        };
+        let errors = validate_entry_ordering(&entry, &bounds).unwrap_err();
+        assert!(errors.iter().any(|e| matches!(
+            e,
+            OrderingViolation::WitnessesExceedBound { count: 5, max: 3 }
+        )));
+    }
+
+    #[test]
+    fn validate_catches_constraints_exceed_bound() {
+        let constraints: Vec<Constraint> = (0..5)
+            .map(|i| Constraint {
+                constraint_id: format!("c-{i:03}"),
+                description: "d".to_string(),
+                active: true,
+            })
+            .collect();
+        let entry = make_entry_with(vec![], vec![], constraints);
+        let bounds = SizeBounds {
+            max_candidates: 64,
+            max_witnesses: 256,
+            max_constraints: 2,
+        };
+        let errors = validate_entry_ordering(&entry, &bounds).unwrap_err();
+        assert!(errors.iter().any(|e| matches!(
+            e,
+            OrderingViolation::ConstraintsExceedBound { count: 5, max: 2 }
+        )));
+    }
+
+    #[test]
+    fn sort_candidates_stable_on_equal_names() {
+        let mut candidates = vec![
+            CandidateAction::new("same", 300),
+            CandidateAction::new("same", 100),
+            CandidateAction::new("same", 200),
+        ];
+        sort_candidates(&mut candidates);
+        assert_eq!(candidates[0].expected_loss_millionths, 100);
+        assert_eq!(candidates[1].expected_loss_millionths, 200);
+        assert_eq!(candidates[2].expected_loss_millionths, 300);
+    }
+
+    #[test]
+    fn dedup_witnesses_no_duplicates_unchanged() {
+        let mut witnesses = vec![
+            Witness {
+                witness_id: "a".to_string(),
+                witness_type: "t".to_string(),
+                value: "1".to_string(),
+            },
+            Witness {
+                witness_id: "b".to_string(),
+                witness_type: "t".to_string(),
+                value: "2".to_string(),
+            },
+        ];
+        dedup_witnesses(&mut witnesses);
+        assert_eq!(witnesses.len(), 2);
+    }
+
+    #[test]
+    fn dedup_witnesses_all_duplicates() {
+        let mut witnesses = vec![
+            Witness {
+                witness_id: "same".to_string(),
+                witness_type: "t".to_string(),
+                value: "1".to_string(),
+            },
+            Witness {
+                witness_id: "same".to_string(),
+                witness_type: "t".to_string(),
+                value: "2".to_string(),
+            },
+            Witness {
+                witness_id: "same".to_string(),
+                witness_type: "t".to_string(),
+                value: "3".to_string(),
+            },
+        ];
+        dedup_witnesses(&mut witnesses);
+        assert_eq!(witnesses.len(), 1);
+        assert_eq!(witnesses[0].value, "1"); // keeps first
+    }
+
+    #[test]
+    fn size_bounds_default_values() {
+        let bounds = SizeBounds::default();
+        assert_eq!(bounds.max_candidates, 64);
+        assert_eq!(bounds.max_witnesses, 256);
+        assert_eq!(bounds.max_constraints, 32);
+    }
+
+    #[test]
+    fn normalize_large_entry_all_truncations() {
+        let candidates: Vec<CandidateAction> = (0..100)
+            .map(|i| CandidateAction::new(format!("act-{i:03}"), i * 1000))
+            .collect();
+        let witnesses: Vec<Witness> = (0..100)
+            .map(|i| Witness {
+                witness_id: format!("w-{i:03}"),
+                witness_type: "t".to_string(),
+                value: format!("{i}"),
+            })
+            .collect();
+        let constraints: Vec<Constraint> = (0..100)
+            .map(|i| Constraint {
+                constraint_id: format!("c-{i:03}"),
+                description: "d".to_string(),
+                active: true,
+            })
+            .collect();
+        let mut entry = make_entry_with(candidates, witnesses, constraints);
+        let bounds = SizeBounds {
+            max_candidates: 10,
+            max_witnesses: 10,
+            max_constraints: 10,
+        };
+        let result = normalize_entry(&mut entry, &bounds);
+        assert_eq!(result.truncations.len(), 3);
+        assert_eq!(entry.candidates.len(), 10);
+        assert_eq!(entry.witnesses.len(), 10);
+        assert_eq!(entry.constraints.len(), 10);
+        assert!(validate_entry_ordering(&entry, &bounds).is_ok());
+    }
+
+    #[test]
+    fn normalization_result_truncation_marker_display() {
+        let marker = TruncationMarker {
+            list_name: "witnesses".to_string(),
+            original_count: 500,
+            retained_count: 256,
+            policy: "top-K by witness_id".to_string(),
+        };
+        let display = marker.to_string();
+        assert!(display.contains("witnesses"));
+        assert!(display.contains("500"));
+        assert!(display.contains("256"));
+    }
 }

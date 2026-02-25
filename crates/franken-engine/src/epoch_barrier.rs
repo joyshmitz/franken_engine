@@ -1006,4 +1006,87 @@ mod tests {
         let restored: BarrierConfig = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(config, restored);
     }
+
+    // --- enrichment tests ---
+
+    #[test]
+    fn release_stale_guard_from_old_epoch_returns_false() {
+        let mut barrier = det_barrier(1);
+        let guard = barrier
+            .enter_critical(CriticalOpKind::DecisionEval, "t")
+            .unwrap();
+        barrier
+            .transition_now(
+                SecurityEpoch::from_raw(2),
+                TransitionReason::PolicyKeyRotation,
+                "t",
+            )
+            .unwrap();
+        assert!(!barrier.release_guard(&guard));
+    }
+
+    #[test]
+    fn force_cancel_when_not_draining_returns_error() {
+        let mut barrier = det_barrier(1);
+        let err = barrier.force_cancel_remaining().unwrap_err();
+        assert!(matches!(err, BarrierError::NoTransitionInProgress));
+    }
+
+    #[test]
+    fn barrier_config_default_values() {
+        let cfg = BarrierConfig::default();
+        assert_eq!(cfg.drain_timeout_ms, 5000);
+        assert!(!cfg.deterministic);
+    }
+
+    #[test]
+    fn barrier_config_deterministic_values() {
+        let cfg = BarrierConfig::deterministic();
+        assert_eq!(cfg.drain_timeout_ms, 0);
+        assert!(cfg.deterministic);
+    }
+
+    #[test]
+    fn barrier_config_accessor() {
+        let barrier = det_barrier(1);
+        assert!(barrier.config().deterministic);
+    }
+
+    #[test]
+    fn barrier_starts_open_with_zero_in_flight() {
+        let barrier = det_barrier(1);
+        assert_eq!(barrier.state(), BarrierState::Open);
+        assert_eq!(barrier.in_flight(), 0);
+        assert_eq!(barrier.current_epoch(), SecurityEpoch::from_raw(1));
+    }
+
+    #[test]
+    fn release_guard_on_empty_barrier_returns_false() {
+        let mut barrier = det_barrier(1);
+        let fake_guard = EpochGuard {
+            guard_id: 999,
+            epoch: SecurityEpoch::from_raw(1),
+            op_kind: CriticalOpKind::DecisionEval,
+            trace_id: "fake".to_string(),
+        };
+        assert!(!barrier.release_guard(&fake_guard));
+    }
+
+    #[test]
+    fn evidence_starts_empty() {
+        let barrier = det_barrier(1);
+        assert!(barrier.evidence().is_empty());
+    }
+
+    #[test]
+    fn can_complete_is_false_when_open() {
+        let barrier = det_barrier(1);
+        assert!(!barrier.can_complete());
+    }
+
+    #[test]
+    fn critical_op_kind_ordering() {
+        assert!(CriticalOpKind::DecisionEval < CriticalOpKind::EvidenceEmission);
+        assert!(CriticalOpKind::EvidenceEmission < CriticalOpKind::KeyDerivation);
+    }
 }

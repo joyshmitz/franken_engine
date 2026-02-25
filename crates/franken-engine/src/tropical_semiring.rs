@@ -466,6 +466,9 @@ impl InstructionCostGraph {
     /// Time: O(V + E).  Exact (not heuristic).
     pub fn critical_path_length(&self) -> Result<CriticalPathResult, TropicalError> {
         let n = self.nodes.len();
+        if n == 0 {
+            return Err(TropicalError::EmptyGraph);
+        }
 
         // Compute in-degree for Kahn's topological sort.
         let mut in_degree = vec![0usize; n];
@@ -1169,6 +1172,17 @@ mod tests {
     #[test]
     fn empty_graph_rejected() {
         let result = InstructionCostGraph::new(vec![]);
+        assert!(matches!(result, Err(TropicalError::EmptyGraph)));
+    }
+
+    #[test]
+    fn deserialized_empty_graph_critical_path_rejected_without_panic() {
+        // Constructor rejects this shape, but deserialization can still produce it.
+        let graph = InstructionCostGraph {
+            nodes: vec![],
+            adjacency: None,
+        };
+        let result = graph.critical_path_length();
         assert!(matches!(result, Err(TropicalError::EmptyGraph)));
     }
 

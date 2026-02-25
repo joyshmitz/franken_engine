@@ -772,4 +772,103 @@ mod tests {
         assert_eq!(chan.total_count(), 3);
         assert_eq!(chan.leak_count(), 1);
     }
+
+    // --- enrichment tests ---
+
+    #[test]
+    fn obligation_state_display_all_variants() {
+        let states = [
+            (ObligationState::Pending, "pending"),
+            (ObligationState::Committed, "committed"),
+            (ObligationState::Aborted, "aborted"),
+            (ObligationState::Leaked, "leaked"),
+        ];
+        for (state, expected) in &states {
+            assert_eq!(state.to_string(), *expected);
+        }
+    }
+
+    #[test]
+    fn abort_reason_display_all_variants() {
+        assert_eq!(AbortReason::DrainTimeout.to_string(), "drain_timeout");
+        assert_eq!(AbortReason::UpstreamFailure.to_string(), "upstream_failure");
+        assert_eq!(AbortReason::PolicyViolation.to_string(), "policy_violation");
+        assert_eq!(AbortReason::OperatorAbort.to_string(), "operator_abort");
+        assert_eq!(
+            AbortReason::Custom("foo".to_string()).to_string(),
+            "custom:foo"
+        );
+    }
+
+    #[test]
+    fn channel_config_default_values() {
+        let cfg = ChannelConfig::default();
+        assert_eq!(cfg.max_pending, 256);
+        assert!(!cfg.lab_mode);
+    }
+
+    #[test]
+    fn obligation_ids_are_sequential() {
+        let mut chan = test_channel();
+        let id1 = chan.send("t").unwrap();
+        let id2 = chan.send("t").unwrap();
+        let id3 = chan.send("t").unwrap();
+        assert_eq!(id1, 1);
+        assert_eq!(id2, 2);
+        assert_eq!(id3, 3);
+    }
+
+    #[test]
+    fn drain_events_clears_buffer() {
+        let mut chan = test_channel();
+        chan.send("t").unwrap();
+        assert!(!chan.drain_events().is_empty());
+        assert!(chan.drain_events().is_empty());
+    }
+
+    #[test]
+    fn commit_nonexistent_obligation_fails() {
+        let mut chan = test_channel();
+        let err = chan.commit(999, "h").unwrap_err();
+        assert!(matches!(
+            err,
+            ObligationError::NotFound { obligation_id: 999 }
+        ));
+    }
+
+    #[test]
+    fn abort_nonexistent_obligation_fails() {
+        let mut chan = test_channel();
+        let err = chan
+            .abort(999, &AbortReason::DrainTimeout, "h")
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            ObligationError::NotFound { obligation_id: 999 }
+        ));
+    }
+
+    #[test]
+    fn double_commit_returns_already_resolved() {
+        let mut chan = test_channel();
+        let id = chan.send("t").unwrap();
+        chan.commit(id, "h1").unwrap();
+        let err = chan.commit(id, "h2").unwrap_err();
+        assert!(matches!(err, ObligationError::AlreadyResolved { .. }));
+    }
+
+    #[test]
+    fn obligation_error_serde_all_variants() {
+        let errors = vec![
+            ObligationError::NotFound { obligation_id: 1 },
+            ObligationError::AlreadyResolved { obligation_id: 2 },
+            ObligationError::Backpressure { max_pending: 10 },
+            ObligationError::Leaked { obligation_id: 3 },
+        ];
+        for err in &errors {
+            let json = serde_json::to_string(err).expect("serialize");
+            let restored: ObligationError = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*err, restored);
+        }
+    }
 }

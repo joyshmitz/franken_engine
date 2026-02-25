@@ -530,4 +530,144 @@ mod tests {
         let restored: LeakMetrics = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(metrics, restored);
     }
+
+    // -- Enrichment: additional edge cases --
+
+    #[test]
+    fn handler_policy_accessor() {
+        let handler = LeakHandler::new(ObligationLeakPolicy::Lab);
+        assert_eq!(handler.policy(), ObligationLeakPolicy::Lab);
+        let handler2 = LeakHandler::new(ObligationLeakPolicy::Production);
+        assert_eq!(handler2.policy(), ObligationLeakPolicy::Production);
+    }
+
+    #[test]
+    fn drain_events_clears_buffer() {
+        let mut handler = LeakHandler::new(ObligationLeakPolicy::Production);
+        handler.handle_leak(test_diagnostic());
+        handler.handle_leak(test_diagnostic());
+        let events = handler.drain_events();
+        assert_eq!(events.len(), 2);
+        let events2 = handler.drain_events();
+        assert!(events2.is_empty(), "drain should clear events");
+    }
+
+    #[test]
+    fn lab_mode_does_not_emit_events() {
+        let mut handler = LeakHandler::new(ObligationLeakPolicy::Lab);
+        handler.handle_leak(test_diagnostic());
+        let events = handler.drain_events();
+        assert!(events.is_empty(), "lab mode should not emit events");
+    }
+
+    #[test]
+    fn metrics_default_is_zero() {
+        let metrics = LeakMetrics::default();
+        assert_eq!(metrics.total, 0);
+        assert!(metrics.by_region.is_empty());
+        assert!(metrics.by_channel.is_empty());
+        assert!(metrics.by_component.is_empty());
+    }
+
+    #[test]
+    fn metrics_multiple_regions() {
+        let mut handler = LeakHandler::new(ObligationLeakPolicy::Production);
+        for i in 0..5 {
+            handler.handle_leak(LeakDiagnostic {
+                obligation_id: i,
+                channel_id: format!("chan-{}", i % 2),
+                creator_trace_id: format!("trace-{i}"),
+                obligation_age_ticks: 100,
+                region_id: format!("region-{}", i % 3),
+                component: "comp".to_string(),
+            });
+        }
+        let metrics = handler.metrics();
+        assert_eq!(metrics.total, 5);
+        assert_eq!(metrics.by_region.len(), 3); // region-0, region-1, region-2
+        assert_eq!(metrics.by_channel.len(), 2); // chan-0, chan-1
+    }
+
+    #[test]
+    fn production_failover_region_matches_diagnostic() {
+        let mut handler = LeakHandler::new(ObligationLeakPolicy::Production);
+        let response = handler.handle_leak(LeakDiagnostic {
+            obligation_id: 1,
+            channel_id: "c".to_string(),
+            creator_trace_id: "t".to_string(),
+            obligation_age_ticks: 50,
+            region_id: "my-region".to_string(),
+            component: "comp".to_string(),
+        });
+        if let LeakResponse::Handled { failover, .. } = response {
+            if let Some(FailoverAction::ScopedRegionClose { region_id }) = failover {
+                assert_eq!(region_id, "my-region");
+            } else {
+                panic!("expected ScopedRegionClose");
+            }
+        } else {
+            panic!("expected Handled");
+        }
+    }
+
+    #[test]
+    fn diagnostic_display_contains_all_fields() {
+        let diag = LeakDiagnostic {
+            obligation_id: 99,
+            channel_id: "ch-x".to_string(),
+            creator_trace_id: "tr-y".to_string(),
+            obligation_age_ticks: 12345,
+            region_id: "reg-z".to_string(),
+            component: "my_comp".to_string(),
+        };
+        let s = diag.to_string();
+        assert!(s.contains("99"));
+        assert!(s.contains("ch-x"));
+        assert!(s.contains("tr-y"));
+        assert!(s.contains("12345"));
+        assert!(s.contains("reg-z"));
+        assert!(s.contains("my_comp"));
+    }
+
+    #[test]
+    fn policy_equality() {
+        assert_eq!(ObligationLeakPolicy::Lab, ObligationLeakPolicy::Lab);
+        assert_ne!(ObligationLeakPolicy::Lab, ObligationLeakPolicy::Production);
+    }
+
+    #[test]
+    fn leak_event_alert_only_failover() {
+        let event = LeakEvent {
+            trace_id: "t".to_string(),
+            obligation_id: 1,
+            channel_id: "c".to_string(),
+            region_id: "r".to_string(),
+            component: "comp".to_string(),
+            leak_policy: ObligationLeakPolicy::Production,
+            failover_action: Some(FailoverAction::AlertOnly),
+            severity: LeakSeverity::Warning,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let restored: LeakEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, restored);
+        assert_eq!(restored.failover_action, Some(FailoverAction::AlertOnly));
+    }
+
+    #[test]
+    fn leak_event_no_failover() {
+        let event = LeakEvent {
+            trace_id: "t".to_string(),
+            obligation_id: 1,
+            channel_id: "c".to_string(),
+            region_id: "r".to_string(),
+            component: "comp".to_string(),
+            leak_policy: ObligationLeakPolicy::Lab,
+            failover_action: None,
+            severity: LeakSeverity::Fatal,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let restored: LeakEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, restored);
+        assert!(restored.failover_action.is_none());
+    }
 }

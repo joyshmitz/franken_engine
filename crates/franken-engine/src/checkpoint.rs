@@ -785,4 +785,187 @@ mod tests {
         let restored: CheckpointCoverage = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(cov, restored);
     }
+
+    // --- enrichment tests ---
+
+    #[test]
+    fn density_config_default_values() {
+        let cfg = DensityConfig::default();
+        assert_eq!(cfg.max_iterations, 1024);
+        assert_eq!(cfg.max_total_iterations, 1_000_000);
+    }
+
+    #[test]
+    fn guard_virtual_time_advances_with_tick() {
+        let (mut guard, _) = test_guard();
+        assert_eq!(guard.virtual_time(), 0);
+        guard.tick();
+        assert_eq!(guard.virtual_time(), 1);
+        guard.tick();
+        guard.tick();
+        assert_eq!(guard.virtual_time(), 3);
+    }
+
+    #[test]
+    fn guard_total_iterations_accessor() {
+        let (mut guard, _) = test_guard();
+        assert_eq!(guard.total_iterations(), 0);
+        for _ in 0..7 {
+            guard.tick();
+        }
+        assert_eq!(guard.total_iterations(), 7);
+    }
+
+    #[test]
+    fn multiple_periodic_checkpoints_in_one_loop() {
+        let (mut guard, _) = test_guard(); // max_iterations=10
+        for _ in 0..30 {
+            guard.tick();
+            guard.check();
+        }
+        let events = guard.drain_events();
+        let periodic_count = events
+            .iter()
+            .filter(|e| e.reason == CheckpointReason::Periodic)
+            .count();
+        assert_eq!(periodic_count, 3);
+    }
+
+    #[test]
+    fn cancel_takes_priority_over_budget_exhaustion() {
+        let token = CancellationToken::new();
+        let mut guard = CheckpointGuard::new(
+            LoopSite::GcScanning,
+            "gc",
+            "t",
+            DensityConfig {
+                max_iterations: 50,
+                max_total_iterations: 10,
+            },
+            token.clone(),
+        );
+        for _ in 0..10 {
+            guard.tick();
+        }
+        token.cancel();
+        let action = guard.check();
+        assert_eq!(action, CheckpointAction::Drain);
+        let events = guard.drain_events();
+        assert_eq!(
+            events.last().unwrap().reason,
+            CheckpointReason::CancelPending
+        );
+    }
+
+    #[test]
+    fn drain_events_clears_buffer() {
+        let (mut guard, _) = test_guard();
+        for _ in 0..10 {
+            guard.tick();
+        }
+        guard.check();
+        assert_eq!(guard.event_count(), 1);
+        let _ = guard.drain_events();
+        assert_eq!(guard.event_count(), 0);
+    }
+
+    #[test]
+    fn coverage_register_custom_site_outside_mandatory() {
+        let mut cov = CheckpointCoverage::new();
+        let initial_total = cov.total();
+        cov.register("my_custom_loop");
+        assert_eq!(cov.total(), initial_total + 1);
+        assert!(cov.coverage.get("my_custom_loop") == Some(&true));
+    }
+
+    #[test]
+    fn coverage_default_is_empty() {
+        let cov = CheckpointCoverage::default();
+        assert!(cov.all_covered());
+        assert_eq!(cov.total(), 0);
+    }
+
+    #[test]
+    fn guard_with_custom_loop_site() {
+        let token = CancellationToken::new();
+        let mut guard = CheckpointGuard::new(
+            LoopSite::Custom("my_scan".to_string()),
+            "scanner",
+            "t-scan",
+            DensityConfig {
+                max_iterations: 2,
+                max_total_iterations: 100,
+            },
+            token,
+        );
+        guard.tick();
+        guard.tick();
+        guard.check();
+        let events = guard.drain_events();
+        assert_eq!(events[0].loop_site, LoopSite::Custom("my_scan".to_string()));
+    }
+
+    #[test]
+    fn guard_max_iterations_one_fires_every_tick() {
+        let token = CancellationToken::new();
+        let mut guard = CheckpointGuard::new(
+            LoopSite::ModuleDecode,
+            "decoder",
+            "t",
+            DensityConfig {
+                max_iterations: 1,
+                max_total_iterations: 100,
+            },
+            token,
+        );
+        for _ in 0..5 {
+            guard.tick();
+            guard.check();
+        }
+        let events = guard.drain_events();
+        assert_eq!(events.len(), 5);
+        assert!(
+            events
+                .iter()
+                .all(|e| e.reason == CheckpointReason::Periodic)
+        );
+    }
+
+    #[test]
+    fn checkpoint_reason_ordering() {
+        assert!(CheckpointReason::Periodic < CheckpointReason::CancelPending);
+        assert!(CheckpointReason::CancelPending < CheckpointReason::BudgetExhausted);
+        assert!(CheckpointReason::BudgetExhausted < CheckpointReason::Explicit);
+    }
+
+    #[test]
+    fn explicit_checkpoint_event_has_correct_reason() {
+        let (mut guard, _) = test_guard();
+        for _ in 0..3 {
+            guard.tick();
+        }
+        guard.explicit_checkpoint();
+        let events = guard.drain_events();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].reason, CheckpointReason::Explicit);
+        assert_eq!(events[0].action, CheckpointAction::Continue);
+        assert_eq!(events[0].iteration_count, 3);
+    }
+
+    #[test]
+    fn token_default_is_not_cancelled() {
+        let token = CancellationToken::default();
+        assert!(!token.is_cancelled());
+    }
+
+    #[test]
+    fn event_virtual_timestamp_matches_guard_time() {
+        let (mut guard, _) = test_guard();
+        for _ in 0..10 {
+            guard.tick();
+        }
+        guard.check();
+        let events = guard.drain_events();
+        assert_eq!(events[0].timestamp_virtual, 10);
+    }
 }

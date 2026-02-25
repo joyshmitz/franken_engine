@@ -64,6 +64,8 @@ pub enum SpectralError {
     Disconnected { components: usize },
     /// Node index out of bounds.
     NodeOutOfBounds { index: usize, size: usize },
+    /// Edge weight must be strictly positive.
+    InvalidEdgeWeight { weight_millionths: i64 },
     /// Power iteration did not converge.
     ConvergenceFailure { iterations: usize },
     /// Spectral gap is zero or negative (degenerate graph).
@@ -82,6 +84,9 @@ impl fmt::Display for SpectralError {
             }
             Self::NodeOutOfBounds { index, size } => {
                 write!(f, "node {index} out of bounds (size {size})")
+            }
+            Self::InvalidEdgeWeight { weight_millionths } => {
+                write!(f, "invalid edge weight {weight_millionths}; expected > 0")
             }
             Self::ConvergenceFailure { iterations } => {
                 write!(
@@ -143,6 +148,9 @@ impl GossipTopology {
         to: usize,
         weight_millionths: i64,
     ) -> Result<(), SpectralError> {
+        if weight_millionths <= 0 {
+            return Err(SpectralError::InvalidEdgeWeight { weight_millionths });
+        }
         if from >= self.num_nodes {
             return Err(SpectralError::NodeOutOfBounds {
                 index: from,
@@ -306,6 +314,14 @@ pub struct SpectralAnalysis {
     pub spectral_gap_millionths: i64,
     /// Mixing-time proxy upper bound: ceil((λ_max / λ₂) · ln(n)).
     pub mixing_time_bound: u64,
+    /// Largest Laplacian eigenvalue λ_max in millionths.
+    pub lambda_max_millionths: i64,
+    /// Iterations used by λ_max power iteration.
+    pub lambda_max_iterations: usize,
+    /// Iterations used by Fiedler iteration.
+    pub fiedler_iterations: usize,
+    /// Infinity-norm residual ||L v₂ - λ₂ v₂||∞ in millionths.
+    pub fiedler_residual_millionths: i64,
     /// Cheeger conductance lower bound: λ₂_norm / 2 in millionths.
     pub cheeger_lower_bound_millionths: i64,
     /// Cheeger conductance upper bound: √(2 · λ₂_norm) in millionths.
@@ -373,8 +389,10 @@ impl SpectralAnalyzer {
         // Mixing time bound: t_mix ≈ ceil(λ_max / λ₂ · ln(n)).
         let ln_n = integer_ln_millionths(n as u64);
         let mixing_time = if spectral_gap > 0 {
-            let ratio = lambda_max * MILLION / spectral_gap; // λ_max/λ₂ in millionths
-            ((ratio * ln_n / MILLION) + MILLION - 1) / MILLION
+            let ratio = lambda_max as i128 * MILLION as i128 / spectral_gap as i128; // λ_max/λ₂ in millionths
+            let mixed = ratio.saturating_mul(ln_n as i128) / MILLION as i128;
+            let rounds = (mixed + MILLION as i128 - 1) / MILLION as i128;
+            rounds.min(i64::MAX as i128) as i64
         } else {
             i64::MAX
         };
@@ -383,12 +401,13 @@ impl SpectralAnalyzer {
         // λ₂_norm / 2 ≤ h ≤ sqrt(2 * λ₂_norm)
         // using λ₂_norm ≈ λ₂ / λ_max.
         let normalized_gap = if lambda_max > 0 {
-            fiedler_value * MILLION / lambda_max
+            let ng = (fiedler_value as i128 * MILLION as i128) / lambda_max as i128;
+            ng.clamp(i64::MIN as i128, i64::MAX as i128) as i64
         } else {
             0
         };
         let cheeger_lower = normalized_gap / 2;
-        let cheeger_upper = integer_sqrt_millionths((2 * normalized_gap).max(0));
+        let cheeger_upper = integer_sqrt_millionths(normalized_gap.saturating_mul(2).max(0));
 
         // Partition detection via Fiedler vector sign.
         let mut partition_a = Vec::new();
@@ -534,6 +553,12 @@ pub struct ConvergenceCertificate {
     /// Conductance bounds (Cheeger inequality).
     pub cheeger_lower_millionths: i64,
     pub cheeger_upper_millionths: i64,
+    /// Largest Laplacian eigenvalue λ_max in millionths.
+    pub lambda_max_millionths: i64,
+    /// Iteration count used to compute λ₂.
+    pub fiedler_iterations: usize,
+    /// Infinity-norm residual for the certified Fiedler pair.
+    pub fiedler_residual_millionths: i64,
     /// Whether the graph has a natural partition.
     pub has_natural_partition: bool,
     /// Partition sizes (if detected).
@@ -796,6 +821,19 @@ mod tests {
     }
 
     #[test]
+    fn nonpositive_edge_weight_rejected() {
+        let mut topo = GossipTopology::new(vec!["a".into(), "b".into()]).unwrap();
+        assert!(matches!(
+            topo.add_edge(0, 1, 0),
+            Err(SpectralError::InvalidEdgeWeight { .. })
+        ));
+        assert!(matches!(
+            topo.add_edge(0, 1, -5),
+            Err(SpectralError::InvalidEdgeWeight { .. })
+        ));
+    }
+
+    #[test]
     fn degree_computation() {
         let mut topo = GossipTopology::new(vec!["a".into(), "b".into(), "c".into()]).unwrap();
         topo.add_edge(0, 1, MILLION).unwrap();
@@ -1007,6 +1045,17 @@ mod tests {
         assert!((analysis.algebraic_connectivity_millionths - 2 * MILLION).abs() < 200_000);
     }
 
+    #[test]
+    fn mixing_time_bound_avoids_overflow_on_large_weights() {
+        let mut topo = GossipTopology::new(vec!["a".into(), "b".into(), "c".into()]).unwrap();
+        let w = i64::MAX / 16;
+        topo.add_edge(0, 1, w).unwrap();
+        topo.add_edge(1, 2, w).unwrap();
+        let analyzer = SpectralAnalyzer::default();
+        let analysis = analyzer.analyze(&topo).unwrap();
+        assert!(analysis.mixing_time_bound >= 1);
+    }
+
     // === Helper functions ===
 
     #[test]
@@ -1042,6 +1091,22 @@ mod tests {
         let ln4 = integer_ln_millionths(4);
         assert!((ln4 - 2 * 693_147).abs() < 30_000);
         assert!(integer_ln_millionths(16) > integer_ln_millionths(4));
+    }
+
+    #[test]
+    fn integer_log2_large_values_stay_normalized() {
+        let n = (1u64 << 40) + 1;
+        let l = integer_log2_millionths(n);
+        assert!(l >= 40 * MILLION);
+        assert!(l < 40 * MILLION + 20_000);
+    }
+
+    #[test]
+    fn integer_ln_large_values_reasonable() {
+        let n = 1u64 << 40;
+        let ln = integer_ln_millionths(n);
+        let expected = 40 * 693_147;
+        assert!((ln - expected).abs() < 40_000);
     }
 
     #[test]

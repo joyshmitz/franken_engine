@@ -1132,4 +1132,189 @@ mod tests {
             .unwrap();
         assert!(pipeline.events().is_empty());
     }
+
+    // -- Enrichment: PipelineConfig defaults --
+
+    #[test]
+    fn pipeline_config_default_values() {
+        let cfg = PipelineConfig::default();
+        assert_eq!(
+            cfg.loss_threshold_milli,
+            LossAssessment::DEFAULT_THRESHOLD_MILLI
+        );
+        assert_eq!(cfg.emergency_max_duration_ms, 300_000);
+        assert!(cfg.emit_stage_events);
+    }
+
+    // -- Enrichment: LossAssessment threshold constant --
+
+    #[test]
+    fn loss_assessment_default_threshold_value() {
+        assert_eq!(LossAssessment::DEFAULT_THRESHOLD_MILLI, 100_000);
+    }
+
+    #[test]
+    fn loss_at_exact_threshold_not_below() {
+        let loss = LossAssessment {
+            expected_loss_milli: 100_000,
+            data_sensitivity_bps: 5000,
+            sink_exposure_bps: 5000,
+            historical_abuse_detected: false,
+            summary: "at threshold".to_string(),
+        };
+        // below_threshold uses strict <, so exact threshold is NOT below
+        assert!(!loss.below_threshold(100_000));
+    }
+
+    // -- Enrichment: PolicyEvalResult is_approved --
+
+    #[test]
+    fn policy_eval_result_is_approved_all_variants() {
+        assert!(
+            PolicyEvalResult::RouteApproved {
+                route_id: "r".to_string(),
+                conditions_met: vec![],
+            }
+            .is_approved()
+        );
+
+        assert!(
+            !PolicyEvalResult::ConditionsNotMet {
+                route_id: "r".to_string(),
+                failed_conditions: vec!["c".to_string()],
+            }
+            .is_approved()
+        );
+
+        assert!(!PolicyEvalResult::NoMatchingRoute.is_approved());
+
+        assert!(
+            !PolicyEvalResult::PolicyUnavailable {
+                reason: "gone".to_string(),
+            }
+            .is_approved()
+        );
+    }
+
+    // -- Enrichment: EmergencyGrant expiry boundary --
+
+    #[test]
+    fn emergency_grant_expired_at_exact_expiry() {
+        let grant = EmergencyGrant {
+            grant_id: "g".to_string(),
+            request_id: "r".to_string(),
+            source_label: Label::Secret,
+            sink_clearance: Label::Public,
+            expiry_ms: 1000,
+            review_completed: false,
+        };
+        assert!(!grant.is_expired(999));
+        assert!(grant.is_expired(1000)); // >= means expired
+        assert!(grant.is_expired(1001));
+    }
+
+    // -- Enrichment: Pipeline starts empty --
+
+    #[test]
+    fn pipeline_starts_empty() {
+        let pipeline = DeclassificationPipeline::default();
+        assert!(pipeline.events().is_empty());
+        assert!(pipeline.receipts().is_empty());
+        let stats = pipeline.stats();
+        assert_eq!(stats.decision_count, 0);
+        assert_eq!(stats.allow_count, 0);
+        assert_eq!(stats.deny_count, 0);
+        assert_eq!(stats.emergency_grants_active, 0);
+    }
+
+    // -- Enrichment: PipelineError is std::error::Error --
+
+    #[test]
+    fn pipeline_error_is_std_error() {
+        let err: Box<dyn std::error::Error> = Box::new(PipelineError::PolicyUnavailable {
+            reason: "test".to_string(),
+        });
+        assert!(!err.to_string().is_empty());
+    }
+
+    // -- Enrichment: PipelineError Display all variants --
+
+    #[test]
+    fn pipeline_error_display_all_variants() {
+        let variants: Vec<PipelineError> = vec![
+            PipelineError::FlowAlreadyLegal {
+                source: Label::Public,
+                sink: Label::Internal,
+            },
+            PipelineError::PolicyUnavailable {
+                reason: "unavail".to_string(),
+            },
+            PipelineError::NoMatchingRoute {
+                source: Label::Secret,
+                sink: Label::Public,
+            },
+            PipelineError::LossExceedsThreshold {
+                expected_loss_milli: 500,
+                threshold_milli: 100,
+            },
+            PipelineError::EmergencyExpired {
+                request_id: "req-1".to_string(),
+                expiry_ms: 999,
+            },
+            PipelineError::SigningError {
+                detail: "bad key".to_string(),
+            },
+            PipelineError::ValidationError(IfcValidationError::EmptyClaim {
+                claim_id: "c-1".to_string(),
+            }),
+        ];
+        assert_eq!(variants.len(), 7, "must cover all PipelineError variants");
+        for v in &variants {
+            assert!(!v.to_string().is_empty());
+        }
+    }
+
+    // -- Enrichment: policy extension mismatch --
+
+    #[test]
+    fn policy_extension_mismatch_returns_error() {
+        let mut pipeline = DeclassificationPipeline::default();
+        let policy = make_policy();
+        let mut request = make_request("declass-secret-internal", Label::Secret, Label::Internal);
+        request.extension_id = "wrong-extension".to_string();
+
+        let err = pipeline
+            .process(&request, &policy, &low_loss(), &test_key())
+            .unwrap_err();
+        assert!(matches!(err, PipelineError::PolicyUnavailable { .. }));
+    }
+
+    // -- Enrichment: emergency grant not visible after review --
+
+    #[test]
+    fn emergency_grant_not_visible_after_review_completion() {
+        let mut pipeline = DeclassificationPipeline::default();
+        let policy = make_policy();
+        let mut request = make_request("bad-route", Label::Secret, Label::Public);
+        request.is_emergency = true;
+
+        pipeline
+            .process(&request, &policy, &low_loss(), &test_key())
+            .unwrap();
+
+        let grant_id = format!("emg-{}", request.request_id);
+        assert!(
+            pipeline
+                .check_emergency_grant(&Label::Secret, &Label::Public, request.timestamp_ms)
+                .is_some()
+        );
+
+        pipeline.complete_emergency_review(&grant_id);
+        // After review, grant should no longer be found
+        assert!(
+            pipeline
+                .check_emergency_grant(&Label::Secret, &Label::Public, request.timestamp_ms)
+                .is_none()
+        );
+    }
 }

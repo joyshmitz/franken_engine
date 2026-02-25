@@ -861,4 +861,134 @@ mod tests {
         assert_eq!(ledger.len(), 0);
         assert!(ledger.is_empty());
     }
+
+    // --- enrichment: builder edge cases ---
+
+    #[test]
+    fn builder_no_candidates_builds_ok() {
+        let entry = EvidenceEntryBuilder::new(
+            "t",
+            "d",
+            "p",
+            SecurityEpoch::from_raw(1),
+            DecisionType::SecurityAction,
+        )
+        .chosen(ChosenAction {
+            action_name: "allow".to_string(),
+            expected_loss_millionths: 0,
+            rationale: "default".to_string(),
+        })
+        .build()
+        .unwrap();
+        assert!(entry.candidates.is_empty());
+        assert!(entry.constraints.is_empty());
+        assert!(entry.witnesses.is_empty());
+        assert!(entry.metadata.is_empty());
+    }
+
+    #[test]
+    fn builder_timestamp_is_set() {
+        let entry = EvidenceEntryBuilder::new(
+            "t",
+            "d",
+            "p",
+            SecurityEpoch::from_raw(1),
+            DecisionType::Revocation,
+        )
+        .timestamp_ns(42_000_000)
+        .chosen(ChosenAction {
+            action_name: "revoke".to_string(),
+            expected_loss_millionths: 10_000,
+            rationale: "expired".to_string(),
+        })
+        .build()
+        .unwrap();
+        assert_eq!(entry.timestamp_ns, 42_000_000);
+    }
+
+    #[test]
+    fn entry_id_format() {
+        let entry = sample_entry();
+        assert!(entry.entry_id.starts_with("ev-"));
+        assert_eq!(entry.entry_id.len(), 3 + 16);
+    }
+
+    #[test]
+    fn evidence_hash_is_16_hex_chars() {
+        let entry = sample_entry();
+        assert_eq!(entry.evidence_hash.len(), 16);
+        assert!(entry.evidence_hash.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn schema_version_ext_accessors() {
+        let v = SchemaVersion::new(3, 7, 0);
+        assert_eq!(v.major_val(), 3);
+        assert_eq!(v.minor_val(), 7);
+    }
+
+    #[test]
+    fn ledger_entries_accessor() {
+        let mut ledger = InMemoryLedger::new();
+        ledger.emit(sample_entry()).unwrap();
+        assert_eq!(ledger.entries().len(), 1);
+        assert_eq!(ledger.entries()[0].trace_id, "trace-001");
+    }
+
+    #[test]
+    fn decision_type_display_all_eight() {
+        let types = [
+            DecisionType::SecurityAction,
+            DecisionType::PolicyUpdate,
+            DecisionType::EpochTransition,
+            DecisionType::Revocation,
+            DecisionType::ExtensionLifecycle,
+            DecisionType::CapabilityDecision,
+            DecisionType::ContractEvaluation,
+            DecisionType::RemoteAuthorization,
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for dt in &types {
+            let s = dt.to_string();
+            assert!(!s.is_empty());
+            seen.insert(s);
+        }
+        assert_eq!(seen.len(), 8, "all 8 types have unique display strings");
+    }
+
+    #[test]
+    fn different_decision_types_produce_different_hashes() {
+        let e1 = EvidenceEntryBuilder::new(
+            "t",
+            "d",
+            "p",
+            SecurityEpoch::from_raw(1),
+            DecisionType::SecurityAction,
+        )
+        .chosen(ChosenAction {
+            action_name: "a".to_string(),
+            expected_loss_millionths: 0,
+            rationale: "r".to_string(),
+        })
+        .build()
+        .unwrap();
+
+        let e2 = EvidenceEntryBuilder::new(
+            "t",
+            "d",
+            "p",
+            SecurityEpoch::from_raw(1),
+            DecisionType::PolicyUpdate,
+        )
+        .chosen(ChosenAction {
+            action_name: "a".to_string(),
+            expected_loss_millionths: 0,
+            rationale: "r".to_string(),
+        })
+        .build()
+        .unwrap();
+
+        assert_ne!(e1.evidence_hash, e2.evidence_hash);
+        assert_ne!(e1.entry_id, e2.entry_id);
+    }
 }

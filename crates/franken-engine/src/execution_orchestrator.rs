@@ -27,7 +27,7 @@ use crate::bayesian_posterior::{
 use crate::containment_executor::{
     ContainmentContext, ContainmentError, ContainmentExecutor, ContainmentReceipt, SandboxPolicy,
 };
-use crate::control_plane::mocks::{MockBudget, MockCx, trace_id_from_seed};
+use crate::control_plane::mocks::{trace_id_from_seed, MockBudget, MockCx};
 use crate::entropy_evidence_compressor::{
     ArithmeticCoder, CompressionCertificate, EntropyEstimator,
 };
@@ -42,11 +42,11 @@ use crate::expected_loss_selector::{
 use crate::hash_tiers::ContentHash;
 use crate::ir_contract::{Ir0Module, Ir3Module};
 use crate::lowering_pipeline::{
-    LoweringContext, LoweringEvent, LoweringPipelineError, PassWitness, lower_ir0_to_ir3,
+    lower_ir0_to_ir3, LoweringContext, LoweringEvent, LoweringPipelineError, PassWitness,
 };
 use crate::optimal_stopping::{
     EscalationPolicy, Observation as StoppingObservation, OptimalStoppingCertificate,
-    STOPPING_SCHEMA_VERSION, StoppingDecision,
+    StoppingDecision, STOPPING_SCHEMA_VERSION,
 };
 use crate::parser::{CanonicalEs2020Parser, ParseError, ParserOptions};
 use crate::region_lifecycle::{CancelReason, DrainDeadline, FinalizeResult};
@@ -55,8 +55,8 @@ use crate::regret_bounded_router::{
     RouterSummary,
 };
 use crate::saga_orchestrator::{
-    SagaError, SagaOrchestrator, SagaType, eviction_saga_steps, quarantine_saga_steps,
-    revocation_saga_steps,
+    eviction_saga_steps, quarantine_saga_steps, revocation_saga_steps, SagaError, SagaOrchestrator,
+    SagaType,
 };
 use crate::security_epoch::SecurityEpoch;
 use crate::tropical_semiring::{
@@ -304,7 +304,7 @@ pub struct ExecutionOrchestrator {
     parser: CanonicalEs2020Parser,
     lane_router: LaneRouter,
     adaptive_router: RegretBoundedRouter,
-    stopping_policy: EscalationPolicy,
+    stopping_policies: BTreeMap<String, EscalationPolicy>,
     last_cumulative_llr_millionths: i64,
     posterior_updater: BayesianPosteriorUpdater,
     loss_selector: ExpectedLossSelector,
@@ -333,20 +333,11 @@ impl ExecutionOrchestrator {
             ADAPTIVE_ROUTER_GAMMA_MILLIONTHS,
         )
         .expect("adaptive router configuration must be valid");
-        let mut stopping_policy = EscalationPolicy::new(
-            STOPPING_CUSUM_THRESHOLD_MILLIONTHS,
-            STOPPING_CUSUM_REFERENCE_MILLIONTHS,
-            256,
-        )
-        .expect("stopping policy configuration must be valid");
-        // Runtime path uses change-point detection. Secretary fallback is
-        // useful for bounded pools but too eager for unbounded service loops.
-        stopping_policy.secretary_enabled = false;
         Self {
             parser: CanonicalEs2020Parser,
             lane_router: LaneRouter::new(),
             adaptive_router,
-            stopping_policy,
+            stopping_policies: BTreeMap::new(),
             last_cumulative_llr_millionths: 0,
             posterior_updater: BayesianPosteriorUpdater::new(prior, "orchestrator"),
             loss_selector: ExpectedLossSelector::new(loss_matrix),
@@ -361,6 +352,19 @@ impl ExecutionOrchestrator {
     /// Create an orchestrator with default configuration.
     pub fn with_defaults() -> Self {
         Self::new(OrchestratorConfig::default())
+    }
+
+    fn new_stopping_policy() -> EscalationPolicy {
+        let mut policy = EscalationPolicy::new(
+            STOPPING_CUSUM_THRESHOLD_MILLIONTHS,
+            STOPPING_CUSUM_REFERENCE_MILLIONTHS,
+            256,
+        )
+        .expect("stopping policy configuration must be valid");
+        // Runtime path uses change-point detection. Secretary fallback is
+        // useful for bounded pools but too eager for unbounded service loops.
+        policy.secretary_enabled = false;
+        policy
     }
 
     /// Access the evidence ledger.
@@ -618,6 +622,10 @@ impl ExecutionOrchestrator {
                 format!("{:?}", summary.active_regime),
             );
             builder = builder.meta(
+                "adaptive_router_exact_regret".to_string(),
+                summary.exact_regret_available.to_string(),
+            );
+            builder = builder.meta(
                 "adaptive_router_regret".to_string(),
                 summary.realized_regret_millionths.to_string(),
             );
@@ -693,10 +701,12 @@ impl ExecutionOrchestrator {
     }
 
     fn execution_reward_millionths(exec: &ExecutionResult) -> i64 {
-        let instruction_penalty = (exec.instructions_executed as i64)
+        let instruction_penalty = i64::try_from(exec.instructions_executed)
+            .unwrap_or(i64::MAX)
             .saturating_mul(50)
             .min(600_000);
-        let hostcall_penalty = (exec.hostcall_decisions.len() as i64)
+        let hostcall_penalty = i64::try_from(exec.hostcall_decisions.len())
+            .unwrap_or(i64::MAX)
             .saturating_mul(25_000)
             .min(300_000);
         (SCALE_MILLION - instruction_penalty - hostcall_penalty).clamp(0, SCALE_MILLION)
@@ -707,7 +717,9 @@ impl ExecutionOrchestrator {
         update: &UpdateResult,
         package: &ExtensionPackage,
     ) -> (StoppingDecision, Option<OptimalStoppingCertificate>) {
-        let llr_increment = update.cumulative_llr_millionths - self.last_cumulative_llr_millionths;
+        let llr_increment = update
+            .cumulative_llr_millionths
+            .saturating_sub(self.last_cumulative_llr_millionths);
         self.last_cumulative_llr_millionths = update.cumulative_llr_millionths;
 
         let observation = StoppingObservation {
@@ -716,35 +728,44 @@ impl ExecutionOrchestrator {
             timestamp_us: self.execution_counter,
             source: package.extension_id.clone(),
         };
-        let decision = self.stopping_policy.observe(&observation);
-        let cert = Some(self.build_optimal_stopping_certificate(decision));
+        let policy = self
+            .stopping_policies
+            .entry(package.extension_id.clone())
+            .or_insert_with(Self::new_stopping_policy);
+        let decision = policy.observe(&observation);
+        let cert = Some(Self::build_optimal_stopping_certificate(
+            policy,
+            decision,
+            self.config.epoch,
+        ));
         (decision, cert)
     }
 
     fn build_optimal_stopping_certificate(
-        &self,
+        policy: &EscalationPolicy,
         decision: StoppingDecision,
+        epoch: SecurityEpoch,
     ) -> OptimalStoppingCertificate {
-        let algorithm = match (&self.stopping_policy.trigger_source, decision) {
+        let algorithm = match (&policy.trigger_source, decision) {
             (Some(source), _) => source.clone(),
             (None, StoppingDecision::Stop) => "composite".to_string(),
             (None, StoppingDecision::Continue) => "none".to_string(),
         };
         let cert_data = format!(
             "{algorithm}:{}:{:?}:{}",
-            self.stopping_policy.total_observations,
+            policy.total_observations,
             decision,
-            self.config.epoch.as_u64()
+            epoch.as_u64()
         );
         OptimalStoppingCertificate {
             schema: STOPPING_SCHEMA_VERSION.to_string(),
             algorithm,
-            observations_before_stop: self.stopping_policy.total_observations,
-            cusum_statistic_millionths: Some(self.stopping_policy.cusum.statistic_millionths),
-            arl0_lower_bound: Some(self.stopping_policy.cusum.arl0_lower_bound(SCALE_MILLION)),
+            observations_before_stop: policy.total_observations,
+            cusum_statistic_millionths: Some(policy.cusum.statistic_millionths),
+            arl0_lower_bound: Some(policy.cusum.arl0_lower_bound(SCALE_MILLION)),
             snell_optimal_value_millionths: None,
             gittins_index_millionths: None,
-            epoch: self.config.epoch,
+            epoch,
             certificate_hash: ContentHash::compute(cert_data.as_bytes()),
         }
     }
@@ -1042,11 +1063,11 @@ impl ExecutionOrchestrator {
 
         Evidence {
             extension_id: package.extension_id.clone(),
-            hostcall_rate_millionths: hostcall_rate_millionths as i64,
+            hostcall_rate_millionths: i64::try_from(hostcall_rate_millionths).unwrap_or(i64::MAX),
             distinct_capabilities,
-            resource_score_millionths: resource_score_millionths as i64,
+            resource_score_millionths: i64::try_from(resource_score_millionths).unwrap_or(i64::MAX),
             timing_anomaly_millionths: 0,
-            denial_rate_millionths: denial_rate_millionths as i64,
+            denial_rate_millionths: i64::try_from(denial_rate_millionths).unwrap_or(i64::MAX),
             epoch,
         }
     }
@@ -1072,6 +1093,13 @@ mod tests {
             capabilities: vec![],
             version: "1.0.0".to_string(),
             metadata: BTreeMap::new(),
+        }
+    }
+
+    fn package_with_id(extension_id: &str) -> ExtensionPackage {
+        ExtensionPackage {
+            extension_id: extension_id.to_string(),
+            ..simple_package()
         }
     }
 
@@ -1102,9 +1130,68 @@ mod tests {
 
         let entry = &result.evidence_entries[0];
         assert!(entry.metadata.contains_key("adaptive_router_regime"));
+        assert!(entry.metadata.contains_key("adaptive_router_exact_regret"));
         assert!(entry.metadata.contains_key("adaptive_router_regret"));
         assert!(entry.metadata.contains_key("ir3_schedule_cost"));
         assert!(entry.metadata.contains_key("optimal_stopping_algorithm"));
+    }
+
+    #[test]
+    fn execution_reward_saturates_for_extreme_instruction_count() {
+        let exec = ExecutionResult {
+            value: crate::baseline_interpreter::Value::Null,
+            hostcall_decisions: Vec::new(),
+            instructions_executed: u64::MAX,
+            witness_events: Vec::new(),
+            events: Vec::new(),
+        };
+        let reward = ExecutionOrchestrator::execution_reward_millionths(&exec);
+        assert_eq!(reward, 400_000);
+    }
+
+    #[test]
+    fn optimal_stopping_state_isolated_per_extension() {
+        let mut orch = ExecutionOrchestrator::with_defaults();
+        let pkg_a = package_with_id("ext-a");
+        let pkg_b = package_with_id("ext-b");
+
+        let update_a = UpdateResult {
+            posterior: Posterior::default_prior(),
+            likelihoods: [500_000, 500_000, 500_000, 500_000],
+            cumulative_llr_millionths: 6_000_000,
+            update_count: 1,
+        };
+        let (decision_a, cert_a) = orch.observe_optimal_stopping(&update_a, &pkg_a);
+        assert_eq!(decision_a, StoppingDecision::Stop);
+        assert_eq!(cert_a.expect("certificate").algorithm, "cusum");
+
+        let update_b = UpdateResult {
+            posterior: Posterior::default_prior(),
+            likelihoods: [500_000, 500_000, 500_000, 500_000],
+            cumulative_llr_millionths: 6_100_000,
+            update_count: 2,
+        };
+        let (decision_b, cert_b) = orch.observe_optimal_stopping(&update_b, &pkg_b);
+        assert_eq!(decision_b, StoppingDecision::Continue);
+        assert_eq!(cert_b.expect("certificate").algorithm, "none");
+        assert_eq!(orch.stopping_policies.len(), 2);
+    }
+
+    #[test]
+    fn optimal_stopping_handles_extreme_cumulative_delta_without_overflow() {
+        let mut orch = ExecutionOrchestrator::with_defaults();
+        orch.last_cumulative_llr_millionths = i64::MAX;
+        let pkg = package_with_id("ext-overflow");
+        let update = UpdateResult {
+            posterior: Posterior::default_prior(),
+            likelihoods: [500_000, 500_000, 500_000, 500_000],
+            cumulative_llr_millionths: i64::MIN,
+            update_count: 1,
+        };
+
+        let (decision, cert) = orch.observe_optimal_stopping(&update, &pkg);
+        assert_eq!(decision, StoppingDecision::Continue);
+        assert_eq!(cert.expect("certificate").algorithm, "none");
     }
 
     #[test]
