@@ -29,6 +29,10 @@ Binary path:
 franken-verify receipt <receipt_id> --input <path> [--summary]
 franken-verify benchmark --input <path> [--summary]
 franken-verify replay --input <path> [--summary]
+    [--signature-key-hex <hex> | --signature-key-file <path>]
+    [--receipt-key <signer_hex>=<verification_key_hex>]...
+    [--receipt-key-file <path>]...
+    [--counterfactual-config-file <path>]...
 franken-verify containment --input <path> [--summary]
 franken-verify attestation create --input <path> [--summary]
 franken-verify attestation verify --input <path> [--summary]
@@ -121,6 +125,32 @@ Notes:
 - `signature_verification_key_hex` is optional.
 - `receipt_verification_keys_hex` is optional.
 - `counterfactual_configs` may be empty for fidelity-only verification.
+- CLI flags can layer auditor-side overrides without editing the input bundle:
+  - `--signature-key-hex` / `--signature-key-file`
+  - `--receipt-key` / `--receipt-key-file`
+  - `--counterfactual-config-file`
+
+### Replay auxiliary file formats
+
+`--receipt-key-file` supports either:
+
+1. JSON map (`signer_engine_object_id_hex -> verification_key_hex`)
+
+```json
+{
+  "0101...": "a1b2..."
+}
+```
+
+2. Line-oriented text (`<signer_hex>=<verification_key_hex>`, `#` comments allowed)
+
+```text
+# signer_id=verification_key
+0101...=a1b2...
+```
+
+`--counterfactual-config-file` accepts either one JSON `CounterfactualConfig`
+object or an array of configs.
 
 ### Containment (`containment --input`)
 
@@ -206,6 +236,14 @@ franken-verify replay --input artifacts/claims/replay_claim.json --summary
 franken-verify containment --input artifacts/claims/containment_claim.json --summary
 franken-verify attestation create --input artifacts/claims/attestation_input.json > artifacts/claims/attestation.json
 franken-verify attestation verify --input artifacts/claims/attestation.json --summary
+
+# replay with auditor-side key/config overlays
+franken-verify replay \
+  --input artifacts/claims/replay_claim.json \
+  --signature-key-file artifacts/claims/signature_key.hex \
+  --receipt-key-file artifacts/claims/receipt_keys.json \
+  --counterfactual-config-file artifacts/claims/counterfactual_branch.json \
+  --summary
 ```
 
 For machine ingestion:

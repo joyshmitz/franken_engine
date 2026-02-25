@@ -9,8 +9,8 @@ use frankenengine_engine::benchmark_denominator::{
     evaluate_publication_gate,
 };
 use frankenengine_engine::causal_replay::{
-    DecisionSnapshot, NondeterminismSource, RecorderConfig, RecordingMode, TraceRecord,
-    TraceRecorder,
+    CounterfactualConfig, DecisionSnapshot, NondeterminismSource, RecorderConfig, RecordingMode,
+    TraceRecord, TraceRecorder,
 };
 use frankenengine_engine::containment_executor::ContainmentState;
 use frankenengine_engine::incident_replay_bundle::{BundleBuilder, IncidentReplayBundle};
@@ -21,7 +21,8 @@ use frankenengine_engine::security_epoch::SecurityEpoch;
 use frankenengine_engine::signature_preimage::SigningKey;
 use frankenengine_engine::third_party_verifier::{
     BenchmarkClaimBundle, ClaimedBenchmarkOutcome, ContainmentClaimBundle, ReplayClaimBundle,
-    VerificationAttestation, VerificationAttestationInput, VerificationVerdict,
+    ThirdPartyVerificationReport, VerificationAttestation, VerificationAttestationInput,
+    VerificationVerdict,
     generate_attestation, verify_attestation, verify_benchmark_claim, verify_containment_claim,
     verify_replay_claim,
 };
@@ -43,6 +44,12 @@ fn write_json<T: serde::Serialize>(prefix: &str, value: &T) -> PathBuf {
         serde_json::to_vec_pretty(value).expect("json serialization should succeed"),
     )
     .expect("json write should succeed");
+    path
+}
+
+fn write_text(prefix: &str, value: &str) -> PathBuf {
+    let path = temp_json_path(prefix);
+    fs::write(&path, value).expect("text write should succeed");
     path
 }
 
@@ -122,6 +129,18 @@ fn make_replay_claim_bundle() -> ReplayClaimBundle {
         signature_verification_key_hex: Some(verification_key_hex),
         receipt_verification_keys_hex: BTreeMap::new(),
         counterfactual_configs: Vec::new(),
+    }
+}
+
+fn make_counterfactual_config(branch_id: &str) -> CounterfactualConfig {
+    CounterfactualConfig {
+        branch_id: branch_id.to_string(),
+        threshold_override_millionths: None,
+        loss_matrix_overrides: BTreeMap::new(),
+        policy_version_override: None,
+        containment_overrides: BTreeMap::new(),
+        evidence_weight_overrides: BTreeMap::new(),
+        branch_from_index: 0,
     }
 }
 
@@ -361,6 +380,110 @@ fn franken_verify_containment_command_surfaces_failure_exit_code() {
     let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
     assert!(stdout.contains("claim_type=containment"));
     assert!(stdout.contains("verdict=Failed"));
+
+    let _ = fs::remove_file(input_path);
+}
+
+#[test]
+fn franken_verify_replay_command_supports_signature_and_counterfactual_files() {
+    let mut input = make_replay_claim_bundle();
+    let verification_key_hex = input
+        .signature_verification_key_hex
+        .clone()
+        .expect("replay bundle includes signature key");
+    input.signature_verification_key_hex = None;
+
+    let input_path = write_json("tpv_replay_input", &input);
+    let signature_key_path = write_text("tpv_replay_sig_key", &verification_key_hex);
+    let counterfactual_path = write_json(
+        "tpv_replay_counterfactual",
+        &make_counterfactual_config("auditor-branch-1"),
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_franken-verify"))
+        .args([
+            "replay",
+            "--input",
+            input_path.to_str().expect("utf8 path"),
+            "--signature-key-file",
+            signature_key_path.to_str().expect("utf8 path"),
+            "--counterfactual-config-file",
+            counterfactual_path.to_str().expect("utf8 path"),
+        ])
+        .output()
+        .expect("replay command should execute");
+
+    assert_eq!(output.status.code(), Some(0));
+    let report: ThirdPartyVerificationReport =
+        serde_json::from_slice(&output.stdout).expect("replay report json");
+    assert_eq!(report.verdict, VerificationVerdict::Verified);
+    assert!(report.checks.iter().any(|check| {
+        check.name.starts_with("signature:") && check.passed
+    }));
+    assert!(report.checks.iter().any(|check| {
+        check.name.starts_with("counterfactual:") && check.passed
+    }));
+
+    let _ = fs::remove_file(input_path);
+    let _ = fs::remove_file(signature_key_path);
+    let _ = fs::remove_file(counterfactual_path);
+}
+
+#[test]
+fn franken_verify_replay_command_supports_receipt_key_file_json_map() {
+    let input = make_replay_claim_bundle();
+    let verification_key_hex = input
+        .signature_verification_key_hex
+        .clone()
+        .expect("replay bundle includes signature key");
+    let input_path = write_json("tpv_replay_receipt_input", &input);
+
+    let receipt_keys: BTreeMap<String, String> =
+        BTreeMap::from([(hex::encode([1u8; 32]), verification_key_hex)]);
+    let receipt_key_path = write_json("tpv_replay_receipt_keys", &receipt_keys);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_franken-verify"))
+        .args([
+            "replay",
+            "--input",
+            input_path.to_str().expect("utf8 path"),
+            "--receipt-key-file",
+            receipt_key_path.to_str().expect("utf8 path"),
+        ])
+        .output()
+        .expect("replay command should execute");
+
+    assert_eq!(output.status.code(), Some(24));
+    let report: ThirdPartyVerificationReport =
+        serde_json::from_slice(&output.stdout).expect("replay report json");
+    assert_eq!(report.verdict, VerificationVerdict::PartiallyVerified);
+    assert!(report.checks.iter().any(|check| {
+        check.name == "receipts:receipts-present" && check.detail.contains("skipped:")
+    }));
+
+    let _ = fs::remove_file(input_path);
+    let _ = fs::remove_file(receipt_key_path);
+}
+
+#[test]
+fn franken_verify_replay_command_rejects_invalid_receipt_key_pair_flag() {
+    let input = make_replay_claim_bundle();
+    let input_path = write_json("tpv_replay_invalid_receipt_flag", &input);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_franken-verify"))
+        .args([
+            "replay",
+            "--input",
+            input_path.to_str().expect("utf8 path"),
+            "--receipt-key",
+            "missing-separator",
+        ])
+        .output()
+        .expect("replay command should execute");
+
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8(output.stderr).expect("utf8 stderr");
+    assert!(stderr.contains("--receipt-key expects"));
 
     let _ = fs::remove_file(input_path);
 }

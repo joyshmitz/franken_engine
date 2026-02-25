@@ -496,6 +496,29 @@ Failover artifacts are written under:
 - `artifacts/parser_failover_controls/<timestamp>/events.jsonl`
 - `artifacts/parser_failover_controls/<timestamp>/commands.txt`
 
+## Parser Parallel Interference Gate
+
+`bd-2mds.1.5.4.2` runs worker/seed parity matrices and adversarial
+determinism stress checks for the parallel parser path, with witness-diff
+explanations and replay bundles for mismatches.
+
+```bash
+# parser parallel interference gate (rch-backed check + stress tests + clippy)
+./scripts/run_parser_parallel_interference_gate.sh ci
+```
+
+Contract and vectors:
+
+- [`docs/PARSER_PARALLEL_INTERFERENCE_GATE.md`](./docs/PARSER_PARALLEL_INTERFERENCE_GATE.md)
+- `crates/franken-engine/tests/parallel_interference_gate_integration.rs`
+- `crates/franken-engine/tests/parallel_parser_integration.rs`
+
+Artifacts are written under:
+
+- `artifacts/parser_parallel_interference/<timestamp>/run_manifest.json`
+- `artifacts/parser_parallel_interference/<timestamp>/events.jsonl`
+- `artifacts/parser_parallel_interference/<timestamp>/commands.txt`
+
 ## Parser API Compatibility Gate
 
 `bd-2mds.1.10.3` stabilizes public parser API contracts and integration
@@ -539,6 +562,28 @@ Artifacts are written under:
 - `artifacts/observability_information_theoretic/<timestamp>/run_manifest.json`
 - `artifacts/observability_information_theoretic/<timestamp>/events.jsonl`
 - `artifacts/observability_information_theoretic/<timestamp>/commands.txt`
+
+## FRX Compiler Lane Charter Gate
+
+`bd-mjh3.10.2` ships a deterministic gate for compiler-lane charter contract
+validation and evidence emission.
+
+```bash
+# FRX compiler lane charter gate (rch-backed check + test + clippy)
+./scripts/run_frx_compiler_lane_charter_suite.sh ci
+```
+
+Deterministic replay wrapper:
+
+```bash
+./scripts/e2e/frx_compiler_lane_charter_replay.sh
+```
+
+Artifacts are written under:
+
+- `artifacts/frx_compiler_lane_charter/<timestamp>/run_manifest.json`
+- `artifacts/frx_compiler_lane_charter/<timestamp>/events.jsonl`
+- `artifacts/frx_compiler_lane_charter/<timestamp>/commands.txt`
 
 ## Phase-A Exit Gate
 
