@@ -903,4 +903,189 @@ mod tests {
         let json2 = serde_json::to_string(&tracker).expect("serialize");
         assert_eq!(json1, json2);
     }
+
+    // -- Enrichment: Display uniqueness for TransitionReason --
+
+    #[test]
+    fn transition_reason_display_all_variants_unique() {
+        let displays: std::collections::BTreeSet<String> = [
+            TransitionReason::PolicyKeyRotation,
+            TransitionReason::RevocationFrontierAdvance,
+            TransitionReason::GuardrailConfigChange,
+            TransitionReason::LossMatrixUpdate,
+            TransitionReason::RemoteTrustConfigChange,
+            TransitionReason::OperatorManualBump,
+        ]
+        .iter()
+        .map(|r| r.to_string())
+        .collect();
+        assert_eq!(displays.len(), 6);
+    }
+
+    // -- Enrichment: Display uniqueness for EpochValidationError --
+
+    #[test]
+    fn epoch_validation_error_display_all_variants_unique() {
+        let displays: std::collections::BTreeSet<String> = [
+            EpochValidationError::NotYetValid {
+                current_epoch: SecurityEpoch::from_raw(1),
+                valid_from: SecurityEpoch::from_raw(5),
+            }
+            .to_string(),
+            EpochValidationError::Expired {
+                current_epoch: SecurityEpoch::from_raw(10),
+                valid_until: SecurityEpoch::from_raw(5),
+            }
+            .to_string(),
+            EpochValidationError::FutureArtifact {
+                current_epoch: SecurityEpoch::from_raw(3),
+                artifact_epoch: SecurityEpoch::from_raw(7),
+            }
+            .to_string(),
+            EpochValidationError::InvertedWindow {
+                valid_from: SecurityEpoch::from_raw(10),
+                valid_until: SecurityEpoch::from_raw(3),
+            }
+            .to_string(),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(displays.len(), 4);
+    }
+
+    // -- Enrichment: SecurityEpoch serde roundtrip --
+
+    #[test]
+    fn security_epoch_serde_roundtrip() {
+        for val in [0, 1, 42, u64::MAX] {
+            let epoch = SecurityEpoch::from_raw(val);
+            let json = serde_json::to_string(&epoch).unwrap();
+            let restored: SecurityEpoch = serde_json::from_str(&json).unwrap();
+            assert_eq!(epoch, restored);
+        }
+    }
+
+    // -- Enrichment: EpochTracker Default trait --
+
+    #[test]
+    fn epoch_tracker_default_matches_new() {
+        let default_tracker = EpochTracker::default();
+        let new_tracker = EpochTracker::new();
+        assert_eq!(default_tracker.current(), new_tracker.current());
+        assert_eq!(
+            default_tracker.transition_count(),
+            new_tracker.transition_count()
+        );
+    }
+
+    // -- Enrichment: TransitionReason serde roundtrip --
+
+    #[test]
+    fn transition_reason_serde_roundtrip_all_variants() {
+        let reasons = [
+            TransitionReason::PolicyKeyRotation,
+            TransitionReason::RevocationFrontierAdvance,
+            TransitionReason::GuardrailConfigChange,
+            TransitionReason::LossMatrixUpdate,
+            TransitionReason::RemoteTrustConfigChange,
+            TransitionReason::OperatorManualBump,
+        ];
+        for reason in &reasons {
+            let json = serde_json::to_string(reason).unwrap();
+            let restored: TransitionReason = serde_json::from_str(&json).unwrap();
+            assert_eq!(*reason, restored);
+        }
+    }
+
+    // -- Enrichment: TransitionRecord serde roundtrip --
+
+    #[test]
+    fn transition_record_serde_roundtrip() {
+        let record = TransitionRecord {
+            previous_epoch: SecurityEpoch::from_raw(0),
+            new_epoch: SecurityEpoch::from_raw(1),
+            reason: TransitionReason::PolicyKeyRotation,
+            trace_id: "t-record".to_string(),
+        };
+        let json = serde_json::to_string(&record).unwrap();
+        let restored: TransitionRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(record, restored);
+    }
+
+    // -- Enrichment: MonotonicityViolation serde roundtrip --
+
+    #[test]
+    fn monotonicity_violation_serde_roundtrip() {
+        let violation = MonotonicityViolation {
+            current: SecurityEpoch::from_raw(10),
+            attempted: SecurityEpoch::from_raw(5),
+        };
+        let json = serde_json::to_string(&violation).unwrap();
+        let restored: MonotonicityViolation = serde_json::from_str(&json).unwrap();
+        assert_eq!(violation, restored);
+    }
+
+    // -- Enrichment: MonotonicityViolation is std::error::Error --
+
+    #[test]
+    fn monotonicity_violation_is_std_error() {
+        let err: Box<dyn std::error::Error> = Box::new(MonotonicityViolation {
+            current: SecurityEpoch::from_raw(10),
+            attempted: SecurityEpoch::from_raw(5),
+        });
+        assert!(err.to_string().contains("10"));
+        assert!(err.to_string().contains("5"));
+    }
+
+    // -- Enrichment: EpochMetadata open_ended fields --
+
+    #[test]
+    fn epoch_metadata_open_ended_fields() {
+        let meta = EpochMetadata::open_ended(SecurityEpoch::from_raw(7));
+        assert_eq!(meta.epoch_id, SecurityEpoch::from_raw(7));
+        assert_eq!(meta.valid_from_epoch, SecurityEpoch::from_raw(7));
+        assert!(meta.valid_until_epoch.is_none());
+    }
+
+    // -- Enrichment: EpochMetadata windowed fields --
+
+    #[test]
+    fn epoch_metadata_windowed_fields() {
+        let meta = EpochMetadata::windowed(
+            SecurityEpoch::from_raw(5),
+            SecurityEpoch::from_raw(3),
+            SecurityEpoch::from_raw(10),
+        );
+        assert_eq!(meta.epoch_id, SecurityEpoch::from_raw(5));
+        assert_eq!(meta.valid_from_epoch, SecurityEpoch::from_raw(3));
+        assert_eq!(meta.valid_until_epoch, Some(SecurityEpoch::from_raw(10)));
+    }
+
+    // -- Enrichment: stamp_open_ended reflects current epoch --
+
+    #[test]
+    fn stamp_open_ended_reflects_current_epoch() {
+        let mut tracker = EpochTracker::new();
+        tracker
+            .advance(TransitionReason::PolicyKeyRotation, "t1")
+            .unwrap();
+        tracker
+            .advance(TransitionReason::GuardrailConfigChange, "t2")
+            .unwrap();
+        let meta = tracker.stamp_open_ended();
+        assert_eq!(meta.epoch_id, SecurityEpoch::from_raw(2));
+        assert_eq!(meta.valid_from_epoch, SecurityEpoch::from_raw(2));
+        assert!(meta.valid_until_epoch.is_none());
+    }
+
+    // -- Enrichment: stamp_windowed reflects current epoch --
+
+    #[test]
+    fn stamp_windowed_uses_current_epoch_as_creation() {
+        let tracker = EpochTracker::from_persisted(SecurityEpoch::from_raw(5));
+        let meta = tracker.stamp_windowed(SecurityEpoch::from_raw(3), SecurityEpoch::from_raw(10));
+        assert_eq!(meta.epoch_id, SecurityEpoch::from_raw(5));
+        assert_eq!(meta.valid_from_epoch, SecurityEpoch::from_raw(3));
+        assert_eq!(meta.valid_until_epoch, Some(SecurityEpoch::from_raw(10)));
+    }
 }

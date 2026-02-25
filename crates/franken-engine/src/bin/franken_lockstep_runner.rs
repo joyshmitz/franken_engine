@@ -9,12 +9,17 @@
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::{collections::BTreeSet, io};
 
 use frankenengine_engine::parser_multi_engine_harness::{
-    DEFAULT_MULTI_ENGINE_FIXTURE_CATALOG_PATH, HarnessEngineSpec, MultiEngineHarnessConfig,
-    MultiEngineHarnessReport, run_multi_engine_harness,
+    DEFAULT_MULTI_ENGINE_FIXTURE_CATALOG_PATH, HarnessEngineKind, HarnessEngineSpec,
+    MultiEngineHarnessConfig, MultiEngineHarnessReport, run_multi_engine_harness,
 };
 use serde::Deserialize;
+
+const LOCKSTEP_RUNTIME_SPECS_SCHEMA_VERSION: &str = "franken-engine.lockstep-runtimes.v1";
+const DEFAULT_LOCKSTEP_RUNTIME_SPECS_PATH: &str =
+    "crates/franken-engine/tests/fixtures/lockstep_runtimes.toml";
 
 #[derive(Debug)]
 struct CliArgs {
@@ -29,6 +34,28 @@ struct CliArgs {
 enum EngineSpecFile {
     Array(Vec<HarnessEngineSpec>),
     Wrapped { engines: Vec<HarnessEngineSpec> },
+}
+
+#[derive(Debug, Deserialize)]
+struct LockstepRuntimeSpecsFile {
+    schema_version: String,
+    runtimes: Vec<LockstepRuntimeSpec>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LockstepRuntimeSpec {
+    runtime_id: String,
+    display_name: String,
+    version_pin: String,
+    command: String,
+    #[serde(default)]
+    args: Vec<String>,
+    #[serde(default = "default_runtime_enabled")]
+    enabled: bool,
+}
+
+fn default_runtime_enabled() -> bool {
+    true
 }
 
 fn main() {
@@ -93,6 +120,7 @@ where
     let mut locale = None::<String>;
     let mut timezone = None::<String>;
     let mut engine_specs = None::<Vec<HarnessEngineSpec>>;
+    let mut runtime_specs_path = None::<PathBuf>;
     let mut out_path = None::<PathBuf>;
     let mut fail_on_divergence = false;
     let mut print_help_flag = false;
@@ -160,6 +188,12 @@ where
                     .ok_or_else(|| "missing value for --engine-specs".to_string())?;
                 engine_specs = Some(load_engine_specs(Path::new(value.as_str()))?);
             }
+            "--runtime-specs" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "missing value for --runtime-specs".to_string())?;
+                runtime_specs_path = Some(PathBuf::from(value));
+            }
             "--fail-on-divergence" => {
                 fail_on_divergence = true;
             }
@@ -198,7 +232,12 @@ where
     if let Some(value) = timezone {
         config.timezone = value;
     }
-    if let Some(specs) = engine_specs {
+    if engine_specs.is_some() && runtime_specs_path.is_some() {
+        return Err("cannot combine --engine-specs with --runtime-specs".into());
+    }
+    if let Some(path) = runtime_specs_path {
+        config.engines = load_runtime_engine_specs(path.as_path())?;
+    } else if let Some(specs) = engine_specs {
         config.engines = specs;
     }
 
@@ -231,6 +270,107 @@ fn load_engine_specs(path: &Path) -> Result<Vec<HarnessEngineSpec>, Box<dyn Erro
     Ok(specs)
 }
 
+fn load_runtime_engine_specs(path: &Path) -> Result<Vec<HarnessEngineSpec>, Box<dyn Error>> {
+    let content = fs::read_to_string(path)?;
+    let parsed = toml::from_str::<LockstepRuntimeSpecsFile>(&content)?;
+    if parsed.schema_version != LOCKSTEP_RUNTIME_SPECS_SCHEMA_VERSION {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "runtime spec file `{}` has schema_version `{}` (expected `{}`)",
+                path.display(),
+                parsed.schema_version,
+                LOCKSTEP_RUNTIME_SPECS_SCHEMA_VERSION
+            ),
+        )
+        .into());
+    }
+    if parsed.runtimes.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("runtime spec file `{}` must not be empty", path.display()),
+        )
+        .into());
+    }
+
+    let mut engines = vec![HarnessEngineSpec::franken_canonical(
+        "frankenengine-engine@workspace",
+    )];
+    let mut ids = BTreeSet::new();
+    ids.insert("franken_canonical".to_string());
+
+    for runtime in parsed
+        .runtimes
+        .into_iter()
+        .filter(|runtime| runtime.enabled)
+    {
+        if runtime.runtime_id.trim().is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "runtime spec file `{}` has entry with empty runtime_id",
+                    path.display()
+                ),
+            )
+            .into());
+        }
+        if runtime.version_pin.trim().is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "runtime `{}` in `{}` has empty version_pin",
+                    runtime.runtime_id,
+                    path.display()
+                ),
+            )
+            .into());
+        }
+        if runtime.command.trim().is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "runtime `{}` in `{}` has empty command",
+                    runtime.runtime_id,
+                    path.display()
+                ),
+            )
+            .into());
+        }
+        if !ids.insert(runtime.runtime_id.clone()) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "runtime `{}` appears more than once in `{}`",
+                    runtime.runtime_id,
+                    path.display()
+                ),
+            )
+            .into());
+        }
+        engines.push(HarnessEngineSpec {
+            engine_id: runtime.runtime_id,
+            display_name: runtime.display_name,
+            kind: HarnessEngineKind::ExternalCommand,
+            version_pin: runtime.version_pin,
+            command: Some(runtime.command),
+            args: runtime.args,
+        });
+    }
+
+    if engines.len() < 2 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "runtime spec file `{}` must include at least one enabled runtime",
+                path.display()
+            ),
+        )
+        .into());
+    }
+
+    Ok(engines)
+}
+
 fn print_help() {
     println!("franken_lockstep_runner");
     println!("  --fixture-catalog <path>");
@@ -243,6 +383,8 @@ fn print_help() {
     println!("  --locale <locale>");
     println!("  --timezone <timezone>");
     println!("  --engine-specs <path>");
+    println!("  --runtime-specs <path>");
     println!("  --fail-on-divergence");
     println!("  --out <path>");
+    println!("  default runtime-specs path: {DEFAULT_LOCKSTEP_RUNTIME_SPECS_PATH}");
 }
