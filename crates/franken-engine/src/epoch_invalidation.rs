@@ -755,7 +755,7 @@ impl EpochInvalidationEngine {
             .ok_or_else(|| InvalidationError::SpecializationNotFound {
                 id: spec_id.clone(),
             })?;
-        let epoch_before_invalidation = self.current_epoch;
+        let epoch_before_invalidation = spec.activated_epoch;
         let rollback_hash = spec.rollback_token_hash.clone();
         let baseline_hash = spec.baseline_ir_hash.clone();
 
@@ -1679,6 +1679,11 @@ mod tests {
             InvalidationError::DuplicateSpecialization {
                 id: make_proof_id("test"),
             },
+            InvalidationError::InvalidState {
+                id: make_proof_id("test"),
+                expected: "baseline-fallback".to_string(),
+                actual: "active".to_string(),
+            },
         ];
         for e in &errors {
             let s = e.to_string();
@@ -1882,6 +1887,11 @@ mod tests {
             },
             InvalidationError::DuplicateSpecialization {
                 id: make_proof_id("e3"),
+            },
+            InvalidationError::InvalidState {
+                id: make_proof_id("e4"),
+                expected: "baseline-fallback".to_string(),
+                actual: "active".to_string(),
             },
         ];
         for v in &variants {
