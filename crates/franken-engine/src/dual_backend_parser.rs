@@ -36,9 +36,6 @@ const MILLION: i64 = 1_000_000;
 /// Schema version for dual-backend parser artifacts.
 pub const DUAL_BACKEND_SCHEMA_VERSION: &str = "franken-engine.dual-backend-parser.v1";
 
-/// Maximum acceptable span-mapping deviation (bytes) before a fidelity
-/// violation is reported.
-
 /// Maximum backends supported.
 const MAX_BACKENDS: usize = 8;
 
@@ -229,7 +226,7 @@ pub struct SpanMappingEntry {
 impl SpanMappingEntry {
     /// Check if this mapping is exact (zero deviation).
     pub fn is_exact(&self) -> bool {
-        self.deviation_bytes == MAX_SPAN_DEVIATION_BYTES
+        self.deviation_bytes == 0
     }
 }
 
@@ -835,6 +832,21 @@ impl DualBackendParser {
         let selected = self
             .policy
             .select_backend(goal, file_extension, &self.backends);
+
+        // The policy may already choose the fallback when the default backend
+        // is unhealthy; count and emit this as an explicit fallback action.
+        if selected == self.policy.fallback_backend
+            && !is_backend_available(&self.policy.default_backend, &self.backends)
+            && is_backend_available(&selected, &self.backends)
+        {
+            self.emit_event(
+                DualBackendEventKind::FallbackSelected,
+                Some(selected.clone()),
+                "",
+            );
+            self.fallback_count += 1;
+            return Ok(selected);
+        }
 
         if !is_backend_available(&selected, &self.backends) {
             // Try fallback.
