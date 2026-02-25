@@ -1,0 +1,89 @@
+{
+  "schema_version": "franken-engine.manifest.v1",
+  "schema_hash": "sha256:manifest-schema-v1",
+  "manifest_id": "parser-phase0-manifest-v1",
+  "generated_at_utc": "2026-02-25T06:14:25Z",
+  "claim": {
+    "claim_id": "claim.parser.scalar_reference_deterministic",
+    "class": "DETERMINISM",
+    "statement": "Scalar reference parser yields deterministic canonical AST hashes for pinned phase0 fixture corpus.",
+    "status": "observed",
+    "bundle_root": "artifacts/parser_phase0"
+  },
+  "source_revision": {
+    "repo": "franken_engine",
+    "branch": "main",
+    "commit": "48a58608eed8eae3b04bee3a10109fa62880369e"
+  },
+  "provenance": {
+    "trace_id": "trace.parser.phase0",
+    "decision_id": "decision.parser.phase0",
+    "policy_id": "policy.parser.scalar_reference.v1",
+    "replay_pointer": "replay://parser-phase0",
+    "evidence_pointer": "evidence://parser-phase0",
+    "receipt_ids": [
+      "rcpt-parser-phase0"
+    ]
+  },
+  "artifacts": {
+    "baseline": {
+      "path": "artifacts/parser_phase0/baseline.json",
+      "sha256": "sha256:df1aae3b20a60007427f581f114c3361255afe7a810f3f764595e888022f340d"
+    },
+    "flamegraph": {
+      "path": "artifacts/parser_phase0/flamegraph.svg",
+      "sha256": "sha256:9164ffc100db034d76efaa87189ea42b4add96e60315e3756bebd7417b7b9f43"
+    },
+    "golden_checksums": {
+      "path": "artifacts/parser_phase0/golden_checksums.txt",
+      "sha256": "sha256:cb8dfd85f72f684d7b1804f6f2aeef75b9eab00e9fc7f95d1e4b71c7c83c9565"
+    },
+    "proof_note": {
+      "path": "artifacts/parser_phase0/proof_note.md",
+      "sha256": "sha256:9cc20c718768a4c022a0e9ab4cbb78f6b5cc2be6e196c93665adcad8eb2bdc1c"
+    },
+    "env": {
+      "path": "artifacts/parser_phase0/env.json",
+      "sha256": "sha256:188a1747cb606cb4222b8b2dbbb5db0e0fbd8895bca9d515ed1fd52f837eb173"
+    },
+    "repro_lock": {
+      "path": "artifacts/parser_phase0/repro.lock",
+      "sha256": "sha256:f9246bd832fc79cd34334fbe929a3560c52fa6114a031f42186917c13b17cd4b"
+    },
+    "provenance": {
+      "path": "artifacts/parser_phase0/provenance.json",
+      "sha256": "sha256:f94375fd8b2506f48254a2f57b9b5ffd47eec946f4f571458e77646ffefc4a9d"
+    }
+  },
+  "inputs": [
+    {
+      "path": "crates/franken-engine/tests/fixtures/parser_phase0_semantic_fixtures.json",
+      "sha256": "sha256:223e5161db6cbff5d3da21c222825f609cc39e4ed7727c2bcceba92ad96ab056"
+    }
+  ],
+  "outputs": [
+    {
+      "path": "artifacts/parser_phase0/baseline.json",
+      "sha256": "sha256:df1aae3b20a60007427f581f114c3361255afe7a810f3f764595e888022f340d"
+    },
+    {
+      "path": "artifacts/parser_phase0/provenance.json",
+      "sha256": "sha256:f94375fd8b2506f48254a2f57b9b5ffd47eec946f4f571458e77646ffefc4a9d"
+    }
+  ],
+  "canonicalization": {
+    "format": "json",
+    "key_order": "lexicographic",
+    "newline": "lf",
+    "hash_algorithm": "sha256"
+  },
+  "validation": {
+    "validator": "cargo test -p frankenengine-engine --test parser_trait_ast --test parser_edge_cases --test parser_phase0_semantic_fixtures --test parser_phase0_metamorphic",
+    "error_taxonomy": "ParseErrorCode + FE-REPRO-0001..FE-REPRO-0008"
+  },
+  "retention": {
+    "min_days": 365,
+    "high_impact_min_days": 730,
+    "rotation_policy": "archive-with-addressable-retrieval"
+  }
+}

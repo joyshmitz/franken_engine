@@ -1,0 +1,45 @@
+{
+  "schema_version": "franken-engine.repro-lock.v1",
+  "schema_hash": "sha256:repro-lock-schema-v1",
+  "generated_at_utc": "2026-02-25T06:14:25Z",
+  "lock_id": "parser-phase0-lock-v1",
+  "manifest_id": "parser-phase0-manifest-v1",
+  "source_commit": "48a58608eed8eae3b04bee3a10109fa62880369e",
+  "determinism": {
+    "allow_network": false,
+    "allow_wall_clock": false,
+    "allow_randomness": false,
+    "max_clock_skew_seconds": 0
+  },
+  "commands": [
+    "cargo run -p frankenengine-engine --bin franken_parser_phase0_report --quiet",
+    "cargo test -p frankenengine-engine --test parser_trait_ast --test parser_edge_cases --test parser_phase0_semantic_fixtures --test parser_phase0_metamorphic"
+  ],
+  "inputs": [
+    {
+      "path": "crates/franken-engine/tests/fixtures/parser_phase0_semantic_fixtures.json",
+      "sha256": "sha256:223e5161db6cbff5d3da21c222825f609cc39e4ed7727c2bcceba92ad96ab056",
+      "kind": "input"
+    }
+  ],
+  "expected_outputs": [
+    {
+      "path": "artifacts/parser_phase0/baseline.json",
+      "sha256": "sha256:df1aae3b20a60007427f581f114c3361255afe7a810f3f764595e888022f340d",
+      "kind": "output"
+    },
+    {
+      "path": "artifacts/parser_phase0/provenance.json",
+      "sha256": "sha256:f94375fd8b2506f48254a2f57b9b5ffd47eec946f4f571458e77646ffefc4a9d",
+      "kind": "output"
+    }
+  ],
+  "replay": {
+    "trace_id": "trace.parser.phase0",
+    "replay_pointer": "replay://parser-phase0"
+  },
+  "verification": {
+    "command": "cargo test -p frankenengine-engine --test parser_trait_ast --test parser_edge_cases --test parser_phase0_semantic_fixtures --test parser_phase0_metamorphic",
+    "expected_verdict": "pass"
+  }
+}
