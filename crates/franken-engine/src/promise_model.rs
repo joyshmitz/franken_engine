@@ -441,7 +441,9 @@ impl PromiseStore {
 
         let record = self.get_mut(handle)?;
         let reactions: Vec<PromiseReaction> = record.reactions.drain(..).collect();
-        let has_reject_handler = reactions.iter().any(|r| r.kind == ReactionKind::Reject);
+        let has_reject_handler = reactions
+            .iter()
+            .any(|r| r.kind == ReactionKind::Reject && r.handler.is_some());
         record.state = PromiseState::Rejected(reason.clone());
         record.label = label.clone();
         record.rejection_handled = has_reject_handler;
@@ -516,9 +518,11 @@ impl PromiseStore {
                 });
             }
             PromiseState::Rejected(reason) => {
-                // Mark rejection as handled.
-                let record = self.get_mut(handle)?;
-                record.rejection_handled = true;
+                // Only explicit onRejected handlers mark rejection as handled.
+                if on_rejected.is_some() {
+                    let record = self.get_mut(handle)?;
+                    record.rejection_handled = true;
+                }
                 queue.enqueue(Microtask::PromiseReaction {
                     handler: on_rejected,
                     argument: reason,
@@ -1585,6 +1589,23 @@ mod tests {
     }
 
     #[test]
+    fn rejection_without_on_rejected_registered_before_reject_remains_unhandled() {
+        let mut store = PromiseStore::new();
+        let mut queue = MicrotaskQueue::new();
+        let h = store.create();
+
+        // Register only onFulfilled; this must not mark a future rejection handled.
+        store
+            .then(h, Some(ClosureHandle(7)), None, Label::Public, &mut queue)
+            .unwrap();
+        store
+            .reject(h, js_str("still_unhandled"), Label::Public, &mut queue)
+            .unwrap();
+
+        assert_eq!(store.unhandled_rejections(), vec![h]);
+    }
+
+    #[test]
     fn then_on_rejected_marks_as_handled() {
         let mut store = PromiseStore::new();
         let mut queue = MicrotaskQueue::new();
@@ -1601,6 +1622,22 @@ mod tests {
             .then(h, None, Some(ClosureHandle(0)), Label::Public, &mut queue)
             .unwrap();
         assert!(store.unhandled_rejections().is_empty());
+    }
+
+    #[test]
+    fn then_on_rejected_without_on_rejected_does_not_mark_handled() {
+        let mut store = PromiseStore::new();
+        let mut queue = MicrotaskQueue::new();
+        let h = store.create();
+        store
+            .reject(h, js_str("err"), Label::Public, &mut queue)
+            .unwrap();
+        assert_eq!(store.unhandled_rejections(), vec![h]);
+
+        store
+            .then(h, Some(ClosureHandle(1)), None, Label::Public, &mut queue)
+            .unwrap();
+        assert_eq!(store.unhandled_rejections(), vec![h]);
     }
 
     // ----- IFC label propagation -----
