@@ -316,30 +316,30 @@ impl ReleaseGate {
         }
 
         let mut checks = Vec::new();
-        let mut budget_remaining = self.config.timeout_budget_ms;
+        let mut budget_consumed_ms = 0_u64;
 
         // 1. Frankenlab scenarios
         let check = self.check_frankenlab_scenarios(cx);
-        budget_remaining = budget_remaining.saturating_sub(self.estimate_check_cost(&check));
+        budget_consumed_ms = budget_consumed_ms.saturating_add(self.estimate_check_cost(&check));
         checks.push(check);
 
         // 2. Evidence replay
         let check = self.check_evidence_replay();
-        budget_remaining = budget_remaining.saturating_sub(self.estimate_check_cost(&check));
+        budget_consumed_ms = budget_consumed_ms.saturating_add(self.estimate_check_cost(&check));
         checks.push(check);
 
         // 3. Obligation tracking
         let check = self.check_obligation_tracking(cx);
-        budget_remaining = budget_remaining.saturating_sub(self.estimate_check_cost(&check));
+        budget_consumed_ms = budget_consumed_ms.saturating_add(self.estimate_check_cost(&check));
         checks.push(check);
 
         // 4. Evidence completeness
         let check = self.check_evidence_completeness(cx);
-        budget_remaining = budget_remaining.saturating_sub(self.estimate_check_cost(&check));
+        budget_consumed_ms = budget_consumed_ms.saturating_add(self.estimate_check_cost(&check));
         checks.push(check);
 
-        // Check timeout: if budget exhausted, fail-closed.
-        if budget_remaining == 0 && self.config.timeout_budget_ms > 0 {
+        // Check timeout: fail only when consumed budget exceeds the configured ceiling.
+        if budget_consumed_ms > self.config.timeout_budget_ms {
             return self.build_timeout_result(checks);
         }
 
@@ -442,6 +442,7 @@ impl ReleaseGate {
             .iter()
             .map(|c| format!("{}", c.kind))
             .collect();
+        let passed_checks = partial_checks.iter().filter(|c| c.passed).count();
         self.push_event("release_gate_evaluated", "fail", Some("GATE_TIMEOUT"));
         let mut result = ReleaseGateResult {
             seed: self.seed,
@@ -453,7 +454,7 @@ impl ReleaseGate {
                 ),
             },
             total_checks: self.config.required_check_kinds.len(),
-            passed_checks: 0,
+            passed_checks,
             exception_applied: false,
             exception_justification: String::new(),
             gate_events: std::mem::take(&mut self.events),
@@ -1156,6 +1157,10 @@ mod tests {
 
         // Partial results should be preserved.
         assert!(!result.checks.is_empty());
+        assert_eq!(
+            result.passed_checks,
+            result.checks.iter().filter(|check| check.passed).count()
+        );
 
         // Timeout event emitted.
         let timeout_event = result
@@ -1177,6 +1182,34 @@ mod tests {
 
         assert!(!result.is_blocked());
         assert_eq!(result.verdict, Verdict::Pass);
+    }
+
+    #[test]
+    fn exact_budget_does_not_timeout() {
+        let mut baseline_gate = ReleaseGate::new(42);
+        let mut baseline_cx = mock_cx(200000);
+        let baseline = baseline_gate.evaluate(&mut baseline_cx);
+        let exact_budget_ms: u64 = baseline
+            .checks
+            .iter()
+            .map(|check| (check.items_checked as u64).saturating_mul(10))
+            .sum();
+
+        let config = GateConfig {
+            timeout_budget_ms: exact_budget_ms,
+            required_check_kinds: GateConfig::default().required_check_kinds,
+        };
+        let mut gate = ReleaseGate::with_config(42, config);
+        let mut cx = mock_cx(200000);
+        let result = gate.evaluate(&mut cx);
+
+        match &result.verdict {
+            Verdict::Fail { reason } => assert!(
+                !reason.contains("GATE_TIMEOUT"),
+                "unexpected timeout under exact budget: {reason}"
+            ),
+            Verdict::Pass => {}
+        }
     }
 
     // -----------------------------------------------------------------------
