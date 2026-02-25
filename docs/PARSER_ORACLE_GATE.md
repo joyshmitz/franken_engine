@@ -69,6 +69,16 @@ Each run writes to `artifacts/parser_oracle/<timestamp>/`:
 - `events.jsonl`
 - `commands.txt`
 
+## Logging Schema Validation
+
+Parser oracle event logs are validated against parser logging schema v1:
+
+- schema contract: `docs/PARSER_LOGGING_SCHEMA_V1.md`
+- validator: `./scripts/validate_parser_log_schema.sh --events <events.jsonl>`
+
+`scripts/run_parser_oracle_gate.sh` runs this validator automatically and
+fails closed if required fields are missing or unsafe payloads are detected.
+
 ## Drift Taxonomy
 
 The parser-oracle report classifies each fixture result:
@@ -95,4 +105,3 @@ Every fixture result includes a deterministic replay command envelope pinned to:
 - fixture catalog path
 
 The replay-failure E2E script intentionally corrupts fixture-hash expectations and asserts fail-closed rejection behavior.
-

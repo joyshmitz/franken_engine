@@ -11,6 +11,10 @@ parser-frontier gate and e2e scripts.
   - `scripts/e2e/parser_phase1_arena_*.sh`
 - Bootstrap helper source of truth:
   - `scripts/e2e/parser_deterministic_env.sh`
+- Verification architecture reference:
+  - `docs/PARSER_VERIFICATION_ARCHITECTURE.md` (`PSRP-09.1`)
+- Logging schema/redaction reference:
+  - `docs/PARSER_LOGGING_SCHEMA_V1.md` (`PSRP-09.5.1`)
 
 ## Contract Version
 
@@ -47,6 +51,21 @@ Run manifests emitted by parser-frontier suites must include:
 - `deterministic_env_schema_version`
 - `deterministic_environment` object with all required fields above
 
+## Event Logging Requirements
+
+Parser-frontier gate event streams must include required stable keys:
+
+- `trace_id`
+- `decision_id`
+- `policy_id`
+- `component`
+- `event`
+- `outcome`
+- `error_code`
+
+See `docs/PARSER_VERIFICATION_ARCHITECTURE.md` for full parser verification
+schema, subsystem coverage map, and escalation model.
+
 ## Operator Verification
 
 1. Run an e2e wrapper, for example:
@@ -60,4 +79,3 @@ Run manifests emitted by parser-frontier suites must include:
 - `deterministic_environment.lang` and `lc_all` are `C.UTF-8`
 - `deterministic_environment.toolchain_fingerprint` is populated
 - `deterministic_environment.seed_transcript_checksum` is present
-

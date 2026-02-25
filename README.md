@@ -387,7 +387,78 @@ The command writes a deterministic JSON artifact under
 ./scripts/run_parser_phase0_gate.sh ci
 ```
 
+Grammar-closure backlog contract (`bd-2mds.1.1.1`) is tracked in
+[`docs/PARSER_GRAMMAR_CLOSURE_BACKLOG.md`](./docs/PARSER_GRAMMAR_CLOSURE_BACKLOG.md)
+with machine-checked catalog + replay coverage in:
+- `crates/franken-engine/tests/fixtures/parser_grammar_closure_backlog.json`
+- `crates/franken-engine/tests/parser_grammar_closure_backlog.rs`
+
+Canonical AST schema/hash contract (`bd-2mds.1.1.2`) is tracked in
+[`docs/PARSER_CANONICAL_AST_SCHEMA.md`](./docs/PARSER_CANONICAL_AST_SCHEMA.md)
+with compatibility vectors in:
+- `crates/franken-engine/tests/parser_trait_ast.rs`
+- `crates/franken-engine/tests/ast_integration.rs`
+
+Canonical Parse Event IR schema/hash contract (`bd-2mds.1.4.1`) is tracked in
+[`docs/PARSER_EVENT_IR_SCHEMA.md`](./docs/PARSER_EVENT_IR_SCHEMA.md)
+with compatibility vectors in:
+- `crates/franken-engine/src/parser.rs` (unit coverage for schema + deterministic event emission)
+- `crates/franken-engine/tests/parser_trait_ast.rs`
+
+Canonical parser diagnostics taxonomy + normalization contract (`bd-2mds.1.1.3`)
+is tracked in
+[`docs/PARSER_DIAGNOSTICS_TAXONOMY.md`](./docs/PARSER_DIAGNOSTICS_TAXONOMY.md)
+with compatibility vectors in:
+- `crates/franken-engine/src/parser.rs` (taxonomy + normalized envelope unit coverage)
+- `crates/franken-engine/tests/parser_trait_ast.rs` (metadata stability + pinned normalized-diagnostic hashes)
+
+Byte-classification + UTF-8 boundary-safe scanner contract (`bd-2mds.1.3.1`)
+is implemented in:
+- `crates/franken-engine/src/parser.rs` (`LEX_BYTE_CLASS_TABLE`, `Utf8BoundarySafeScanner`, ASCII scalar-parity tests)
+- `crates/franken-engine/tests/parser_trait_ast.rs` (UTF-8 budget witness compatibility vector)
+
+```bash
+# replay one grammar family deterministically (via rch)
+PARSER_GRAMMAR_FAMILY=statement.control_flow rch exec -- \
+  env RUSTUP_TOOLCHAIN=nightly CARGO_TARGET_DIR=/tmp/rch_target_franken_engine_parser_phase0_gate \
+  cargo test -p frankenengine-engine --test parser_grammar_closure_backlog \
+  parser_grammar_closure_backlog_fixtures_are_replayable_by_family -- --nocapture
+
+# run canonical AST contract vectors (via rch)
+rch exec -- env RUSTUP_TOOLCHAIN=nightly \
+  CARGO_TARGET_DIR=/tmp/rch_target_franken_engine_parser_ast_contract \
+  cargo test -p frankenengine-engine --test parser_trait_ast --test ast_integration
+
+# run parser diagnostics taxonomy/normalization compatibility vectors (via rch)
+rch exec -- env RUSTUP_TOOLCHAIN=nightly \
+  CARGO_TARGET_DIR=/tmp/rch_target_franken_engine_parser_diagnostics_contract \
+  cargo test -p frankenengine-engine --test parser_trait_ast
+```
+
 Gate run manifests are written under `artifacts/parser_phase0_gate/<timestamp>/run_manifest.json`.
+
+## Phase-A Exit Gate
+
+`bd-1csl.1` adds a deterministic Phase-A gate runner that checks critical
+dependency-bead closure and aggregates parser/test262 gate evidence into a
+single manifest.
+
+```bash
+# Default behavior: fail fast when dependencies are unresolved
+./scripts/run_phase_a_exit_gate.sh check
+
+# Full gate orchestration (delegates heavy cargo work through existing rch-backed scripts)
+./scripts/run_phase_a_exit_gate.sh ci
+
+# Force sub-gate evidence collection even while dependencies are unresolved
+PHASE_A_GATE_RUN_SUBGATES_WHEN_BLOCKED=1 ./scripts/run_phase_a_exit_gate.sh check
+
+# Dependency-only check (explicitly skip sub-gates)
+PHASE_A_GATE_SKIP_SUBGATES=1 ./scripts/run_phase_a_exit_gate.sh check
+```
+
+Phase-A gate artifacts are written under
+`artifacts/phase_a_exit_gate/<timestamp>/`.
 
 ## Troubleshooting
 
