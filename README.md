@@ -541,6 +541,34 @@ Artifacts are written under:
 - `artifacts/parser_api_compatibility/<timestamp>/events.jsonl`
 - `artifacts/parser_api_compatibility/<timestamp>/commands.txt`
 
+## Parser Regression Bisector Scoreboard Gate
+
+`bd-2mds.1.6.4` automates parser regression attribution and deterministic
+scoreboard publication across telemetry history snapshots.
+
+```bash
+# parser regression bisector scoreboard gate (rch-backed check + test + clippy)
+./scripts/run_parser_regression_bisector_scoreboard.sh ci
+```
+
+Contract and vectors:
+
+- [`docs/PARSER_REGRESSION_BISECTOR_SCOREBOARD.md`](./docs/PARSER_REGRESSION_BISECTOR_SCOREBOARD.md)
+- `crates/franken-engine/tests/fixtures/parser_regression_bisector_scoreboard_v1.json`
+- `crates/franken-engine/tests/parser_regression_bisector_scoreboard.rs`
+
+Deterministic replay wrapper:
+
+```bash
+./scripts/e2e/parser_regression_bisector_scoreboard_replay.sh
+```
+
+Artifacts are written under:
+
+- `artifacts/parser_regression_bisector_scoreboard/<timestamp>/run_manifest.json`
+- `artifacts/parser_regression_bisector_scoreboard/<timestamp>/events.jsonl`
+- `artifacts/parser_regression_bisector_scoreboard/<timestamp>/commands.txt`
+
 ## Observability Information-Theoretic Gate
 
 `bd-mjh3.17` defines FRX-17 observability channel governance and compression
@@ -584,6 +612,138 @@ Artifacts are written under:
 - `artifacts/frx_compiler_lane_charter/<timestamp>/run_manifest.json`
 - `artifacts/frx_compiler_lane_charter/<timestamp>/events.jsonl`
 - `artifacts/frx_compiler_lane_charter/<timestamp>/commands.txt`
+
+## FRX Verification Lane Charter Gate
+
+`bd-mjh3.10.4` ships a deterministic gate for verification/formal lane charter
+contract validation and evidence emission.
+
+```bash
+# FRX verification lane charter gate (rch-backed check + test + clippy)
+./scripts/run_frx_verification_lane_charter_suite.sh ci
+```
+
+Deterministic replay wrapper:
+
+```bash
+./scripts/e2e/frx_verification_lane_charter_replay.sh
+```
+
+Artifacts are written under:
+
+- `artifacts/frx_verification_lane_charter/<timestamp>/run_manifest.json`
+- `artifacts/frx_verification_lane_charter/<timestamp>/events.jsonl`
+- `artifacts/frx_verification_lane_charter/<timestamp>/commands.txt`
+
+## FRX Optimization Lane Charter Gate
+
+`bd-mjh3.10.5` ships a deterministic gate for optimization/performance lane
+charter contract validation and evidence emission.
+
+```bash
+# FRX optimization lane charter gate (rch-backed check + test + clippy)
+./scripts/run_frx_optimization_lane_charter_suite.sh ci
+```
+
+Deterministic replay wrapper:
+
+```bash
+./scripts/e2e/frx_optimization_lane_charter_replay.sh
+```
+
+Artifacts are written under:
+
+- `artifacts/frx_optimization_lane_charter/<timestamp>/run_manifest.json`
+- `artifacts/frx_optimization_lane_charter/<timestamp>/events.jsonl`
+- `artifacts/frx_optimization_lane_charter/<timestamp>/commands.txt`
+
+## FRX Toolchain Lane Charter Gate
+
+`bd-mjh3.10.6` ships a deterministic gate for toolchain/ecosystem lane charter
+contract validation and evidence emission.
+
+```bash
+# FRX toolchain lane charter gate (rch-backed check + test + clippy)
+./scripts/run_frx_toolchain_lane_charter_suite.sh ci
+```
+
+Deterministic replay wrapper:
+
+```bash
+./scripts/e2e/frx_toolchain_lane_charter_replay.sh
+```
+
+Artifacts are written under:
+
+- `artifacts/frx_toolchain_lane_charter/<timestamp>/run_manifest.json`
+- `artifacts/frx_toolchain_lane_charter/<timestamp>/events.jsonl`
+- `artifacts/frx_toolchain_lane_charter/<timestamp>/commands.txt`
+
+## FRX Governance/Evidence Lane Charter Gate
+
+`bd-mjh3.10.7` ships a deterministic gate for governance/evidence lane charter
+contract validation and evidence emission.
+
+```bash
+# FRX governance/evidence lane charter gate (rch-backed check + test + clippy)
+./scripts/run_frx_governance_evidence_lane_charter_suite.sh ci
+```
+
+Deterministic replay wrapper:
+
+```bash
+./scripts/e2e/frx_governance_evidence_lane_charter_replay.sh
+```
+
+Artifacts are written under:
+
+- `artifacts/frx_governance_evidence_lane_charter/<timestamp>/run_manifest.json`
+- `artifacts/frx_governance_evidence_lane_charter/<timestamp>/events.jsonl`
+- `artifacts/frx_governance_evidence_lane_charter/<timestamp>/commands.txt`
+
+## FRX Adoption/Release Lane Charter Gate
+
+`bd-mjh3.10.8` ships a deterministic gate for adoption/release lane charter
+contract validation and evidence emission.
+
+```bash
+# FRX adoption/release lane charter gate (rch-backed check + test + clippy)
+./scripts/run_frx_adoption_release_lane_charter_suite.sh ci
+```
+
+Deterministic replay wrapper:
+
+```bash
+./scripts/e2e/frx_adoption_release_lane_charter_replay.sh
+```
+
+Artifacts are written under:
+
+- `artifacts/frx_adoption_release_lane_charter/<timestamp>/run_manifest.json`
+- `artifacts/frx_adoption_release_lane_charter/<timestamp>/events.jsonl`
+- `artifacts/frx_adoption_release_lane_charter/<timestamp>/commands.txt`
+
+## FRX Track E Verification/Fuzz/Formal Coverage Sprint Gate
+
+`bd-mjh3.11.5` ships a deterministic gate for Track E verification/fuzz/formal
+coverage sprint contract validation and evidence emission.
+
+```bash
+# FRX Track E verification/fuzz/formal coverage sprint gate (rch-backed check + test + clippy)
+./scripts/run_frx_track_e_verification_fuzz_formal_coverage_sprint_suite.sh ci
+```
+
+Deterministic replay wrapper:
+
+```bash
+./scripts/e2e/frx_track_e_verification_fuzz_formal_coverage_sprint_replay.sh
+```
+
+Artifacts are written under:
+
+- `artifacts/frx_track_e_verification_fuzz_formal_coverage_sprint/<timestamp>/run_manifest.json`
+- `artifacts/frx_track_e_verification_fuzz_formal_coverage_sprint/<timestamp>/events.jsonl`
+- `artifacts/frx_track_e_verification_fuzz_formal_coverage_sprint/<timestamp>/commands.txt`
 
 ## Phase-A Exit Gate
 
