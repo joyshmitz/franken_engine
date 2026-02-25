@@ -203,7 +203,10 @@ fn lockstep_runner_loads_runtime_specs_as_external_engines() {
         .as_array()
         .expect("engine_specs should be an array");
     assert_eq!(engine_specs.len(), 3);
-    assert_eq!(engine_specs[0]["engine_id"].as_str(), Some("franken_canonical"));
+    assert_eq!(
+        engine_specs[0]["engine_id"].as_str(),
+        Some("franken_canonical")
+    );
     assert_eq!(engine_specs[1]["engine_id"].as_str(), Some("node"));
     assert_eq!(engine_specs[1]["version_pin"].as_str(), Some("node@test"));
     assert_eq!(engine_specs[2]["engine_id"].as_str(), Some("bun"));
@@ -218,7 +221,10 @@ fn lockstep_runner_loads_runtime_specs_as_external_engines() {
 fn lockstep_runner_rejects_runtime_specs_and_engine_specs_combination() {
     let catalog_path = temp_path("franken_lockstep_runner_runtime_conflict_catalog", "json");
     let runtime_specs_path = temp_path("franken_lockstep_runner_runtime_conflict_specs", "toml");
-    let engine_specs_path = temp_path("franken_lockstep_runner_runtime_conflict_engine_specs", "json");
+    let engine_specs_path = temp_path(
+        "franken_lockstep_runner_runtime_conflict_engine_specs",
+        "json",
+    );
     let expected_hash = write_fixture_catalog(&catalog_path);
     write_runtime_specs(&runtime_specs_path, expected_hash.as_str());
     write_engine_specs(&engine_specs_path);
