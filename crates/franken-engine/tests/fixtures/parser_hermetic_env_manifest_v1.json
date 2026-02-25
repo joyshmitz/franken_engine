@@ -1,0 +1,55 @@
+{
+  "schema_version": "franken-engine.parser-hermetic-wrapper.manifest-contract.v1",
+  "wrapper_id": "parser_benchmark_protocol_gate",
+  "bead_id": "bd-2mds.1.7.1",
+  "deterministic_env_schema_version": "franken-engine.parser-frontier.env-contract.v1",
+  "required_wrapper_modes": [
+    "check",
+    "test",
+    "clippy",
+    "ci"
+  ],
+  "runner_commands": {
+    "check": "./scripts/run_parser_benchmark_protocol.sh check",
+    "test": "./scripts/run_parser_benchmark_protocol.sh test",
+    "clippy": "./scripts/run_parser_benchmark_protocol.sh clippy",
+    "ci": "./scripts/run_parser_benchmark_protocol.sh ci"
+  },
+  "required_manifest_keys": [
+    "schema_version",
+    "bead_id",
+    "deterministic_env_schema_version",
+    "trace_id",
+    "decision_id",
+    "policy_id",
+    "replay_command",
+    "deterministic_environment",
+    "commands",
+    "artifacts",
+    "operator_verification"
+  ],
+  "required_environment_keys": [
+    "timezone",
+    "lang",
+    "lc_all",
+    "source_date_epoch",
+    "rustc_version",
+    "cargo_version",
+    "rust_host",
+    "cpu_fingerprint",
+    "rustc_verbose_hash",
+    "toolchain_fingerprint",
+    "seed_transcript_checksum"
+  ],
+  "required_event_keys": [
+    "trace_id",
+    "decision_id",
+    "policy_id",
+    "component",
+    "event",
+    "replay_command",
+    "outcome",
+    "error_code"
+  ],
+  "replay_command_template": "./scripts/run_parser_benchmark_protocol.sh ci"
+}

@@ -77,3 +77,43 @@ parser_frontier_bootstrap_env() {
       | parser_frontier_sha256
   )"
 }
+
+parser_frontier_json_escape() {
+  local value="${1-}"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  value="${value//$'\n'/\\n}"
+  value="${value//$'\r'/\\r}"
+  value="${value//$'\t'/\\t}"
+  printf '%s' "$value"
+}
+
+parser_frontier_seed_checksum_json() {
+  local seed_checksum="${1-}"
+  if [[ -z "$seed_checksum" || "$seed_checksum" == "null" ]]; then
+    printf 'null'
+  else
+    printf '"%s"' "$(parser_frontier_json_escape "$seed_checksum")"
+  fi
+}
+
+# Emit deterministic_environment JSON fields (inner object only).
+# Caller is responsible for writing surrounding braces.
+parser_frontier_emit_manifest_environment_fields() {
+  local indent="${1:-    }"
+  local seed_checksum="${2:-null}"
+  local seed_checksum_json
+  seed_checksum_json="$(parser_frontier_seed_checksum_json "$seed_checksum")"
+
+  echo "${indent}\"timezone\": \"$(parser_frontier_json_escape "${TZ}")\","
+  echo "${indent}\"lang\": \"$(parser_frontier_json_escape "${LANG}")\","
+  echo "${indent}\"lc_all\": \"$(parser_frontier_json_escape "${LC_ALL}")\","
+  echo "${indent}\"source_date_epoch\": \"$(parser_frontier_json_escape "${SOURCE_DATE_EPOCH}")\","
+  echo "${indent}\"rustc_version\": \"$(parser_frontier_json_escape "${PARSER_FRONTIER_RUSTC_VERSION}")\","
+  echo "${indent}\"cargo_version\": \"$(parser_frontier_json_escape "${PARSER_FRONTIER_CARGO_VERSION}")\","
+  echo "${indent}\"rust_host\": \"$(parser_frontier_json_escape "${PARSER_FRONTIER_RUST_HOST}")\","
+  echo "${indent}\"cpu_fingerprint\": \"$(parser_frontier_json_escape "${PARSER_FRONTIER_CPU_FINGERPRINT}")\","
+  echo "${indent}\"rustc_verbose_hash\": \"$(parser_frontier_json_escape "${PARSER_FRONTIER_RUSTC_VERBOSE_HASH}")\","
+  echo "${indent}\"toolchain_fingerprint\": \"$(parser_frontier_json_escape "${PARSER_FRONTIER_TOOLCHAIN_FINGERPRINT}")\","
+  echo "${indent}\"seed_transcript_checksum\": ${seed_checksum_json}"
+}

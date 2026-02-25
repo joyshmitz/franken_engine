@@ -54,7 +54,8 @@ fn run() -> Result<i32, Box<dyn Error>> {
     println!("{json}");
 
     if args.fail_on_divergence
-        && (report.summary.divergent_fixtures > 0 || report.summary.fixtures_with_nondeterminism > 0)
+        && (report.summary.divergent_fixtures > 0
+            || report.summary.fixtures_with_nondeterminism > 0)
     {
         Ok(2)
     } else {

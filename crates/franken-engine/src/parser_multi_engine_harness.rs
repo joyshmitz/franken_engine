@@ -11,13 +11,20 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::ast::ParseGoal;
-use crate::parser::{CanonicalEs2020Parser, Es2020Parser};
+use crate::parser::{CanonicalEs2020Parser, Es2020Parser, ParseDiagnosticTaxonomy, ParseErrorCode};
 
 pub const DEFAULT_MULTI_ENGINE_FIXTURE_CATALOG_PATH: &str =
     "crates/franken-engine/tests/fixtures/parser_phase0_semantic_fixtures.json";
 
 const EXPECTED_FIXTURE_SCHEMA_VERSION: &str = "franken-engine.parser-phase0.semantic-fixtures.v1";
 const EXPECTED_FIXTURE_PARSER_MODE: &str = "scalar_reference";
+const AST_NORMALIZATION_SCHEMA_VERSION: &str = "franken-engine.parser-ast-normalization.v1";
+const DIAGNOSTIC_NORMALIZATION_SCHEMA_VERSION: &str =
+    "franken-engine.parser-diagnostic-normalization.v1";
+const EXTERNAL_DIAGNOSTIC_TAXONOMY_VERSION: &str = "external.engine-diagnostic.v1";
+const DRIFT_CLASSIFICATION_TAXONOMY_VERSION: &str =
+    "franken-engine.parser-multi-engine-drift-taxonomy.v1";
+const REPORT_SCHEMA_VERSION: &str = "franken-engine.parser-multi-engine.report.v2";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -127,6 +134,10 @@ pub struct EngineRunOutcome {
     pub value: String,
     pub deterministic: bool,
     pub duration_us: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub normalized_ast: Option<NormalizedAstArtifact>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub normalized_diagnostic: Option<NormalizedDiagnosticArtifact>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -148,6 +159,8 @@ pub struct FixtureComparisonResult {
     pub equivalent_across_engines: bool,
     pub nondeterministic_engine_count: u64,
     pub divergence_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drift_classification: Option<DriftClassification>,
     pub replay_command: String,
     pub engine_results: Vec<EngineFixtureResult>,
 }
@@ -158,6 +171,9 @@ pub struct MultiEngineHarnessSummary {
     pub equivalent_fixtures: u64,
     pub divergent_fixtures: u64,
     pub fixtures_with_nondeterminism: u64,
+    pub drift_minor_fixtures: u64,
+    pub drift_critical_fixtures: u64,
+    pub drift_counts_by_category: BTreeMap<String, u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -180,6 +196,121 @@ pub struct MultiEngineHarnessReport {
     pub fixture_results: Vec<FixtureComparisonResult>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AstNormalizationAdapter {
+    CanonicalHashPassthroughV1,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DiagnosticNormalizationAdapter {
+    ParserDiagnosticsTaxonomyV1,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NormalizedAstArtifact {
+    pub schema_version: String,
+    pub adapter: AstNormalizationAdapter,
+    pub canonical_hash: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NormalizedDiagnosticArtifact {
+    pub schema_version: String,
+    pub taxonomy_version: String,
+    pub adapter: DiagnosticNormalizationAdapter,
+    pub diagnostic_code: String,
+    pub category: String,
+    pub severity: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parse_error_code: Option<String>,
+    pub canonical_hash: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DriftCategory {
+    Semantic,
+    Diagnostics,
+    Harness,
+    Artifact,
+}
+
+impl DriftCategory {
+    const fn owner_hint(self) -> &'static str {
+        match self {
+            Self::Semantic => "parser-core",
+            Self::Diagnostics => "parser-diagnostics-taxonomy",
+            Self::Harness => "parser-multi-engine-harness",
+            Self::Artifact => "parser-artifact-contract",
+        }
+    }
+
+    const fn remediation_hint(self) -> &'static str {
+        match self {
+            Self::Semantic => "replay fixture and compare normalized AST hashes across engines",
+            Self::Diagnostics => {
+                "inspect normalized diagnostic codes and alias mappings for peer engines"
+            }
+            Self::Harness => {
+                "rerun with fixed seed/env and audit harness/external-command nondeterminism"
+            }
+            Self::Artifact => {
+                "validate normalized artifact shape and schema compatibility per engine outcome"
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DriftSeverity {
+    Minor,
+    Critical,
+}
+
+impl DriftSeverity {
+    const fn comparator_decision(self) -> &'static str {
+        match self {
+            Self::Minor => "drift_minor",
+            Self::Critical => "drift_critical",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DriftClassification {
+    pub taxonomy_version: String,
+    pub category: DriftCategory,
+    pub severity: DriftSeverity,
+    pub comparator_decision: String,
+    pub owner_hint: String,
+    pub remediation_hint: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EngineNormalizedArtifacts {
+    normalized_ast: Option<NormalizedAstArtifact>,
+    normalized_diagnostic: Option<NormalizedDiagnosticArtifact>,
+}
+
+impl EngineNormalizedArtifacts {
+    fn signature(&self) -> String {
+        let ast = self
+            .normalized_ast
+            .as_ref()
+            .map(|artifact| artifact.canonical_hash.as_str())
+            .unwrap_or("none");
+        let diagnostic = self
+            .normalized_diagnostic
+            .as_ref()
+            .map(|artifact| artifact.canonical_hash.as_str())
+            .unwrap_or("none");
+        format!("ast:{ast};diag:{diagnostic}")
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum EngineObservation {
     Hash(String),
@@ -197,13 +328,6 @@ impl EngineObservation {
     fn value(&self) -> &str {
         match self {
             Self::Hash(value) | Self::Error(value) => value,
-        }
-    }
-
-    fn signature(&self) -> String {
-        match self {
-            Self::Hash(value) => format!("hash:{value}"),
-            Self::Error(value) => format!("error:{value}"),
         }
     }
 }
@@ -256,6 +380,10 @@ pub enum MultiEngineHarnessError {
         engine_id: String,
         detail: String,
     },
+    Normalization {
+        engine_id: String,
+        detail: String,
+    },
 }
 
 impl fmt::Display for MultiEngineHarnessError {
@@ -263,7 +391,10 @@ impl fmt::Display for MultiEngineHarnessError {
         match self {
             Self::Io { path, source } => write!(f, "failed to read `{path}`: {source}"),
             Self::DecodeCatalog(message) => {
-                write!(f, "failed to decode multi-engine fixture catalog: {message}")
+                write!(
+                    f,
+                    "failed to decode multi-engine fixture catalog: {message}"
+                )
             }
             Self::InvalidCatalogSchema { expected, actual } => write!(
                 f,
@@ -273,9 +404,14 @@ impl fmt::Display for MultiEngineHarnessError {
                 f,
                 "invalid multi-engine catalog parser_mode `{actual}` (expected `{expected}`)"
             ),
-            Self::EmptyFixtureCatalog => write!(f, "multi-engine fixture catalog must not be empty"),
+            Self::EmptyFixtureCatalog => {
+                write!(f, "multi-engine fixture catalog must not be empty")
+            }
             Self::DuplicateFixtureId { fixture_id } => {
-                write!(f, "multi-engine fixture id `{fixture_id}` appears more than once")
+                write!(
+                    f,
+                    "multi-engine fixture id `{fixture_id}` appears more than once"
+                )
             }
             Self::UnknownGoal { fixture_id, goal } => {
                 write!(f, "fixture `{fixture_id}` has unknown parse goal `{goal}`")
@@ -283,9 +419,17 @@ impl fmt::Display for MultiEngineHarnessError {
             Self::FixtureFilterNotFound { fixture_id } => {
                 write!(f, "fixture filter `{fixture_id}` did not match any fixture")
             }
-            Self::InvalidConfig(message) => write!(f, "invalid multi-engine harness config: {message}"),
+            Self::InvalidConfig(message) => {
+                write!(f, "invalid multi-engine harness config: {message}")
+            }
             Self::ExternalEngine { engine_id, detail } => {
                 write!(f, "external engine `{engine_id}` failed: {detail}")
+            }
+            Self::Normalization { engine_id, detail } => {
+                write!(
+                    f,
+                    "normalization adapter for engine `{engine_id}` failed: {detail}"
+                )
             }
         }
     }
@@ -299,12 +443,12 @@ pub fn run_multi_engine_harness(
     validate_config(config)?;
 
     let catalog = load_fixture_catalog(config.fixture_catalog_path.as_path())?;
-    let catalog_hash = hash_bytes(
-        &fs::read(config.fixture_catalog_path.as_path()).map_err(|source| MultiEngineHarnessError::Io {
+    let catalog_hash = hash_bytes(&fs::read(config.fixture_catalog_path.as_path()).map_err(
+        |source| MultiEngineHarnessError::Io {
             path: config.fixture_catalog_path.display().to_string(),
             source,
-        })?,
-    );
+        },
+    )?);
 
     let mut selected = catalog.fixtures;
     if let Some(fixture_id) = config.fixture_id_filter.as_ref() {
@@ -328,6 +472,9 @@ pub fn run_multi_engine_harness(
     let mut equivalent_count = 0_u64;
     let mut divergent_count = 0_u64;
     let mut fixtures_with_nondeterminism = 0_u64;
+    let mut drift_minor_fixtures = 0_u64;
+    let mut drift_critical_fixtures = 0_u64;
+    let mut drift_counts_by_category = BTreeMap::<String, u64>::new();
 
     for fixture in &selected {
         let goal = parse_goal(fixture.id.as_str(), fixture.goal.as_str())?;
@@ -347,10 +494,16 @@ pub fn run_multi_engine_harness(
         let mut nondeterministic_engine_count = 0_u64;
 
         for engine in &config.engines {
-            let derived_seed = derive_engine_seed(config.seed, fixture.id.as_str(), engine.engine_id.as_str());
+            let derived_seed =
+                derive_engine_seed(config.seed, fixture.id.as_str(), engine.engine_id.as_str());
             let first = execute_engine(engine, fixture, goal, derived_seed, config)?;
             let second = execute_engine(engine, fixture, goal, derived_seed, config)?;
-            let deterministic = first.observation == second.observation;
+            let first_normalized =
+                normalize_engine_observation(engine.engine_id.as_str(), &first.observation)?;
+            let second_normalized =
+                normalize_engine_observation(engine.engine_id.as_str(), &second.observation)?;
+            let deterministic =
+                first.observation == second.observation && first_normalized == second_normalized;
             if !deterministic {
                 nondeterministic_engine_count += 1;
             }
@@ -360,16 +513,20 @@ pub fn run_multi_engine_harness(
                 value: first.observation.value().to_string(),
                 deterministic,
                 duration_us: first.duration_us,
+                normalized_ast: first_normalized.normalized_ast.clone(),
+                normalized_diagnostic: first_normalized.normalized_diagnostic.clone(),
             };
             let second_run = EngineRunOutcome {
                 kind: second.observation.kind(),
                 value: second.observation.value().to_string(),
                 deterministic,
                 duration_us: second.duration_us,
+                normalized_ast: second_normalized.normalized_ast.clone(),
+                normalized_diagnostic: second_normalized.normalized_diagnostic.clone(),
             };
 
             outcome_signatures
-                .entry(first.observation.signature())
+                .entry(first_normalized.signature())
                 .or_default()
                 .push(engine.engine_id.clone());
 
@@ -383,12 +540,21 @@ pub fn run_multi_engine_harness(
             });
         }
 
-        let equivalent_across_engines = outcome_signatures.len() == 1 && nondeterministic_engine_count == 0;
+        let equivalent_across_engines =
+            outcome_signatures.len() == 1 && nondeterministic_engine_count == 0;
         let divergence_reason = if equivalent_across_engines {
             None
         } else {
             Some(format_divergence_reason(
                 &outcome_signatures,
+                nondeterministic_engine_count,
+            ))
+        };
+        let drift_classification = if equivalent_across_engines {
+            None
+        } else {
+            Some(classify_fixture_drift(
+                &engine_results,
                 nondeterministic_engine_count,
             ))
         };
@@ -401,6 +567,15 @@ pub fn run_multi_engine_harness(
         if nondeterministic_engine_count > 0 {
             fixtures_with_nondeterminism += 1;
         }
+        if let Some(classification) = drift_classification.as_ref() {
+            *drift_counts_by_category
+                .entry(format!("{:?}", classification.category).to_ascii_lowercase())
+                .or_insert(0) += 1;
+            match classification.severity {
+                DriftSeverity::Minor => drift_minor_fixtures += 1,
+                DriftSeverity::Critical => drift_critical_fixtures += 1,
+            }
+        }
 
         fixture_results.push(FixtureComparisonResult {
             fixture_id: fixture.id.clone(),
@@ -410,13 +585,14 @@ pub fn run_multi_engine_harness(
             equivalent_across_engines,
             nondeterministic_engine_count,
             divergence_reason,
+            drift_classification,
             replay_command,
             engine_results,
         });
     }
 
     Ok(MultiEngineHarnessReport {
-        schema_version: "franken-engine.parser-multi-engine.report.v1".to_string(),
+        schema_version: REPORT_SCHEMA_VERSION.to_string(),
         generated_at_utc: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
         run_id,
         trace_id: config.trace_id.clone(),
@@ -435,6 +611,9 @@ pub fn run_multi_engine_harness(
             equivalent_fixtures: equivalent_count,
             divergent_fixtures: divergent_count,
             fixtures_with_nondeterminism,
+            drift_minor_fixtures,
+            drift_critical_fixtures,
+            drift_counts_by_category,
         },
         fixture_results,
     })
@@ -480,9 +659,80 @@ fn format_divergence_reason(
         parts.push(format!("{signature} <- [{}]", engines.join(",")));
     }
     if nondeterministic_engine_count > 0 {
-        parts.push(format!("nondeterministic_engines={nondeterministic_engine_count}"));
+        parts.push(format!(
+            "nondeterministic_engines={nondeterministic_engine_count}"
+        ));
     }
     parts.join("; ")
+}
+
+fn classify_fixture_drift(
+    engine_results: &[EngineFixtureResult],
+    nondeterministic_engine_count: u64,
+) -> DriftClassification {
+    if nondeterministic_engine_count > 0 {
+        return build_drift_classification(DriftCategory::Harness, DriftSeverity::Critical);
+    }
+
+    if has_artifact_shape_mismatch(engine_results) {
+        return build_drift_classification(DriftCategory::Artifact, DriftSeverity::Critical);
+    }
+
+    if engine_results.is_empty() {
+        return build_drift_classification(DriftCategory::Artifact, DriftSeverity::Critical);
+    }
+
+    let has_hash = engine_results
+        .iter()
+        .any(|result| matches!(result.first_run.kind, EngineOutcomeKind::Hash));
+    let has_error = engine_results
+        .iter()
+        .any(|result| matches!(result.first_run.kind, EngineOutcomeKind::Error));
+
+    if has_hash && has_error {
+        return build_drift_classification(DriftCategory::Semantic, DriftSeverity::Critical);
+    }
+
+    match engine_results[0].first_run.kind {
+        EngineOutcomeKind::Hash => {
+            build_drift_classification(DriftCategory::Semantic, DriftSeverity::Critical)
+        }
+        EngineOutcomeKind::Error => {
+            build_drift_classification(DriftCategory::Diagnostics, DriftSeverity::Minor)
+        }
+    }
+}
+
+fn build_drift_classification(
+    category: DriftCategory,
+    severity: DriftSeverity,
+) -> DriftClassification {
+    DriftClassification {
+        taxonomy_version: DRIFT_CLASSIFICATION_TAXONOMY_VERSION.to_string(),
+        category,
+        severity,
+        comparator_decision: severity.comparator_decision().to_string(),
+        owner_hint: category.owner_hint().to_string(),
+        remediation_hint: category.remediation_hint().to_string(),
+    }
+}
+
+fn has_artifact_shape_mismatch(engine_results: &[EngineFixtureResult]) -> bool {
+    engine_results.iter().any(|result| {
+        !run_outcome_shape_matches_kind(&result.first_run)
+            || !run_outcome_shape_matches_kind(&result.second_run)
+    })
+}
+
+fn run_outcome_shape_matches_kind(run: &EngineRunOutcome) -> bool {
+    match run.kind {
+        EngineOutcomeKind::Hash => {
+            run.normalized_ast.is_some() && run.normalized_diagnostic.is_none()
+        }
+        EngineOutcomeKind::Error => {
+            run.normalized_diagnostic.is_some() && run.normalized_ast.is_none()
+        }
+    }
 }
 
 fn validate_config(config: &MultiEngineHarnessConfig) -> Result<(), MultiEngineHarnessError> {
@@ -585,13 +835,14 @@ fn run_external_engine(
     seed: u64,
     config: &MultiEngineHarnessConfig,
 ) -> Result<EngineObservation, MultiEngineHarnessError> {
-    let command = engine
-        .command
-        .as_ref()
-        .ok_or_else(|| MultiEngineHarnessError::ExternalEngine {
-            engine_id: engine.engine_id.clone(),
-            detail: "missing command".to_string(),
-        })?;
+    let command =
+        engine
+            .command
+            .as_ref()
+            .ok_or_else(|| MultiEngineHarnessError::ExternalEngine {
+                engine_id: engine.engine_id.clone(),
+                detail: "missing command".to_string(),
+            })?;
 
     let request = ExternalCommandRequest {
         goal: goal.as_str().to_string(),
@@ -603,10 +854,11 @@ fn run_external_engine(
         engine_id: engine.engine_id.clone(),
     };
 
-    let payload = serde_json::to_vec(&request).map_err(|error| MultiEngineHarnessError::ExternalEngine {
-        engine_id: engine.engine_id.clone(),
-        detail: format!("failed to serialize request payload: {error}"),
-    })?;
+    let payload =
+        serde_json::to_vec(&request).map_err(|error| MultiEngineHarnessError::ExternalEngine {
+            engine_id: engine.engine_id.clone(),
+            detail: format!("failed to serialize request payload: {error}"),
+        })?;
 
     let mut process = Command::new(command);
     process
@@ -618,10 +870,12 @@ fn run_external_engine(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let mut child = process.spawn().map_err(|error| MultiEngineHarnessError::ExternalEngine {
-        engine_id: engine.engine_id.clone(),
-        detail: format!("failed to spawn command `{command}`: {error}"),
-    })?;
+    let mut child = process
+        .spawn()
+        .map_err(|error| MultiEngineHarnessError::ExternalEngine {
+            engine_id: engine.engine_id.clone(),
+            detail: format!("failed to spawn command `{command}`: {error}"),
+        })?;
 
     if let Some(stdin) = child.stdin.as_mut() {
         stdin
@@ -632,12 +886,13 @@ fn run_external_engine(
             })?;
     }
 
-    let output = child
-        .wait_with_output()
-        .map_err(|error| MultiEngineHarnessError::ExternalEngine {
-            engine_id: engine.engine_id.clone(),
-            detail: format!("failed waiting for process exit: {error}"),
-        })?;
+    let output =
+        child
+            .wait_with_output()
+            .map_err(|error| MultiEngineHarnessError::ExternalEngine {
+                engine_id: engine.engine_id.clone(),
+                detail: format!("failed waiting for process exit: {error}"),
+            })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -658,12 +913,13 @@ fn run_external_engine(
         });
     }
 
-    let response: ExternalCommandResponse = serde_json::from_slice(&output.stdout).map_err(|error| {
-        MultiEngineHarnessError::ExternalEngine {
-            engine_id: engine.engine_id.clone(),
-            detail: format!("invalid JSON response: {error}"),
-        }
-    })?;
+    let response: ExternalCommandResponse =
+        serde_json::from_slice(&output.stdout).map_err(|error| {
+            MultiEngineHarnessError::ExternalEngine {
+                engine_id: engine.engine_id.clone(),
+                detail: format!("invalid JSON response: {error}"),
+            }
+        })?;
 
     if let Some(hash) = response.hash {
         return Ok(EngineObservation::Hash(hash));
@@ -676,6 +932,123 @@ fn run_external_engine(
         engine_id: engine.engine_id.clone(),
         detail: "response must include either `hash` or `error_code`".to_string(),
     })
+}
+
+fn normalize_engine_observation(
+    engine_id: &str,
+    observation: &EngineObservation,
+) -> Result<EngineNormalizedArtifacts, MultiEngineHarnessError> {
+    match observation {
+        EngineObservation::Hash(value) => Ok(EngineNormalizedArtifacts {
+            normalized_ast: Some(normalize_ast_hash(engine_id, value)?),
+            normalized_diagnostic: None,
+        }),
+        EngineObservation::Error(value) => Ok(EngineNormalizedArtifacts {
+            normalized_ast: None,
+            normalized_diagnostic: Some(normalize_diagnostic_code(value)),
+        }),
+    }
+}
+
+fn normalize_ast_hash(
+    engine_id: &str,
+    raw_hash: &str,
+) -> Result<NormalizedAstArtifact, MultiEngineHarnessError> {
+    let canonical_hash = canonicalize_sha256_hash(raw_hash).ok_or_else(|| {
+        MultiEngineHarnessError::Normalization {
+            engine_id: engine_id.to_string(),
+            detail: format!("invalid AST hash `{raw_hash}` (expected sha256:<64-hex>)"),
+        }
+    })?;
+    Ok(NormalizedAstArtifact {
+        schema_version: AST_NORMALIZATION_SCHEMA_VERSION.to_string(),
+        adapter: AstNormalizationAdapter::CanonicalHashPassthroughV1,
+        canonical_hash,
+    })
+}
+
+fn normalize_diagnostic_code(raw_code: &str) -> NormalizedDiagnosticArtifact {
+    let trimmed = raw_code.trim();
+    let normalized_key = trimmed.to_ascii_lowercase();
+    let maybe_code = parse_error_code_alias(&normalized_key);
+    let taxonomy = ParseDiagnosticTaxonomy::v1();
+
+    let (diagnostic_code, category, severity, parse_error_code, taxonomy_version) =
+        if let Some(code) = maybe_code {
+            if let Some(rule) = taxonomy.rule_for(code) {
+                (
+                    rule.diagnostic_code.clone(),
+                    rule.category.as_str().to_string(),
+                    rule.severity.as_str().to_string(),
+                    Some(code.as_str().to_string()),
+                    ParseDiagnosticTaxonomy::taxonomy_version().to_string(),
+                )
+            } else {
+                (
+                    code.stable_diagnostic_code().to_string(),
+                    code.diagnostic_category().as_str().to_string(),
+                    code.diagnostic_severity().as_str().to_string(),
+                    Some(code.as_str().to_string()),
+                    ParseDiagnosticTaxonomy::taxonomy_version().to_string(),
+                )
+            }
+        } else {
+            (
+                format!("external::{trimmed}"),
+                "system".to_string(),
+                "error".to_string(),
+                None,
+                EXTERNAL_DIAGNOSTIC_TAXONOMY_VERSION.to_string(),
+            )
+        };
+
+    let canonical_hash = hash_bytes(
+        format!(
+            "{schema}|{taxonomy}|{adapter}|{code}|{category}|{severity}|{parse_code}",
+            schema = DIAGNOSTIC_NORMALIZATION_SCHEMA_VERSION,
+            taxonomy = taxonomy_version,
+            adapter = "parser_diagnostics_taxonomy_v1",
+            code = diagnostic_code,
+            category = category,
+            severity = severity,
+            parse_code = parse_error_code.as_deref().unwrap_or("none"),
+        )
+        .as_bytes(),
+    );
+
+    NormalizedDiagnosticArtifact {
+        schema_version: DIAGNOSTIC_NORMALIZATION_SCHEMA_VERSION.to_string(),
+        taxonomy_version,
+        adapter: DiagnosticNormalizationAdapter::ParserDiagnosticsTaxonomyV1,
+        diagnostic_code,
+        category,
+        severity,
+        parse_error_code,
+        canonical_hash,
+    }
+}
+
+fn parse_error_code_alias(value: &str) -> Option<ParseErrorCode> {
+    match value {
+        "emptysource" | "empty_source" => Some(ParseErrorCode::EmptySource),
+        "invalidgoal" | "invalid_goal" => Some(ParseErrorCode::InvalidGoal),
+        "unsupportedsyntax" | "unsupported_syntax" => Some(ParseErrorCode::UnsupportedSyntax),
+        "ioreadfailed" | "io_read_failed" => Some(ParseErrorCode::IoReadFailed),
+        "invalidutf8" | "invalid_utf8" => Some(ParseErrorCode::InvalidUtf8),
+        "sourcetoolarge" | "source_too_large" => Some(ParseErrorCode::SourceTooLarge),
+        "budgetexceeded" | "budget_exceeded" => Some(ParseErrorCode::BudgetExceeded),
+        _ => None,
+    }
+}
+
+fn canonicalize_sha256_hash(raw_hash: &str) -> Option<String> {
+    let value = raw_hash.trim();
+    let lowercase = value.to_ascii_lowercase();
+    let hash = lowercase.strip_prefix("sha256:")?;
+    if hash.len() != 64 || !hash.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(format!("sha256:{hash}"))
 }
 
 pub fn derive_engine_seed(master_seed: u64, fixture_id: &str, engine_id: &str) -> u64 {
@@ -697,7 +1070,9 @@ pub fn load_fixture_catalog(path: &Path) -> Result<HarnessFixtureCatalog, MultiE
     Ok(catalog)
 }
 
-fn validate_fixture_catalog(catalog: &HarnessFixtureCatalog) -> Result<(), MultiEngineHarnessError> {
+fn validate_fixture_catalog(
+    catalog: &HarnessFixtureCatalog,
+) -> Result<(), MultiEngineHarnessError> {
     if catalog.schema_version != EXPECTED_FIXTURE_SCHEMA_VERSION {
         return Err(MultiEngineHarnessError::InvalidCatalogSchema {
             expected: EXPECTED_FIXTURE_SCHEMA_VERSION.to_string(),
@@ -869,6 +1244,8 @@ mod tests {
             value: "sha256:abc".to_string(),
             deterministic: true,
             duration_us: 42,
+            normalized_ast: None,
+            normalized_diagnostic: None,
         };
         let json = serde_json::to_string(&outcome).expect("serialize");
         assert!(json.contains("\"deterministic\":true"));
@@ -882,6 +1259,8 @@ mod tests {
             value: "sha256:abc".to_string(),
             deterministic: true,
             duration_us: 10,
+            normalized_ast: None,
+            normalized_diagnostic: None,
         };
         let result = EngineFixtureResult {
             engine_id: "e1".to_string(),
@@ -903,10 +1282,17 @@ mod tests {
             equivalent_fixtures: 95,
             divergent_fixtures: 3,
             fixtures_with_nondeterminism: 2,
+            drift_minor_fixtures: 1,
+            drift_critical_fixtures: 2,
+            drift_counts_by_category: BTreeMap::from([
+                ("diagnostics".to_string(), 1),
+                ("semantic".to_string(), 2),
+            ]),
         };
         let json = serde_json::to_string(&summary).expect("serialize");
         assert!(json.contains("\"total_fixtures\":100"));
         assert!(json.contains("\"divergent_fixtures\":3"));
+        assert!(json.contains("\"drift_critical_fixtures\":2"));
     }
 
     #[test]
@@ -916,6 +1302,8 @@ mod tests {
             value: "sha256:abc".to_string(),
             deterministic: true,
             duration_us: 5,
+            normalized_ast: None,
+            normalized_diagnostic: None,
         };
         let result = FixtureComparisonResult {
             fixture_id: "f-1".to_string(),
@@ -925,6 +1313,7 @@ mod tests {
             equivalent_across_engines: true,
             nondeterministic_engine_count: 0,
             divergence_reason: None,
+            drift_classification: None,
             replay_command: "replay f-1".to_string(),
             engine_results: vec![EngineFixtureResult {
                 engine_id: "e1".to_string(),
@@ -969,8 +1358,7 @@ mod tests {
             }}"#,
             EXPECTED_FIXTURE_SCHEMA_VERSION, EXPECTED_FIXTURE_PARSER_MODE
         );
-        let catalog: HarnessFixtureCatalog =
-            serde_json::from_str(&json).expect("deserialize");
+        let catalog: HarnessFixtureCatalog = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(catalog.fixtures.len(), 1);
         assert_eq!(catalog.fixtures[0].id, "f-1");
     }
@@ -1052,9 +1440,18 @@ mod tests {
     }
 
     #[test]
+    fn error_display_normalization() {
+        let e = MultiEngineHarnessError::Normalization {
+            engine_id: "ext-2".to_string(),
+            detail: "bad hash".to_string(),
+        };
+        let s = e.to_string();
+        assert!(s.contains("ext-2") && s.contains("bad hash"));
+    }
+
+    #[test]
     fn error_is_std_error() {
-        let e: Box<dyn std::error::Error> =
-            Box::new(MultiEngineHarnessError::EmptyFixtureCatalog);
+        let e: Box<dyn std::error::Error> = Box::new(MultiEngineHarnessError::EmptyFixtureCatalog);
         assert!(!e.to_string().is_empty());
     }
 
@@ -1087,7 +1484,11 @@ mod tests {
         assert_eq!(config.locale, "C");
         assert_eq!(config.timezone, "UTC");
         assert!(config.trace_id.starts_with("trace-parser-multi-engine-"));
-        assert!(config.decision_id.starts_with("decision-parser-multi-engine-"));
+        assert!(
+            config
+                .decision_id
+                .starts_with("decision-parser-multi-engine-")
+        );
     }
 
     #[test]
@@ -1102,5 +1503,184 @@ mod tests {
         let a = derive_engine_seed(7, "fixture", "engine_a");
         let b = derive_engine_seed(7, "fixture", "engine_b");
         assert_ne!(a, b);
+    }
+
+    fn make_engine_result_for_test(
+        engine_id: &str,
+        kind: EngineOutcomeKind,
+        value: &str,
+        deterministic: bool,
+    ) -> EngineFixtureResult {
+        let (normalized_ast, normalized_diagnostic) = match kind {
+            EngineOutcomeKind::Hash => (
+                Some(NormalizedAstArtifact {
+                    schema_version: AST_NORMALIZATION_SCHEMA_VERSION.to_string(),
+                    adapter: AstNormalizationAdapter::CanonicalHashPassthroughV1,
+                    canonical_hash: value.to_string(),
+                }),
+                None,
+            ),
+            EngineOutcomeKind::Error => (None, Some(normalize_diagnostic_code(value))),
+        };
+
+        let run = EngineRunOutcome {
+            kind: kind.clone(),
+            value: value.to_string(),
+            deterministic,
+            duration_us: 1,
+            normalized_ast,
+            normalized_diagnostic,
+        };
+        EngineFixtureResult {
+            engine_id: engine_id.to_string(),
+            display_name: engine_id.to_string(),
+            version_pin: "v1".to_string(),
+            derived_seed: 7,
+            first_run: run.clone(),
+            second_run: run,
+        }
+    }
+
+    #[test]
+    fn classify_fixture_drift_uses_semantic_critical_for_hash_divergence() {
+        let results = vec![
+            make_engine_result_for_test(
+                "engine-a",
+                EngineOutcomeKind::Hash,
+                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                true,
+            ),
+            make_engine_result_for_test(
+                "engine-b",
+                EngineOutcomeKind::Hash,
+                "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                true,
+            ),
+        ];
+        let classification = classify_fixture_drift(&results, 0);
+        assert_eq!(classification.category, DriftCategory::Semantic);
+        assert_eq!(classification.severity, DriftSeverity::Critical);
+    }
+
+    #[test]
+    fn classify_fixture_drift_prefers_harness_for_nondeterminism() {
+        let results = vec![
+            make_engine_result_for_test(
+                "engine-a",
+                EngineOutcomeKind::Error,
+                "empty_source",
+                false,
+            ),
+            make_engine_result_for_test(
+                "engine-b",
+                EngineOutcomeKind::Error,
+                "invalid_goal",
+                false,
+            ),
+        ];
+        let classification = classify_fixture_drift(&results, 1);
+        assert_eq!(classification.category, DriftCategory::Harness);
+        assert_eq!(classification.severity, DriftSeverity::Critical);
+        assert_eq!(classification.owner_hint, "parser-multi-engine-harness");
+    }
+
+    #[test]
+    fn classify_fixture_drift_uses_diagnostics_minor_for_error_divergence() {
+        let results = vec![
+            make_engine_result_for_test("engine-a", EngineOutcomeKind::Error, "empty_source", true),
+            make_engine_result_for_test("engine-b", EngineOutcomeKind::Error, "invalid_goal", true),
+        ];
+        let classification = classify_fixture_drift(&results, 0);
+        assert_eq!(classification.category, DriftCategory::Diagnostics);
+        assert_eq!(classification.severity, DriftSeverity::Minor);
+        assert_eq!(classification.comparator_decision, "drift_minor");
+    }
+
+    #[test]
+    fn classify_fixture_drift_uses_artifact_for_shape_mismatch() {
+        let mut malformed = make_engine_result_for_test(
+            "engine-a",
+            EngineOutcomeKind::Hash,
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            true,
+        );
+        malformed.first_run.normalized_ast = None;
+        let results = vec![
+            malformed,
+            make_engine_result_for_test(
+                "engine-b",
+                EngineOutcomeKind::Hash,
+                "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                true,
+            ),
+        ];
+        let classification = classify_fixture_drift(&results, 0);
+        assert_eq!(classification.category, DriftCategory::Artifact);
+        assert_eq!(classification.severity, DriftSeverity::Critical);
+        assert_eq!(classification.comparator_decision, "drift_critical");
+    }
+
+    #[test]
+    fn canonicalize_sha256_hash_normalizes_case() {
+        let value = canonicalize_sha256_hash(
+            "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        )
+        .expect("hash should normalize");
+        assert_eq!(
+            value,
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        );
+    }
+
+    #[test]
+    fn normalize_diagnostic_code_maps_parser_aliases() {
+        let normalized = normalize_diagnostic_code("empty_source");
+        assert_eq!(
+            normalized.taxonomy_version,
+            ParseDiagnosticTaxonomy::taxonomy_version()
+        );
+        assert_eq!(normalized.parse_error_code.as_deref(), Some("empty_source"));
+        assert_eq!(normalized.category, "input");
+        assert_eq!(normalized.severity, "error");
+        assert!(normalized.diagnostic_code.starts_with("FE-PARSER-DIAG-"));
+        assert!(normalized.canonical_hash.starts_with("sha256:"));
+    }
+
+    #[test]
+    fn normalize_diagnostic_code_uses_external_fallback_for_unknown_codes() {
+        let normalized = normalize_diagnostic_code("PeerEngineOddity");
+        assert_eq!(
+            normalized.taxonomy_version,
+            EXTERNAL_DIAGNOSTIC_TAXONOMY_VERSION
+        );
+        assert_eq!(normalized.parse_error_code, None);
+        assert_eq!(normalized.category, "system");
+        assert_eq!(normalized.severity, "error");
+        assert_eq!(
+            normalized.diagnostic_code,
+            "external::PeerEngineOddity".to_string()
+        );
+    }
+
+    #[test]
+    fn normalize_engine_observation_attaches_ast_or_diagnostic_artifact() {
+        let ast = normalize_engine_observation(
+            "engine-a",
+            &EngineObservation::Hash(
+                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                    .to_string(),
+            ),
+        )
+        .expect("ast normalization");
+        assert!(ast.normalized_ast.is_some());
+        assert!(ast.normalized_diagnostic.is_none());
+
+        let diagnostic = normalize_engine_observation(
+            "engine-b",
+            &EngineObservation::Error("EmptySource".to_string()),
+        )
+        .expect("diagnostic normalization");
+        assert!(diagnostic.normalized_ast.is_none());
+        assert!(diagnostic.normalized_diagnostic.is_some());
     }
 }

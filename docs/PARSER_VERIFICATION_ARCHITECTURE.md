@@ -37,6 +37,8 @@ Each subsystem must have at least one active lane in each applicable layer.
 |---|---|---|---|---|---|
 | SIMD lexer | `src/simd_lexer.rs` tests | parser phase0 metamorphic corpus | `tests/simd_lexer_integration.rs` | `scripts/run_parser_phase0_gate.sh` (`test`,`ci`) | phase0 `run_manifest.json`, `events.jsonl`, `commands.txt` |
 | Parser core semantics | `src/parser.rs`, `src/ast.rs` tests | parser oracle fixture + metamorphic relation set + seeded property/regression generation in `tests/parser_property_regression.rs` | `tests/parser_trait_ast.rs`, `tests/parser_edge_cases.rs`, `tests/ast_integration.rs`, `tests/parser_property_regression.rs` | `scripts/run_parser_phase0_gate.sh`, `scripts/run_parser_oracle_gate.sh` | parser-oracle `baseline.json`, `relation_report.json`, `metamorphic_evidence.jsonl`, `manifest.json` |
+| Benchmark protocol + corpus tiers | protocol fixture/test contract in `tests/parser_benchmark_protocol.rs` | deterministic tier/case parseability checks via fixture corpus | `tests/parser_benchmark_protocol.rs` | `scripts/run_parser_benchmark_protocol.sh` (`check`,`test`,`clippy`,`ci`) | parser-benchmark-protocol `run_manifest.json`, `events.jsonl`, `commands.txt` |
+| Hermetic run wrappers + env manifests | deterministic env helper contract in `scripts/e2e/parser_deterministic_env.sh` | fixture contract in `tests/fixtures/parser_hermetic_env_manifest_v1.json` | `tests/parser_hermetic_wrapper_contract.rs` | `scripts/run_parser_benchmark_protocol.sh` (`test`,`ci`) | parser-benchmark-protocol `run_manifest.json`, `events.jsonl`, `commands.txt` with deterministic env + replay fields |
 | Event IR + AST materialization | `src/ast.rs` tests | parser oracle semantic drift taxonomy | `tests/parser_trait_ast.rs`, `tests/parser_phase0_semantic_fixtures.rs` | parser oracle `ci` and replay-failure e2e | oracle `relation_events.jsonl`, `minimized_failures/`, `golden_checksums.txt` |
 | Diagnostics + recovery | `src/parser_error_recovery.rs` tests | diagnostics drift checks in oracle | `tests/parser_error_recovery_integration.rs`, `tests/runtime_diagnostics_cli.rs` | parser oracle full/nightly e2e | oracle `proof_note.md` + replay command envelope |
 | Arena allocator / memory determinism | `src/parser_arena.rs` tests | deterministic scenario replay (smoke/parity/budget/corruption) | `tests/parser_arena_integration.rs`, `tests/parser_arena_phase1.rs` | `scripts/run_parser_phase1_arena_suite.sh` and `scripts/e2e/parser_phase1_arena_*.sh` | phase1 `run_manifest.json`, `events.jsonl`, `commands.txt` |
@@ -70,6 +72,7 @@ Strongly recommended parser fields (required for parser-frontier gates):
 - `workload_id` or `scenario`
 - `corpus` or `partition`
 - `replay_command`
+- `deterministic_env_schema_version` (for hermetic wrapper lanes)
 - `schema_version`
 - `generated_at_utc`
 
@@ -117,6 +120,7 @@ Primary parser verification entrypoints:
 ./scripts/run_parser_phase0_gate.sh ci
 ./scripts/run_parser_oracle_gate.sh ci
 ./scripts/run_parser_phase1_arena_suite.sh ci
+./scripts/run_parser_benchmark_protocol.sh ci
 ```
 
 E2E wrappers:

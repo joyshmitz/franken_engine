@@ -1,0 +1,100 @@
+{
+  "schema_version": "franken-engine.parser-benchmark-protocol.v1",
+  "protocol_version": "1.0.0",
+  "parser_mode": "scalar_reference",
+  "deterministic_environment_contract": "franken-engine.parser-frontier.env-contract.v1",
+  "measurement_window": {
+    "warmup_iterations": 5,
+    "measurement_iterations": 30,
+    "replicates": 5,
+    "max_relative_stdev_millionths": 100000
+  },
+  "corpus_tiers": [
+    {
+      "tier_id": "smoke",
+      "description": "Fast PR-gate smoke corpus",
+      "min_cases": 8,
+      "max_cases": 25,
+      "release_required": true
+    },
+    {
+      "tier_id": "core",
+      "description": "Representative semantic corpus",
+      "min_cases": 50,
+      "max_cases": 250,
+      "release_required": true
+    },
+    {
+      "tier_id": "stress",
+      "description": "High-complexity throughput/latency stress corpus",
+      "min_cases": 100,
+      "max_cases": 500,
+      "release_required": true
+    },
+    {
+      "tier_id": "adversarial",
+      "description": "Parser defense and worst-case corpus",
+      "min_cases": 25,
+      "max_cases": 150,
+      "release_required": true
+    }
+  ],
+  "metrics": [
+    "throughput_sources_per_second",
+    "latency_ns_p50",
+    "latency_ns_p95",
+    "latency_ns_p99",
+    "bytes_per_source_avg",
+    "tokens_per_source_avg",
+    "semantic_hash_stability_rate"
+  ],
+  "structured_event_keys": [
+    "trace_id",
+    "decision_id",
+    "policy_id",
+    "component",
+    "event",
+    "outcome",
+    "error_code"
+  ],
+  "runner_commands": {
+    "check": "./scripts/run_parser_benchmark_protocol.sh check",
+    "test": "./scripts/run_parser_benchmark_protocol.sh test",
+    "clippy": "./scripts/run_parser_benchmark_protocol.sh clippy",
+    "ci": "./scripts/run_parser_benchmark_protocol.sh ci"
+  },
+  "benchmark_cases": [
+    {
+      "case_id": "smoke-var-decl",
+      "tier_id": "smoke",
+      "family_id": "declaration",
+      "goal": "script",
+      "source": "let x = 1;",
+      "expected_semantic_class": "scalar_declaration"
+    },
+    {
+      "case_id": "core-import-export",
+      "tier_id": "core",
+      "family_id": "module-linkage",
+      "goal": "module",
+      "source": "import x from 'm'; export { x };",
+      "expected_semantic_class": "module_binding"
+    },
+    {
+      "case_id": "stress-loop-arithmetic",
+      "tier_id": "stress",
+      "family_id": "control-flow",
+      "goal": "script",
+      "source": "for (let i = 0; i < 100; i++) { let y = i + 1; }",
+      "expected_semantic_class": "iterative_hot_path"
+    },
+    {
+      "case_id": "adversarial-deep-binary",
+      "tier_id": "adversarial",
+      "family_id": "expression-depth",
+      "goal": "script",
+      "source": "let z = (((1+2)+3)+4)+5;",
+      "expected_semantic_class": "depth_pressure"
+    }
+  ]
+}

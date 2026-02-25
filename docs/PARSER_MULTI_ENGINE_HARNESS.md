@@ -1,4 +1,4 @@
-# Parser Multi-Engine Harness (`bd-2mds.1.2.1`)
+# Parser Multi-Engine Harness (`bd-2mds.1.2.1`, `bd-2mds.1.2.2`, `bd-2mds.1.2.3`)
 
 Deterministic comparison harness for parser outputs across multiple engines under a controlled environment (`LC_ALL=C`, `TZ=UTC`) with reproducible manifests and one-command replay paths per fixture.
 
@@ -14,6 +14,60 @@ It compares fixture outcomes across:
 - `franken_canonical` (native scalar-reference parser)
 - `fixture_expected_hash` (catalog baseline oracle)
 - optional `external_command` engines (e.g., Boa/peer parser wrappers)
+
+## Normalization Adapters (PSRP-02.2)
+
+The harness now normalizes engine-specific outputs into canonical comparison
+artifacts before drift comparison:
+
+- AST/hash outcomes normalize through adapter
+  `canonical_hash_passthrough_v1` into schema
+  `franken-engine.parser-ast-normalization.v1`.
+- Diagnostic/error outcomes normalize through adapter
+  `parser_diagnostics_taxonomy_v1` into schema
+  `franken-engine.parser-diagnostic-normalization.v1`.
+- Known parser error aliases (`EmptySource`, `empty_source`, etc.) are mapped
+  into canonical parser diagnostics taxonomy entries so cross-engine case/style
+  differences do not create false divergences.
+- Unknown external diagnostic codes are normalized deterministically under
+  fallback taxonomy `external.engine-diagnostic.v1`.
+
+Per-engine `first_run`/`second_run` rows include optional:
+
+- `normalized_ast`
+- `normalized_diagnostic`
+
+Harness equivalence checks compare these normalized artifacts (not only raw
+engine-returned strings), and deterministic checks assert both raw and
+normalized consistency across repeated runs.
+
+## Drift Classification (PSRP-02.3)
+
+When engines diverge, the harness now emits deterministic drift classification
+metadata on each fixture row (`drift_classification`) and summary rollups:
+
+- Taxonomy version:
+  `franken-engine.parser-multi-engine-drift-taxonomy.v1`
+- Categories:
+  - `semantic`
+  - `diagnostics`
+  - `harness`
+  - `artifact`
+- Severity mapping:
+  - `diagnostics` -> `minor` (`comparator_decision=drift_minor`)
+  - `semantic`, `harness`, `artifact` -> `critical`
+    (`comparator_decision=drift_critical`)
+- Deterministic owner hints:
+  - `semantic` -> `parser-core`
+  - `diagnostics` -> `parser-diagnostics-taxonomy`
+  - `harness` -> `parser-multi-engine-harness`
+  - `artifact` -> `parser-artifact-contract`
+
+`summary` now includes:
+
+- `drift_minor_fixtures`
+- `drift_critical_fixtures`
+- `drift_counts_by_category`
 
 ## Engine Contract
 

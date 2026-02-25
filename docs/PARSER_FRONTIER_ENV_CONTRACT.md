@@ -6,9 +6,15 @@ parser-frontier gate and e2e scripts.
 ## Scope
 
 - Applies to parser-frontier execution beads under epic `bd-2mds`.
-- Current implementation is wired into the parser phase1 arena suite:
+- Current implementation is wired into parser phase1/event-materializer suites:
   - `scripts/run_parser_phase1_arena_suite.sh`
   - `scripts/e2e/parser_phase1_arena_*.sh`
+  - `scripts/run_parser_event_materializer_lane.sh`
+  - `scripts/e2e/parser_event_materializer_replay.sh`
+- Hermetic wrapper + environment-manifest contract for `PSRP-07.1`:
+  - `scripts/run_parser_benchmark_protocol.sh`
+  - `crates/franken-engine/tests/parser_hermetic_wrapper_contract.rs`
+  - `crates/franken-engine/tests/fixtures/parser_hermetic_env_manifest_v1.json`
 - Bootstrap helper source of truth:
   - `scripts/e2e/parser_deterministic_env.sh`
 - Verification architecture reference:
@@ -43,6 +49,23 @@ Every parser-frontier gate/e2e run must set and record:
 4. Seed contract:
 - `seed_transcript_checksum` must be present in manifest payload.
 - Use `null` only when a scenario does not produce a seed transcript.
+
+## Hermetic Wrapper Contract (PSRP-07.1)
+
+Parser wrappers participating in this contract must:
+
+1. Source and bootstrap deterministic env from `scripts/e2e/parser_deterministic_env.sh`.
+2. Execute heavy Rust commands through `rch`.
+3. Emit stable manifest keys:
+   - `deterministic_env_schema_version`
+   - `deterministic_environment`
+   - `replay_command`
+4. Emit event rows that include parser logging base keys plus `replay_command`.
+5. Publish deterministic artifacts:
+   - `run_manifest.json`
+   - `events.jsonl`
+   - `commands.txt`
+6. Provide one-command operator replay via `replay_command`.
 
 ## Manifest Requirements
 
@@ -79,3 +102,18 @@ schema, subsystem coverage map, and escalation model.
 - `deterministic_environment.lang` and `lc_all` are `C.UTF-8`
 - `deterministic_environment.toolchain_fingerprint` is populated
 - `deterministic_environment.seed_transcript_checksum` is present
+
+Parser benchmark-protocol hermetic wrapper verification:
+
+```bash
+CARGO_TARGET_DIR=/data/tmp/rch_target_franken_engine_parser_benchmark_protocol \
+  ./scripts/run_parser_benchmark_protocol.sh test
+cat artifacts/parser_benchmark_protocol/<timestamp>/run_manifest.json
+cat artifacts/parser_benchmark_protocol/<timestamp>/events.jsonl
+cat artifacts/parser_benchmark_protocol/<timestamp>/commands.txt
+```
+
+Confirm manifest includes:
+- `deterministic_env_schema_version`
+- `deterministic_environment` object with required fields
+- `replay_command`
