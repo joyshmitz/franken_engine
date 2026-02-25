@@ -27,6 +27,7 @@
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::ast::SourceSpan;
 use crate::engine_object_id::EngineObjectId;
@@ -219,6 +220,50 @@ impl fmt::Display for LexerMode {
     }
 }
 
+/// Required architecture feature gate for enabling SWAR mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum SwarFeatureGate {
+    /// Portable SWAR-only gate (no SIMD intrinsics required).
+    Portable,
+    /// Require x86_64 AVX2 capability.
+    RequireAvx2,
+    /// Require x86_64 AVX512F capability.
+    RequireAvx512F,
+    /// Require ARM/AArch64 NEON capability.
+    RequireNeon,
+}
+
+impl fmt::Display for SwarFeatureGate {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Portable => write!(f, "portable"),
+            Self::RequireAvx2 => write!(f, "require_avx2"),
+            Self::RequireAvx512F => write!(f, "require_avx512f"),
+            Self::RequireNeon => write!(f, "require_neon"),
+        }
+    }
+}
+
+/// Architecture family used for deterministic fallback decisions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum ArchFamily {
+    X86_64,
+    Aarch64,
+    Arm,
+    Other,
+}
+
+impl fmt::Display for ArchFamily {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::X86_64 => write!(f, "x86_64"),
+            Self::Aarch64 => write!(f, "aarch64"),
+            Self::Arm => write!(f, "arm"),
+            Self::Other => write!(f, "other"),
+        }
+    }
+}
+
 /// Reason the SWAR path was disabled in favor of scalar fallback.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SwarDisableReason {
@@ -228,6 +273,16 @@ pub enum SwarDisableReason {
     ParityMismatch { mismatch_index: u64 },
     /// Input too small to benefit from SWAR (below width threshold).
     InputBelowThreshold { input_len: u64, threshold: u64 },
+    /// SWAR path not supported on the active architecture profile.
+    ArchitectureUnsupported {
+        pointer_width: u32,
+        little_endian: bool,
+    },
+    /// Policy requires an architecture feature gate that is unavailable.
+    FeatureGateUnavailable {
+        required: SwarFeatureGate,
+        arch_family: ArchFamily,
+    },
     /// Token budget would be exceeded before SWAR scan completes.
     TokenBudgetExceeded,
 }
@@ -247,6 +302,22 @@ impl fmt::Display for SwarDisableReason {
                 "input_below_threshold(len={}, threshold={})",
                 input_len, threshold
             ),
+            Self::ArchitectureUnsupported {
+                pointer_width,
+                little_endian,
+            } => write!(
+                f,
+                "architecture_unsupported(pointer_width={}, little_endian={})",
+                pointer_width, little_endian
+            ),
+            Self::FeatureGateUnavailable {
+                required,
+                arch_family,
+            } => write!(
+                f,
+                "feature_gate_unavailable(required={}, arch={})",
+                required, arch_family
+            ),
             Self::TokenBudgetExceeded => write!(f, "token_budget_exceeded"),
         }
     }
@@ -263,6 +334,8 @@ pub struct LexerConfig {
     pub max_source_bytes: u64,
     /// Minimum input size (bytes) to engage SWAR path. Below this, scalar is used.
     pub swar_min_input_bytes: u64,
+    /// Architecture feature gate policy for enabling SWAR.
+    pub feature_gate: SwarFeatureGate,
     /// If true, emit full token stream. If false, only count tokens (fast path).
     pub emit_tokens: bool,
 }
@@ -274,6 +347,7 @@ impl Default for LexerConfig {
             max_tokens: 65_536,
             max_source_bytes: 1_048_576,
             swar_min_input_bytes: 64,
+            feature_gate: SwarFeatureGate::Portable,
             emit_tokens: true,
         }
     }
@@ -658,13 +732,10 @@ impl SwarLexer {
             });
         }
 
-        // Fall back to scalar for very small inputs
-        if input_len < config.swar_min_input_bytes {
+        let profile = ArchCapabilityProfile::detect();
+        if let Some(reason) = evaluate_swar_fallback_matrix(input_len, config, &profile) {
             let mut result = ScalarLexer::lex(input, config)?;
-            result.swar_disable_reason = Some(SwarDisableReason::InputBelowThreshold {
-                input_len,
-                threshold: config.swar_min_input_bytes,
-            });
+            result.swar_disable_reason = Some(reason);
             return Ok(result);
         }
 
@@ -948,7 +1019,11 @@ fn find_mismatch(swar: &LexerOutput, scalar: &LexerOutput) -> Option<ParityMisma
 pub fn lex(input: &str, config: &LexerConfig) -> Result<LexerOutput, LexerError> {
     let bytes = input.as_bytes();
     match config.mode {
-        LexerMode::Scalar => ScalarLexer::lex(bytes, config),
+        LexerMode::Scalar => {
+            let mut output = ScalarLexer::lex(bytes, config)?;
+            output.swar_disable_reason = Some(SwarDisableReason::OperatorOverride);
+            Ok(output)
+        }
         LexerMode::Swar => SwarLexer::lex(bytes, config),
         LexerMode::Differential => {
             let diff = DifferentialLexer::lex(bytes, config)?;
@@ -996,9 +1071,69 @@ pub struct LexerArtifact {
     pub schema_version: LexerSchemaVersion,
 }
 
+/// Structured witness log for lexer fallback and token determinism auditing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LexerTokenWitnessLog {
+    /// Schema version.
+    pub schema_version: LexerSchemaVersion,
+    /// Stable trace identifier for correlation.
+    pub trace_id: String,
+    /// Stable decision identifier for policy decisions.
+    pub decision_id: String,
+    /// Policy identifier for the feature-gate policy applied.
+    pub policy_id: String,
+    /// Requested mode from the input config.
+    pub requested_mode: LexerMode,
+    /// Actual mode selected by fallback matrix.
+    pub actual_mode: LexerMode,
+    /// Feature-gate policy requested by the config.
+    pub feature_gate: SwarFeatureGate,
+    /// SWAR disable reason when fallback occurred.
+    pub swar_disable_reason: Option<SwarDisableReason>,
+    /// Architecture profile used for fallback decisions.
+    pub arch_profile: ArchCapabilityProfile,
+    /// SHA-256 hash of input bytes.
+    pub input_hash: String,
+    /// Total tokens produced.
+    pub token_count: u64,
+    /// Deterministic hash of token witness rows.
+    pub token_witness_hash: String,
+    /// One-command replay instruction.
+    pub replay_command: String,
+}
+
+/// Build a structured token witness log from a lexer result.
+pub fn build_token_witness_log(
+    input: &str,
+    config: &LexerConfig,
+    output: &LexerOutput,
+    trace_id: &str,
+    decision_id: &str,
+    policy_id: &str,
+    replay_command: &str,
+) -> LexerTokenWitnessLog {
+    LexerTokenWitnessLog {
+        schema_version: LexerSchemaVersion::V1,
+        trace_id: trace_id.to_string(),
+        decision_id: decision_id.to_string(),
+        policy_id: policy_id.to_string(),
+        requested_mode: config.mode,
+        actual_mode: output.actual_mode,
+        feature_gate: config.feature_gate,
+        swar_disable_reason: output.swar_disable_reason.clone(),
+        arch_profile: ArchCapabilityProfile::detect(),
+        input_hash: sha256_prefixed(input.as_bytes()),
+        token_count: output.token_count,
+        token_witness_hash: compute_token_witness_hash(&output.tokens, output.token_count),
+        replay_command: replay_command.to_string(),
+    }
+}
+
 /// Architecture capability profile for SWAR support decisions.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ArchCapabilityProfile {
+    /// Architecture family.
+    pub arch_family: ArchFamily,
     /// SWAR width in bytes (always 8 for u64-based SWAR).
     pub swar_width: u32,
     /// Target pointer width in bits (32 or 64).
@@ -1007,12 +1142,62 @@ pub struct ArchCapabilityProfile {
     pub little_endian: bool,
     /// Whether SWAR path is available (true on all targets with 64-bit u64).
     pub swar_available: bool,
+    /// Whether AVX2 is available on the current machine (x86_64 only).
+    pub avx2_available: bool,
+    /// Whether AVX512F is available on the current machine (x86_64 only).
+    pub avx512f_available: bool,
+    /// Whether NEON is available on the current machine (ARM/AArch64 only).
+    pub neon_available: bool,
 }
 
 impl ArchCapabilityProfile {
     /// Detect the current architecture's SWAR capability.
     pub fn detect() -> Self {
+        let arch_family = if cfg!(target_arch = "x86_64") {
+            ArchFamily::X86_64
+        } else if cfg!(target_arch = "aarch64") {
+            ArchFamily::Aarch64
+        } else if cfg!(target_arch = "arm") {
+            ArchFamily::Arm
+        } else {
+            ArchFamily::Other
+        };
+        let avx2_available = {
+            #[cfg(target_arch = "x86_64")]
+            {
+                std::arch::is_x86_feature_detected!("avx2")
+            }
+            #[cfg(not(target_arch = "x86_64"))]
+            {
+                false
+            }
+        };
+        let avx512f_available = {
+            #[cfg(target_arch = "x86_64")]
+            {
+                std::arch::is_x86_feature_detected!("avx512f")
+            }
+            #[cfg(not(target_arch = "x86_64"))]
+            {
+                false
+            }
+        };
+        let neon_available = {
+            #[cfg(target_arch = "aarch64")]
+            {
+                std::arch::is_aarch64_feature_detected!("neon")
+            }
+            #[cfg(target_arch = "arm")]
+            {
+                cfg!(target_feature = "neon")
+            }
+            #[cfg(not(any(target_arch = "aarch64", target_arch = "arm")))]
+            {
+                false
+            }
+        };
         Self {
+            arch_family,
             swar_width: 8,
             pointer_width: if cfg!(target_pointer_width = "64") {
                 64
@@ -1021,6 +1206,9 @@ impl ArchCapabilityProfile {
             },
             little_endian: cfg!(target_endian = "little"),
             swar_available: true, // u64 SWAR works on all targets
+            avx2_available,
+            avx512f_available,
+            neon_available,
         }
     }
 
@@ -1028,6 +1216,53 @@ impl ArchCapabilityProfile {
     pub fn supports_swar(&self) -> bool {
         self.swar_available && self.little_endian
     }
+
+    /// Whether this profile satisfies a feature-gate requirement.
+    pub fn supports_feature_gate(&self, gate: SwarFeatureGate) -> bool {
+        if !self.supports_swar() {
+            return false;
+        }
+        match gate {
+            SwarFeatureGate::Portable => true,
+            SwarFeatureGate::RequireAvx2 => {
+                self.arch_family == ArchFamily::X86_64 && self.avx2_available
+            }
+            SwarFeatureGate::RequireAvx512F => {
+                self.arch_family == ArchFamily::X86_64 && self.avx512f_available
+            }
+            SwarFeatureGate::RequireNeon => {
+                matches!(self.arch_family, ArchFamily::Aarch64 | ArchFamily::Arm)
+                    && self.neon_available
+            }
+        }
+    }
+}
+
+/// Deterministic scalar-fallback matrix for SWAR mode.
+pub fn evaluate_swar_fallback_matrix(
+    input_len: u64,
+    config: &LexerConfig,
+    profile: &ArchCapabilityProfile,
+) -> Option<SwarDisableReason> {
+    if !profile.supports_swar() {
+        return Some(SwarDisableReason::ArchitectureUnsupported {
+            pointer_width: profile.pointer_width,
+            little_endian: profile.little_endian,
+        });
+    }
+    if !profile.supports_feature_gate(config.feature_gate) {
+        return Some(SwarDisableReason::FeatureGateUnavailable {
+            required: config.feature_gate,
+            arch_family: profile.arch_family,
+        });
+    }
+    if input_len < config.swar_min_input_bytes {
+        return Some(SwarDisableReason::InputBelowThreshold {
+            input_len,
+            threshold: config.swar_min_input_bytes,
+        });
+    }
+    None
 }
 
 // ---------------------------------------------------------------------------
@@ -1191,6 +1426,33 @@ pub fn evaluate_rollback_gate(
 // Helper functions
 // ---------------------------------------------------------------------------
 
+fn sha256_prefixed(bytes: &[u8]) -> String {
+    format!("sha256:{}", hex::encode(Sha256::digest(bytes)))
+}
+
+fn token_kind_tag(kind: TokenKind) -> u8 {
+    match kind {
+        TokenKind::Identifier => 0,
+        TokenKind::NumericLiteral => 1,
+        TokenKind::StringLiteral => 2,
+        TokenKind::UnterminatedString => 3,
+        TokenKind::TwoCharOperator => 4,
+        TokenKind::Punctuation => 5,
+    }
+}
+
+fn compute_token_witness_hash(tokens: &[Token], token_count: u64) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"franken-engine.simd-lexer.token-witness.v1");
+    hasher.update(token_count.to_le_bytes());
+    for token in tokens {
+        hasher.update([token_kind_tag(token.kind)]);
+        hasher.update(token.start.to_le_bytes());
+        hasher.update(token.end.to_le_bytes());
+    }
+    format!("sha256:{}", hex::encode(hasher.finalize()))
+}
+
 #[inline]
 fn is_ident_start(byte: u8) -> bool {
     byte.is_ascii_alphabetic() || byte == b'_' || byte == b'$'
@@ -1282,6 +1544,25 @@ mod tests {
         LexerConfig {
             mode: LexerMode::Differential,
             ..Default::default()
+        }
+    }
+
+    fn profile_for_tests(
+        arch_family: ArchFamily,
+        little_endian: bool,
+        avx2_available: bool,
+        avx512f_available: bool,
+        neon_available: bool,
+    ) -> ArchCapabilityProfile {
+        ArchCapabilityProfile {
+            arch_family,
+            swar_width: 8,
+            pointer_width: 64,
+            little_endian,
+            swar_available: true,
+            avx2_available,
+            avx512f_available,
+            neon_available,
         }
     }
 
@@ -1757,6 +2038,10 @@ mod tests {
         let output = lex("hello world", &scalar_config()).unwrap();
         assert_eq!(output.token_count, 2);
         assert_eq!(output.actual_mode, LexerMode::Scalar);
+        assert_eq!(
+            output.swar_disable_reason,
+            Some(SwarDisableReason::OperatorOverride)
+        );
     }
 
     #[test]
@@ -1800,6 +2085,53 @@ mod tests {
         let profile = ArchCapabilityProfile::detect();
         assert_eq!(profile.swar_width, 8);
         assert!(profile.swar_available);
+        assert_eq!(
+            profile.supports_feature_gate(SwarFeatureGate::Portable),
+            profile.supports_swar()
+        );
+    }
+
+    #[test]
+    fn fallback_matrix_rejects_unsupported_architecture() {
+        let profile = profile_for_tests(ArchFamily::Other, false, false, false, false);
+        let config = LexerConfig::default();
+        let reason = evaluate_swar_fallback_matrix(4096, &config, &profile).unwrap();
+        assert_eq!(
+            reason,
+            SwarDisableReason::ArchitectureUnsupported {
+                pointer_width: 64,
+                little_endian: false
+            }
+        );
+    }
+
+    #[test]
+    fn fallback_matrix_rejects_missing_feature_gate() {
+        let profile = profile_for_tests(ArchFamily::X86_64, true, false, false, false);
+        let config = LexerConfig {
+            feature_gate: SwarFeatureGate::RequireAvx2,
+            ..LexerConfig::default()
+        };
+        let reason = evaluate_swar_fallback_matrix(4096, &config, &profile).unwrap();
+        assert_eq!(
+            reason,
+            SwarDisableReason::FeatureGateUnavailable {
+                required: SwarFeatureGate::RequireAvx2,
+                arch_family: ArchFamily::X86_64
+            }
+        );
+    }
+
+    #[test]
+    fn fallback_matrix_accepts_matching_feature_gate() {
+        let profile = profile_for_tests(ArchFamily::Aarch64, true, false, false, true);
+        let config = LexerConfig {
+            feature_gate: SwarFeatureGate::RequireNeon,
+            swar_min_input_bytes: 64,
+            ..LexerConfig::default()
+        };
+        let reason = evaluate_swar_fallback_matrix(4096, &config, &profile);
+        assert!(reason.is_none());
     }
 
     // --- Throughput ---
@@ -1945,6 +2277,17 @@ mod tests {
     }
 
     #[test]
+    fn swar_feature_gate_display() {
+        assert_eq!(SwarFeatureGate::Portable.to_string(), "portable");
+        assert_eq!(SwarFeatureGate::RequireAvx2.to_string(), "require_avx2");
+        assert_eq!(
+            SwarFeatureGate::RequireAvx512F.to_string(),
+            "require_avx512f"
+        );
+        assert_eq!(SwarFeatureGate::RequireNeon.to_string(), "require_neon");
+    }
+
+    #[test]
     fn swar_disable_reason_display() {
         assert_eq!(
             SwarDisableReason::OperatorOverride.to_string(),
@@ -1961,6 +2304,22 @@ mod tests {
             }
             .to_string(),
             "input_below_threshold(len=10, threshold=64)"
+        );
+        assert_eq!(
+            SwarDisableReason::ArchitectureUnsupported {
+                pointer_width: 64,
+                little_endian: true
+            }
+            .to_string(),
+            "architecture_unsupported(pointer_width=64, little_endian=true)"
+        );
+        assert_eq!(
+            SwarDisableReason::FeatureGateUnavailable {
+                required: SwarFeatureGate::RequireAvx2,
+                arch_family: ArchFamily::X86_64
+            }
+            .to_string(),
+            "feature_gate_unavailable(required=require_avx2, arch=x86_64)"
         );
         assert_eq!(
             SwarDisableReason::TokenBudgetExceeded.to_string(),
@@ -2009,6 +2368,41 @@ mod tests {
         let out1 = lex(input, &config).unwrap();
         let out2 = lex(input, &config).unwrap();
         assert_eq!(out1, out2);
+    }
+
+    #[test]
+    fn token_witness_log_is_deterministic() {
+        let input = "let total = value + 42;";
+        let config = LexerConfig {
+            mode: LexerMode::Swar,
+            swar_min_input_bytes: 0,
+            ..Default::default()
+        };
+        let output = lex(input, &config).unwrap();
+        let replay = "cargo test -p frankenengine-engine --test simd_lexer_integration -- --exact token_witness_log_contains_replay_command";
+        let log1 = build_token_witness_log(
+            input,
+            &config,
+            &output,
+            "trace-simd-lexer-feature-gate",
+            "decision-simd-lexer-feature-gate",
+            "policy-simd-lexer-feature-gate-v1",
+            replay,
+        );
+        let log2 = build_token_witness_log(
+            input,
+            &config,
+            &output,
+            "trace-simd-lexer-feature-gate",
+            "decision-simd-lexer-feature-gate",
+            "policy-simd-lexer-feature-gate-v1",
+            replay,
+        );
+        assert_eq!(log1, log2);
+        assert!(log1.input_hash.starts_with("sha256:"));
+        assert!(log1.token_witness_hash.starts_with("sha256:"));
+        assert_eq!(log1.actual_mode, output.actual_mode);
+        assert_eq!(log1.token_count, output.token_count);
     }
 
     // --- Token span properties ---

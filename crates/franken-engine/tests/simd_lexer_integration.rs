@@ -8,10 +8,11 @@
 
 use frankenengine_engine::engine_object_id::{ObjectDomain, SchemaId, derive_id};
 use frankenengine_engine::simd_lexer::{
-    ArchCapabilityProfile, DifferentialLexer, DifferentialResult, LexerArtifact, LexerConfig,
-    LexerError, LexerMode, LexerOutput, LexerSchemaVersion, ParityMismatch, RollbackGateConfig,
-    RollbackGateResult, SwarDisableReason, ThroughputComparison, ThroughputSample, Token,
-    TokenKind, count_tokens, evaluate_rollback_gate, lex,
+    ArchCapabilityProfile, ArchFamily, DifferentialLexer, DifferentialResult, LexerArtifact,
+    LexerConfig, LexerError, LexerMode, LexerOutput, LexerSchemaVersion, LexerTokenWitnessLog,
+    ParityMismatch, RollbackGateConfig, RollbackGateResult, SwarDisableReason, SwarFeatureGate,
+    ThroughputComparison, ThroughputSample, Token, TokenKind, build_token_witness_log,
+    count_tokens, evaluate_rollback_gate, evaluate_swar_fallback_matrix, lex,
 };
 
 // ---------------------------------------------------------------------------
@@ -41,6 +42,25 @@ fn diff_config() -> LexerConfig {
     }
 }
 
+fn profile_for_tests(
+    arch_family: ArchFamily,
+    little_endian: bool,
+    avx2_available: bool,
+    avx512f_available: bool,
+    neon_available: bool,
+) -> ArchCapabilityProfile {
+    ArchCapabilityProfile {
+        arch_family,
+        swar_width: 8,
+        pointer_width: 64,
+        little_endian,
+        swar_available: true,
+        avx2_available,
+        avx512f_available,
+        neon_available,
+    }
+}
+
 // ===========================================================================
 // 1. LexerConfig defaults and modes
 // ===========================================================================
@@ -52,6 +72,7 @@ fn config_default_values() {
     assert_eq!(cfg.max_tokens, 65_536);
     assert_eq!(cfg.max_source_bytes, 1_048_576);
     assert_eq!(cfg.swar_min_input_bytes, 64);
+    assert_eq!(cfg.feature_gate, SwarFeatureGate::Portable);
     assert!(cfg.emit_tokens);
 }
 
@@ -492,6 +513,22 @@ fn swar_disable_reason_display_all_variants() {
         "input_below_threshold(len=10, threshold=64)"
     );
     assert_eq!(
+        SwarDisableReason::ArchitectureUnsupported {
+            pointer_width: 64,
+            little_endian: true
+        }
+        .to_string(),
+        "architecture_unsupported(pointer_width=64, little_endian=true)"
+    );
+    assert_eq!(
+        SwarDisableReason::FeatureGateUnavailable {
+            required: SwarFeatureGate::RequireAvx2,
+            arch_family: ArchFamily::X86_64
+        }
+        .to_string(),
+        "feature_gate_unavailable(required=require_avx2, arch=x86_64)"
+    );
+    assert_eq!(
         SwarDisableReason::TokenBudgetExceeded.to_string(),
         "token_budget_exceeded"
     );
@@ -813,6 +850,10 @@ fn arch_capability_profile_detect() {
     let profile = ArchCapabilityProfile::detect();
     assert_eq!(profile.swar_width, 8);
     assert!(profile.swar_available);
+    assert_eq!(
+        profile.supports_feature_gate(SwarFeatureGate::Portable),
+        profile.supports_swar()
+    );
     // On typical CI/dev machines: 64-bit, little-endian.
     if cfg!(target_pointer_width = "64") {
         assert_eq!(profile.pointer_width, 64);
@@ -829,6 +870,37 @@ fn arch_profile_serde_roundtrip() {
     let json = serde_json::to_string(&profile).unwrap();
     let back: ArchCapabilityProfile = serde_json::from_str(&json).unwrap();
     assert_eq!(profile, back);
+}
+
+#[test]
+fn fallback_matrix_rejects_missing_avx2_gate() {
+    let profile = profile_for_tests(ArchFamily::X86_64, true, false, false, false);
+    let cfg = LexerConfig {
+        feature_gate: SwarFeatureGate::RequireAvx2,
+        ..LexerConfig::default()
+    };
+    let reason = evaluate_swar_fallback_matrix(4096, &cfg, &profile).unwrap();
+    assert_eq!(
+        reason,
+        SwarDisableReason::FeatureGateUnavailable {
+            required: SwarFeatureGate::RequireAvx2,
+            arch_family: ArchFamily::X86_64
+        }
+    );
+}
+
+#[test]
+fn fallback_matrix_rejects_big_endian_profile() {
+    let profile = profile_for_tests(ArchFamily::Other, false, false, false, false);
+    let cfg = LexerConfig::default();
+    let reason = evaluate_swar_fallback_matrix(4096, &cfg, &profile).unwrap();
+    assert_eq!(
+        reason,
+        SwarDisableReason::ArchitectureUnsupported {
+            pointer_width: 64,
+            little_endian: false
+        }
+    );
 }
 
 // ===========================================================================
@@ -917,4 +989,45 @@ fn schema_version_serde_roundtrip() {
 fn output_schema_version_is_v1() {
     let out = lex("a", &scalar_config()).unwrap();
     assert_eq!(out.schema_version, LexerSchemaVersion::V1);
+}
+
+#[test]
+fn token_witness_log_contains_replay_command() {
+    let input = "let result = alpha + beta;";
+    let cfg = swar_config_no_threshold();
+    let out = lex(input, &cfg).unwrap();
+    let replay = "cargo test -p frankenengine-engine --test simd_lexer_integration -- --exact token_witness_log_contains_replay_command";
+    let log = build_token_witness_log(
+        input,
+        &cfg,
+        &out,
+        "trace-simd-lexer-feature-gate",
+        "decision-simd-lexer-feature-gate",
+        "policy-simd-lexer-feature-gate-v1",
+        replay,
+    );
+    assert_eq!(log.replay_command, replay);
+    assert_eq!(log.actual_mode, out.actual_mode);
+    assert_eq!(log.token_count, out.token_count);
+    assert!(log.input_hash.starts_with("sha256:"));
+    assert!(log.token_witness_hash.starts_with("sha256:"));
+}
+
+#[test]
+fn token_witness_log_serde_roundtrip() {
+    let input = "const z = 99;";
+    let cfg = swar_config_no_threshold();
+    let out = lex(input, &cfg).unwrap();
+    let log = build_token_witness_log(
+        input,
+        &cfg,
+        &out,
+        "trace-simd-lexer-feature-gate",
+        "decision-simd-lexer-feature-gate",
+        "policy-simd-lexer-feature-gate-v1",
+        "cargo test -p frankenengine-engine --test simd_lexer_integration -- --exact token_witness_log_serde_roundtrip",
+    );
+    let json = serde_json::to_string(&log).unwrap();
+    let back: LexerTokenWitnessLog = serde_json::from_str(&json).unwrap();
+    assert_eq!(log, back);
 }
