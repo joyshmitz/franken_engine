@@ -10,6 +10,9 @@ This document defines the versioned Parse Event IR contract introduced for `bd-2
 - Canonical hash prefix: `sha256:`
 - Producer policy id: `franken-engine.parser-event-producer.policy.v1`
 - Producer component: `canonical_es2020_parser`
+- Materializer contract version: `franken-engine.parser-event-ast-materializer.contract.v1`
+- Materializer schema version: `franken-engine.parser-event-ast-materializer.schema.v1`
+- Materializer node-id prefix: `ast-node-`
 
 ## Canonical Serialization Rules
 
@@ -79,6 +82,30 @@ artifacts for both success and failure runs.
 `parse_completed.payload_hash` is the canonical hash of the full syntax tree canonical value.
 `parse_failed.payload_hash` is the canonical hash of normalized diagnostics.
 
+## Deterministic AST Materializer (v1)
+
+Event->AST materialization for `bd-2mds.1.4.3` is exposed via:
+- `ParseEventIr::materialize_from_source(source_text, options)`
+- `ParseEventIr::materialize_from_syntax_tree(tree)`
+- `CanonicalEs2020Parser::parse_with_materialized_ast(...)`
+
+The materializer:
+1. validates envelope versions, sequence monotonicity, and provenance stability,
+2. rejects `parse_failed` streams for AST materialization,
+3. validates statement payload kind/hash/span parity against canonical AST statements,
+4. validates `parse_completed.payload_hash` against canonical AST hash,
+5. emits stable node-id witnesses (`root_node_id`, `statement_nodes[]`) for replay/audit.
+
+Node IDs are deterministic and derived from canonical seed fields:
+- `trace_id`
+- `decision_id`
+- `sequence`
+- `payload_hash` (or `null`)
+
+The node ID format is:
+
+`node_id = "ast-node-" + hex(sha256(canonical_seed))[0..24]`
+
 ## Compatibility Policy
 
 Any semantic change to:
@@ -89,6 +116,8 @@ Any semantic change to:
 - sequence semantics,
 - payload hash derivation,
 - provenance-id derivation contract (`trace_id`, `decision_id`, `policy_id`, `component`),
+- materializer error taxonomy,
+- node-id derivation contract (`ast-node-*` witness generation),
 
 requires a contract/schema version bump and new pinned hash vectors.
 
@@ -97,10 +126,17 @@ requires a contract/schema version bump and new pinned hash vectors.
 Primary contract tests:
 - `crates/franken-engine/src/parser.rs` unit tests for contract constants and deterministic event generation.
 - `crates/franken-engine/tests/parser_trait_ast.rs` hash-vector compatibility tests.
+- deterministic materializer parity/tamper tests in `crates/franken-engine/src/parser.rs` and `crates/franken-engine/tests/parser_trait_ast.rs`.
 
 Replay command:
 
 ```bash
 rch exec -- env RUSTUP_TOOLCHAIN=nightly CARGO_TARGET_DIR=/tmp/rch_target_franken_engine_parser_event_ir_contract \
   cargo test -p frankenengine-engine --test parser_trait_ast
+```
+
+Materializer lane e2e replay command:
+
+```bash
+./scripts/e2e/parser_event_materializer_replay.sh
 ```

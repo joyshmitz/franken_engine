@@ -405,6 +405,13 @@ with compatibility vectors in:
 - `crates/franken-engine/src/parser.rs` (unit coverage for schema + deterministic event emission)
 - `crates/franken-engine/tests/parser_trait_ast.rs`
 
+Deterministic event->AST materializer contract (`bd-2mds.1.4.3`) is tracked in
+[`docs/PARSER_EVENT_IR_SCHEMA.md`](./docs/PARSER_EVENT_IR_SCHEMA.md)
+with compatibility vectors and replay lane artifacts in:
+- `crates/franken-engine/src/parser.rs` (materializer core + stable node-id witness generation)
+- `crates/franken-engine/tests/parser_trait_ast.rs` (event->AST parity/tamper/replay vectors)
+- `scripts/run_parser_event_materializer_lane.sh` + `scripts/e2e/parser_event_materializer_replay.sh` (structured lane manifests/events)
+
 Canonical parser diagnostics taxonomy + normalization contract (`bd-2mds.1.1.3`)
 is tracked in
 [`docs/PARSER_DIAGNOSTICS_TAXONOMY.md`](./docs/PARSER_DIAGNOSTICS_TAXONOMY.md)
@@ -433,6 +440,12 @@ rch exec -- env RUSTUP_TOOLCHAIN=nightly \
 rch exec -- env RUSTUP_TOOLCHAIN=nightly \
   CARGO_TARGET_DIR=/tmp/rch_target_franken_engine_parser_diagnostics_contract \
   cargo test -p frankenengine-engine --test parser_trait_ast
+
+# run deterministic parser event->AST materializer lane (rch-backed)
+./scripts/run_parser_event_materializer_lane.sh ci
+
+# one-command deterministic replay for materializer lane
+./scripts/e2e/parser_event_materializer_replay.sh
 ```
 
 Gate run manifests are written under `artifacts/parser_phase0_gate/<timestamp>/run_manifest.json`.

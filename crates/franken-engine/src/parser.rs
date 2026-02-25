@@ -36,6 +36,14 @@ pub const PARSE_EVENT_IR_COMPONENT: &str = "canonical_es2020_parser";
 pub const PARSE_EVENT_IR_TRACE_PREFIX: &str = "trace-parser-event-";
 /// Stable prefix used for parse event decision IDs.
 pub const PARSE_EVENT_IR_DECISION_PREFIX: &str = "decision-parser-event-";
+/// Versioned event->AST materializer contract identifier.
+pub const PARSE_EVENT_AST_MATERIALIZER_CONTRACT_VERSION: &str =
+    "franken-engine.parser-event-ast-materializer.contract.v1";
+/// Versioned event->AST materializer schema identifier.
+pub const PARSE_EVENT_AST_MATERIALIZER_SCHEMA_VERSION: &str =
+    "franken-engine.parser-event-ast-materializer.schema.v1";
+/// Stable prefix used for materialized AST node IDs.
+pub const PARSE_EVENT_AST_MATERIALIZER_NODE_ID_PREFIX: &str = "ast-node-";
 /// Versioned parser diagnostics taxonomy identifier.
 pub const PARSER_DIAGNOSTIC_TAXONOMY_VERSION: &str =
     "franken-engine.parser-diagnostics.taxonomy.v1";
@@ -978,6 +986,545 @@ impl ParseEventIr {
         let digest = Sha256::digest(self.canonical_bytes());
         format!("{}{}", Self::canonical_hash_prefix(), hex::encode(digest))
     }
+
+    /// Materialize a deterministic AST witness from this event stream and source text.
+    ///
+    /// This verifies event ordering/provenance/payload parity, then emits a stable
+    /// node-id projection over the canonical AST.
+    pub fn materialize_from_source(
+        &self,
+        source_text: &str,
+        options: &ParserOptions,
+    ) -> ParseEventMaterializationResult<MaterializedSyntaxTree> {
+        if self
+            .events
+            .iter()
+            .any(|event| matches!(event.kind, ParseEventKind::ParseFailed))
+        {
+            return Err(ParseEventMaterializationError::new(
+                ParseEventMaterializationErrorCode::ParseFailedEventStream,
+                "cannot materialize AST from a failed parse event stream".to_string(),
+                None,
+            ));
+        }
+        if options.mode != self.parser_mode {
+            return Err(ParseEventMaterializationError::new(
+                ParseEventMaterializationErrorCode::ModeMismatch,
+                format!(
+                    "materializer mode mismatch: event_ir={} options={}",
+                    self.parser_mode.as_str(),
+                    options.mode.as_str()
+                ),
+                None,
+            ));
+        }
+        let parsed =
+            parse_source(source_text, &self.source_label, self.goal, options).map_err(|err| {
+                ParseEventMaterializationError::new(
+                    ParseEventMaterializationErrorCode::SourceParseFailed,
+                    format!(
+                        "source parse failed while materializing from event stream: {} ({})",
+                        err.code.as_str(),
+                        err.message
+                    ),
+                    None,
+                )
+            })?;
+        self.materialize_with_tree(&parsed, Some(source_text))
+    }
+
+    /// Materialize a deterministic AST witness from this event stream and a canonical AST.
+    pub fn materialize_from_syntax_tree(
+        &self,
+        tree: &SyntaxTree,
+    ) -> ParseEventMaterializationResult<MaterializedSyntaxTree> {
+        self.materialize_with_tree(tree, None)
+    }
+
+    fn materialize_with_tree(
+        &self,
+        tree: &SyntaxTree,
+        source_text: Option<&str>,
+    ) -> ParseEventMaterializationResult<MaterializedSyntaxTree> {
+        if self.contract_version != Self::contract_version() {
+            return Err(ParseEventMaterializationError::new(
+                ParseEventMaterializationErrorCode::UnsupportedContractVersion,
+                format!(
+                    "unsupported event-ir contract version: {}",
+                    self.contract_version
+                ),
+                None,
+            ));
+        }
+        if self.schema_version != Self::schema_version() {
+            return Err(ParseEventMaterializationError::new(
+                ParseEventMaterializationErrorCode::UnsupportedSchemaVersion,
+                format!(
+                    "unsupported event-ir schema version: {}",
+                    self.schema_version
+                ),
+                None,
+            ));
+        }
+        if self.events.is_empty() {
+            return Err(ParseEventMaterializationError::new(
+                ParseEventMaterializationErrorCode::MissingParseStarted,
+                "event stream is empty".to_string(),
+                None,
+            ));
+        }
+        if self.goal != tree.goal {
+            return Err(ParseEventMaterializationError::new(
+                ParseEventMaterializationErrorCode::GoalMismatch,
+                format!(
+                    "materializer goal mismatch: event_ir={} syntax_tree={}",
+                    self.goal.as_str(),
+                    tree.goal.as_str()
+                ),
+                None,
+            ));
+        }
+        if self
+            .events
+            .iter()
+            .any(|event| matches!(event.kind, ParseEventKind::ParseFailed))
+        {
+            return Err(ParseEventMaterializationError::new(
+                ParseEventMaterializationErrorCode::ParseFailedEventStream,
+                "cannot materialize AST from a failed parse event stream".to_string(),
+                None,
+            ));
+        }
+
+        for (expected_sequence, event) in self.events.iter().enumerate() {
+            let expected_sequence = expected_sequence as u64;
+            if event.sequence != expected_sequence {
+                return Err(ParseEventMaterializationError::new(
+                    ParseEventMaterializationErrorCode::InvalidEventSequence,
+                    format!(
+                        "non-gap-free event sequence: expected {} got {}",
+                        expected_sequence, event.sequence
+                    ),
+                    Some(event.sequence),
+                ));
+            }
+        }
+
+        let started = self.events.first().expect("non-empty events");
+        if started.kind != ParseEventKind::ParseStarted || started.sequence != 0 {
+            return Err(ParseEventMaterializationError::new(
+                ParseEventMaterializationErrorCode::MissingParseStarted,
+                "first event must be parse_started at sequence 0".to_string(),
+                Some(started.sequence),
+            ));
+        }
+        let completed = self.events.last().expect("non-empty events");
+        if completed.kind != ParseEventKind::ParseCompleted {
+            return Err(ParseEventMaterializationError::new(
+                ParseEventMaterializationErrorCode::MissingParseCompleted,
+                "final event must be parse_completed".to_string(),
+                Some(completed.sequence),
+            ));
+        }
+
+        let trace_id = started.trace_id.clone();
+        let decision_id = started.decision_id.clone();
+        let policy_id = started.policy_id.clone();
+        let component = started.component.clone();
+
+        for event in &self.events {
+            if event.trace_id != trace_id
+                || event.decision_id != decision_id
+                || event.policy_id != policy_id
+                || event.component != component
+                || event.parser_mode != self.parser_mode
+                || event.goal != self.goal
+                || event.source_label != self.source_label
+            {
+                return Err(ParseEventMaterializationError::new(
+                    ParseEventMaterializationErrorCode::InconsistentEventEnvelope,
+                    format!("inconsistent event envelope at sequence {}", event.sequence),
+                    Some(event.sequence),
+                ));
+            }
+        }
+
+        let tree_hash = tree.canonical_hash();
+        if let Some(payload_kind) = started.payload_kind.as_deref() {
+            match payload_kind {
+                "source_text" => {
+                    if let Some(source_text) = source_text {
+                        let source_hash = canonical_string_hash(source_text);
+                        if started.payload_hash.as_deref() != Some(source_hash.as_str()) {
+                            return Err(ParseEventMaterializationError::new(
+                                ParseEventMaterializationErrorCode::SourceHashMismatch,
+                                "parse_started payload_hash does not match source_text canonical hash"
+                                    .to_string(),
+                                Some(started.sequence),
+                            ));
+                        }
+                    }
+                }
+                "syntax_tree" => {
+                    if started.payload_hash.as_deref() != Some(tree_hash.as_str()) {
+                        return Err(ParseEventMaterializationError::new(
+                            ParseEventMaterializationErrorCode::AstHashMismatch,
+                            "parse_started payload_hash does not match syntax_tree canonical hash"
+                                .to_string(),
+                            Some(started.sequence),
+                        ));
+                    }
+                }
+                other => {
+                    return Err(ParseEventMaterializationError::new(
+                        ParseEventMaterializationErrorCode::InconsistentEventEnvelope,
+                        format!("unsupported parse_started payload_kind: {other}"),
+                        Some(started.sequence),
+                    ));
+                }
+            }
+        }
+
+        let statement_events: Vec<&ParseEvent> = self
+            .events
+            .iter()
+            .filter(|event| event.kind == ParseEventKind::StatementParsed)
+            .collect();
+        if statement_events.len() != tree.body.len() {
+            return Err(ParseEventMaterializationError::new(
+                ParseEventMaterializationErrorCode::StatementCountMismatch,
+                format!(
+                    "statement event count mismatch: events={} syntax_tree={}",
+                    statement_events.len(),
+                    tree.body.len()
+                ),
+                None,
+            ));
+        }
+
+        let mut statement_nodes = Vec::with_capacity(statement_events.len());
+        for (expected_idx, (event, statement)) in
+            statement_events.iter().zip(tree.body.iter()).enumerate()
+        {
+            let expected_idx_u64 = expected_idx as u64;
+            if event.statement_index != Some(expected_idx_u64) {
+                return Err(ParseEventMaterializationError::new(
+                    ParseEventMaterializationErrorCode::StatementIndexMismatch,
+                    format!(
+                        "statement index mismatch at sequence {}: expected {} got {:?}",
+                        event.sequence, expected_idx_u64, event.statement_index
+                    ),
+                    Some(event.sequence),
+                ));
+            }
+            let expected_kind = statement_kind_label(statement);
+            if event.payload_kind.as_deref() != Some(expected_kind) {
+                return Err(ParseEventMaterializationError::new(
+                    ParseEventMaterializationErrorCode::StatementKindMismatch,
+                    format!(
+                        "statement payload kind mismatch at sequence {}: expected {} got {:?}",
+                        event.sequence, expected_kind, event.payload_kind
+                    ),
+                    Some(event.sequence),
+                ));
+            }
+            let expected_hash = canonical_value_hash(&statement.canonical_value());
+            if event.payload_hash.as_deref() != Some(expected_hash.as_str()) {
+                return Err(ParseEventMaterializationError::new(
+                    ParseEventMaterializationErrorCode::StatementHashMismatch,
+                    format!(
+                        "statement payload hash mismatch at sequence {}",
+                        event.sequence
+                    ),
+                    Some(event.sequence),
+                ));
+            }
+            if event.span.as_ref() != Some(statement.span()) {
+                return Err(ParseEventMaterializationError::new(
+                    ParseEventMaterializationErrorCode::StatementSpanMismatch,
+                    format!("statement span mismatch at sequence {}", event.sequence),
+                    Some(event.sequence),
+                ));
+            }
+
+            let node_id = parse_event_ast_node_id(
+                &trace_id,
+                &decision_id,
+                event.sequence,
+                event.payload_hash.as_deref(),
+            );
+            statement_nodes.push(MaterializedStatementNode {
+                node_id,
+                sequence: event.sequence,
+                statement_index: expected_idx_u64,
+                payload_hash: expected_hash,
+                span: statement.span().clone(),
+            });
+        }
+
+        if completed.payload_kind.as_deref() != Some("syntax_tree") {
+            return Err(ParseEventMaterializationError::new(
+                ParseEventMaterializationErrorCode::InconsistentEventEnvelope,
+                "parse_completed payload_kind must be syntax_tree".to_string(),
+                Some(completed.sequence),
+            ));
+        }
+        if completed.payload_hash.as_deref() != Some(tree_hash.as_str()) {
+            return Err(ParseEventMaterializationError::new(
+                ParseEventMaterializationErrorCode::AstHashMismatch,
+                "parse_completed payload_hash does not match syntax_tree canonical hash"
+                    .to_string(),
+                Some(completed.sequence),
+            ));
+        }
+        if completed.span.as_ref() != Some(&tree.span) {
+            return Err(ParseEventMaterializationError::new(
+                ParseEventMaterializationErrorCode::StatementSpanMismatch,
+                "parse_completed span does not match syntax_tree span".to_string(),
+                Some(completed.sequence),
+            ));
+        }
+
+        let root_node_id = parse_event_ast_node_id(
+            &trace_id,
+            &decision_id,
+            completed.sequence,
+            completed.payload_hash.as_deref(),
+        );
+        Ok(MaterializedSyntaxTree {
+            schema_version: MaterializedSyntaxTree::schema_version().to_string(),
+            contract_version: MaterializedSyntaxTree::contract_version().to_string(),
+            trace_id,
+            decision_id,
+            policy_id,
+            component,
+            parser_mode: self.parser_mode,
+            goal: self.goal,
+            source_label: self.source_label.clone(),
+            root_node_id,
+            statement_nodes,
+            syntax_tree: tree.clone(),
+        })
+    }
+}
+
+pub type ParseEventMaterializationResult<T> = Result<T, ParseEventMaterializationError>;
+
+/// Stable materialization failure codes for event->AST replay lane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ParseEventMaterializationErrorCode {
+    UnsupportedContractVersion,
+    UnsupportedSchemaVersion,
+    ParseFailedEventStream,
+    MissingParseStarted,
+    MissingParseCompleted,
+    InvalidEventSequence,
+    InconsistentEventEnvelope,
+    GoalMismatch,
+    ModeMismatch,
+    StatementCountMismatch,
+    StatementIndexMismatch,
+    StatementKindMismatch,
+    StatementHashMismatch,
+    StatementSpanMismatch,
+    SourceHashMismatch,
+    AstHashMismatch,
+    SourceParseFailed,
+}
+
+impl ParseEventMaterializationErrorCode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::UnsupportedContractVersion => "unsupported_contract_version",
+            Self::UnsupportedSchemaVersion => "unsupported_schema_version",
+            Self::ParseFailedEventStream => "parse_failed_event_stream",
+            Self::MissingParseStarted => "missing_parse_started",
+            Self::MissingParseCompleted => "missing_parse_completed",
+            Self::InvalidEventSequence => "invalid_event_sequence",
+            Self::InconsistentEventEnvelope => "inconsistent_event_envelope",
+            Self::GoalMismatch => "goal_mismatch",
+            Self::ModeMismatch => "mode_mismatch",
+            Self::StatementCountMismatch => "statement_count_mismatch",
+            Self::StatementIndexMismatch => "statement_index_mismatch",
+            Self::StatementKindMismatch => "statement_kind_mismatch",
+            Self::StatementHashMismatch => "statement_hash_mismatch",
+            Self::StatementSpanMismatch => "statement_span_mismatch",
+            Self::SourceHashMismatch => "source_hash_mismatch",
+            Self::AstHashMismatch => "ast_hash_mismatch",
+            Self::SourceParseFailed => "source_parse_failed",
+        }
+    }
+}
+
+/// Deterministic materializer failure with stable code + message.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ParseEventMaterializationError {
+    pub code: ParseEventMaterializationErrorCode,
+    pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sequence: Option<u64>,
+}
+
+impl ParseEventMaterializationError {
+    fn new(
+        code: ParseEventMaterializationErrorCode,
+        message: String,
+        sequence: Option<u64>,
+    ) -> Self {
+        Self {
+            code,
+            message,
+            sequence,
+        }
+    }
+}
+
+impl fmt::Display for ParseEventMaterializationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(sequence) = self.sequence {
+            write!(
+                f,
+                "{} (sequence={}): {}",
+                self.code.as_str(),
+                sequence,
+                self.message
+            )
+        } else {
+            write!(f, "{}: {}", self.code.as_str(), self.message)
+        }
+    }
+}
+
+impl std::error::Error for ParseEventMaterializationError {}
+
+/// Stable statement-node witness emitted by the deterministic AST materializer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MaterializedStatementNode {
+    pub node_id: String,
+    pub sequence: u64,
+    pub statement_index: u64,
+    pub payload_hash: String,
+    pub span: SourceSpan,
+}
+
+impl MaterializedStatementNode {
+    pub fn canonical_value(&self) -> CanonicalValue {
+        let mut map = BTreeMap::new();
+        map.insert(
+            "node_id".to_string(),
+            CanonicalValue::String(self.node_id.clone()),
+        );
+        map.insert("sequence".to_string(), CanonicalValue::U64(self.sequence));
+        map.insert(
+            "statement_index".to_string(),
+            CanonicalValue::U64(self.statement_index),
+        );
+        map.insert(
+            "payload_hash".to_string(),
+            CanonicalValue::String(self.payload_hash.clone()),
+        );
+        map.insert("span".to_string(), self.span.canonical_value());
+        CanonicalValue::Map(map)
+    }
+}
+
+/// Deterministic AST materialization output projected from Parse Event IR.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MaterializedSyntaxTree {
+    pub schema_version: String,
+    pub contract_version: String,
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub component: String,
+    pub parser_mode: ParserMode,
+    pub goal: ParseGoal,
+    pub source_label: String,
+    pub root_node_id: String,
+    pub statement_nodes: Vec<MaterializedStatementNode>,
+    pub syntax_tree: SyntaxTree,
+}
+
+impl MaterializedSyntaxTree {
+    pub const fn contract_version() -> &'static str {
+        PARSE_EVENT_AST_MATERIALIZER_CONTRACT_VERSION
+    }
+
+    pub const fn schema_version() -> &'static str {
+        PARSE_EVENT_AST_MATERIALIZER_SCHEMA_VERSION
+    }
+
+    pub fn canonical_value(&self) -> CanonicalValue {
+        let mut map = BTreeMap::new();
+        map.insert(
+            "schema_version".to_string(),
+            CanonicalValue::String(self.schema_version.clone()),
+        );
+        map.insert(
+            "contract_version".to_string(),
+            CanonicalValue::String(self.contract_version.clone()),
+        );
+        map.insert(
+            "trace_id".to_string(),
+            CanonicalValue::String(self.trace_id.clone()),
+        );
+        map.insert(
+            "decision_id".to_string(),
+            CanonicalValue::String(self.decision_id.clone()),
+        );
+        map.insert(
+            "policy_id".to_string(),
+            CanonicalValue::String(self.policy_id.clone()),
+        );
+        map.insert(
+            "component".to_string(),
+            CanonicalValue::String(self.component.clone()),
+        );
+        map.insert(
+            "parser_mode".to_string(),
+            CanonicalValue::String(self.parser_mode.as_str().to_string()),
+        );
+        map.insert(
+            "goal".to_string(),
+            CanonicalValue::String(self.goal.as_str().to_string()),
+        );
+        map.insert(
+            "source_label".to_string(),
+            CanonicalValue::String(self.source_label.clone()),
+        );
+        map.insert(
+            "root_node_id".to_string(),
+            CanonicalValue::String(self.root_node_id.clone()),
+        );
+        map.insert(
+            "statement_nodes".to_string(),
+            CanonicalValue::Array(
+                self.statement_nodes
+                    .iter()
+                    .map(MaterializedStatementNode::canonical_value)
+                    .collect(),
+            ),
+        );
+        map.insert(
+            "syntax_tree".to_string(),
+            self.syntax_tree.canonical_value(),
+        );
+        CanonicalValue::Map(map)
+    }
+
+    pub fn canonical_bytes(&self) -> Vec<u8> {
+        deterministic_serde::encode_value(&self.canonical_value())
+    }
+
+    pub fn canonical_hash(&self) -> String {
+        let digest = Sha256::digest(self.canonical_bytes());
+        format!(
+            "{}{}",
+            ParseEventIr::canonical_hash_prefix(),
+            hex::encode(digest)
+        )
+    }
 }
 
 fn canonical_value_hash(value: &CanonicalValue) -> String {
@@ -1029,6 +1576,36 @@ fn parse_event_provenance_ids(
         format!("{PARSE_EVENT_IR_TRACE_PREFIX}{suffix}"),
         format!("{PARSE_EVENT_IR_DECISION_PREFIX}{suffix}"),
     )
+}
+
+fn parse_event_ast_node_id(
+    trace_id: &str,
+    decision_id: &str,
+    sequence: u64,
+    payload_hash: Option<&str>,
+) -> String {
+    let mut seed = BTreeMap::new();
+    seed.insert(
+        "trace_id".to_string(),
+        CanonicalValue::String(trace_id.to_string()),
+    );
+    seed.insert(
+        "decision_id".to_string(),
+        CanonicalValue::String(decision_id.to_string()),
+    );
+    seed.insert("sequence".to_string(), CanonicalValue::U64(sequence));
+    seed.insert(
+        "payload_hash".to_string(),
+        payload_hash
+            .map(|hash| CanonicalValue::String(hash.to_string()))
+            .unwrap_or(CanonicalValue::Null),
+    );
+    let digest = Sha256::digest(deterministic_serde::encode_value(&CanonicalValue::Map(
+        seed,
+    )));
+    let digest_hex = hex::encode(digest);
+    let suffix = &digest_hex[..24];
+    format!("{PARSE_EVENT_AST_MATERIALIZER_NODE_ID_PREFIX}{suffix}")
 }
 
 fn statement_kind_label(statement: &Statement) -> &'static str {
@@ -1396,6 +1973,54 @@ impl CanonicalEs2020Parser {
             Err(error) => {
                 let event_ir = ParseEventIr::from_parse_error(&error, goal, options.mode);
                 (Err(error), event_ir)
+            }
+        }
+    }
+
+    /// Parse input, emit deterministic event IR, and materialize deterministic AST node witnesses.
+    pub fn parse_with_materialized_ast<I>(
+        &self,
+        input: I,
+        goal: ParseGoal,
+        options: &ParserOptions,
+    ) -> (
+        ParseResult<SyntaxTree>,
+        ParseEventIr,
+        ParseEventMaterializationResult<MaterializedSyntaxTree>,
+    )
+    where
+        I: ParserInput,
+    {
+        match input.into_source() {
+            Ok(source) => match parse_source(&source.text, &source.label, goal, options) {
+                Ok(tree) => {
+                    let event_ir = ParseEventIr::from_parse_source(
+                        &tree,
+                        &source.text,
+                        source.label.clone(),
+                        options.mode,
+                    );
+                    let materialized = event_ir.materialize_with_tree(&tree, Some(&source.text));
+                    (Ok(tree), event_ir, materialized)
+                }
+                Err(error) => {
+                    let event_ir = ParseEventIr::from_parse_error(&error, goal, options.mode);
+                    let materialized = Err(ParseEventMaterializationError::new(
+                        ParseEventMaterializationErrorCode::ParseFailedEventStream,
+                        "cannot materialize AST for failed parse".to_string(),
+                        None,
+                    ));
+                    (Err(error), event_ir, materialized)
+                }
+            },
+            Err(error) => {
+                let event_ir = ParseEventIr::from_parse_error(&error, goal, options.mode);
+                let materialized = Err(ParseEventMaterializationError::new(
+                    ParseEventMaterializationErrorCode::ParseFailedEventStream,
+                    "cannot materialize AST for failed parse".to_string(),
+                    None,
+                ));
+                (Err(error), event_ir, materialized)
             }
         }
     }
@@ -3417,6 +4042,166 @@ mod tests {
                 .payload_hash
                 .as_deref()
                 .is_some_and(|hash| hash.starts_with(ParseEventIr::canonical_hash_prefix()))
+        );
+    }
+
+    #[test]
+    fn parse_event_ast_materializer_contract_metadata_is_versioned_and_stable() {
+        assert_eq!(
+            PARSE_EVENT_AST_MATERIALIZER_CONTRACT_VERSION,
+            "franken-engine.parser-event-ast-materializer.contract.v1"
+        );
+        assert_eq!(
+            PARSE_EVENT_AST_MATERIALIZER_SCHEMA_VERSION,
+            "franken-engine.parser-event-ast-materializer.schema.v1"
+        );
+        assert_eq!(PARSE_EVENT_AST_MATERIALIZER_NODE_ID_PREFIX, "ast-node-");
+        assert_eq!(
+            MaterializedSyntaxTree::contract_version(),
+            PARSE_EVENT_AST_MATERIALIZER_CONTRACT_VERSION
+        );
+        assert_eq!(
+            MaterializedSyntaxTree::schema_version(),
+            PARSE_EVENT_AST_MATERIALIZER_SCHEMA_VERSION
+        );
+    }
+
+    #[test]
+    fn materialize_from_source_matches_canonical_ast_hash_and_node_witnesses() {
+        let parser = CanonicalEs2020Parser;
+        let source = "import dep from \"pkg\";\nexport default dep;\n";
+        let options = ParserOptions::default();
+        let (result, event_ir) = parser.parse_with_event_ir(source, ParseGoal::Module, &options);
+        let tree = result.expect("parse should succeed");
+        let materialized = event_ir
+            .materialize_from_source(source, &options)
+            .expect("materialization should succeed");
+
+        assert_eq!(
+            materialized.syntax_tree.canonical_hash(),
+            tree.canonical_hash()
+        );
+        assert_eq!(materialized.statement_nodes.len(), tree.body.len());
+        assert!(
+            materialized
+                .root_node_id
+                .starts_with(PARSE_EVENT_AST_MATERIALIZER_NODE_ID_PREFIX)
+        );
+        for (idx, node) in materialized.statement_nodes.iter().enumerate() {
+            assert_eq!(node.statement_index, idx as u64);
+            assert_eq!(node.sequence, (idx as u64).saturating_add(1));
+            assert!(
+                node.node_id
+                    .starts_with(PARSE_EVENT_AST_MATERIALIZER_NODE_ID_PREFIX)
+            );
+            assert!(
+                node.payload_hash
+                    .starts_with(ParseEventIr::canonical_hash_prefix())
+            );
+        }
+    }
+
+    #[test]
+    fn materialized_ast_node_ids_are_deterministic_for_identical_inputs() {
+        let parser = CanonicalEs2020Parser;
+        let source = "await work";
+        let options = ParserOptions::default();
+
+        let (left_result, left_ir) =
+            parser.parse_with_event_ir(source, ParseGoal::Script, &options);
+        let left_tree = left_result.expect("left parse should succeed");
+        let (right_result, right_ir) =
+            parser.parse_with_event_ir(source, ParseGoal::Script, &options);
+        let right_tree = right_result.expect("right parse should succeed");
+
+        let left_materialized = left_ir
+            .materialize_from_source(source, &options)
+            .expect("left materialization should succeed");
+        let right_materialized = right_ir
+            .materialize_from_source(source, &options)
+            .expect("right materialization should succeed");
+
+        assert_eq!(
+            left_materialized.syntax_tree.canonical_hash(),
+            left_tree.canonical_hash()
+        );
+        assert_eq!(
+            right_materialized.syntax_tree.canonical_hash(),
+            right_tree.canonical_hash()
+        );
+        assert_eq!(
+            left_materialized.root_node_id,
+            right_materialized.root_node_id
+        );
+        assert_eq!(
+            left_materialized.statement_nodes,
+            right_materialized.statement_nodes
+        );
+        assert_eq!(
+            left_materialized.canonical_hash(),
+            right_materialized.canonical_hash()
+        );
+    }
+
+    #[test]
+    fn materialize_from_source_rejects_statement_hash_tampering() {
+        let parser = CanonicalEs2020Parser;
+        let source = "alpha;";
+        let options = ParserOptions::default();
+        let (_result, mut event_ir) =
+            parser.parse_with_event_ir(source, ParseGoal::Script, &options);
+        event_ir.events[1].payload_hash = Some(
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000".to_string(),
+        );
+
+        let err = event_ir
+            .materialize_from_source(source, &options)
+            .expect_err("tampered payload hash must fail");
+        assert_eq!(
+            err.code,
+            ParseEventMaterializationErrorCode::StatementHashMismatch
+        );
+        assert_eq!(err.sequence, Some(1));
+    }
+
+    #[test]
+    fn materialize_from_source_rejects_failed_event_streams() {
+        let parser = CanonicalEs2020Parser;
+        let (_result, event_ir) =
+            parser.parse_with_event_ir("", ParseGoal::Script, &ParserOptions::default());
+        let err = event_ir
+            .materialize_from_source("", &ParserOptions::default())
+            .expect_err("failed event stream should be rejected");
+        assert_eq!(
+            err.code,
+            ParseEventMaterializationErrorCode::ParseFailedEventStream
+        );
+    }
+
+    #[test]
+    fn parse_with_materialized_ast_success_and_failure_contracts_are_deterministic() {
+        let parser = CanonicalEs2020Parser;
+        let source = "import dep from \"pkg\";\nexport default dep;";
+        let options = ParserOptions::default();
+
+        let (result, _event_ir, materialized_result) =
+            parser.parse_with_materialized_ast(source, ParseGoal::Module, &options);
+        let tree = result.expect("parse should succeed");
+        let materialized = materialized_result.expect("materializer should succeed");
+        assert_eq!(
+            materialized.syntax_tree.canonical_hash(),
+            tree.canonical_hash()
+        );
+
+        let (failed_result, _failed_ir, failed_materialized) =
+            parser.parse_with_materialized_ast("", ParseGoal::Script, &ParserOptions::default());
+        let err = failed_result.expect_err("empty source should fail parse");
+        assert_eq!(err.code, ParseErrorCode::EmptySource);
+        assert_eq!(
+            failed_materialized
+                .expect_err("failed parse must not materialize")
+                .code,
+            ParseEventMaterializationErrorCode::ParseFailedEventStream
         );
     }
 }

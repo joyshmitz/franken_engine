@@ -6,12 +6,14 @@ use frankenengine_engine::ast::{
     CANONICAL_AST_SCHEMA_VERSION, Expression, ParseGoal, Statement, SyntaxTree,
 };
 use frankenengine_engine::parser::{
-    CanonicalEs2020Parser, Es2020Parser, PARSE_EVENT_IR_CONTRACT_VERSION,
+    CanonicalEs2020Parser, Es2020Parser, MaterializedSyntaxTree,
+    PARSE_EVENT_AST_MATERIALIZER_CONTRACT_VERSION, PARSE_EVENT_AST_MATERIALIZER_NODE_ID_PREFIX,
+    PARSE_EVENT_AST_MATERIALIZER_SCHEMA_VERSION, PARSE_EVENT_IR_CONTRACT_VERSION,
     PARSE_EVENT_IR_HASH_ALGORITHM, PARSE_EVENT_IR_HASH_PREFIX, PARSE_EVENT_IR_SCHEMA_VERSION,
     PARSER_DIAGNOSTIC_HASH_ALGORITHM, PARSER_DIAGNOSTIC_HASH_PREFIX,
     PARSER_DIAGNOSTIC_SCHEMA_VERSION, PARSER_DIAGNOSTIC_TAXONOMY_VERSION, ParseBudgetKind,
-    ParseDiagnosticEnvelope, ParseErrorCode, ParseEventIr, ParseEventKind, ParserBudget,
-    ParserMode, ParserOptions, StreamInput,
+    ParseDiagnosticEnvelope, ParseErrorCode, ParseEventIr, ParseEventKind,
+    ParseEventMaterializationErrorCode, ParserBudget, ParserMode, ParserOptions, StreamInput,
 };
 
 #[test]
@@ -245,6 +247,111 @@ fn canonical_parse_event_ir_failure_vector_is_deterministic() {
             .events
             .iter()
             .all(|event| event.trace_id.starts_with("trace-parser-event-"))
+    );
+}
+
+#[test]
+fn canonical_parse_event_ast_materializer_metadata_is_versioned_and_stable() {
+    assert_eq!(
+        PARSE_EVENT_AST_MATERIALIZER_CONTRACT_VERSION,
+        "franken-engine.parser-event-ast-materializer.contract.v1"
+    );
+    assert_eq!(
+        PARSE_EVENT_AST_MATERIALIZER_SCHEMA_VERSION,
+        "franken-engine.parser-event-ast-materializer.schema.v1"
+    );
+    assert_eq!(PARSE_EVENT_AST_MATERIALIZER_NODE_ID_PREFIX, "ast-node-");
+    assert_eq!(
+        MaterializedSyntaxTree::contract_version(),
+        PARSE_EVENT_AST_MATERIALIZER_CONTRACT_VERSION
+    );
+    assert_eq!(
+        MaterializedSyntaxTree::schema_version(),
+        PARSE_EVENT_AST_MATERIALIZER_SCHEMA_VERSION
+    );
+}
+
+#[test]
+fn canonical_parse_event_to_ast_hash_parity_is_deterministic() {
+    let parser = CanonicalEs2020Parser;
+    let source = "import dep from \"pkg\";\nexport default dep;\n";
+    let options = ParserOptions::default();
+    let (result, event_ir) = parser.parse_with_event_ir(source, ParseGoal::Module, &options);
+    let tree = result.expect("parse should succeed");
+
+    let materialized = event_ir
+        .materialize_from_source(source, &options)
+        .expect("materialization should succeed");
+    assert_eq!(
+        materialized.syntax_tree.canonical_hash(),
+        tree.canonical_hash()
+    );
+    assert_eq!(materialized.statement_nodes.len(), tree.body.len());
+}
+
+#[test]
+fn canonical_parse_event_to_ast_node_id_witnesses_are_stable() {
+    let parser = CanonicalEs2020Parser;
+    let source = "await work";
+    let options = ParserOptions::default();
+    let (left_result, left_ir) = parser.parse_with_event_ir(source, ParseGoal::Script, &options);
+    let (right_result, right_ir) = parser.parse_with_event_ir(source, ParseGoal::Script, &options);
+    assert!(left_result.is_ok());
+    assert!(right_result.is_ok());
+
+    let left = left_ir
+        .materialize_from_source(source, &options)
+        .expect("left materialization should succeed");
+    let right = right_ir
+        .materialize_from_source(source, &options)
+        .expect("right materialization should succeed");
+    assert_eq!(left.root_node_id, right.root_node_id);
+    assert_eq!(left.statement_nodes, right.statement_nodes);
+    assert_eq!(left.canonical_hash(), right.canonical_hash());
+}
+
+#[test]
+fn canonical_parse_event_to_ast_tamper_detection_is_deterministic() {
+    let parser = CanonicalEs2020Parser;
+    let source = "alpha;";
+    let options = ParserOptions::default();
+    let (_result, mut event_ir) = parser.parse_with_event_ir(source, ParseGoal::Script, &options);
+    event_ir.events[1].payload_hash =
+        Some("sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff".to_string());
+
+    let err = event_ir
+        .materialize_from_source(source, &options)
+        .expect_err("tampered payload hash should be rejected");
+    assert_eq!(
+        err.code,
+        ParseEventMaterializationErrorCode::StatementHashMismatch
+    );
+    assert_eq!(err.sequence, Some(1));
+}
+
+#[test]
+fn canonical_parse_with_materialized_ast_replay_contract_is_deterministic() {
+    let parser = CanonicalEs2020Parser;
+    let source = "-7";
+    let options = ParserOptions::default();
+    let (result, _event_ir, materialized_result) =
+        parser.parse_with_materialized_ast(source, ParseGoal::Script, &options);
+    let tree = result.expect("parse should succeed");
+    let materialized = materialized_result.expect("materializer should succeed");
+    assert_eq!(
+        materialized.syntax_tree.canonical_hash(),
+        tree.canonical_hash()
+    );
+
+    let (failed_result, _failed_ir, failed_materialized_result) =
+        parser.parse_with_materialized_ast("", ParseGoal::Script, &ParserOptions::default());
+    let parse_err = failed_result.expect_err("empty source should fail parse");
+    assert_eq!(parse_err.code, ParseErrorCode::EmptySource);
+    let materializer_err = failed_materialized_result
+        .expect_err("failed parse should fail materialization deterministically");
+    assert_eq!(
+        materializer_err.code,
+        ParseEventMaterializationErrorCode::ParseFailedEventStream
     );
 }
 
