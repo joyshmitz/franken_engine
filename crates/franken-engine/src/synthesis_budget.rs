@@ -1425,6 +1425,50 @@ mod tests {
     // -- BudgetOverride --
 
     #[test]
+    // -- Enrichment: Ord, std::error --
+
+    #[test]
+    fn synthesis_phase_ordering() {
+        assert!(SynthesisPhase::StaticAnalysis < SynthesisPhase::Ablation);
+        assert!(SynthesisPhase::Ablation < SynthesisPhase::TheoremChecking);
+        assert!(SynthesisPhase::TheoremChecking < SynthesisPhase::ResultAssembly);
+    }
+
+    #[test]
+    fn budget_dimension_ordering() {
+        assert!(BudgetDimension::Time < BudgetDimension::Compute);
+        assert!(BudgetDimension::Compute < BudgetDimension::Depth);
+    }
+
+    #[test]
+    fn fallback_quality_ordering() {
+        assert!(FallbackQuality::StaticBound < FallbackQuality::PartialAblation);
+        assert!(FallbackQuality::PartialAblation < FallbackQuality::UnverifiedFull);
+    }
+
+    #[test]
+    fn budget_error_implements_std_error() {
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(BudgetError::AlreadyExhausted),
+            Box::new(BudgetError::NoActivePhase),
+            Box::new(BudgetError::Exhausted(ExhaustionReason {
+                exceeded_dimensions: vec![BudgetDimension::Time],
+                phase: SynthesisPhase::Ablation,
+                global_limit_hit: false,
+                consumption: PhaseConsumption::zero(),
+                limit_value: 1_000_000,
+            })),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            let msg = format!("{v}");
+            assert!(!msg.is_empty());
+            displays.insert(msg);
+        }
+        assert_eq!(displays.len(), 3, "all 3 variants produce distinct messages");
+    }
+
+    #[test]
     fn budget_override_serde_roundtrip() {
         let ovr = BudgetOverride {
             extension_id: "ext-1".to_string(),

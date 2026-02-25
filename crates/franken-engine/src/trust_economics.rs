@@ -1875,4 +1875,36 @@ mod tests {
         assert_eq!(m.total_base_cost(), 1_000_000);
         assert_eq!(m.expected_roi(), Some(1_000_000)); // 1.0x ROI
     }
+
+    // -- Enrichment: std::error --
+
+    #[test]
+    fn trust_economics_error_implements_std_error() {
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(TrustEconomicsError::IncompleteLossMatrix {
+                populated: 3,
+                expected: 9,
+            }),
+            Box::new(TrustEconomicsError::CascadeProbabilityOutOfRange {
+                value: 2_000_000,
+            }),
+            Box::new(TrustEconomicsError::ZeroAttackerCost),
+            Box::new(TrustEconomicsError::AsymmetryViolation {
+                action: "allow".into(),
+                benign_loss: 0,
+                malicious_loss: -1,
+            }),
+            Box::new(TrustEconomicsError::VersionRegression {
+                current: 5,
+                attempted: 3,
+            }),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            let msg = format!("{v}");
+            assert!(!msg.is_empty());
+            displays.insert(msg);
+        }
+        assert_eq!(displays.len(), 5, "all 5 variants produce distinct messages");
+    }
 }

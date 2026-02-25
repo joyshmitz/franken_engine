@@ -1497,4 +1497,275 @@ mod tests {
         let result = store.rotate_key(KeyRole::Signing, 0, 1, epoch);
         assert!(result.is_err());
     }
+
+    // -- serde roundtrips for enums -------------------------------------------
+
+    #[test]
+    fn key_role_serde_roundtrip() {
+        for role in KeyRole::ALL {
+            let json = serde_json::to_string(role).unwrap();
+            let back: KeyRole = serde_json::from_str(&json).unwrap();
+            assert_eq!(*role, back);
+        }
+    }
+
+    #[test]
+    fn key_status_serde_roundtrip() {
+        for status in &[
+            KeyStatus::Pending,
+            KeyStatus::Active,
+            KeyStatus::Rotated,
+            KeyStatus::Revoked,
+            KeyStatus::Expired,
+        ] {
+            let json = serde_json::to_string(status).unwrap();
+            let back: KeyStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(*status, back);
+        }
+    }
+
+    #[test]
+    fn key_role_error_serde_roundtrip() {
+        let errors = vec![
+            KeyRoleError::KeyRoleMismatch {
+                expected: KeyRole::Signing,
+                actual: KeyRole::Encryption,
+            },
+            KeyRoleError::KeyNotActive {
+                role: KeyRole::Issuance,
+                status: KeyStatus::Revoked,
+            },
+            KeyRoleError::NoActiveKey {
+                role: KeyRole::Signing,
+            },
+            KeyRoleError::BundleCreationFailed,
+            KeyRoleError::BundleSignatureInvalid,
+            KeyRoleError::SequenceRegression {
+                role: KeyRole::Signing,
+                existing: 5,
+                attempted: 3,
+            },
+            KeyRoleError::PrincipalNotFound,
+            KeyRoleError::DuplicateKey {
+                role: KeyRole::Encryption,
+                sequence: 2,
+            },
+        ];
+        for err in &errors {
+            let json = serde_json::to_string(err).unwrap();
+            let back: KeyRoleError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*err, back);
+        }
+    }
+
+    // -- KeyRoleError Display: all 8 variants ---------------------------------
+
+    #[test]
+    fn key_role_error_display_key_not_active() {
+        let err = KeyRoleError::KeyNotActive {
+            role: KeyRole::Signing,
+            status: KeyStatus::Expired,
+        };
+        let s = err.to_string();
+        assert!(s.contains("signing"));
+        assert!(s.contains("expired"));
+    }
+
+    #[test]
+    fn key_role_error_display_bundle_creation_failed() {
+        assert!(KeyRoleError::BundleCreationFailed
+            .to_string()
+            .contains("bundle creation failed"));
+    }
+
+    #[test]
+    fn key_role_error_display_bundle_signature_invalid() {
+        assert!(KeyRoleError::BundleSignatureInvalid
+            .to_string()
+            .contains("signature invalid"));
+    }
+
+    #[test]
+    fn key_role_error_display_sequence_regression() {
+        let err = KeyRoleError::SequenceRegression {
+            role: KeyRole::Issuance,
+            existing: 10,
+            attempted: 5,
+        };
+        let s = err.to_string();
+        assert!(s.contains("issuance"));
+        assert!(s.contains("10"));
+        assert!(s.contains("5"));
+    }
+
+    #[test]
+    fn key_role_error_display_principal_not_found() {
+        assert!(KeyRoleError::PrincipalNotFound
+            .to_string()
+            .contains("principal not found"));
+    }
+
+    #[test]
+    fn key_role_error_display_duplicate_key() {
+        let err = KeyRoleError::DuplicateKey {
+            role: KeyRole::Encryption,
+            sequence: 7,
+        };
+        let s = err.to_string();
+        assert!(s.contains("encryption"));
+        assert!(s.contains("7"));
+    }
+
+    // -- struct serde roundtrips -----------------------------------------------
+
+    #[test]
+    fn encryption_public_key_serde_roundtrip() {
+        let pk = EncryptionPublicKey::from_bytes([0x42; 32]);
+        let json = serde_json::to_string(&pk).unwrap();
+        let back: EncryptionPublicKey = serde_json::from_str(&json).unwrap();
+        assert_eq!(pk, back);
+    }
+
+    #[test]
+    fn encryption_private_key_serde_roundtrip() {
+        let sk = EncryptionPrivateKey::from_bytes([0x99; 32]);
+        let json = serde_json::to_string(&sk).unwrap();
+        let back: EncryptionPrivateKey = serde_json::from_str(&json).unwrap();
+        assert_eq!(sk.as_bytes(), back.as_bytes());
+    }
+
+    #[test]
+    fn role_key_entry_serde_roundtrip() {
+        let seed = test_seed();
+        let epoch = SecurityEpoch::from_raw(1);
+        let sk = make_signing_key(&seed, epoch);
+        let entry = make_role_entry(
+            KeyRole::Signing,
+            sk.verification_key(),
+            None,
+            KeyStatus::Active,
+            epoch,
+            0,
+        );
+        let json = serde_json::to_string(&entry).unwrap();
+        let back: RoleKeyEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry, back);
+    }
+
+    // -- schema / derivation determinism --------------------------------------
+
+    #[test]
+    fn bundle_schema_deterministic() {
+        let s1 = bundle_schema();
+        let s2 = bundle_schema();
+        assert_eq!(s1, s2);
+    }
+
+    #[test]
+    fn bundle_schema_id_deterministic() {
+        let id1 = bundle_schema_id();
+        let id2 = bundle_schema_id();
+        assert_eq!(id1, id2);
+    }
+
+    #[test]
+    fn derive_role_key_deterministic() {
+        let seed = test_seed();
+        let epoch = SecurityEpoch::from_raw(1);
+        let k1 = derive_role_key(&seed, KeyRole::Signing, epoch);
+        let k2 = derive_role_key(&seed, KeyRole::Signing, epoch);
+        assert_eq!(k1, k2);
+    }
+
+    #[test]
+    fn key_role_all_has_three() {
+        assert_eq!(KeyRole::ALL.len(), 3);
+    }
+
+    // -- encryption key display length ----------------------------------------
+
+    #[test]
+    fn encryption_public_key_display_is_64_hex_chars() {
+        let pk = EncryptionPublicKey::from_bytes([0x00; 32]);
+        let s = pk.to_string();
+        assert_eq!(s.len(), 64);
+        assert!(s.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    // -- verification_keys_for_role excludes revoked --------------------------
+
+    #[test]
+    // -- Enrichment: Ord, std::error --
+
+    #[test]
+    fn key_role_ordering() {
+        assert!(KeyRole::Signing < KeyRole::Encryption);
+        assert!(KeyRole::Encryption < KeyRole::Issuance);
+    }
+
+    #[test]
+    fn key_status_ordering() {
+        assert!(KeyStatus::Pending < KeyStatus::Active);
+        assert!(KeyStatus::Active < KeyStatus::Rotated);
+        assert!(KeyStatus::Rotated < KeyStatus::Revoked);
+        assert!(KeyStatus::Revoked < KeyStatus::Expired);
+    }
+
+    #[test]
+    fn key_role_error_implements_std_error() {
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(KeyRoleError::KeyRoleMismatch {
+                expected: KeyRole::Signing,
+                actual: KeyRole::Encryption,
+            }),
+            Box::new(KeyRoleError::KeyNotActive {
+                role: KeyRole::Signing,
+                status: KeyStatus::Revoked,
+            }),
+            Box::new(KeyRoleError::NoActiveKey {
+                role: KeyRole::Issuance,
+            }),
+            Box::new(KeyRoleError::BundleCreationFailed),
+            Box::new(KeyRoleError::BundleSignatureInvalid),
+            Box::new(KeyRoleError::SequenceRegression {
+                role: KeyRole::Signing,
+                existing: 5,
+                attempted: 3,
+            }),
+            Box::new(KeyRoleError::PrincipalNotFound),
+            Box::new(KeyRoleError::DuplicateKey {
+                role: KeyRole::Signing,
+                sequence: 1,
+            }),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            let msg = format!("{v}");
+            assert!(!msg.is_empty());
+            displays.insert(msg);
+        }
+        assert_eq!(displays.len(), 8, "all 8 variants produce distinct messages");
+    }
+
+    #[test]
+    fn verification_keys_excludes_revoked_and_pending() {
+        let seed = test_seed();
+        let epoch = SecurityEpoch::from_raw(1);
+        let sk = make_signing_key(&seed, epoch);
+
+        let mut store = PrincipalKeyStore::new();
+        store
+            .register_key(make_role_entry(
+                KeyRole::Signing,
+                sk.verification_key(),
+                None,
+                KeyStatus::Pending,
+                epoch,
+                0,
+            ))
+            .unwrap();
+
+        // Pending keys are not verifiable.
+        assert!(store.verification_keys_for_role(KeyRole::Signing).is_empty());
+    }
 }

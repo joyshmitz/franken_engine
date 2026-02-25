@@ -3220,4 +3220,916 @@ mod tests {
             event.event == "suppression_gate_evaluated" && event.outcome == "fail"
         }));
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: Display impls
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn campaign_complexity_display() {
+        assert_eq!(CampaignComplexity::Probe.to_string(), "probe");
+        assert_eq!(CampaignComplexity::MultiStage.to_string(), "multi_stage");
+        assert_eq!(CampaignComplexity::Apt.to_string(), "apt");
+    }
+
+    #[test]
+    fn attack_dimension_display_all_variants() {
+        assert_eq!(
+            AttackDimension::HostcallSequence.to_string(),
+            "hostcall_sequence"
+        );
+        assert_eq!(
+            AttackDimension::TemporalPayload.to_string(),
+            "temporal_payload"
+        );
+        assert_eq!(
+            AttackDimension::PrivilegeEscalation.to_string(),
+            "privilege_escalation"
+        );
+        assert_eq!(AttackDimension::PolicyEvasion.to_string(), "policy_evasion");
+        assert_eq!(AttackDimension::Exfiltration.to_string(), "exfiltration");
+    }
+
+    #[test]
+    fn containment_difficulty_display_all() {
+        assert_eq!(ContainmentDifficulty::Easy.to_string(), "easy");
+        assert_eq!(ContainmentDifficulty::Moderate.to_string(), "moderate");
+        assert_eq!(ContainmentDifficulty::Hard.to_string(), "hard");
+        assert_eq!(ContainmentDifficulty::Critical.to_string(), "critical");
+    }
+
+    #[test]
+    fn mutation_operator_display_all() {
+        assert_eq!(MutationOperator::PointMutation.to_string(), "point_mutation");
+        assert_eq!(MutationOperator::Crossover.to_string(), "crossover");
+        assert_eq!(MutationOperator::Insertion.to_string(), "insertion");
+        assert_eq!(MutationOperator::Deletion.to_string(), "deletion");
+        assert_eq!(
+            MutationOperator::TemporalShift.to_string(),
+            "temporal_shift"
+        );
+    }
+
+    #[test]
+    fn defense_subsystem_display_all() {
+        assert_eq!(DefenseSubsystem::Sentinel.to_string(), "sentinel");
+        assert_eq!(DefenseSubsystem::Containment.to_string(), "containment");
+        assert_eq!(
+            DefenseSubsystem::EvidenceAccumulation.to_string(),
+            "evidence_accumulation"
+        );
+        assert_eq!(
+            DefenseSubsystem::FleetConvergence.to_string(),
+            "fleet_convergence"
+        );
+    }
+
+    #[test]
+    fn threat_category_display_all() {
+        assert_eq!(ThreatCategory::CredentialTheft.to_string(), "credential_theft");
+        assert_eq!(
+            ThreatCategory::PrivilegeEscalation.to_string(),
+            "privilege_escalation"
+        );
+        assert_eq!(ThreatCategory::Persistence.to_string(), "persistence");
+        assert_eq!(ThreatCategory::Exfiltration.to_string(), "exfiltration");
+        assert_eq!(ThreatCategory::PolicyEvasion.to_string(), "policy_evasion");
+    }
+
+    #[test]
+    fn campaign_severity_display_all() {
+        assert_eq!(CampaignSeverity::Advisory.to_string(), "advisory");
+        assert_eq!(CampaignSeverity::Moderate.to_string(), "moderate");
+        assert_eq!(CampaignSeverity::Critical.to_string(), "critical");
+        assert_eq!(CampaignSeverity::Blocking.to_string(), "blocking");
+    }
+
+    #[test]
+    fn campaign_runtime_display_all() {
+        assert_eq!(CampaignRuntime::FrankenEngine.to_string(), "franken_engine");
+        assert_eq!(CampaignRuntime::NodeLts.to_string(), "node_lts");
+        assert_eq!(CampaignRuntime::BunStable.to_string(), "bun_stable");
+    }
+
+    #[test]
+    fn campaign_attack_category_display_all() {
+        assert_eq!(CampaignAttackCategory::Injection.to_string(), "injection");
+        assert_eq!(
+            CampaignAttackCategory::PrototypePollution.to_string(),
+            "prototype_pollution"
+        );
+        assert_eq!(
+            CampaignAttackCategory::SupplyChain.to_string(),
+            "supply_chain"
+        );
+        assert_eq!(
+            CampaignAttackCategory::CapabilityEscape.to_string(),
+            "capability_escape"
+        );
+        assert_eq!(
+            CampaignAttackCategory::TimingSideChannel.to_string(),
+            "timing_side_channel"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: CampaignError Display and error_code
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn campaign_error_display_all_variants() {
+        let errors: Vec<CampaignError> = vec![
+            CampaignError::InvalidGrammar {
+                detail: "bad".to_string(),
+            },
+            CampaignError::InvalidCampaign {
+                detail: "oops".to_string(),
+            },
+            CampaignError::InvalidExecutionResult {
+                detail: "nope".to_string(),
+            },
+            CampaignError::InvalidMutation {
+                detail: "hmm".to_string(),
+            },
+            CampaignError::InvalidSeed,
+            CampaignError::InvalidCalibration {
+                detail: "cal".to_string(),
+            },
+        ];
+        let expected_substrings = [
+            "invalid grammar",
+            "invalid campaign",
+            "invalid execution result",
+            "invalid mutation",
+            "seed must be non-zero",
+            "invalid calibration",
+        ];
+        for (err, substr) in errors.iter().zip(expected_substrings.iter()) {
+            assert!(
+                err.to_string().contains(substr),
+                "{:?} should contain {substr}",
+                err
+            );
+        }
+    }
+
+    #[test]
+    fn campaign_error_codes_unique() {
+        let errors: Vec<CampaignError> = vec![
+            CampaignError::InvalidGrammar {
+                detail: String::new(),
+            },
+            CampaignError::InvalidCampaign {
+                detail: String::new(),
+            },
+            CampaignError::InvalidExecutionResult {
+                detail: String::new(),
+            },
+            CampaignError::InvalidMutation {
+                detail: String::new(),
+            },
+            CampaignError::InvalidSeed,
+            CampaignError::InvalidCalibration {
+                detail: String::new(),
+            },
+        ];
+        let codes: Vec<&str> = errors.iter().map(|e| e.error_code()).collect();
+        let unique: BTreeSet<&str> = codes.iter().copied().collect();
+        assert_eq!(codes.len(), unique.len(), "all error codes must be unique");
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: serde roundtrips for key types
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn campaign_error_serde_all_variants() {
+        let variants: Vec<CampaignError> = vec![
+            CampaignError::InvalidGrammar {
+                detail: "g".to_string(),
+            },
+            CampaignError::InvalidCampaign {
+                detail: "c".to_string(),
+            },
+            CampaignError::InvalidExecutionResult {
+                detail: "r".to_string(),
+            },
+            CampaignError::InvalidMutation {
+                detail: "m".to_string(),
+            },
+            CampaignError::InvalidSeed,
+            CampaignError::InvalidCalibration {
+                detail: "x".to_string(),
+            },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let restored: CampaignError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, restored);
+        }
+    }
+
+    #[test]
+    fn campaign_complexity_serde() {
+        for v in [
+            CampaignComplexity::Probe,
+            CampaignComplexity::MultiStage,
+            CampaignComplexity::Apt,
+        ] {
+            let json = serde_json::to_string(&v).unwrap();
+            let restored: CampaignComplexity = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, restored);
+        }
+    }
+
+    #[test]
+    fn attack_dimension_serde() {
+        for v in [
+            AttackDimension::HostcallSequence,
+            AttackDimension::TemporalPayload,
+            AttackDimension::PrivilegeEscalation,
+            AttackDimension::PolicyEvasion,
+            AttackDimension::Exfiltration,
+        ] {
+            let json = serde_json::to_string(&v).unwrap();
+            let restored: AttackDimension = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, restored);
+        }
+    }
+
+    #[test]
+    fn mutation_operator_serde() {
+        for v in [
+            MutationOperator::PointMutation,
+            MutationOperator::Crossover,
+            MutationOperator::Insertion,
+            MutationOperator::Deletion,
+            MutationOperator::TemporalShift,
+        ] {
+            let json = serde_json::to_string(&v).unwrap();
+            let restored: MutationOperator = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, restored);
+        }
+    }
+
+    #[test]
+    fn containment_difficulty_serde() {
+        for v in [
+            ContainmentDifficulty::Easy,
+            ContainmentDifficulty::Moderate,
+            ContainmentDifficulty::Hard,
+            ContainmentDifficulty::Critical,
+        ] {
+            let json = serde_json::to_string(&v).unwrap();
+            let restored: ContainmentDifficulty = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, restored);
+        }
+    }
+
+    #[test]
+    fn campaign_severity_serde() {
+        for v in [
+            CampaignSeverity::Advisory,
+            CampaignSeverity::Moderate,
+            CampaignSeverity::Critical,
+            CampaignSeverity::Blocking,
+        ] {
+            let json = serde_json::to_string(&v).unwrap();
+            let restored: CampaignSeverity = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, restored);
+        }
+    }
+
+    #[test]
+    fn defense_subsystem_serde() {
+        for v in [
+            DefenseSubsystem::Sentinel,
+            DefenseSubsystem::Containment,
+            DefenseSubsystem::EvidenceAccumulation,
+            DefenseSubsystem::FleetConvergence,
+        ] {
+            let json = serde_json::to_string(&v).unwrap();
+            let restored: DefenseSubsystem = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, restored);
+        }
+    }
+
+    #[test]
+    fn threat_category_serde() {
+        for v in [
+            ThreatCategory::CredentialTheft,
+            ThreatCategory::PrivilegeEscalation,
+            ThreatCategory::Persistence,
+            ThreatCategory::Exfiltration,
+            ThreatCategory::PolicyEvasion,
+        ] {
+            let json = serde_json::to_string(&v).unwrap();
+            let restored: ThreatCategory = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, restored);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: DeterministicRng
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn rng_zero_seed_rejected() {
+        assert!(matches!(
+            DeterministicRng::new(0),
+            Err(CampaignError::InvalidSeed)
+        ));
+    }
+
+    #[test]
+    fn rng_deterministic() {
+        let mut a = DeterministicRng::new(42).unwrap();
+        let mut b = DeterministicRng::new(42).unwrap();
+        for _ in 0..10 {
+            assert_eq!(a.next_u64(), b.next_u64());
+        }
+    }
+
+    #[test]
+    fn rng_choose_index_zero_len() {
+        let mut rng = DeterministicRng::new(1).unwrap();
+        assert_eq!(rng.choose_index(0), 0);
+    }
+
+    #[test]
+    fn rng_range_degenerate() {
+        let mut rng = DeterministicRng::new(1).unwrap();
+        assert_eq!(rng.range_u64(5, 5), 5);
+        assert_eq!(rng.range_u64(10, 3), 10); // end < start
+    }
+
+    #[test]
+    fn rng_serde_roundtrip() {
+        let rng = DeterministicRng::new(42).unwrap();
+        let json = serde_json::to_string(&rng).unwrap();
+        let restored: DeterministicRng = serde_json::from_str(&json).unwrap();
+        assert_eq!(rng, restored);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: validation edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn grammar_validation_rejects_zero_version() {
+        let mut grammar = AttackGrammar::default();
+        grammar.version = 0;
+        let err = grammar.validate().unwrap_err();
+        assert!(err.to_string().contains("version"));
+    }
+
+    #[test]
+    fn grammar_validation_rejects_zero_weight() {
+        let mut grammar = AttackGrammar::default();
+        grammar.hostcall_motifs[0].weight = 0;
+        let err = grammar.validate().unwrap_err();
+        assert!(err.to_string().contains("zero-weight"));
+    }
+
+    #[test]
+    fn grammar_validation_rejects_empty_label() {
+        let mut grammar = AttackGrammar::default();
+        grammar.hostcall_motifs[0].label = "  ".to_string();
+        let err = grammar.validate().unwrap_err();
+        assert!(err.to_string().contains("empty production label"));
+    }
+
+    #[test]
+    fn execution_result_validation_rejects_zero_steps() {
+        let result = CampaignExecutionResult {
+            total_steps: 0,
+            undetected_steps: 0,
+            objective_achieved_before_containment: false,
+            damage_potential_millionths: 0,
+            evidence_atoms_before_detection: 0,
+            novel_technique: false,
+        };
+        assert!(result.validate().is_err());
+    }
+
+    #[test]
+    fn execution_result_validation_rejects_undetected_exceeds_total() {
+        let result = CampaignExecutionResult {
+            total_steps: 3,
+            undetected_steps: 5,
+            objective_achieved_before_containment: false,
+            damage_potential_millionths: 0,
+            evidence_atoms_before_detection: 0,
+            novel_technique: false,
+        };
+        assert!(result.validate().is_err());
+    }
+
+    #[test]
+    fn execution_result_validation_rejects_damage_over_million() {
+        let result = CampaignExecutionResult {
+            total_steps: 1,
+            undetected_steps: 0,
+            objective_achieved_before_containment: false,
+            damage_potential_millionths: 1_000_001,
+            evidence_atoms_before_detection: 0,
+            novel_technique: false,
+        };
+        assert!(result.validate().is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: scoring difficulty brackets
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn scoring_difficulty_critical() {
+        let result = CampaignExecutionResult {
+            total_steps: 4,
+            undetected_steps: 4,
+            objective_achieved_before_containment: true,
+            damage_potential_millionths: 1_000_000,
+            evidence_atoms_before_detection: 50,
+            novel_technique: true,
+        };
+        let score = ExploitObjectiveScore::from_result(&result).unwrap();
+        assert_eq!(score.difficulty, ContainmentDifficulty::Critical);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: CampaignRuntime helpers
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn campaign_runtime_is_baseline() {
+        assert!(!CampaignRuntime::FrankenEngine.is_baseline());
+        assert!(CampaignRuntime::NodeLts.is_baseline());
+        assert!(CampaignRuntime::BunStable.is_baseline());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: CampaignAttackCategory ALL constant
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn attack_category_all_has_five() {
+        assert_eq!(CampaignAttackCategory::ALL.len(), 5);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: RegressionCorpus
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn regression_corpus_empty_by_default() {
+        let corpus = RegressionCorpus::default();
+        assert!(corpus.is_empty());
+        assert_eq!(corpus.len(), 0);
+        assert!(corpus.fixture("nonexistent").is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: campaign validation edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn campaign_validation_rejects_empty_fields() {
+        let campaign = sample_campaign(CampaignComplexity::Probe, 0x1234);
+
+        let mut c = campaign.clone();
+        c.campaign_id = "  ".to_string();
+        assert!(c.validate().is_err());
+
+        let mut c = campaign.clone();
+        c.trace_id = "".to_string();
+        assert!(c.validate().is_err());
+
+        let mut c = campaign.clone();
+        c.decision_id = " ".to_string();
+        assert!(c.validate().is_err());
+
+        let mut c = campaign.clone();
+        c.policy_id = "".to_string();
+        assert!(c.validate().is_err());
+
+        let mut c = campaign.clone();
+        c.grammar_version = 0;
+        assert!(c.validate().is_err());
+
+        let mut c = campaign.clone();
+        c.seed = 0;
+        assert!(c.validate().is_err());
+
+        let mut c = campaign;
+        c.steps.clear();
+        assert!(c.validate().is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: deletion from single-step campaign
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn mutation_deletion_single_step_rejected() {
+        let grammar = AttackGrammar::default();
+        let mut generator =
+            CampaignGenerator::new(grammar.clone(), CampaignGeneratorConfig::default(), 0xF00D)
+                .unwrap();
+        let mut campaign = generator
+            .generate_campaign(CampaignComplexity::Probe)
+            .unwrap();
+        campaign.steps.truncate(1);
+        campaign.steps[0].step_id = 0;
+
+        let err = MutationEngine::mutate(
+            &campaign,
+            &grammar,
+            MutationRequest {
+                operator: MutationOperator::Deletion,
+                seed: 1,
+                donor_campaign: None,
+            },
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("cannot delete"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: untested enum serde roundtrips
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn campaign_runtime_serde_roundtrip() {
+        for v in [
+            CampaignRuntime::FrankenEngine,
+            CampaignRuntime::NodeLts,
+            CampaignRuntime::BunStable,
+        ] {
+            let json = serde_json::to_string(&v).unwrap();
+            let restored: CampaignRuntime = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, restored);
+        }
+    }
+
+    #[test]
+    fn campaign_attack_category_serde_roundtrip() {
+        for v in CampaignAttackCategory::ALL {
+            let json = serde_json::to_string(&v).unwrap();
+            let restored: CampaignAttackCategory = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, restored);
+        }
+    }
+
+    #[test]
+    fn attack_step_kind_serde_all_variants() {
+        let variants: Vec<AttackStepKind> = vec![
+            AttackStepKind::HostcallSequence {
+                motif: "m".to_string(),
+                hostcall_count: 5,
+            },
+            AttackStepKind::TemporalPayload {
+                stage: "s".to_string(),
+                delay_ms: 100,
+            },
+            AttackStepKind::PrivilegeEscalation {
+                probe: "p".to_string(),
+                escalation_depth: 3,
+            },
+            AttackStepKind::PolicyEvasion {
+                motif: "ev".to_string(),
+                threshold_margin_millionths: 50_000,
+            },
+            AttackStepKind::Exfiltration {
+                strategy: "chunk".to_string(),
+                chunk_count: 10,
+            },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let restored: AttackStepKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, restored);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: struct serde roundtrips
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn weighted_production_serde_roundtrip() {
+        let wp = WeightedProduction {
+            label: "motif_a".to_string(),
+            weight: 10,
+        };
+        let json = serde_json::to_string(&wp).unwrap();
+        let restored: WeightedProduction = serde_json::from_str(&json).unwrap();
+        assert_eq!(wp, restored);
+    }
+
+    #[test]
+    fn attack_step_serde_roundtrip() {
+        let step = AttackStep {
+            step_id: 0,
+            dimension: AttackDimension::Exfiltration,
+            production_label: "chunk_exfil".to_string(),
+            kind: AttackStepKind::Exfiltration {
+                strategy: "chunk".to_string(),
+                chunk_count: 5,
+            },
+        };
+        let json = serde_json::to_string(&step).unwrap();
+        let restored: AttackStep = serde_json::from_str(&json).unwrap();
+        assert_eq!(step, restored);
+    }
+
+    #[test]
+    fn campaign_execution_result_serde_roundtrip() {
+        let res = CampaignExecutionResult {
+            undetected_steps: 2,
+            total_steps: 5,
+            objective_achieved_before_containment: false,
+            damage_potential_millionths: 300_000,
+            evidence_atoms_before_detection: 3,
+            novel_technique: true,
+        };
+        let json = serde_json::to_string(&res).unwrap();
+        let restored: CampaignExecutionResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(res, restored);
+    }
+
+    #[test]
+    fn campaign_event_serde_roundtrip() {
+        let ev = CampaignEvent {
+            trace_id: "t-1".to_string(),
+            decision_id: "d-1".to_string(),
+            policy_id: "p-1".to_string(),
+            component: "campaign".to_string(),
+            event: "scored".to_string(),
+            outcome: "ok".to_string(),
+            error_code: None,
+            campaign_id: "c-1".to_string(),
+            composite_score_millionths: 500_000,
+        };
+        let json = serde_json::to_string(&ev).unwrap();
+        let restored: CampaignEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(ev, restored);
+    }
+
+    #[test]
+    fn campaign_classification_serde_roundtrip() {
+        let cls = CampaignClassification {
+            campaign_id: "c-1".to_string(),
+            subsystem: DefenseSubsystem::Sentinel,
+            threat_category: ThreatCategory::Exfiltration,
+            severity: CampaignSeverity::Critical,
+            evasion_report: true,
+            containment_escape_report: false,
+            near_miss_report: false,
+        };
+        let json = serde_json::to_string(&cls).unwrap();
+        let restored: CampaignClassification = serde_json::from_str(&json).unwrap();
+        assert_eq!(cls, restored);
+    }
+
+    #[test]
+    fn technique_effectiveness_serde_roundtrip() {
+        let te = TechniqueEffectiveness {
+            attempts: 100,
+            detected: 90,
+            escaped: 5,
+            near_miss: 5,
+            detection_rate_millionths: 900_000,
+            escape_rate_millionths: 50_000,
+        };
+        let json = serde_json::to_string(&te).unwrap();
+        let restored: TechniqueEffectiveness = serde_json::from_str(&json).unwrap();
+        assert_eq!(te, restored);
+    }
+
+    #[test]
+    fn calibration_snapshot_serde_roundtrip() {
+        let snap = CalibrationSnapshot {
+            detection_threshold_millionths: 500_000,
+            evidence_weights_millionths: BTreeMap::new(),
+            loss_matrix_millionths: BTreeMap::new(),
+        };
+        let json = serde_json::to_string(&snap).unwrap();
+        let restored: CalibrationSnapshot = serde_json::from_str(&json).unwrap();
+        assert_eq!(snap, restored);
+    }
+
+    #[test]
+    fn minimization_proof_serde_roundtrip() {
+        let mp = MinimizationProof {
+            rounds: 5,
+            removed_steps: 3,
+            is_fixed_point: true,
+        };
+        let json = serde_json::to_string(&mp).unwrap();
+        let restored: MinimizationProof = serde_json::from_str(&json).unwrap();
+        assert_eq!(mp, restored);
+    }
+
+    #[test]
+    fn suppression_comparison_serde_roundtrip() {
+        let cmp = SuppressionComparison {
+            attack_category: CampaignAttackCategory::Injection,
+            baseline_runtime: CampaignRuntime::NodeLts,
+            frankenengine_compromise_rate_millionths: 10_000,
+            baseline_compromise_rate_millionths: 50_000,
+            frankenengine_confidence_interval_millionths: (5_000, 15_000),
+            baseline_confidence_interval_millionths: (40_000, 60_000),
+            p_value_millionths: 1_000,
+            statistically_significant: true,
+        };
+        let json = serde_json::to_string(&cmp).unwrap();
+        let restored: SuppressionComparison = serde_json::from_str(&json).unwrap();
+        assert_eq!(cmp, restored);
+    }
+
+    #[test]
+    fn campaign_suppression_sample_serde_roundtrip() {
+        let s = CampaignSuppressionSample {
+            campaign_id: "c-1".to_string(),
+            attack_category: CampaignAttackCategory::SupplyChain,
+            target_runtime: CampaignRuntime::FrankenEngine,
+            attempt_count: 100,
+            success_count: 2,
+            raw_log_ref: "ref-log".to_string(),
+            repro_script_ref: "ref-repro".to_string(),
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        let restored: CampaignSuppressionSample = serde_json::from_str(&json).unwrap();
+        assert_eq!(s, restored);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: default value assertions
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn attack_grammar_default_populated() {
+        let g = AttackGrammar::default();
+        assert_eq!(g.version, 1);
+        assert!(!g.hostcall_motifs.is_empty());
+        assert!(!g.temporal_staging.is_empty());
+        assert!(!g.privilege_escalation.is_empty());
+        assert!(!g.policy_evasion.is_empty());
+        assert!(!g.exfiltration.is_empty());
+    }
+
+    #[test]
+    fn guardplane_calibration_state_default_values() {
+        let s = GuardplaneCalibrationState::default();
+        assert_eq!(s.detection_threshold_millionths, 700_000);
+        assert!(!s.evidence_weights_millionths.is_empty());
+        assert!(!s.loss_matrix_millionths.is_empty());
+        assert_eq!(s.calibration_epoch, 0);
+    }
+
+    #[test]
+    fn campaign_generator_config_default() {
+        let c = CampaignGeneratorConfig::default();
+        assert_eq!(c.campaigns_per_hour, 12);
+        assert_eq!(c.max_backpressure_queue, 24);
+        assert_eq!(c.promotion_threshold_millionths, 700_000);
+    }
+
+    #[test]
+    fn suppression_gate_config_default_values() {
+        let c = SuppressionGateConfig::default();
+        assert_eq!(c.required_categories.len(), 5);
+        assert_eq!(c.minimum_baseline_runtimes, 2);
+        assert_eq!(c.max_p_value_millionths, 50_000);
+        assert!(c.require_continuous_run);
+        assert_eq!(c.minimum_trend_points, 2);
+        assert_eq!(c.max_escalation_latency_seconds, 3_600);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: ordering tests for Ord-derived enums
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn attack_dimension_ordering() {
+        assert!(AttackDimension::HostcallSequence < AttackDimension::Exfiltration);
+    }
+
+    #[test]
+    fn defense_subsystem_ordering() {
+        assert!(DefenseSubsystem::Sentinel < DefenseSubsystem::FleetConvergence);
+    }
+
+    #[test]
+    fn threat_category_ordering() {
+        assert!(ThreatCategory::CredentialTheft < ThreatCategory::PolicyEvasion);
+    }
+
+    #[test]
+    fn campaign_severity_ordering() {
+        assert!(CampaignSeverity::Advisory < CampaignSeverity::Blocking);
+    }
+
+    #[test]
+    fn campaign_runtime_ordering() {
+        assert!(CampaignRuntime::FrankenEngine < CampaignRuntime::BunStable);
+    }
+
+    // -- Enrichment: missing serde, std::error, Display content --
+
+    #[test]
+    fn campaign_error_std_error_trait() {
+        let errs: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(CampaignError::InvalidGrammar {
+                detail: "x".to_string(),
+            }),
+            Box::new(CampaignError::InvalidCampaign {
+                detail: "y".to_string(),
+            }),
+            Box::new(CampaignError::InvalidExecutionResult {
+                detail: "z".to_string(),
+            }),
+            Box::new(CampaignError::InvalidMutation {
+                detail: "w".to_string(),
+            }),
+            Box::new(CampaignError::InvalidSeed),
+            Box::new(CampaignError::InvalidCalibration {
+                detail: "c".to_string(),
+            }),
+        ];
+        for e in &errs {
+            assert!(!e.to_string().is_empty());
+        }
+        assert_eq!(errs.len(), 6);
+    }
+
+    #[test]
+    fn campaign_trend_point_serde_roundtrip() {
+        let pt = CampaignTrendPoint {
+            release_candidate_id: "rc-1".to_string(),
+            timestamp_ns: 1_000_000_000,
+            samples_evaluated: 42,
+        };
+        let json = serde_json::to_string(&pt).unwrap();
+        let restored: CampaignTrendPoint = serde_json::from_str(&json).unwrap();
+        assert_eq!(pt, restored);
+    }
+
+    #[test]
+    fn exploit_escalation_record_serde_roundtrip() {
+        let rec = ExploitEscalationRecord {
+            campaign_id: "camp-1".to_string(),
+            attack_category: CampaignAttackCategory::Injection,
+            target_runtime: CampaignRuntime::FrankenEngine,
+            successful_exploit: true,
+            escalation_triggered: true,
+            escalation_latency_seconds: Some(5),
+        };
+        let json = serde_json::to_string(&rec).unwrap();
+        let restored: ExploitEscalationRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(rec, restored);
+    }
+
+    #[test]
+    fn suppression_gate_input_serde_roundtrip() {
+        let sample = CampaignSuppressionSample {
+            campaign_id: "camp-1".to_string(),
+            attack_category: CampaignAttackCategory::Injection,
+            target_runtime: CampaignRuntime::FrankenEngine,
+            attempt_count: 100,
+            success_count: 1,
+            raw_log_ref: "log-ref-1".to_string(),
+            repro_script_ref: "repro-ref-1".to_string(),
+        };
+        let input = SuppressionGateInput {
+            release_candidate_id: "rc-1".to_string(),
+            continuous_run: true,
+            samples: vec![sample],
+            trend_points: vec![CampaignTrendPoint {
+                release_candidate_id: "rc-1".to_string(),
+                timestamp_ns: 1000,
+                samples_evaluated: 10,
+            }],
+            escalations: vec![],
+        };
+        let json = serde_json::to_string(&input).unwrap();
+        let restored: SuppressionGateInput = serde_json::from_str(&json).unwrap();
+        assert_eq!(input, restored);
+    }
+
+    #[test]
+    fn campaign_attack_category_display_all_five_distinct() {
+        let strs: Vec<String> = CampaignAttackCategory::ALL
+            .iter()
+            .map(|v| v.to_string())
+            .collect();
+        assert_eq!(strs.len(), 5);
+        let set: std::collections::BTreeSet<_> = strs.iter().collect();
+        assert_eq!(set.len(), 5);
+    }
+
+    #[test]
+    fn campaign_attack_category_ordering() {
+        assert!(CampaignAttackCategory::Injection < CampaignAttackCategory::TimingSideChannel);
+    }
 }

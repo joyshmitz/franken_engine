@@ -1530,4 +1530,28 @@ mod tests {
         let back: ReceiptError = serde_json::from_str(&json).unwrap();
         assert_eq!(err, back);
     }
+
+    // -- Enrichment: std::error --
+
+    #[test]
+    fn receipt_error_implements_std_error() {
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(ReceiptError::EmptyProofInputs),
+            Box::new(ReceiptError::EmptyTransformationDescription),
+            Box::new(ReceiptError::IdenticalIrDigests),
+            Box::new(ReceiptError::NoEquivalenceTests),
+            Box::new(ReceiptError::ZeroTestCount),
+            Box::new(ReceiptError::PassRateOutOfRange { value: 2_000_000 }),
+            Box::new(ReceiptError::ZeroBenchmarkSamples),
+            Box::new(ReceiptError::UnvalidatedRollback),
+            Box::new(ReceiptError::IdDerivation("bad id".into())),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            let msg = format!("{v}");
+            assert!(!msg.is_empty());
+            displays.insert(msg);
+        }
+        assert_eq!(displays.len(), 9, "all 9 tested variants produce distinct messages");
+    }
 }

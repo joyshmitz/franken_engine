@@ -803,4 +803,105 @@ mod tests {
             assert_eq!(*err, restored);
         }
     }
+
+    // -- Enrichment: serde roundtrips --
+
+    #[test]
+    fn guardrail_serde_roundtrip() {
+        let g = Guardrail {
+            id: "cost-cap".to_string(),
+            description: "limits spending".to_string(),
+            blocked_actions: vec!["expensive".to_string(), "risky".to_string()],
+        };
+        let json = serde_json::to_string(&g).expect("serialize");
+        let restored: Guardrail = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(g, restored);
+    }
+
+    #[test]
+    fn posterior_serde_roundtrip() {
+        let p = normal_posterior();
+        let json = serde_json::to_string(&p).expect("serialize");
+        let restored: Posterior = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(p, restored);
+    }
+
+    // -- Enrichment: defaults --
+
+    #[test]
+    fn loss_matrix_default_is_empty() {
+        let m = LossMatrix::default();
+        assert!(m.is_empty());
+        assert_eq!(m.len(), 0);
+    }
+
+    // -- Enrichment: error Display --
+
+    #[test]
+    fn error_display_no_loss_entries() {
+        let e = PolicyControllerError::NoLossEntries;
+        assert_eq!(e.to_string(), "no loss entries for any action");
+    }
+
+    #[test]
+    fn error_display_evidence_emission_failed() {
+        let e = PolicyControllerError::EvidenceEmissionFailed {
+            reason: "ledger full".to_string(),
+        };
+        assert!(e.to_string().contains("ledger full"));
+    }
+
+    #[test]
+    fn error_is_std_error() {
+        let errors: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(PolicyControllerError::EmptyActionSet),
+            Box::new(PolicyControllerError::NoLossEntries),
+            Box::new(PolicyControllerError::SafeDefaultNotInActionSet {
+                safe_default: "x".to_string(),
+            }),
+            Box::new(PolicyControllerError::EvidenceEmissionFailed {
+                reason: "r".to_string(),
+            }),
+        ];
+        for e in &errors {
+            assert!(!e.to_string().is_empty());
+        }
+    }
+
+    // -- Enrichment: guardrail behavior --
+
+    #[test]
+    fn guardrail_blocks_matching_action() {
+        let g = Guardrail {
+            id: "g1".to_string(),
+            description: "d".to_string(),
+            blocked_actions: vec!["a".to_string(), "b".to_string()],
+        };
+        assert!(g.blocks("a"));
+        assert!(g.blocks("b"));
+        assert!(!g.blocks("c"));
+    }
+
+    // -- Enrichment: posterior --
+
+    #[test]
+    fn posterior_states_deterministic_order() {
+        let mut probs = BTreeMap::new();
+        probs.insert("z_state".to_string(), 100_000);
+        probs.insert("a_state".to_string(), 900_000);
+        let p = Posterior::new(probs);
+        let states: Vec<&str> = p.states().collect();
+        assert_eq!(states, vec!["a_state", "z_state"]);
+    }
+
+    // -- Enrichment: loss matrix --
+
+    #[test]
+    fn loss_matrix_overwrite_entry() {
+        let mut m = LossMatrix::new();
+        m.set("s1", "a1", 100);
+        m.set("s1", "a1", 200);
+        assert_eq!(m.get("s1", "a1"), Some(200));
+        assert_eq!(m.len(), 1);
+    }
 }

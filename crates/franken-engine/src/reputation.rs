@@ -1607,4 +1607,346 @@ mod tests {
         // Two RevokedBy edges created.
         assert_eq!(graph.edge_count(), initial_edges + 2);
     }
+
+    // -- serde roundtrips for enum types --------------------------------------
+
+    #[test]
+    fn trust_level_serde_roundtrip_all_variants() {
+        for level in &TrustLevel::ALL {
+            let json = serde_json::to_string(level).unwrap();
+            let back: TrustLevel = serde_json::from_str(&json).unwrap();
+            assert_eq!(*level, back);
+        }
+    }
+
+    #[test]
+    fn evidence_type_serde_roundtrip() {
+        let variants = [
+            EvidenceType::BehavioralObservation,
+            EvidenceType::AdversarialCampaignResult,
+            EvidenceType::FleetEvidence,
+            EvidenceType::IncidentRecord,
+            EvidenceType::ThreatIntelligence,
+            EvidenceType::ProvenanceAttestation,
+            EvidenceType::OperatorAssessment,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: EvidenceType = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn evidence_source_serde_roundtrip() {
+        let variants = [
+            EvidenceSource::BayesianSentinel,
+            EvidenceSource::AdversarialCampaign,
+            EvidenceSource::FleetImmuneSystem,
+            EvidenceSource::OperatorManual,
+            EvidenceSource::ExternalThreatFeed,
+            EvidenceSource::BuildProvenance,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: EvidenceSource = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn incident_severity_serde_roundtrip() {
+        for sev in &[
+            IncidentSeverity::Low,
+            IncidentSeverity::Medium,
+            IncidentSeverity::High,
+            IncidentSeverity::Critical,
+        ] {
+            let json = serde_json::to_string(sev).unwrap();
+            let back: IncidentSeverity = serde_json::from_str(&json).unwrap();
+            assert_eq!(*sev, back);
+        }
+    }
+
+    #[test]
+    fn resolution_status_serde_roundtrip() {
+        for status in &[
+            ResolutionStatus::Active,
+            ResolutionStatus::Contained,
+            ResolutionStatus::Resolved,
+            ResolutionStatus::FalsePositive,
+        ] {
+            let json = serde_json::to_string(status).unwrap();
+            let back: ResolutionStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(*status, back);
+        }
+    }
+
+    // -- serde roundtrips for struct types ------------------------------------
+
+    #[test]
+    fn provenance_record_serde_roundtrip() {
+        let record = ProvenanceRecord {
+            extension_id: "ext-1".into(),
+            publisher_verified: true,
+            build_attested: false,
+            attestation_source: Some("sigstore".into()),
+            dependency_depth: 3,
+            has_provenance_gap: true,
+            gap_descriptions: vec!["missing attestation".into()],
+        };
+        let json = serde_json::to_string(&record).unwrap();
+        let back: ProvenanceRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(record, back);
+    }
+
+    #[test]
+    fn trust_lookup_result_serde_roundtrip() {
+        let result = TrustLookupResult {
+            extension_id: "ext-1".into(),
+            current_trust_level: TrustLevel::Established,
+            transition_count: 2,
+            last_transition: None,
+            evidence_count: 5,
+            dependency_risk_score: 300_000,
+            publisher_trust_score: Some(750_000),
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let back: TrustLookupResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(result, back);
+    }
+
+    #[test]
+    fn revocation_impact_serde_roundtrip() {
+        let impact = RevocationImpact {
+            directly_affected: ["ext-b".into()].into_iter().collect(),
+            transitively_affected: BTreeSet::new(),
+            trust_degradations: vec![],
+        };
+        let json = serde_json::to_string(&impact).unwrap();
+        let back: RevocationImpact = serde_json::from_str(&json).unwrap();
+        assert_eq!(impact, back);
+    }
+
+    #[test]
+    fn operator_override_input_serde_roundtrip() {
+        let input = OperatorOverrideInput {
+            extension_id: "ext-1".into(),
+            new_level: TrustLevel::Provisional,
+            justification: "incident resolved".into(),
+            evidence_ids: vec!["ev-1".into()],
+            policy_version: 2,
+            epoch: SecurityEpoch::from_raw(3),
+            timestamp_ns: 1_000,
+        };
+        let json = serde_json::to_string(&input).unwrap();
+        let back: OperatorOverrideInput = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.extension_id, "ext-1");
+        assert_eq!(back.new_level, TrustLevel::Provisional);
+    }
+
+    // -- ReputationGraphError Display: all 6 variants -------------------------
+
+    #[test]
+    fn error_display_publisher_not_found() {
+        let err = ReputationGraphError::PublisherNotFound {
+            publisher_id: "pub-99".into(),
+        };
+        assert!(err.to_string().contains("pub-99"));
+    }
+
+    #[test]
+    fn error_display_duplicate_extension() {
+        let err = ReputationGraphError::DuplicateExtension {
+            extension_id: "ext-dup".into(),
+        };
+        assert!(err.to_string().contains("ext-dup"));
+    }
+
+    #[test]
+    fn error_display_duplicate_evidence() {
+        let err = ReputationGraphError::DuplicateEvidence {
+            evidence_id: "ev-dup".into(),
+        };
+        assert!(err.to_string().contains("ev-dup"));
+    }
+
+    #[test]
+    fn error_display_circular_dependency() {
+        let err = ReputationGraphError::CircularDependency {
+            extension_id: "ext-a".into(),
+            dependency_chain: vec!["ext-b".into(), "ext-a".into()],
+        };
+        let s = err.to_string();
+        assert!(s.contains("ext-a"));
+        assert!(s.contains("ext-b -> ext-a"));
+    }
+
+    // -- empty graph state ----------------------------------------------------
+
+    #[test]
+    fn empty_graph_counts() {
+        let graph = ReputationGraph::new();
+        assert_eq!(graph.extension_count(), 0);
+        assert_eq!(graph.evidence_count(), 0);
+        assert_eq!(graph.total_transitions(), 0);
+        assert_eq!(graph.edge_count(), 0);
+    }
+
+    #[test]
+    fn empty_graph_get_extension_returns_none() {
+        let graph = ReputationGraph::new();
+        assert!(graph.get_extension("nonexistent").is_none());
+    }
+
+    #[test]
+    fn empty_graph_get_publisher_returns_none() {
+        let graph = ReputationGraph::new();
+        assert!(graph.get_publisher("nonexistent").is_none());
+    }
+
+    #[test]
+    fn empty_graph_trust_history_empty() {
+        let graph = ReputationGraph::new();
+        assert!(graph.trust_history("nonexistent").is_empty());
+    }
+
+    // -- can_auto_transition_to edge cases ------------------------------------
+
+    #[test]
+    fn auto_transition_same_level_always_allowed() {
+        for level in &TrustLevel::ALL {
+            assert!(level.can_auto_transition_to(*level));
+        }
+    }
+
+    #[test]
+    fn auto_transition_degraded_to_non_degraded_denied() {
+        assert!(!TrustLevel::Suspicious.can_auto_transition_to(TrustLevel::Unknown));
+        assert!(!TrustLevel::Compromised.can_auto_transition_to(TrustLevel::Established));
+        assert!(!TrustLevel::Revoked.can_auto_transition_to(TrustLevel::Trusted));
+    }
+
+    #[test]
+    fn auto_transition_non_degraded_to_degraded_allowed() {
+        for src in &[
+            TrustLevel::Unknown,
+            TrustLevel::Provisional,
+            TrustLevel::Established,
+            TrustLevel::Trusted,
+        ] {
+            for dst in &[
+                TrustLevel::Suspicious,
+                TrustLevel::Compromised,
+                TrustLevel::Revoked,
+            ] {
+                assert!(
+                    src.can_auto_transition_to(*dst),
+                    "{src} -> {dst} should be auto-allowed"
+                );
+            }
+        }
+    }
+
+    // -- incident severity ordering -------------------------------------------
+
+    #[test]
+    fn incident_severity_ordering() {
+        assert!(IncidentSeverity::Low < IncidentSeverity::Medium);
+        assert!(IncidentSeverity::Medium < IncidentSeverity::High);
+        assert!(IncidentSeverity::High < IncidentSeverity::Critical);
+    }
+
+    #[test]
+    fn resolution_status_ordering() {
+        assert!(ResolutionStatus::Active < ResolutionStatus::Contained);
+        assert!(ResolutionStatus::Contained < ResolutionStatus::Resolved);
+        assert!(ResolutionStatus::Resolved < ResolutionStatus::FalsePositive);
+    }
+
+    // -- get_provenance miss --------------------------------------------------
+
+    #[test]
+    fn get_provenance_nonexistent_returns_none() {
+        let graph = ReputationGraph::new();
+        assert!(graph.get_provenance("nonexistent").is_none());
+    }
+
+    // -- edge type serde roundtrip --------------------------------------------
+
+    #[test]
+    fn edge_type_serde_roundtrip() {
+        let edges = vec![
+            EdgeType::PublishedBy {
+                extension_id: "ext-1".into(),
+                publisher_id: "pub-1".into(),
+            },
+            EdgeType::DependsOn {
+                dependent_id: "ext-1".into(),
+                dependency_id: "ext-2".into(),
+            },
+            EdgeType::DerivedFrom {
+                new_version_id: "v2".into(),
+                old_version_id: "v1".into(),
+            },
+            EdgeType::ObservedBehavior {
+                extension_id: "ext-1".into(),
+                evidence_id: "ev-1".into(),
+            },
+            EdgeType::RevokedBy {
+                extension_id: "ext-1".into(),
+                incident_id: "inc-1".into(),
+            },
+            EdgeType::RevocationPropagatedTo {
+                source_extension_id: "ext-1".into(),
+                target_extension_id: "ext-2".into(),
+                incident_id: "inc-1".into(),
+            },
+            EdgeType::TrustTransitioned {
+                extension_id: "ext-1".into(),
+                transition_id: "tt-1".into(),
+            },
+        ];
+        for edge in &edges {
+            let json = serde_json::to_string(edge).unwrap();
+            let back: EdgeType = serde_json::from_str(&json).unwrap();
+            assert_eq!(*edge, back);
+        }
+    }
+
+    // -- Enrichment: std::error --
+
+    #[test]
+    fn reputation_graph_error_implements_std_error() {
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(ReputationGraphError::ExtensionNotFound {
+                extension_id: "ext-1".into(),
+            }),
+            Box::new(ReputationGraphError::PublisherNotFound {
+                publisher_id: "pub-1".into(),
+            }),
+            Box::new(ReputationGraphError::AutoUpgradeDenied {
+                extension_id: "ext-2".into(),
+                current: TrustLevel::Provisional,
+                attempted: TrustLevel::Trusted,
+            }),
+            Box::new(ReputationGraphError::DuplicateExtension {
+                extension_id: "ext-3".into(),
+            }),
+            Box::new(ReputationGraphError::DuplicateEvidence {
+                evidence_id: "ev-1".into(),
+            }),
+            Box::new(ReputationGraphError::CircularDependency {
+                extension_id: "ext-4".into(),
+                dependency_chain: vec!["ext-4".into(), "ext-5".into()],
+            }),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            let msg = format!("{v}");
+            assert!(!msg.is_empty());
+            displays.insert(msg);
+        }
+        assert_eq!(displays.len(), 6, "all 6 variants produce distinct messages");
+    }
 }

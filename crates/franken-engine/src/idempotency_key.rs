@@ -1056,6 +1056,37 @@ mod tests {
     // -- Full lifecycle --
 
     #[test]
+    // -- Enrichment: std::error --
+
+    #[test]
+    fn idempotency_error_implements_std_error() {
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(IdempotencyError::EpochMismatch {
+                key_epoch: SecurityEpoch::from_raw(1),
+                current_epoch: SecurityEpoch::from_raw(3),
+            }),
+            Box::new(IdempotencyError::MaxRetriesExceeded {
+                computation_name: "compute".into(),
+                max_retries: 3,
+                attempt: 4,
+            }),
+            Box::new(IdempotencyError::DuplicateInProgress {
+                computation_name: "other".into(),
+            }),
+            Box::new(IdempotencyError::EntryNotFound {
+                key_hex: "aabb".into(),
+            }),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            let msg = format!("{v}");
+            assert!(!msg.is_empty());
+            displays.insert(msg);
+        }
+        assert_eq!(displays.len(), 4, "all 4 variants produce distinct messages");
+    }
+
+    #[test]
     fn full_lifecycle_derive_check_complete_cache_hit() {
         let mut store = IdempotencyStore::new(test_epoch(), test_session_key());
         let input = test_derivation_input();

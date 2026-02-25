@@ -691,6 +691,55 @@ mod tests {
         assert_eq!(marker, restored);
     }
 
+    // -- Enrichment: Display & std::error --
+
+    #[test]
+    fn ordering_violation_display_all_variants() {
+        let variants: Vec<OrderingViolation> = vec![
+            OrderingViolation::CandidatesNotSorted {
+                first_unsorted_index: 3,
+            },
+            OrderingViolation::WitnessesNotSorted {
+                first_unsorted_index: 1,
+            },
+            OrderingViolation::ConstraintsNotSorted {
+                first_unsorted_index: 0,
+            },
+            OrderingViolation::DuplicateWitnessId {
+                witness_id: "w-1".to_string(),
+            },
+            OrderingViolation::CandidatesExceedBound {
+                count: 300,
+                max: 256,
+            },
+            OrderingViolation::WitnessesExceedBound {
+                count: 300,
+                max: 256,
+            },
+            OrderingViolation::ConstraintsExceedBound {
+                count: 300,
+                max: 256,
+            },
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            let msg = format!("{v}");
+            assert!(!msg.is_empty());
+            displays.insert(msg);
+        }
+        assert_eq!(displays.len(), 7, "all 7 variants produce distinct messages");
+    }
+
+    #[test]
+    fn ordering_violation_implements_std_error() {
+        let v = OrderingViolation::CandidatesNotSorted {
+            first_unsorted_index: 0,
+        };
+        let err: &dyn std::error::Error = &v;
+        assert!(!format!("{err}").is_empty());
+        assert!(err.source().is_none());
+    }
+
     #[test]
     fn ordering_violation_serialization_round_trip() {
         let violations = vec![

@@ -664,6 +664,86 @@ mod tests {
         assert_eq!(contract, restored);
     }
 
+    // -- Enrichment: serde, Ord, std::error --
+
+    #[test]
+    fn contract_validation_error_serde_all_variants() {
+        let variants = vec![
+            ContractValidationError::MissingField {
+                field: "name".to_string(),
+            },
+            ContractValidationError::EvBelowThreshold {
+                score_str: "0.3".to_string(),
+                tier: "Positive".to_string(),
+            },
+            ContractValidationError::EvTierMismatch {
+                score_str: "0.8".to_string(),
+                declared_tier: "Marginal".to_string(),
+                expected_tier: "Positive".to_string(),
+            },
+            ContractValidationError::EmptyRolloutStages,
+            ContractValidationError::InvalidRolloutOrder {
+                stage: "Shadow".to_string(),
+                position: 2,
+            },
+            ContractValidationError::IncompatibleVersion {
+                version: "3.0".to_string(),
+            },
+            ContractValidationError::InvalidEvScore,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).expect("serialize");
+            let restored: ContractValidationError =
+                serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*v, restored);
+        }
+    }
+
+    #[test]
+    fn contract_validation_error_implements_std_error() {
+        let err: &dyn std::error::Error = &ContractValidationError::InvalidEvScore;
+        assert!(!format!("{err}").is_empty());
+        assert!(err.source().is_none());
+    }
+
+    #[test]
+    fn ev_tier_serde_all_variants() {
+        for tier in [
+            EvTier::Reject,
+            EvTier::Marginal,
+            EvTier::Positive,
+            EvTier::HighImpact,
+        ] {
+            let json = serde_json::to_string(&tier).expect("serialize");
+            let restored: EvTier = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(tier, restored);
+        }
+    }
+
+    #[test]
+    fn rollout_stage_serde_all_variants() {
+        for stage in [
+            RolloutStage::Shadow,
+            RolloutStage::Canary,
+            RolloutStage::Ramp,
+            RolloutStage::Default,
+        ] {
+            let json = serde_json::to_string(&stage).expect("serialize");
+            let restored: RolloutStage =
+                serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(stage, restored);
+        }
+    }
+
+    #[test]
+    fn contract_version_ordering() {
+        let v1_0 = ContractVersion { major: 1, minor: 0 };
+        let v1_1 = ContractVersion { major: 1, minor: 1 };
+        let v2_0 = ContractVersion { major: 2, minor: 0 };
+        assert!(v1_0 < v1_1);
+        assert!(v1_1 < v2_0);
+    }
+
     #[test]
     fn contract_version_serialization() {
         let v = ContractVersion::CURRENT;

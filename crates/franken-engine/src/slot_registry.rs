@@ -2546,4 +2546,743 @@ mod tests {
             roundtrip.get(&orig_id).unwrap().kind
         );
     }
+
+    // -- SlotId Display and as_str --
+
+    #[test]
+    fn slot_id_display_and_as_str() {
+        let id = SlotId::new("ir-lowering").unwrap();
+        assert_eq!(id.to_string(), "ir-lowering");
+        assert_eq!(id.as_str(), "ir-lowering");
+    }
+
+    #[test]
+    fn slot_id_rejects_underscore() {
+        assert!(matches!(
+            SlotId::new("ir_lowering"),
+            Err(SlotRegistryError::InvalidSlotId { .. })
+        ));
+    }
+
+    #[test]
+    fn slot_id_accepts_digits() {
+        assert!(SlotId::new("parser-v2").is_ok());
+    }
+
+    // -- SlotKind Display all 12 variants --
+
+    #[test]
+    fn slot_kind_display_all_variants() {
+        let expected = [
+            (SlotKind::Parser, "parser"),
+            (SlotKind::IrLowering, "ir-lowering"),
+            (SlotKind::CapabilityLowering, "capability-lowering"),
+            (SlotKind::ExecLowering, "exec-lowering"),
+            (SlotKind::Interpreter, "interpreter"),
+            (SlotKind::ObjectModel, "object-model"),
+            (SlotKind::ScopeModel, "scope-model"),
+            (SlotKind::AsyncRuntime, "async-runtime"),
+            (SlotKind::GarbageCollector, "garbage-collector"),
+            (SlotKind::ModuleLoader, "module-loader"),
+            (SlotKind::HostcallDispatch, "hostcall-dispatch"),
+            (SlotKind::Builtins, "builtins"),
+        ];
+        for (kind, label) in expected {
+            assert_eq!(kind.to_string(), label);
+        }
+    }
+
+    // -- PromotionStatus Display all 4 variants --
+
+    #[test]
+    fn promotion_status_display_all_variants() {
+        assert_eq!(PromotionStatus::Delegate.to_string(), "delegate");
+        let pc = PromotionStatus::PromotionCandidate {
+            candidate_digest: "sha256:abc".to_string(),
+        };
+        assert!(pc.to_string().contains("sha256:abc"));
+        let promoted = PromotionStatus::Promoted {
+            native_digest: "sha256:xyz".to_string(),
+            receipt_id: "r-1".to_string(),
+        };
+        let s = promoted.to_string();
+        assert!(s.contains("sha256:xyz"));
+        assert!(s.contains("r-1"));
+        let demoted = PromotionStatus::Demoted {
+            reason: "regression".to_string(),
+            rollback_digest: "sha256:old".to_string(),
+        };
+        let s = demoted.to_string();
+        assert!(s.contains("regression"));
+        assert!(s.contains("sha256:old"));
+    }
+
+    // -- PromotionStatus is_native / is_delegate --
+
+    #[test]
+    fn promotion_status_is_native_and_is_delegate() {
+        assert!(!PromotionStatus::Delegate.is_native());
+        assert!(PromotionStatus::Delegate.is_delegate());
+
+        let pc = PromotionStatus::PromotionCandidate {
+            candidate_digest: "d".to_string(),
+        };
+        assert!(!pc.is_native());
+        assert!(!pc.is_delegate());
+
+        let promoted = PromotionStatus::Promoted {
+            native_digest: "d".to_string(),
+            receipt_id: "r".to_string(),
+        };
+        assert!(promoted.is_native());
+        assert!(!promoted.is_delegate());
+
+        let demoted = PromotionStatus::Demoted {
+            reason: "r".to_string(),
+            rollback_digest: "d".to_string(),
+        };
+        assert!(!demoted.is_native());
+        assert!(demoted.is_delegate());
+    }
+
+    // -- ReleaseSlotClass Display --
+
+    #[test]
+    fn release_slot_class_display() {
+        assert_eq!(ReleaseSlotClass::Core.to_string(), "core");
+        assert_eq!(ReleaseSlotClass::NonCore.to_string(), "non_core");
+    }
+
+    // -- GaReleaseGuardVerdict Display --
+
+    #[test]
+    fn ga_release_guard_verdict_display() {
+        assert_eq!(GaReleaseGuardVerdict::Pass.to_string(), "pass");
+        assert_eq!(GaReleaseGuardVerdict::Blocked.to_string(), "blocked");
+    }
+
+    // -- SlotRegistryError Display all 6 variants --
+
+    #[test]
+    fn slot_registry_error_display_all_variants() {
+        let errors = [
+            (
+                SlotRegistryError::InvalidSlotId {
+                    id: "BAD".to_string(),
+                    reason: "uppercase".to_string(),
+                },
+                "BAD",
+            ),
+            (
+                SlotRegistryError::DuplicateSlotId {
+                    id: "parser".to_string(),
+                },
+                "duplicate",
+            ),
+            (
+                SlotRegistryError::SlotNotFound {
+                    id: "ghost".to_string(),
+                },
+                "not found",
+            ),
+            (
+                SlotRegistryError::InconsistentAuthority {
+                    id: "parser".to_string(),
+                    detail: "mismatch".to_string(),
+                },
+                "inconsistent",
+            ),
+            (
+                SlotRegistryError::InvalidTransition {
+                    id: "parser".to_string(),
+                    from: "delegate".to_string(),
+                    to: "promoted".to_string(),
+                },
+                "invalid transition",
+            ),
+            (
+                SlotRegistryError::AuthorityBroadening {
+                    id: "parser".to_string(),
+                    detail: "extra caps".to_string(),
+                },
+                "broadening",
+            ),
+        ];
+        for (err, expected_substr) in errors {
+            let s = err.to_string();
+            assert!(
+                s.contains(expected_substr),
+                "'{s}' should contain '{expected_substr}'"
+            );
+        }
+    }
+
+    // -- GaReleaseGuardError Display all 6 variants --
+
+    #[test]
+    fn ga_release_guard_error_display_all_variants() {
+        let errors: Vec<GaReleaseGuardError> = vec![
+            GaReleaseGuardError::InvalidInput {
+                field: "trace_id".to_string(),
+                detail: "empty".to_string(),
+            },
+            GaReleaseGuardError::UnknownCoreSlot {
+                slot_id: "ghost".to_string(),
+            },
+            GaReleaseGuardError::InvalidExemption {
+                exemption_id: "ex-1".to_string(),
+                detail: "expired".to_string(),
+            },
+            GaReleaseGuardError::DuplicateExemption {
+                slot_id: "parser".to_string(),
+            },
+            GaReleaseGuardError::InvalidLineageArtifact {
+                slot_id: "parser".to_string(),
+                detail: "empty digest".to_string(),
+            },
+            GaReleaseGuardError::DuplicateLineageArtifact {
+                slot_id: "parser".to_string(),
+            },
+        ];
+        for err in errors {
+            let s = err.to_string();
+            assert!(!s.is_empty());
+        }
+    }
+
+    // -- ReplacementProgressError Display all 3 variants --
+
+    #[test]
+    fn replacement_progress_error_display_all_variants() {
+        let errors: Vec<ReplacementProgressError> = vec![
+            ReplacementProgressError::InvalidInput {
+                field: "trace_id".to_string(),
+                detail: "empty".to_string(),
+            },
+            ReplacementProgressError::UnknownSignalSlot {
+                slot_id: "ghost".to_string(),
+            },
+            ReplacementProgressError::InvalidSignal {
+                slot_id: "parser".to_string(),
+                detail: "zero weight".to_string(),
+            },
+        ];
+        for err in errors {
+            let s = err.to_string();
+            assert!(!s.is_empty());
+        }
+    }
+
+    // -- SlotReplacementSignal default --
+
+    #[test]
+    fn slot_replacement_signal_default() {
+        let s = SlotReplacementSignal::default();
+        assert_eq!(s.invocation_weight_millionths, 1_000_000);
+        assert_eq!(s.throughput_uplift_millionths, 0);
+        assert_eq!(s.security_risk_reduction_millionths, 0);
+    }
+
+    // -- GaReleaseGuardConfig default --
+
+    #[test]
+    fn ga_release_guard_config_default() {
+        let config = GaReleaseGuardConfig::default();
+        assert!(config.core_slots.is_empty());
+        assert!(config.non_core_delegate_limit.is_none());
+        assert!(config.lineage_dashboard_ref.contains("frankentui"));
+    }
+
+    // -- Serde roundtrips --
+
+    #[test]
+    fn slot_id_serde_roundtrip() {
+        let id = SlotId::new("parser").unwrap();
+        let json = serde_json::to_string(&id).unwrap();
+        let back: SlotId = serde_json::from_str(&json).unwrap();
+        assert_eq!(id, back);
+    }
+
+    #[test]
+    fn slot_kind_serde_roundtrip() {
+        for kind in [
+            SlotKind::Parser,
+            SlotKind::IrLowering,
+            SlotKind::CapabilityLowering,
+            SlotKind::ExecLowering,
+            SlotKind::Interpreter,
+            SlotKind::ObjectModel,
+            SlotKind::ScopeModel,
+            SlotKind::AsyncRuntime,
+            SlotKind::GarbageCollector,
+            SlotKind::ModuleLoader,
+            SlotKind::HostcallDispatch,
+            SlotKind::Builtins,
+        ] {
+            let json = serde_json::to_value(kind).unwrap();
+            let back: SlotKind = serde_json::from_value(json).unwrap();
+            assert_eq!(kind, back);
+        }
+    }
+
+    #[test]
+    fn slot_capability_serde_roundtrip() {
+        for cap in [
+            SlotCapability::ReadSource,
+            SlotCapability::EmitIr,
+            SlotCapability::HeapAlloc,
+            SlotCapability::ScheduleAsync,
+            SlotCapability::InvokeHostcall,
+            SlotCapability::ModuleAccess,
+            SlotCapability::TriggerGc,
+            SlotCapability::EmitEvidence,
+        ] {
+            let json = serde_json::to_value(cap).unwrap();
+            let back: SlotCapability = serde_json::from_value(json).unwrap();
+            assert_eq!(cap, back);
+        }
+    }
+
+    #[test]
+    fn promotion_status_serde_roundtrip() {
+        let statuses = vec![
+            PromotionStatus::Delegate,
+            PromotionStatus::PromotionCandidate {
+                candidate_digest: "sha256:c".to_string(),
+            },
+            PromotionStatus::Promoted {
+                native_digest: "sha256:n".to_string(),
+                receipt_id: "r-1".to_string(),
+            },
+            PromotionStatus::Demoted {
+                reason: "bug".to_string(),
+                rollback_digest: "sha256:old".to_string(),
+            },
+        ];
+        for status in statuses {
+            let json = serde_json::to_string(&status).unwrap();
+            let back: PromotionStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(status, back);
+        }
+    }
+
+    #[test]
+    fn promotion_transition_serde_roundtrip() {
+        for t in [
+            PromotionTransition::RegisteredDelegate,
+            PromotionTransition::EnteredCandidacy,
+            PromotionTransition::PromotedToNative,
+            PromotionTransition::DemotedToDelegate,
+            PromotionTransition::RolledBack,
+        ] {
+            let json = serde_json::to_value(t).unwrap();
+            let back: PromotionTransition = serde_json::from_value(json).unwrap();
+            assert_eq!(t, back);
+        }
+    }
+
+    #[test]
+    fn slot_registry_error_serde_roundtrip() {
+        let errors = vec![
+            SlotRegistryError::InvalidSlotId {
+                id: "BAD".to_string(),
+                reason: "uppercase".to_string(),
+            },
+            SlotRegistryError::DuplicateSlotId {
+                id: "parser".to_string(),
+            },
+            SlotRegistryError::SlotNotFound {
+                id: "ghost".to_string(),
+            },
+            SlotRegistryError::InconsistentAuthority {
+                id: "parser".to_string(),
+                detail: "mismatch".to_string(),
+            },
+            SlotRegistryError::InvalidTransition {
+                id: "parser".to_string(),
+                from: "delegate".to_string(),
+                to: "promoted".to_string(),
+            },
+            SlotRegistryError::AuthorityBroadening {
+                id: "parser".to_string(),
+                detail: "extra caps".to_string(),
+            },
+        ];
+        for err in errors {
+            let json = serde_json::to_string(&err).unwrap();
+            let back: SlotRegistryError = serde_json::from_str(&json).unwrap();
+            assert_eq!(err, back);
+        }
+    }
+
+    #[test]
+    fn ga_release_guard_error_serde_roundtrip() {
+        let errors: Vec<GaReleaseGuardError> = vec![
+            GaReleaseGuardError::InvalidInput {
+                field: "f".to_string(),
+                detail: "d".to_string(),
+            },
+            GaReleaseGuardError::UnknownCoreSlot {
+                slot_id: "s".to_string(),
+            },
+            GaReleaseGuardError::InvalidExemption {
+                exemption_id: "e".to_string(),
+                detail: "d".to_string(),
+            },
+            GaReleaseGuardError::DuplicateExemption {
+                slot_id: "s".to_string(),
+            },
+            GaReleaseGuardError::InvalidLineageArtifact {
+                slot_id: "s".to_string(),
+                detail: "d".to_string(),
+            },
+            GaReleaseGuardError::DuplicateLineageArtifact {
+                slot_id: "s".to_string(),
+            },
+        ];
+        for err in errors {
+            let json = serde_json::to_string(&err).unwrap();
+            let back: GaReleaseGuardError = serde_json::from_str(&json).unwrap();
+            assert_eq!(err, back);
+        }
+    }
+
+    #[test]
+    fn release_slot_class_serde_roundtrip() {
+        for class in [ReleaseSlotClass::Core, ReleaseSlotClass::NonCore] {
+            let json = serde_json::to_value(class).unwrap();
+            let back: ReleaseSlotClass = serde_json::from_value(json).unwrap();
+            assert_eq!(class, back);
+        }
+    }
+
+    #[test]
+    fn ga_release_guard_verdict_serde_roundtrip() {
+        for v in [GaReleaseGuardVerdict::Pass, GaReleaseGuardVerdict::Blocked] {
+            let json = serde_json::to_value(v).unwrap();
+            let back: GaReleaseGuardVerdict = serde_json::from_value(json).unwrap();
+            assert_eq!(v, back);
+        }
+    }
+
+    // -- Empty registry --
+
+    #[test]
+    fn empty_registry_is_empty() {
+        let reg = SlotRegistry::new();
+        assert!(reg.is_empty());
+        assert_eq!(reg.len(), 0);
+        assert_eq!(reg.native_count(), 0);
+        assert_eq!(reg.delegate_count(), 0);
+        assert!((reg.native_coverage() - 0.0).abs() < f64::EPSILON);
+    }
+
+    // -- Replacement progress validation --
+
+    #[test]
+    fn replacement_progress_rejects_empty_trace_id() {
+        let reg = SlotRegistry::new();
+        let err = reg
+            .snapshot_replacement_progress("", "d", "p", &BTreeMap::new())
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            ReplacementProgressError::InvalidInput { field, .. } if field == "trace_id"
+        ));
+    }
+
+    #[test]
+    fn replacement_progress_rejects_empty_decision_id() {
+        let reg = SlotRegistry::new();
+        let err = reg
+            .snapshot_replacement_progress("t", "", "p", &BTreeMap::new())
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            ReplacementProgressError::InvalidInput { field, .. } if field == "decision_id"
+        ));
+    }
+
+    #[test]
+    fn replacement_progress_rejects_empty_policy_id() {
+        let reg = SlotRegistry::new();
+        let err = reg
+            .snapshot_replacement_progress("t", "d", "", &BTreeMap::new())
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            ReplacementProgressError::InvalidInput { field, .. } if field == "policy_id"
+        ));
+    }
+
+    // -- Lineage event recording --
+
+    #[test]
+    fn lineage_records_each_transition() {
+        let mut reg = SlotRegistry::new();
+        let id = SlotId::new("parser").unwrap();
+        reg.register_delegate(
+            id.clone(),
+            SlotKind::Parser,
+            test_authority(),
+            "sha256:d1".into(),
+            "t0".into(),
+        )
+        .unwrap();
+        let entry = reg.get(&id).unwrap();
+        assert_eq!(entry.promotion_lineage.len(), 1);
+        assert_eq!(
+            entry.promotion_lineage[0].transition,
+            PromotionTransition::RegisteredDelegate
+        );
+        assert!(entry.promotion_lineage[0].receipt_id.is_none());
+
+        reg.begin_candidacy(&id, "sha256:c1".into(), "t1".into())
+            .unwrap();
+        let entry = reg.get(&id).unwrap();
+        assert_eq!(entry.promotion_lineage.len(), 2);
+        assert_eq!(
+            entry.promotion_lineage[1].transition,
+            PromotionTransition::EnteredCandidacy
+        );
+    }
+
+    // -- Authority envelope edge cases --
+
+    #[test]
+    fn empty_authority_envelope_is_consistent() {
+        let env = AuthorityEnvelope {
+            required: vec![],
+            permitted: vec![],
+        };
+        assert!(env.is_consistent());
+    }
+
+    #[test]
+    fn empty_authority_subsumes_empty() {
+        let a = AuthorityEnvelope {
+            required: vec![],
+            permitted: vec![],
+        };
+        let b = AuthorityEnvelope {
+            required: vec![],
+            permitted: vec![],
+        };
+        assert!(a.subsumes(&b));
+    }
+
+    // -- SlotEntry get for nonexistent --
+
+    #[test]
+    fn get_returns_none_for_missing_slot() {
+        let reg = SlotRegistry::new();
+        let id = SlotId::new("nope").unwrap();
+        assert!(reg.get(&id).is_none());
+    }
+
+    // -- Rollback target after demotion --
+
+    #[test]
+    fn rollback_target_set_after_demotion() {
+        let mut reg = SlotRegistry::new();
+        let id = SlotId::new("parser").unwrap();
+        reg.register_delegate(
+            id.clone(),
+            SlotKind::Parser,
+            test_authority(),
+            "sha256:d1".into(),
+            "t0".into(),
+        )
+        .unwrap();
+        reg.begin_candidacy(&id, "sha256:c1".into(), "t1".into())
+            .unwrap();
+        reg.promote(
+            &id,
+            "sha256:n1".into(),
+            &narrower_authority(),
+            "r1".into(),
+            "t2".into(),
+        )
+        .unwrap();
+        reg.demote(&id, "regression".into(), "t3".into()).unwrap();
+
+        let entry = reg.get(&id).unwrap();
+        assert_eq!(entry.rollback_target.as_deref(), Some("sha256:d1"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: struct serde roundtrips
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn authority_envelope_serde_roundtrip() {
+        let ae = AuthorityEnvelope {
+            required: vec![SlotCapability::ReadSource, SlotCapability::EmitIr],
+            permitted: vec![
+                SlotCapability::ReadSource,
+                SlotCapability::EmitIr,
+                SlotCapability::EmitEvidence,
+            ],
+        };
+        let json = serde_json::to_string(&ae).unwrap();
+        let restored: AuthorityEnvelope = serde_json::from_str(&json).unwrap();
+        assert_eq!(ae, restored);
+    }
+
+    #[test]
+    fn lineage_event_serde_roundtrip() {
+        let ev = LineageEvent {
+            transition: PromotionTransition::PromotedToNative,
+            digest: "sha256:abc".to_string(),
+            timestamp: "2026-01-01T00:00:00Z".to_string(),
+            receipt_id: Some("r-1".to_string()),
+        };
+        let json = serde_json::to_string(&ev).unwrap();
+        let restored: LineageEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(ev, restored);
+    }
+
+    #[test]
+    fn core_slot_exemption_serde_roundtrip() {
+        let ex = CoreSlotExemption {
+            exemption_id: "ex-1".to_string(),
+            slot_id: SlotId::new("parser").unwrap(),
+            approved_by: "admin".to_string(),
+            signed_risk_acknowledgement: "ack".to_string(),
+            remediation_plan: "plan".to_string(),
+            remediation_deadline_epoch: 100,
+            expires_at_epoch: 200,
+        };
+        let json = serde_json::to_string(&ex).unwrap();
+        let restored: CoreSlotExemption = serde_json::from_str(&json).unwrap();
+        assert_eq!(ex, restored);
+    }
+
+    #[test]
+    fn ga_release_guard_event_serde_roundtrip() {
+        let ev = GaReleaseGuardEvent {
+            trace_id: "t-1".to_string(),
+            decision_id: "d-1".to_string(),
+            policy_id: "p-1".to_string(),
+            component: "ga_guard".to_string(),
+            event: "evaluated".to_string(),
+            outcome: "pass".to_string(),
+            error_code: None,
+            slot_id: Some("parser".to_string()),
+            detail: "ok".to_string(),
+        };
+        let json = serde_json::to_string(&ev).unwrap();
+        let restored: GaReleaseGuardEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(ev, restored);
+    }
+
+    #[test]
+    fn replacement_priority_candidate_serde_roundtrip() {
+        let c = ReplacementPriorityCandidate {
+            slot_id: SlotId::new("parser").unwrap(),
+            slot_kind: SlotKind::Parser,
+            promotion_status: "delegate".to_string(),
+            delegate_backed: true,
+            invocation_weight_millionths: 500_000,
+            throughput_uplift_millionths: 200_000,
+            security_risk_reduction_millionths: 100_000,
+            expected_value_score_millionths: 300_000,
+        };
+        let json = serde_json::to_string(&c).unwrap();
+        let restored: ReplacementPriorityCandidate = serde_json::from_str(&json).unwrap();
+        assert_eq!(c, restored);
+    }
+
+    #[test]
+    fn replacement_progress_event_serde_roundtrip() {
+        let ev = ReplacementProgressEvent {
+            trace_id: "t-1".to_string(),
+            decision_id: "d-1".to_string(),
+            policy_id: "p-1".to_string(),
+            component: "replacement".to_string(),
+            event: "snapshot".to_string(),
+            outcome: "ok".to_string(),
+            error_code: None,
+            slot_id: None,
+            detail: "complete".to_string(),
+        };
+        let json = serde_json::to_string(&ev).unwrap();
+        let restored: ReplacementProgressEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(ev, restored);
+    }
+
+    #[test]
+    fn slot_replacement_signal_serde_roundtrip() {
+        let sig = SlotReplacementSignal {
+            invocation_weight_millionths: 300_000,
+            throughput_uplift_millionths: 50_000,
+            security_risk_reduction_millionths: 100_000,
+        };
+        let json = serde_json::to_string(&sig).unwrap();
+        let restored: SlotReplacementSignal = serde_json::from_str(&json).unwrap();
+        assert_eq!(sig, restored);
+    }
+
+    #[test]
+    fn replacement_progress_error_serde_roundtrip() {
+        let errors: Vec<ReplacementProgressError> = vec![
+            ReplacementProgressError::InvalidInput {
+                field: "trace_id".to_string(),
+                detail: "empty".to_string(),
+            },
+            ReplacementProgressError::UnknownSignalSlot {
+                slot_id: "unknown".to_string(),
+            },
+            ReplacementProgressError::InvalidSignal {
+                slot_id: "parser".to_string(),
+                detail: "zero weight".to_string(),
+            },
+        ];
+        for err in &errors {
+            let json = serde_json::to_string(err).unwrap();
+            let restored: ReplacementProgressError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*err, restored);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: ordering
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn slot_id_ordering() {
+        let a = SlotId::new("alpha").unwrap();
+        let b = SlotId::new("beta").unwrap();
+        assert!(a < b);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: error is std::error::Error
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn slot_registry_error_is_std_error() {
+        let err: Box<dyn std::error::Error> = Box::new(SlotRegistryError::SlotNotFound {
+            id: "x".to_string(),
+        });
+        assert!(!err.to_string().is_empty());
+    }
+
+    #[test]
+    fn ga_release_guard_error_is_std_error() {
+        let err: Box<dyn std::error::Error> = Box::new(GaReleaseGuardError::InvalidInput {
+            field: "f".to_string(),
+            detail: "d".to_string(),
+        });
+        assert!(!err.to_string().is_empty());
+    }
+
+    #[test]
+    fn replacement_progress_error_is_std_error() {
+        let err: Box<dyn std::error::Error> = Box::new(ReplacementProgressError::InvalidInput {
+            field: "f".to_string(),
+            detail: "d".to_string(),
+        });
+        assert!(!err.to_string().is_empty());
+    }
 }

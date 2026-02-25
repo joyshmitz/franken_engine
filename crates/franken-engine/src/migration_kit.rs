@@ -2747,4 +2747,393 @@ mod tests {
                 < RemediationEffort::Significant.weight_millionths()
         );
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: leaf enum serde roundtrips
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn source_runtime_serde_roundtrip() {
+        for rt in [SourceRuntime::Node, SourceRuntime::Bun] {
+            let json = serde_json::to_string(&rt).unwrap();
+            let restored: SourceRuntime = serde_json::from_str(&json).unwrap();
+            assert_eq!(rt, restored);
+        }
+    }
+
+    #[test]
+    fn api_support_level_serde_roundtrip() {
+        for level in [
+            ApiSupportLevel::FullySupported,
+            ApiSupportLevel::PartiallySupported,
+            ApiSupportLevel::Unsupported,
+            ApiSupportLevel::Deprecated,
+            ApiSupportLevel::RequiresPolyfill,
+        ] {
+            let json = serde_json::to_string(&level).unwrap();
+            let restored: ApiSupportLevel = serde_json::from_str(&json).unwrap();
+            assert_eq!(level, restored);
+        }
+    }
+
+    #[test]
+    fn divergence_kind_serde_roundtrip() {
+        for kind in [
+            DivergenceKind::SemanticDifference,
+            DivergenceKind::TimingDifference,
+            DivergenceKind::OutputFormatDifference,
+            DivergenceKind::ErrorBehaviorDifference,
+            DivergenceKind::MissingFeature,
+            DivergenceKind::SecurityPolicyDifference,
+        ] {
+            let json = serde_json::to_string(&kind).unwrap();
+            let restored: DivergenceKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(kind, restored);
+        }
+    }
+
+    #[test]
+    fn divergence_severity_serde_roundtrip() {
+        for sev in [
+            DivergenceSeverity::Critical,
+            DivergenceSeverity::High,
+            DivergenceSeverity::Medium,
+            DivergenceSeverity::Low,
+            DivergenceSeverity::Informational,
+        ] {
+            let json = serde_json::to_string(&sev).unwrap();
+            let restored: DivergenceSeverity = serde_json::from_str(&json).unwrap();
+            assert_eq!(sev, restored);
+        }
+    }
+
+    #[test]
+    fn inferred_capability_kind_serde_roundtrip() {
+        for kind in [
+            InferredCapabilityKind::FileSystem,
+            InferredCapabilityKind::Network,
+            InferredCapabilityKind::ProcessSpawn,
+            InferredCapabilityKind::EnvironmentAccess,
+            InferredCapabilityKind::CryptoAccess,
+            InferredCapabilityKind::TimerAccess,
+            InferredCapabilityKind::WorkerThreads,
+            InferredCapabilityKind::ChildProcess,
+            InferredCapabilityKind::DynamicImport,
+            InferredCapabilityKind::WasmExecution,
+            InferredCapabilityKind::SharedMemory,
+            InferredCapabilityKind::NativeAddon,
+        ] {
+            let json = serde_json::to_string(&kind).unwrap();
+            let restored: InferredCapabilityKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(kind, restored);
+        }
+    }
+
+    #[test]
+    fn remediation_category_serde_roundtrip() {
+        for cat in [
+            RemediationCategory::ApiReplacement,
+            RemediationCategory::DependencySwap,
+            RemediationCategory::ConfigChange,
+            RemediationCategory::CodeRefactor,
+            RemediationCategory::PolyfillAddition,
+            RemediationCategory::SecurityPolicyUpdate,
+            RemediationCategory::FeatureDisable,
+        ] {
+            let json = serde_json::to_string(&cat).unwrap();
+            let restored: RemediationCategory = serde_json::from_str(&json).unwrap();
+            assert_eq!(cat, restored);
+        }
+    }
+
+    #[test]
+    fn remediation_effort_serde_roundtrip() {
+        for effort in [
+            RemediationEffort::Trivial,
+            RemediationEffort::Low,
+            RemediationEffort::Medium,
+            RemediationEffort::High,
+            RemediationEffort::Significant,
+        ] {
+            let json = serde_json::to_string(&effort).unwrap();
+            let restored: RemediationEffort = serde_json::from_str(&json).unwrap();
+            assert_eq!(effort, restored);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: MigrationKitError serde all variants
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn migration_kit_error_serde_all_variants() {
+        let errors: Vec<MigrationKitError> = vec![
+            MigrationKitError::AnalysisFailed { detail: "a".into() },
+            MigrationKitError::ManifestGenerationFailed { detail: "b".into() },
+            MigrationKitError::CapabilityInferenceFailed { detail: "c".into() },
+            MigrationKitError::BehaviorValidationFailed { detail: "d".into() },
+            MigrationKitError::RemediationUnavailable { detail: "e".into() },
+            MigrationKitError::InvalidPackageJson { detail: "f".into() },
+            MigrationKitError::UnsupportedApiDetected { api: "g".into(), detail: "h".into() },
+            MigrationKitError::IncompatibleDependency { name: "i".into(), reason: "j".into() },
+            MigrationKitError::LockstepMismatch { runtime: "k".into(), detail: "l".into() },
+            MigrationKitError::ReportGenerationFailed { detail: "m".into() },
+            MigrationKitError::DeterminismViolation { detail: "n".into() },
+            MigrationKitError::TooManyEntries { kind: "o".into(), count: 99, max: 50 },
+            MigrationKitError::InternalError { detail: "p".into() },
+        ];
+        for err in &errors {
+            let json = serde_json::to_string(err).unwrap();
+            let restored: MigrationKitError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*err, restored);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: MigrationKitError Display all variants
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn migration_kit_error_display_all_variants() {
+        let cases: Vec<(MigrationKitError, &str)> = vec![
+            (MigrationKitError::AnalysisFailed { detail: "x".into() }, "analysis failed: x"),
+            (MigrationKitError::ManifestGenerationFailed { detail: "x".into() }, "manifest generation failed: x"),
+            (MigrationKitError::CapabilityInferenceFailed { detail: "x".into() }, "capability inference failed: x"),
+            (MigrationKitError::BehaviorValidationFailed { detail: "x".into() }, "behavior validation failed: x"),
+            (MigrationKitError::RemediationUnavailable { detail: "x".into() }, "remediation unavailable: x"),
+            (MigrationKitError::InvalidPackageJson { detail: "x".into() }, "invalid package.json: x"),
+            (MigrationKitError::UnsupportedApiDetected { api: "a".into(), detail: "d".into() }, "unsupported API 'a': d"),
+            (MigrationKitError::IncompatibleDependency { name: "n".into(), reason: "r".into() }, "incompatible dependency 'n': r"),
+            (MigrationKitError::LockstepMismatch { runtime: "Bun".into(), detail: "x".into() }, "lockstep mismatch for Bun: x"),
+            (MigrationKitError::ReportGenerationFailed { detail: "x".into() }, "report generation failed: x"),
+            (MigrationKitError::DeterminismViolation { detail: "x".into() }, "determinism violation: x"),
+            (MigrationKitError::TooManyEntries { kind: "api".into(), count: 99, max: 50 }, "too many api entries: 99 exceeds max 50"),
+            (MigrationKitError::InternalError { detail: "x".into() }, "internal error: x"),
+        ];
+        for (err, expected) in &cases {
+            assert_eq!(err.to_string(), *expected);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: MigrationConfig default values
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn migration_config_default_values() {
+        let c = MigrationConfig::default();
+        assert_eq!(c.source_runtime, SourceRuntime::Node);
+        assert!(c.analyze_dependencies);
+        assert!(c.infer_capabilities);
+        assert!(c.run_behavior_validation);
+        assert_eq!(c.min_compatibility_score_millionths, 800_000);
+        assert_eq!(c.max_divergence_count, 100);
+        assert_eq!(c.deterministic_seed, 42);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: all capability kind names
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn inferred_capability_kind_all_names() {
+        let expected = [
+            (InferredCapabilityKind::FileSystem, "cap:fs"),
+            (InferredCapabilityKind::Network, "cap:net"),
+            (InferredCapabilityKind::ProcessSpawn, "cap:process:spawn"),
+            (InferredCapabilityKind::EnvironmentAccess, "cap:env"),
+            (InferredCapabilityKind::CryptoAccess, "cap:crypto"),
+            (InferredCapabilityKind::TimerAccess, "cap:timer"),
+            (InferredCapabilityKind::WorkerThreads, "cap:worker"),
+            (InferredCapabilityKind::ChildProcess, "cap:process:child"),
+            (InferredCapabilityKind::DynamicImport, "cap:import:dynamic"),
+            (InferredCapabilityKind::WasmExecution, "cap:wasm"),
+            (InferredCapabilityKind::SharedMemory, "cap:shared-memory"),
+            (InferredCapabilityKind::NativeAddon, "cap:native-addon"),
+        ];
+        for (kind, name) in &expected {
+            assert_eq!(kind.franken_capability_name(), *name);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: all weight/penalty values
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn api_support_level_all_weights() {
+        assert_eq!(ApiSupportLevel::FullySupported.compatibility_weight_millionths(), 1_000_000);
+        assert_eq!(ApiSupportLevel::PartiallySupported.compatibility_weight_millionths(), 700_000);
+        assert_eq!(ApiSupportLevel::Deprecated.compatibility_weight_millionths(), 500_000);
+        assert_eq!(ApiSupportLevel::RequiresPolyfill.compatibility_weight_millionths(), 400_000);
+        assert_eq!(ApiSupportLevel::Unsupported.compatibility_weight_millionths(), 0);
+    }
+
+    #[test]
+    fn divergence_severity_all_penalties() {
+        assert_eq!(DivergenceSeverity::Critical.penalty_millionths(), 200_000);
+        assert_eq!(DivergenceSeverity::High.penalty_millionths(), 100_000);
+        assert_eq!(DivergenceSeverity::Medium.penalty_millionths(), 50_000);
+        assert_eq!(DivergenceSeverity::Low.penalty_millionths(), 20_000);
+        assert_eq!(DivergenceSeverity::Informational.penalty_millionths(), 0);
+    }
+
+    #[test]
+    fn remediation_effort_all_weights() {
+        assert_eq!(RemediationEffort::Trivial.weight_millionths(), 100_000);
+        assert_eq!(RemediationEffort::Low.weight_millionths(), 300_000);
+        assert_eq!(RemediationEffort::Medium.weight_millionths(), 500_000);
+        assert_eq!(RemediationEffort::High.weight_millionths(), 800_000);
+        assert_eq!(RemediationEffort::Significant.weight_millionths(), 1_000_000);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: struct serde roundtrips
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn migration_event_serde_roundtrip() {
+        let event = MigrationEvent {
+            trace_id: "t-1".to_string(),
+            decision_id: "d-1".to_string(),
+            component: "migration_kit".to_string(),
+            event: "test".to_string(),
+            outcome: "ok".to_string(),
+            error_code: Some("FE-MK-0001".to_string()),
+            details: BTreeMap::from([("k".to_string(), "v".to_string())]),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let restored: MigrationEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, restored);
+    }
+
+    #[test]
+    fn lockstep_test_result_serde_roundtrip() {
+        let r = LockstepTestResult {
+            test_name: "t1".to_string(),
+            node_output: "ok".to_string(),
+            franken_output: "ok".to_string(),
+            node_exit_code: 0,
+            franken_exit_code: 1,
+            node_duration_us: 100,
+            franken_duration_us: 200,
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        let restored: LockstepTestResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(r, restored);
+    }
+
+    #[test]
+    fn source_file_serde_roundtrip() {
+        let sf = SourceFile {
+            path: "index.js".to_string(),
+            content: "console.log('hi');".to_string(),
+        };
+        let json = serde_json::to_string(&sf).unwrap();
+        let restored: SourceFile = serde_json::from_str(&json).unwrap();
+        assert_eq!(sf, restored);
+    }
+
+    #[test]
+    fn api_usage_entry_serde_roundtrip() {
+        let entry = ApiUsageEntry {
+            api_name: "readFile".to_string(),
+            module_path: "fs".to_string(),
+            usage_count: 5,
+            support_level: ApiSupportLevel::FullySupported,
+            notes: "sandboxed".to_string(),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let restored: ApiUsageEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry, restored);
+    }
+
+    #[test]
+    fn dependency_entry_serde_roundtrip() {
+        let de = DependencyEntry {
+            name: "lodash".to_string(),
+            version_spec: "^4.17.21".to_string(),
+            compatible: true,
+            migration_notes: "pure JS".to_string(),
+        };
+        let json = serde_json::to_string(&de).unwrap();
+        let restored: DependencyEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(de, restored);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: ordering tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn api_support_level_ordering() {
+        assert!(ApiSupportLevel::FullySupported < ApiSupportLevel::Unsupported);
+        assert!(ApiSupportLevel::PartiallySupported < ApiSupportLevel::Deprecated);
+    }
+
+    #[test]
+    fn divergence_severity_ordering() {
+        assert!(DivergenceSeverity::Critical < DivergenceSeverity::Informational);
+    }
+
+    #[test]
+    fn remediation_effort_ordering() {
+        assert!(RemediationEffort::Trivial < RemediationEffort::Significant);
+    }
+
+    #[test]
+    fn source_runtime_ordering() {
+        assert!(SourceRuntime::Node < SourceRuntime::Bun);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: is_migration_blocker completeness
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn api_support_level_blocker_completeness() {
+        assert!(!ApiSupportLevel::FullySupported.is_migration_blocker());
+        assert!(!ApiSupportLevel::PartiallySupported.is_migration_blocker());
+        assert!(ApiSupportLevel::Unsupported.is_migration_blocker());
+        assert!(!ApiSupportLevel::Deprecated.is_migration_blocker());
+        assert!(!ApiSupportLevel::RequiresPolyfill.is_migration_blocker());
+    }
+
+    // -- Enrichment: std::error --
+
+    #[test]
+    fn migration_kit_error_implements_std_error() {
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(MigrationKitError::AnalysisFailed {
+                detail: "fail".into(),
+            }),
+            Box::new(MigrationKitError::ManifestGenerationFailed {
+                detail: "fail".into(),
+            }),
+            Box::new(MigrationKitError::CapabilityInferenceFailed {
+                detail: "fail".into(),
+            }),
+            Box::new(MigrationKitError::InvalidPackageJson {
+                detail: "missing".into(),
+            }),
+            Box::new(MigrationKitError::UnsupportedApiDetected {
+                api: "eval".into(),
+                detail: "banned".into(),
+            }),
+            Box::new(MigrationKitError::IncompatibleDependency {
+                name: "lodash".into(),
+                reason: "native".into(),
+            }),
+            Box::new(MigrationKitError::DeterminismViolation {
+                detail: "Math.random".into(),
+            }),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            let msg = format!("{v}");
+            assert!(!msg.is_empty());
+            displays.insert(msg);
+        }
+        assert_eq!(displays.len(), 7, "all 7 tested variants produce distinct messages");
+    }
 }

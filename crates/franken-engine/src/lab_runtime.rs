@@ -783,6 +783,39 @@ mod tests {
         );
     }
 
+    // -- Enrichment: serde roundtrips --
+
+    #[test]
+    fn lab_event_serde_roundtrip() {
+        let event = LabEvent {
+            virtual_time: 1000,
+            step_index: 5,
+            action: "spawn".to_string(),
+            task_id: Some(42),
+            region_id: Some("region-1".to_string()),
+            outcome: "ok".to_string(),
+        };
+        let json = serde_json::to_string(&event).expect("serialize");
+        let restored: LabEvent = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(event, restored);
+    }
+
+    #[test]
+    fn fault_kind_serde_all_variants() {
+        for kind in [
+            FaultKind::Panic,
+            FaultKind::ChannelDisconnect,
+            FaultKind::ObligationLeak,
+            FaultKind::DeadlineExpired,
+            FaultKind::RegionClose,
+        ] {
+            let json = serde_json::to_string(&kind).expect("serialize");
+            let restored: FaultKind =
+                serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(kind, restored);
+        }
+    }
+
     #[test]
     fn nonexistent_task_returns_none() {
         let rt = LabRuntime::new(42);

@@ -1676,4 +1676,277 @@ mod tests {
             FeatureStatus::Passing
         );
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: leaf enum serde roundtrips
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn feature_status_serde_roundtrip() {
+        for v in [
+            FeatureStatus::NotStarted,
+            FeatureStatus::InProgress,
+            FeatureStatus::Passing,
+            FeatureStatus::Waived,
+        ] {
+            let json = serde_json::to_string(&v).unwrap();
+            let restored: FeatureStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, restored);
+        }
+    }
+
+    #[test]
+    fn es_version_serde_roundtrip() {
+        let json = serde_json::to_string(&EsVersion::Es2020).unwrap();
+        let restored: EsVersion = serde_json::from_str(&json).unwrap();
+        assert_eq!(EsVersion::Es2020, restored);
+    }
+
+    #[test]
+    fn lockstep_runtime_serde_roundtrip() {
+        for v in [LockstepRuntime::Node, LockstepRuntime::Bun] {
+            let json = serde_json::to_string(&v).unwrap();
+            let restored: LockstepRuntime = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, restored);
+        }
+    }
+
+    #[test]
+    fn feature_area_serde_roundtrip() {
+        for v in FeatureArea::all() {
+            let json = serde_json::to_string(v).unwrap();
+            let restored: FeatureArea = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, restored);
+        }
+    }
+
+    #[test]
+    fn parity_tracker_error_serde_all_variants() {
+        let errors: Vec<ParityTrackerError> = vec![
+            ParityTrackerError::FeatureNotFound {
+                feature_id: "f".to_string(),
+            },
+            ParityTrackerError::WaiverNotFound {
+                waiver_id: "w".to_string(),
+            },
+            ParityTrackerError::WaiverAlreadyExists {
+                waiver_id: "w".to_string(),
+            },
+            ParityTrackerError::WaiverSealed {
+                waiver_id: "w".to_string(),
+            },
+            ParityTrackerError::InvalidWaiver {
+                detail: "d".to_string(),
+            },
+            ParityTrackerError::InvalidMetrics {
+                detail: "d".to_string(),
+            },
+            ParityTrackerError::DuplicateFeature {
+                feature_id: "f".to_string(),
+            },
+            ParityTrackerError::GateEvaluationFailed {
+                detail: "d".to_string(),
+            },
+        ];
+        for err in &errors {
+            let json = serde_json::to_string(err).unwrap();
+            let restored: ParityTrackerError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*err, restored);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: struct serde roundtrips
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test262_result_serde_roundtrip() {
+        let r = Test262Result {
+            area: FeatureArea::BigInt,
+            total: 100,
+            passing: 95,
+            failing_test_ids: vec!["t1".to_string()],
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        let restored: Test262Result = serde_json::from_str(&json).unwrap();
+        assert_eq!(r, restored);
+    }
+
+    #[test]
+    fn lockstep_mismatch_serde_roundtrip() {
+        let m = LockstepMismatch {
+            test_id: "t1".to_string(),
+            expected: "42".to_string(),
+            actual: "43".to_string(),
+        };
+        let json = serde_json::to_string(&m).unwrap();
+        let restored: LockstepMismatch = serde_json::from_str(&json).unwrap();
+        assert_eq!(m, restored);
+    }
+
+    #[test]
+    fn release_gate_criteria_serde_roundtrip() {
+        let c = ReleaseGateCriteria {
+            min_test262_pass_rate_millionths: 950_000,
+            min_lockstep_match_rate_millionths: 950_000,
+            require_waiver_coverage: true,
+        };
+        let json = serde_json::to_string(&c).unwrap();
+        let restored: ReleaseGateCriteria = serde_json::from_str(&json).unwrap();
+        assert_eq!(c, restored);
+    }
+
+    #[test]
+    fn unwaived_failure_serde_roundtrip() {
+        let f = UnwaivedFailure {
+            feature_id: "f".to_string(),
+            failure_type: "test262".to_string(),
+            test_id: "t1".to_string(),
+        };
+        let json = serde_json::to_string(&f).unwrap();
+        let restored: UnwaivedFailure = serde_json::from_str(&json).unwrap();
+        assert_eq!(f, restored);
+    }
+
+    #[test]
+    fn tracker_context_serde_roundtrip() {
+        let c = TrackerContext {
+            trace_id: "t-1".to_string(),
+            decision_id: "d-1".to_string(),
+            policy_id: "p-1".to_string(),
+        };
+        let json = serde_json::to_string(&c).unwrap();
+        let restored: TrackerContext = serde_json::from_str(&json).unwrap();
+        assert_eq!(c, restored);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: default value assertions
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn release_gate_criteria_default_values() {
+        let c = ReleaseGateCriteria::default();
+        assert_eq!(c.min_test262_pass_rate_millionths, 950_000);
+        assert_eq!(c.min_lockstep_match_rate_millionths, 950_000);
+        assert!(c.require_waiver_coverage);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: ordering
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn feature_status_ordering() {
+        assert!(FeatureStatus::NotStarted < FeatureStatus::Waived);
+    }
+
+    #[test]
+    fn feature_area_ordering() {
+        assert!(FeatureArea::OptionalChaining < FeatureArea::ForInOrder);
+    }
+
+    #[test]
+    fn lockstep_runtime_ordering() {
+        assert!(LockstepRuntime::Node < LockstepRuntime::Bun);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: ParityTrackerError Display + is std::error::Error
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parity_tracker_error_display_all_non_empty() {
+        let errors: Vec<ParityTrackerError> = vec![
+            ParityTrackerError::FeatureNotFound {
+                feature_id: "f".to_string(),
+            },
+            ParityTrackerError::WaiverNotFound {
+                waiver_id: "w".to_string(),
+            },
+            ParityTrackerError::WaiverAlreadyExists {
+                waiver_id: "w".to_string(),
+            },
+            ParityTrackerError::WaiverSealed {
+                waiver_id: "w".to_string(),
+            },
+            ParityTrackerError::InvalidWaiver {
+                detail: "d".to_string(),
+            },
+            ParityTrackerError::InvalidMetrics {
+                detail: "d".to_string(),
+            },
+            ParityTrackerError::DuplicateFeature {
+                feature_id: "f".to_string(),
+            },
+            ParityTrackerError::GateEvaluationFailed {
+                detail: "d".to_string(),
+            },
+        ];
+        for err in &errors {
+            assert!(!err.to_string().is_empty());
+        }
+    }
+
+    #[test]
+    fn parity_tracker_error_is_std_error() {
+        let err: Box<dyn std::error::Error> = Box::new(ParityTrackerError::FeatureNotFound {
+            feature_id: "f".to_string(),
+        });
+        assert!(!err.to_string().is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: FeatureArea::all and as_str
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn feature_area_all_has_ten() {
+        assert_eq!(FeatureArea::all().len(), 10);
+    }
+
+    #[test]
+    fn feature_area_as_str_matches_display() {
+        for area in FeatureArea::all() {
+            assert_eq!(area.as_str(), area.to_string());
+        }
+    }
+
+    #[test]
+    fn feature_status_ord() {
+        assert!(FeatureStatus::NotStarted < FeatureStatus::InProgress);
+        assert!(FeatureStatus::InProgress < FeatureStatus::Passing);
+        assert!(FeatureStatus::Passing < FeatureStatus::Waived);
+    }
+
+    #[test]
+    fn lockstep_runtime_ord() {
+        assert!(LockstepRuntime::Node < LockstepRuntime::Bun);
+    }
+
+    #[test]
+    fn feature_area_ord() {
+        assert!(FeatureArea::OptionalChaining < FeatureArea::NullishCoalescing);
+        assert!(FeatureArea::NullishCoalescing < FeatureArea::LogicalAssignment);
+        assert!(FeatureArea::DynamicImport > FeatureArea::WeakReferences);
+    }
+
+    #[test]
+    fn parity_tracker_error_std_error() {
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(ParityTrackerError::FeatureNotFound { feature_id: "f1".into() }),
+            Box::new(ParityTrackerError::WaiverNotFound { waiver_id: "w1".into() }),
+            Box::new(ParityTrackerError::WaiverAlreadyExists { waiver_id: "w2".into() }),
+            Box::new(ParityTrackerError::WaiverSealed { waiver_id: "w3".into() }),
+            Box::new(ParityTrackerError::InvalidWaiver { detail: "bad".into() }),
+            Box::new(ParityTrackerError::InvalidMetrics { detail: "wrong".into() }),
+            Box::new(ParityTrackerError::DuplicateFeature { feature_id: "f2".into() }),
+            Box::new(ParityTrackerError::GateEvaluationFailed { detail: "fail".into() }),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            displays.insert(format!("{v}"));
+        }
+        assert_eq!(displays.len(), 8);
+    }
 }

@@ -787,6 +787,154 @@ mod tests {
 
     // -- Multiple services --
 
+    // -- Enrichment: serde roundtrips, Display, defaults --
+
+    #[test]
+    fn restart_policy_serde_roundtrip_all_variants() {
+        let variants = [
+            RestartPolicy::Permanent,
+            RestartPolicy::Transient,
+            RestartPolicy::Temporary,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).expect("serialize");
+            let restored: RestartPolicy = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*v, restored);
+        }
+    }
+
+    #[test]
+    fn service_state_serde_roundtrip_all_variants() {
+        let variants = [
+            ServiceState::Starting,
+            ServiceState::Running,
+            ServiceState::Failed,
+            ServiceState::Restarting,
+            ServiceState::Isolated,
+            ServiceState::Terminated,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).expect("serialize");
+            let restored: ServiceState = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*v, restored);
+        }
+    }
+
+    #[test]
+    fn service_state_display_all_variants() {
+        let display_strs: Vec<String> = [
+            ServiceState::Starting,
+            ServiceState::Running,
+            ServiceState::Failed,
+            ServiceState::Restarting,
+            ServiceState::Isolated,
+            ServiceState::Terminated,
+        ]
+        .iter()
+        .map(|v| v.to_string())
+        .collect();
+        assert_eq!(display_strs.len(), 6);
+        // All distinct
+        let set: std::collections::BTreeSet<_> = display_strs.iter().collect();
+        assert_eq!(set.len(), 6);
+    }
+
+    #[test]
+    fn health_status_serde_roundtrip_all_variants() {
+        let variants = [
+            HealthStatus::Healthy,
+            HealthStatus::Degraded,
+            HealthStatus::Critical,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).expect("serialize");
+            let restored: HealthStatus = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*v, restored);
+        }
+    }
+
+    #[test]
+    fn health_status_display_all_variants() {
+        assert_eq!(HealthStatus::Healthy.to_string(), "healthy");
+        assert_eq!(HealthStatus::Degraded.to_string(), "degraded");
+        assert_eq!(HealthStatus::Critical.to_string(), "critical");
+    }
+
+    #[test]
+    fn health_status_ordering() {
+        assert!(HealthStatus::Healthy < HealthStatus::Degraded);
+        assert!(HealthStatus::Degraded < HealthStatus::Critical);
+    }
+
+    #[test]
+    fn supervisor_action_serde_roundtrip_all_variants() {
+        let variants = [
+            SupervisorAction::Start,
+            SupervisorAction::Restart,
+            SupervisorAction::Isolate,
+            SupervisorAction::Terminate,
+            SupervisorAction::Escalate,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).expect("serialize");
+            let restored: SupervisorAction = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*v, restored);
+        }
+    }
+
+    #[test]
+    fn supervisor_action_display_all_variants() {
+        let display_strs: Vec<String> = [
+            SupervisorAction::Start,
+            SupervisorAction::Restart,
+            SupervisorAction::Isolate,
+            SupervisorAction::Terminate,
+            SupervisorAction::Escalate,
+        ]
+        .iter()
+        .map(|v| v.to_string())
+        .collect();
+        assert_eq!(display_strs.len(), 5);
+        let set: std::collections::BTreeSet<_> = display_strs.iter().collect();
+        assert_eq!(set.len(), 5);
+    }
+
+    #[test]
+    fn restart_budget_default_values() {
+        let d = RestartBudget::default();
+        assert!(d.max_restarts > 0, "default budget should allow restarts");
+        assert!(d.window_ticks > 0, "default window should be nonzero");
+    }
+
+    #[test]
+    fn restart_budget_serde_roundtrip() {
+        let b = RestartBudget {
+            max_restarts: 5,
+            window_ticks: 200,
+        };
+        let json = serde_json::to_string(&b).expect("serialize");
+        let restored: RestartBudget = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(b, restored);
+    }
+
+    #[test]
+    fn drain_events_on_fresh_supervisor_is_empty() {
+        let mut sup = Supervisor::new("sup", "t");
+        assert!(sup.drain_events().is_empty());
+    }
+
+    #[test]
+    fn service_count_tracks_additions() {
+        let mut sup = Supervisor::new("sup", "t");
+        assert_eq!(sup.service_count(), 0);
+        sup.add_service(test_config("a"));
+        assert_eq!(sup.service_count(), 1);
+        sup.add_service(test_config("b"));
+        assert_eq!(sup.service_count(), 2);
+    }
+
+    // -- Multiple services --
+
     #[test]
     fn multiple_services_independent_budgets() {
         let mut sup = Supervisor::new("sup", "t");

@@ -1160,6 +1160,18 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
+    // -- Enrichment: Ord --
+
+    #[test]
+    fn action_category_ordering() {
+        assert!(ActionCategory::DecisionContract < ActionCategory::RegionLifecycle);
+        assert!(ActionCategory::RegionLifecycle < ActionCategory::Cancellation);
+        assert!(ActionCategory::Cancellation < ActionCategory::ObligationLifecycle);
+        assert!(ActionCategory::ObligationLifecycle < ActionCategory::ExtensionLifecycle);
+        assert!(ActionCategory::ExtensionLifecycle < ActionCategory::ContainmentAction);
+    }
+
+    #[test]
     fn error_display_messages() {
         let e = EvidenceEmissionError::BufferFull { capacity: 10 };
         assert!(e.to_string().contains("10"));

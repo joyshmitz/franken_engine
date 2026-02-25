@@ -2119,4 +2119,799 @@ mod tests {
             serde_json::from_str(&encoded_event).expect("deserialize");
         assert_eq!(event, decoded_event);
     }
+
+    // -- SessionState Display --
+
+    #[test]
+    fn session_state_display_all_variants() {
+        assert_eq!(SessionState::Init.to_string(), "init");
+        assert_eq!(SessionState::Established.to_string(), "established");
+        assert_eq!(SessionState::Expired.to_string(), "expired");
+        assert_eq!(SessionState::Closed.to_string(), "closed");
+    }
+
+    // -- SequencePolicy Display --
+
+    #[test]
+    fn sequence_policy_display() {
+        assert_eq!(SequencePolicy::Strict.to_string(), "strict");
+        assert_eq!(SequencePolicy::Monotonic.to_string(), "monotonic");
+    }
+
+    // -- SessionConfig defaults --
+
+    #[test]
+    fn session_config_default_values() {
+        let cfg = SessionConfig::default();
+        assert_eq!(cfg.max_lifetime_ticks, 10_000);
+        assert_eq!(cfg.max_messages, 10_000);
+        assert_eq!(cfg.max_buffered_messages, 256);
+        assert_eq!(cfg.sequence_policy, SequencePolicy::Monotonic);
+        assert_eq!(cfg.replay_drop_threshold, 8);
+        assert_eq!(cfg.replay_drop_window_ticks, 1_000);
+    }
+
+    // -- AeadAlgorithm helpers --
+
+    #[test]
+    fn aead_algorithm_nonce_lengths() {
+        assert_eq!(AeadAlgorithm::ChaCha20Poly1305.nonce_len(), 12);
+        assert_eq!(AeadAlgorithm::Aes256Gcm.nonce_len(), 12);
+        assert_eq!(AeadAlgorithm::XChaCha20Poly1305.nonce_len(), 24);
+    }
+
+    #[test]
+    fn aead_algorithm_max_messages_per_key() {
+        assert_eq!(AeadAlgorithm::Aes256Gcm.max_messages_per_key(), 1u64 << 32);
+        assert_eq!(
+            AeadAlgorithm::ChaCha20Poly1305.max_messages_per_key(),
+            u64::MAX
+        );
+        assert_eq!(
+            AeadAlgorithm::XChaCha20Poly1305.max_messages_per_key(),
+            u64::MAX
+        );
+    }
+
+    // -- Handshake validation --
+
+    #[test]
+    fn empty_session_id_rejected() {
+        let mut channel = SessionHostcallChannel::new();
+        let hs = handshake("", "trace", 100);
+        let err = channel
+            .create_session(hs, &signing_key(1), &signing_key(2), SessionConfig::default())
+            .unwrap_err();
+        assert!(matches!(err, SessionChannelError::InvalidIdentity { .. }));
+    }
+
+    #[test]
+    fn empty_extension_id_rejected() {
+        let mut channel = SessionHostcallChannel::new();
+        let mut hs = handshake("sess-1", "trace", 100);
+        hs.extension_id = String::new();
+        let err = channel
+            .create_session(hs, &signing_key(1), &signing_key(2), SessionConfig::default())
+            .unwrap_err();
+        assert!(matches!(err, SessionChannelError::InvalidIdentity { .. }));
+    }
+
+    #[test]
+    fn too_long_identity_field_rejected() {
+        let mut channel = SessionHostcallChannel::new();
+        let mut hs = handshake("sess-1", "trace", 100);
+        hs.host_id = "x".repeat(129);
+        let err = channel
+            .create_session(hs, &signing_key(1), &signing_key(2), SessionConfig::default())
+            .unwrap_err();
+        assert!(matches!(err, SessionChannelError::InvalidIdentity { .. }));
+    }
+
+    #[test]
+    fn same_extension_and_host_id_rejected() {
+        let mut channel = SessionHostcallChannel::new();
+        let mut hs = handshake("sess-1", "trace", 100);
+        hs.host_id = hs.extension_id.clone();
+        let err = channel
+            .create_session(hs, &signing_key(1), &signing_key(2), SessionConfig::default())
+            .unwrap_err();
+        assert!(matches!(err, SessionChannelError::InvalidHandshake { .. }));
+    }
+
+    #[test]
+    fn duplicate_session_id_rejected() {
+        let mut channel = SessionHostcallChannel::new();
+        let _ = create_basic_session(&mut channel, "dup-sess");
+        let err = channel
+            .create_session(
+                handshake("dup-sess", "trace", 200),
+                &signing_key(1),
+                &signing_key(2),
+                SessionConfig::default(),
+            )
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            SessionChannelError::SessionAlreadyExists { .. }
+        ));
+    }
+
+    // -- Config validation --
+
+    #[test]
+    fn zero_max_messages_rejected() {
+        let mut channel = SessionHostcallChannel::new();
+        let err = channel
+            .create_session(
+                handshake("sess-cfg", "trace", 100),
+                &signing_key(1),
+                &signing_key(2),
+                SessionConfig {
+                    max_messages: 0,
+                    ..SessionConfig::default()
+                },
+            )
+            .unwrap_err();
+        assert!(matches!(err, SessionChannelError::InvalidHandshake { .. }));
+    }
+
+    #[test]
+    fn zero_max_lifetime_rejected() {
+        let mut channel = SessionHostcallChannel::new();
+        let err = channel
+            .create_session(
+                handshake("sess-lt", "trace", 100),
+                &signing_key(1),
+                &signing_key(2),
+                SessionConfig {
+                    max_lifetime_ticks: 0,
+                    ..SessionConfig::default()
+                },
+            )
+            .unwrap_err();
+        assert!(matches!(err, SessionChannelError::InvalidHandshake { .. }));
+    }
+
+    #[test]
+    fn zero_max_buffered_rejected() {
+        let mut channel = SessionHostcallChannel::new();
+        let err = channel
+            .create_session(
+                handshake("sess-buf", "trace", 100),
+                &signing_key(1),
+                &signing_key(2),
+                SessionConfig {
+                    max_buffered_messages: 0,
+                    ..SessionConfig::default()
+                },
+            )
+            .unwrap_err();
+        assert!(matches!(err, SessionChannelError::InvalidHandshake { .. }));
+    }
+
+    #[test]
+    fn replay_threshold_without_window_rejected() {
+        let mut channel = SessionHostcallChannel::new();
+        let err = channel
+            .create_session(
+                handshake("sess-rw", "trace", 100),
+                &signing_key(1),
+                &signing_key(2),
+                SessionConfig {
+                    replay_drop_threshold: 5,
+                    replay_drop_window_ticks: 0,
+                    ..SessionConfig::default()
+                },
+            )
+            .unwrap_err();
+        assert!(matches!(err, SessionChannelError::InvalidHandshake { .. }));
+    }
+
+    // -- Close session --
+
+    #[test]
+    fn close_session_transitions_to_closed() {
+        let mut channel = SessionHostcallChannel::new();
+        let handle = create_basic_session(&mut channel, "sess-close");
+        channel
+            .close_session(&handle, "trace-close", 200, None, None)
+            .expect("close should succeed");
+        assert_eq!(channel.session_state(&handle), Some(SessionState::Closed));
+    }
+
+    #[test]
+    fn close_already_closed_session_fails() {
+        let mut channel = SessionHostcallChannel::new();
+        let handle = create_basic_session(&mut channel, "sess-close-twice");
+        channel
+            .close_session(&handle, "trace-close", 200, None, None)
+            .expect("first close");
+        let err = channel
+            .close_session(&handle, "trace-close-2", 201, None, None)
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            SessionChannelError::SessionNotEstablished { .. }
+        ));
+    }
+
+    #[test]
+    fn close_emits_event() {
+        let mut channel = SessionHostcallChannel::new();
+        let handle = create_basic_session(&mut channel, "sess-close-evt");
+        let _ = channel.drain_events();
+        channel
+            .close_session(&handle, "trace-close", 200, Some("dec-c"), Some("pol-c"))
+            .unwrap();
+        let events = channel.drain_events();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event, "session_closed");
+        assert_eq!(events[0].decision_id.as_deref(), Some("dec-c"));
+        assert_eq!(events[0].policy_id.as_deref(), Some("pol-c"));
+    }
+
+    // -- Session not found --
+
+    #[test]
+    fn send_on_missing_session_fails() {
+        let mut channel = SessionHostcallChannel::new();
+        let handle = SessionHandle {
+            session_id: "nonexistent".to_string(),
+        };
+        let err = channel
+            .send(&handle, b"x".to_vec(), "trace", 100, None, None)
+            .unwrap_err();
+        assert!(matches!(err, SessionChannelError::SessionNotFound { .. }));
+    }
+
+    #[test]
+    fn receive_on_missing_session_fails() {
+        let mut channel = SessionHostcallChannel::new();
+        let handle = SessionHandle {
+            session_id: "nonexistent".to_string(),
+        };
+        let err = channel
+            .receive(&handle, "trace", 100, None, None)
+            .unwrap_err();
+        assert!(matches!(err, SessionChannelError::SessionNotFound { .. }));
+    }
+
+    #[test]
+    fn close_missing_session_fails() {
+        let mut channel = SessionHostcallChannel::new();
+        let handle = SessionHandle {
+            session_id: "nonexistent".to_string(),
+        };
+        let err = channel
+            .close_session(&handle, "trace", 100, None, None)
+            .unwrap_err();
+        assert!(matches!(err, SessionChannelError::SessionNotFound { .. }));
+    }
+
+    // -- Queue/state for missing sessions --
+
+    #[test]
+    fn queue_len_returns_none_for_missing_session() {
+        let channel = SessionHostcallChannel::new();
+        let handle = SessionHandle {
+            session_id: "nonexistent".to_string(),
+        };
+        assert_eq!(channel.queue_len(&handle), None);
+    }
+
+    #[test]
+    fn session_state_returns_none_for_missing_session() {
+        let channel = SessionHostcallChannel::new();
+        let handle = SessionHandle {
+            session_id: "nonexistent".to_string(),
+        };
+        assert_eq!(channel.session_state(&handle), None);
+    }
+
+    // -- No message available --
+
+    #[test]
+    fn receive_on_empty_queue_fails() {
+        let mut channel = SessionHostcallChannel::new();
+        let handle = create_basic_session(&mut channel, "sess-empty-q");
+        let err = channel
+            .receive(&handle, "trace", 101, None, None)
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            SessionChannelError::NoMessageAvailable { .. }
+        ));
+    }
+
+    // -- Send on closed session --
+
+    #[test]
+    fn send_on_closed_session_fails() {
+        let mut channel = SessionHostcallChannel::new();
+        let handle = create_basic_session(&mut channel, "sess-closed-send");
+        channel
+            .close_session(&handle, "trace-close", 200, None, None)
+            .unwrap();
+        let err = channel
+            .send(&handle, b"x".to_vec(), "trace", 201, None, None)
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            SessionChannelError::SessionNotEstablished { .. }
+        ));
+    }
+
+    // -- Backpressure signal on non-established session --
+
+    #[test]
+    fn backpressure_signal_on_closed_session_fails() {
+        let mut channel = SessionHostcallChannel::new();
+        let handle = create_basic_session(&mut channel, "sess-bp-closed");
+        channel
+            .close_session(&handle, "trace-close", 200, None, None)
+            .unwrap();
+        let err = channel
+            .authenticated_backpressure_signal(&handle, 1, 1, "trace", 201)
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            SessionChannelError::SessionNotEstablished { .. }
+        ));
+    }
+
+    // -- verify_authenticated_signal with wrong session_id --
+
+    #[test]
+    fn verify_signal_with_wrong_session_id_fails() {
+        let mut channel = SessionHostcallChannel::new();
+        let handle = create_basic_session(&mut channel, "sess-verify-sig");
+        let mut signal = channel
+            .authenticated_backpressure_signal(&handle, 0, 1, "trace", 101)
+            .unwrap();
+        signal.session_id = "wrong-session".to_string();
+        let err = channel
+            .verify_authenticated_signal(&handle, &signal)
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            SessionChannelError::SessionBindingMismatch { .. }
+        ));
+    }
+
+    // -- SessionChannelError Display --
+
+    #[test]
+    fn session_channel_error_display_all_variants() {
+        let cases: Vec<(SessionChannelError, &str)> = vec![
+            (
+                SessionChannelError::InvalidIdentity {
+                    field: "session_id".to_string(),
+                },
+                "session_id",
+            ),
+            (
+                SessionChannelError::InvalidHandshake {
+                    detail: "bad".to_string(),
+                },
+                "bad",
+            ),
+            (
+                SessionChannelError::SessionAlreadyExists {
+                    session_id: "s1".to_string(),
+                },
+                "s1",
+            ),
+            (
+                SessionChannelError::SessionNotFound {
+                    session_id: "s2".to_string(),
+                },
+                "s2",
+            ),
+            (
+                SessionChannelError::SessionNotEstablished {
+                    session_id: "s3".to_string(),
+                    state: SessionState::Closed,
+                },
+                "closed",
+            ),
+            (
+                SessionChannelError::SessionExpired {
+                    session_id: "s4".to_string(),
+                    reason: "timeout".to_string(),
+                },
+                "timeout",
+            ),
+            (
+                SessionChannelError::Backpressure {
+                    session_id: "s5".to_string(),
+                    pending: 10,
+                    limit: 5,
+                },
+                "pending=10",
+            ),
+            (
+                SessionChannelError::NoMessageAvailable {
+                    session_id: "s6".to_string(),
+                },
+                "no message",
+            ),
+            (
+                SessionChannelError::SessionBindingMismatch {
+                    expected_session_id: "a".to_string(),
+                    actual_session_id: "b".to_string(),
+                },
+                "binding mismatch",
+            ),
+            (
+                SessionChannelError::MacMismatch {
+                    session_id: "s7".to_string(),
+                    sequence: 42,
+                },
+                "42",
+            ),
+            (
+                SessionChannelError::ReplayDetected {
+                    session_id: "s8".to_string(),
+                    sequence: 3,
+                    last_seen: 5,
+                },
+                "replay",
+            ),
+            (
+                SessionChannelError::OutOfOrderDetected {
+                    session_id: "s9".to_string(),
+                    sequence: 7,
+                    expected_min: 4,
+                },
+                "out-of-order",
+            ),
+            (
+                SessionChannelError::NonceExhausted {
+                    sequence: 100,
+                    limit: 50,
+                    algorithm: AeadAlgorithm::Aes256Gcm,
+                },
+                "nonce budget exhausted",
+            ),
+        ];
+        for (err, expected_substring) in cases {
+            let s = err.to_string();
+            assert!(
+                s.contains(expected_substring),
+                "'{s}' should contain '{expected_substring}'"
+            );
+        }
+    }
+
+    // -- SessionChannelError serde roundtrip --
+
+    #[test]
+    fn session_channel_error_serde_roundtrip() {
+        let errors = vec![
+            SessionChannelError::InvalidIdentity {
+                field: "f".to_string(),
+            },
+            SessionChannelError::InvalidHandshake {
+                detail: "d".to_string(),
+            },
+            SessionChannelError::SessionAlreadyExists {
+                session_id: "s".to_string(),
+            },
+            SessionChannelError::SessionNotFound {
+                session_id: "s".to_string(),
+            },
+            SessionChannelError::SessionNotEstablished {
+                session_id: "s".to_string(),
+                state: SessionState::Init,
+            },
+            SessionChannelError::SessionExpired {
+                session_id: "s".to_string(),
+                reason: "r".to_string(),
+            },
+            SessionChannelError::Backpressure {
+                session_id: "s".to_string(),
+                pending: 1,
+                limit: 2,
+            },
+            SessionChannelError::NoMessageAvailable {
+                session_id: "s".to_string(),
+            },
+            SessionChannelError::SessionBindingMismatch {
+                expected_session_id: "a".to_string(),
+                actual_session_id: "b".to_string(),
+            },
+            SessionChannelError::MacMismatch {
+                session_id: "s".to_string(),
+                sequence: 1,
+            },
+            SessionChannelError::ReplayDetected {
+                session_id: "s".to_string(),
+                sequence: 1,
+                last_seen: 2,
+            },
+            SessionChannelError::OutOfOrderDetected {
+                session_id: "s".to_string(),
+                sequence: 5,
+                expected_min: 3,
+            },
+            SessionChannelError::NonceExhausted {
+                sequence: 100,
+                limit: 50,
+                algorithm: AeadAlgorithm::Aes256Gcm,
+            },
+        ];
+        for err in &errors {
+            let json = serde_json::to_string(err).expect("serialize");
+            let restored: SessionChannelError =
+                serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*err, restored);
+        }
+    }
+
+    // -- Serde roundtrips for types --
+
+    #[test]
+    fn session_state_serde_roundtrip() {
+        for state in [
+            SessionState::Init,
+            SessionState::Established,
+            SessionState::Expired,
+            SessionState::Closed,
+        ] {
+            let json = serde_json::to_string(&state).unwrap();
+            let restored: SessionState = serde_json::from_str(&json).unwrap();
+            assert_eq!(state, restored);
+        }
+    }
+
+    #[test]
+    fn sequence_policy_serde_roundtrip() {
+        for policy in [SequencePolicy::Strict, SequencePolicy::Monotonic] {
+            let json = serde_json::to_string(&policy).unwrap();
+            let restored: SequencePolicy = serde_json::from_str(&json).unwrap();
+            assert_eq!(policy, restored);
+        }
+    }
+
+    #[test]
+    fn aead_algorithm_serde_roundtrip() {
+        for alg in [
+            AeadAlgorithm::ChaCha20Poly1305,
+            AeadAlgorithm::Aes256Gcm,
+            AeadAlgorithm::XChaCha20Poly1305,
+        ] {
+            let json = serde_json::to_string(&alg).unwrap();
+            let restored: AeadAlgorithm = serde_json::from_str(&json).unwrap();
+            assert_eq!(alg, restored);
+        }
+    }
+
+    #[test]
+    fn channel_payload_serde_roundtrip() {
+        let payloads = vec![
+            ChannelPayload::Inline(vec![1, 2, 3]),
+            ChannelPayload::Shared(SharedPayloadDescriptor {
+                region_id: 42,
+                payload_len: 100,
+                payload_hash: ContentHash::compute(b"test"),
+            }),
+            ChannelPayload::Backpressure(BackpressureSignal {
+                pending_messages: 10,
+                limit: 5,
+            }),
+        ];
+        for payload in &payloads {
+            let json = serde_json::to_string(payload).unwrap();
+            let restored: ChannelPayload = serde_json::from_str(&json).unwrap();
+            assert_eq!(*payload, restored);
+        }
+    }
+
+    #[test]
+    fn session_config_serde_roundtrip() {
+        let cfg = SessionConfig::default();
+        let json = serde_json::to_string(&cfg).unwrap();
+        let restored: SessionConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(cfg, restored);
+    }
+
+    #[test]
+    fn session_handshake_serde_roundtrip() {
+        let hs = handshake("s1", "trace-1", 100);
+        let json = serde_json::to_string(&hs).unwrap();
+        let restored: SessionHandshake = serde_json::from_str(&json).unwrap();
+        assert_eq!(hs, restored);
+    }
+
+    #[test]
+    fn replay_drop_reason_as_str_values() {
+        assert_eq!(ReplayDropReason::Replay.as_str(), "replay");
+        assert_eq!(ReplayDropReason::Duplicate.as_str(), "duplicate");
+        assert_eq!(ReplayDropReason::OutOfOrder.as_str(), "out_of_order");
+    }
+
+    // -- Replay drop window reset --
+
+    #[test]
+    fn replay_drop_window_resets_after_window_ticks() {
+        let mut channel = SessionHostcallChannel::new();
+        let handle = create_session_with_config(
+            &mut channel,
+            "sess-window-reset",
+            SessionConfig {
+                replay_drop_threshold: 2,
+                replay_drop_window_ticks: 10,
+                ..SessionConfig::default()
+            },
+        );
+        channel
+            .send(&handle, b"first".to_vec(), "trace", 101, None, None)
+            .unwrap();
+
+        let replay = {
+            let session = channel
+                .sessions
+                .get(&handle.session_id)
+                .unwrap();
+            session.inbound.front().cloned().unwrap()
+        };
+
+        let _ = channel.receive(&handle, "trace", 102, None, None).unwrap();
+
+        // First drop at tick 103 (within window).
+        {
+            let session = channel.sessions.get_mut(&handle.session_id).unwrap();
+            session.inbound.push_back(replay.clone());
+        }
+        let _ = channel.receive(&handle, "trace", 103, None, None);
+
+        // Second drop at tick 120 (outside window — resets counter).
+        channel
+            .send(&handle, b"second".to_vec(), "trace", 115, None, None)
+            .unwrap();
+        let replay2 = {
+            let session = channel.sessions.get(&handle.session_id).unwrap();
+            session.inbound.front().cloned().unwrap()
+        };
+        let _ = channel.receive(&handle, "trace", 116, None, None).unwrap();
+
+        {
+            let session = channel.sessions.get_mut(&handle.session_id).unwrap();
+            session.inbound.push_back(replay2);
+        }
+        let err = channel.receive(&handle, "trace", 120, None, None).unwrap_err();
+        // Should NOT be SessionExpired because the window was reset.
+        assert!(matches!(err, SessionChannelError::ReplayDetected { .. }));
+        assert_eq!(
+            channel.session_state(&handle),
+            Some(SessionState::Established)
+        );
+    }
+
+    // -- drain_events --
+
+    #[test]
+    fn drain_events_empties_the_buffer() {
+        let mut channel = SessionHostcallChannel::new();
+        let _ = create_basic_session(&mut channel, "sess-drain");
+        let events = channel.drain_events();
+        assert!(!events.is_empty());
+        let events2 = channel.drain_events();
+        assert!(events2.is_empty());
+    }
+
+    // -- send_shared_buffer sequence exhaustion --
+
+    #[test]
+    fn shared_buffer_sequence_exhaustion_expires_session() {
+        let mut channel = SessionHostcallChannel::new();
+        let handle = create_basic_session(&mut channel, "sess-shared-exhaust");
+        let session = channel
+            .sessions
+            .get_mut(&handle.session_id)
+            .unwrap();
+        session.next_sequence = u64::MAX;
+
+        let err = channel
+            .send_shared_buffer(
+                &handle,
+                SharedSendInput {
+                    region_id: 1,
+                    payload: b"test",
+                    trace_id: "trace",
+                    timestamp_ticks: 101,
+                    decision_id: None,
+                    policy_id: None,
+                },
+            )
+            .unwrap_err();
+        assert!(matches!(err, SessionChannelError::SessionExpired { .. }));
+    }
+
+    // -- Multiple messages in sequence --
+
+    #[test]
+    fn multiple_messages_increment_sequence() {
+        let mut channel = SessionHostcallChannel::new();
+        let handle = create_basic_session(&mut channel, "sess-multi");
+        let seq1 = channel
+            .send(&handle, b"a".to_vec(), "trace", 101, None, None)
+            .unwrap();
+        let seq2 = channel
+            .send(&handle, b"b".to_vec(), "trace", 102, None, None)
+            .unwrap();
+        assert_eq!(seq1, 1);
+        assert_eq!(seq2, 2);
+        assert_eq!(channel.queue_len(&handle), Some(2));
+    }
+
+    // -- Enrichment: missing serde roundtrips, std::error --
+
+    #[test]
+    fn data_plane_direction_serde_roundtrip() {
+        let variants = [
+            DataPlaneDirection::HostToExtension,
+            DataPlaneDirection::ExtensionToHost,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).expect("serialize");
+            let restored: DataPlaneDirection = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*v, restored);
+        }
+    }
+
+    #[test]
+    fn replay_drop_reason_serde_roundtrip() {
+        let variants = [
+            ReplayDropReason::Replay,
+            ReplayDropReason::Duplicate,
+            ReplayDropReason::OutOfOrder,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).expect("serialize");
+            let restored: ReplayDropReason = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*v, restored);
+        }
+    }
+
+    #[test]
+    fn session_channel_error_std_error_trait() {
+        let errs: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(SessionChannelError::InvalidIdentity {
+                field: "x".to_string(),
+            }),
+            Box::new(SessionChannelError::SessionNotFound {
+                session_id: "s".to_string(),
+            }),
+            Box::new(SessionChannelError::SessionExpired {
+                session_id: "s".to_string(),
+                reason: "timeout".to_string(),
+            }),
+            Box::new(SessionChannelError::Backpressure {
+                session_id: "s".to_string(),
+                pending: 10,
+                limit: 100,
+            }),
+            Box::new(SessionChannelError::NoMessageAvailable {
+                session_id: "s".to_string(),
+            }),
+            Box::new(SessionChannelError::MacMismatch {
+                session_id: "s".to_string(),
+                sequence: 1,
+            }),
+            Box::new(SessionChannelError::ReplayDetected {
+                session_id: "s".to_string(),
+                sequence: 1,
+                last_seen: 0,
+            }),
+            Box::new(SessionChannelError::NonceExhausted {
+                sequence: 100,
+                limit: 100,
+                algorithm: AeadAlgorithm::Aes256Gcm,
+            }),
+        ];
+        for e in &errs {
+            assert!(!e.to_string().is_empty());
+        }
+    }
 }

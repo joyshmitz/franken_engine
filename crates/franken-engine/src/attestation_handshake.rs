@@ -1422,4 +1422,263 @@ mod tests {
         assert_eq!(verifier.valid_authorizations_at(1050).len(), 1);
         assert_eq!(verifier.valid_authorizations_at(1200).len(), 0);
     }
+
+    // -- serde roundtrips for enum types --------------------------------------
+
+    #[test]
+    fn handshake_outcome_serde_roundtrip() {
+        for outcome in &[
+            HandshakeOutcome::Authorized,
+            HandshakeOutcome::ChallengeTimeout,
+            HandshakeOutcome::MeasurementRejected,
+            HandshakeOutcome::QuoteFailed,
+            HandshakeOutcome::KeyBindingFailed,
+            HandshakeOutcome::SignatureFailed,
+        ] {
+            let json = serde_json::to_string(outcome).unwrap();
+            let back: HandshakeOutcome = serde_json::from_str(&json).unwrap();
+            assert_eq!(*outcome, back);
+        }
+    }
+
+    #[test]
+    fn reattestation_trigger_serde_roundtrip() {
+        for trigger in &[
+            ReattestationTrigger::Periodic,
+            ReattestationTrigger::PolicyChange,
+            ReattestationTrigger::EpochTransition,
+            ReattestationTrigger::TrustRootUpdate,
+            ReattestationTrigger::Manual,
+        ] {
+            let json = serde_json::to_string(trigger).unwrap();
+            let back: ReattestationTrigger = serde_json::from_str(&json).unwrap();
+            assert_eq!(*trigger, back);
+        }
+    }
+
+    #[test]
+    fn handshake_error_serde_roundtrip() {
+        let errors = vec![
+            HandshakeError::ChallengeExpired {
+                challenge_timestamp_ns: 100,
+                deadline_ns: 50,
+                current_ns: 200,
+            },
+            HandshakeError::ChallengeSignatureInvalid,
+            HandshakeError::MeasurementNotApproved {
+                measurement_hash: ContentHash::compute(b"test"),
+            },
+            HandshakeError::QuoteVerificationFailed {
+                result: "bad".to_string(),
+            },
+            HandshakeError::NonceMismatch,
+            HandshakeError::KeyBindingInvalid,
+            HandshakeError::ResponseSignatureInvalid,
+            HandshakeError::AuthorizationExpired {
+                issued_at_ns: 100,
+                validity_window_ns: 50,
+                current_ns: 200,
+            },
+            HandshakeError::AuthorizationSignatureInvalid,
+            HandshakeError::OperationNotAuthorized {
+                operation: "admin".to_string(),
+            },
+            HandshakeError::CellNotFound {
+                cell_id: "c1".to_string(),
+            },
+            HandshakeError::ReattestationRequired {
+                reason: "policy".to_string(),
+            },
+            HandshakeError::IdDerivation("err".to_string()),
+        ];
+        for err in &errors {
+            let json = serde_json::to_string(err).unwrap();
+            let back: HandshakeError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*err, back);
+        }
+    }
+
+    // -- canonical bytes determinism ------------------------------------------
+
+    #[test]
+    fn authorization_canonical_bytes_deterministic() {
+        let mut verifier = test_verifier();
+        let root = test_trust_root();
+        let measurement = test_measurement(&root);
+        verifier.approve_measurement(measurement.composite_hash());
+
+        let client = test_client();
+        let auth = do_full_handshake(&mut verifier, &client, &root, &measurement, 1000).unwrap();
+
+        let bytes1 = auth.canonical_bytes();
+        let bytes2 = auth.canonical_bytes();
+        assert_eq!(bytes1, bytes2);
+        assert!(!bytes1.is_empty());
+    }
+
+    #[test]
+    fn response_canonical_bytes_deterministic() {
+        let root = test_trust_root();
+        let measurement = test_measurement(&root);
+        let client = test_client();
+        let verifier = test_verifier();
+        let challenge = verifier
+            .generate_challenge([1u8; 32], 1000, 10_000)
+            .unwrap();
+        let response = client.respond(&challenge, &measurement, &root, 10_000, 1000);
+
+        let b1 = response.canonical_bytes();
+        let b2 = response.canonical_bytes();
+        assert_eq!(b1, b2);
+        assert!(!b1.is_empty());
+    }
+
+    // -- fresh verifier state -------------------------------------------------
+
+    #[test]
+    fn fresh_verifier_has_no_authorizations() {
+        let verifier = test_verifier();
+        assert_eq!(verifier.authorization_count(), 0);
+        assert!(verifier.authorized_cells().is_empty());
+        assert!(verifier.events().is_empty());
+    }
+
+    // -- authorized_cells list ------------------------------------------------
+
+    #[test]
+    fn authorized_cells_returns_cell_ids() {
+        let mut verifier = test_verifier();
+        let root = test_trust_root();
+        let measurement = test_measurement(&root);
+        verifier.approve_measurement(measurement.composite_hash());
+
+        let client = test_client();
+        do_full_handshake(&mut verifier, &client, &root, &measurement, 1000).unwrap();
+
+        let cells = verifier.authorized_cells();
+        assert_eq!(cells.len(), 1);
+        assert_eq!(cells[0], "cell-001");
+    }
+
+    // -- advance_epoch --------------------------------------------------------
+
+    #[test]
+    fn advance_epoch_updates_epoch() {
+        let mut verifier = test_verifier();
+        assert_eq!(verifier.epoch, SecurityEpoch::from_raw(42));
+        verifier.advance_epoch(SecurityEpoch::from_raw(43));
+        // Next challenge should use the new epoch.
+        let challenge = verifier
+            .generate_challenge([2u8; 32], 5000, 1000)
+            .unwrap();
+        assert_eq!(challenge.epoch, SecurityEpoch::from_raw(43));
+    }
+
+    // -- revoke nonexistent returns false ------------------------------------
+
+    #[test]
+    fn revoke_nonexistent_authorization_returns_false() {
+        let mut verifier = test_verifier();
+        assert!(!verifier.revoke_authorization("nonexistent"));
+    }
+
+    // -- revoke_all on empty returns zero -------------------------------------
+
+    // -- Enrichment: std::error, edge cases --
+
+    #[test]
+    fn handshake_error_std_error_trait() {
+        // ContentHash already in scope via `use super::*`
+        let errs: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(HandshakeError::ChallengeExpired {
+                challenge_timestamp_ns: 1,
+                deadline_ns: 2,
+                current_ns: 3,
+            }),
+            Box::new(HandshakeError::ChallengeSignatureInvalid),
+            Box::new(HandshakeError::MeasurementNotApproved {
+                measurement_hash: ContentHash::compute(b"x"),
+            }),
+            Box::new(HandshakeError::QuoteVerificationFailed {
+                result: "fail".to_string(),
+            }),
+            Box::new(HandshakeError::NonceMismatch),
+            Box::new(HandshakeError::KeyBindingInvalid),
+            Box::new(HandshakeError::ResponseSignatureInvalid),
+            Box::new(HandshakeError::AuthorizationExpired {
+                issued_at_ns: 1,
+                validity_window_ns: 2,
+                current_ns: 3,
+            }),
+            Box::new(HandshakeError::AuthorizationSignatureInvalid),
+            Box::new(HandshakeError::OperationNotAuthorized {
+                operation: "read".to_string(),
+            }),
+            Box::new(HandshakeError::CellNotFound {
+                cell_id: "c".to_string(),
+            }),
+            Box::new(HandshakeError::ReattestationRequired {
+                reason: "epoch".to_string(),
+            }),
+            Box::new(HandshakeError::IdDerivation("bad".to_string())),
+        ];
+        for e in &errs {
+            assert!(!e.to_string().is_empty());
+        }
+        assert_eq!(errs.len(), 13);
+    }
+
+    #[test]
+    fn handshake_outcome_serde_all_six_variants() {
+        let variants = [
+            HandshakeOutcome::Authorized,
+            HandshakeOutcome::ChallengeTimeout,
+            HandshakeOutcome::MeasurementRejected,
+            HandshakeOutcome::QuoteFailed,
+            HandshakeOutcome::KeyBindingFailed,
+            HandshakeOutcome::SignatureFailed,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).expect("serialize");
+            let restored: HandshakeOutcome = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*v, restored);
+        }
+    }
+
+    #[test]
+    fn reattestation_trigger_serde_all_five_variants() {
+        let variants = [
+            ReattestationTrigger::Periodic,
+            ReattestationTrigger::PolicyChange,
+            ReattestationTrigger::EpochTransition,
+            ReattestationTrigger::TrustRootUpdate,
+            ReattestationTrigger::Manual,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).expect("serialize");
+            let restored: ReattestationTrigger =
+                serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*v, restored);
+        }
+    }
+
+    #[test]
+    fn cell_authorization_authorizes_rejects_unknown_op() {
+        let mut verifier = test_verifier();
+        let root = test_trust_root();
+        let measurement = test_measurement(&root);
+        verifier.approve_measurement(measurement.composite_hash());
+        let client = test_client();
+        let auth = do_full_handshake(&mut verifier, &client, &root, &measurement, 1000).unwrap();
+        // Operation not in authorized set should fail
+        assert!(!auth.authorizes("nonexistent_op"));
+    }
+
+    // -- revoke_all on empty returns zero -------------------------------------
+
+    #[test]
+    fn revoke_all_on_empty_returns_zero() {
+        let mut verifier = test_verifier();
+        assert_eq!(verifier.revoke_all_authorizations(), 0);
+    }
 }

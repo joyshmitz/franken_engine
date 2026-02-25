@@ -1869,4 +1869,115 @@ mod tests {
         let sc2 = gov.compute_scorecard("mc-test-001", 3_000_000_000).unwrap();
         assert!(sc2.implementation_friction_millionths < sc1.implementation_friction_millionths);
     }
+
+    // -- Enrichment: error trait --
+
+    #[test]
+    fn governor_error_is_std_error() {
+        let errors: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(GovernorError::MoonshotNotFound {
+                id: "m".to_string(),
+            }),
+            Box::new(GovernorError::MoonshotNotActive {
+                id: "m".to_string(),
+            }),
+            Box::new(GovernorError::InvalidContract {
+                reason: "r".to_string(),
+            }),
+            Box::new(GovernorError::AlreadyRegistered {
+                id: "m".to_string(),
+            }),
+            Box::new(GovernorError::NotPaused {
+                id: "m".to_string(),
+            }),
+        ];
+        for e in &errors {
+            assert!(!e.to_string().is_empty());
+        }
+    }
+
+    // -- Enrichment: serde roundtrips --
+
+    #[test]
+    fn artifact_evidence_serde_roundtrip() {
+        let ae = ArtifactEvidence {
+            artifact_id: "art-1".to_string(),
+            obligation_id: "obl-1".to_string(),
+            artifact_type: ArtifactType::Proof,
+            submitted_at_ns: 1_000_000_000,
+            content_hash: "sha256:abc".to_string(),
+        };
+        let json = serde_json::to_string(&ae).expect("serialize");
+        let restored: ArtifactEvidence = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(ae, restored);
+    }
+
+    #[test]
+    fn metric_observation_serde_roundtrip() {
+        let mo = MetricObservation {
+            metric_id: "latency_p99".to_string(),
+            value_millionths: 500_000,
+            observed_at_ns: 2_000_000_000,
+        };
+        let json = serde_json::to_string(&mo).expect("serialize");
+        let restored: MetricObservation = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(mo, restored);
+    }
+
+    #[test]
+    fn governor_config_serde_roundtrip() {
+        let cfg = GovernorConfig::default();
+        let json = serde_json::to_string(&cfg).expect("serialize");
+        let restored: GovernorConfig = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(cfg, restored);
+    }
+
+    #[test]
+    fn moonshot_status_serde_roundtrip() {
+        let statuses = vec![
+            MoonshotStatus::Active,
+            MoonshotStatus::Paused {
+                reason: "review".to_string(),
+                paused_at_ns: 1_000,
+            },
+            MoonshotStatus::Killed {
+                reason: "budget".to_string(),
+                killed_at_ns: 2_000,
+            },
+            MoonshotStatus::Completed {
+                completed_at_ns: 3_000,
+            },
+        ];
+        for s in &statuses {
+            let json = serde_json::to_string(s).expect("serialize");
+            let restored: MoonshotStatus = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*s, restored);
+        }
+    }
+
+    #[test]
+    fn decision_kind_serde_roundtrip() {
+        let kinds = vec![
+            GovernorDecisionKind::Promote {
+                from: MoonshotStage::Research,
+                to: MoonshotStage::Shadow,
+            },
+            GovernorDecisionKind::Hold {
+                reason: "low confidence".to_string(),
+            },
+            GovernorDecisionKind::Kill {
+                triggered_criteria: vec!["budget".to_string()],
+            },
+            GovernorDecisionKind::Pause {
+                reason: "review".to_string(),
+            },
+            GovernorDecisionKind::Resume,
+        ];
+        for k in &kinds {
+            let json = serde_json::to_string(k).expect("serialize");
+            let restored: GovernorDecisionKind =
+                serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*k, restored);
+        }
+    }
 }

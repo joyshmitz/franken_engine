@@ -1484,4 +1484,32 @@ mod tests {
             "optimizer_subsystem"
         );
     }
+
+    // -- Enrichment: std::error --
+
+    #[test]
+    fn proof_schema_error_implements_std_error() {
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(ProofSchemaError::InvalidSignature {
+                artifact: "proof".into(),
+            }),
+            Box::new(ProofSchemaError::MissingField {
+                field: "name".into(),
+            }),
+            Box::new(ProofSchemaError::NonEquivalent {
+                reason: "mismatch".into(),
+            }),
+            Box::new(ProofSchemaError::UnauthorizedSigner {
+                role: SignerRole::OptimizerSubsystem,
+                artifact: "receipt".into(),
+            }),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            let msg = format!("{v}");
+            assert!(!msg.is_empty());
+            displays.insert(msg);
+        }
+        assert_eq!(displays.len(), 4, "all 4 tested variants produce distinct messages");
+    }
 }

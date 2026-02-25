@@ -545,6 +545,81 @@ mod tests {
         }
     }
 
+    // -- Enrichment: serde, ordering, std::error --
+
+    #[test]
+    fn runtime_capability_serde_all_variants() {
+        let all = [
+            RuntimeCapability::VmDispatch,
+            RuntimeCapability::GcInvoke,
+            RuntimeCapability::IrLowering,
+            RuntimeCapability::PolicyRead,
+            RuntimeCapability::PolicyWrite,
+            RuntimeCapability::EvidenceEmit,
+            RuntimeCapability::DecisionInvoke,
+            RuntimeCapability::NetworkEgress,
+            RuntimeCapability::LeaseManagement,
+            RuntimeCapability::IdempotencyDerive,
+            RuntimeCapability::ExtensionLifecycle,
+            RuntimeCapability::HeapAllocate,
+            RuntimeCapability::EnvRead,
+            RuntimeCapability::ProcessSpawn,
+            RuntimeCapability::FsRead,
+            RuntimeCapability::FsWrite,
+        ];
+        for cap in &all {
+            let json = serde_json::to_string(cap).expect("serialize");
+            let restored: RuntimeCapability =
+                serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*cap, restored);
+        }
+    }
+
+    #[test]
+    fn profile_kind_serde_all_variants() {
+        let all = [
+            ProfileKind::Full,
+            ProfileKind::EngineCore,
+            ProfileKind::Policy,
+            ProfileKind::Remote,
+            ProfileKind::ComputeOnly,
+        ];
+        for kind in &all {
+            let json = serde_json::to_string(kind).expect("serialize");
+            let restored: ProfileKind =
+                serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*kind, restored);
+        }
+    }
+
+    #[test]
+    fn runtime_capability_ordering() {
+        assert!(RuntimeCapability::VmDispatch < RuntimeCapability::GcInvoke);
+        assert!(RuntimeCapability::GcInvoke < RuntimeCapability::IrLowering);
+        assert!(RuntimeCapability::IrLowering < RuntimeCapability::PolicyRead);
+        assert!(RuntimeCapability::FsRead < RuntimeCapability::FsWrite);
+    }
+
+    #[test]
+    fn profile_kind_ordering() {
+        assert!(ProfileKind::Full < ProfileKind::EngineCore);
+        assert!(ProfileKind::EngineCore < ProfileKind::Policy);
+        assert!(ProfileKind::Policy < ProfileKind::Remote);
+        assert!(ProfileKind::Remote < ProfileKind::ComputeOnly);
+    }
+
+    #[test]
+    fn capability_denied_implements_std_error() {
+        let denied = CapabilityDenied {
+            required: RuntimeCapability::PolicyWrite,
+            held_profile: ProfileKind::EngineCore,
+            component: "test".to_string(),
+        };
+        let err: &dyn std::error::Error = &denied;
+        assert!(!format!("{err}").is_empty());
+        assert!(err.source().is_none());
+    }
+
     #[test]
     fn capability_denied_serialization_round_trip() {
         let denied = CapabilityDenied {

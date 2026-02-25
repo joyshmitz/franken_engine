@@ -1781,4 +1781,160 @@ mod tests {
             serde_json::to_string(&r2).unwrap()
         );
     }
+
+    // -- Enrichment: ordering --
+
+    #[test]
+    fn merge_operator_ordering() {
+        assert!(MergeOperator::Union < MergeOperator::Intersection);
+        assert!(MergeOperator::Intersection < MergeOperator::Attenuation);
+        assert!(MergeOperator::Attenuation < MergeOperator::Precedence);
+    }
+
+    #[test]
+    fn formal_property_ordering() {
+        assert!(FormalProperty::Monotonicity < FormalProperty::NonInterference);
+        assert!(FormalProperty::NonInterference < FormalProperty::AttenuationLegality);
+        assert!(FormalProperty::AttenuationLegality < FormalProperty::MergeDeterminism);
+        assert!(FormalProperty::MergeDeterminism < FormalProperty::PrecedenceStability);
+    }
+
+    #[test]
+    fn diagnostic_severity_ordering() {
+        assert!(DiagnosticSeverity::Warning < DiagnosticSeverity::Error);
+        assert!(DiagnosticSeverity::Error < DiagnosticSeverity::Fatal);
+    }
+
+    // -- Enrichment: error trait --
+
+    #[test]
+    fn compiler_error_is_std_error() {
+        let e: Box<dyn std::error::Error> = Box::new(CompilerError::EmptyPolicy {
+            policy_id: PolicyId::new("p1"),
+        });
+        assert!(!e.to_string().is_empty());
+    }
+
+    // -- Enrichment: serde roundtrips --
+
+    #[test]
+    fn authority_grant_serde_roundtrip() {
+        let grant = AuthorityGrant {
+            subject: "ext-1".to_string(),
+            capability: Capability::new("cap:fs"),
+            conditions: BTreeSet::new(),
+            scope: "local".to_string(),
+            lifetime_epochs: 10,
+        };
+        let json = serde_json::to_string(&grant).expect("serialize");
+        let restored: AuthorityGrant = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(grant, restored);
+    }
+
+    #[test]
+    fn property_witness_serde_roundtrip() {
+        let pw = PropertyWitness {
+            property: FormalProperty::Monotonicity,
+            policy_id: PolicyId::new("p1"),
+            explanation: "all intersection nodes".to_string(),
+            nodes_examined: 5,
+            pass_name: "monotonicity_check".to_string(),
+        };
+        let json = serde_json::to_string(&pw).expect("serialize");
+        let restored: PropertyWitness = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(pw, restored);
+    }
+
+    #[test]
+    fn counterexample_serde_roundtrip() {
+        let ce = Counterexample {
+            property: FormalProperty::NonInterference,
+            policy_id: PolicyId::new("p1"),
+            violating_nodes: vec!["n1".to_string(), "n2".to_string()],
+            description: "overlap".to_string(),
+            merge_path: vec!["n1".to_string()],
+        };
+        let json = serde_json::to_string(&ce).expect("serialize");
+        let restored: Counterexample = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(ce, restored);
+    }
+
+    #[test]
+    fn hook_diagnostic_serde_roundtrip() {
+        let hd = HookDiagnostic {
+            property_violated: FormalProperty::MergeDeterminism,
+            counterexample: None,
+            policy_ids: vec![PolicyId::new("p1")],
+            severity: DiagnosticSeverity::Warning,
+        };
+        let json = serde_json::to_string(&hd).expect("serialize");
+        let restored: HookDiagnostic = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(hd, restored);
+    }
+
+    #[test]
+    fn hook_check_result_serde_roundtrip() {
+        let hcr = HookCheckResult {
+            hook_name: "pre_deploy".to_string(),
+            passed: true,
+            diagnostics: Vec::new(),
+        };
+        let json = serde_json::to_string(&hcr).expect("serialize");
+        let restored: HookCheckResult = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(hcr, restored);
+    }
+
+    // -- Enrichment: default --
+
+    #[test]
+    fn compiler_default_values() {
+        let c = PolicyTheoremCompiler::default();
+        let c2 = PolicyTheoremCompiler::new();
+        assert_eq!(
+            serde_json::to_string(&c).unwrap(),
+            serde_json::to_string(&c2).unwrap()
+        );
+    }
+
+    #[test]
+    fn merge_operator_ord() {
+        assert!(MergeOperator::Union < MergeOperator::Intersection);
+        assert!(MergeOperator::Intersection < MergeOperator::Attenuation);
+        assert!(MergeOperator::Attenuation < MergeOperator::Precedence);
+    }
+
+    #[test]
+    fn formal_property_ord() {
+        assert!(FormalProperty::Monotonicity < FormalProperty::NonInterference);
+        assert!(FormalProperty::NonInterference < FormalProperty::AttenuationLegality);
+        assert!(FormalProperty::AttenuationLegality < FormalProperty::MergeDeterminism);
+        assert!(FormalProperty::MergeDeterminism < FormalProperty::PrecedenceStability);
+    }
+
+    #[test]
+    fn diagnostic_severity_ord() {
+        assert!(DiagnosticSeverity::Warning < DiagnosticSeverity::Error);
+        assert!(DiagnosticSeverity::Error < DiagnosticSeverity::Fatal);
+    }
+
+    #[test]
+    fn compiler_error_std_error() {
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(CompilerError::EmptyPolicy { policy_id: PolicyId::new("p1") }),
+            Box::new(CompilerError::PolicyTooLarge {
+                policy_id: PolicyId::new("p2"),
+                node_count: 5000,
+                max_nodes: 1000,
+            }),
+            Box::new(CompilerError::HookFailed {
+                hook_name: "monotonicity".into(),
+                diagnostics: vec![],
+            }),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            displays.insert(format!("{v}"));
+        }
+        assert_eq!(displays.len(), 3);
+    }
 }

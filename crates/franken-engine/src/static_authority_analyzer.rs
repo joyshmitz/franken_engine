@@ -1727,4 +1727,181 @@ mod tests {
             "excluded_dead_path"
         );
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: leaf enum serde roundtrips
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn analysis_method_serde_roundtrip() {
+        for v in [
+            AnalysisMethod::LatticeReachability,
+            AnalysisMethod::ManifestFallback,
+            AnalysisMethod::TimeoutFallback,
+            AnalysisMethod::ExcludedDeadPath,
+        ] {
+            let json = serde_json::to_string(&v).unwrap();
+            let restored: AnalysisMethod = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, restored);
+        }
+    }
+
+    #[test]
+    fn analysis_error_serde_all_variants() {
+        let errors: Vec<AnalysisError> = vec![
+            AnalysisError::ExtensionMismatch {
+                graph_ext: "a".to_string(),
+                manifest_ext: "b".to_string(),
+            },
+            AnalysisError::EmptyEffectGraph {
+                extension_id: "e".to_string(),
+            },
+            AnalysisError::NoEntryNode {
+                extension_id: "e".to_string(),
+            },
+            AnalysisError::TimedOut {
+                extension_id: "e".to_string(),
+                elapsed_ns: 100,
+                budget_ns: 50,
+            },
+        ];
+        for err in &errors {
+            let json = serde_json::to_string(err).unwrap();
+            let restored: AnalysisError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*err, restored);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: struct serde roundtrips
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn effect_node_serde_roundtrip() {
+        let node = EffectNode {
+            node_id: "n1".to_string(),
+            kind: EffectNodeKind::HostcallSite {
+                capability: cap("cap:fs"),
+            },
+            source_location: Some("module.rs:42".to_string()),
+        };
+        let json = serde_json::to_string(&node).unwrap();
+        let restored: EffectNode = serde_json::from_str(&json).unwrap();
+        assert_eq!(node, restored);
+    }
+
+    #[test]
+    fn effect_edge_serde_roundtrip() {
+        let e = EffectEdge {
+            from: "a".to_string(),
+            to: "b".to_string(),
+            provably_dead: true,
+        };
+        let json = serde_json::to_string(&e).unwrap();
+        let restored: EffectEdge = serde_json::from_str(&json).unwrap();
+        assert_eq!(e, restored);
+    }
+
+    #[test]
+    fn per_capability_evidence_serde_roundtrip() {
+        let ev = PerCapabilityEvidence {
+            capability: cap("cap:net"),
+            requiring_nodes: {
+                let mut s = BTreeSet::new();
+                s.insert("n1".to_string());
+                s
+            },
+            analysis_method: AnalysisMethod::LatticeReachability,
+            summary: "found via lattice".to_string(),
+        };
+        let json = serde_json::to_string(&ev).unwrap();
+        let restored: PerCapabilityEvidence = serde_json::from_str(&json).unwrap();
+        assert_eq!(ev, restored);
+    }
+
+    #[test]
+    fn precision_estimate_serde_roundtrip() {
+        let pe = PrecisionEstimate {
+            upper_bound_size: 5,
+            manifest_declared_size: 3,
+            ratio_millionths: 1_666_667,
+            excluded_by_path_sensitivity: 1,
+        };
+        let json = serde_json::to_string(&pe).unwrap();
+        let restored: PrecisionEstimate = serde_json::from_str(&json).unwrap();
+        assert_eq!(pe, restored);
+    }
+
+    #[test]
+    fn analysis_config_serde_roundtrip() {
+        let cfg = AnalysisConfig {
+            time_budget_ns: 1_000_000,
+            path_sensitive: false,
+            zone: "us-east".to_string(),
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        let restored: AnalysisConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(cfg, restored);
+    }
+
+    #[test]
+    fn analysis_cache_key_serde_roundtrip() {
+        let key = AnalysisCacheKey {
+            effect_graph_hash: ContentHash::compute(b"graph"),
+            manifest_hash: ContentHash::compute(b"manifest"),
+            path_sensitive: true,
+        };
+        let json = serde_json::to_string(&key).unwrap();
+        let restored: AnalysisCacheKey = serde_json::from_str(&json).unwrap();
+        assert_eq!(key, restored);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: default values
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn analysis_config_default_values() {
+        let cfg = AnalysisConfig::default();
+        assert_eq!(cfg.time_budget_ns, 60_000_000_000);
+        assert!(cfg.path_sensitive);
+        assert_eq!(cfg.zone, "default");
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: ordering
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn effect_node_kind_ordering() {
+        assert!(EffectNodeKind::Entry < EffectNodeKind::Exit);
+    }
+
+    #[test]
+    fn analysis_method_ordering() {
+        assert!(AnalysisMethod::LatticeReachability < AnalysisMethod::ExcludedDeadPath);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: Capability helpers
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn capability_as_str_matches_display() {
+        let c = Capability::new("cap:fs");
+        assert_eq!(c.as_str(), "cap:fs");
+        assert_eq!(c.to_string(), "cap:fs");
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: AnalysisError is std::error::Error
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn analysis_error_is_std_error() {
+        let err: Box<dyn std::error::Error> = Box::new(AnalysisError::EmptyEffectGraph {
+            extension_id: "e".to_string(),
+        });
+        assert!(!err.to_string().is_empty());
+    }
 }

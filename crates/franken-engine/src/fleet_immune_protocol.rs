@@ -1655,4 +1655,44 @@ mod tests {
         let decoded: QuorumCheckpoint = serde_json::from_str(&json).unwrap();
         assert_eq!(checkpoint, decoded);
     }
+
+    // -- Enrichment: std::error --
+
+    #[test]
+    fn protocol_error_implements_std_error() {
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(ProtocolError::ReplayDetected {
+                node_id: NodeId("n-1".into()),
+                received_seq: 3,
+                last_accepted_seq: 5,
+            }),
+            Box::new(ProtocolError::DuplicateEvidence {
+                trace_id: "t-1".into(),
+                extension_id: "ext-1".into(),
+            }),
+            Box::new(ProtocolError::IncompatibleVersion {
+                local: ProtocolVersion { major: 1, minor: 0 },
+                remote: ProtocolVersion { major: 2, minor: 0 },
+            }),
+            Box::new(ProtocolError::InvalidSignature {
+                node_id: NodeId("n-3".into()),
+                message_type: "intent".into(),
+            }),
+            Box::new(ProtocolError::QuorumNotReached {
+                required: 3,
+                actual: 1,
+            }),
+            Box::new(ProtocolError::PartitionedNode {
+                node_id: NodeId("n-4".into()),
+            }),
+            Box::new(ProtocolError::EmptyIntents),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            let msg = format!("{v}");
+            assert!(!msg.is_empty());
+            displays.insert(msg);
+        }
+        assert_eq!(displays.len(), 7, "all 7 variants produce distinct messages");
+    }
 }

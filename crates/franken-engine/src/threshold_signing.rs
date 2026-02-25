@@ -1593,6 +1593,59 @@ mod tests {
     }
 
     #[test]
+    // -- Enrichment: Ord, std::error --
+
+    #[test]
+    fn threshold_scope_ordering() {
+        assert!(ThresholdScope::EmergencyRevocation < ThresholdScope::KeyRotation);
+        assert!(ThresholdScope::KeyRotation < ThresholdScope::AuthoritySetChange);
+        assert!(ThresholdScope::AuthoritySetChange < ThresholdScope::PolicyCheckpoint);
+    }
+
+    #[test]
+    fn threshold_error_implements_std_error() {
+        let holder = ShareHolderId([0xAA; 32]);
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(ThresholdError::InvalidThreshold {
+                k: 5,
+                n: 3,
+                detail: "k > n".into(),
+            }),
+            Box::new(ThresholdError::InsufficientThresholdShares {
+                collected: 1,
+                required: 3,
+            }),
+            Box::new(ThresholdError::UnauthorizedShareHolder {
+                holder: holder.clone(),
+            }),
+            Box::new(ThresholdError::DuplicateSubmission {
+                holder: holder.clone(),
+            }),
+            Box::new(ThresholdError::DuplicateShareHolder),
+            Box::new(ThresholdError::PartialSignatureInvalid { holder }),
+            Box::new(ThresholdError::SigningFailed {
+                detail: "fail".into(),
+            }),
+            Box::new(ThresholdError::IdDerivationFailed {
+                detail: "bad".into(),
+            }),
+            Box::new(ThresholdError::CeremonyAlreadyFinalized),
+            Box::new(ThresholdError::PreimageMismatch),
+            Box::new(ThresholdError::ScopeNotThresholded {
+                scope: ThresholdScope::EmergencyRevocation,
+            }),
+            Box::new(ThresholdError::NoScopedOperations),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            let msg = format!("{v}");
+            assert!(!msg.is_empty());
+            displays.insert(msg);
+        }
+        assert_eq!(displays.len(), 12, "all 12 variants produce distinct messages");
+    }
+
+    #[test]
     fn threshold_scope_all_variants() {
         assert_eq!(ThresholdScope::ALL.len(), 4);
     }

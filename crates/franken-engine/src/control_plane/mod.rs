@@ -827,4 +827,70 @@ mod tests {
         // Second call exhausts the queue, should default to Timeout
         assert_eq!(decision.evaluate(&req).unwrap(), DecisionVerdict::Timeout);
     }
+
+    // -- Enrichment: error trait --
+
+    #[test]
+    fn control_plane_adapter_error_is_std_error() {
+        let errors: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(ControlPlaneAdapterError::BudgetExhausted {
+                requested_ms: 100,
+            }),
+            Box::new(ControlPlaneAdapterError::DecisionGateway {
+                code: "DG_TIMEOUT",
+            }),
+            Box::new(ControlPlaneAdapterError::EvidenceEmission {
+                code: "EE_FAIL",
+            }),
+        ];
+        for e in &errors {
+            assert!(!e.to_string().is_empty());
+        }
+    }
+
+    // -- Enrichment: default --
+
+    #[test]
+    fn mock_failure_mode_default_is_never() {
+        assert_eq!(MockFailureMode::default(), MockFailureMode::Never);
+    }
+
+    #[test]
+    fn in_memory_evidence_emitter_default_is_empty() {
+        let emitter = InMemoryEvidenceEmitter::default();
+        assert_eq!(emitter.entries().len(), 0);
+        assert_eq!(emitter.events().len(), 0);
+    }
+
+    // -- Enrichment: error code uniqueness --
+
+    #[test]
+    fn error_codes_are_distinct() {
+        let codes = [
+            ControlPlaneAdapterError::BudgetExhausted { requested_ms: 1 }.error_code(),
+            ControlPlaneAdapterError::DecisionGateway { code: "x" }.error_code(),
+            ControlPlaneAdapterError::EvidenceEmission { code: "y" }.error_code(),
+        ];
+        let set: std::collections::BTreeSet<&str> = codes.iter().copied().collect();
+        assert_eq!(set.len(), codes.len());
+    }
+
+    // -- Enrichment: adapter event with error_code --
+
+    #[test]
+    fn adapter_event_with_error_code_serde() {
+        let event = AdapterEvent {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            component: "test".to_string(),
+            event: "eval".to_string(),
+            outcome: "fail".to_string(),
+            error_code: Some("DG_TIMEOUT".to_string()),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: AdapterEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, back);
+        assert_eq!(back.error_code.as_deref(), Some("DG_TIMEOUT"));
+    }
 }

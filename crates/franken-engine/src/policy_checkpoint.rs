@@ -1113,4 +1113,85 @@ mod tests {
         let restored: CheckpointEvent = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(event, restored);
     }
+
+    // -- Enrichment: ordering --
+
+    #[test]
+    fn policy_type_ordering() {
+        assert!(PolicyType::RuntimeExecution < PolicyType::CapabilityLattice);
+        assert!(PolicyType::CapabilityLattice < PolicyType::ExtensionTrust);
+        assert!(PolicyType::ExtensionTrust < PolicyType::EvidenceRetention);
+        assert!(PolicyType::EvidenceRetention < PolicyType::RevocationGovernance);
+    }
+
+    #[test]
+    fn policy_head_ordering() {
+        let h1 = PolicyHead {
+            policy_type: PolicyType::RuntimeExecution,
+            policy_hash: ContentHash::compute(b"a"),
+            policy_version: 1,
+        };
+        let h2 = PolicyHead {
+            policy_type: PolicyType::CapabilityLattice,
+            policy_hash: ContentHash::compute(b"a"),
+            policy_version: 1,
+        };
+        assert!(h1 < h2);
+    }
+
+    #[test]
+    fn deterministic_timestamp_ordering() {
+        assert!(DeterministicTimestamp(1) < DeterministicTimestamp(2));
+        assert!(DeterministicTimestamp(100) > DeterministicTimestamp(50));
+    }
+
+    // -- Enrichment: serde --
+
+    #[test]
+    fn deterministic_timestamp_serde_roundtrip() {
+        let ts = DeterministicTimestamp(12345);
+        let json = serde_json::to_string(&ts).expect("serialize");
+        let restored: DeterministicTimestamp = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(ts, restored);
+    }
+
+    // -- Enrichment: error trait --
+
+    #[test]
+    fn checkpoint_error_is_std_error() {
+        let errors: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(CheckpointError::GenesisMustHaveNoPredecessor),
+            Box::new(CheckpointError::MissingPredecessor),
+            Box::new(CheckpointError::EmptyPolicyHeads),
+            Box::new(CheckpointError::NonMonotonicSequence {
+                prev_seq: 5,
+                current_seq: 3,
+            }),
+        ];
+        for e in &errors {
+            assert!(!e.to_string().is_empty());
+        }
+    }
+
+    // -- Enrichment: event type display completeness --
+
+    #[test]
+    fn checkpoint_event_type_display_all_variants() {
+        let events = [
+            CheckpointEventType::GenesisCreated,
+            CheckpointEventType::ChainCheckpointCreated { prev_seq: 5 },
+            CheckpointEventType::QuorumVerified {
+                valid: 3,
+                threshold: 2,
+            },
+            CheckpointEventType::ChainLinkageVerified,
+            CheckpointEventType::EpochTransition {
+                from: SecurityEpoch::from_raw(1),
+                to: SecurityEpoch::from_raw(2),
+            },
+        ];
+        for e in &events {
+            assert!(!e.to_string().is_empty());
+        }
+    }
 }

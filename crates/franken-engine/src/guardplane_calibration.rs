@@ -1274,4 +1274,192 @@ mod tests {
         assert_eq!(EffectivenessTrend::Stable.to_string(), "stable");
         assert_eq!(EffectivenessTrend::Degrading.to_string(), "degrading");
     }
+
+    // -------------------------------------------------------------------
+    // Serde roundtrips (enrichment)
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn calibration_error_serde_all_variants() {
+        let variants = vec![
+            CalibrationError::EmptyCampaignBatch,
+            CalibrationError::CampaignValidationFailed {
+                detail: "bad campaign".to_string(),
+            },
+            CalibrationError::CalibrationFailed {
+                detail: "cycle failed".to_string(),
+            },
+            CalibrationError::InvalidConfig {
+                detail: "bad config".to_string(),
+            },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: CalibrationError = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, v);
+        }
+    }
+
+    #[test]
+    fn calibration_context_serde_roundtrip() {
+        let ctx = test_ctx();
+        let json = serde_json::to_string(&ctx).unwrap();
+        let back: CalibrationContext = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, ctx);
+    }
+
+    #[test]
+    fn effectiveness_trend_serde_all_variants() {
+        for v in [
+            EffectivenessTrend::Improving,
+            EffectivenessTrend::Stable,
+            EffectivenessTrend::Degrading,
+        ] {
+            let json = serde_json::to_string(&v).unwrap();
+            let back: EffectivenessTrend = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, v);
+        }
+    }
+
+    #[test]
+    fn dimension_effectiveness_serde_roundtrip() {
+        let de = DimensionEffectiveness {
+            dimension: "Exfiltration".to_string(),
+            detection_rate_millionths: 800_000,
+            evasion_rate_millionths: 200_000,
+            trend: EffectivenessTrend::Improving,
+            sample_count: 42,
+        };
+        let json = serde_json::to_string(&de).unwrap();
+        let back: DimensionEffectiveness = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, de);
+    }
+
+    // -------------------------------------------------------------------
+    // CalibrationError Display (enrichment)
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn calibration_error_display_includes_code_and_detail() {
+        let e1 = CalibrationError::EmptyCampaignBatch;
+        assert!(e1.to_string().contains("FE-GCAL-0001"));
+
+        let e2 = CalibrationError::CampaignValidationFailed {
+            detail: "bad input".to_string(),
+        };
+        let s = e2.to_string();
+        assert!(s.contains("FE-GCAL-0002"));
+        assert!(s.contains("bad input"));
+
+        let e3 = CalibrationError::CalibrationFailed {
+            detail: "diverged".to_string(),
+        };
+        let s = e3.to_string();
+        assert!(s.contains("FE-GCAL-0003"));
+        assert!(s.contains("diverged"));
+
+        let e4 = CalibrationError::InvalidConfig {
+            detail: "bad threshold".to_string(),
+        };
+        let s = e4.to_string();
+        assert!(s.contains("FE-GCAL-0004"));
+        assert!(s.contains("bad threshold"));
+    }
+
+    // -------------------------------------------------------------------
+    // with_config constructor (enrichment)
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn with_config_constructor() {
+        let config = RedBlueCalibrationConfig {
+            target_false_negative_millionths: 50_000,
+            ..RedBlueCalibrationConfig::default()
+        };
+        let engine = GuardplaneCalibrationEngine::with_config(config);
+        assert_eq!(engine.cycle_count(), 0);
+        assert_eq!(engine.total_campaigns_ingested(), 0);
+    }
+
+    // -------------------------------------------------------------------
+    // Multiple consecutive cycles (enrichment)
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn multiple_cycles_accumulate_campaigns() {
+        let mut engine = GuardplaneCalibrationEngine::new();
+        let ctx = test_ctx();
+        let outcomes1 = vec![make_outcome(AttackDimension::Exfiltration, 0, 5, false)];
+        let outcomes2 = vec![
+            make_outcome(AttackDimension::PrivilegeEscalation, 2, 8, false),
+            make_outcome(AttackDimension::PolicyEvasion, 3, 6, true),
+        ];
+
+        engine.run_calibration_cycle(&outcomes1, &ctx).unwrap();
+        engine.run_calibration_cycle(&outcomes2, &ctx).unwrap();
+
+        assert_eq!(engine.cycle_count(), 2);
+        assert_eq!(engine.total_campaigns_ingested(), 3);
+    }
+
+    // -------------------------------------------------------------------
+    // EffectivenessTrend ordering (enrichment)
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn effectiveness_trend_ordering() {
+        // Declaration order: Improving, Stable, Degrading
+        assert!(EffectivenessTrend::Improving < EffectivenessTrend::Stable);
+        assert!(EffectivenessTrend::Stable < EffectivenessTrend::Degrading);
+    }
+
+    // -------------------------------------------------------------------
+    // Trend with flat data (enrichment)
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn trend_stable_with_flat_data() {
+        let flat = vec![300_000; 10];
+        assert_eq!(compute_trend(&flat), EffectivenessTrend::Stable);
+    }
+
+    // -------------------------------------------------------------------
+    // Error code uniqueness (enrichment)
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn error_codes_are_unique() {
+        let errors = vec![
+            CalibrationError::EmptyCampaignBatch,
+            CalibrationError::CampaignValidationFailed {
+                detail: String::new(),
+            },
+            CalibrationError::CalibrationFailed {
+                detail: String::new(),
+            },
+            CalibrationError::InvalidConfig {
+                detail: String::new(),
+            },
+        ];
+        let codes: std::collections::BTreeSet<&str> = errors.iter().map(|e| e.code()).collect();
+        assert_eq!(codes.len(), errors.len());
+    }
+
+    // -------------------------------------------------------------------
+    // Alerts clear between cycles (enrichment)
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn alerts_accumulate_across_cycles() {
+        let mut engine = GuardplaneCalibrationEngine::new();
+        engine.set_evasion_alert_threshold(0); // any evasion triggers
+        let ctx = test_ctx();
+
+        let outcomes = vec![make_outcome(AttackDimension::Exfiltration, 5, 10, false)];
+        engine.run_calibration_cycle(&outcomes, &ctx).unwrap();
+        let alerts_after_first = engine.alerts().len();
+
+        engine.run_calibration_cycle(&outcomes, &ctx).unwrap();
+        assert!(engine.alerts().len() >= alerts_after_first);
+    }
 }

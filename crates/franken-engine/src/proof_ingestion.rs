@@ -1709,4 +1709,281 @@ mod tests {
         assert!(engine.active_proofs().is_empty());
         assert!(engine.active_hypotheses().is_empty());
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: serde roundtrips for leaf types
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn proof_type_serde_roundtrip() {
+        for pt in [
+            ProofType::PlasCapabilityWitness,
+            ProofType::IfcFlowProof,
+            ProofType::ReplaySequenceMotif,
+        ] {
+            let json = serde_json::to_string(&pt).unwrap();
+            let restored: ProofType = serde_json::from_str(&json).unwrap();
+            assert_eq!(restored, pt);
+        }
+    }
+
+    #[test]
+    fn hypothesis_kind_serde_roundtrip() {
+        for hk in [
+            HypothesisKind::DeadCodeElimination,
+            HypothesisKind::DispatchSpecialization,
+            HypothesisKind::FlowCheckElision,
+            HypothesisKind::SuperinstructionFusion,
+        ] {
+            let json = serde_json::to_string(&hk).unwrap();
+            let restored: HypothesisKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(restored, hk);
+        }
+    }
+
+    #[test]
+    fn risk_level_serde_roundtrip() {
+        for rl in [RiskLevel::Low, RiskLevel::Medium, RiskLevel::High] {
+            let json = serde_json::to_string(&rl).unwrap();
+            let restored: RiskLevel = serde_json::from_str(&json).unwrap();
+            assert_eq!(restored, rl);
+        }
+    }
+
+    #[test]
+    fn activation_stage_serde_roundtrip() {
+        for stage in [
+            ActivationStageLocal::Shadow,
+            ActivationStageLocal::Canary,
+            ActivationStageLocal::Ramp,
+            ActivationStageLocal::Default,
+        ] {
+            let json = serde_json::to_string(&stage).unwrap();
+            let restored: ActivationStageLocal = serde_json::from_str(&json).unwrap();
+            assert_eq!(restored, stage);
+        }
+    }
+
+    #[test]
+    fn ingestion_config_serde_roundtrip() {
+        let cfg = test_config();
+        let json = serde_json::to_string(&cfg).unwrap();
+        let restored: IngestionConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored, cfg);
+    }
+
+    #[test]
+    fn ingestion_error_serde_roundtrip_all_variants() {
+        let fake_id = engine_object_id::derive_id(
+            ObjectDomain::PolicyObject,
+            "test",
+            &SchemaId::from_definition(b"fake"),
+            b"fake",
+        )
+        .unwrap();
+
+        let errors = vec![
+            IngestionError::ValidationFailed {
+                proof_id: fake_id.clone(),
+                status: ProofValidationStatus::SignatureInvalid,
+            },
+            IngestionError::NoHypothesesGenerated {
+                proof_id: fake_id.clone(),
+            },
+            IngestionError::HypothesisGenerationFailed {
+                reason: "bad derivation".to_string(),
+            },
+            IngestionError::UnsupportedProofType {
+                proof_type: ProofType::ReplaySequenceMotif,
+            },
+            IngestionError::IdDerivation("test error".to_string()),
+            IngestionError::ConservativeModeActive {
+                invalidation_count: 12,
+                window_ns: 60_000_000_000,
+            },
+        ];
+        for err in &errors {
+            let json = serde_json::to_string(err).unwrap();
+            let restored: IngestionError = serde_json::from_str(&json).unwrap();
+            assert_eq!(&restored, err);
+        }
+    }
+
+    #[test]
+    fn validation_status_serde_roundtrip_all_variants() {
+        let fake_id = engine_object_id::derive_id(
+            ObjectDomain::PolicyObject,
+            "test",
+            &SchemaId::from_definition(b"fake"),
+            b"fake",
+        )
+        .unwrap();
+
+        let statuses = vec![
+            ProofValidationStatus::Accepted,
+            ProofValidationStatus::SignatureInvalid,
+            ProofValidationStatus::EpochStale {
+                proof_epoch: SecurityEpoch::from_raw(10),
+                current_epoch: SecurityEpoch::from_raw(20),
+            },
+            ProofValidationStatus::Expired {
+                validity_end_ns: 500,
+                current_ns: 1000,
+            },
+            ProofValidationStatus::PolicyMismatch {
+                proof_policy: "old-pol".to_string(),
+                active_policy: "new-pol".to_string(),
+            },
+            ProofValidationStatus::SemanticCheckFailed {
+                reason: "unsupported".to_string(),
+            },
+            ProofValidationStatus::Duplicate {
+                existing_id: fake_id,
+            },
+        ];
+        for s in &statuses {
+            let json = serde_json::to_string(s).unwrap();
+            let restored: ProofValidationStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(&restored, s);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: Display format verification
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn error_display_format_content() {
+        let err = IngestionError::ConservativeModeActive {
+            invalidation_count: 15,
+            window_ns: 60_000,
+        };
+        let s = err.to_string();
+        assert!(s.contains("15") && s.contains("60000"));
+
+        let err = IngestionError::UnsupportedProofType {
+            proof_type: ProofType::IfcFlowProof,
+        };
+        assert!(err.to_string().contains("ifc-flow-proof"));
+    }
+
+    #[test]
+    fn validation_status_display_format_content() {
+        let s = ProofValidationStatus::EpochStale {
+            proof_epoch: SecurityEpoch::from_raw(5),
+            current_epoch: SecurityEpoch::from_raw(10),
+        };
+        let display = s.to_string();
+        assert!(display.contains("5") && display.contains("10"));
+
+        let s = ProofValidationStatus::PolicyMismatch {
+            proof_policy: "alpha".to_string(),
+            active_policy: "beta".to_string(),
+        };
+        let display = s.to_string();
+        assert!(display.contains("alpha") && display.contains("beta"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: ordering and default
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn risk_level_ordering() {
+        assert!(RiskLevel::Low < RiskLevel::Medium);
+        assert!(RiskLevel::Medium < RiskLevel::High);
+    }
+
+    #[test]
+    fn activation_stage_ordering() {
+        assert!(ActivationStageLocal::Shadow < ActivationStageLocal::Canary);
+        assert!(ActivationStageLocal::Canary < ActivationStageLocal::Ramp);
+        assert!(ActivationStageLocal::Ramp < ActivationStageLocal::Default);
+    }
+
+    #[test]
+    fn ingestion_config_default_values() {
+        let cfg = IngestionConfig::default();
+        assert!(cfg.active_policy_id.is_empty());
+        assert_eq!(cfg.signing_key, [0u8; 32]);
+        assert_eq!(cfg.churn_threshold, 10);
+        assert_eq!(cfg.plas_speedup_estimate, 1_200_000);
+        assert_eq!(cfg.ifc_speedup_estimate, 1_100_000);
+        assert_eq!(cfg.replay_speedup_estimate, 1_500_000);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn invalidate_unknown_proof_returns_zero() {
+        let mut engine = test_engine();
+        let fake_id = engine_object_id::derive_id(
+            ObjectDomain::PolicyObject,
+            "test",
+            &SchemaId::from_definition(b"fake"),
+            b"unknown",
+        )
+        .unwrap();
+        let count = engine.invalidate_proof(&fake_id, "test", 1000);
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn set_active_policy_changes_validation() {
+        let mut engine = test_engine();
+        // Proof matches original policy.
+        let proof = make_proof(ProofType::PlasCapabilityWitness, b"x", "policy-001");
+        assert!(engine.ingest_proof(proof, 1000).is_ok());
+
+        // Change policy, new proof with old policy should fail.
+        engine.set_active_policy("policy-002");
+        let proof = make_proof(ProofType::IfcFlowProof, b"y", "policy-001");
+        let err = engine.ingest_proof(proof, 2000).unwrap_err();
+        assert!(matches!(
+            err,
+            IngestionError::ValidationFailed {
+                status: ProofValidationStatus::PolicyMismatch { .. },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn canonical_bytes_deterministic_for_hypothesis() {
+        let mut engine = test_engine();
+        let proof = make_default_proof(ProofType::IfcFlowProof);
+        let hypotheses = engine.ingest_proof(proof, 1000).unwrap();
+
+        let bytes1 = hypotheses[0].canonical_bytes();
+        let bytes2 = hypotheses[0].canonical_bytes();
+        assert_eq!(bytes1, bytes2);
+        assert!(!bytes1.is_empty());
+    }
+
+    #[test]
+    fn empty_engine_serde_roundtrip() {
+        // Full engine with proofs can't roundtrip due to BTreeMap<EngineObjectId, _> key issue.
+        // Test empty engine which has no entries in those maps.
+        let engine = test_engine();
+        let json = serde_json::to_string(&engine).unwrap();
+        let restored: ProofIngestionEngine = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.current_epoch(), test_epoch());
+        assert!(restored.active_proofs().is_empty());
+        assert!(restored.active_hypotheses().is_empty());
+    }
+
+    #[test]
+    fn hypotheses_for_unknown_proof_returns_empty() {
+        let engine = test_engine();
+        let fake_id = engine_object_id::derive_id(
+            ObjectDomain::PolicyObject,
+            "test",
+            &SchemaId::from_definition(b"fake"),
+            b"none",
+        )
+        .unwrap();
+        assert!(engine.hypotheses_for_proof(&fake_id).is_empty());
+    }
 }

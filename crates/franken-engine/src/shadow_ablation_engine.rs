@@ -2566,4 +2566,173 @@ mod tests {
             ShadowAblationEngine::new(config.clone(), SynthesisBudgetContract::default()).unwrap();
         assert_eq!(engine.config(), &config);
     }
+
+    // ── Enrichment: serde roundtrips for remaining types ───────────
+
+    #[test]
+    fn shadow_ablation_error_serde_round_trip() {
+        let errors: Vec<ShadowAblationError> = vec![
+            ShadowAblationError::EmptyStaticUpperBound {
+                extension_id: "ext-1".to_string(),
+            },
+            ShadowAblationError::ExtensionMismatch {
+                expected: "a".to_string(),
+                found: "b".to_string(),
+            },
+            ShadowAblationError::InvalidConfig {
+                detail: "bad".to_string(),
+            },
+            ShadowAblationError::InvalidOracleResult {
+                detail: "invalid".to_string(),
+            },
+            ShadowAblationError::Budget {
+                detail: "exhausted".to_string(),
+            },
+            ShadowAblationError::SignatureFailed {
+                detail: "failed".to_string(),
+            },
+            ShadowAblationError::SignatureInvalid {
+                detail: "invalid".to_string(),
+            },
+            ShadowAblationError::IntegrityFailure {
+                expected: "aaa".to_string(),
+                actual: "bbb".to_string(),
+            },
+        ];
+        for err in &errors {
+            let json = serde_json::to_string(err).expect("serialize");
+            let restored: ShadowAblationError =
+                serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*err, restored);
+        }
+    }
+
+    #[test]
+    fn transcript_input_serde_round_trip() {
+        let input = ShadowAblationTranscriptInput {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            extension_id: "e".to_string(),
+            static_report_id: EngineObjectId([0x11; 32]),
+            replay_corpus_id: "corpus".to_string(),
+            randomness_snapshot_id: "rng".to_string(),
+            deterministic_seed: 42,
+            search_strategy: AblationSearchStrategy::LatticeGreedy,
+            initial_capabilities: BTreeSet::from([cap("a"), cap("b")]),
+            final_capabilities: BTreeSet::from([cap("a")]),
+            evaluations: Vec::new(),
+            fallback: None,
+            budget_utilization: BTreeMap::new(),
+        };
+        let json = serde_json::to_string(&input).expect("serialize");
+        let restored: ShadowAblationTranscriptInput =
+            serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(input, restored);
+    }
+
+    #[test]
+    fn search_strategy_ordering() {
+        assert!(AblationSearchStrategy::LatticeGreedy < AblationSearchStrategy::BinaryGuided);
+    }
+
+    #[test]
+    fn search_stage_ordering() {
+        assert!(AblationSearchStage::SingleCapability < AblationSearchStage::CorrelatedPair);
+        assert!(AblationSearchStage::CorrelatedPair < AblationSearchStage::BinaryBlock);
+    }
+
+    #[test]
+    fn failure_class_ordering() {
+        assert!(
+            AblationFailureClass::CorrectnessRegression < AblationFailureClass::InvariantViolation
+        );
+    }
+
+    // -- Enrichment: missing serde roundtrips --
+
+    #[test]
+    fn run_result_serde_roundtrip() {
+        use crate::hash_tiers::ContentHash;
+
+        let result = ShadowAblationRunResult {
+            trace_id: "t1".to_string(),
+            decision_id: "d1".to_string(),
+            policy_id: "p1".to_string(),
+            extension_id: "ext-1".to_string(),
+            static_report_id: EngineObjectId([0xAA; 32]),
+            search_strategy: AblationSearchStrategy::BinaryGuided,
+            initial_capabilities: BTreeSet::from([Capability("cap-a".to_string()), Capability("cap-b".to_string())]),
+            minimal_capabilities: BTreeSet::from([Capability("cap-a".to_string())]),
+            evaluations: vec![],
+            logs: vec![],
+            budget_exhausted: false,
+            fallback: None,
+            budget_utilization: BTreeMap::new(),
+            transcript: SignedShadowAblationTranscript {
+                transcript_id: "tx-1".to_string(),
+                trace_id: "t1".to_string(),
+                decision_id: "d1".to_string(),
+                policy_id: "p1".to_string(),
+                extension_id: "ext-1".to_string(),
+                static_report_id: EngineObjectId([0xAA; 32]),
+                replay_corpus_id: "corpus-1".to_string(),
+                randomness_snapshot_id: "rng-1".to_string(),
+                deterministic_seed: 42,
+                search_strategy: AblationSearchStrategy::BinaryGuided,
+                initial_capabilities: BTreeSet::from([Capability("cap-a".to_string()), Capability("cap-b".to_string())]),
+                final_capabilities: BTreeSet::from([Capability("cap-a".to_string())]),
+                evaluations: vec![],
+                fallback: None,
+                budget_utilization: BTreeMap::new(),
+                transcript_hash: ContentHash::compute(b"test-hash"),
+                signer: SigningKey::from_bytes([1u8; 32]).verification_key(),
+                signature: Signature::from_bytes([0u8; 64]),
+            },
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let restored: ShadowAblationRunResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(result, restored);
+    }
+
+    #[test]
+    fn signed_transcript_serde_roundtrip() {
+        use crate::hash_tiers::ContentHash;
+
+        let transcript = SignedShadowAblationTranscript {
+            transcript_id: "tx-2".to_string(),
+            trace_id: "t2".to_string(),
+            decision_id: "d2".to_string(),
+            policy_id: "p2".to_string(),
+            extension_id: "ext-2".to_string(),
+            static_report_id: EngineObjectId([0xCC; 32]),
+            replay_corpus_id: "corpus-2".to_string(),
+            randomness_snapshot_id: "rng-2".to_string(),
+            deterministic_seed: 99,
+            search_strategy: AblationSearchStrategy::LatticeGreedy,
+            initial_capabilities: BTreeSet::from([Capability("read".to_string()), Capability("write".to_string())]),
+            final_capabilities: BTreeSet::from([Capability("read".to_string())]),
+            evaluations: vec![],
+            fallback: None,
+            budget_utilization: BTreeMap::new(),
+            transcript_hash: ContentHash::compute(b"tx-hash-2"),
+            signer: SigningKey::from_bytes([2u8; 32]).verification_key(),
+            signature: Signature::from_bytes([0u8; 64]),
+        };
+        let json = serde_json::to_string(&transcript).unwrap();
+        let restored: SignedShadowAblationTranscript = serde_json::from_str(&json).unwrap();
+        assert_eq!(transcript, restored);
+    }
+
+    #[test]
+    fn failure_class_error_codes() {
+        assert_eq!(
+            AblationFailureClass::CorrectnessRegression.error_code(),
+            "ablation_correctness_regression"
+        );
+        assert_eq!(
+            AblationFailureClass::BudgetExhausted.error_code(),
+            "ablation_budget_exhausted"
+        );
+    }
 }

@@ -1263,6 +1263,35 @@ mod tests {
     // -- Full lifecycle --
 
     #[test]
+    // -- Enrichment: std::error --
+
+    #[test]
+    fn lease_error_implements_std_error() {
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(LeaseError::LeaseNotFound { lease_id: 1 }),
+            Box::new(LeaseError::LeaseExpired {
+                lease_id: 2,
+                expired_at: 1000,
+            }),
+            Box::new(LeaseError::LeaseReleased { lease_id: 3 }),
+            Box::new(LeaseError::EpochMismatch {
+                lease_id: 4,
+                lease_epoch: SecurityEpoch::from_raw(1),
+                current_epoch: SecurityEpoch::from_raw(3),
+            }),
+            Box::new(LeaseError::ZeroTtl),
+            Box::new(LeaseError::EmptyHolder),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            let msg = format!("{v}");
+            assert!(!msg.is_empty());
+            displays.insert(msg);
+        }
+        assert_eq!(displays.len(), 6, "all 6 variants produce distinct messages");
+    }
+
+    #[test]
     fn full_lifecycle_grant_renew_expire_escalate() {
         let mut store = LeaseStore::new(test_epoch());
 

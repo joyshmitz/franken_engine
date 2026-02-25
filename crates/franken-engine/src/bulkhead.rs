@@ -1132,6 +1132,41 @@ mod tests {
     // -- Full lifecycle with defaults --
 
     #[test]
+    // -- Enrichment: Ord, std::error --
+
+    #[test]
+    fn bulkhead_class_ordering() {
+        assert!(BulkheadClass::RemoteInFlight < BulkheadClass::BackgroundMaintenance);
+        assert!(BulkheadClass::BackgroundMaintenance < BulkheadClass::SagaExecution);
+        assert!(BulkheadClass::SagaExecution < BulkheadClass::EvidenceFlush);
+    }
+
+    #[test]
+    fn bulkhead_error_implements_std_error() {
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(BulkheadError::BulkheadFull {
+                bulkhead_id: "b-1".into(),
+                max_concurrent: 10,
+                queue_depth: 5,
+            }),
+            Box::new(BulkheadError::PermitNotFound { permit_id: 42 }),
+            Box::new(BulkheadError::BulkheadNotFound {
+                bulkhead_id: "b-2".into(),
+            }),
+            Box::new(BulkheadError::InvalidConfig {
+                reason: "bad".into(),
+            }),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            let msg = format!("{v}");
+            assert!(!msg.is_empty());
+            displays.insert(msg);
+        }
+        assert_eq!(displays.len(), 4, "all 4 variants produce distinct messages");
+    }
+
+    #[test]
     fn full_lifecycle_with_defaults() {
         let mut reg = BulkheadRegistry::with_defaults();
 

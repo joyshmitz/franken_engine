@@ -1229,6 +1229,390 @@ mod tests {
     // Forward version upgrade succeeds
     // -----------------------------------------------------------------------
 
+    // -----------------------------------------------------------------------
+    // Serde round-trips (enrichment)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn module_cache_key_serde_round_trip() {
+        let key = ModuleCacheKey::new("mod:serde", ModuleVersionFingerprint::new(source_hash("k"), 3, 7));
+        let json = serde_json::to_string(&key).expect("serialize");
+        let decoded: ModuleCacheKey = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(decoded, key);
+    }
+
+    #[test]
+    fn module_cache_entry_serde_round_trip() {
+        let key = ModuleCacheKey::new("mod:entry", ModuleVersionFingerprint::new(source_hash("e"), 1, 1));
+        let entry = ModuleCacheEntry {
+            key,
+            artifact_hash: ContentHash::compute(b"artifact-serde"),
+            resolved_specifier: "/app/entry.js".to_string(),
+            inserted_seq: 42,
+        };
+        let json = serde_json::to_string(&entry).expect("serialize");
+        let decoded: ModuleCacheEntry = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(decoded, entry);
+    }
+
+    #[test]
+    fn cache_insert_request_serde_round_trip() {
+        let req = CacheInsertRequest::new(
+            "mod:req",
+            ModuleVersionFingerprint::new(source_hash("r"), 2, 3),
+            ContentHash::compute(b"art-req"),
+            "/req.js",
+        );
+        let json = serde_json::to_string(&req).expect("serialize");
+        let decoded: CacheInsertRequest = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(decoded, req);
+    }
+
+    #[test]
+    fn cache_context_serde_round_trip() {
+        let ctx = CacheContext::new("t1", "d1", "p1");
+        let json = serde_json::to_string(&ctx).expect("serialize");
+        let decoded: CacheContext = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(decoded, ctx);
+    }
+
+    #[test]
+    fn cache_event_serde_round_trip() {
+        let mut cache = ModuleCache::new();
+        cache.invalidate_source_update("mod:ev-serde", source_hash("x"), &context());
+        let event = cache.events().last().unwrap().clone();
+        let json = serde_json::to_string(&event).expect("serialize");
+        let decoded: CacheEvent = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(decoded, event);
+    }
+
+    #[test]
+    fn cache_error_serde_round_trip() {
+        let mut cache = ModuleCache::new();
+        let v = ModuleVersionFingerprint::new(source_hash("s"), 1, 1);
+        let err = cache
+            .insert(
+                CacheInsertRequest::new("", v, ContentHash::compute(b"a"), "/e.js"),
+                &context(),
+            )
+            .unwrap_err();
+        let json = serde_json::to_string(&*err).expect("serialize");
+        let decoded: CacheError = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(decoded, *err);
+    }
+
+    #[test]
+    fn module_cache_snapshot_captures_revoked_and_entries() {
+        let mut cache = ModuleCache::new();
+        let ctx = context();
+        let v = ModuleVersionFingerprint::new(source_hash("mc"), 1, 1);
+        cache
+            .insert(
+                CacheInsertRequest::new("mod:mc", v, ContentHash::compute(b"art"), "/mc.js"),
+                &ctx,
+            )
+            .unwrap();
+        cache.invalidate_trust_revocation("mod:revoked", 1, &ctx);
+        let snap = cache.snapshot();
+        // Snapshot roundtrips through JSON (unlike ModuleCache which has non-string map keys)
+        let json = serde_json::to_string(&snap).expect("serialize");
+        let decoded: CacheSnapshot = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(decoded, snap);
+        assert_eq!(snap.entries.len(), 1);
+        assert!(snap.revoked_modules.contains("mod:revoked"));
+    }
+
+    // -----------------------------------------------------------------------
+    // CacheErrorCode serde uses snake_case
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn cache_error_code_serde_uses_snake_case() {
+        let json = serde_json::to_string(&CacheErrorCode::ModuleRevoked).unwrap();
+        assert_eq!(json, "\"module_revoked\"");
+        let json = serde_json::to_string(&CacheErrorCode::VersionRegression).unwrap();
+        assert_eq!(json, "\"version_regression\"");
+        let json = serde_json::to_string(&CacheErrorCode::EmptyModuleId).unwrap();
+        assert_eq!(json, "\"empty_module_id\"");
+    }
+
+    // -----------------------------------------------------------------------
+    // CacheError Display for all error codes
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn cache_error_display_module_revoked() {
+        let mut cache = ModuleCache::new();
+        let ctx = context();
+        let v = ModuleVersionFingerprint::new(source_hash("s"), 1, 1);
+        cache
+            .insert(
+                CacheInsertRequest::new("mod:rd", v, ContentHash::compute(b"a"), "/r.js"),
+                &ctx,
+            )
+            .unwrap();
+        cache.invalidate_trust_revocation("mod:rd", 2, &ctx);
+        let err = cache
+            .insert(
+                CacheInsertRequest::new(
+                    "mod:rd",
+                    ModuleVersionFingerprint::new(source_hash("s2"), 1, 2),
+                    ContentHash::compute(b"a2"),
+                    "/r.js",
+                ),
+                &ctx,
+            )
+            .unwrap_err();
+        let display = format!("{err}");
+        assert!(display.contains("FE-MODCACHE-0001"), "got: {display}");
+        assert!(display.contains("revoked"), "got: {display}");
+    }
+
+    #[test]
+    fn cache_error_display_version_regression() {
+        let mut cache = ModuleCache::new();
+        let ctx = context();
+        let v1 = ModuleVersionFingerprint::new(source_hash("s"), 5, 5);
+        cache
+            .insert(
+                CacheInsertRequest::new("mod:vr", v1, ContentHash::compute(b"a1"), "/vr.js"),
+                &ctx,
+            )
+            .unwrap();
+        let v2 = ModuleVersionFingerprint::new(source_hash("s2"), 3, 5);
+        let err = cache
+            .insert(
+                CacheInsertRequest::new("mod:vr", v2, ContentHash::compute(b"a2"), "/vr.js"),
+                &ctx,
+            )
+            .unwrap_err();
+        let display = format!("{err}");
+        assert!(display.contains("FE-MODCACHE-0002"), "got: {display}");
+        assert!(display.contains("regression"), "got: {display}");
+    }
+
+    // -----------------------------------------------------------------------
+    // Default trait
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn module_cache_default_equals_new() {
+        let a = ModuleCache::new();
+        let b = ModuleCache::default();
+        assert_eq!(a, b);
+    }
+
+    // -----------------------------------------------------------------------
+    // Invalidation on unknown modules
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn invalidate_policy_change_on_unknown_module_creates_version_entry() {
+        let mut cache = ModuleCache::new();
+        cache.invalidate_policy_change("mod:unknown-policy", 5, &context());
+        let snap = cache.snapshot();
+        assert!(snap.latest_versions.contains_key("mod:unknown-policy"));
+        assert_eq!(snap.latest_versions["mod:unknown-policy"].policy_version, 5);
+    }
+
+    #[test]
+    fn invalidate_trust_revocation_on_unknown_module_marks_revoked() {
+        let mut cache = ModuleCache::new();
+        cache.invalidate_trust_revocation("mod:unknown-trust", 3, &context());
+        let snap = cache.snapshot();
+        assert!(snap.revoked_modules.contains("mod:unknown-trust"));
+        assert!(snap.latest_versions.contains_key("mod:unknown-trust"));
+    }
+
+    // -----------------------------------------------------------------------
+    // restore_trust edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn restore_trust_on_non_revoked_module_is_harmless() {
+        let mut cache = ModuleCache::new();
+        let ctx = context();
+        let v = ModuleVersionFingerprint::new(source_hash("s"), 1, 1);
+        cache
+            .insert(
+                CacheInsertRequest::new("mod:nr", v.clone(), ContentHash::compute(b"a"), "/nr.js"),
+                &ctx,
+            )
+            .unwrap();
+        let hash_before = cache.state_hash();
+        cache.restore_trust("mod:nr", 2, &ctx);
+        // Module still accessible, trust_revision may advance
+        assert!(cache.get("mod:nr", &v).is_none()); // version changed (trust_revision bumped)
+        // But hash should differ since latest_versions changed
+        assert_ne!(cache.state_hash(), hash_before);
+    }
+
+    #[test]
+    fn restore_trust_on_unknown_module_creates_entry() {
+        let mut cache = ModuleCache::new();
+        cache.restore_trust("mod:ghost", 1, &context());
+        let snap = cache.snapshot();
+        assert!(snap.latest_versions.contains_key("mod:ghost"));
+        assert!(!snap.revoked_modules.contains("mod:ghost"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Merge snapshot edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn merge_empty_remote_snapshot_is_noop() {
+        let mut cache = ModuleCache::new();
+        let ctx = context();
+        let v = ModuleVersionFingerprint::new(source_hash("s"), 1, 1);
+        cache
+            .insert(
+                CacheInsertRequest::new("mod:local", v.clone(), ContentHash::compute(b"a"), "/l.js"),
+                &ctx,
+            )
+            .unwrap();
+        let hash_before = cache.state_hash();
+        let empty_snap = ModuleCache::new().snapshot();
+        cache.merge_snapshot(&empty_snap, &ctx);
+        assert_eq!(cache.state_hash(), hash_before);
+        assert!(cache.get("mod:local", &v).is_some());
+    }
+
+    #[test]
+    fn merge_into_empty_local_adopts_remote_entries() {
+        let mut remote = ModuleCache::new();
+        let ctx = context();
+        let v = ModuleVersionFingerprint::new(source_hash("r"), 1, 1);
+        remote
+            .insert(
+                CacheInsertRequest::new("mod:remote", v.clone(), ContentHash::compute(b"ar"), "/r.js"),
+                &ctx,
+            )
+            .unwrap();
+        let remote_snap = remote.snapshot();
+
+        let mut local = ModuleCache::new();
+        local.merge_snapshot(&remote_snap, &ctx);
+        assert!(local.get("mod:remote", &v).is_some());
+    }
+
+    #[test]
+    fn merge_does_not_import_revoked_module_entries() {
+        let mut remote = ModuleCache::new();
+        let ctx = context();
+        let v = ModuleVersionFingerprint::new(source_hash("s"), 1, 1);
+        remote
+            .insert(
+                CacheInsertRequest::new("mod:willrevoke", v, ContentHash::compute(b"a"), "/w.js"),
+                &ctx,
+            )
+            .unwrap();
+        remote.invalidate_trust_revocation("mod:willrevoke", 2, &ctx);
+        let remote_snap = remote.snapshot();
+
+        let mut local = ModuleCache::new();
+        local.merge_snapshot(&remote_snap, &ctx);
+        assert!(local.revoked_modules.contains("mod:willrevoke"));
+        assert!(local.entries.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // State hash changes after operations
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn state_hash_changes_after_insert() {
+        let mut cache = ModuleCache::new();
+        let hash_empty = cache.state_hash();
+        let v = ModuleVersionFingerprint::new(source_hash("s"), 1, 1);
+        cache
+            .insert(
+                CacheInsertRequest::new("mod:sh", v, ContentHash::compute(b"a"), "/sh.js"),
+                &context(),
+            )
+            .unwrap();
+        assert_ne!(cache.state_hash(), hash_empty);
+    }
+
+    #[test]
+    fn state_hash_changes_after_revocation() {
+        let mut cache = ModuleCache::new();
+        let ctx = context();
+        let v = ModuleVersionFingerprint::new(source_hash("s"), 1, 1);
+        cache
+            .insert(
+                CacheInsertRequest::new("mod:hr", v, ContentHash::compute(b"a"), "/hr.js"),
+                &ctx,
+            )
+            .unwrap();
+        let hash_before = cache.state_hash();
+        cache.invalidate_trust_revocation("mod:hr", 2, &ctx);
+        assert_ne!(cache.state_hash(), hash_before);
+    }
+
+    // -----------------------------------------------------------------------
+    // Ordering tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn module_version_fingerprint_ordering() {
+        let a = ModuleVersionFingerprint::new(source_hash("a"), 1, 1);
+        let b = ModuleVersionFingerprint::new(source_hash("a"), 2, 1);
+        let c = ModuleVersionFingerprint::new(source_hash("a"), 2, 2);
+        assert!(a < b);
+        assert!(b < c);
+    }
+
+    #[test]
+    fn module_cache_key_ordering() {
+        let v = ModuleVersionFingerprint::new(source_hash("s"), 1, 1);
+        let ka = ModuleCacheKey::new("aaa", v.clone());
+        let kb = ModuleCacheKey::new("bbb", v);
+        assert!(ka < kb);
+    }
+
+    // -----------------------------------------------------------------------
+    // Error event fields
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn error_event_records_correct_fields() {
+        let mut cache = ModuleCache::new();
+        let v = ModuleVersionFingerprint::new(source_hash("s"), 1, 1);
+        let _ = cache.insert(
+            CacheInsertRequest::new("", v, ContentHash::compute(b"a"), "/e.js"),
+            &context(),
+        );
+        let event = cache.events().last().unwrap();
+        assert_eq!(event.component, "module_cache");
+        assert_eq!(event.event, "cache_insert");
+        assert_eq!(event.outcome, "deny");
+        assert_eq!(event.error_code, "FE-MODCACHE-0003");
+        assert_eq!(event.module_id, "<empty>");
+    }
+
+    // -----------------------------------------------------------------------
+    // ModuleCacheEntry canonical value determinism
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn module_cache_entry_canonical_value_is_deterministic() {
+        let key = ModuleCacheKey::new("mod:det2", ModuleVersionFingerprint::new(source_hash("d"), 1, 1));
+        let entry = ModuleCacheEntry {
+            key,
+            artifact_hash: ContentHash::compute(b"det-artifact"),
+            resolved_specifier: "/det.js".to_string(),
+            inserted_seq: 99,
+        };
+        let bytes1 = encode_value(&entry.canonical_value());
+        let bytes2 = encode_value(&entry.canonical_value());
+        assert_eq!(bytes1, bytes2);
+    }
+
+    // -----------------------------------------------------------------------
+    // Forward version upgrade succeeds (existing)
+    // -----------------------------------------------------------------------
+
     #[test]
     fn forward_version_upgrade_succeeds() {
         let mut cache = ModuleCache::new();

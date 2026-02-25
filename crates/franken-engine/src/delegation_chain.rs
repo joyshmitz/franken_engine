@@ -703,4 +703,688 @@ mod tests {
 
         assert_eq!(err, ChainError::MissingCheckpointBinding { index: 0 });
     }
+
+    // -- Missing revocation freshness binding --
+
+    #[test]
+    fn missing_revocation_freshness_binding_is_rejected() {
+        let (mut chain, root_sk, leaf_delegate) = valid_chain_fixture();
+        chain.links[1].revocation_freshness = None;
+        let ctx = make_ctx(&root_sk);
+
+        let err = verify_chain(
+            &chain,
+            RuntimeCapability::VmDispatch,
+            &leaf_delegate,
+            &ctx,
+            &NoRevocationOracle,
+        )
+        .expect_err("missing revocation freshness should fail");
+
+        assert_eq!(
+            err,
+            ChainError::MissingRevocationFreshnessBinding { index: 1 }
+        );
+    }
+
+    // -- Zone mismatch --
+
+    #[test]
+    fn zone_mismatch_is_rejected() {
+        let root_sk = make_sk(1);
+        let issuer_sk = make_sk(2);
+        let leaf_delegate = make_principal(99);
+
+        let link0 = make_bound_token(
+            &root_sk,
+            principal_id_from_verification_key(&issuer_sk.verification_key()),
+            &[RuntimeCapability::VmDispatch],
+        );
+
+        // Build link1 in a different zone.
+        let builder = crate::capability_token::TokenBuilder::new(
+            issuer_sk.clone(),
+            DeterministicTimestamp(100),
+            DeterministicTimestamp(1_000),
+            SecurityEpoch::GENESIS,
+            "zone-evil",
+        )
+        .add_audience(leaf_delegate.clone())
+        .bind_checkpoint(crate::capability_token::CheckpointRef {
+            min_checkpoint_seq: 5,
+            checkpoint_id: EngineObjectId([7; 32]),
+        })
+        .bind_revocation_freshness(crate::capability_token::RevocationFreshnessRef {
+            min_revocation_seq: 3,
+            revocation_head_hash: ContentHash::compute(b"rev-head"),
+        })
+        .add_capability(RuntimeCapability::VmDispatch);
+        let link1 = builder.build().expect("token should build");
+
+        let chain = DelegationChain::new(vec![link0, link1]);
+        let ctx = make_ctx(&root_sk);
+
+        let err = verify_chain(
+            &chain,
+            RuntimeCapability::VmDispatch,
+            &leaf_delegate,
+            &ctx,
+            &NoRevocationOracle,
+        )
+        .expect_err("zone mismatch should fail");
+
+        match err {
+            ChainError::ZoneMismatch {
+                index,
+                expected_zone,
+                actual_zone,
+            } => {
+                assert_eq!(index, 1);
+                assert_eq!(expected_zone, "zone-a");
+                assert_eq!(actual_zone, "zone-evil");
+            }
+            other => panic!("expected zone mismatch, got {other:?}"),
+        }
+    }
+
+    // -- Missing capability at leaf --
+
+    #[test]
+    fn missing_capability_at_leaf_is_rejected() {
+        let (chain, root_sk, leaf_delegate) = valid_chain_fixture();
+        let ctx = make_ctx(&root_sk);
+
+        // Leaf only has VmDispatch, not NetworkEgress.
+        let err = verify_chain(
+            &chain,
+            RuntimeCapability::NetworkEgress,
+            &leaf_delegate,
+            &ctx,
+            &NoRevocationOracle,
+        )
+        .expect_err("missing leaf capability should fail");
+
+        match err {
+            ChainError::MissingCapabilityAtLeaf {
+                required,
+                leaf_capabilities,
+            } => {
+                assert_eq!(required, RuntimeCapability::NetworkEgress);
+                assert!(leaf_capabilities.contains(&RuntimeCapability::VmDispatch));
+                assert!(!leaf_capabilities.contains(&RuntimeCapability::NetworkEgress));
+            }
+            other => panic!("expected missing capability at leaf, got {other:?}"),
+        }
+    }
+
+    // -- Single-link chain --
+
+    #[test]
+    fn single_link_chain_verifies() {
+        let root_sk = make_sk(1);
+        let leaf_delegate = make_principal(99);
+
+        let link0 = make_bound_token(
+            &root_sk,
+            leaf_delegate.clone(),
+            &[RuntimeCapability::VmDispatch],
+        );
+        let chain = DelegationChain::new(vec![link0]);
+        let ctx = make_ctx(&root_sk);
+
+        let proof = verify_chain(
+            &chain,
+            RuntimeCapability::VmDispatch,
+            &leaf_delegate,
+            &ctx,
+            &NoRevocationOracle,
+        )
+        .expect("single-link chain should verify");
+
+        assert_eq!(proof.chain_summary.len(), 1);
+        assert_eq!(proof.chain_summary[0].index, 0);
+        assert_eq!(proof.chain_summary[0].delegate, leaf_delegate);
+    }
+
+    // -- Revocation of first/last link --
+
+    #[test]
+    fn revoked_root_link_invalidates_chain() {
+        let (chain, root_sk, leaf_delegate) = valid_chain_fixture();
+        let ctx = make_ctx(&root_sk);
+        let mut revoked = BTreeSet::new();
+        revoked.insert(chain.links[0].jti.clone());
+        let oracle = SetRevocationOracle { revoked };
+
+        let err = verify_chain(
+            &chain,
+            RuntimeCapability::VmDispatch,
+            &leaf_delegate,
+            &ctx,
+            &oracle,
+        )
+        .expect_err("revoked root should fail");
+
+        match err {
+            ChainError::RevokedLink { index, .. } => assert_eq!(index, 0),
+            other => panic!("expected revoked link, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn revoked_leaf_link_invalidates_chain() {
+        let (chain, root_sk, leaf_delegate) = valid_chain_fixture();
+        let ctx = make_ctx(&root_sk);
+        let mut revoked = BTreeSet::new();
+        revoked.insert(chain.links[2].jti.clone());
+        let oracle = SetRevocationOracle { revoked };
+
+        let err = verify_chain(
+            &chain,
+            RuntimeCapability::VmDispatch,
+            &leaf_delegate,
+            &ctx,
+            &oracle,
+        )
+        .expect_err("revoked leaf should fail");
+
+        match err {
+            ChainError::RevokedLink { index, .. } => assert_eq!(index, 2),
+            other => panic!("expected revoked link, got {other:?}"),
+        }
+    }
+
+    // -- DelegationChain basic methods --
+
+    #[test]
+    fn delegation_chain_len_and_is_empty() {
+        let empty = DelegationChain::new(Vec::new());
+        assert!(empty.is_empty());
+        assert_eq!(empty.len(), 0);
+
+        let (chain, _, _) = valid_chain_fixture();
+        assert!(!chain.is_empty());
+        assert_eq!(chain.len(), 3);
+    }
+
+    // -- DelegationVerificationContext defaults --
+
+    #[test]
+    fn delegation_context_default_values() {
+        let ctx = DelegationVerificationContext::default();
+        assert_eq!(ctx.current_tick, 0);
+        assert_eq!(ctx.verifier_checkpoint_seq, 0);
+        assert_eq!(ctx.verifier_revocation_seq, 0);
+        assert_eq!(ctx.max_chain_depth, DEFAULT_MAX_CHAIN_DEPTH);
+        assert!(ctx.authorized_roots.is_empty());
+        assert!(ctx.required_zone.is_none());
+    }
+
+    #[test]
+    fn delegation_context_with_authorized_root() {
+        let sk = make_sk(1);
+        let ctx = DelegationVerificationContext::with_authorized_root(sk.verification_key());
+        assert_eq!(ctx.authorized_roots.len(), 1);
+        assert!(ctx.authorized_roots.contains(&sk.verification_key()));
+        assert_eq!(ctx.max_chain_depth, DEFAULT_MAX_CHAIN_DEPTH);
+    }
+
+    // -- NoRevocationOracle --
+
+    #[test]
+    fn no_revocation_oracle_never_revokes() {
+        let oracle = NoRevocationOracle;
+        let token_id = EngineObjectId([0xAA; 32]);
+        assert!(!oracle.is_revoked(&token_id));
+    }
+
+    // -- chain_hash determinism --
+
+    #[test]
+    fn chain_hash_is_deterministic() {
+        let (chain, root_sk, leaf_delegate) = valid_chain_fixture();
+        let ctx = make_ctx(&root_sk);
+
+        let proof1 = verify_chain(
+            &chain,
+            RuntimeCapability::VmDispatch,
+            &leaf_delegate,
+            &ctx,
+            &NoRevocationOracle,
+        )
+        .unwrap();
+        let proof2 = verify_chain(
+            &chain,
+            RuntimeCapability::VmDispatch,
+            &leaf_delegate,
+            &ctx,
+            &NoRevocationOracle,
+        )
+        .unwrap();
+
+        assert_eq!(proof1.chain_hash, proof2.chain_hash);
+    }
+
+    #[test]
+    fn chain_hash_changes_with_different_delegate() {
+        let root_sk = make_sk(1);
+        let leaf_a = make_principal(99);
+        let leaf_b = make_principal(88);
+
+        let link0_a = make_bound_token(
+            &root_sk,
+            leaf_a.clone(),
+            &[RuntimeCapability::VmDispatch],
+        );
+        let link0_b = make_bound_token(
+            &root_sk,
+            leaf_b.clone(),
+            &[RuntimeCapability::VmDispatch],
+        );
+
+        let ctx = make_ctx(&root_sk);
+        let proof_a = verify_chain(
+            &DelegationChain::new(vec![link0_a]),
+            RuntimeCapability::VmDispatch,
+            &leaf_a,
+            &ctx,
+            &NoRevocationOracle,
+        )
+        .unwrap();
+        let proof_b = verify_chain(
+            &DelegationChain::new(vec![link0_b]),
+            RuntimeCapability::VmDispatch,
+            &leaf_b,
+            &ctx,
+            &NoRevocationOracle,
+        )
+        .unwrap();
+
+        assert_ne!(proof_a.chain_hash, proof_b.chain_hash);
+    }
+
+    // -- AuthorizationProof fields --
+
+    #[test]
+    fn proof_verified_at_tick_matches_context() {
+        let (chain, root_sk, leaf_delegate) = valid_chain_fixture();
+        let ctx = make_ctx(&root_sk);
+
+        let proof = verify_chain(
+            &chain,
+            RuntimeCapability::VmDispatch,
+            &leaf_delegate,
+            &ctx,
+            &NoRevocationOracle,
+        )
+        .unwrap();
+
+        assert_eq!(proof.verified_at_tick, 500);
+        assert_eq!(proof.authorized_capability, RuntimeCapability::VmDispatch);
+        assert_eq!(
+            proof.root_issuer,
+            principal_id_from_verification_key(&root_sk.verification_key())
+        );
+    }
+
+    // -- DelegationChain::verify convenience method --
+
+    #[test]
+    fn delegation_chain_verify_method() {
+        let (chain, root_sk, leaf_delegate) = valid_chain_fixture();
+        let ctx = make_ctx(&root_sk);
+
+        let proof = chain
+            .verify(
+                RuntimeCapability::VmDispatch,
+                &leaf_delegate,
+                &ctx,
+                &NoRevocationOracle,
+            )
+            .expect("verify method should delegate correctly");
+
+        assert_eq!(proof.chain_summary.len(), 3);
+    }
+
+    // -- principal_id_from_verification_key --
+
+    #[test]
+    fn principal_id_from_vk_is_deterministic() {
+        let sk = make_sk(42);
+        let p1 = principal_id_from_verification_key(&sk.verification_key());
+        let p2 = principal_id_from_verification_key(&sk.verification_key());
+        assert_eq!(p1, p2);
+    }
+
+    #[test]
+    fn principal_id_differs_for_different_keys() {
+        let p1 = principal_id_from_verification_key(&make_sk(1).verification_key());
+        let p2 = principal_id_from_verification_key(&make_sk(2).verification_key());
+        assert_ne!(p1, p2);
+    }
+
+    // -- ChainError Display --
+
+    #[test]
+    fn chain_error_display_empty_chain() {
+        let err = ChainError::EmptyChain;
+        assert!(err.to_string().contains("empty"));
+    }
+
+    #[test]
+    fn chain_error_display_depth_exceeded() {
+        let err = ChainError::DepthExceeded {
+            max_depth: 5,
+            actual_depth: 10,
+        };
+        let s = err.to_string();
+        assert!(s.contains("5"));
+        assert!(s.contains("10"));
+    }
+
+    #[test]
+    fn chain_error_display_unauthorized_root() {
+        let err = ChainError::UnauthorizedRoot {
+            root_issuer: make_sk(1).verification_key(),
+        };
+        assert!(err.to_string().contains("unauthorized root"));
+    }
+
+    #[test]
+    fn chain_error_display_missing_checkpoint() {
+        let err = ChainError::MissingCheckpointBinding { index: 3 };
+        let s = err.to_string();
+        assert!(s.contains("3"));
+        assert!(s.contains("checkpoint"));
+    }
+
+    #[test]
+    fn chain_error_display_missing_revocation_freshness() {
+        let err = ChainError::MissingRevocationFreshnessBinding { index: 2 };
+        let s = err.to_string();
+        assert!(s.contains("2"));
+        assert!(s.contains("revocation freshness"));
+    }
+
+    #[test]
+    fn chain_error_display_token_verification_failed() {
+        let err = ChainError::TokenVerificationFailed {
+            index: 1,
+            error: TokenError::SignatureInvalid {
+                detail: "bad sig".to_string(),
+            },
+        };
+        let s = err.to_string();
+        assert!(s.contains("1"));
+        assert!(s.contains("bad sig"));
+    }
+
+    #[test]
+    fn chain_error_display_attenuation_violation() {
+        let mut amplified = BTreeSet::new();
+        amplified.insert(RuntimeCapability::FsWrite);
+        let err = ChainError::AttenuationViolation {
+            index: 2,
+            parent_capability_count: 1,
+            child_capability_count: 2,
+            amplified_capabilities: amplified,
+        };
+        let s = err.to_string();
+        assert!(s.contains("attenuation"));
+        assert!(s.contains("2"));
+    }
+
+    #[test]
+    fn chain_error_display_zone_mismatch() {
+        let err = ChainError::ZoneMismatch {
+            index: 1,
+            expected_zone: "zone-a".to_string(),
+            actual_zone: "zone-b".to_string(),
+        };
+        let s = err.to_string();
+        assert!(s.contains("zone-a"));
+        assert!(s.contains("zone-b"));
+    }
+
+    #[test]
+    fn chain_error_display_revoked_link() {
+        let err = ChainError::RevokedLink {
+            index: 0,
+            token_id: EngineObjectId([0xAA; 32]),
+        };
+        let s = err.to_string();
+        assert!(s.contains("revoked"));
+        assert!(s.contains("0"));
+    }
+
+    #[test]
+    fn chain_error_display_missing_capability_at_leaf() {
+        let mut caps = BTreeSet::new();
+        caps.insert(RuntimeCapability::VmDispatch);
+        let err = ChainError::MissingCapabilityAtLeaf {
+            required: RuntimeCapability::NetworkEgress,
+            leaf_capabilities: caps,
+        };
+        let s = err.to_string();
+        assert!(s.contains("network_egress"));
+    }
+
+    // -- Serde roundtrips --
+
+    #[test]
+    fn chain_error_serde_roundtrip() {
+        let errors = vec![
+            ChainError::EmptyChain,
+            ChainError::DepthExceeded {
+                max_depth: 8,
+                actual_depth: 12,
+            },
+            ChainError::UnauthorizedRoot {
+                root_issuer: make_sk(1).verification_key(),
+            },
+            ChainError::MissingCheckpointBinding { index: 0 },
+            ChainError::MissingRevocationFreshnessBinding { index: 1 },
+            ChainError::TokenVerificationFailed {
+                index: 2,
+                error: TokenError::EmptyCapabilities,
+            },
+            ChainError::AttenuationViolation {
+                index: 1,
+                parent_capability_count: 2,
+                child_capability_count: 3,
+                amplified_capabilities: {
+                    let mut s = BTreeSet::new();
+                    s.insert(RuntimeCapability::FsWrite);
+                    s
+                },
+            },
+            ChainError::ZoneMismatch {
+                index: 0,
+                expected_zone: "a".to_string(),
+                actual_zone: "b".to_string(),
+            },
+            ChainError::RevokedLink {
+                index: 1,
+                token_id: EngineObjectId([1; 32]),
+            },
+            ChainError::MissingCapabilityAtLeaf {
+                required: RuntimeCapability::VmDispatch,
+                leaf_capabilities: BTreeSet::new(),
+            },
+        ];
+        for err in &errors {
+            let json = serde_json::to_string(err).expect("serialize");
+            let restored: ChainError = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*err, restored);
+        }
+    }
+
+    #[test]
+    fn delegation_chain_serde_roundtrip() {
+        let (chain, _, _) = valid_chain_fixture();
+        let json = serde_json::to_string(&chain).expect("serialize");
+        let restored: DelegationChain = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(chain, restored);
+    }
+
+    #[test]
+    fn authorization_proof_serde_roundtrip() {
+        let (chain, root_sk, leaf_delegate) = valid_chain_fixture();
+        let ctx = make_ctx(&root_sk);
+        let proof = verify_chain(
+            &chain,
+            RuntimeCapability::VmDispatch,
+            &leaf_delegate,
+            &ctx,
+            &NoRevocationOracle,
+        )
+        .unwrap();
+
+        let json = serde_json::to_string(&proof).expect("serialize");
+        let restored: AuthorizationProof = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(proof, restored);
+    }
+
+    #[test]
+    fn delegation_link_summary_serde_roundtrip() {
+        let summary = DelegationLinkSummary {
+            index: 0,
+            token_id: EngineObjectId([1; 32]),
+            issuer: make_principal(1),
+            delegate: make_principal(2),
+            capability_count: 3,
+            zone: "zone-a".to_string(),
+            not_before_tick: 100,
+            expiry_tick: 1000,
+        };
+        let json = serde_json::to_string(&summary).expect("serialize");
+        let restored: DelegationLinkSummary =
+            serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(summary, restored);
+    }
+
+    #[test]
+    fn delegation_context_serde_roundtrip() {
+        let ctx = DelegationVerificationContext {
+            current_tick: 500,
+            verifier_checkpoint_seq: 10,
+            verifier_revocation_seq: 5,
+            max_chain_depth: 4,
+            authorized_roots: {
+                let mut s = BTreeSet::new();
+                s.insert(make_sk(1).verification_key());
+                s
+            },
+            required_zone: Some("zone-a".to_string()),
+        };
+        let json = serde_json::to_string(&ctx).expect("serialize");
+        let restored: DelegationVerificationContext =
+            serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(ctx, restored);
+    }
+
+    // -- DEFAULT_MAX_CHAIN_DEPTH constant --
+
+    #[test]
+    fn default_max_chain_depth_constant() {
+        assert_eq!(DEFAULT_MAX_CHAIN_DEPTH, 8);
+    }
+
+    // -- Zone inferred from root when required_zone is None --
+
+    #[test]
+    fn zone_inferred_from_root_link_when_required_zone_is_none() {
+        let root_sk = make_sk(1);
+        let leaf_delegate = make_principal(99);
+
+        let link0 = make_bound_token(
+            &root_sk,
+            leaf_delegate.clone(),
+            &[RuntimeCapability::VmDispatch],
+        );
+        let chain = DelegationChain::new(vec![link0]);
+
+        let mut ctx = make_ctx(&root_sk);
+        ctx.required_zone = None; // Zone inferred from root link.
+
+        let proof = verify_chain(
+            &chain,
+            RuntimeCapability::VmDispatch,
+            &leaf_delegate,
+            &ctx,
+            &NoRevocationOracle,
+        )
+        .expect("should verify when zone inferred from root");
+
+        assert_eq!(proof.chain_summary.len(), 1);
+    }
+
+    // -- Chain summary link fields --
+
+    #[test]
+    fn chain_summary_includes_temporal_and_zone_info() {
+        let (chain, root_sk, leaf_delegate) = valid_chain_fixture();
+        let ctx = make_ctx(&root_sk);
+
+        let proof = verify_chain(
+            &chain,
+            RuntimeCapability::VmDispatch,
+            &leaf_delegate,
+            &ctx,
+            &NoRevocationOracle,
+        )
+        .unwrap();
+
+        for (i, link_summary) in proof.chain_summary.iter().enumerate() {
+            assert_eq!(link_summary.index, i);
+            assert_eq!(link_summary.zone, "zone-a");
+            assert_eq!(link_summary.not_before_tick, 100);
+            assert_eq!(link_summary.expiry_tick, 1_000);
+            assert!(link_summary.capability_count > 0);
+            assert_eq!(link_summary.token_id, chain.links[i].jti);
+        }
+    }
+
+    // -- Max depth boundary --
+
+    #[test]
+    // -- Enrichment: std::error --
+
+    #[test]
+    fn chain_error_implements_std_error() {
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(ChainError::EmptyChain),
+            Box::new(ChainError::DepthExceeded {
+                max_depth: 5,
+                actual_depth: 8,
+            }),
+            Box::new(ChainError::MissingCheckpointBinding { index: 2 }),
+            Box::new(ChainError::MissingRevocationFreshnessBinding { index: 1 }),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            let msg = format!("{v}");
+            assert!(!msg.is_empty());
+            displays.insert(msg);
+        }
+        assert_eq!(displays.len(), 4, "all 4 variants produce distinct messages");
+    }
+
+    #[test]
+    fn chain_at_exact_max_depth_passes() {
+        let (chain, root_sk, leaf_delegate) = valid_chain_fixture();
+        let mut ctx = make_ctx(&root_sk);
+        ctx.max_chain_depth = 3; // chain has exactly 3 links
+
+        let proof = verify_chain(
+            &chain,
+            RuntimeCapability::VmDispatch,
+            &leaf_delegate,
+            &ctx,
+            &NoRevocationOracle,
+        )
+        .expect("chain at exact max depth should pass");
+
+        assert_eq!(proof.chain_summary.len(), 3);
+    }
 }

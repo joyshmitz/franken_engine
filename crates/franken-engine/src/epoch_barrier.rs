@@ -933,6 +933,70 @@ mod tests {
         assert_eq!(guard, restored);
     }
 
+    // -- Enrichment: serde, Display, std::error --
+
+    #[test]
+    fn barrier_state_serde_all_variants() {
+        for state in [
+            BarrierState::Open,
+            BarrierState::Draining,
+            BarrierState::Finalizing,
+        ] {
+            let json = serde_json::to_string(&state).expect("serialize");
+            let restored: BarrierState =
+                serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(state, restored);
+        }
+    }
+
+    #[test]
+    fn critical_op_kind_serde_all_variants() {
+        for kind in [
+            CriticalOpKind::DecisionEval,
+            CriticalOpKind::EvidenceEmission,
+            CriticalOpKind::KeyDerivation,
+            CriticalOpKind::CapabilityCheck,
+            CriticalOpKind::RevocationCheck,
+            CriticalOpKind::RemoteOperation,
+        ] {
+            let json = serde_json::to_string(&kind).expect("serialize");
+            let restored: CriticalOpKind =
+                serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(kind, restored);
+        }
+    }
+
+    #[test]
+    fn barrier_error_implements_std_error() {
+        let epoch = SecurityEpoch::from_raw(5);
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(BarrierError::EpochTransitioning {
+                current_epoch: epoch,
+                state: BarrierState::Draining,
+            }),
+            Box::new(BarrierError::TransitionAlreadyInProgress {
+                current_epoch: epoch,
+            }),
+            Box::new(BarrierError::DrainTimeout {
+                epoch,
+                remaining_guards: 3,
+                timeout_ms: 5000,
+            }),
+            Box::new(BarrierError::NoTransitionInProgress),
+            Box::new(BarrierError::NonMonotonicTransition {
+                current: epoch,
+                attempted: SecurityEpoch::from_raw(2),
+            }),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            let msg = format!("{v}");
+            assert!(!msg.is_empty());
+            displays.insert(msg);
+        }
+        assert_eq!(displays.len(), 5, "all 5 variants produce distinct messages");
+    }
+
     #[test]
     fn barrier_config_serialization_round_trip() {
         let config = BarrierConfig::default();

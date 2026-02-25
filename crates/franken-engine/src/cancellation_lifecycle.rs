@@ -1272,4 +1272,31 @@ mod tests {
         assert!(mgr.is_cancelled("ext-1"));
         assert!(!mgr.is_cancelled("ext-2"));
     }
+
+    // -- Enrichment: std::error --
+
+    #[test]
+    fn cancellation_error_implements_std_error() {
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(CancellationError::CellNotFound {
+                cell_id: "c1".into(),
+            }),
+            Box::new(CancellationError::BudgetExhausted {
+                cell_id: "c2".into(),
+                event: LifecycleEvent::Unload,
+            }),
+            Box::new(CancellationError::CellError {
+                cell_id: "c3".into(),
+                error_code: "cx".into(),
+                message: "fail".into(),
+            }),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            let msg = format!("{v}");
+            assert!(!msg.is_empty());
+            displays.insert(msg);
+        }
+        assert_eq!(displays.len(), 3);
+    }
 }

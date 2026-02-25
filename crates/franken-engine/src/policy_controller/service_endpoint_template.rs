@@ -828,4 +828,582 @@ mod tests {
         assert!(json["trace_id"].is_string());
         assert!(json["log"]["event"].is_string());
     }
+
+    // -- Scope constants --
+
+    #[test]
+    fn scope_constants_are_stable() {
+        assert_eq!(SCOPE_HEALTH_READ, "engine.health.read");
+        assert_eq!(SCOPE_CONTROL_WRITE, "engine.control.write");
+        assert_eq!(SCOPE_EVIDENCE_READ, "engine.evidence.read");
+        assert_eq!(SCOPE_REPLAY_READ, "engine.replay.read");
+        assert_eq!(SCOPE_REPLAY_WRITE, "engine.replay.write");
+    }
+
+    // -- AuthContext --
+
+    #[test]
+    fn auth_context_has_scope_positive_and_negative() {
+        let auth = auth_with_scopes(&[SCOPE_HEALTH_READ, SCOPE_CONTROL_WRITE]);
+        assert!(auth.has_scope(SCOPE_HEALTH_READ));
+        assert!(auth.has_scope(SCOPE_CONTROL_WRITE));
+        assert!(!auth.has_scope(SCOPE_EVIDENCE_READ));
+        assert!(!auth.has_scope(SCOPE_REPLAY_READ));
+        assert!(!auth.has_scope(SCOPE_REPLAY_WRITE));
+    }
+
+    #[test]
+    fn auth_context_empty_scopes_denies_everything() {
+        let auth = auth_with_scopes(&[]);
+        assert!(!auth.has_scope(SCOPE_HEALTH_READ));
+        assert!(!auth.has_scope(SCOPE_CONTROL_WRITE));
+    }
+
+    // -- EndpointFailure --
+
+    #[test]
+    fn endpoint_failure_new_has_empty_details() {
+        let f = EndpointFailure::new("ERR-001", "something broke");
+        assert_eq!(f.error_code, "ERR-001");
+        assert_eq!(f.message, "something broke");
+        assert!(f.details.is_empty());
+    }
+
+    // -- Health endpoint unauthorized --
+
+    #[test]
+    fn health_endpoint_unauthorized_without_scope() {
+        let calls = Rc::new(Cell::new(0));
+        let template = template(calls);
+        let response = template.health_endpoint(&auth_with_scopes(&[]), &context());
+        assert_eq!(response.status, "error");
+        assert!(response.data.is_none());
+        let error = response.error.expect("error envelope");
+        assert_eq!(error.error_code, "unauthorized");
+        assert_eq!(error.details["required_scope"], SCOPE_HEALTH_READ);
+        assert_eq!(response.log.outcome, "error");
+        assert_eq!(response.log.event, "authz.denied");
+    }
+
+    // -- Control action endpoints --
+
+    #[test]
+    fn control_action_unauthorized_without_scope() {
+        let calls = Rc::new(Cell::new(0));
+        let mut template = template(calls);
+        let response = template.control_action_endpoint(
+            &auth_with_scopes(&[SCOPE_HEALTH_READ]),
+            &context(),
+            &ControlActionRequest {
+                extension_id: "ext-a".to_string(),
+                action: ControlAction::Stop,
+                reason: "maintenance".to_string(),
+            },
+        );
+        assert_eq!(response.status, "error");
+        let error = response.error.expect("error envelope");
+        assert_eq!(error.error_code, "unauthorized");
+    }
+
+    #[test]
+    fn control_action_rejects_empty_reason() {
+        let calls = Rc::new(Cell::new(0));
+        let mut template = template(calls);
+        let response = template.control_action_endpoint(
+            &auth_with_scopes(&[SCOPE_CONTROL_WRITE]),
+            &context(),
+            &ControlActionRequest {
+                extension_id: "ext-a".to_string(),
+                action: ControlAction::Start,
+                reason: "   ".to_string(),
+            },
+        );
+        assert_eq!(response.status, "error");
+        let error = response.error.expect("error envelope");
+        assert_eq!(error.details["field"], "reason");
+    }
+
+    #[test]
+    fn control_action_rejects_reason_over_256_chars() {
+        let calls = Rc::new(Cell::new(0));
+        let mut template = template(calls);
+        let long_reason = "x".repeat(257);
+        let response = template.control_action_endpoint(
+            &auth_with_scopes(&[SCOPE_CONTROL_WRITE]),
+            &context(),
+            &ControlActionRequest {
+                extension_id: "ext-a".to_string(),
+                action: ControlAction::Suspend,
+                reason: long_reason,
+            },
+        );
+        assert_eq!(response.status, "error");
+        let error = response.error.expect("error envelope");
+        assert_eq!(error.details["field"], "reason");
+    }
+
+    #[test]
+    fn control_action_accepts_reason_at_256_chars() {
+        let calls = Rc::new(Cell::new(0));
+        let mut template = template(Rc::clone(&calls));
+        let exact_reason = "x".repeat(256);
+        let response = template.control_action_endpoint(
+            &auth_with_scopes(&[SCOPE_CONTROL_WRITE]),
+            &context(),
+            &ControlActionRequest {
+                extension_id: "ext-a".to_string(),
+                action: ControlAction::Start,
+                reason: exact_reason,
+            },
+        );
+        assert_eq!(response.status, "ok");
+        assert_eq!(calls.get(), 1);
+    }
+
+    // -- Evidence export endpoints --
+
+    #[test]
+    fn evidence_export_unauthorized_without_scope() {
+        let calls = Rc::new(Cell::new(0));
+        let template = template(calls);
+        let response = template.evidence_export_endpoint(
+            &auth_with_scopes(&[]),
+            &context(),
+            &EvidenceExportRequest {
+                since_epoch_seconds: 0,
+                until_epoch_seconds: None,
+                page_size: 10,
+                cursor: None,
+            },
+        );
+        assert_eq!(response.status, "error");
+        let error = response.error.expect("error envelope");
+        assert_eq!(error.error_code, "unauthorized");
+    }
+
+    #[test]
+    fn evidence_export_rejects_page_size_zero() {
+        let calls = Rc::new(Cell::new(0));
+        let template = template(calls);
+        let response = template.evidence_export_endpoint(
+            &auth_with_scopes(&[SCOPE_EVIDENCE_READ]),
+            &context(),
+            &EvidenceExportRequest {
+                since_epoch_seconds: 0,
+                until_epoch_seconds: None,
+                page_size: 0,
+                cursor: None,
+            },
+        );
+        assert_eq!(response.status, "error");
+        let error = response.error.expect("error envelope");
+        assert_eq!(error.details["field"], "page_size");
+    }
+
+    #[test]
+    fn evidence_export_rejects_page_size_over_1000() {
+        let calls = Rc::new(Cell::new(0));
+        let template = template(calls);
+        let response = template.evidence_export_endpoint(
+            &auth_with_scopes(&[SCOPE_EVIDENCE_READ]),
+            &context(),
+            &EvidenceExportRequest {
+                since_epoch_seconds: 0,
+                until_epoch_seconds: None,
+                page_size: 1001,
+                cursor: None,
+            },
+        );
+        assert_eq!(response.status, "error");
+        let error = response.error.expect("error envelope");
+        assert_eq!(error.details["field"], "page_size");
+    }
+
+    #[test]
+    fn evidence_export_accepts_page_size_at_boundary() {
+        let calls = Rc::new(Cell::new(0));
+        let template = template(calls);
+        // page_size = 1 (minimum)
+        let r1 = template.evidence_export_endpoint(
+            &auth_with_scopes(&[SCOPE_EVIDENCE_READ]),
+            &context(),
+            &EvidenceExportRequest {
+                since_epoch_seconds: 0,
+                until_epoch_seconds: None,
+                page_size: 1,
+                cursor: None,
+            },
+        );
+        assert_eq!(r1.status, "ok");
+
+        // page_size = 1000 (maximum)
+        let r2 = template.evidence_export_endpoint(
+            &auth_with_scopes(&[SCOPE_EVIDENCE_READ]),
+            &context(),
+            &EvidenceExportRequest {
+                since_epoch_seconds: 0,
+                until_epoch_seconds: None,
+                page_size: 1000,
+                cursor: None,
+            },
+        );
+        assert_eq!(r2.status, "ok");
+    }
+
+    #[test]
+    fn evidence_export_accepts_equal_since_until() {
+        let calls = Rc::new(Cell::new(0));
+        let template = template(calls);
+        let response = template.evidence_export_endpoint(
+            &auth_with_scopes(&[SCOPE_EVIDENCE_READ]),
+            &context(),
+            &EvidenceExportRequest {
+                since_epoch_seconds: 100,
+                until_epoch_seconds: Some(100),
+                page_size: 50,
+                cursor: None,
+            },
+        );
+        assert_eq!(response.status, "ok");
+    }
+
+    // -- Replay control endpoints --
+
+    #[test]
+    fn replay_start_requires_trace_id() {
+        let calls = Rc::new(Cell::new(0));
+        let mut template = template(calls);
+        let response = template.replay_control_endpoint(
+            &auth_with_scopes(&[SCOPE_REPLAY_WRITE]),
+            &context(),
+            &ReplayControlRequest {
+                command: ReplayCommand::Start,
+                trace_id: None,
+                session_id: None,
+            },
+        );
+        assert_eq!(response.status, "error");
+        let error = response.error.expect("error envelope");
+        assert_eq!(error.details["field"], "trace_id");
+    }
+
+    #[test]
+    fn replay_start_rejects_blank_trace_id() {
+        let calls = Rc::new(Cell::new(0));
+        let mut template = template(calls);
+        let response = template.replay_control_endpoint(
+            &auth_with_scopes(&[SCOPE_REPLAY_WRITE]),
+            &context(),
+            &ReplayControlRequest {
+                command: ReplayCommand::Start,
+                trace_id: Some("  ".to_string()),
+                session_id: None,
+            },
+        );
+        assert_eq!(response.status, "error");
+        let error = response.error.expect("error envelope");
+        assert_eq!(error.details["field"], "trace_id");
+    }
+
+    #[test]
+    fn replay_stop_requires_session_id() {
+        let calls = Rc::new(Cell::new(0));
+        let mut template = template(calls);
+        let response = template.replay_control_endpoint(
+            &auth_with_scopes(&[SCOPE_REPLAY_WRITE]),
+            &context(),
+            &ReplayControlRequest {
+                command: ReplayCommand::Stop,
+                trace_id: None,
+                session_id: None,
+            },
+        );
+        assert_eq!(response.status, "error");
+        let error = response.error.expect("error envelope");
+        assert_eq!(error.details["field"], "session_id");
+    }
+
+    #[test]
+    fn replay_status_requires_session_id() {
+        let calls = Rc::new(Cell::new(0));
+        let mut template = template(calls);
+        let response = template.replay_control_endpoint(
+            &auth_with_scopes(&[SCOPE_REPLAY_READ]),
+            &context(),
+            &ReplayControlRequest {
+                command: ReplayCommand::Status,
+                trace_id: None,
+                session_id: None,
+            },
+        );
+        assert_eq!(response.status, "error");
+    }
+
+    #[test]
+    fn replay_start_success() {
+        let calls = Rc::new(Cell::new(0));
+        let mut template = template(calls);
+        let response = template.replay_control_endpoint(
+            &auth_with_scopes(&[SCOPE_REPLAY_WRITE]),
+            &context(),
+            &ReplayControlRequest {
+                command: ReplayCommand::Start,
+                trace_id: Some("trace-replay".to_string()),
+                session_id: None,
+            },
+        );
+        assert_eq!(response.status, "ok");
+        let data = response.data.expect("replay payload");
+        assert_eq!(data.session_id, "session-01");
+        assert_eq!(data.state, "running");
+    }
+
+    #[test]
+    fn replay_stop_success() {
+        let calls = Rc::new(Cell::new(0));
+        let mut template = template(calls);
+        let response = template.replay_control_endpoint(
+            &auth_with_scopes(&[SCOPE_REPLAY_WRITE]),
+            &context(),
+            &ReplayControlRequest {
+                command: ReplayCommand::Stop,
+                trace_id: None,
+                session_id: Some("session-99".to_string()),
+            },
+        );
+        assert_eq!(response.status, "ok");
+        let data = response.data.expect("replay payload");
+        assert_eq!(data.session_id, "session-99");
+        assert_eq!(data.state, "stopped");
+    }
+
+    // -- Upstream failure propagation --
+
+    #[test]
+    fn upstream_failure_propagates_error_code_and_details() {
+        // Use a mock that returns an error.
+        struct FailingDecisionExecutor;
+        impl DecisionContractExecutor for FailingDecisionExecutor {
+            fn execute_control_action(
+                &mut self,
+                _request: &ControlActionRequest,
+                _context: &RequestContext,
+            ) -> Result<ControlActionResponse, EndpointFailure> {
+                let mut details = BTreeMap::new();
+                details.insert("subsystem".to_string(), "decision-engine".to_string());
+                Err(EndpointFailure {
+                    error_code: "BACKEND-500".to_string(),
+                    message: "internal failure".to_string(),
+                    details,
+                })
+            }
+        }
+
+        let mut tmpl = ServiceEndpointTemplate::new(
+            MockHealthProvider {
+                snapshot: HealthStatusResponse {
+                    runtime_status: "healthy".to_string(),
+                    loaded_extensions: vec![],
+                    security_epoch: 1,
+                    gc_pressure_basis_points: 0,
+                },
+            },
+            FailingDecisionExecutor,
+            MockEvidenceProvider,
+            MockReplayController,
+        );
+
+        let response = tmpl.control_action_endpoint(
+            &auth_with_scopes(&[SCOPE_CONTROL_WRITE]),
+            &context(),
+            &ControlActionRequest {
+                extension_id: "ext-a".to_string(),
+                action: ControlAction::Quarantine,
+                reason: "test failure".to_string(),
+            },
+        );
+
+        assert_eq!(response.status, "error");
+        let error = response.error.expect("error envelope");
+        assert_eq!(error.error_code, "BACKEND-500");
+        assert_eq!(error.message, "internal failure");
+        assert_eq!(error.details["subsystem"], "decision-engine");
+        assert_eq!(response.log.outcome, "error");
+    }
+
+    // -- Log fields populated from context --
+
+    #[test]
+    fn ok_response_log_fields_populated_from_context() {
+        let calls = Rc::new(Cell::new(0));
+        let template = template(calls);
+        let ctx = context();
+        let response = template.health_endpoint(&auth_with_scopes(&[SCOPE_HEALTH_READ]), &ctx);
+        assert_eq!(response.log.trace_id, ctx.trace_id);
+        assert_eq!(response.log.decision_id, ctx.decision_id);
+        assert_eq!(response.log.policy_id, ctx.policy_id);
+        assert_eq!(response.log.component, ctx.component);
+        assert!(response.log.error_code.is_none());
+    }
+
+    #[test]
+    fn error_response_log_includes_error_code() {
+        let calls = Rc::new(Cell::new(0));
+        let template = template(calls);
+        let response = template.health_endpoint(&auth_with_scopes(&[]), &context());
+        assert_eq!(response.log.outcome, "error");
+        assert_eq!(response.log.error_code.as_deref(), Some("unauthorized"));
+    }
+
+    // -- Serde roundtrips --
+
+    #[test]
+    fn request_context_serde_roundtrip() {
+        let ctx = context();
+        let json = serde_json::to_string(&ctx).unwrap();
+        let back: RequestContext = serde_json::from_str(&json).unwrap();
+        assert_eq!(ctx, back);
+    }
+
+    #[test]
+    fn auth_context_serde_roundtrip() {
+        let auth = auth_with_scopes(&[SCOPE_HEALTH_READ, SCOPE_CONTROL_WRITE]);
+        let json = serde_json::to_string(&auth).unwrap();
+        let back: AuthContext = serde_json::from_str(&json).unwrap();
+        assert_eq!(auth, back);
+    }
+
+    #[test]
+    fn control_action_serde_roundtrip() {
+        for action in [
+            ControlAction::Start,
+            ControlAction::Stop,
+            ControlAction::Suspend,
+            ControlAction::Quarantine,
+        ] {
+            let json = serde_json::to_value(action).unwrap();
+            let back: ControlAction = serde_json::from_value(json).unwrap();
+            assert_eq!(action, back);
+        }
+    }
+
+    #[test]
+    fn replay_command_serde_roundtrip() {
+        for cmd in [
+            ReplayCommand::Start,
+            ReplayCommand::Stop,
+            ReplayCommand::Status,
+        ] {
+            let json = serde_json::to_value(cmd).unwrap();
+            let back: ReplayCommand = serde_json::from_value(json).unwrap();
+            assert_eq!(cmd, back);
+        }
+    }
+
+    #[test]
+    fn endpoint_failure_serde_roundtrip() {
+        let mut f = EndpointFailure::new("E-42", "bad input");
+        f.details.insert("key".to_string(), "value".to_string());
+        let json = serde_json::to_string(&f).unwrap();
+        let back: EndpointFailure = serde_json::from_str(&json).unwrap();
+        assert_eq!(f, back);
+    }
+
+    #[test]
+    fn control_action_request_serde_roundtrip() {
+        let req = ControlActionRequest {
+            extension_id: "ext-x".to_string(),
+            action: ControlAction::Quarantine,
+            reason: "policy violation".to_string(),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let back: ControlActionRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(req, back);
+    }
+
+    #[test]
+    fn evidence_export_request_serde_roundtrip() {
+        let req = EvidenceExportRequest {
+            since_epoch_seconds: 100,
+            until_epoch_seconds: Some(200),
+            page_size: 50,
+            cursor: Some("cursor-abc".to_string()),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let back: EvidenceExportRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(req, back);
+    }
+
+    #[test]
+    fn replay_control_request_serde_roundtrip() {
+        let req = ReplayControlRequest {
+            command: ReplayCommand::Start,
+            trace_id: Some("trace-001".to_string()),
+            session_id: None,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let back: ReplayControlRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(req, back);
+    }
+
+    #[test]
+    fn health_status_response_serde_roundtrip() {
+        let h = HealthStatusResponse {
+            runtime_status: "degraded".to_string(),
+            loaded_extensions: vec!["ext-a".to_string()],
+            security_epoch: 7,
+            gc_pressure_basis_points: 500,
+        };
+        let json = serde_json::to_string(&h).unwrap();
+        let back: HealthStatusResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(h, back);
+    }
+
+    #[test]
+    fn evidence_record_serde_roundtrip() {
+        let r = EvidenceRecord {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            component: "c".to_string(),
+            event: "e".to_string(),
+            outcome: "ok".to_string(),
+            artifact_ref: "evidence://ref".to_string(),
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        let back: EvidenceRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(r, back);
+    }
+
+    #[test]
+    fn structured_log_event_serde_roundtrip() {
+        let e = StructuredLogEvent {
+            trace_id: "t".to_string(),
+            decision_id: Some("d".to_string()),
+            policy_id: None,
+            component: "engine".to_string(),
+            event: "test.event".to_string(),
+            outcome: "ok".to_string(),
+            error_code: Some("E-1".to_string()),
+        };
+        let json = serde_json::to_string(&e).unwrap();
+        let back: StructuredLogEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(e, back);
+    }
+
+    #[test]
+    fn error_envelope_serde_roundtrip() {
+        let mut details = BTreeMap::new();
+        details.insert("key".to_string(), "val".to_string());
+        let env = ErrorEnvelope {
+            error_code: "ERR-1".to_string(),
+            message: "something".to_string(),
+            trace_id: "t".to_string(),
+            component: "c".to_string(),
+            details,
+        };
+        let json = serde_json::to_string(&env).unwrap();
+        let back: ErrorEnvelope = serde_json::from_str(&json).unwrap();
+        assert_eq!(env, back);
+    }
 }

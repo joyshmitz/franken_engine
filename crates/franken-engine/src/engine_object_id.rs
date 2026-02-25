@@ -921,4 +921,23 @@ mod tests {
         assert_eq!(display.len(), 64);
         assert!(display.chars().all(|c| c.is_ascii_hexdigit()));
     }
+
+    #[test]
+    fn id_error_std_error() {
+        let schema = SchemaId::from_definition(b"test-schema");
+        let id1 = derive_id(ObjectDomain::PolicyObject, "zone", &schema, b"a").unwrap();
+        let id2 = derive_id(ObjectDomain::PolicyObject, "zone", &schema, b"b").unwrap();
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(IdError::EmptyCanonicalBytes),
+            Box::new(IdError::IdMismatch { expected: id1, computed: id2 }),
+            Box::new(IdError::NonCanonicalInput { reason: "bad".into() }),
+            Box::new(IdError::InvalidHexLength { expected: 64, actual: 10 }),
+            Box::new(IdError::InvalidHexChar { position: 3 }),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            displays.insert(format!("{v}"));
+        }
+        assert_eq!(displays.len(), 5);
+    }
 }

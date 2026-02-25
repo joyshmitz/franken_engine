@@ -1236,4 +1236,482 @@ mod tests {
         assert_eq!(event.outcome, "rejected");
         assert_eq!(event.error_code.as_deref(), Some("FE-GOV-LED-0002"));
     }
+
+    // -- GovernanceDecisionType Display all 6 variants --
+
+    #[test]
+    fn governance_decision_type_display() {
+        assert_eq!(GovernanceDecisionType::Promote.to_string(), "promote");
+        assert_eq!(GovernanceDecisionType::Hold.to_string(), "hold");
+        assert_eq!(GovernanceDecisionType::Kill.to_string(), "kill");
+        assert_eq!(GovernanceDecisionType::Pause.to_string(), "pause");
+        assert_eq!(GovernanceDecisionType::Resume.to_string(), "resume");
+        assert_eq!(GovernanceDecisionType::Override.to_string(), "override");
+    }
+
+    // -- GovernanceActor --
+
+    #[test]
+    fn governance_actor_system_accessors() {
+        let actor = GovernanceActor::System("gov-engine".to_string());
+        assert_eq!(actor.actor_id(), "gov-engine");
+        assert!(!actor.is_human());
+    }
+
+    #[test]
+    fn governance_actor_human_accessors() {
+        let actor = GovernanceActor::Human("operator-1".to_string());
+        assert_eq!(actor.actor_id(), "operator-1");
+        assert!(actor.is_human());
+    }
+
+    // -- Config validation --
+
+    #[test]
+    fn config_rejects_zero_checkpoint_interval() {
+        let err = GovernanceAuditLedger::new(GovernanceLedgerConfig {
+            checkpoint_interval: 0,
+            signer_key: b"key".to_vec(),
+            policy_id: "policy".to_string(),
+        })
+        .unwrap_err();
+        assert!(matches!(err, GovernanceLedgerError::InvalidConfig { .. }));
+    }
+
+    #[test]
+    fn config_rejects_empty_signer_key() {
+        let err = GovernanceAuditLedger::new(GovernanceLedgerConfig {
+            checkpoint_interval: 1,
+            signer_key: vec![],
+            policy_id: "policy".to_string(),
+        })
+        .unwrap_err();
+        assert!(matches!(err, GovernanceLedgerError::InvalidConfig { .. }));
+    }
+
+    #[test]
+    fn config_rejects_empty_policy_id() {
+        let err = GovernanceAuditLedger::new(GovernanceLedgerConfig {
+            checkpoint_interval: 1,
+            signer_key: b"key".to_vec(),
+            policy_id: "  ".to_string(),
+        })
+        .unwrap_err();
+        assert!(matches!(err, GovernanceLedgerError::InvalidConfig { .. }));
+    }
+
+    #[test]
+    fn config_default_values() {
+        let config = GovernanceLedgerConfig::default();
+        assert_eq!(config.checkpoint_interval, 64);
+        assert!(!config.signer_key.is_empty());
+        assert!(!config.policy_id.is_empty());
+    }
+
+    // -- Input validation --
+
+    #[test]
+    fn append_rejects_empty_decision_id() {
+        let mut ledger = ledger();
+        let mut input = automatic_input("d", "moon-1", GovernanceDecisionType::Promote, 10);
+        input.decision_id = "  ".to_string();
+        let err = ledger.append(input).unwrap_err();
+        assert!(matches!(
+            err,
+            GovernanceLedgerError::InvalidInput { field, .. } if field == "decision_id"
+        ));
+    }
+
+    #[test]
+    fn append_rejects_empty_moonshot_id() {
+        let mut ledger = ledger();
+        let mut input = automatic_input("d", "moon-1", GovernanceDecisionType::Promote, 10);
+        input.moonshot_id = "".to_string();
+        let err = ledger.append(input).unwrap_err();
+        assert!(matches!(
+            err,
+            GovernanceLedgerError::InvalidInput { field, .. } if field == "moonshot_id"
+        ));
+    }
+
+    #[test]
+    fn append_rejects_empty_actor_id() {
+        let mut ledger = ledger();
+        let mut input = automatic_input("d", "moon-1", GovernanceDecisionType::Promote, 10);
+        input.actor = GovernanceActor::System("".to_string());
+        let err = ledger.append(input).unwrap_err();
+        assert!(matches!(
+            err,
+            GovernanceLedgerError::InvalidInput { field, .. } if field == "actor"
+        ));
+    }
+
+    #[test]
+    fn append_rejects_confidence_over_million() {
+        let mut ledger = ledger();
+        let mut input = automatic_input("d", "moon-1", GovernanceDecisionType::Promote, 10);
+        input.rationale.confidence_millionths = 1_000_001;
+        let err = ledger.append(input).unwrap_err();
+        assert!(matches!(err, GovernanceLedgerError::InvalidInput { .. }));
+    }
+
+    #[test]
+    fn append_rejects_risk_over_million() {
+        let mut ledger = ledger();
+        let mut input = automatic_input("d", "moon-1", GovernanceDecisionType::Promote, 10);
+        input.rationale.risk_of_harm_millionths = 1_000_001;
+        let err = ledger.append(input).unwrap_err();
+        assert!(matches!(err, GovernanceLedgerError::InvalidInput { .. }));
+    }
+
+    // -- Out of order timestamp --
+
+    #[test]
+    fn append_rejects_out_of_order_timestamp() {
+        let mut ledger = ledger();
+        ledger
+            .append(automatic_input(
+                "d-1",
+                "moon-1",
+                GovernanceDecisionType::Promote,
+                100,
+            ))
+            .unwrap();
+        let err = ledger
+            .append(automatic_input(
+                "d-2",
+                "moon-1",
+                GovernanceDecisionType::Hold,
+                50,
+            ))
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            GovernanceLedgerError::OutOfOrderTimestamp { .. }
+        ));
+    }
+
+    // -- Hash chain links --
+
+    #[test]
+    fn first_entry_has_no_previous_hash() {
+        let mut ledger = ledger();
+        let entry = ledger
+            .append(automatic_input(
+                "d-1",
+                "moon-1",
+                GovernanceDecisionType::Promote,
+                10,
+            ))
+            .unwrap();
+        assert!(entry.previous_hash.is_none());
+    }
+
+    #[test]
+    fn second_entry_has_previous_hash() {
+        let mut ledger = ledger();
+        let e1 = ledger
+            .append(automatic_input(
+                "d-1",
+                "moon-1",
+                GovernanceDecisionType::Promote,
+                10,
+            ))
+            .unwrap();
+        let e2 = ledger
+            .append(automatic_input(
+                "d-2",
+                "moon-1",
+                GovernanceDecisionType::Hold,
+                20,
+            ))
+            .unwrap();
+        assert_eq!(e2.previous_hash.as_deref(), Some(e1.entry_hash.as_str()));
+    }
+
+    // -- Override flag --
+
+    #[test]
+    fn override_entry_has_is_override_true() {
+        let mut ledger = ledger();
+        let entry = ledger.append(override_input("ovr-1", 10)).unwrap();
+        assert!(entry.is_override);
+    }
+
+    #[test]
+    fn non_override_entry_has_is_override_false() {
+        let mut ledger = ledger();
+        let entry = ledger
+            .append(automatic_input(
+                "d-1",
+                "moon-1",
+                GovernanceDecisionType::Promote,
+                10,
+            ))
+            .unwrap();
+        assert!(!entry.is_override);
+    }
+
+    // -- GovernanceLedgerError Display and code --
+
+    #[test]
+    fn governance_ledger_error_display_all_variants() {
+        let errors: Vec<GovernanceLedgerError> = vec![
+            GovernanceLedgerError::InvalidConfig {
+                reason: "bad".to_string(),
+            },
+            GovernanceLedgerError::InvalidInput {
+                field: "f".to_string(),
+                reason: "r".to_string(),
+            },
+            GovernanceLedgerError::DuplicateDecisionId {
+                decision_id: "d".to_string(),
+            },
+            GovernanceLedgerError::OutOfOrderTimestamp {
+                previous_ns: 100,
+                new_ns: 50,
+            },
+            GovernanceLedgerError::SerializationFailed {
+                reason: "json".to_string(),
+            },
+            GovernanceLedgerError::HashChainMismatch { sequence: 3 },
+            GovernanceLedgerError::SignatureMismatch { sequence: 4 },
+            GovernanceLedgerError::EntryHashMismatch { sequence: 5 },
+            GovernanceLedgerError::EmptyLedger,
+        ];
+        for err in &errors {
+            assert!(!err.to_string().is_empty());
+            assert!(err.code().starts_with("FE-GOV-LED-"));
+        }
+    }
+
+    #[test]
+    fn governance_ledger_error_codes_are_unique() {
+        let errors: Vec<GovernanceLedgerError> = vec![
+            GovernanceLedgerError::InvalidConfig {
+                reason: "".to_string(),
+            },
+            GovernanceLedgerError::InvalidInput {
+                field: "".to_string(),
+                reason: "".to_string(),
+            },
+            GovernanceLedgerError::DuplicateDecisionId {
+                decision_id: "".to_string(),
+            },
+            GovernanceLedgerError::OutOfOrderTimestamp {
+                previous_ns: 0,
+                new_ns: 0,
+            },
+            GovernanceLedgerError::SerializationFailed {
+                reason: "".to_string(),
+            },
+            GovernanceLedgerError::HashChainMismatch { sequence: 0 },
+            GovernanceLedgerError::SignatureMismatch { sequence: 0 },
+            GovernanceLedgerError::EntryHashMismatch { sequence: 0 },
+            GovernanceLedgerError::EmptyLedger,
+        ];
+        let codes: BTreeSet<&str> = errors.iter().map(|e| e.code()).collect();
+        assert_eq!(codes.len(), errors.len());
+    }
+
+    // -- Query filters --
+
+    #[test]
+    fn query_all_returns_everything() {
+        let mut ledger = ledger();
+        ledger
+            .append(automatic_input(
+                "d-1",
+                "moon-1",
+                GovernanceDecisionType::Promote,
+                10,
+            ))
+            .unwrap();
+        ledger
+            .append(automatic_input(
+                "d-2",
+                "moon-2",
+                GovernanceDecisionType::Kill,
+                20,
+            ))
+            .unwrap();
+        let results = ledger.query(&GovernanceLedgerQuery::all());
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn query_by_decision_type() {
+        let mut ledger = ledger();
+        ledger
+            .append(automatic_input(
+                "d-1",
+                "moon-1",
+                GovernanceDecisionType::Promote,
+                10,
+            ))
+            .unwrap();
+        ledger
+            .append(automatic_input(
+                "d-2",
+                "moon-1",
+                GovernanceDecisionType::Kill,
+                20,
+            ))
+            .unwrap();
+        let q = GovernanceLedgerQuery {
+            decision_types: Some(BTreeSet::from([GovernanceDecisionType::Kill])),
+            ..GovernanceLedgerQuery::all()
+        };
+        let results = ledger.query(&q);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].decision_type, GovernanceDecisionType::Kill);
+    }
+
+    #[test]
+    fn query_by_time_range() {
+        let mut ledger = ledger();
+        ledger
+            .append(automatic_input(
+                "d-1",
+                "moon-1",
+                GovernanceDecisionType::Promote,
+                10,
+            ))
+            .unwrap();
+        ledger
+            .append(automatic_input(
+                "d-2",
+                "moon-1",
+                GovernanceDecisionType::Hold,
+                100,
+            ))
+            .unwrap();
+        let q = GovernanceLedgerQuery {
+            start_time_ns: Some(50),
+            ..GovernanceLedgerQuery::all()
+        };
+        let results = ledger.query(&q);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].decision_id, "d-2");
+    }
+
+    // -- Serde roundtrips --
+
+    #[test]
+    fn governance_decision_type_serde_roundtrip() {
+        for dt in [
+            GovernanceDecisionType::Promote,
+            GovernanceDecisionType::Hold,
+            GovernanceDecisionType::Kill,
+            GovernanceDecisionType::Pause,
+            GovernanceDecisionType::Resume,
+            GovernanceDecisionType::Override,
+        ] {
+            let json = serde_json::to_value(dt).unwrap();
+            let back: GovernanceDecisionType = serde_json::from_value(json).unwrap();
+            assert_eq!(dt, back);
+        }
+    }
+
+    #[test]
+    fn governance_actor_serde_roundtrip() {
+        for actor in [
+            GovernanceActor::System("gov".to_string()),
+            GovernanceActor::Human("operator".to_string()),
+        ] {
+            let json = serde_json::to_string(&actor).unwrap();
+            let back: GovernanceActor = serde_json::from_str(&json).unwrap();
+            assert_eq!(actor, back);
+        }
+    }
+
+    #[test]
+    fn governance_ledger_error_serde_roundtrip() {
+        let errors: Vec<GovernanceLedgerError> = vec![
+            GovernanceLedgerError::InvalidConfig {
+                reason: "bad".to_string(),
+            },
+            GovernanceLedgerError::DuplicateDecisionId {
+                decision_id: "d".to_string(),
+            },
+            GovernanceLedgerError::EmptyLedger,
+        ];
+        for err in errors {
+            let json = serde_json::to_string(&err).unwrap();
+            let back: GovernanceLedgerError = serde_json::from_str(&json).unwrap();
+            assert_eq!(err, back);
+        }
+    }
+
+    #[test]
+    fn governance_rationale_serde_roundtrip() {
+        let r = GovernanceRationale::for_automatic_decision(
+            "test summary",
+            800_000,
+            100_000,
+            vec!["criterion-a".to_string()],
+            vec!["criterion-b".to_string()],
+        );
+        let json = serde_json::to_string(&r).unwrap();
+        let back: GovernanceRationale = serde_json::from_str(&json).unwrap();
+        assert_eq!(r, back);
+    }
+
+    #[test]
+    fn governance_ledger_entry_serde_roundtrip() {
+        let mut ledger = ledger();
+        let entry = ledger
+            .append(automatic_input(
+                "d-1",
+                "moon-1",
+                GovernanceDecisionType::Promote,
+                10,
+            ))
+            .unwrap();
+        let json = serde_json::to_string(&entry).unwrap();
+        let back: GovernanceLedgerEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry, back);
+    }
+
+    // -- latest_entry / latest_checkpoint --
+
+    #[test]
+    fn latest_entry_and_checkpoint_on_empty_ledger() {
+        let ledger = ledger();
+        assert!(ledger.latest_entry().is_none());
+        assert!(ledger.latest_checkpoint().is_none());
+    }
+
+    // -- Artifact references are sorted and deduped --
+
+    #[test]
+    fn artifact_references_sorted_and_deduped() {
+        let mut ledger = ledger();
+        let mut input = automatic_input("d-1", "moon-1", GovernanceDecisionType::Promote, 10);
+        input.artifact_references = vec![
+            "z-ref".to_string(),
+            "a-ref".to_string(),
+            "a-ref".to_string(),
+        ];
+        let entry = ledger.append(input).unwrap();
+        assert_eq!(entry.artifact_references, vec!["a-ref", "z-ref"]);
+    }
+
+    // -- Sequence numbering --
+
+    #[test]
+    fn sequence_numbers_are_monotonic() {
+        let mut ledger = ledger();
+        for i in 1..=5 {
+            let entry = ledger
+                .append(automatic_input(
+                    &format!("d-{i}"),
+                    "moon-1",
+                    GovernanceDecisionType::Promote,
+                    i * 10,
+                ))
+                .unwrap();
+            assert_eq!(entry.sequence, i as u64);
+        }
+    }
 }

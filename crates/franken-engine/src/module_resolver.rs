@@ -1556,4 +1556,133 @@ mod tests {
         let resolver = DeterministicModuleResolver::default();
         assert_eq!(resolver.root_dir(), "/");
     }
+
+    // -- Enrichment: ordering --
+
+    #[test]
+    fn module_syntax_ordering() {
+        assert!(ModuleSyntax::EsModule < ModuleSyntax::CommonJs);
+    }
+
+    #[test]
+    fn import_style_ordering() {
+        assert!(ImportStyle::Import < ImportStyle::Require);
+    }
+
+    #[test]
+    fn module_source_kind_ordering() {
+        assert!(ModuleSourceKind::BuiltIn < ModuleSourceKind::Workspace);
+        assert!(ModuleSourceKind::Workspace < ModuleSourceKind::ExternalRegistry);
+    }
+
+    // -- Enrichment: error trait --
+
+    #[test]
+    fn resolution_error_is_std_error() {
+        let event = ResolutionEvent {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            component: "resolver".to_string(),
+            event: "resolve".to_string(),
+            outcome: "error".to_string(),
+            error_code: "FE_MODRES_EMPTY".to_string(),
+        };
+        let err = ResolutionError {
+            code: ResolutionErrorCode::EmptySpecifier,
+            message: "empty".to_string(),
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            event,
+        };
+        let e: Box<dyn std::error::Error> = Box::new(err);
+        assert!(!e.to_string().is_empty());
+    }
+
+    #[test]
+    fn registry_error_is_std_error() {
+        let err = RegistryError {
+            code: RegistryErrorCode::EmptyKey,
+            message: "key empty".to_string(),
+        };
+        let e: Box<dyn std::error::Error> = Box::new(err);
+        assert!(!e.to_string().is_empty());
+    }
+
+    // -- Enrichment: serde roundtrips --
+
+    #[test]
+    fn module_provenance_serde_roundtrip() {
+        let mp = ModuleProvenance {
+            kind: ModuleSourceKind::BuiltIn,
+            origin: "franken:core".to_string(),
+        };
+        let json = serde_json::to_string(&mp).expect("serialize");
+        let restored: ModuleProvenance = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(mp, restored);
+    }
+
+    #[test]
+    fn module_dependency_serde_roundtrip() {
+        let md = ModuleDependency {
+            specifier: "./utils.js".to_string(),
+            style: ImportStyle::Import,
+        };
+        let json = serde_json::to_string(&md).expect("serialize");
+        let restored: ModuleDependency = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(md, restored);
+    }
+
+    #[test]
+    fn module_request_serde_roundtrip() {
+        let mr = ModuleRequest::new("franken:core", ImportStyle::Import);
+        let json = serde_json::to_string(&mr).expect("serialize");
+        let restored: ModuleRequest = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(mr, restored);
+    }
+
+    #[test]
+    fn resolution_context_serde_roundtrip() {
+        let ctx = ResolutionContext {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+        };
+        let json = serde_json::to_string(&ctx).expect("serialize");
+        let restored: ResolutionContext = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(ctx, restored);
+    }
+
+    #[test]
+    fn registry_error_serde_roundtrip() {
+        let err = RegistryError {
+            code: RegistryErrorCode::EmptyKey,
+            message: "key must not be empty".to_string(),
+        };
+        let json = serde_json::to_string(&err).expect("serialize");
+        let restored: RegistryError = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(err, restored);
+    }
+
+    #[test]
+    fn allow_all_policy_default_serde() {
+        let p = AllowAllPolicy::default();
+        let json = serde_json::to_string(&p).expect("serialize");
+        let restored: AllowAllPolicy = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(p, restored);
+    }
+
+    #[test]
+    fn module_source_kind_serde_roundtrip() {
+        for kind in [
+            ModuleSourceKind::BuiltIn,
+            ModuleSourceKind::Workspace,
+            ModuleSourceKind::ExternalRegistry,
+        ] {
+            let json = serde_json::to_string(&kind).expect("serialize");
+            let restored: ModuleSourceKind = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(kind, restored);
+        }
+    }
 }

@@ -694,6 +694,62 @@ mod tests {
 
     // -- Integration with GcCollector --
 
+    // -- Enrichment: serde roundtrips --
+
+    #[test]
+    fn pause_budget_serde_roundtrip() {
+        let budget = PauseBudget::new(100_000, 500_000, 2_000_000);
+        let json = serde_json::to_string(&budget).expect("serialize");
+        let restored: PauseBudget = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(budget, restored);
+    }
+
+    #[test]
+    fn pause_record_serde_roundtrip() {
+        let event = make_event(7, "ext-serde", 12345, 50, 8192);
+        let record = PauseRecord::from_gc_event(&event);
+        let json = serde_json::to_string(&record).expect("serialize");
+        let restored: PauseRecord = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(record, restored);
+    }
+
+    #[test]
+    fn percentile_serde_all_variants() {
+        for p in [Percentile::P50, Percentile::P95, Percentile::P99] {
+            let json = serde_json::to_string(&p).expect("serialize");
+            let restored: Percentile = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(p, restored);
+        }
+    }
+
+    #[test]
+    fn budget_violation_serde_roundtrip() {
+        let v = BudgetViolation {
+            percentile: Percentile::P99,
+            observed_ns: 15_000_000,
+            budget_ns: 10_000_000,
+            scope: "ext-a".to_string(),
+        };
+        let json = serde_json::to_string(&v).expect("serialize");
+        let restored: BudgetViolation = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(v, restored);
+    }
+
+    #[test]
+    fn percentile_snapshot_serde_roundtrip() {
+        let snap = PercentileSnapshot {
+            count: 100,
+            min_ns: 500,
+            max_ns: 50_000,
+            p50_ns: 5_000,
+            p95_ns: 20_000,
+            p99_ns: 45_000,
+        };
+        let json = serde_json::to_string(&snap).expect("serialize");
+        let restored: PercentileSnapshot = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(snap, restored);
+    }
+
     #[test]
     fn integration_gc_collector_to_pause_tracker() {
         use crate::gc::{GcCollector, GcConfig};

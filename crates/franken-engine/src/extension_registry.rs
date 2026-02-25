@@ -2047,4 +2047,409 @@ mod tests {
         };
         assert_eq!(format!("{k}"), "@org/ext@1.2.3");
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: serde round-trips for leaf types
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn package_version_serde_roundtrip() {
+        let v = PackageVersion::new(3, 14, 159);
+        let json = serde_json::to_string(&v).unwrap();
+        let restored: PackageVersion = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored, v);
+    }
+
+    #[test]
+    fn package_key_serde_roundtrip() {
+        let k = PackageKey {
+            scope: "acme".to_string(),
+            name: "gadget".to_string(),
+            version: PackageVersion::new(2, 0, 1),
+        };
+        let json = serde_json::to_string(&k).unwrap();
+        let restored: PackageKey = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored, k);
+    }
+
+    #[test]
+    fn package_query_serde_roundtrip() {
+        let q = PackageQuery {
+            scope: Some("org".to_string()),
+            name: Some("ext".to_string()),
+            publisher_id: None,
+            include_revoked: true,
+            limit: 50,
+        };
+        let json = serde_json::to_string(&q).unwrap();
+        let restored: PackageQuery = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored, q);
+    }
+
+    #[test]
+    fn build_descriptor_serde_roundtrip() {
+        let bd = test_build_descriptor();
+        let json = serde_json::to_string(&bd).unwrap();
+        let restored: BuildDescriptor = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored, bd);
+    }
+
+    #[test]
+    fn artifact_entry_serde_roundtrip() {
+        let a = test_artifact();
+        let json = serde_json::to_string(&a).unwrap();
+        let restored: ArtifactEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored, a);
+    }
+
+    #[test]
+    fn capability_declaration_serde_roundtrip() {
+        let c = test_capability();
+        let json = serde_json::to_string(&c).unwrap();
+        let restored: CapabilityDeclaration = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored, c);
+    }
+
+    #[test]
+    fn registry_error_serde_roundtrip_all_variants() {
+        let errors: Vec<RegistryError> = vec![
+            RegistryError::PublisherNotFound {
+                publisher_id: EngineObjectId([1; 32]),
+            },
+            RegistryError::PublisherRevoked {
+                publisher_id: EngineObjectId([2; 32]),
+            },
+            RegistryError::PackageAlreadyExists {
+                scope: "sc".to_string(),
+                name: "nm".to_string(),
+                version: PackageVersion::new(1, 0, 0),
+            },
+            RegistryError::PackageNotFound {
+                scope: "sc".to_string(),
+                name: "nm".to_string(),
+                version: PackageVersion::new(1, 0, 0),
+            },
+            RegistryError::PackageRevoked {
+                package_id: EngineObjectId([3; 32]),
+            },
+            RegistryError::SignatureInvalid {
+                reason: "hmac mismatch".to_string(),
+            },
+            RegistryError::ContentHashMismatch {
+                artifact_name: "lib.wasm".to_string(),
+                expected: ContentHash::compute(b"a"),
+                actual: ContentHash::compute(b"b"),
+            },
+            RegistryError::ScopeNotOwned {
+                scope: "other".to_string(),
+                publisher_id: EngineObjectId([4; 32]),
+            },
+            RegistryError::TooManyCapabilities {
+                count: 300,
+                max: 256,
+            },
+            RegistryError::TooManyArtifacts {
+                count: 2000,
+                max: 1024,
+            },
+            RegistryError::InvalidScope {
+                scope: "bad!".to_string(),
+                reason: "special chars".to_string(),
+            },
+            RegistryError::InvalidName {
+                name: "".to_string(),
+                reason: "empty".to_string(),
+            },
+            RegistryError::RevocationTargetUnknown {
+                target_id: EngineObjectId([5; 32]),
+            },
+            RegistryError::BuildDescriptorIncomplete {
+                missing_field: "toolchain_version".to_string(),
+            },
+        ];
+        for err in &errors {
+            let json = serde_json::to_string(err).unwrap();
+            let restored: RegistryError = serde_json::from_str(&json).unwrap();
+            assert_eq!(&restored, err);
+        }
+    }
+
+    #[test]
+    fn registry_event_serde_roundtrip() {
+        let evt = RegistryEvent {
+            event_type: RegistryEventType::PackagePublished,
+            component: "extension_registry".to_string(),
+            outcome: EventOutcome::Success,
+            publisher_id: Some(EngineObjectId([10; 32])),
+            package_id: Some(EngineObjectId([11; 32])),
+            scope: Some("org".to_string()),
+            name: Some("ext".to_string()),
+            version: Some(PackageVersion::new(1, 0, 0)),
+            error_code: None,
+            timestamp: DeterministicTimestamp(500),
+        };
+        let json = serde_json::to_string(&evt).unwrap();
+        let restored: RegistryEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored, evt);
+    }
+
+    #[test]
+    fn verification_result_serde_roundtrip() {
+        let vr = VerificationResult {
+            valid: false,
+            package_id: EngineObjectId([20; 32]),
+            publisher_key: VerificationKey([21; 32]),
+            publisher_active: true,
+            package_active: false,
+            structure_valid: true,
+            signature_valid: true,
+            artifacts_root_valid: true,
+            errors: vec!["package has been revoked".to_string()],
+        };
+        let json = serde_json::to_string(&vr).unwrap();
+        let restored: VerificationResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored, vr);
+    }
+
+    #[test]
+    fn registry_event_type_serde_roundtrip() {
+        let types = [
+            RegistryEventType::PublisherRegistered,
+            RegistryEventType::PublisherRevoked,
+            RegistryEventType::ScopeClaimed,
+            RegistryEventType::PackagePublished,
+            RegistryEventType::PackageQueried,
+            RegistryEventType::PackageVerified,
+            RegistryEventType::PackageRevoked,
+            RegistryEventType::VerificationFailed,
+            RegistryEventType::RevocationPropagated,
+        ];
+        for t in &types {
+            let json = serde_json::to_string(t).unwrap();
+            let restored: RegistryEventType = serde_json::from_str(&json).unwrap();
+            assert_eq!(&restored, t);
+        }
+    }
+
+    #[test]
+    fn event_outcome_serde_roundtrip() {
+        for o in [EventOutcome::Success, EventOutcome::Denied, EventOutcome::Error] {
+            let json = serde_json::to_string(&o).unwrap();
+            let restored: EventOutcome = serde_json::from_str(&json).unwrap();
+            assert_eq!(restored, o);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: Display format verification
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn error_display_format_verification() {
+        let id = EngineObjectId([0; 32]);
+        let err = RegistryError::PackageAlreadyExists {
+            scope: "myorg".to_string(),
+            name: "widget".to_string(),
+            version: PackageVersion::new(2, 1, 0),
+        };
+        assert!(format!("{err}").contains("@myorg/widget@2.1.0"));
+
+        let err = RegistryError::ScopeNotOwned {
+            scope: "locked".to_string(),
+            publisher_id: id.clone(),
+        };
+        assert!(format!("{err}").contains("@locked"));
+
+        let err = RegistryError::TooManyCapabilities {
+            count: 300,
+            max: 256,
+        };
+        assert!(format!("{err}").contains("300") && format!("{err}").contains("256"));
+
+        let err = RegistryError::ContentHashMismatch {
+            artifact_name: "lib.wasm".to_string(),
+            expected: ContentHash::compute(b"a"),
+            actual: ContentHash::compute(b"b"),
+        };
+        assert!(format!("{err}").contains("lib.wasm"));
+
+        let err = RegistryError::BuildDescriptorIncomplete {
+            missing_field: "source_hash".to_string(),
+        };
+        assert!(format!("{err}").contains("source_hash"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: validation edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn validate_scope_rejects_too_long() {
+        let long_scope: String = "a".repeat(MAX_SCOPE_LEN + 1);
+        let result = validate_scope(&long_scope);
+        assert!(matches!(result, Err(RegistryError::InvalidScope { .. })));
+    }
+
+    #[test]
+    fn validate_scope_accepts_max_length() {
+        let max_scope: String = "a".repeat(MAX_SCOPE_LEN);
+        assert!(validate_scope(&max_scope).is_ok());
+    }
+
+    #[test]
+    fn validate_name_rejects_too_long() {
+        let long_name: String = "b".repeat(MAX_NAME_LEN + 1);
+        let result = validate_name(&long_name);
+        assert!(matches!(result, Err(RegistryError::InvalidName { .. })));
+    }
+
+    #[test]
+    fn validate_name_accepts_max_length() {
+        let max_name: String = "b".repeat(MAX_NAME_LEN);
+        assert!(validate_name(&max_name).is_ok());
+    }
+
+    #[test]
+    fn publish_too_many_artifacts_fails() {
+        let (mut reg, pub_id, sk, vk) = setup_registry_with_publisher();
+        let v = PackageVersion::new(1, 0, 0);
+        let mut manifest = build_manifest("testorg", "ext", v, &pub_id, &vk);
+        manifest.artifacts = (0..=MAX_ARTIFACTS)
+            .map(|i| ArtifactEntry {
+                path: format!("file_{i}.bin"),
+                content_hash: ContentHash::compute(format!("content_{i}").as_bytes()),
+                size_bytes: 100,
+                mime_type: None,
+            })
+            .collect();
+        // Recompute artifacts root.
+        manifest.artifacts_root_hash = manifest.compute_artifacts_root();
+        let result = sign_and_publish(&mut reg, &manifest, &sk);
+        assert!(matches!(
+            result,
+            Err(RegistryError::TooManyArtifacts { .. })
+        ));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: search and query edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn search_by_publisher_id_filter() {
+        let (mut reg, pub_id, sk, vk) = setup_registry_with_publisher();
+        let v = PackageVersion::new(1, 0, 0);
+        let m = build_manifest("testorg", "ext", v, &pub_id, &vk);
+        sign_and_publish(&mut reg, &m, &sk).unwrap();
+
+        let results = reg.search(&PackageQuery {
+            publisher_id: Some(pub_id),
+            ..PackageQuery::default()
+        });
+        assert_eq!(results.len(), 1);
+
+        let results = reg.search(&PackageQuery {
+            publisher_id: Some(EngineObjectId([99; 32])),
+            ..PackageQuery::default()
+        });
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn search_respects_limit() {
+        let (mut reg, pub_id, sk, vk) = setup_registry_with_publisher();
+        for i in 0..5 {
+            let v = PackageVersion::new(1, 0, i);
+            let m = build_manifest("testorg", "ext", v, &pub_id, &vk);
+            sign_and_publish(&mut reg, &m, &sk).unwrap();
+        }
+        let results = reg.search(&PackageQuery {
+            limit: 2,
+            ..PackageQuery::default()
+        });
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn get_package_by_id_returns_correct() {
+        let (mut reg, pub_id, sk, vk) = setup_registry_with_publisher();
+        let v = PackageVersion::new(1, 0, 0);
+        let m = build_manifest("testorg", "ext", v, &pub_id, &vk);
+        let pkg_id = sign_and_publish(&mut reg, &m, &sk).unwrap();
+
+        let pkg = reg.get_package_by_id(&pkg_id).unwrap();
+        assert_eq!(pkg.manifest.name, "ext");
+
+        assert!(reg.get_package_by_id(&EngineObjectId([77; 32])).is_none());
+    }
+
+    #[test]
+    fn package_query_default_values() {
+        let q = PackageQuery::default();
+        assert_eq!(q.scope, None);
+        assert_eq!(q.name, None);
+        assert_eq!(q.publisher_id, None);
+        assert!(!q.include_revoked);
+        assert_eq!(q.limit, 100);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: determinism and state
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn build_descriptor_content_hash_deterministic() {
+        let bd1 = test_build_descriptor();
+        let bd2 = test_build_descriptor();
+        assert_eq!(bd1.content_hash(), bd2.content_hash());
+    }
+
+    #[test]
+    fn build_descriptor_content_hash_changes_with_flags() {
+        let mut bd1 = test_build_descriptor();
+        let h1 = bd1.content_hash();
+        bd1.build_flags.push("--debug".to_string());
+        let h2 = bd1.content_hash();
+        assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn is_package_revoked_returns_false_for_unknown() {
+        let reg = ExtensionRegistry::new(DeterministicTimestamp(1));
+        assert!(!reg.is_package_revoked("nope", "nope", PackageVersion::new(0, 0, 0)));
+    }
+
+    #[test]
+    fn empty_registry_state() {
+        let reg = ExtensionRegistry::new(DeterministicTimestamp(0));
+        assert_eq!(reg.package_count(), 0);
+        assert_eq!(reg.publisher_count(), 0);
+        assert_eq!(reg.audit_event_count(), 0);
+        assert!(reg.events().is_empty());
+        assert!(reg.export_audit_log().is_empty());
+    }
+
+    #[test]
+    fn unsigned_bytes_deterministic() {
+        let (_, pub_id, _, vk) = setup_registry_with_publisher();
+        let v = PackageVersion::new(1, 0, 0);
+        let m1 = build_manifest("testorg", "ext", v, &pub_id, &vk);
+        let m2 = build_manifest("testorg", "ext", v, &pub_id, &vk);
+        assert_eq!(m1.unsigned_bytes(), m2.unsigned_bytes());
+    }
+
+    #[test]
+    fn capability_declaration_ordering() {
+        let c1 = CapabilityDeclaration {
+            name: "a:read".to_string(),
+            justification: "x".to_string(),
+            optional: false,
+        };
+        let c2 = CapabilityDeclaration {
+            name: "b:write".to_string(),
+            justification: "y".to_string(),
+            optional: true,
+        };
+        assert!(c1 < c2);
+    }
 }

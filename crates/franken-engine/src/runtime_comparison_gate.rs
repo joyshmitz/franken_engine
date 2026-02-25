@@ -1635,4 +1635,160 @@ mod tests {
         assert!(bundle.outcome.is_pass());
         assert_eq!(bundle.reproducibility_results.len(), 1);
     }
+
+    // -- Enrichment: missing serde roundtrips, ordering, Display --
+
+    #[test]
+    fn benchmark_result_serde_roundtrip() {
+        let r = BenchmarkResult {
+            benchmark_id: "bench_micro".to_string(),
+            category: BenchmarkCategory::Micro,
+            runtime: RuntimeId::FrankenEngine,
+            wall_time_ns: 5000,
+            memory_peak_bytes: 1024,
+            run_count: 30,
+            cv_millionths: 15_000,
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        let restored: BenchmarkResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(r, restored);
+    }
+
+    #[test]
+    fn environment_fingerprint_serde_roundtrip() {
+        let fp = EnvironmentFingerprint {
+            cpu_model: "AMD Ryzen 9".to_string(),
+            cpu_cores: 16,
+            ram_bytes: 64_000_000_000,
+            os_version: "Ubuntu 24.04".to_string(),
+            kernel_version: "6.8.0".to_string(),
+            runtime_versions: BTreeMap::from([
+                ("franken_engine".to_string(), "0.1.0".to_string()),
+                ("node_lts".to_string(), "20.12.0".to_string()),
+            ]),
+            runtime_flags: BTreeMap::new(),
+            fingerprint_hash: ContentHash::compute(b"fp-test"),
+        };
+        let json = serde_json::to_string(&fp).unwrap();
+        let restored: EnvironmentFingerprint = serde_json::from_str(&json).unwrap();
+        assert_eq!(fp, restored);
+    }
+
+    #[test]
+    fn methodology_audit_serde_roundtrip() {
+        let m = MethodologyAudit {
+            selection_rationale: true,
+            warmup_policy: true,
+            gc_jit_settling: false,
+            statistical_treatment: true,
+            known_limitations: true,
+            peer_reviewed: false,
+            reviewer_ids: vec![],
+        };
+        let json = serde_json::to_string(&m).unwrap();
+        let restored: MethodologyAudit = serde_json::from_str(&json).unwrap();
+        assert_eq!(m, restored);
+    }
+
+    #[test]
+    fn artifact_bundle_audit_serde_roundtrip() {
+        let a = ArtifactBundleAudit {
+            raw_timing_data: true,
+            environment_fingerprint: true,
+            run_manifest: true,
+            replay_script: true,
+            dependency_manifests: false,
+            bundle_hash: ContentHash::compute(b"bundle-test"),
+        };
+        let json = serde_json::to_string(&a).unwrap();
+        let restored: ArtifactBundleAudit = serde_json::from_str(&json).unwrap();
+        assert_eq!(a, restored);
+    }
+
+    #[test]
+    fn reproducibility_result_serde_roundtrip() {
+        let r = ReproducibilityResult {
+            benchmark_id: "bench_1".to_string(),
+            runtime: RuntimeId::NodeLts,
+            original_ns: 1000,
+            replay_ns: 1050,
+            deviation_millionths: 50_000,
+            within_tolerance: true,
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        let restored: ReproducibilityResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(r, restored);
+    }
+
+    #[test]
+    fn runtime_id_ordering() {
+        assert!(RuntimeId::FrankenEngine < RuntimeId::NodeLts);
+        assert!(RuntimeId::NodeLts < RuntimeId::BunStable);
+    }
+
+    #[test]
+    fn benchmark_category_ordering() {
+        assert!(BenchmarkCategory::Micro < BenchmarkCategory::Macro);
+        assert!(BenchmarkCategory::Macro < BenchmarkCategory::Startup);
+        assert!(BenchmarkCategory::Startup < BenchmarkCategory::Throughput);
+        assert!(BenchmarkCategory::Throughput < BenchmarkCategory::Memory);
+    }
+
+    #[test]
+    fn gate_outcome_ordering() {
+        assert!(GateOutcome::Pass < GateOutcome::Fail);
+    }
+
+    #[test]
+    fn gate_error_display_invalid_fingerprint() {
+        let e = GateError::InvalidFingerprint {
+            detail: "bad hash".to_string(),
+        };
+        assert!(e.to_string().contains("bad hash"));
+    }
+
+    #[test]
+    fn gate_blocker_display_all_variants() {
+        let blockers = [
+            GateBlocker::MissingCategory {
+                category: "micro".to_string(),
+            },
+            GateBlocker::ExcessiveVariance {
+                benchmark_id: "b1".to_string(),
+                runtime: RuntimeId::FrankenEngine,
+                cv_millionths: 50_000,
+                max_cv_millionths: 30_000,
+            },
+            GateBlocker::InsufficientRuns {
+                benchmark_id: "b2".to_string(),
+                runtime: RuntimeId::NodeLts,
+                run_count: 5,
+                required: 30,
+            },
+            GateBlocker::IncompleteMethodology {
+                missing_sections: vec!["warmup_policy".to_string()],
+            },
+            GateBlocker::IncompleteArtifactBundle {
+                missing_artifacts: vec!["replay_script".to_string()],
+            },
+            GateBlocker::ReproducibilityFailed {
+                benchmark_id: "b3".to_string(),
+                original_ns: 1000,
+                replay_ns: 2000,
+                deviation_millionths: 500_000,
+            },
+            GateBlocker::MissingRuntime {
+                runtime: RuntimeId::BunStable,
+            },
+            GateBlocker::NoBenchmarks,
+            GateBlocker::BenchmarkSniffingDetected {
+                detail: "config mismatch".to_string(),
+            },
+        ];
+        for b in &blockers {
+            let s = format!("{b:?}");
+            assert!(!s.is_empty());
+        }
+        assert_eq!(blockers.len(), 9);
+    }
 }

@@ -786,6 +786,59 @@ mod tests {
         assert!(msg.contains("sync"));
     }
 
+    // -- Enrichment: serde, std::error --
+
+    #[test]
+    fn remote_operation_type_serde_all_variants() {
+        let all = [
+            RemoteOperationType::HttpRequest,
+            RemoteOperationType::GrpcCall,
+            RemoteOperationType::DnsResolution,
+            RemoteOperationType::DistributedStateMutation,
+            RemoteOperationType::LeaseRenewal,
+            RemoteOperationType::RemoteIpc,
+        ];
+        for op in &all {
+            let json = serde_json::to_string(op).expect("serialize");
+            let restored: RemoteOperationType =
+                serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*op, restored);
+        }
+    }
+
+    #[test]
+    fn remote_transport_error_implements_std_error() {
+        let denied = RemoteCapabilityDenied {
+            operation: RemoteOperationType::HttpRequest,
+            component: "test".to_string(),
+            held_profile: ProfileKind::ComputeOnly,
+            required_capabilities: vec![RuntimeCapability::NetworkEgress],
+            trace_id: "t-1".to_string(),
+        };
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(RemoteTransportError::ConnectionFailed {
+                endpoint: "http://localhost".into(),
+                reason: "refused".into(),
+            }),
+            Box::new(RemoteTransportError::RemoteError {
+                status: 500,
+                message: "internal".into(),
+            }),
+            Box::new(RemoteTransportError::Timeout {
+                endpoint: "http://localhost".into(),
+                duration_ms: 5000,
+            }),
+            Box::new(RemoteTransportError::CapabilityDenied(denied)),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            let msg = format!("{v}");
+            assert!(!msg.is_empty());
+            displays.insert(msg);
+        }
+        assert_eq!(displays.len(), 4, "all 4 variants produce distinct messages");
+    }
+
     #[test]
     fn operation_type_display() {
         assert_eq!(RemoteOperationType::HttpRequest.to_string(), "http_request");

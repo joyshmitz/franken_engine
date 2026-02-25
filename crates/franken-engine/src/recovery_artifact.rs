@@ -1103,4 +1103,140 @@ mod tests {
             .contains("reason1")
         );
     }
+
+    // -- Enrichment: serde roundtrips --
+
+    #[test]
+    fn operator_action_serde_roundtrip() {
+        let action = OperatorAction {
+            operator: "admin".to_string(),
+            action: "approve_recovery".to_string(),
+            authorization_hash: AuthenticityHash::compute_keyed(b"auth", b"key"),
+            timestamp_ticks: 42_000,
+        };
+        let json = serde_json::to_string(&action).expect("serialize");
+        let restored: OperatorAction = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(action, restored);
+    }
+
+    #[test]
+    fn recovery_event_serde_roundtrip() {
+        let event = RecoveryEvent {
+            artifact_id: "art-1".to_string(),
+            artifact_type: "gap_fill".to_string(),
+            trigger: "reconciliation_failure".to_string(),
+            verification_verdict: "valid".to_string(),
+            trace_id: "t-1".to_string(),
+            epoch_id: 1,
+            event: "artifact_created".to_string(),
+        };
+        let json = serde_json::to_string(&event).expect("serialize");
+        let restored: RecoveryEvent = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(event, restored);
+    }
+
+    #[test]
+    fn verification_error_artifact_id_mismatch_serde() {
+        let err = VerificationError::ArtifactIdMismatch {
+            expected: ContentHash::compute(b"expected"),
+            computed: ContentHash::compute(b"computed"),
+        };
+        let json = serde_json::to_string(&err).expect("serialize");
+        let restored: VerificationError = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(err, restored);
+    }
+
+    // -- Enrichment: ordering --
+
+    #[test]
+    fn artifact_type_ordering() {
+        assert!(ArtifactType::GapFill < ArtifactType::StateRepair);
+        assert!(ArtifactType::StateRepair < ArtifactType::ForcedReconciliation);
+        assert!(ArtifactType::ForcedReconciliation < ArtifactType::TrustRestoration);
+        assert!(ArtifactType::TrustRestoration < ArtifactType::RejectedEpochPromotion);
+        assert!(ArtifactType::RejectedEpochPromotion < ArtifactType::RejectedRevocation);
+        assert!(ArtifactType::RejectedRevocation < ArtifactType::FailedAttestation);
+    }
+
+    // -- Enrichment: Display completeness --
+
+    #[test]
+    fn artifact_type_display_remaining_variants() {
+        assert_eq!(
+            ArtifactType::TrustRestoration.to_string(),
+            "trust_restoration"
+        );
+        assert_eq!(
+            ArtifactType::RejectedRevocation.to_string(),
+            "rejected_revocation"
+        );
+    }
+
+    #[test]
+    fn verification_error_display_all_variants() {
+        let e1 = VerificationError::ArtifactIdMismatch {
+            expected: ContentHash::compute(b"a"),
+            computed: ContentHash::compute(b"b"),
+        };
+        assert!(e1.to_string().contains("mismatch"));
+
+        let e2 = VerificationError::MissingProofElement {
+            element_type: "mmr".to_string(),
+        };
+        assert!(e2.to_string().contains("mmr"));
+    }
+
+    // -- Enrichment: std::error::Error --
+
+    #[test]
+    fn verification_error_is_std_error() {
+        let errors: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(VerificationError::EmptyProofBundle),
+            Box::new(VerificationError::SignatureInvalid {
+                details: "d".to_string(),
+            }),
+            Box::new(VerificationError::MissingProofElement {
+                element_type: "t".to_string(),
+            }),
+            Box::new(VerificationError::ArtifactIdMismatch {
+                expected: ContentHash::compute(b"a"),
+                computed: ContentHash::compute(b"b"),
+            }),
+        ];
+        for e in &errors {
+            assert!(!e.to_string().is_empty());
+        }
+    }
+
+    // -- Enrichment: trigger Display completeness --
+
+    #[test]
+    fn recovery_trigger_display_all_variants() {
+        let triggers = vec![
+            RecoveryTrigger::ReconciliationFailure {
+                reconciliation_id: "r1".to_string(),
+            },
+            RecoveryTrigger::IntegrityCheckFailure {
+                check_id: "c1".to_string(),
+                details: "bad".to_string(),
+            },
+            RecoveryTrigger::OperatorIntervention {
+                operator: "admin".to_string(),
+                reason: "restore".to_string(),
+            },
+            RecoveryTrigger::AutomaticFallback {
+                fallback_id: "fb-1".to_string(),
+            },
+            RecoveryTrigger::EpochValidationFailure {
+                from_epoch: 1,
+                to_epoch: 2,
+            },
+            RecoveryTrigger::StaleAttestation {
+                attestation_age_ticks: 5000,
+            },
+        ];
+        for t in &triggers {
+            assert!(!t.to_string().is_empty());
+        }
+    }
 }

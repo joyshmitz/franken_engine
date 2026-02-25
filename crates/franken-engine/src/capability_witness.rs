@@ -4678,4 +4678,573 @@ mod tests {
         let result = isqrt_millionths(4_000_000);
         assert_eq!(result, 2000);
     }
+
+    // -- Enrichment: serde roundtrips for leaf types --
+
+    #[test]
+    fn lifecycle_state_serde_roundtrip() {
+        let variants = [
+            LifecycleState::Draft,
+            LifecycleState::Validated,
+            LifecycleState::Promoted,
+            LifecycleState::Active,
+            LifecycleState::Superseded,
+            LifecycleState::Revoked,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).expect("serialize");
+            let restored: LifecycleState = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*v, restored);
+        }
+    }
+
+    #[test]
+    fn proof_kind_serde_roundtrip() {
+        let variants = [
+            ProofKind::StaticAnalysis,
+            ProofKind::DynamicAblation,
+            ProofKind::PolicyTheoremCheck,
+            ProofKind::OperatorAttestation,
+            ProofKind::InheritedFromPredecessor,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).expect("serialize");
+            let restored: ProofKind = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*v, restored);
+        }
+    }
+
+    #[test]
+    fn promotion_theorem_kind_serde_roundtrip() {
+        let variants = vec![
+            PromotionTheoremKind::MergeLegality,
+            PromotionTheoremKind::AttenuationLegality,
+            PromotionTheoremKind::NonInterference,
+            PromotionTheoremKind::Custom("my_theorem".to_string()),
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).expect("serialize");
+            let restored: PromotionTheoremKind =
+                serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*v, restored);
+        }
+    }
+
+    #[test]
+    fn witness_schema_version_serde_roundtrip() {
+        let v = WitnessSchemaVersion::CURRENT;
+        let json = serde_json::to_string(&v).expect("serialize");
+        let restored: WitnessSchemaVersion =
+            serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(v, restored);
+    }
+
+    #[test]
+    fn confidence_interval_serde_roundtrip() {
+        let ci = ConfidenceInterval::from_trials(100, 90);
+        let json = serde_json::to_string(&ci).expect("serialize");
+        let restored: ConfidenceInterval = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(ci, restored);
+    }
+
+    #[test]
+    fn witness_error_serde_roundtrip() {
+        let errors: Vec<WitnessError> = vec![
+            WitnessError::EmptyRequiredSet,
+            WitnessError::MissingProofObligation {
+                capability: "cap_a".to_string(),
+            },
+            WitnessError::InvalidConfidence {
+                reason: "too low".to_string(),
+            },
+            WitnessError::InvalidTransition {
+                from: LifecycleState::Draft,
+                to: LifecycleState::Active,
+            },
+            WitnessError::IncompatibleSchema {
+                witness: WitnessSchemaVersion { major: 1, minor: 0 },
+                reader: WitnessSchemaVersion { major: 2, minor: 0 },
+            },
+            WitnessError::SignatureInvalid {
+                detail: "bad".to_string(),
+            },
+            WitnessError::IntegrityFailure {
+                expected: "aaa".to_string(),
+                actual: "bbb".to_string(),
+            },
+            WitnessError::IdDerivation("failed".to_string()),
+            WitnessError::InvalidRollbackToken {
+                reason: "unknown".to_string(),
+            },
+            WitnessError::EpochMismatch {
+                witness_epoch: 1,
+                current_epoch: 2,
+            },
+            WitnessError::MissingPromotionTheoremProofs {
+                missing_checks: vec!["merge".to_string()],
+            },
+            WitnessError::PromotionTheoremFailed {
+                failed_checks: vec!["attenuation".to_string()],
+            },
+        ];
+        for err in &errors {
+            let json = serde_json::to_string(err).expect("serialize");
+            let restored: WitnessError = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*err, restored);
+        }
+    }
+
+    #[test]
+    fn publication_entry_kind_serde_roundtrip() {
+        let variants = [PublicationEntryKind::Publish, PublicationEntryKind::Revoke];
+        for v in &variants {
+            let json = serde_json::to_string(v).expect("serialize");
+            let restored: PublicationEntryKind =
+                serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*v, restored);
+        }
+    }
+
+    #[test]
+    fn witness_publication_error_serde_roundtrip() {
+        let errors: Vec<WitnessPublicationError> = vec![
+            WitnessPublicationError::InvalidConfig {
+                reason: "bad".to_string(),
+            },
+            WitnessPublicationError::WitnessNotPromoted {
+                state: LifecycleState::Draft,
+            },
+            WitnessPublicationError::DuplicatePublication {
+                witness_id: EngineObjectId([1; 32]),
+            },
+            WitnessPublicationError::EmptyRevocationReason,
+            WitnessPublicationError::IdDerivation("err".to_string()),
+            WitnessPublicationError::InclusionProofFailed {
+                detail: "miss".to_string(),
+            },
+            WitnessPublicationError::LogEntryHashMismatch,
+            WitnessPublicationError::GovernanceLedger {
+                detail: "ledger err".to_string(),
+            },
+            WitnessPublicationError::EvidenceLedger {
+                detail: "evidence err".to_string(),
+            },
+        ];
+        for err in &errors {
+            let json = serde_json::to_string(err).expect("serialize");
+            let restored: WitnessPublicationError =
+                serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*err, restored);
+        }
+    }
+
+    #[test]
+    fn witness_index_error_serde_roundtrip() {
+        let errors: Vec<WitnessIndexError> = vec![
+            WitnessIndexError::Serialization {
+                operation: "write".to_string(),
+                detail: "fail".to_string(),
+            },
+            WitnessIndexError::CorruptRecord {
+                key: "k1".to_string(),
+                detail: "bad".to_string(),
+            },
+            WitnessIndexError::InvalidInput {
+                detail: "empty".to_string(),
+            },
+        ];
+        for err in &errors {
+            let json = serde_json::to_string(err).expect("serialize");
+            let restored: WitnessIndexError =
+                serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*err, restored);
+        }
+    }
+
+    #[test]
+    fn source_capability_set_serde_roundtrip() {
+        let scs = SourceCapabilitySet {
+            source_id: "src-1".to_string(),
+            capabilities: BTreeSet::from([Capability::new("cap_a")]),
+        };
+        let json = serde_json::to_string(&scs).expect("serialize");
+        let restored: SourceCapabilitySet =
+            serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(scs, restored);
+    }
+
+    #[test]
+    fn lifecycle_state_ordering() {
+        assert!(LifecycleState::Draft < LifecycleState::Validated);
+        assert!(LifecycleState::Validated < LifecycleState::Promoted);
+        assert!(LifecycleState::Promoted < LifecycleState::Active);
+        assert!(LifecycleState::Active < LifecycleState::Superseded);
+        assert!(LifecycleState::Superseded < LifecycleState::Revoked);
+    }
+
+    #[test]
+    fn witness_publication_config_serde_roundtrip() {
+        let config = WitnessPublicationConfig::default();
+        let json = serde_json::to_string(&config).expect("serialize");
+        let restored: WitnessPublicationConfig =
+            serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(config, restored);
+    }
+
+    #[test]
+    fn witness_publication_event_serde_roundtrip() {
+        let event = WitnessPublicationEvent {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            component: "witness_publication".to_string(),
+            event: "test".to_string(),
+            outcome: "ok".to_string(),
+            error_code: None,
+            timestamp_ns: 12345,
+        };
+        let json = serde_json::to_string(&event).expect("serialize");
+        let restored: WitnessPublicationEvent =
+            serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(event, restored);
+    }
+
+    #[test]
+    fn publication_entry_kind_display_content() {
+        assert_eq!(PublicationEntryKind::Publish.to_string(), "publish");
+        assert_eq!(PublicationEntryKind::Revoke.to_string(), "revoke");
+    }
+
+    #[test]
+    fn witness_index_error_display_content() {
+        let s = WitnessIndexError::Serialization {
+            operation: "write".to_string(),
+            detail: "broken".to_string(),
+        }
+        .to_string();
+        assert!(s.contains("write"));
+        assert!(s.contains("broken"));
+
+        let s = WitnessIndexError::CorruptRecord {
+            key: "k1".to_string(),
+            detail: "bad crc".to_string(),
+        }
+        .to_string();
+        assert!(s.contains("k1"));
+
+        let s = WitnessIndexError::InvalidInput {
+            detail: "empty".to_string(),
+        }
+        .to_string();
+        assert!(s.contains("empty"));
+    }
+
+    #[test]
+    fn promotion_theorem_kind_display_content() {
+        assert_eq!(
+            PromotionTheoremKind::MergeLegality.to_string(),
+            "merge-legality"
+        );
+        assert_eq!(
+            PromotionTheoremKind::AttenuationLegality.to_string(),
+            "attenuation-legality"
+        );
+        assert_eq!(
+            PromotionTheoremKind::NonInterference.to_string(),
+            "non-interference"
+        );
+        assert!(
+            PromotionTheoremKind::Custom("my_thm".to_string())
+                .to_string()
+                .contains("my_thm")
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: struct serde roundtrips
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn witness_index_record_serde_roundtrip() {
+        let key = test_signing_key();
+        let cap = Capability::new("cap:fs");
+        let w = WitnessBuilder::new(
+            test_extension_id(),
+            test_policy_id(),
+            SecurityEpoch::from_raw(1),
+            1000,
+            key,
+        )
+        .require(cap.clone())
+        .proof(make_proof(&cap))
+        .confidence(ConfidenceInterval::from_trials(100, 95))
+        .replay_seed(42)
+        .transcript_hash(ContentHash::compute(b"tx"))
+        .build()
+        .unwrap();
+        let rec = WitnessIndexRecord {
+            witness_id: w.witness_id.clone(),
+            extension_id: w.extension_id.clone(),
+            policy_id: w.policy_id.clone(),
+            epoch: w.epoch,
+            lifecycle_state: w.lifecycle_state,
+            promotion_timestamp_ns: w.timestamp_ns,
+            content_hash: w.content_hash.clone(),
+            witness: w,
+        };
+        let json = serde_json::to_string(&rec).unwrap();
+        let restored: WitnessIndexRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(rec, restored);
+    }
+
+    #[test]
+    fn capability_escrow_receipt_record_serde_roundtrip() {
+        let rec = CapabilityEscrowReceiptRecord {
+            receipt_id: "r-1".to_string(),
+            extension_id: test_extension_id(),
+            capability: Some(Capability::new("cap:net")),
+            decision_kind: "grant".to_string(),
+            outcome: "approved".to_string(),
+            timestamp_ns: 1000,
+            trace_id: "t-1".to_string(),
+            decision_id: "d-1".to_string(),
+            policy_id: "p-1".to_string(),
+            error_code: None,
+        };
+        let json = serde_json::to_string(&rec).unwrap();
+        let restored: CapabilityEscrowReceiptRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(rec, restored);
+    }
+
+    #[test]
+    fn witness_index_query_serde_roundtrip() {
+        let q = WitnessIndexQuery {
+            extension_id: Some(test_extension_id()),
+            policy_id: None,
+            epoch: Some(SecurityEpoch::from_raw(1)),
+            lifecycle_state: Some(LifecycleState::Active),
+            capability: None,
+            start_timestamp_ns: Some(100),
+            end_timestamp_ns: Some(200),
+            include_revoked: false,
+            cursor: None,
+            limit: 10,
+        };
+        let json = serde_json::to_string(&q).unwrap();
+        let restored: WitnessIndexQuery = serde_json::from_str(&json).unwrap();
+        assert_eq!(q, restored);
+    }
+
+    #[test]
+    fn witness_index_event_serde_roundtrip() {
+        let ev = WitnessIndexEvent {
+            trace_id: "t-1".to_string(),
+            decision_id: "d-1".to_string(),
+            policy_id: "p-1".to_string(),
+            component: "witness_index".to_string(),
+            event: "indexed".to_string(),
+            outcome: "ok".to_string(),
+            error_code: None,
+        };
+        let json = serde_json::to_string(&ev).unwrap();
+        let restored: WitnessIndexEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(ev, restored);
+    }
+
+    #[test]
+    fn witness_publication_query_serde_roundtrip() {
+        let q = WitnessPublicationQuery {
+            extension_id: Some(test_extension_id()),
+            policy_id: None,
+            epoch: Some(SecurityEpoch::from_raw(2)),
+            content_hash: Some(ContentHash::compute(b"hash")),
+            include_revoked: true,
+        };
+        let json = serde_json::to_string(&q).unwrap();
+        let restored: WitnessPublicationQuery = serde_json::from_str(&json).unwrap();
+        assert_eq!(q, restored);
+    }
+
+    #[test]
+    fn custom_theorem_extension_serde_roundtrip() {
+        let ext = CustomTheoremExtension {
+            name: "isolation_check".to_string(),
+            required_capabilities: {
+                let mut s = BTreeSet::new();
+                s.insert(Capability::new("cap:fs"));
+                s
+            },
+            forbidden_capabilities: BTreeSet::new(),
+        };
+        let json = serde_json::to_string(&ext).unwrap();
+        let restored: CustomTheoremExtension = serde_json::from_str(&json).unwrap();
+        assert_eq!(ext, restored);
+    }
+
+    #[test]
+    fn promotion_theorem_log_event_serde_roundtrip() {
+        let ev = PromotionTheoremLogEvent {
+            trace_id: "t-1".to_string(),
+            decision_id: "d-1".to_string(),
+            policy_id: "p-1".to_string(),
+            component: "promotion".to_string(),
+            event: "evaluated".to_string(),
+            outcome: "passed".to_string(),
+            error_code: None,
+        };
+        let json = serde_json::to_string(&ev).unwrap();
+        let restored: PromotionTheoremLogEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(ev, restored);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: default value assertions
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn witness_index_query_default_values() {
+        let q = WitnessIndexQuery::default();
+        assert!(q.extension_id.is_none());
+        assert!(q.policy_id.is_none());
+        assert!(q.epoch.is_none());
+        assert!(q.lifecycle_state.is_none());
+        assert!(q.capability.is_none());
+        assert!(q.start_timestamp_ns.is_none());
+        assert!(q.end_timestamp_ns.is_none());
+        assert!(q.include_revoked);
+        assert!(q.cursor.is_none());
+        assert_eq!(q.limit, 128);
+    }
+
+    #[test]
+    fn witness_publication_config_default_values() {
+        let c = WitnessPublicationConfig::default();
+        assert_eq!(c.checkpoint_interval, 8);
+        assert_eq!(c.policy_id, "capability-witness-policy");
+        assert!(c.governance_ledger_config.is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: ordering tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn proof_kind_ordering() {
+        assert!(ProofKind::StaticAnalysis < ProofKind::InheritedFromPredecessor);
+    }
+
+    #[test]
+    fn publication_entry_kind_ordering() {
+        assert!(PublicationEntryKind::Publish < PublicationEntryKind::Revoke);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: Display completeness
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn witness_publication_error_display_all_variants() {
+        let variants: Vec<WitnessPublicationError> = vec![
+            WitnessPublicationError::InvalidConfig {
+                reason: "bad".to_string(),
+            },
+            WitnessPublicationError::WitnessNotPromoted {
+                state: LifecycleState::Draft,
+            },
+            WitnessPublicationError::DuplicatePublication {
+                witness_id: test_extension_id(),
+            },
+            WitnessPublicationError::PublicationNotFound {
+                publication_id: test_extension_id(),
+            },
+            WitnessPublicationError::WitnessNotPublished {
+                witness_id: test_extension_id(),
+            },
+            WitnessPublicationError::AlreadyRevoked {
+                witness_id: test_extension_id(),
+            },
+            WitnessPublicationError::EmptyRevocationReason,
+            WitnessPublicationError::IdDerivation("id err".to_string()),
+            WitnessPublicationError::InclusionProofFailed {
+                detail: "bad".to_string(),
+            },
+            WitnessPublicationError::ConsistencyProofFailed {
+                detail: "bad".to_string(),
+            },
+            WitnessPublicationError::TreeHeadSignatureInvalid {
+                detail: "bad".to_string(),
+            },
+            WitnessPublicationError::TreeHeadHashMismatch {
+                expected: "a".to_string(),
+                actual: "b".to_string(),
+            },
+            WitnessPublicationError::LogEntryHashMismatch,
+            WitnessPublicationError::WitnessVerificationFailed {
+                detail: "bad".to_string(),
+            },
+            WitnessPublicationError::GovernanceLedger {
+                detail: "bad".to_string(),
+            },
+            WitnessPublicationError::EvidenceLedger {
+                detail: "bad".to_string(),
+            },
+        ];
+        for v in &variants {
+            let s = v.to_string();
+            assert!(!s.is_empty(), "Display should not be empty for {v:?}");
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: WitnessPublicationQuery::all
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn witness_publication_query_all_includes_revoked() {
+        let q = WitnessPublicationQuery::all();
+        assert!(q.extension_id.is_none());
+        assert!(q.policy_id.is_none());
+        assert!(q.epoch.is_none());
+        assert!(q.content_hash.is_none());
+        assert!(q.include_revoked);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: publication_entry_kind as_str
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn publication_entry_kind_as_str_values() {
+        assert_eq!(PublicationEntryKind::Publish.as_str(), "publish");
+        assert_eq!(PublicationEntryKind::Revoke.as_str(), "revoke");
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: WitnessIndexError code all variants
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn witness_index_error_code_all_variants() {
+        let errors: Vec<WitnessIndexError> = vec![
+            WitnessIndexError::Storage(StorageError::NotFound {
+                store: StoreKind::PlasWitness,
+                key: "k".to_string(),
+            }),
+            WitnessIndexError::Serialization {
+                operation: "w".to_string(),
+                detail: "e".to_string(),
+            },
+            WitnessIndexError::CorruptRecord {
+                key: "k".to_string(),
+                detail: "d".to_string(),
+            },
+            WitnessIndexError::InvalidInput {
+                detail: "d".to_string(),
+            },
+        ];
+        let codes: Vec<&str> = errors.iter().map(|e| e.code()).collect();
+        // All codes should be unique
+        let unique: BTreeSet<&str> = codes.iter().copied().collect();
+        assert_eq!(codes.len(), unique.len());
+    }
 }

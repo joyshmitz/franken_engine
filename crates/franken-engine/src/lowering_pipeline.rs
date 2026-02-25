@@ -5,8 +5,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use crate::ast::{ExportKind, Expression, ParseGoal, Statement};
+use crate::flow_lattice::{
+    Clearance, DeclassificationObligation, FlowCheckResult as LatticeFlowCheckResult,
+    Ir2FlowLattice, LabelClass,
+};
 use crate::hash_tiers::ContentHash;
-use crate::ifc_artifacts::Label;
+use crate::ifc_artifacts::{Label, ProofMethod};
 use crate::ir_contract::{
     BindingId, BindingKind, CapabilityTag, EffectBoundary, FlowAnnotation, Ir0Module, Ir1Literal,
     Ir1Module, Ir1Op, Ir2Module, Ir2Op, Ir3FunctionDesc, Ir3Instruction, Ir3Module, IrError,
@@ -16,6 +20,8 @@ use crate::ir_contract::{
 
 const COMPONENT: &str = "lowering_pipeline";
 const IFC_RUNTIME_GUARD_CAPABILITY: &str = "ifc.check_flow";
+const IFC_FLOW_PROOF_ERROR_CODE: &str = "FE-LOWER-IFC-0001";
+const IFC_FLOW_PROOF_SCHEMA_VERSION: &str = "frankenengine.ir2_flow_proof_witness.v1";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LoweringContext {
@@ -86,6 +92,7 @@ pub struct LoweringPipelineOutput {
     pub ir1: Ir1Module,
     pub ir2: Ir2Module,
     pub ir3: Ir3Module,
+    pub ir2_flow_proof_artifact: Ir2FlowProofArtifact,
     pub witnesses: Vec<PassWitness>,
     pub isomorphism_ledger: Vec<IsomorphismLedgerEntry>,
     pub events: Vec<LoweringEvent>,
@@ -107,6 +114,68 @@ impl FlowInferenceMetrics {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Ir2FlowProofArtifact {
+    pub schema_version: String,
+    pub artifact_id: String,
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub module_id: String,
+    pub proved_flows: Vec<FlowProofArtifactEntry>,
+    pub denied_flows: Vec<DeniedFlowArtifactEntry>,
+    pub required_declassifications: Vec<RequiredDeclassificationArtifactEntry>,
+    pub runtime_checkpoints: Vec<RuntimeCheckpointArtifactEntry>,
+}
+
+impl Ir2FlowProofArtifact {
+    fn finalize(mut self) -> Self {
+        self.proved_flows.sort();
+        self.denied_flows.sort();
+        self.required_declassifications.sort();
+        self.runtime_checkpoints.sort();
+        self.artifact_id = compute_ir2_flow_artifact_id(&self);
+        self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct FlowProofArtifactEntry {
+    pub op_index: u64,
+    pub source_label: Label,
+    pub sink_clearance: Label,
+    pub capability: Option<String>,
+    pub proof_method: ProofMethod,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct DeniedFlowArtifactEntry {
+    pub op_index: u64,
+    pub source_label: Label,
+    pub sink_clearance: Label,
+    pub capability: Option<String>,
+    pub reason: String,
+    pub error_code: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct RequiredDeclassificationArtifactEntry {
+    pub op_index: u64,
+    pub source_label: Label,
+    pub sink_clearance: Label,
+    pub capability: Option<String>,
+    pub obligation_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct RuntimeCheckpointArtifactEntry {
+    pub op_index: u64,
+    pub source_label: Label,
+    pub sink_clearance: Label,
+    pub capability: Option<String>,
+    pub reason: String,
+}
+
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum LoweringPipelineError {
     #[error("IR0 module has no statements")]
@@ -119,6 +188,15 @@ pub enum LoweringPipelineError {
     },
     #[error("deterministic invariant failed: {detail}")]
     InvariantViolation { detail: &'static str },
+    #[error("flow lattice evaluation failed: {detail}")]
+    FlowLatticeFailure { detail: String },
+    #[error("unauthorized flow detected at op {op_index}: {source_label:?} -> {sink_clearance:?} ({detail})")]
+    UnauthorizedFlow {
+        op_index: usize,
+        source_label: Label,
+        sink_clearance: Label,
+        detail: String,
+    },
 }
 
 pub fn lower_ir0_to_ir3(
@@ -157,6 +235,21 @@ pub fn lower_ir0_to_ir3(
         }
     };
 
+    let ir2_flow_proof_artifact = match build_ir2_flow_proof_artifact(&ir2_result.module, context) {
+        Ok(artifact) => {
+            events.push(success_event(context, "ir2_flow_check_completed"));
+            artifact
+        }
+        Err(error) => {
+            events.push(failure_event(
+                context,
+                "ir2_flow_check_completed",
+                IFC_FLOW_PROOF_ERROR_CODE,
+            ));
+            return Err(error);
+        }
+    };
+
     let ir3_result = match lower_ir2_to_ir3(&ir2_result.module) {
         Ok(result) => {
             events.push(success_event(context, "ir2_to_ir3_lowered"));
@@ -176,6 +269,7 @@ pub fn lower_ir0_to_ir3(
         ir1: ir1_result.module,
         ir2: ir2_result.module,
         ir3: ir3_result.module,
+        ir2_flow_proof_artifact,
         witnesses: vec![ir1_result.witness, ir2_result.witness, ir3_result.witness],
         isomorphism_ledger: vec![
             ir1_result.ledger_entry,
@@ -595,6 +689,176 @@ pub fn lower_ir2_to_ir3(
         },
         module: ir3,
     })
+}
+
+fn build_ir2_flow_proof_artifact(
+    ir2: &Ir2Module,
+    context: &LoweringContext,
+) -> Result<Ir2FlowProofArtifact, LoweringPipelineError> {
+    let mut lattice = Ir2FlowLattice::new(context.policy_id.clone());
+    let mut artifact = Ir2FlowProofArtifact {
+        schema_version: IFC_FLOW_PROOF_SCHEMA_VERSION.to_string(),
+        artifact_id: String::new(),
+        trace_id: context.trace_id.clone(),
+        decision_id: context.decision_id.clone(),
+        policy_id: context.policy_id.clone(),
+        module_id: ir2.header.source_label.clone(),
+        proved_flows: Vec::new(),
+        denied_flows: Vec::new(),
+        required_declassifications: Vec::new(),
+        runtime_checkpoints: Vec::new(),
+    };
+
+    for (op_index, op) in ir2.ops.iter().enumerate() {
+        let Some(flow) = op.flow.as_ref() else {
+            continue;
+        };
+        let op_index_u64 = op_index as u64;
+        let source_label = flow.data_label.clone();
+        let sink_clearance_label = flow.sink_clearance.clone();
+        let source_class = LabelClass::from_label(&source_label);
+        let sink_clearance = sink_label_to_clearance(&sink_clearance_label);
+        let capability = op.required_capability.as_ref().map(|cap| cap.0.clone());
+
+        if flow.declassification_required
+            && let Some(required_capability) = op.required_capability.as_ref()
+            && flow_capability_supports_declassification(required_capability)
+        {
+            let obligation_id = format!("declass-op-{op_index}");
+            if !lattice.obligations().contains_key(&obligation_id) {
+                lattice
+                    .register_obligation(DeclassificationObligation {
+                        obligation_id,
+                        source_label: source_class.clone(),
+                        target_clearance: sink_clearance.clone(),
+                        decision_contract_id: context.decision_id.clone(),
+                        requires_operator_approval: true,
+                        max_uses: 0,
+                        use_count: 0,
+                    })
+                    .map_err(|err| LoweringPipelineError::FlowLatticeFailure {
+                        detail: err.to_string(),
+                    })?;
+            }
+        }
+
+        if let Some(required_capability) = op.required_capability.as_ref()
+            && flow_requires_runtime_checkpoint(Some(flow), required_capability)
+        {
+            artifact
+                .runtime_checkpoints
+                .push(RuntimeCheckpointArtifactEntry {
+                    op_index: op_index_u64,
+                    source_label,
+                    sink_clearance: sink_clearance_label,
+                    capability,
+                    reason: runtime_checkpoint_reason(flow, required_capability),
+                });
+            continue;
+        }
+
+        match lattice.check_flow(&source_class, &sink_clearance, &context.trace_id) {
+            LatticeFlowCheckResult::LegalByLattice => {
+                artifact.proved_flows.push(FlowProofArtifactEntry {
+                    op_index: op_index_u64,
+                    source_label,
+                    sink_clearance: sink_clearance_label,
+                    capability,
+                    proof_method: ProofMethod::StaticAnalysis,
+                });
+            }
+            LatticeFlowCheckResult::RequiresDeclassification { obligation_id } => {
+                artifact.required_declassifications.push(
+                    RequiredDeclassificationArtifactEntry {
+                        op_index: op_index_u64,
+                        source_label,
+                        sink_clearance: sink_clearance_label,
+                        capability,
+                        obligation_id,
+                    },
+                );
+            }
+            LatticeFlowCheckResult::Blocked { .. } => {
+                artifact.denied_flows.push(DeniedFlowArtifactEntry {
+                    op_index: op_index_u64,
+                    source_label,
+                    sink_clearance: sink_clearance_label,
+                    capability,
+                    reason: "no_lattice_or_declassification_path".to_string(),
+                    error_code: IFC_FLOW_PROOF_ERROR_CODE.to_string(),
+                });
+            }
+        }
+    }
+
+    let artifact = artifact.finalize();
+    if let Some(first_denied) = artifact.denied_flows.first() {
+        return Err(LoweringPipelineError::UnauthorizedFlow {
+            op_index: first_denied.op_index as usize,
+            source_label: first_denied.source_label.clone(),
+            sink_clearance: first_denied.sink_clearance.clone(),
+            detail: format!(
+                "artifact_id={} denied_flow_count={} reason={}",
+                artifact.artifact_id,
+                artifact.denied_flows.len(),
+                first_denied.reason
+            ),
+        });
+    }
+
+    Ok(artifact)
+}
+
+fn compute_ir2_flow_artifact_id(artifact: &Ir2FlowProofArtifact) -> String {
+    let mut preimage = artifact.clone();
+    preimage.artifact_id.clear();
+    let encoded = serde_json::to_vec(&preimage).unwrap_or_default();
+    let hash = ContentHash::compute(&encoded);
+    format!("sha256:{}", hex::encode(hash.as_bytes()))
+}
+
+fn sink_label_to_clearance(label: &Label) -> Clearance {
+    match label {
+        Label::Public => Clearance::NeverSink,
+        Label::Internal => Clearance::RestrictedSink,
+        Label::Confidential => Clearance::AuditedSink,
+        Label::Secret => Clearance::SealedSink,
+        Label::TopSecret => Clearance::OpenSink,
+        Label::Custom { level, .. } => match level {
+            0 => Clearance::NeverSink,
+            1 => Clearance::RestrictedSink,
+            2 => Clearance::AuditedSink,
+            3 => Clearance::SealedSink,
+            _ => Clearance::OpenSink,
+        },
+    }
+}
+
+fn flow_capability_supports_declassification(capability: &CapabilityTag) -> bool {
+    let normalized = capability.0.to_ascii_lowercase();
+    normalized.contains("declassify") || normalized.contains("declassification")
+}
+
+fn flow_requires_runtime_checkpoint(flow: Option<&FlowAnnotation>, capability: &CapabilityTag) -> bool {
+    let capability_is_dynamic = capability.0 == "hostcall.invoke";
+    let flow_is_ambiguous = flow.is_some_and(|annotation| {
+        matches!(annotation.data_label, Label::Custom { .. })
+            || matches!(annotation.sink_clearance, Label::Custom { .. })
+    });
+    capability_is_dynamic || flow_is_ambiguous
+}
+
+fn runtime_checkpoint_reason(flow: &FlowAnnotation, capability: &CapabilityTag) -> String {
+    if capability.0 == "hostcall.invoke" {
+        return "dynamic_capability".to_string();
+    }
+    if matches!(flow.data_label, Label::Custom { .. }) {
+        return "ambiguous_data_label".to_string();
+    }
+    if matches!(flow.sink_clearance, Label::Custom { .. }) {
+        return "ambiguous_sink_clearance".to_string();
+    }
+    "runtime_checkpoint_required".to_string()
 }
 
 fn alloc_binding(
@@ -1205,12 +1469,162 @@ mod tests {
     }
 
     #[test]
+    fn ir2_flow_proof_artifact_records_static_proof() {
+        let mut ir1 = Ir1Module::new(ContentHash::compute(b"flow-ir0"), "static_flow.js");
+        ir1.ops.push(Ir1Op::LoadLiteral {
+            value: Ir1Literal::String("hostcall<\"fs.read\">".to_string()),
+        });
+        ir1.ops.push(Ir1Op::Return);
+
+        let ir2 = lower_ir1_to_ir2(&ir1)
+            .expect("IR1->IR2 should succeed")
+            .module;
+        let context = LoweringContext::new("trace-static", "decision-static", "policy-static");
+        let artifact = build_ir2_flow_proof_artifact(&ir2, &context)
+            .expect("static flow artifact should succeed");
+
+        assert!(artifact.denied_flows.is_empty());
+        assert!(artifact.required_declassifications.is_empty());
+        assert!(artifact.runtime_checkpoints.is_empty());
+        assert!(artifact.proved_flows.iter().any(
+            |entry| entry.proof_method == ProofMethod::StaticAnalysis
+                && entry.capability.as_deref() == Some("fs.read")
+        ));
+        assert!(artifact.artifact_id.starts_with("sha256:"));
+    }
+
+    #[test]
+    fn ir2_flow_proof_artifact_records_dynamic_runtime_checkpoint() {
+        let mut ir1 = Ir1Module::new(ContentHash::compute(b"flow-ir0"), "dynamic_flow.js");
+        ir1.ops.push(Ir1Op::LoadLiteral {
+            value: Ir1Literal::String("secret_token".to_string()),
+        });
+        ir1.ops.push(Ir1Op::Call { arg_count: 1 });
+        ir1.ops.push(Ir1Op::Return);
+
+        let ir2 = lower_ir1_to_ir2(&ir1)
+            .expect("IR1->IR2 should succeed")
+            .module;
+        let context = LoweringContext::new("trace-dyn", "decision-dyn", "policy-dyn");
+        let artifact = build_ir2_flow_proof_artifact(&ir2, &context)
+            .expect("dynamic flow artifact should succeed");
+
+        assert!(artifact.denied_flows.is_empty());
+        assert!(artifact.proved_flows.is_empty());
+        assert!(artifact.required_declassifications.is_empty());
+        assert_eq!(artifact.runtime_checkpoints.len(), 1);
+        assert_eq!(artifact.runtime_checkpoints[0].reason, "dynamic_capability");
+        assert_eq!(
+            artifact.runtime_checkpoints[0].capability.as_deref(),
+            Some("hostcall.invoke")
+        );
+    }
+
+    #[test]
+    fn ir2_flow_proof_artifact_detects_required_declassification() {
+        let mut ir2 = Ir2Module::new(ContentHash::compute(b"ir1"), "declass_fixture.js");
+        ir2.ops.push(Ir2Op {
+            inner: Ir1Op::Call { arg_count: 1 },
+            effect: EffectBoundary::HostcallEffect,
+            required_capability: Some(CapabilityTag("declassify.audit".to_string())),
+            flow: Some(FlowAnnotation {
+                data_label: Label::Secret,
+                sink_clearance: Label::Public,
+                declassification_required: true,
+            }),
+        });
+
+        let context = LoweringContext::new("trace-declass", "decision-declass", "policy-declass");
+        let artifact = build_ir2_flow_proof_artifact(&ir2, &context)
+            .expect("declassification route should be tracked");
+
+        assert!(artifact.denied_flows.is_empty());
+        assert!(artifact.proved_flows.is_empty());
+        assert_eq!(artifact.required_declassifications.len(), 1);
+        assert_eq!(
+            artifact.required_declassifications[0].obligation_id,
+            "declass-op-0"
+        );
+    }
+
+    #[test]
+    fn ir2_flow_proof_artifact_rejects_unauthorized_static_flow() {
+        let mut ir2 = Ir2Module::new(ContentHash::compute(b"ir1"), "denied_fixture.js");
+        ir2.ops.push(Ir2Op {
+            inner: Ir1Op::Call { arg_count: 1 },
+            effect: EffectBoundary::HostcallEffect,
+            required_capability: Some(CapabilityTag("fs.write".to_string())),
+            flow: Some(FlowAnnotation {
+                data_label: Label::Secret,
+                sink_clearance: Label::Public,
+                declassification_required: true,
+            }),
+        });
+
+        let context = LoweringContext::new("trace-deny", "decision-deny", "policy-deny");
+        let err = build_ir2_flow_proof_artifact(&ir2, &context).expect_err("must fail closed");
+
+        match err {
+            LoweringPipelineError::UnauthorizedFlow {
+                op_index,
+                source_label,
+                sink_clearance,
+                detail,
+            } => {
+                assert_eq!(op_index, 0);
+                assert_eq!(source_label, Label::Secret);
+                assert_eq!(sink_clearance, Label::Public);
+                assert!(detail.contains("artifact_id=sha256:"));
+                assert!(detail.contains("denied_flow_count=1"));
+            }
+            other => panic!("unexpected error variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ir2_flow_proof_artifact_is_deterministic() {
+        let mut ir2 = Ir2Module::new(ContentHash::compute(b"ir1"), "deterministic_fixture.js");
+        ir2.ops.push(Ir2Op {
+            inner: Ir1Op::Call { arg_count: 1 },
+            effect: EffectBoundary::HostcallEffect,
+            required_capability: Some(CapabilityTag("declassify.audit".to_string())),
+            flow: Some(FlowAnnotation {
+                data_label: Label::Secret,
+                sink_clearance: Label::Public,
+                declassification_required: true,
+            }),
+        });
+
+        let context = LoweringContext::new("trace-det", "decision-det", "policy-det");
+        let first = build_ir2_flow_proof_artifact(&ir2, &context).expect("first");
+        let second = build_ir2_flow_proof_artifact(&ir2, &context).expect("second");
+
+        assert_eq!(first, second);
+        let first_json = serde_json::to_string(&first).expect("serialize first");
+        let second_json = serde_json::to_string(&second).expect("serialize second");
+        assert_eq!(first_json, second_json);
+    }
+
+    #[test]
+    fn pipeline_output_includes_flow_proof_artifact() {
+        let ir0 = script_ir0();
+        let context = LoweringContext::new("trace-artifact", "decision-artifact", "policy-artifact");
+        let output = lower_ir0_to_ir3(&ir0, &context).expect("pipeline should succeed");
+
+        assert_eq!(
+            output.ir2_flow_proof_artifact.schema_version,
+            IFC_FLOW_PROOF_SCHEMA_VERSION
+        );
+        assert!(output.ir2_flow_proof_artifact.artifact_id.starts_with("sha256:"));
+    }
+
+    #[test]
     fn pipeline_emits_structured_events_with_governance_fields() {
         let ir0 = script_ir0();
         let context = LoweringContext::new("trace-a", "decision-a", "policy-a");
         let output = lower_ir0_to_ir3(&ir0, &context).expect("pipeline should succeed");
 
-        assert_eq!(output.events.len(), 3);
+        assert_eq!(output.events.len(), 4);
         assert!(output.events.iter().all(|event| {
             !event.trace_id.is_empty()
                 && !event.decision_id.is_empty()
@@ -1219,6 +1633,12 @@ mod tests {
                 && !event.event.is_empty()
                 && !event.outcome.is_empty()
         }));
+        assert!(
+            output
+                .events
+                .iter()
+                .any(|event| event.event == "ir2_flow_check_completed")
+        );
         assert_eq!(output.witnesses.len(), 3);
         assert_eq!(output.isomorphism_ledger.len(), 3);
     }
@@ -1997,7 +2417,7 @@ mod tests {
 
         assert_eq!(output.witnesses.len(), 3);
         assert_eq!(output.isomorphism_ledger.len(), 3);
-        assert_eq!(output.events.len(), 3);
+        assert_eq!(output.events.len(), 4);
         assert!(
             output
                 .events

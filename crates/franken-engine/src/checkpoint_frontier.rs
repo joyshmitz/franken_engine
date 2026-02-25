@@ -1442,4 +1442,431 @@ mod tests {
             .unwrap_err();
         assert!(matches!(err, FrontierError::UnknownZone { .. }));
     }
+
+    // -- FrontierError Display all variants --
+
+    #[test]
+    fn frontier_error_display_all_variants() {
+        let cases: Vec<(FrontierError, &str)> = vec![
+            (
+                FrontierError::DuplicateCheckpoint {
+                    zone: "z".to_string(),
+                    checkpoint_seq: 5,
+                },
+                "duplicate",
+            ),
+            (
+                FrontierError::ChainLinkageFailure {
+                    zone: "z".to_string(),
+                    detail: "mismatch".to_string(),
+                },
+                "mismatch",
+            ),
+            (
+                FrontierError::QuorumFailure {
+                    zone: "z".to_string(),
+                    detail: "insufficient".to_string(),
+                },
+                "insufficient",
+            ),
+            (
+                FrontierError::UnknownZone {
+                    zone: "z".to_string(),
+                },
+                "unknown zone",
+            ),
+            (
+                FrontierError::EpochRegression {
+                    zone: "z".to_string(),
+                    frontier_epoch: SecurityEpoch::from_raw(3),
+                    attempted_epoch: SecurityEpoch::from_raw(1),
+                },
+                "epoch regression",
+            ),
+            (
+                FrontierError::PersistenceFailed {
+                    zone: "z".to_string(),
+                    detail: "disk".to_string(),
+                },
+                "disk",
+            ),
+        ];
+        for (err, substring) in cases {
+            assert!(
+                err.to_string().contains(substring),
+                "'{}' should contain '{}'",
+                err, substring
+            );
+        }
+    }
+
+    // -- FrontierEventType Display all variants --
+
+    #[test]
+    fn frontier_event_type_display_all_variants() {
+        let cases = vec![
+            (
+                FrontierEventType::ZoneInitialized {
+                    zone: "z".to_string(),
+                    genesis_seq: 0,
+                },
+                "zone_initialized",
+            ),
+            (
+                FrontierEventType::RollbackRejected {
+                    zone: "z".to_string(),
+                    frontier_seq: 5,
+                    attempted_seq: 3,
+                },
+                "rollback_rejected",
+            ),
+            (
+                FrontierEventType::DuplicateRejected {
+                    zone: "z".to_string(),
+                    checkpoint_seq: 5,
+                },
+                "duplicate_rejected",
+            ),
+            (
+                FrontierEventType::EpochRegressionRejected {
+                    zone: "z".to_string(),
+                    frontier_epoch: SecurityEpoch::from_raw(3),
+                    attempted_epoch: SecurityEpoch::from_raw(1),
+                },
+                "epoch_regression_rejected",
+            ),
+            (
+                FrontierEventType::FrontierLoaded {
+                    zone: "z".to_string(),
+                    frontier_seq: 10,
+                },
+                "frontier_loaded",
+            ),
+        ];
+        for (et, substring) in cases {
+            assert!(
+                et.to_string().contains(substring),
+                "'{}' should contain '{}'",
+                et, substring
+            );
+        }
+    }
+
+    // -- FrontierError serde for remaining variants --
+
+    #[test]
+    fn frontier_error_serde_all_variants() {
+        let errors = vec![
+            FrontierError::ChainLinkageFailure {
+                zone: "z".to_string(),
+                detail: "d".to_string(),
+            },
+            FrontierError::QuorumFailure {
+                zone: "z".to_string(),
+                detail: "d".to_string(),
+            },
+            FrontierError::EpochRegression {
+                zone: "z".to_string(),
+                frontier_epoch: SecurityEpoch::from_raw(5),
+                attempted_epoch: SecurityEpoch::from_raw(2),
+            },
+            FrontierError::PersistenceFailed {
+                zone: "z".to_string(),
+                detail: "d".to_string(),
+            },
+        ];
+        for err in &errors {
+            let json = serde_json::to_string(err).unwrap();
+            let restored: FrontierError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*err, restored);
+        }
+    }
+
+    // -- FrontierEntry serde --
+
+    #[test]
+    fn frontier_entry_serde_roundtrip() {
+        let entry = FrontierEntry {
+            checkpoint_seq: 5,
+            checkpoint_id: EngineObjectId([0xAA; 32]),
+            epoch: SecurityEpoch::from_raw(2),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let restored: FrontierEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry, restored);
+    }
+
+    // -- get_frontier for missing zone --
+
+    #[test]
+    fn get_frontier_returns_none_for_missing_zone() {
+        let mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
+        assert!(mgr.get_frontier("nonexistent").is_none());
+    }
+
+    // -- zones listing --
+
+    #[test]
+    fn zones_listing_across_multiple_zones() {
+        let sk = make_sk(1);
+        let vk = sk.verification_key();
+        let genesis_a = build_genesis(std::slice::from_ref(&sk), "zone-a");
+        let genesis_b = build_genesis(&[sk], "zone-b");
+
+        let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
+        mgr.accept_checkpoint("zone-a", &genesis_a, 1, &[vk.clone()], "t-a")
+            .unwrap();
+        mgr.accept_checkpoint("zone-b", &genesis_b, 1, &[vk], "t-b")
+            .unwrap();
+
+        let zones = mgr.zones();
+        assert_eq!(zones.len(), 2);
+        assert!(zones.contains(&"zone-a"));
+        assert!(zones.contains(&"zone-b"));
+    }
+
+    // -- Duplicate checkpoint rejection (after advance) --
+
+    #[test]
+    fn duplicate_checkpoint_after_advance_rejected() {
+        let sk = make_sk(1);
+        let vk = sk.verification_key();
+        let genesis = build_genesis(std::slice::from_ref(&sk), "zone-a");
+
+        let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
+        mgr.accept_checkpoint("zone-a", &genesis, 1, std::slice::from_ref(&vk), "t-0")
+            .unwrap();
+
+        let cp1 = build_after(
+            &genesis,
+            1,
+            SecurityEpoch::GENESIS,
+            200,
+            std::slice::from_ref(&sk),
+            "zone-a",
+        );
+        mgr.accept_checkpoint("zone-a", &cp1, 1, std::slice::from_ref(&vk), "t-1")
+            .unwrap();
+
+        // Re-submit cp1 — should be duplicate.
+        let err = mgr
+            .accept_checkpoint("zone-a", &cp1, 1, &[vk], "t-dup")
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            FrontierError::DuplicateCheckpoint {
+                checkpoint_seq: 1,
+                ..
+            }
+        ));
+    }
+
+    // -- Persistence failure --
+
+    #[test]
+    fn persistence_failure_rejects_genesis() {
+        let sk = make_sk(1);
+        let vk = sk.verification_key();
+        let genesis = build_genesis(&[sk], "zone-a");
+
+        let mut backend = InMemoryBackend::new();
+        backend.fail_on_persist = true;
+        let mut mgr = CheckpointFrontierManager::new(backend);
+
+        let err = mgr
+            .accept_checkpoint("zone-a", &genesis, 1, &[vk], "t-0")
+            .unwrap_err();
+        assert!(matches!(err, FrontierError::PersistenceFailed { .. }));
+    }
+
+    #[test]
+    fn persistence_failure_rejects_advance() {
+        let sk = make_sk(1);
+        let vk = sk.verification_key();
+        let genesis = build_genesis(std::slice::from_ref(&sk), "zone-a");
+
+        let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
+        mgr.accept_checkpoint("zone-a", &genesis, 1, std::slice::from_ref(&vk), "t-0")
+            .unwrap();
+
+        // Enable failure.
+        mgr.backend_mut().fail_on_persist = true;
+
+        let cp1 = build_after(&genesis, 1, SecurityEpoch::GENESIS, 200, &[sk], "zone-a");
+        let err = mgr
+            .accept_checkpoint("zone-a", &cp1, 1, &[vk], "t-1")
+            .unwrap_err();
+        assert!(matches!(err, FrontierError::PersistenceFailed { .. }));
+
+        // Frontier should NOT have advanced.
+        assert_eq!(mgr.get_frontier("zone-a").unwrap().frontier_seq, 0);
+    }
+
+    // -- Recovery --
+
+    #[test]
+    fn recover_loads_persisted_state() {
+        let sk = make_sk(1);
+        let genesis = build_genesis(&[sk], "zone-a");
+
+        let mut backend = InMemoryBackend::new();
+        let state = FrontierState::from_genesis("zone-a", &genesis);
+        backend.persist(&state).unwrap();
+
+        let mut mgr = CheckpointFrontierManager::new(backend);
+        let count = mgr.recover("t-recover").unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(mgr.get_frontier("zone-a").unwrap().frontier_seq, 0);
+    }
+
+    #[test]
+    fn recover_emits_loaded_events() {
+        let sk = make_sk(1);
+        let genesis = build_genesis(&[sk], "zone-a");
+
+        let mut backend = InMemoryBackend::new();
+        backend
+            .persist(&FrontierState::from_genesis("zone-a", &genesis))
+            .unwrap();
+
+        let mut mgr = CheckpointFrontierManager::new(backend);
+        mgr.recover("t-recover").unwrap();
+
+        let events = mgr.drain_events();
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            &events[0].event_type,
+            FrontierEventType::FrontierLoaded { zone, .. } if zone == "zone-a"
+        ));
+    }
+
+    // -- Persist count tracking --
+
+    #[test]
+    fn backend_persist_count_increments() {
+        let sk = make_sk(1);
+        let vk = sk.verification_key();
+        let genesis = build_genesis(std::slice::from_ref(&sk), "zone-a");
+
+        let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
+        assert_eq!(mgr.backend().persist_count, 0);
+
+        mgr.accept_checkpoint("zone-a", &genesis, 1, &[vk.clone()], "t-0")
+            .unwrap();
+        assert_eq!(mgr.backend().persist_count, 1);
+
+        let cp1 = build_after(&genesis, 1, SecurityEpoch::GENESIS, 200, &[sk], "zone-a");
+        mgr.accept_checkpoint("zone-a", &cp1, 1, &[vk], "t-1")
+            .unwrap();
+        assert_eq!(mgr.backend().persist_count, 2);
+    }
+
+    // -- Recent IDs trimming --
+
+    #[test]
+    fn recent_ids_trimmed_to_max() {
+        let sk = make_sk(1);
+        let vk = sk.verification_key();
+        let genesis = build_genesis(std::slice::from_ref(&sk), "zone-a");
+
+        let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
+        mgr.accept_checkpoint("zone-a", &genesis, 1, std::slice::from_ref(&vk), "t-0")
+            .unwrap();
+
+        let mut prev = genesis;
+        for i in 1..=40u64 {
+            let cp = build_after(
+                &prev,
+                i,
+                SecurityEpoch::GENESIS,
+                100 + i * 100,
+                std::slice::from_ref(&sk),
+                "zone-a",
+            );
+            mgr.accept_checkpoint("zone-a", &cp, 1, std::slice::from_ref(&vk), &format!("t-{i}"))
+                .unwrap();
+            prev = cp;
+        }
+
+        let frontier = mgr.get_frontier("zone-a").unwrap();
+        assert!(frontier.recent_ids.len() <= FrontierState::MAX_RECENT_ENTRIES);
+        assert_eq!(frontier.frontier_seq, 40);
+        assert_eq!(frontier.accept_count, 41); // genesis + 40
+    }
+
+    // -- InMemoryBackend load --
+
+    #[test]
+    fn in_memory_backend_load_returns_none_for_missing() {
+        let backend = InMemoryBackend::new();
+        assert!(backend.load("nonexistent").unwrap().is_none());
+    }
+
+    #[test]
+    fn in_memory_backend_load_all_empty() {
+        let backend = InMemoryBackend::new();
+        assert!(backend.load_all().unwrap().is_empty());
+    }
+
+    // -- drain_events empties buffer --
+
+    #[test]
+    fn drain_events_empties_buffer() {
+        let sk = make_sk(1);
+        let vk = sk.verification_key();
+        let genesis = build_genesis(&[sk], "zone-a");
+
+        let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
+        mgr.accept_checkpoint("zone-a", &genesis, 1, &[vk], "t-0")
+            .unwrap();
+
+        let events = mgr.drain_events();
+        assert!(!events.is_empty());
+        let events2 = mgr.drain_events();
+        assert!(events2.is_empty());
+    }
+
+    // -- Enrichment: std::error --
+
+    #[test]
+    fn frontier_error_implements_std_error() {
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(FrontierError::RollbackRejected {
+                zone: "z1".into(),
+                frontier_seq: 5,
+                attempted_seq: 3,
+            }),
+            Box::new(FrontierError::DuplicateCheckpoint {
+                zone: "z2".into(),
+                checkpoint_seq: 10,
+            }),
+            Box::new(FrontierError::ChainLinkageFailure {
+                zone: "z3".into(),
+                detail: "bad link".into(),
+            }),
+            Box::new(FrontierError::QuorumFailure {
+                zone: "z4".into(),
+                detail: "not enough".into(),
+            }),
+            Box::new(FrontierError::UnknownZone {
+                zone: "z5".into(),
+            }),
+            Box::new(FrontierError::EpochRegression {
+                zone: "z6".into(),
+                frontier_epoch: SecurityEpoch::from_raw(5),
+                attempted_epoch: SecurityEpoch::from_raw(3),
+            }),
+            Box::new(FrontierError::PersistenceFailed {
+                zone: "z7".into(),
+                detail: "io".into(),
+            }),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            let msg = format!("{v}");
+            assert!(!msg.is_empty());
+            displays.insert(msg);
+        }
+        assert_eq!(displays.len(), 7, "all 7 variants produce distinct messages");
+    }
 }

@@ -1422,6 +1422,23 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
+    // -- Enrichment: Ord --
+
+    #[test]
+    fn hostcall_type_ordering() {
+        assert!(HostcallType::FsRead < HostcallType::FsWrite);
+        assert!(HostcallType::FsWrite < HostcallType::NetworkSend);
+        assert!(HostcallType::NetworkSend < HostcallType::NetworkRecv);
+        assert!(HostcallType::NetworkRecv < HostcallType::ProcessSpawn);
+        assert!(HostcallType::ProcessSpawn < HostcallType::EnvRead);
+        assert!(HostcallType::EnvRead < HostcallType::MemAlloc);
+        assert!(HostcallType::MemAlloc < HostcallType::TimerCreate);
+        assert!(HostcallType::TimerCreate < HostcallType::CryptoOp);
+        assert!(HostcallType::CryptoOp < HostcallType::IpcSend);
+        assert!(HostcallType::IpcSend < HostcallType::IpcRecv);
+    }
+
+    #[test]
     fn empty_recorder() {
         let recorder = test_recorder();
         assert!(recorder.is_empty());

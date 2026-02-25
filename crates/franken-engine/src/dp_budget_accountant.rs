@@ -1102,4 +1102,34 @@ mod tests {
             .unwrap_err();
         assert!(matches!(err, AccountantError::BudgetExhausted { .. }));
     }
+
+    // -- Enrichment: std::error --
+
+    #[test]
+    fn accountant_error_implements_std_error() {
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(AccountantError::BudgetExhausted {
+                dimension: "epsilon".into(),
+                epsilon_remaining: 0,
+                delta_remaining: 100,
+            }),
+            Box::new(AccountantError::EpochNotAdvanced {
+                current: SecurityEpoch::from_raw(3),
+                proposed: SecurityEpoch::from_raw(2),
+            }),
+            Box::new(AccountantError::InvalidConsumption {
+                reason: "negative".into(),
+            }),
+            Box::new(AccountantError::InvalidConfiguration {
+                reason: "bad".into(),
+            }),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            let msg = format!("{v}");
+            assert!(!msg.is_empty());
+            displays.insert(msg);
+        }
+        assert_eq!(displays.len(), 4);
+    }
 }

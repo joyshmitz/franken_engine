@@ -3151,6 +3151,55 @@ mod tests {
     }
 
     #[test]
+    // -- Enrichment: std::error --
+
+    #[test]
+    fn governance_error_implements_std_error() {
+        use crate::policy_checkpoint::DeterministicTimestamp;
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(GovernanceError::EmptyPolicyDefinition),
+            Box::new(GovernanceError::InvalidPolicySyntax {
+                expected_format: "json".into(),
+                reason: "parse fail".into(),
+            }),
+            Box::new(GovernanceError::PolicySchemaViolation {
+                constraint: "max_length".into(),
+            }),
+            Box::new(GovernanceError::IdDerivationFailed {
+                detail: "bad".into(),
+            }),
+            Box::new(GovernanceError::InvalidTimeRange {
+                start: DeterministicTimestamp(100),
+                end: DeterministicTimestamp(50),
+            }),
+            Box::new(GovernanceError::NoEvidenceInRange {
+                start: DeterministicTimestamp(0),
+                end: DeterministicTimestamp(100),
+            }),
+            Box::new(GovernanceError::UnknownFramework {
+                framework: "soc3".into(),
+            }),
+            Box::new(GovernanceError::MissingControl {
+                control_id: "AC-1".into(),
+            }),
+            Box::new(GovernanceError::HookFailed {
+                hook_type: GovernanceHookType::PreDeploy,
+                reason: "timeout".into(),
+            }),
+            Box::new(GovernanceError::SerialisationFailed {
+                reason: "json".into(),
+            }),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            let msg = format!("{v}");
+            assert!(!msg.is_empty());
+            displays.insert(msg);
+        }
+        assert_eq!(displays.len(), 10, "all 10 variants produce distinct messages");
+    }
+
+    #[test]
     fn test_diagnostic_severity_serde() {
         for sev in DiagnosticSeverity::all() {
             let json = serde_json::to_string(sev).unwrap();

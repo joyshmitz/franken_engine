@@ -1135,4 +1135,34 @@ mod tests {
             "fleet_telemetry"
         );
     }
+
+    // -- Enrichment: std::error --
+
+    #[test]
+    fn contract_error_implements_std_error() {
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(ContractError::EmptyContractId),
+            Box::new(ContractError::InvalidHypothesis {
+                reason: "empty".into(),
+            }),
+            Box::new(ContractError::EmptyTargetMetrics),
+            Box::new(ContractError::InvalidEvModel {
+                reason: "bad prior".into(),
+            }),
+            Box::new(ContractError::InvalidRiskBudget {
+                reason: "negative".into(),
+            }),
+            Box::new(ContractError::EmptyKillCriteria),
+            Box::new(ContractError::InvalidRollback {
+                reason: "stale".into(),
+            }),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            let msg = format!("{v}");
+            assert!(!msg.is_empty());
+            displays.insert(msg);
+        }
+        assert_eq!(displays.len(), 7, "all 7 variants produce distinct messages");
+    }
 }

@@ -3897,6 +3897,154 @@ mod tests {
     }
 
     #[test]
+    fn control_plane_invariants_dashboard_handles_missing_sources_without_panicking() {
+        let dashboard =
+            ControlPlaneInvariantsDashboardView::from_partial(ControlPlaneInvariantsPartial {
+                generated_at_unix_ms: Some(1_700_000_001_200),
+                ..Default::default()
+            });
+
+        assert_eq!(dashboard.cluster, "unknown");
+        assert_eq!(dashboard.zone, "unknown");
+        assert_eq!(dashboard.runtime_mode, "unknown");
+        assert!(dashboard.evidence_stream.is_empty());
+        assert!(dashboard.obligation_rows.is_empty());
+        assert!(dashboard.region_rows.is_empty());
+        assert!(dashboard.cancellation_events.is_empty());
+        assert!(dashboard.safe_mode_activations.is_empty());
+        assert_eq!(dashboard.decision_outcomes, DecisionOutcomesPanelView::default());
+        assert_eq!(dashboard.obligation_status, ObligationStatusPanelView::default());
+        assert_eq!(dashboard.region_lifecycle, RegionLifecyclePanelView::default());
+        assert_eq!(dashboard.replay_health.last_run_status, ReplayHealthStatus::Unknown);
+        assert_eq!(
+            dashboard.schema_version.compatibility_status,
+            SchemaCompatibilityStatus::Unknown
+        );
+        assert!(dashboard.triggered_alerts().is_empty());
+        assert!(dashboard.meets_refresh_sla());
+    }
+
+    #[test]
+    fn control_plane_invariants_dashboard_detects_refresh_sla_breach() {
+        let dashboard =
+            ControlPlaneInvariantsDashboardView::from_partial(ControlPlaneInvariantsPartial {
+                cluster: "prod".to_string(),
+                zone: "us-east-1".to_string(),
+                runtime_mode: "secure".to_string(),
+                generated_at_unix_ms: Some(1_700_000_100_000),
+                refresh_policy: Some(DashboardRefreshPolicy {
+                    evidence_stream_refresh_secs: 5,
+                    aggregate_refresh_secs: 60,
+                }),
+                evidence_stream_last_updated_unix_ms: Some(1_700_000_093_000),
+                aggregates_last_updated_unix_ms: Some(1_700_000_030_000),
+                ..Default::default()
+            });
+
+        assert!(!dashboard.meets_refresh_sla());
+    }
+
+    #[test]
+    fn control_plane_invariants_obligation_failure_alert_avoids_false_positives() {
+        let alert_rule = DashboardAlertRule {
+            rule_id: "alert-obligation-failure".to_string(),
+            description: "obligation failure rate > 0".to_string(),
+            metric: DashboardAlertMetric::ObligationFailureRateMillionths,
+            comparator: ThresholdComparator::GreaterThan,
+            threshold: 0,
+            severity: DashboardSeverity::Critical,
+        };
+
+        let dashboard_without_failures =
+            ControlPlaneInvariantsDashboardView::from_partial(ControlPlaneInvariantsPartial {
+                cluster: "prod".to_string(),
+                zone: "us-east-1".to_string(),
+                runtime_mode: "secure".to_string(),
+                generated_at_unix_ms: Some(1_700_000_120_000),
+                obligation_rows: vec![
+                    ObligationStatusRowView {
+                        obligation_id: "obl-open".to_string(),
+                        extension_id: "ext-a".to_string(),
+                        region_id: "region-a".to_string(),
+                        state: ObligationState::Open,
+                        severity: DashboardSeverity::Info,
+                        due_at_unix_ms: 1_700_000_121_000,
+                        updated_at_unix_ms: 1_700_000_120_100,
+                        detail: "pending".to_string(),
+                    },
+                    ObligationStatusRowView {
+                        obligation_id: "obl-done".to_string(),
+                        extension_id: "ext-a".to_string(),
+                        region_id: "region-a".to_string(),
+                        state: ObligationState::Fulfilled,
+                        severity: DashboardSeverity::Info,
+                        due_at_unix_ms: 1_700_000_121_100,
+                        updated_at_unix_ms: 1_700_000_120_200,
+                        detail: "completed".to_string(),
+                    },
+                ],
+                alert_rules: vec![alert_rule.clone()],
+                ..Default::default()
+            });
+
+        assert!(
+            dashboard_without_failures.triggered_alerts().is_empty(),
+            "zero-failure obligation sets must not trigger the failure-rate alert"
+        );
+
+        let dashboard_with_failure =
+            ControlPlaneInvariantsDashboardView::from_partial(ControlPlaneInvariantsPartial {
+                cluster: "prod".to_string(),
+                zone: "us-east-1".to_string(),
+                runtime_mode: "secure".to_string(),
+                generated_at_unix_ms: Some(1_700_000_120_000),
+                obligation_rows: vec![
+                    ObligationStatusRowView {
+                        obligation_id: "obl-open".to_string(),
+                        extension_id: "ext-a".to_string(),
+                        region_id: "region-a".to_string(),
+                        state: ObligationState::Open,
+                        severity: DashboardSeverity::Info,
+                        due_at_unix_ms: 1_700_000_121_000,
+                        updated_at_unix_ms: 1_700_000_120_100,
+                        detail: "pending".to_string(),
+                    },
+                    ObligationStatusRowView {
+                        obligation_id: "obl-done".to_string(),
+                        extension_id: "ext-a".to_string(),
+                        region_id: "region-a".to_string(),
+                        state: ObligationState::Fulfilled,
+                        severity: DashboardSeverity::Info,
+                        due_at_unix_ms: 1_700_000_121_100,
+                        updated_at_unix_ms: 1_700_000_120_200,
+                        detail: "completed".to_string(),
+                    },
+                    ObligationStatusRowView {
+                        obligation_id: "obl-fail".to_string(),
+                        extension_id: "ext-a".to_string(),
+                        region_id: "region-a".to_string(),
+                        state: ObligationState::Failed,
+                        severity: DashboardSeverity::Critical,
+                        due_at_unix_ms: 1_700_000_121_200,
+                        updated_at_unix_ms: 1_700_000_120_300,
+                        detail: "timeout".to_string(),
+                    },
+                ],
+                alert_rules: vec![alert_rule],
+                ..Default::default()
+            });
+
+        let alerts = dashboard_with_failure.triggered_alerts();
+        assert_eq!(alerts.len(), 1);
+        assert_eq!(alerts[0].rule_id, "alert-obligation-failure");
+        assert_eq!(
+            alerts[0].metric,
+            DashboardAlertMetric::ObligationFailureRateMillionths
+        );
+        assert_eq!(alerts[0].observed_value, 333_333);
+    }
+
+    #[test]
     fn flow_decision_dashboard_builds_alerts_and_filters_views() {
         let dashboard = FlowDecisionDashboardView::from_partial(FlowDecisionPartial {
             cluster: "prod".to_string(),
@@ -4620,5 +4768,842 @@ mod tests {
         assert_eq!(filtered.next_best_replacements.len(), 1);
         assert_eq!(filtered.native_coverage.native_slots, 0);
         assert_eq!(filtered.native_coverage.delegate_slots, 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: serde roundtrips for enum types
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn replay_status_serde_roundtrip() {
+        for s in [
+            ReplayStatus::Running,
+            ReplayStatus::Complete,
+            ReplayStatus::Failed,
+            ReplayStatus::NoEvents,
+        ] {
+            let json = serde_json::to_string(&s).unwrap();
+            let restored: ReplayStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(restored, s);
+        }
+    }
+
+    #[test]
+    fn dashboard_severity_serde_roundtrip() {
+        for s in [
+            DashboardSeverity::Info,
+            DashboardSeverity::Warning,
+            DashboardSeverity::Critical,
+        ] {
+            let json = serde_json::to_string(&s).unwrap();
+            let restored: DashboardSeverity = serde_json::from_str(&json).unwrap();
+            assert_eq!(restored, s);
+        }
+    }
+
+    #[test]
+    fn decision_outcome_kind_serde_roundtrip() {
+        for k in [
+            DecisionOutcomeKind::Allow,
+            DecisionOutcomeKind::Deny,
+            DecisionOutcomeKind::Fallback,
+        ] {
+            let json = serde_json::to_string(&k).unwrap();
+            let restored: DecisionOutcomeKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(restored, k);
+        }
+    }
+
+    #[test]
+    fn obligation_state_serde_roundtrip() {
+        for s in [
+            ObligationState::Open,
+            ObligationState::Fulfilled,
+            ObligationState::Failed,
+        ] {
+            let json = serde_json::to_string(&s).unwrap();
+            let restored: ObligationState = serde_json::from_str(&json).unwrap();
+            assert_eq!(restored, s);
+        }
+    }
+
+    #[test]
+    fn cancellation_kind_serde_roundtrip() {
+        for k in [
+            CancellationKind::Unload,
+            CancellationKind::Quarantine,
+            CancellationKind::Suspend,
+            CancellationKind::Terminate,
+            CancellationKind::Revocation,
+        ] {
+            let json = serde_json::to_string(&k).unwrap();
+            let restored: CancellationKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(restored, k);
+        }
+    }
+
+    #[test]
+    fn update_kind_serde_roundtrip() {
+        for k in [UpdateKind::Snapshot, UpdateKind::Delta, UpdateKind::Heartbeat] {
+            let json = serde_json::to_string(&k).unwrap();
+            let restored: UpdateKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(restored, k);
+        }
+    }
+
+    #[test]
+    fn adapter_stream_serde_roundtrip() {
+        for s in [
+            AdapterStream::IncidentReplay,
+            AdapterStream::PolicyExplanation,
+            AdapterStream::ControlDashboard,
+            AdapterStream::ControlPlaneInvariantsDashboard,
+            AdapterStream::FlowDecisionDashboard,
+            AdapterStream::CapabilityDeltaDashboard,
+            AdapterStream::ReplacementProgressDashboard,
+            AdapterStream::ProofSpecializationLineageDashboard,
+        ] {
+            let json = serde_json::to_string(&s).unwrap();
+            let restored: AdapterStream = serde_json::from_str(&json).unwrap();
+            assert_eq!(restored, s);
+        }
+    }
+
+    #[test]
+    fn replay_health_status_serde_roundtrip() {
+        for s in [
+            ReplayHealthStatus::Pass,
+            ReplayHealthStatus::Fail,
+            ReplayHealthStatus::Unknown,
+        ] {
+            let json = serde_json::to_string(&s).unwrap();
+            let restored: ReplayHealthStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(restored, s);
+        }
+    }
+
+    #[test]
+    fn recovery_status_serde_roundtrip() {
+        for s in [
+            RecoveryStatus::Recovering,
+            RecoveryStatus::Recovered,
+            RecoveryStatus::Waived,
+        ] {
+            let json = serde_json::to_string(&s).unwrap();
+            let restored: RecoveryStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(restored, s);
+        }
+    }
+
+    #[test]
+    fn schema_compatibility_status_serde_roundtrip() {
+        for s in [
+            SchemaCompatibilityStatus::Unknown,
+            SchemaCompatibilityStatus::Compatible,
+            SchemaCompatibilityStatus::NeedsMigration,
+            SchemaCompatibilityStatus::Incompatible,
+        ] {
+            let json = serde_json::to_string(&s).unwrap();
+            let restored: SchemaCompatibilityStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(restored, s);
+        }
+    }
+
+    #[test]
+    fn dashboard_alert_metric_serde_roundtrip() {
+        for m in [
+            DashboardAlertMetric::ObligationFailureRateMillionths,
+            DashboardAlertMetric::ReplayDivergenceCount,
+            DashboardAlertMetric::SafeModeActivationCount,
+            DashboardAlertMetric::CancellationEventCount,
+            DashboardAlertMetric::FallbackActivationCount,
+        ] {
+            let json = serde_json::to_string(&m).unwrap();
+            let restored: DashboardAlertMetric = serde_json::from_str(&json).unwrap();
+            assert_eq!(restored, m);
+        }
+    }
+
+    #[test]
+    fn threshold_comparator_serde_roundtrip() {
+        for c in [
+            ThresholdComparator::GreaterThan,
+            ThresholdComparator::GreaterOrEqual,
+            ThresholdComparator::LessThan,
+            ThresholdComparator::LessOrEqual,
+            ThresholdComparator::Equal,
+        ] {
+            let json = serde_json::to_string(&c).unwrap();
+            let restored: ThresholdComparator = serde_json::from_str(&json).unwrap();
+            assert_eq!(restored, c);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: serde roundtrips for struct types
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn replay_event_view_serde_roundtrip() {
+        let ev = ReplayEventView::new(1, "engine", "start", "ok", 100);
+        let json = serde_json::to_string(&ev).unwrap();
+        let restored: ReplayEventView = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored, ev);
+    }
+
+    #[test]
+    fn action_candidate_view_serde_roundtrip() {
+        let ac = ActionCandidateView {
+            action: "contain".to_string(),
+            expected_loss_millionths: 50_000,
+        };
+        let json = serde_json::to_string(&ac).unwrap();
+        let restored: ActionCandidateView = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored, ac);
+    }
+
+    #[test]
+    fn driver_view_serde_roundtrip() {
+        let dv = DriverView {
+            name: "risk_score".to_string(),
+            contribution_millionths: 300_000,
+        };
+        let json = serde_json::to_string(&dv).unwrap();
+        let restored: DriverView = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored, dv);
+    }
+
+    #[test]
+    fn dashboard_metric_view_serde_roundtrip() {
+        let mv = DashboardMetricView {
+            metric: "latency_p95_ms".to_string(),
+            value: 42,
+            unit: "ms".to_string(),
+        };
+        let json = serde_json::to_string(&mv).unwrap();
+        let restored: DashboardMetricView = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored, mv);
+    }
+
+    #[test]
+    fn extension_status_row_serde_roundtrip() {
+        let row = ExtensionStatusRow {
+            extension_id: "weather-ext".to_string(),
+            state: "running".to_string(),
+            trust_level: "trusted".to_string(),
+        };
+        let json = serde_json::to_string(&row).unwrap();
+        let restored: ExtensionStatusRow = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored, row);
+    }
+
+    #[test]
+    fn dashboard_refresh_policy_serde_roundtrip() {
+        let rp = DashboardRefreshPolicy {
+            evidence_stream_refresh_secs: 10,
+            aggregate_refresh_secs: 120,
+        };
+        let json = serde_json::to_string(&rp).unwrap();
+        let restored: DashboardRefreshPolicy = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored, rp);
+    }
+
+    #[test]
+    fn benchmark_trend_point_serde_roundtrip() {
+        let pt = BenchmarkTrendPointView {
+            timestamp_unix_ms: 1_700_000_000_000,
+            throughput_tps: 5000,
+            latency_p95_ms: 12,
+            memory_peak_mb: 512,
+        };
+        let json = serde_json::to_string(&pt).unwrap();
+        let restored: BenchmarkTrendPointView = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored, pt);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn normalize_non_empty_trims_and_replaces_blank() {
+        assert_eq!(normalize_non_empty("  hello  ".to_string()), "hello");
+        assert_eq!(normalize_non_empty("".to_string()), "unknown");
+        assert_eq!(normalize_non_empty("   ".to_string()), "unknown");
+    }
+
+    #[test]
+    fn incident_replay_with_events_marks_complete() {
+        let ev = ReplayEventView::new(0, "engine", "init", "ok", 100);
+        let replay = IncidentReplayView::snapshot("trace-1", "scenario", vec![ev]);
+        assert_eq!(replay.replay_status, ReplayStatus::Complete);
+        assert!(replay.deterministic);
+    }
+
+    #[test]
+    fn adapter_envelope_encode_json_deterministic() {
+        let payload = FrankentuiViewPayload::IncidentReplay(IncidentReplayView::snapshot(
+            "trace-1",
+            "scenario-1",
+            vec![],
+        ));
+        let env = AdapterEnvelope::new(
+            "trace-1",
+            1000,
+            AdapterStream::IncidentReplay,
+            UpdateKind::Snapshot,
+            payload,
+        );
+        let enc1 = env.encode_json().unwrap();
+        let enc2 = env.encode_json().unwrap();
+        assert_eq!(enc1, enc2);
+    }
+
+    #[test]
+    fn dashboard_severity_default_is_info() {
+        assert_eq!(DashboardSeverity::default(), DashboardSeverity::Info);
+    }
+
+    #[test]
+    fn replay_health_status_default_is_unknown() {
+        assert_eq!(ReplayHealthStatus::default(), ReplayHealthStatus::Unknown);
+    }
+
+    #[test]
+    fn recovery_status_default_is_recovering() {
+        assert_eq!(RecoveryStatus::default(), RecoveryStatus::Recovering);
+    }
+
+    #[test]
+    fn dashboard_refresh_policy_default_values() {
+        let rp = DashboardRefreshPolicy::default();
+        assert_eq!(rp.evidence_stream_refresh_secs, 5);
+        assert_eq!(rp.aggregate_refresh_secs, 60);
+    }
+
+    #[test]
+    fn schema_version_panel_default_is_unknown() {
+        let sv = SchemaVersionPanelView::default();
+        assert_eq!(sv.compatibility_status, SchemaCompatibilityStatus::Unknown);
+        assert_eq!(sv.evidence_schema_version, 0);
+    }
+
+    #[test]
+    fn policy_explanation_partial_serde_roundtrip() {
+        let partial = PolicyExplanationPartial {
+            decision_id: "d1".to_string(),
+            policy_id: "p1".to_string(),
+            selected_action: "contain".to_string(),
+            confidence_millionths: Some(750_000),
+            expected_loss_millionths: Some(120_000),
+            action_candidates: vec![ActionCandidateView {
+                action: "contain".to_string(),
+                expected_loss_millionths: 120_000,
+            }],
+            key_drivers: vec![DriverView {
+                name: "risk".to_string(),
+                contribution_millionths: 600_000,
+            }],
+        };
+        let json = serde_json::to_string(&partial).unwrap();
+        let restored: PolicyExplanationPartial = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored, partial);
+    }
+
+    #[test]
+    fn snake_case_serde_enum_values_are_lowercase() {
+        let json = serde_json::to_string(&ReplayStatus::NoEvents).unwrap();
+        assert_eq!(json, "\"no_events\"");
+
+        let json = serde_json::to_string(&UpdateKind::Heartbeat).unwrap();
+        assert_eq!(json, "\"heartbeat\"");
+
+        let json = serde_json::to_string(&CancellationKind::Quarantine).unwrap();
+        assert_eq!(json, "\"quarantine\"");
+
+        let json = serde_json::to_string(&DashboardAlertMetric::ObligationFailureRateMillionths)
+            .unwrap();
+        assert_eq!(json, "\"obligation_failure_rate_millionths\"");
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: untested leaf enum serde roundtrips
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn flow_sensitivity_level_serde_roundtrip() {
+        for v in [
+            FlowSensitivityLevel::Low,
+            FlowSensitivityLevel::Medium,
+            FlowSensitivityLevel::High,
+            FlowSensitivityLevel::Critical,
+        ] {
+            let json = serde_json::to_string(&v).unwrap();
+            let restored: FlowSensitivityLevel = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, restored);
+        }
+    }
+
+    #[test]
+    fn declassification_outcome_serde_roundtrip() {
+        for v in [DeclassificationOutcome::Approved, DeclassificationOutcome::Denied] {
+            let json = serde_json::to_string(&v).unwrap();
+            let restored: DeclassificationOutcome = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, restored);
+        }
+    }
+
+    #[test]
+    fn confinement_status_serde_roundtrip() {
+        for v in [
+            ConfinementStatus::Full,
+            ConfinementStatus::Partial,
+            ConfinementStatus::Degraded,
+        ] {
+            let json = serde_json::to_string(&v).unwrap();
+            let restored: ConfinementStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, restored);
+        }
+    }
+
+    #[test]
+    fn replacement_risk_level_serde_roundtrip() {
+        for v in [
+            ReplacementRiskLevel::Low,
+            ReplacementRiskLevel::Medium,
+            ReplacementRiskLevel::High,
+        ] {
+            let json = serde_json::to_string(&v).unwrap();
+            let restored: ReplacementRiskLevel = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, restored);
+        }
+    }
+
+    #[test]
+    fn rollback_status_serde_roundtrip() {
+        for v in [
+            RollbackStatus::Investigating,
+            RollbackStatus::Resolved,
+            RollbackStatus::Waived,
+        ] {
+            let json = serde_json::to_string(&v).unwrap();
+            let restored: RollbackStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, restored);
+        }
+    }
+
+    #[test]
+    fn proof_inventory_kind_serde_roundtrip() {
+        for v in [
+            ProofInventoryKind::CapabilityWitness,
+            ProofInventoryKind::FlowProof,
+            ProofInventoryKind::ReplayMotif,
+        ] {
+            let json = serde_json::to_string(&v).unwrap();
+            let restored: ProofInventoryKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, restored);
+        }
+    }
+
+    #[test]
+    fn proof_validity_status_serde_roundtrip() {
+        for v in [
+            ProofValidityStatus::Valid,
+            ProofValidityStatus::ExpiringSoon,
+            ProofValidityStatus::Expired,
+            ProofValidityStatus::Revoked,
+        ] {
+            let json = serde_json::to_string(&v).unwrap();
+            let restored: ProofValidityStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, restored);
+        }
+    }
+
+    #[test]
+    fn proof_specialization_invalidation_reason_serde_roundtrip() {
+        for v in [
+            ProofSpecializationInvalidationReason::EpochChange,
+            ProofSpecializationInvalidationReason::ProofExpired,
+            ProofSpecializationInvalidationReason::ProofRevoked,
+        ] {
+            let json = serde_json::to_string(&v).unwrap();
+            let restored: ProofSpecializationInvalidationReason =
+                serde_json::from_str(&json).unwrap();
+            assert_eq!(v, restored);
+        }
+    }
+
+    #[test]
+    fn specialization_fallback_reason_serde_roundtrip() {
+        for v in [
+            SpecializationFallbackReason::ProofUnavailable,
+            SpecializationFallbackReason::ProofExpired,
+            SpecializationFallbackReason::ProofRevoked,
+            SpecializationFallbackReason::ValidationFailed,
+        ] {
+            let json = serde_json::to_string(&v).unwrap();
+            let restored: SpecializationFallbackReason = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, restored);
+        }
+    }
+
+    #[test]
+    fn override_review_status_serde_roundtrip() {
+        for v in [
+            OverrideReviewStatus::Pending,
+            OverrideReviewStatus::Approved,
+            OverrideReviewStatus::Rejected,
+            OverrideReviewStatus::Waived,
+        ] {
+            let json = serde_json::to_string(&v).unwrap();
+            let restored: OverrideReviewStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, restored);
+        }
+    }
+
+    #[test]
+    fn grant_expiry_status_serde_roundtrip() {
+        for v in [
+            GrantExpiryStatus::Active,
+            GrantExpiryStatus::ExpiringSoon,
+            GrantExpiryStatus::Expired,
+            GrantExpiryStatus::NotApplicable,
+        ] {
+            let json = serde_json::to_string(&v).unwrap();
+            let restored: GrantExpiryStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, restored);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: default value assertions
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn flow_sensitivity_level_default_is_low() {
+        assert_eq!(FlowSensitivityLevel::default(), FlowSensitivityLevel::Low);
+    }
+
+    #[test]
+    fn proof_validity_status_default_is_valid() {
+        assert_eq!(ProofValidityStatus::default(), ProofValidityStatus::Valid);
+    }
+
+    #[test]
+    fn override_review_status_default_is_pending() {
+        assert_eq!(OverrideReviewStatus::default(), OverrideReviewStatus::Pending);
+    }
+
+    #[test]
+    fn grant_expiry_status_default_is_active() {
+        assert_eq!(GrantExpiryStatus::default(), GrantExpiryStatus::Active);
+    }
+
+    #[test]
+    fn decision_outcomes_panel_default_all_zero() {
+        let d = DecisionOutcomesPanelView::default();
+        assert_eq!(d.allow_count, 0);
+        assert_eq!(d.deny_count, 0);
+        assert_eq!(d.fallback_count, 0);
+        assert_eq!(d.average_expected_loss_millionths, 0);
+    }
+
+    #[test]
+    fn specialization_performance_impact_default_all_zero() {
+        let d = SpecializationPerformanceImpactView::default();
+        assert_eq!(d.active_specialization_count, 0);
+        assert_eq!(d.aggregate_latency_reduction_millionths, 0);
+        assert_eq!(d.aggregate_throughput_increase_millionths, 0);
+        assert_eq!(d.specialization_coverage_millionths, 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: struct serde roundtrips
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn obligation_status_row_view_serde_roundtrip() {
+        let row = ObligationStatusRowView {
+            obligation_id: "o-1".to_string(),
+            extension_id: "ext-a".to_string(),
+            region_id: "r-1".to_string(),
+            state: ObligationState::Open,
+            severity: DashboardSeverity::Warning,
+            due_at_unix_ms: 1000,
+            updated_at_unix_ms: 900,
+            detail: "pending check".to_string(),
+        };
+        let json = serde_json::to_string(&row).unwrap();
+        let restored: ObligationStatusRowView = serde_json::from_str(&json).unwrap();
+        assert_eq!(row, restored);
+    }
+
+    #[test]
+    fn cancellation_event_view_serde_roundtrip() {
+        let ev = CancellationEventView {
+            extension_id: "ext-a".to_string(),
+            region_id: "r-1".to_string(),
+            cancellation_kind: CancellationKind::Quarantine,
+            severity: DashboardSeverity::Critical,
+            detail: "policy violation".to_string(),
+            timestamp_unix_ms: 5000,
+        };
+        let json = serde_json::to_string(&ev).unwrap();
+        let restored: CancellationEventView = serde_json::from_str(&json).unwrap();
+        assert_eq!(ev, restored);
+    }
+
+    #[test]
+    fn label_map_node_view_serde_roundtrip() {
+        let node = LabelMapNodeView {
+            label_id: "lbl-1".to_string(),
+            sensitivity: FlowSensitivityLevel::High,
+            description: "PII label".to_string(),
+            extension_overlays: vec!["ext-a".to_string()],
+        };
+        let json = serde_json::to_string(&node).unwrap();
+        let restored: LabelMapNodeView = serde_json::from_str(&json).unwrap();
+        assert_eq!(node, restored);
+    }
+
+    #[test]
+    fn slot_status_overview_row_serde_roundtrip() {
+        let row = SlotStatusOverviewRow {
+            slot_id: "slot-1".to_string(),
+            slot_kind: "compute".to_string(),
+            implementation_kind: "native".to_string(),
+            promotion_status: "promoted".to_string(),
+            risk_level: ReplacementRiskLevel::Low,
+            last_transition_unix_ms: 2000,
+            health: "healthy".to_string(),
+            lineage_ref: "ref-1".to_string(),
+        };
+        let json = serde_json::to_string(&row).unwrap();
+        let restored: SlotStatusOverviewRow = serde_json::from_str(&json).unwrap();
+        assert_eq!(row, restored);
+    }
+
+    #[test]
+    fn rollback_event_view_serde_roundtrip() {
+        let ev = RollbackEventView {
+            slot_id: "slot-1".to_string(),
+            receipt_id: "r-1".to_string(),
+            reason: "perf regression".to_string(),
+            status: RollbackStatus::Investigating,
+            occurred_at_unix_ms: 3000,
+            lineage_ref: "ref-a".to_string(),
+            evidence_ref: "ref-b".to_string(),
+        };
+        let json = serde_json::to_string(&ev).unwrap();
+        let restored: RollbackEventView = serde_json::from_str(&json).unwrap();
+        assert_eq!(ev, restored);
+    }
+
+    #[test]
+    fn proof_inventory_row_view_serde_roundtrip() {
+        let row = ProofInventoryRowView {
+            proof_id: "p-1".to_string(),
+            proof_kind: ProofInventoryKind::CapabilityWitness,
+            validity_status: ProofValidityStatus::Valid,
+            epoch_id: 5,
+            linked_specialization_count: 2,
+            enabled_specialization_ids: vec!["s-1".to_string()],
+            proof_ref: "ref-p".to_string(),
+        };
+        let json = serde_json::to_string(&row).unwrap();
+        let restored: ProofInventoryRowView = serde_json::from_str(&json).unwrap();
+        assert_eq!(row, restored);
+    }
+
+    #[test]
+    fn override_rationale_view_serde_roundtrip() {
+        let ov = OverrideRationaleView {
+            override_id: "ov-1".to_string(),
+            extension_id: "ext-a".to_string(),
+            capability: Some("cap:fs".to_string()),
+            rationale: "required for migration".to_string(),
+            signed_justification_ref: "ref-j".to_string(),
+            review_status: OverrideReviewStatus::Approved,
+            grant_expiry_status: GrantExpiryStatus::ExpiringSoon,
+            requested_at_unix_ms: 1000,
+            reviewed_at_unix_ms: Some(2000),
+            expires_at_unix_ms: Some(5000),
+            receipt_ref: "ref-r".to_string(),
+            replay_ref: "ref-rp".to_string(),
+        };
+        let json = serde_json::to_string(&ov).unwrap();
+        let restored: OverrideRationaleView = serde_json::from_str(&json).unwrap();
+        assert_eq!(ov, restored);
+    }
+
+    #[test]
+    fn capability_delta_alert_view_serde_roundtrip() {
+        let alert = CapabilityDeltaAlertView {
+            alert_id: "a-1".to_string(),
+            extension_id: Some("ext-a".to_string()),
+            severity: DashboardSeverity::Warning,
+            reason: "over-privileged".to_string(),
+            generated_at_unix_ms: 4000,
+        };
+        let json = serde_json::to_string(&alert).unwrap();
+        let restored: CapabilityDeltaAlertView = serde_json::from_str(&json).unwrap();
+        assert_eq!(alert, restored);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: filter/partial default assertions
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn control_plane_dashboard_filter_default_all_none() {
+        let f = ControlPlaneDashboardFilter::default();
+        assert!(f.extension_id.is_none());
+        assert!(f.region_id.is_none());
+        assert!(f.severity.is_none());
+        assert!(f.start_unix_ms.is_none());
+        assert!(f.end_unix_ms.is_none());
+    }
+
+    #[test]
+    fn flow_decision_dashboard_filter_default_all_none() {
+        let f = FlowDecisionDashboardFilter::default();
+        assert!(f.extension_id.is_none());
+        assert!(f.source_label.is_none());
+        assert!(f.sink_clearance.is_none());
+        assert!(f.sensitivity.is_none());
+        assert!(f.start_unix_ms.is_none());
+        assert!(f.end_unix_ms.is_none());
+    }
+
+    // -- Enrichment: missing serde roundtrips --
+
+    #[test]
+    fn frankentui_view_payload_serde_roundtrip() {
+        let payload = FrankentuiViewPayload::IncidentReplay(IncidentReplayView::snapshot(
+            "trace-1",
+            "scenario-1",
+            vec![],
+        ));
+        let json = serde_json::to_string(&payload).unwrap();
+        let restored: FrankentuiViewPayload = serde_json::from_str(&json).unwrap();
+        assert_eq!(payload, restored);
+    }
+
+    #[test]
+    fn incident_replay_view_serde_roundtrip() {
+        let ev = ReplayEventView::new(0, "engine", "init", "ok", 100);
+        let view = IncidentReplayView::snapshot("trace-1", "scenario-1", vec![ev]);
+        let json = serde_json::to_string(&view).unwrap();
+        let restored: IncidentReplayView = serde_json::from_str(&json).unwrap();
+        assert_eq!(view, restored);
+    }
+
+    #[test]
+    fn evidence_stream_entry_view_serde_roundtrip() {
+        let entry = EvidenceStreamEntryView {
+            trace_id: "t1".to_string(),
+            decision_id: "d1".to_string(),
+            policy_id: "p1".to_string(),
+            action_type: "observe".to_string(),
+            decision_outcome: DecisionOutcomeKind::Allow,
+            expected_loss_millionths: 500,
+            extension_id: "ext-1".to_string(),
+            region_id: "region-1".to_string(),
+            severity: DashboardSeverity::Warning,
+            component: "engine".to_string(),
+            event: "decision".to_string(),
+            outcome: "ok".to_string(),
+            error_code: None,
+            timestamp_unix_ms: 1000,
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let restored: EvidenceStreamEntryView = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry, restored);
+    }
+
+    #[test]
+    fn dashboard_alert_rule_serde_roundtrip() {
+        let rule = DashboardAlertRule {
+            rule_id: "alert-1".to_string(),
+            description: "High failure rate".to_string(),
+            metric: DashboardAlertMetric::ObligationFailureRateMillionths,
+            comparator: ThresholdComparator::GreaterThan,
+            threshold: 100_000,
+            severity: DashboardSeverity::Critical,
+        };
+        let json = serde_json::to_string(&rule).unwrap();
+        let restored: DashboardAlertRule = serde_json::from_str(&json).unwrap();
+        assert_eq!(rule, restored);
+    }
+
+    #[test]
+    fn triggered_alert_view_serde_roundtrip() {
+        let alert = TriggeredAlertView {
+            rule_id: "r1".to_string(),
+            description: "alert-desc".to_string(),
+            metric: DashboardAlertMetric::ReplayDivergenceCount,
+            observed_value: 10,
+            threshold: 5,
+            severity: DashboardSeverity::Warning,
+            triggered_at_unix_ms: 2000,
+        };
+        let json = serde_json::to_string(&alert).unwrap();
+        let restored: TriggeredAlertView = serde_json::from_str(&json).unwrap();
+        assert_eq!(alert, restored);
+    }
+
+    #[test]
+    fn label_map_edge_view_serde_roundtrip() {
+        let edge = LabelMapEdgeView {
+            source_label: "A".to_string(),
+            sink_clearance: "B".to_string(),
+            route_policy_id: Some("policy-1".to_string()),
+            route_enabled: true,
+        };
+        let json = serde_json::to_string(&edge).unwrap();
+        let restored: LabelMapEdgeView = serde_json::from_str(&json).unwrap();
+        assert_eq!(edge, restored);
+    }
+
+    #[test]
+    fn blocked_flow_view_serde_roundtrip() {
+        let flow = BlockedFlowView {
+            flow_id: "flow-1".to_string(),
+            extension_id: "ext-1".to_string(),
+            source_label: "secret".to_string(),
+            sink_clearance: "public".to_string(),
+            sensitivity: FlowSensitivityLevel::High,
+            blocked_reason: "policy violation".to_string(),
+            attempted_exfiltration: false,
+            code_path_ref: "src/main.rs:42".to_string(),
+            extension_context_ref: "ctx-1".to_string(),
+            trace_id: "t1".to_string(),
+            decision_id: "d1".to_string(),
+            policy_id: "p1".to_string(),
+            error_code: None,
+            occurred_at_unix_ms: 3000,
+        };
+        let json = serde_json::to_string(&flow).unwrap();
+        let restored: BlockedFlowView = serde_json::from_str(&json).unwrap();
+        assert_eq!(flow, restored);
+    }
+
+    #[test]
+    fn coverage_trend_point_serde_roundtrip() {
+        let pt = CoverageTrendPoint {
+            timestamp_unix_ms: 5000,
+            native_coverage_millionths: 900_000,
+        };
+        let json = serde_json::to_string(&pt).unwrap();
+        let restored: CoverageTrendPoint = serde_json::from_str(&json).unwrap();
+        assert_eq!(pt, restored);
+    }
+
+    #[test]
+    fn replacement_dashboard_filter_default_all_none() {
+        let f = ReplacementDashboardFilter::default();
+        assert!(f.slot_kind.is_none());
+        assert!(f.risk_level.is_none());
+        assert!(f.promotion_status.is_none());
     }
 }

@@ -1404,4 +1404,20 @@ mod tests {
         assert!(emitter.ledger()[0].candidates.is_empty());
         assert!(emitter.ledger()[0].witnesses.is_empty());
     }
+
+    #[test]
+    fn emission_error_std_error() {
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(EmissionError::MissingField { field: "ctx".into() }),
+            Box::new(EmissionError::LedgerWriteFailure { reason: "disk".into() }),
+            Box::new(EmissionError::ValidationFailure { reason: "bad".into() }),
+            Box::new(EmissionError::BufferFull { capacity: 64 }),
+            Box::new(EmissionError::NotRequired { action: HighImpactAction::Sandbox }),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            displays.insert(format!("{v}"));
+        }
+        assert_eq!(displays.len(), 5);
+    }
 }

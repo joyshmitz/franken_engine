@@ -903,6 +903,71 @@ mod tests {
         assert_eq!(stats, restored);
     }
 
+    // -- Enrichment: std::error, serde, defaults --
+
+    #[test]
+    fn detector_error_std_error_trait() {
+        let errs: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(DetectorError::InvalidObservation {
+                reason: "x".to_string(),
+            }),
+            Box::new(DetectorError::UnknownMetricStream {
+                stream: "y".to_string(),
+            }),
+        ];
+        for e in &errs {
+            assert!(!e.to_string().is_empty());
+        }
+    }
+
+    #[test]
+    fn constant_hazard_serde_roundtrip() {
+        let h = ConstantHazard { lambda: 42 };
+        let json = serde_json::to_string(&h).expect("serialize");
+        let restored: ConstantHazard = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(restored.lambda, 42);
+    }
+
+    #[test]
+    fn regime_classifier_default_values() {
+        let c = RegimeClassifier::default();
+        assert_eq!(c.elevated_threshold, 700_000);
+        assert_eq!(c.attack_threshold, 900_000);
+        assert_eq!(c.degraded_threshold, -500_000);
+    }
+
+    #[test]
+    fn multi_stream_detector_default_empty() {
+        let m = MultiStreamDetector::default();
+        assert_eq!(m.stream_count(), 0);
+        assert_eq!(m.overall_regime(), Regime::Normal);
+    }
+
+    #[test]
+    fn change_point_probability_initial() {
+        let det = test_detector("m");
+        // Initially all mass at run-length 0
+        assert_eq!(det.change_point_probability(), 1_000_000);
+    }
+
+    #[test]
+    fn normal_stats_default_prior_values() {
+        let s = NormalStats::default_prior();
+        assert_eq!(s.mu0, 0);
+        assert_eq!(s.kappa0, 100_000);
+        assert_eq!(s.alpha0, 1_000_000);
+        assert_eq!(s.beta0, 1_000_000);
+    }
+
+    #[test]
+    fn regime_serde_format() {
+        // Verify the JSON representation uses quoted enum names
+        let json = serde_json::to_string(&Regime::Normal).expect("serialize");
+        assert_eq!(json, "\"Normal\"");
+        let json = serde_json::to_string(&Regime::Attack).expect("serialize");
+        assert_eq!(json, "\"Attack\"");
+    }
+
     #[test]
     fn classifier_serialization_round_trip() {
         let c = RegimeClassifier::default();

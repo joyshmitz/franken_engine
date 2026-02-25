@@ -466,6 +466,66 @@ mod tests {
     }
 
     #[test]
+    // -- Enrichment: serde roundtrips --
+
+    #[test]
+    fn obligation_leak_policy_serde_both_variants() {
+        for policy in [ObligationLeakPolicy::Lab, ObligationLeakPolicy::Production] {
+            let json = serde_json::to_string(&policy).expect("serialize");
+            let restored: ObligationLeakPolicy =
+                serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(policy, restored);
+        }
+    }
+
+    #[test]
+    fn leak_severity_serde_all_variants() {
+        for sev in [
+            LeakSeverity::Warning,
+            LeakSeverity::Critical,
+            LeakSeverity::Fatal,
+        ] {
+            let json = serde_json::to_string(&sev).expect("serialize");
+            let restored: LeakSeverity = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(sev, restored);
+        }
+    }
+
+    #[test]
+    fn failover_action_serde_both_variants() {
+        let actions = vec![
+            FailoverAction::ScopedRegionClose {
+                region_id: "r-42".to_string(),
+            },
+            FailoverAction::AlertOnly,
+        ];
+        for action in actions {
+            let json = serde_json::to_string(&action).expect("serialize");
+            let restored: FailoverAction =
+                serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(action, restored);
+        }
+    }
+
+    #[test]
+    fn leak_response_serde_both_variants() {
+        let diag = test_diagnostic();
+        // Lab policy returns Abort
+        let mut handler_lab = LeakHandler::new(ObligationLeakPolicy::Lab);
+        let abort_resp = handler_lab.handle_leak(diag.clone());
+        let json = serde_json::to_string(&abort_resp).expect("serialize");
+        let restored: LeakResponse = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(abort_resp, restored);
+
+        // Production policy returns Handled
+        let mut handler_prod = LeakHandler::new(ObligationLeakPolicy::Production);
+        let handled_resp = handler_prod.handle_leak(test_diagnostic());
+        let json = serde_json::to_string(&handled_resp).expect("serialize");
+        let restored: LeakResponse = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(handled_resp, restored);
+    }
+
+    #[test]
     fn leak_metrics_serialization_round_trip() {
         let mut metrics = LeakMetrics::default();
         metrics.record("r", "c", "comp");

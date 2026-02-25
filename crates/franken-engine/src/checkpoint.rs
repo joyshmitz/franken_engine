@@ -739,6 +739,47 @@ mod tests {
     }
 
     #[test]
+    // -- Enrichment: serde & Display --
+
+    #[test]
+    fn checkpoint_action_serde_all_variants() {
+        for action in [
+            CheckpointAction::Continue,
+            CheckpointAction::Drain,
+            CheckpointAction::Abort,
+        ] {
+            let json = serde_json::to_string(&action).expect("serialize");
+            let restored: CheckpointAction =
+                serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(action, restored);
+        }
+    }
+
+    #[test]
+    fn loop_site_display_all_variants() {
+        let sites = vec![
+            (LoopSite::BytecodeDispatch, "bytecode_dispatch"),
+            (LoopSite::GcScanning, "gc_scanning"),
+            (LoopSite::GcSweep, "gc_sweep"),
+            (LoopSite::PolicyIteration, "policy_iteration"),
+            (LoopSite::ContractEvaluation, "contract_evaluation"),
+            (LoopSite::ReplayStep, "replay_step"),
+            (LoopSite::ModuleDecode, "module_decode"),
+            (LoopSite::ModuleVerify, "module_verify"),
+            (LoopSite::IrLowering, "ir_lowering"),
+            (LoopSite::IrCompilation, "ir_compilation"),
+            (LoopSite::Custom("mysite".to_string()), "custom:mysite"),
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for (site, expected) in &sites {
+            let display = format!("{site}");
+            assert_eq!(&display, *expected);
+            seen.insert(display);
+        }
+        assert_eq!(seen.len(), 11, "all 11 variants produce distinct strings");
+    }
+
+    #[test]
     fn coverage_serialization_round_trip() {
         let mut cov = CheckpointCoverage::new();
         cov.register("bytecode_dispatch");

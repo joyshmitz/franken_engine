@@ -819,6 +819,72 @@ mod tests {
 
     // -- Relevance overrides --
 
+    // -- Enrichment: serde, ordering, std::error --
+
+    #[test]
+    fn probe_state_serde_roundtrip() {
+        let state = ProbeState {
+            config: health_probe("h-serde"),
+            staleness: 42,
+            execution_count: 7,
+            last_success: true,
+        };
+        let json = serde_json::to_string(&state).expect("serialize");
+        let restored: ProbeState = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(state, restored);
+    }
+
+    #[test]
+    fn scheduler_config_serde_roundtrip() {
+        let config = test_config();
+        let json = serde_json::to_string(&config).expect("serialize");
+        let restored: SchedulerConfig =
+            serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(config, restored);
+    }
+
+    #[test]
+    fn schedule_decision_serde_roundtrip() {
+        let dec = ScheduleDecision {
+            probe_id: "p-1".to_string(),
+            kind: ProbeKind::IntegrityAudit,
+            voi_score: 3_500_000,
+            cost: 1_000_000,
+            scheduled: true,
+            skip_reason: None,
+        };
+        let json = serde_json::to_string(&dec).expect("serialize");
+        let restored: ScheduleDecision =
+            serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(dec, restored);
+    }
+
+    #[test]
+    fn probe_kind_ordering() {
+        assert!(ProbeKind::HealthCheck < ProbeKind::DeepDiagnostic);
+        assert!(ProbeKind::DeepDiagnostic < ProbeKind::CalibrationProbe);
+        assert!(ProbeKind::CalibrationProbe < ProbeKind::IntegrityAudit);
+    }
+
+    #[test]
+    fn scheduler_error_implements_std_error() {
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(SchedulerError::DuplicateProbe {
+                probe_id: "p-1".into(),
+            }),
+            Box::new(SchedulerError::ProbeNotFound {
+                probe_id: "p-2".into(),
+            }),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            let msg = format!("{v}");
+            assert!(!msg.is_empty());
+            displays.insert(msg);
+        }
+        assert_eq!(displays.len(), 2);
+    }
+
     #[test]
     fn relevance_override_affects_scheduling() {
         let mut config = test_config();

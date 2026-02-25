@@ -635,4 +635,252 @@ mod tests {
         }
         assert!(!ctx.tick()); // 8th exceeds
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: serde roundtrips for leaf types
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn mask_outcome_serde_all_variants() {
+        let variants = [
+            MaskOutcome::CleanRelease,
+            MaskOutcome::BoundExceeded,
+            MaskOutcome::CancelDeferred,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let restored: MaskOutcome = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, restored);
+        }
+    }
+
+    #[test]
+    fn mask_error_serde_all_variants() {
+        let variants: Vec<MaskError> = vec![
+            MaskError::NestingDenied,
+            MaskError::OperationNotAllowed {
+                operation_name: "bad_op".to_string(),
+            },
+            MaskError::AlreadyReleased,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let restored: MaskError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, restored);
+        }
+    }
+
+    #[test]
+    fn mask_bounds_serde_roundtrip() {
+        let bounds = MaskBounds { max_ops: 42 };
+        let json = serde_json::to_string(&bounds).unwrap();
+        let restored: MaskBounds = serde_json::from_str(&json).unwrap();
+        assert_eq!(bounds, restored);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: default values
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn mask_bounds_default_value() {
+        let b = MaskBounds::default();
+        assert_eq!(b.max_ops, 64);
+    }
+
+    #[test]
+    fn standard_policy_defaults() {
+        let p = MaskPolicy::standard();
+        assert!(!p.lab_mode);
+        assert_eq!(p.default_bounds, MaskBounds::default());
+        assert_eq!(p.operation_bounds.len(), 4);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: fresh context state
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn fresh_context_initial_state() {
+        let ctx = test_context();
+        assert!(!ctx.is_masked());
+        assert_eq!(ctx.event_count(), 0);
+        assert!(!ctx.is_lab_mode());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: event_count and drain
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn event_count_tracks_events() {
+        let mut ctx = test_context();
+        ctx.create_mask(&checkpoint_justification()).unwrap();
+        ctx.tick();
+        ctx.release_mask(false).unwrap();
+        assert_eq!(ctx.event_count(), 1);
+
+        ctx.create_mask(&checkpoint_justification()).unwrap();
+        ctx.tick();
+        ctx.release_mask(true).unwrap();
+        assert_eq!(ctx.event_count(), 2);
+    }
+
+    #[test]
+    fn drain_events_clears_list() {
+        let mut ctx = test_context();
+        ctx.create_mask(&checkpoint_justification()).unwrap();
+        ctx.tick();
+        ctx.release_mask(false).unwrap();
+        assert_eq!(ctx.event_count(), 1);
+
+        let drained = ctx.drain_events();
+        assert_eq!(drained.len(), 1);
+        assert_eq!(ctx.event_count(), 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: tick after bound exceeded
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn tick_after_bound_exceeded_stays_false() {
+        let mut ctx = test_context();
+        ctx.create_mask(&checkpoint_justification()).unwrap();
+        // Exhaust bound (32 ops).
+        for _ in 0..32 {
+            ctx.tick();
+        }
+        // Further ticks still return false.
+        assert!(!ctx.tick());
+        assert!(!ctx.tick());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: release with cancel_pending after bound exceeded
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn release_after_bound_exceeded_ignores_cancel_pending() {
+        let mut ctx = test_context();
+        ctx.create_mask(&checkpoint_justification()).unwrap();
+        for _ in 0..32 {
+            ctx.tick();
+        }
+        // Even with cancel_pending=true, outcome is BoundExceeded.
+        let outcome = ctx.release_mask(true).unwrap();
+        assert_eq!(outcome, MaskOutcome::BoundExceeded);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: new mask after bound exceeded release
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn new_mask_after_bound_exceeded_release() {
+        let mut ctx = test_context();
+        ctx.create_mask(&checkpoint_justification()).unwrap();
+        for _ in 0..32 {
+            ctx.tick();
+        }
+        ctx.release_mask(false).unwrap();
+
+        // Should be able to create a new mask.
+        let id = ctx.create_mask(&checkpoint_justification()).unwrap();
+        assert_eq!(id, 2);
+        assert!(ctx.is_masked());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: evidence_append and two_phase_commit bounds
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn evidence_append_bounds() {
+        let mut ctx = test_context();
+        ctx.create_mask(&MaskJustification {
+            operation_name: "evidence_append".to_string(),
+            expected_ops_hint: 5,
+            atomicity_reason: "atomic".to_string(),
+        })
+        .unwrap();
+        // max_ops = 16
+        for _ in 0..15 {
+            assert!(ctx.tick());
+        }
+        assert!(!ctx.tick()); // 16th exceeds
+    }
+
+    #[test]
+    fn two_phase_commit_bounds() {
+        let policy = MaskPolicy::standard();
+        let bounds = policy.bounds_for("two_phase_commit").unwrap();
+        assert_eq!(bounds.max_ops, 64);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: MaskError Display substring verification
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn mask_error_display_substrings() {
+        let e = MaskError::OperationNotAllowed {
+            operation_name: "dangerous_op".to_string(),
+        };
+        let s = e.to_string();
+        assert!(s.contains("not allowed"));
+        assert!(s.contains("dangerous_op"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: not masked after clean release
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn not_masked_after_release() {
+        let mut ctx = test_context();
+        ctx.create_mask(&checkpoint_justification()).unwrap();
+        assert!(ctx.is_masked());
+        ctx.release_mask(false).unwrap();
+        assert!(!ctx.is_masked());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: release with bound_exceeded does not emit duplicate event
+    // -----------------------------------------------------------------------
+
+    #[test]
+    // -- Enrichment: std::error --
+
+    #[test]
+    fn mask_error_implements_std_error() {
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(MaskError::NestingDenied),
+            Box::new(MaskError::OperationNotAllowed {
+                operation_name: "cancel".into(),
+            }),
+            Box::new(MaskError::AlreadyReleased),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            let msg = format!("{v}");
+            assert!(!msg.is_empty());
+            displays.insert(msg);
+        }
+        assert_eq!(displays.len(), 3, "all 3 variants produce distinct messages");
+    }
+
+    #[test]
+    fn bound_exceeded_release_no_duplicate_event() {
+        let mut ctx = test_context();
+        ctx.create_mask(&checkpoint_justification()).unwrap();
+        for _ in 0..32 {
+            ctx.tick();
+        }
+        // 1 event from tick's bound exceeded
+        assert_eq!(ctx.event_count(), 1);
+        ctx.release_mask(false).unwrap();
+        // Still just 1 event — no duplicate
+        assert_eq!(ctx.event_count(), 1);
+    }
 }

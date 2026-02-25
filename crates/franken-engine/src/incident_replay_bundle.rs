@@ -2357,4 +2357,291 @@ mod tests {
         let restored: CounterfactualResult = serde_json::from_str(&json).unwrap();
         assert_eq!(result, restored);
     }
+
+    // -------------------------------------------------------------------
+    // Enrichment: BundleError serde roundtrip (all 11 variants)
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn bundle_error_serde_all_variants() {
+        let errors: Vec<BundleError> = vec![
+            BundleError::IntegrityFailure {
+                expected: "aaa".to_string(),
+                actual: "bbb".to_string(),
+            },
+            BundleError::ArtifactHashMismatch {
+                artifact_id: "t1".to_string(),
+            },
+            BundleError::SignatureInvalid,
+            BundleError::ReplayDivergence {
+                details: "mismatch".to_string(),
+            },
+            BundleError::ReceiptInvalid {
+                receipt_id: "r1".to_string(),
+                reason: "sig".to_string(),
+            },
+            BundleError::IncompatibleVersion {
+                bundle: BundleFormatVersion { major: 2, minor: 0 },
+                reader: BundleFormatVersion { major: 1, minor: 0 },
+            },
+            BundleError::EmptyBundle,
+            BundleError::TraceNotFound {
+                trace_id: "t1".to_string(),
+            },
+            BundleError::IdDerivation("bad".to_string()),
+            BundleError::ReplayFailed("boom".to_string()),
+            BundleError::RedactionViolation {
+                field: "secret".to_string(),
+            },
+        ];
+        for err in &errors {
+            let json = serde_json::to_string(err).expect("serialize");
+            let restored: BundleError = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*err, restored);
+        }
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: BundleError Display content verification
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn bundle_error_display_content_verified() {
+        let cases: Vec<(BundleError, &str)> = vec![
+            (
+                BundleError::IntegrityFailure {
+                    expected: "aaa".to_string(),
+                    actual: "bbb".to_string(),
+                },
+                "integrity failure: expected aaa, got bbb",
+            ),
+            (
+                BundleError::ArtifactHashMismatch {
+                    artifact_id: "t1".to_string(),
+                },
+                "artifact hash mismatch: t1",
+            ),
+            (BundleError::SignatureInvalid, "bundle signature invalid"),
+            (
+                BundleError::ReplayDivergence {
+                    details: "m".to_string(),
+                },
+                "replay divergence: m",
+            ),
+            (
+                BundleError::ReceiptInvalid {
+                    receipt_id: "r".to_string(),
+                    reason: "s".to_string(),
+                },
+                "receipt invalid (r): s",
+            ),
+            (
+                BundleError::IncompatibleVersion {
+                    bundle: BundleFormatVersion { major: 2, minor: 1 },
+                    reader: BundleFormatVersion { major: 1, minor: 0 },
+                },
+                "incompatible version: bundle=2.1, reader=1.0",
+            ),
+            (BundleError::EmptyBundle, "empty bundle"),
+            (
+                BundleError::TraceNotFound {
+                    trace_id: "t".to_string(),
+                },
+                "trace not found: t",
+            ),
+            (BundleError::IdDerivation("x".to_string()), "id derivation: x"),
+            (BundleError::ReplayFailed("y".to_string()), "replay failed: y"),
+            (
+                BundleError::RedactionViolation {
+                    field: "f".to_string(),
+                },
+                "redaction violation: f",
+            ),
+        ];
+        for (err, expected) in &cases {
+            assert_eq!(err.to_string(), *expected, "mismatch for {err:?}");
+        }
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: leaf type serde roundtrips
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn bundle_format_version_serde_roundtrip() {
+        let v = BundleFormatVersion { major: 3, minor: 7 };
+        let json = serde_json::to_string(&v).expect("serialize");
+        let restored: BundleFormatVersion = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(v, restored);
+    }
+
+    #[test]
+    fn bundle_artifact_kind_serde_roundtrip() {
+        for variant in [
+            BundleArtifactKind::Trace,
+            BundleArtifactKind::Evidence,
+            BundleArtifactKind::OptReceipt,
+            BundleArtifactKind::QuorumCheckpoint,
+            BundleArtifactKind::NondeterminismLog,
+            BundleArtifactKind::CounterfactualResult,
+            BundleArtifactKind::PolicySnapshot,
+        ] {
+            let json = serde_json::to_string(&variant).expect("serialize");
+            let restored: BundleArtifactKind = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(variant, restored);
+        }
+    }
+
+    #[test]
+    fn check_outcome_serde_roundtrip() {
+        let outcomes = vec![
+            CheckOutcome::Pass,
+            CheckOutcome::Fail {
+                reason: "bad".to_string(),
+            },
+            CheckOutcome::Skipped {
+                reason: "n/a".to_string(),
+            },
+        ];
+        for outcome in &outcomes {
+            let json = serde_json::to_string(outcome).expect("serialize");
+            let restored: CheckOutcome = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*outcome, restored);
+        }
+    }
+
+    #[test]
+    fn verification_category_serde_roundtrip() {
+        for variant in [
+            VerificationCategory::Integrity,
+            VerificationCategory::ArtifactHash,
+            VerificationCategory::Replay,
+            VerificationCategory::ReceiptChain,
+            VerificationCategory::Counterfactual,
+            VerificationCategory::Compatibility,
+        ] {
+            let json = serde_json::to_string(&variant).expect("serialize");
+            let restored: VerificationCategory =
+                serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(variant, restored);
+        }
+    }
+
+    #[test]
+    fn verification_check_serde_roundtrip() {
+        let check = VerificationCheck {
+            name: "test-check".to_string(),
+            category: VerificationCategory::Integrity,
+            outcome: CheckOutcome::Pass,
+        };
+        let json = serde_json::to_string(&check).expect("serialize");
+        let restored: VerificationCheck = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(check, restored);
+    }
+
+    #[test]
+    fn category_summary_serde_roundtrip() {
+        let summary = CategorySummary {
+            passed: 5,
+            failed: 2,
+            skipped: 1,
+        };
+        let json = serde_json::to_string(&summary).expect("serialize");
+        let restored: CategorySummary = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(summary, restored);
+    }
+
+    #[test]
+    fn artifact_entry_serde_roundtrip() {
+        let entry = ArtifactEntry {
+            artifact_id: "t1".to_string(),
+            kind: BundleArtifactKind::Trace,
+            content_hash: ContentHash::compute(b"test-data"),
+            redacted: false,
+            size_bytes: 128,
+        };
+        let json = serde_json::to_string(&entry).expect("serialize");
+        let restored: ArtifactEntry = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(entry, restored);
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: ordering tests
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn bundle_artifact_kind_ordering() {
+        let mut kinds = vec![
+            BundleArtifactKind::PolicySnapshot,
+            BundleArtifactKind::Trace,
+            BundleArtifactKind::CounterfactualResult,
+            BundleArtifactKind::Evidence,
+        ];
+        kinds.sort();
+        assert_eq!(kinds[0], BundleArtifactKind::Trace);
+        assert_eq!(kinds[3], BundleArtifactKind::PolicySnapshot);
+    }
+
+    #[test]
+    fn verification_category_ordering() {
+        let mut cats = vec![
+            VerificationCategory::Compatibility,
+            VerificationCategory::Integrity,
+            VerificationCategory::Counterfactual,
+            VerificationCategory::Replay,
+        ];
+        cats.sort();
+        assert_eq!(cats[0], VerificationCategory::Integrity);
+        assert_eq!(cats[3], VerificationCategory::Compatibility);
+    }
+
+    #[test]
+    fn bundle_format_version_ordering() {
+        let v10 = BundleFormatVersion { major: 1, minor: 0 };
+        let v11 = BundleFormatVersion { major: 1, minor: 1 };
+        let v20 = BundleFormatVersion { major: 2, minor: 0 };
+        assert!(v10 < v11);
+        assert!(v11 < v20);
+    }
+
+    #[test]
+    fn bundle_artifact_kind_ord() {
+        assert!(BundleArtifactKind::Trace < BundleArtifactKind::Evidence);
+        assert!(BundleArtifactKind::Evidence < BundleArtifactKind::OptReceipt);
+        assert!(BundleArtifactKind::OptReceipt < BundleArtifactKind::QuorumCheckpoint);
+        assert!(BundleArtifactKind::SignatureData < BundleArtifactKind::MerkleTree);
+    }
+
+    #[test]
+    fn verification_category_ord() {
+        assert!(VerificationCategory::Integrity < VerificationCategory::Authenticity);
+        assert!(VerificationCategory::Authenticity < VerificationCategory::Compatibility);
+        assert!(VerificationCategory::Compatibility < VerificationCategory::Replay);
+        assert!(VerificationCategory::Replay < VerificationCategory::Counterfactual);
+    }
+
+    #[test]
+    fn bundle_error_std_error() {
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(BundleError::IntegrityFailure { expected: "a".into(), actual: "b".into() }),
+            Box::new(BundleError::ArtifactHashMismatch { artifact_id: "a1".into() }),
+            Box::new(BundleError::SignatureInvalid),
+            Box::new(BundleError::ReplayDivergence { details: "diverged".into() }),
+            Box::new(BundleError::ReceiptInvalid { receipt_id: "r1".into(), reason: "bad".into() }),
+            Box::new(BundleError::IncompatibleVersion {
+                bundle: BundleFormatVersion { major: 2, minor: 0 },
+                reader: BundleFormatVersion { major: 1, minor: 0 },
+            }),
+            Box::new(BundleError::EmptyBundle),
+            Box::new(BundleError::TraceNotFound { trace_id: "t1".into() }),
+            Box::new(BundleError::IdDerivation("bad id".into())),
+            Box::new(BundleError::ReplayFailed("timeout".into())),
+            Box::new(BundleError::RedactionViolation { field: "secret".into() }),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            displays.insert(format!("{v}"));
+        }
+        assert_eq!(displays.len(), 11);
+    }
 }

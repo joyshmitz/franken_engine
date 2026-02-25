@@ -1537,4 +1537,168 @@ mod tests {
             .contains("5")
         );
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: leaf enum serde roundtrips
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn security_action_kind_serde_roundtrip() {
+        for v in [
+            SecurityActionKind::Quarantine,
+            SecurityActionKind::Suspend,
+            SecurityActionKind::Terminate,
+        ] {
+            let json = serde_json::to_string(&v).unwrap();
+            let restored: SecurityActionKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, restored);
+        }
+    }
+
+    #[test]
+    fn policy_transition_kind_serde_roundtrip() {
+        for v in [
+            PolicyTransitionKind::Activation,
+            PolicyTransitionKind::Deactivation,
+            PolicyTransitionKind::EpochAdvancement,
+        ] {
+            let json = serde_json::to_string(&v).unwrap();
+            let restored: PolicyTransitionKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, restored);
+        }
+    }
+
+    #[test]
+    fn revocation_kind_serde_roundtrip() {
+        for v in [
+            RevocationKind::Issuance,
+            RevocationKind::PropagationConfirmation,
+        ] {
+            let json = serde_json::to_string(&v).unwrap();
+            let restored: RevocationKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, restored);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: struct serde roundtrips
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn correlation_id_serde_roundtrip() {
+        let cid = CorrelationId::new("corr-123").unwrap();
+        let json = serde_json::to_string(&cid).unwrap();
+        let restored: CorrelationId = serde_json::from_str(&json).unwrap();
+        assert_eq!(cid, restored);
+    }
+
+    #[test]
+    fn trace_context_serde_roundtrip() {
+        let tc = TraceContext {
+            traceparent: "00-abc-def-01".to_string(),
+            tracestate: Some("vendor=val".to_string()),
+            baggage: None,
+        };
+        let json = serde_json::to_string(&tc).unwrap();
+        let restored: TraceContext = serde_json::from_str(&json).unwrap();
+        assert_eq!(tc, restored);
+    }
+
+    #[test]
+    fn redacted_payload_serde_roundtrip() {
+        let rp = RedactedPayload {
+            redacted_summary: "summary".to_string(),
+            payload_hash: ContentHash::compute(b"payload"),
+            redaction_applied: true,
+        };
+        let json = serde_json::to_string(&rp).unwrap();
+        let restored: RedactedPayload = serde_json::from_str(&json).unwrap();
+        assert_eq!(rp, restored);
+    }
+
+    #[test]
+    fn audit_chain_head_serde_roundtrip() {
+        let head = AuditChainHead {
+            head_marker_id: 42,
+            latest_marker_hash: ContentHash::compute(b"latest"),
+            rolling_chain_hash: ContentHash::compute(b"rolling"),
+            signed_head_hash: AuthenticityHash::compute_keyed(b"head", b"key"),
+        };
+        let json = serde_json::to_string(&head).unwrap();
+        let restored: AuditChainHead = serde_json::from_str(&json).unwrap();
+        assert_eq!(head, restored);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: ordering tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn security_action_kind_ordering() {
+        assert!(SecurityActionKind::Quarantine < SecurityActionKind::Terminate);
+    }
+
+    #[test]
+    fn policy_transition_kind_ordering() {
+        assert!(PolicyTransitionKind::Activation < PolicyTransitionKind::EpochAdvancement);
+    }
+
+    #[test]
+    fn revocation_kind_ordering() {
+        assert!(RevocationKind::Issuance < RevocationKind::PropagationConfirmation);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: Display content for sub-kinds
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn security_action_kind_display_all() {
+        assert_eq!(SecurityActionKind::Quarantine.to_string(), "quarantine");
+        assert_eq!(SecurityActionKind::Suspend.to_string(), "suspend");
+        assert_eq!(SecurityActionKind::Terminate.to_string(), "terminate");
+    }
+
+    #[test]
+    fn policy_transition_kind_display_all() {
+        assert_eq!(PolicyTransitionKind::Activation.to_string(), "activation");
+        assert_eq!(
+            PolicyTransitionKind::Deactivation.to_string(),
+            "deactivation"
+        );
+        assert_eq!(
+            PolicyTransitionKind::EpochAdvancement.to_string(),
+            "epoch_advancement"
+        );
+    }
+
+    #[test]
+    fn revocation_kind_display_all() {
+        assert_eq!(RevocationKind::Issuance.to_string(), "issuance");
+        assert_eq!(
+            RevocationKind::PropagationConfirmation.to_string(),
+            "propagation_confirmation"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: CorrelationId helpers
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn correlation_id_as_str_matches_display() {
+        let cid = CorrelationId::new("corr-x").unwrap();
+        assert_eq!(cid.as_str(), "corr-x");
+        assert_eq!(cid.to_string(), "corr-x");
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: ChainIntegrityError is std::error::Error
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn chain_integrity_error_is_std_error() {
+        let err: Box<dyn std::error::Error> = Box::new(ChainIntegrityError::EmptyStream);
+        assert!(!err.to_string().is_empty());
+    }
 }

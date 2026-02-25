@@ -1437,51 +1437,65 @@ mod tests {
 
     #[test]
     fn thresholds_attested_receipt_too_high() {
-        let mut t = GovernanceScorecardThresholds::default();
-        t.min_attested_receipt_coverage_millionths = 1_000_001;
+        let t = GovernanceScorecardThresholds {
+            min_attested_receipt_coverage_millionths: 1_000_001,
+            ..GovernanceScorecardThresholds::default()
+        };
         let err = t.validate().unwrap_err();
         assert!(matches!(err, GovernanceScorecardError::InvalidInput { .. }));
     }
 
     #[test]
     fn thresholds_privacy_consumption_too_high() {
-        let mut t = GovernanceScorecardThresholds::default();
-        t.max_privacy_epoch_consumption_millionths = 1_000_001;
+        let t = GovernanceScorecardThresholds {
+            max_privacy_epoch_consumption_millionths: 1_000_001,
+            ..GovernanceScorecardThresholds::default()
+        };
         assert!(t.validate().is_err());
     }
 
     #[test]
     fn thresholds_moonshot_override_too_high() {
-        let mut t = GovernanceScorecardThresholds::default();
-        t.max_moonshot_override_frequency_millionths = 1_000_001;
+        let t = GovernanceScorecardThresholds {
+            max_moonshot_override_frequency_millionths: 1_000_001,
+            ..GovernanceScorecardThresholds::default()
+        };
         assert!(t.validate().is_err());
     }
 
     #[test]
     fn thresholds_moonshot_kill_rate_too_high() {
-        let mut t = GovernanceScorecardThresholds::default();
-        t.max_moonshot_kill_rate_millionths = 1_000_001;
+        let t = GovernanceScorecardThresholds {
+            max_moonshot_kill_rate_millionths: 1_000_001,
+            ..GovernanceScorecardThresholds::default()
+        };
         assert!(t.validate().is_err());
     }
 
     #[test]
     fn thresholds_conformance_pass_rate_too_high() {
-        let mut t = GovernanceScorecardThresholds::default();
-        t.min_conformance_pass_rate_millionths = 1_000_001;
+        let t = GovernanceScorecardThresholds {
+            min_conformance_pass_rate_millionths: 1_000_001,
+            ..GovernanceScorecardThresholds::default()
+        };
         assert!(t.validate().is_err());
     }
 
     #[test]
     fn thresholds_exhaustion_lead_zero() {
-        let mut t = GovernanceScorecardThresholds::default();
-        t.warn_privacy_exhaustion_within_ns = Some(0);
+        let t = GovernanceScorecardThresholds {
+            warn_privacy_exhaustion_within_ns: Some(0),
+            ..GovernanceScorecardThresholds::default()
+        };
         assert!(t.validate().is_err());
     }
 
     #[test]
     fn thresholds_decision_ns_zero() {
-        let mut t = GovernanceScorecardThresholds::default();
-        t.max_moonshot_mean_time_to_decision_ns = Some(0);
+        let t = GovernanceScorecardThresholds {
+            max_moonshot_mean_time_to_decision_ns: Some(0),
+            ..GovernanceScorecardThresholds::default()
+        };
         assert!(t.validate().is_err());
     }
 
@@ -1732,18 +1746,15 @@ mod tests {
     #[test]
     fn publish_scorecard_moonshot_override_high_critical() {
         let mut req = test_request();
-        req.moonshot_governor.governance_report.override_frequency_millionths = 500_000; // > 200k
+        req.moonshot_governor
+            .governance_report
+            .override_frequency_millionths = 500_000; // > 200k
         let key = test_signing_key();
         let mut ledger = test_ledger();
         let publication =
             publish_governance_scorecard(&req, &key, &mut ledger, test_actor()).unwrap();
         assert_eq!(publication.outcome, GovernanceScorecardOutcome::Critical);
-        assert!(
-            publication
-                .blockers
-                .iter()
-                .any(|b| b.contains("moonshot"))
-        );
+        assert!(publication.blockers.iter().any(|b| b.contains("moonshot")));
     }
 
     #[test]
@@ -1777,7 +1788,10 @@ mod tests {
         let publication =
             publish_governance_scorecard(&req, &key, &mut ledger, test_actor()).unwrap();
         assert!(!publication.events.is_empty());
-        assert_eq!(publication.events[0].component, GOVERNANCE_SCORECARD_COMPONENT);
+        assert_eq!(
+            publication.events[0].component,
+            GOVERNANCE_SCORECARD_COMPONENT
+        );
         // Should have: started, 4 dimension evals, trend check, ledger append, decision
         assert!(publication.events.len() >= 7);
     }
@@ -2134,5 +2148,136 @@ mod tests {
             outcome: GovernanceScorecardOutcome::Healthy,
         };
         assert!(is_trend_regression(&prev, &current));
+    }
+
+    // -- Enrichment: missing serde roundtrips, std::error --
+
+    #[test]
+    fn privacy_budget_health_input_serde_roundtrip() {
+        let input = test_privacy_budget();
+        let json = serde_json::to_string(&input).unwrap();
+        let restored: PrivacyBudgetHealthInput = serde_json::from_str(&json).unwrap();
+        assert_eq!(input, restored);
+    }
+
+    #[test]
+    fn moonshot_governor_health_input_serde_roundtrip() {
+        let input = test_moonshot_governor();
+        let json = serde_json::to_string(&input).unwrap();
+        let restored: MoonshotGovernorHealthInput = serde_json::from_str(&json).unwrap();
+        assert_eq!(input, restored);
+    }
+
+    #[test]
+    fn cross_repo_conformance_input_serde_roundtrip() {
+        let input = test_conformance();
+        let json = serde_json::to_string(&input).unwrap();
+        let restored: CrossRepoConformanceInput = serde_json::from_str(&json).unwrap();
+        assert_eq!(input, restored);
+    }
+
+    #[test]
+    fn attested_receipt_coverage_summary_serde_roundtrip() {
+        let summary = AttestedReceiptCoverageSummary {
+            high_impact_total: 10,
+            high_impact_with_valid_attestation: 8,
+            high_impact_missing_or_invalid_attestation: 2,
+            coverage_millionths: 800_000,
+            threshold_pass: true,
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        let restored: AttestedReceiptCoverageSummary = serde_json::from_str(&json).unwrap();
+        assert_eq!(summary, restored);
+    }
+
+    #[test]
+    fn privacy_budget_health_summary_serde_roundtrip() {
+        let summary = PrivacyBudgetHealthSummary {
+            epoch: crate::security_epoch::SecurityEpoch::from_raw(1),
+            epoch_epsilon_budget_millionths: 1_000_000,
+            epoch_epsilon_spent_millionths: 500_000,
+            epoch_delta_budget_millionths: 100_000,
+            epoch_delta_spent_millionths: 10_000,
+            epoch_consumption_millionths: 500_000,
+            lifetime_epsilon_remaining_millionths: 5_000_000,
+            lifetime_delta_remaining_millionths: 900_000,
+            estimated_remaining_operations: 100,
+            epsilon_burn_rate_per_hour_millionths: 50_000,
+            delta_burn_rate_per_hour_millionths: 1_000,
+            projected_epsilon_exhaustion_ns: Some(999_999_999),
+            projected_delta_exhaustion_ns: None,
+            overrun_incidents: 0,
+            threshold_pass: true,
+            near_term_exhaustion_warning: false,
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        let restored: PrivacyBudgetHealthSummary = serde_json::from_str(&json).unwrap();
+        assert_eq!(summary, restored);
+    }
+
+    #[test]
+    fn moonshot_governor_decision_summary_serde_roundtrip() {
+        let summary = MoonshotGovernorDecisionSummary {
+            total_decisions: 50,
+            override_count: 3,
+            kill_count: 1,
+            override_frequency_millionths: 60_000,
+            kill_rate_millionths: 20_000,
+            mean_time_to_decision_ns: Some(5_000_000),
+            active_moonshots: 4,
+            paused_moonshots: 1,
+            killed_moonshots: 1,
+            threshold_pass: true,
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        let restored: MoonshotGovernorDecisionSummary = serde_json::from_str(&json).unwrap();
+        assert_eq!(summary, restored);
+    }
+
+    #[test]
+    fn cross_repo_conformance_stability_summary_serde_roundtrip() {
+        let summary = CrossRepoConformanceStabilitySummary {
+            release_id: "v1.0.0".to_string(),
+            total_cells: 100,
+            passed_cells: 95,
+            failed_cells: 5,
+            pass_rate_millionths: 950_000,
+            universal_failures: 1,
+            version_specific_failures: 4,
+            outstanding_exemptions: 2,
+            failure_class_distribution: BTreeMap::from([
+                ("timeout".to_string(), 3),
+                ("assertion".to_string(), 2),
+            ]),
+            threshold_pass: true,
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        let restored: CrossRepoConformanceStabilitySummary =
+            serde_json::from_str(&json).unwrap();
+        assert_eq!(summary, restored);
+    }
+
+    #[test]
+    fn governance_scorecard_error_std_error_trait() {
+        let errs: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(GovernanceScorecardError::InvalidInput {
+                field: "f".to_string(),
+                detail: "d".to_string(),
+            }),
+            Box::new(GovernanceScorecardError::SerializationFailure("s".to_string())),
+            Box::new(GovernanceScorecardError::SignatureFailure("sig".to_string())),
+            Box::new(GovernanceScorecardError::LedgerWriteFailure("lw".to_string())),
+        ];
+        for e in &errs {
+            assert!(!e.to_string().is_empty());
+        }
+        assert_eq!(errs.len(), 4);
+    }
+
+    #[test]
+    fn outcome_ordering_full_chain() {
+        assert!(GovernanceScorecardOutcome::Healthy < GovernanceScorecardOutcome::Warning);
+        assert!(GovernanceScorecardOutcome::Warning < GovernanceScorecardOutcome::Critical);
+        assert!(GovernanceScorecardOutcome::Healthy < GovernanceScorecardOutcome::Critical);
     }
 }

@@ -3426,4 +3426,216 @@ mod tests {
         let back: DemotionReceiptInput = serde_json::from_str(&json).unwrap();
         assert_eq!(input, back);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: leaf enum serde
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn proof_direction_serde_roundtrip() {
+        for dir in [ProofDirection::Left, ProofDirection::Right] {
+            let json = serde_json::to_string(&dir).unwrap();
+            let restored: ProofDirection = serde_json::from_str(&json).unwrap();
+            assert_eq!(dir, restored);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: LineageLogError serde all variants
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn lineage_log_error_serde_all_variants() {
+        let errors: Vec<LineageLogError> = vec![
+            LineageLogError::SequenceMismatch { expected: 5, got: 3 },
+            LineageLogError::ChainBreak { sequence: 7 },
+            LineageLogError::DuplicateReceipt { receipt_id: "r-1".to_string() },
+            LineageLogError::CheckpointBeyondLog { checkpoint_length: 10, log_length: 5 },
+            LineageLogError::CheckpointNotFound { checkpoint_seq: 9 },
+            LineageLogError::InvalidCheckpointOrder { older: 2, newer: 1 },
+            LineageLogError::EmptyLog,
+        ];
+        for err in &errors {
+            let json = serde_json::to_string(err).unwrap();
+            let restored: LineageLogError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*err, restored);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: LineageLogError Display missing variants
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn lineage_log_error_display_remaining_variants() {
+        let err = LineageLogError::DuplicateReceipt { receipt_id: "r-1".to_string() };
+        assert_eq!(err.to_string(), "duplicate receipt: r-1");
+
+        let err = LineageLogError::CheckpointBeyondLog { checkpoint_length: 10, log_length: 5 };
+        assert_eq!(err.to_string(), "checkpoint length 10 beyond log length 5");
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: struct serde roundtrips for untested types
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn merkle_proof_step_serde_roundtrip() {
+        let step = MerkleProofStep {
+            sibling_hash: ContentHash::compute(b"sibling"),
+            direction: ProofDirection::Left,
+        };
+        let json = serde_json::to_string(&step).unwrap();
+        let restored: MerkleProofStep = serde_json::from_str(&json).unwrap();
+        assert_eq!(step, restored);
+    }
+
+    #[test]
+    fn lineage_step_serde_roundtrip() {
+        let step = LineageStep {
+            sequence: 0,
+            kind: ReplacementKind::Demotion,
+            old_cell_digest: "old".to_string(),
+            new_cell_digest: "new".to_string(),
+            receipt_id: "r-1".to_string(),
+            timestamp_ns: 100,
+            epoch: SecurityEpoch::from_raw(1),
+            validation_artifact_count: 3,
+        };
+        let json = serde_json::to_string(&step).unwrap();
+        let restored: LineageStep = serde_json::from_str(&json).unwrap();
+        assert_eq!(step, restored);
+    }
+
+    #[test]
+    fn lineage_verification_serde_roundtrip() {
+        let ver = LineageVerification {
+            slot_id: test_slot_id("slot-a"),
+            total_entries: 5,
+            chain_valid: true,
+            all_receipts_present: true,
+            issues: vec!["minor note".to_string()],
+        };
+        let json = serde_json::to_string(&ver).unwrap();
+        let restored: LineageVerification = serde_json::from_str(&json).unwrap();
+        assert_eq!(ver, restored);
+    }
+
+    #[test]
+    fn lineage_log_event_serde_roundtrip() {
+        let event = LineageLogEvent {
+            trace_id: "t-1".to_string(),
+            decision_id: "d-1".to_string(),
+            policy_id: "p-1".to_string(),
+            component: "lineage_log".to_string(),
+            event: "append".to_string(),
+            outcome: "ok".to_string(),
+            error_code: None,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let restored: LineageLogEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, restored);
+    }
+
+    #[test]
+    fn replay_join_row_serde_roundtrip() {
+        let row = ReplayJoinRow {
+            slot_id: test_slot_id("slot"),
+            replacement_receipt_id: "r-1".to_string(),
+            replacement_kind: ReplacementKind::DelegateToNative,
+            old_cell_digest: "old".to_string(),
+            new_cell_digest: "new".to_string(),
+            promotion_timestamp_ns: 100,
+            replacement_content_hash: "hash".to_string(),
+            demotion_receipt_id: None,
+            demotion_reason: None,
+            demotion_timestamp_ns: None,
+            gate_results: Vec::new(),
+            performance_benchmarks: Vec::new(),
+            sentinel_risk_scores: Vec::new(),
+            differential_execution_logs: Vec::new(),
+            additional_evidence: Vec::new(),
+        };
+        let json = serde_json::to_string(&row).unwrap();
+        let restored: ReplayJoinRow = serde_json::from_str(&json).unwrap();
+        assert_eq!(row, restored);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: ordering tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn replacement_kind_ordering() {
+        assert!(ReplacementKind::DelegateToNative < ReplacementKind::RePromotion);
+    }
+
+    #[test]
+    fn evidence_category_ordering() {
+        assert!(EvidenceCategory::GateResult < EvidenceCategory::Additional);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: LineageIndexError serde all variants
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn lineage_index_error_serde_all_variants() {
+        let errors: Vec<LineageIndexError> = vec![
+            LineageIndexError::Storage(StorageError::NotFound { store: StoreKind::ReplacementLineage, key: "k".to_string() }),
+            LineageIndexError::Serialization { operation: "write".to_string(), detail: "err".to_string() },
+            LineageIndexError::CorruptRecord { key: "k".to_string(), detail: "bad".to_string() },
+            LineageIndexError::InvalidInput { detail: "empty".to_string() },
+        ];
+        for err in &errors {
+            let json = serde_json::to_string(err).unwrap();
+            let restored: LineageIndexError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*err, restored);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: LineageIndexError Display content verified
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn lineage_index_error_display_content_verified() {
+        let err = LineageIndexError::Serialization {
+            operation: "write".to_string(),
+            detail: "codec failure".to_string(),
+        };
+        assert_eq!(err.to_string(), "serialization error (write): codec failure");
+
+        let err = LineageIndexError::CorruptRecord {
+            key: "slot:a".to_string(),
+            detail: "invalid CRC".to_string(),
+        };
+        assert_eq!(err.to_string(), "corrupt record `slot:a`: invalid CRC");
+
+        let err = LineageIndexError::InvalidInput {
+            detail: "empty receipt_id".to_string(),
+        };
+        assert_eq!(err.to_string(), "invalid input: empty receipt_id");
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: SlotLineageQuery and ReplayJoinQuery defaults
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn slot_lineage_query_default() {
+        let q = SlotLineageQuery::default();
+        assert!(q.min_timestamp_ns.is_none());
+        assert!(q.max_timestamp_ns.is_none());
+        assert!(q.limit.is_none());
+    }
+
+    #[test]
+    fn replay_join_query_default() {
+        let q = ReplayJoinQuery::default();
+        assert!(q.slot_id.is_none());
+        assert!(q.min_timestamp_ns.is_none());
+        assert!(q.max_timestamp_ns.is_none());
+        assert!(q.limit.is_none());
+    }
 }

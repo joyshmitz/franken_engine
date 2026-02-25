@@ -1812,4 +1812,38 @@ mod tests {
         assert_eq!(gw.policy_check_count(), 2);
         assert_eq!(gw.telemetry_count(), 1);
     }
+
+    #[test]
+    fn cx_threading_error_std_error() {
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(CxThreadingError::BudgetExhausted {
+                operation: "op".into(),
+                requested_ms: 10,
+                remaining_ms: 0,
+            }),
+            Box::new(CxThreadingError::HostcallRejected {
+                hostcall_name: "fs_read".into(),
+                reason: "denied".into(),
+            }),
+            Box::new(CxThreadingError::PolicyDenied {
+                check_name: "ifc".into(),
+                verdict: "no".into(),
+            }),
+            Box::new(CxThreadingError::LifecycleViolation {
+                from: LifecyclePhase::Unloaded,
+                to: LifecyclePhase::Running,
+                reason: "skip".into(),
+            }),
+            Box::new(CxThreadingError::TelemetryFailed {
+                emitter: "span".into(),
+                reason: "full".into(),
+            }),
+            Box::new(CxThreadingError::Cancelled { operation: "gc".into() }),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            displays.insert(format!("{v}"));
+        }
+        assert_eq!(displays.len(), 6);
+    }
 }

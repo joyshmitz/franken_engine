@@ -1710,6 +1710,30 @@ mod tests {
     }
 
     #[test]
+    // -- Enrichment: std::error --
+
+    #[test]
+    fn envelope_error_implements_std_error() {
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(EnvelopeError::EmptyExtensionId),
+            Box::new(EnvelopeError::EmptyUpperBound),
+            Box::new(EnvelopeError::OverlappingFlows { overlap_count: 3 }),
+            Box::new(EnvelopeError::IdDerivation("bad id".into())),
+            Box::new(EnvelopeError::SignatureError("bad sig".into())),
+            Box::new(EnvelopeError::BudgetExhausted {
+                phase: "static".into(),
+            }),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            let msg = format!("{v}");
+            assert!(!msg.is_empty());
+            displays.insert(msg);
+        }
+        assert_eq!(displays.len(), 6, "all 6 variants produce distinct messages");
+    }
+
+    #[test]
     fn dynamic_pass_promotes_essential_flow_to_required() {
         // Oracle says: removing Secret→Internal breaks the extension.
         let oracle = |r: &FlowRule| r.source_label == Label::Secret;

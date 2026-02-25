@@ -1127,6 +1127,50 @@ mod tests {
         }
     }
 
+    // -- Enrichment: serde & error coverage --
+
+    #[test]
+    fn universal_likelihood_ratio_serde_roundtrip() {
+        let ulr = UniversalLikelihoodRatio {
+            null_mean_millionths: -500_000,
+        };
+        let json = serde_json::to_string(&ulr).expect("serialize");
+        let restored: UniversalLikelihoodRatio =
+            serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(ulr.null_mean_millionths, restored.null_mean_millionths);
+    }
+
+    #[test]
+    fn guardrail_error_implements_std_error() {
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(GuardrailError::Suspended {
+                guardrail_id: "g1".into(),
+            }),
+            Box::new(GuardrailError::AlreadyTriggered {
+                guardrail_id: "g2".into(),
+            }),
+            Box::new(GuardrailError::InvalidObservation {
+                guardrail_id: "g3".into(),
+            }),
+            Box::new(GuardrailError::ResetUnauthorized {
+                guardrail_id: "g4".into(),
+            }),
+            Box::new(GuardrailError::NotTriggered {
+                guardrail_id: "g5".into(),
+            }),
+            Box::new(GuardrailError::EValueOverflow {
+                guardrail_id: "g6".into(),
+            }),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            let msg = format!("{v}");
+            assert!(!msg.is_empty());
+            displays.insert(msg);
+        }
+        assert_eq!(displays.len(), 6, "all 6 variants produce distinct messages");
+    }
+
     #[test]
     fn threshold_lr_serialization_round_trip() {
         let lr = ThresholdLikelihoodRatio {

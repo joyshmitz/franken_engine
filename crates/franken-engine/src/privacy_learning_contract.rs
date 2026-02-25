@@ -4725,4 +4725,576 @@ mod tests {
         assert_eq!(SecretSharingScheme::Additive.to_string(), "additive");
         assert_eq!(SecretSharingScheme::Shamir.to_string(), "shamir");
     }
+
+    // -------------------------------------------------------------------
+    // Enrichment: serde roundtrips for leaf enum types
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn feature_field_type_serde_roundtrip() {
+        for variant in [
+            FeatureFieldType::FixedPoint,
+            FeatureFieldType::Counter,
+            FeatureFieldType::Boolean,
+            FeatureFieldType::Categorical,
+        ] {
+            let json = serde_json::to_string(&variant).expect("serialize");
+            let restored: FeatureFieldType = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(variant, restored);
+        }
+    }
+
+    #[test]
+    fn clipping_method_serde_roundtrip() {
+        for variant in [
+            ClippingMethod::L2Norm,
+            ClippingMethod::PerCoordinate,
+            ClippingMethod::Adaptive,
+        ] {
+            let json = serde_json::to_string(&variant).expect("serialize");
+            let restored: ClippingMethod = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(variant, restored);
+        }
+    }
+
+    #[test]
+    fn composition_method_serde_roundtrip() {
+        for variant in [
+            CompositionMethod::Basic,
+            CompositionMethod::Advanced,
+            CompositionMethod::Renyi,
+            CompositionMethod::ZeroCdp,
+        ] {
+            let json = serde_json::to_string(&variant).expect("serialize");
+            let restored: CompositionMethod = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(variant, restored);
+        }
+    }
+
+    #[test]
+    fn coordinator_trust_model_serde_roundtrip() {
+        for variant in [
+            CoordinatorTrustModel::HonestButCurious,
+            CoordinatorTrustModel::Malicious,
+        ] {
+            let json = serde_json::to_string(&variant).expect("serialize");
+            let restored: CoordinatorTrustModel = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(variant, restored);
+        }
+    }
+
+    #[test]
+    fn secret_sharing_scheme_serde_roundtrip() {
+        for variant in [SecretSharingScheme::Additive, SecretSharingScheme::Shamir] {
+            let json = serde_json::to_string(&variant).expect("serialize");
+            let restored: SecretSharingScheme = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(variant, restored);
+        }
+    }
+
+    #[test]
+    fn prng_algorithm_serde_roundtrip_and_display() {
+        let variant = PrngAlgorithm::ChaCha20LikeCounter;
+        let json = serde_json::to_string(&variant).expect("serialize");
+        let restored: PrngAlgorithm = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(variant, restored);
+        assert_eq!(variant.to_string(), "chacha20_like_counter");
+    }
+
+    #[test]
+    fn safety_metric_serde_roundtrip() {
+        for variant in SafetyMetric::ALL {
+            let json = serde_json::to_string(variant).expect("serialize");
+            let restored: SafetyMetric = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*variant, restored);
+        }
+    }
+
+    #[test]
+    fn shadow_extension_class_serde_roundtrip() {
+        for variant in [
+            ShadowExtensionClass::LowRisk,
+            ShadowExtensionClass::Standard,
+            ShadowExtensionClass::HighRisk,
+            ShadowExtensionClass::Critical,
+        ] {
+            let json = serde_json::to_string(&variant).expect("serialize");
+            let restored: ShadowExtensionClass = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(variant, restored);
+        }
+    }
+
+    #[test]
+    fn shadow_promotion_verdict_serde_roundtrip() {
+        for variant in [
+            ShadowPromotionVerdict::Pass,
+            ShadowPromotionVerdict::Reject,
+            ShadowPromotionVerdict::OverrideApproved,
+        ] {
+            let json = serde_json::to_string(&variant).expect("serialize");
+            let restored: ShadowPromotionVerdict =
+                serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(variant, restored);
+        }
+    }
+
+    #[test]
+    fn contract_event_type_serde_roundtrip() {
+        let variants = vec![
+            ContractEventType::Registered {
+                contract_id: EngineObjectId([0xAA; 32]),
+                zone: "zone-a".to_string(),
+                epoch: SecurityEpoch::from_raw(5),
+            },
+            ContractEventType::Revoked {
+                contract_id: EngineObjectId([0xBB; 32]),
+                zone: "zone-b".to_string(),
+            },
+        ];
+        for variant in &variants {
+            let json = serde_json::to_string(variant).expect("serialize");
+            let restored: ContractEventType = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*variant, restored);
+        }
+    }
+
+    #[test]
+    fn contract_event_serde_roundtrip() {
+        let event = ContractEvent {
+            event_type: ContractEventType::Registered {
+                contract_id: EngineObjectId([0xCC; 32]),
+                zone: "z".to_string(),
+                epoch: SecurityEpoch::from_raw(3),
+            },
+            trace_id: "trace-123".to_string(),
+        };
+        let json = serde_json::to_string(&event).expect("serialize");
+        let restored: ContractEvent = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(event, restored);
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: ContractError serde remaining variants
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn contract_error_serde_remaining_variants() {
+        let errors: Vec<ContractError> = vec![
+            ContractError::FieldNameMismatch {
+                key: "k".to_string(),
+                field_name: "f".to_string(),
+            },
+            ContractError::BackwardCompatibilityViolation {
+                detail: "d".to_string(),
+            },
+            ContractError::InvalidUpdatePolicy {
+                detail: "d".to_string(),
+            },
+            ContractError::InvalidClippingStrategy {
+                detail: "d".to_string(),
+            },
+            ContractError::InvalidAggregation {
+                detail: "d".to_string(),
+            },
+            ContractError::InvalidRetention {
+                detail: "d".to_string(),
+            },
+            ContractError::InvalidRandomnessTranscript {
+                detail: "d".to_string(),
+            },
+            ContractError::MissingSeedEscrow {
+                phase_id: "p".to_string(),
+                epoch_id: SecurityEpoch::from_raw(1),
+            },
+            ContractError::SeedEscrowAccessDenied {
+                principal: "pr".to_string(),
+                phase_id: "ph".to_string(),
+            },
+            ContractError::SeedHashMismatch {
+                phase_id: "p".to_string(),
+            },
+            ContractError::IdDerivationFailed {
+                detail: "d".to_string(),
+            },
+            ContractError::SignatureFailed {
+                detail: "d".to_string(),
+            },
+            ContractError::SignatureInvalid {
+                detail: "d".to_string(),
+            },
+            ContractError::InvalidVersion {
+                detail: "d".to_string(),
+            },
+            ContractError::DuplicateContract {
+                contract_id: EngineObjectId([0xAA; 32]),
+            },
+            ContractError::NotFound {
+                contract_id: EngineObjectId([0xBB; 32]),
+            },
+            ContractError::InvalidShadowEvaluation {
+                detail: "d".to_string(),
+            },
+            ContractError::InvalidShadowOverride {
+                detail: "d".to_string(),
+            },
+        ];
+        for err in &errors {
+            let json = serde_json::to_string(err).expect("serialize");
+            let restored: ContractError = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*err, restored);
+        }
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: ContractError Display remaining variants
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn contract_error_display_all_variants() {
+        let cases: Vec<(ContractError, &str)> = vec![
+            (ContractError::EmptyFeatureSchema, "feature schema has no fields"),
+            (
+                ContractError::InvalidVersion { detail: "v0".to_string() },
+                "invalid version: v0",
+            ),
+            (
+                ContractError::FieldNameMismatch {
+                    key: "k".to_string(),
+                    field_name: "f".to_string(),
+                },
+                "field name mismatch: key=k, field.name=f",
+            ),
+            (
+                ContractError::BackwardCompatibilityViolation { detail: "bc".to_string() },
+                "backward compatibility violation: bc",
+            ),
+            (
+                ContractError::InvalidUpdatePolicy { detail: "up".to_string() },
+                "invalid update policy: up",
+            ),
+            (
+                ContractError::InvalidClippingStrategy { detail: "cs".to_string() },
+                "invalid clipping strategy: cs",
+            ),
+            (
+                ContractError::InvalidDpBudget { detail: "dp".to_string() },
+                "invalid DP budget: dp",
+            ),
+            (
+                ContractError::InvalidAggregation { detail: "ag".to_string() },
+                "invalid aggregation: ag",
+            ),
+            (
+                ContractError::InvalidRetention { detail: "rt".to_string() },
+                "invalid retention: rt",
+            ),
+            (
+                ContractError::InvalidRandomnessTranscript { detail: "rn".to_string() },
+                "invalid randomness transcript: rn",
+            ),
+            (ContractError::NoAuthorizedParticipants, "no authorized participants"),
+            (
+                ContractError::IdDerivationFailed { detail: "id".to_string() },
+                "id derivation failed: id",
+            ),
+            (
+                ContractError::SignatureFailed { detail: "sf".to_string() },
+                "signature failed: sf",
+            ),
+            (
+                ContractError::SignatureInvalid { detail: "si".to_string() },
+                "signature invalid: si",
+            ),
+            (
+                ContractError::InvalidShadowEvaluation { detail: "se".to_string() },
+                "invalid shadow evaluation: se",
+            ),
+            (
+                ContractError::InvalidShadowOverride { detail: "so".to_string() },
+                "invalid shadow override: so",
+            ),
+        ];
+        for (err, expected) in &cases {
+            assert_eq!(err.to_string(), *expected, "mismatch for {err:?}");
+        }
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: Display for shadow/safety types
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn safety_metric_display_all_variants() {
+        assert_eq!(SafetyMetric::FalsePositiveRate.to_string(), "false_positive_rate");
+        assert_eq!(SafetyMetric::FalseNegativeRate.to_string(), "false_negative_rate");
+        assert_eq!(SafetyMetric::CalibrationError.to_string(), "calibration_error");
+        assert_eq!(
+            SafetyMetric::DriftDetectionAccuracy.to_string(),
+            "drift_detection_accuracy"
+        );
+        assert_eq!(SafetyMetric::ContainmentTime.to_string(), "containment_time");
+    }
+
+    #[test]
+    fn shadow_extension_class_display_all_variants() {
+        assert_eq!(ShadowExtensionClass::LowRisk.to_string(), "low_risk");
+        assert_eq!(ShadowExtensionClass::Standard.to_string(), "standard");
+        assert_eq!(ShadowExtensionClass::HighRisk.to_string(), "high_risk");
+        assert_eq!(ShadowExtensionClass::Critical.to_string(), "critical");
+    }
+
+    #[test]
+    fn shadow_promotion_verdict_display_all_variants() {
+        assert_eq!(ShadowPromotionVerdict::Pass.to_string(), "pass");
+        assert_eq!(ShadowPromotionVerdict::Reject.to_string(), "reject");
+        assert_eq!(ShadowPromotionVerdict::OverrideApproved.to_string(), "override_approved");
+    }
+
+    #[test]
+    fn composition_method_display_advanced() {
+        assert_eq!(CompositionMethod::Advanced.to_string(), "advanced");
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: default values
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn shadow_burn_in_threshold_profile_default_values() {
+        let d = ShadowBurnInThresholdProfile::default();
+        assert_eq!(d.min_shadow_success_rate_millionths, 995_000);
+        assert_eq!(d.max_false_deny_rate_millionths, 5_000);
+        assert_eq!(d.min_burn_in_duration_ns, 3_600_000_000_000);
+        assert!(d.require_verified_rollback_artifacts);
+    }
+
+    #[test]
+    fn shadow_evaluation_gate_config_default_values() {
+        let d = ShadowEvaluationGateConfig::default();
+        assert_eq!(d.regression_tolerance_millionths, 5_000);
+        assert_eq!(d.min_required_improvement_millionths, 2_500);
+        // Default profile should match ShadowBurnInThresholdProfile::default().
+        assert_eq!(
+            d.default_burn_in_profile,
+            ShadowBurnInThresholdProfile::default()
+        );
+        // Three extension class overrides: LowRisk, HighRisk, Critical.
+        assert_eq!(d.burn_in_profiles_by_extension_class.len(), 3);
+        assert!(d.burn_in_profiles_by_extension_class.contains_key(&ShadowExtensionClass::LowRisk));
+        assert!(
+            d.burn_in_profiles_by_extension_class
+                .contains_key(&ShadowExtensionClass::HighRisk)
+        );
+        assert!(
+            d.burn_in_profiles_by_extension_class
+                .contains_key(&ShadowExtensionClass::Critical)
+        );
+    }
+
+    #[test]
+    fn shadow_extension_class_default_is_standard() {
+        assert_eq!(ShadowExtensionClass::default(), ShadowExtensionClass::Standard);
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: DeterministicPrng error paths
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn deterministic_prng_rejects_empty_phase_id() {
+        let result = DeterministicPrng::new(
+            "  ",
+            PrngAlgorithm::ChaCha20LikeCounter,
+            b"some-seed",
+        );
+        assert!(matches!(
+            result,
+            Err(ContractError::InvalidRandomnessTranscript { .. })
+        ));
+    }
+
+    #[test]
+    fn deterministic_prng_rejects_empty_seed() {
+        let result = DeterministicPrng::new(
+            "valid-phase",
+            PrngAlgorithm::ChaCha20LikeCounter,
+            b"",
+        );
+        assert!(matches!(
+            result,
+            Err(ContractError::InvalidRandomnessTranscript { .. })
+        ));
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: SafetyMetric::ALL completeness
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn safety_metric_all_is_complete() {
+        assert_eq!(SafetyMetric::ALL.len(), 5);
+        let all_set: BTreeSet<SafetyMetric> = SafetyMetric::ALL.iter().copied().collect();
+        assert!(all_set.contains(&SafetyMetric::FalsePositiveRate));
+        assert!(all_set.contains(&SafetyMetric::FalseNegativeRate));
+        assert!(all_set.contains(&SafetyMetric::CalibrationError));
+        assert!(all_set.contains(&SafetyMetric::DriftDetectionAccuracy));
+        assert!(all_set.contains(&SafetyMetric::ContainmentTime));
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: ordering tests
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn feature_field_type_ordering() {
+        let mut types = vec![
+            FeatureFieldType::Categorical,
+            FeatureFieldType::Boolean,
+            FeatureFieldType::Counter,
+            FeatureFieldType::FixedPoint,
+        ];
+        types.sort();
+        // Derived Ord follows declaration order.
+        assert_eq!(types[0], FeatureFieldType::FixedPoint);
+        assert_eq!(types[3], FeatureFieldType::Categorical);
+    }
+
+    #[test]
+    fn safety_metric_ordering() {
+        let mut metrics = vec![
+            SafetyMetric::ContainmentTime,
+            SafetyMetric::DriftDetectionAccuracy,
+            SafetyMetric::CalibrationError,
+            SafetyMetric::FalseNegativeRate,
+            SafetyMetric::FalsePositiveRate,
+        ];
+        metrics.sort();
+        assert_eq!(metrics[0], SafetyMetric::FalsePositiveRate);
+        assert_eq!(metrics[4], SafetyMetric::ContainmentTime);
+    }
+
+    #[test]
+    fn shadow_extension_class_ordering() {
+        let mut classes = vec![
+            ShadowExtensionClass::Critical,
+            ShadowExtensionClass::LowRisk,
+            ShadowExtensionClass::Standard,
+            ShadowExtensionClass::HighRisk,
+        ];
+        classes.sort();
+        assert_eq!(classes[0], ShadowExtensionClass::LowRisk);
+        assert_eq!(classes[3], ShadowExtensionClass::Critical);
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: serde for struct types
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn update_policy_serde_roundtrip() {
+        let policy = test_update_policy();
+        let json = serde_json::to_string(&policy).expect("serialize");
+        let restored: UpdatePolicy = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(policy, restored);
+    }
+
+    #[test]
+    fn clipping_strategy_serde_roundtrip() {
+        let strategy = test_clipping_strategy();
+        let json = serde_json::to_string(&strategy).expect("serialize");
+        let restored: ClippingStrategy = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(strategy, restored);
+    }
+
+    #[test]
+    fn aggregation_serde_roundtrip() {
+        let agg = test_aggregation();
+        let json = serde_json::to_string(&agg).expect("serialize");
+        let restored: SecureAggregationRequirements =
+            serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(agg, restored);
+    }
+
+    #[test]
+    fn retention_serde_roundtrip() {
+        let ret = test_retention();
+        let json = serde_json::to_string(&ret).expect("serialize");
+        let restored: DataRetentionPolicy = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(ret, restored);
+    }
+
+    #[test]
+    fn safety_metric_snapshot_serde_roundtrip() {
+        let snap = baseline_metrics();
+        let json = serde_json::to_string(&snap).expect("serialize");
+        let restored: SafetyMetricSnapshot = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(snap, restored);
+    }
+
+    #[test]
+    fn shadow_replay_reference_serde_roundtrip() {
+        let rr = replay_reference();
+        let json = serde_json::to_string(&rr).expect("serialize");
+        let restored: ShadowReplayReference = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(rr, restored);
+    }
+
+    #[test]
+    fn shadow_gate_event_serde_roundtrip() {
+        let event = ShadowGateEvent {
+            trace_id: "t1".to_string(),
+            decision_id: "d1".to_string(),
+            policy_id: "p1".to_string(),
+            component: "shadow_evaluation_gate".to_string(),
+            event: "shadow_start".to_string(),
+            outcome: "started".to_string(),
+            error_code: Some("FE-PLC-SHADOW-0001".to_string()),
+        };
+        let json = serde_json::to_string(&event).expect("serialize");
+        let restored: ShadowGateEvent = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(event, restored);
+    }
+
+    #[test]
+    fn shadow_burn_in_scorecard_entry_serde_roundtrip() {
+        let entry = ShadowBurnInScorecardEntry {
+            policy_id: "p1".to_string(),
+            candidate_version: "v1".to_string(),
+            extension_class: ShadowExtensionClass::HighRisk,
+            verdict: ShadowPromotionVerdict::Pass,
+            shadow_success_rate_millionths: 998_000,
+            false_deny_rate_millionths: 2_000,
+            burn_in_duration_ns: 7_200_000_000_000,
+            rollback_ready: true,
+            burn_in_early_terminated: false,
+        };
+        let json = serde_json::to_string(&entry).expect("serialize");
+        let restored: ShadowBurnInScorecardEntry =
+            serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(entry, restored);
+    }
+
+    #[test]
+    fn replay_output_serde_roundtrip() {
+        let output = ReplayOutput {
+            phase_id: "noise-phase".to_string(),
+            sequence_counter: 3,
+            outputs: vec![100, 200, 300],
+        };
+        let json = serde_json::to_string(&output).expect("serialize");
+        let restored: ReplayOutput = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(output, restored);
+    }
+
+    #[test]
+    fn seed_escrow_access_event_serde_roundtrip() {
+        let event = SeedEscrowAccessEvent {
+            principal: "auditor-1".to_string(),
+            reason: "investigation".to_string(),
+            approved: true,
+        };
+        let json = serde_json::to_string(&event).expect("serialize");
+        let restored: SeedEscrowAccessEvent = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(event, restored);
+    }
 }

@@ -2310,6 +2310,47 @@ mod tests {
     // ExtensionHostBinding — multiple sessions per extension
     // -----------------------------------------------------------------------
 
+    // -- Enrichment: std::error --
+
+    #[test]
+    fn cell_error_implements_std_error() {
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(CellError::InvalidState {
+                cell_id: "c1".into(),
+                current: RegionState::Running,
+                attempted: "finalize".into(),
+            }),
+            Box::new(CellError::BudgetExhausted {
+                cell_id: "c2".into(),
+                requested_ms: 100,
+                remaining_ms: 0,
+            }),
+            Box::new(CellError::CxThreading {
+                cell_id: "c3".into(),
+                error_code: "cx_budget_exhausted".into(),
+                message: "thread fail".into(),
+            }),
+            Box::new(CellError::CellNotFound {
+                cell_id: "c4".into(),
+            }),
+            Box::new(CellError::SessionRejected {
+                parent_cell_id: "c5".into(),
+                reason: "max sessions".into(),
+            }),
+            Box::new(CellError::ObligationNotFound {
+                cell_id: "c6".into(),
+                obligation_id: "ob-99".into(),
+            }),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            let msg = format!("{v}");
+            assert!(!msg.is_empty());
+            displays.insert(msg);
+        }
+        assert_eq!(displays.len(), 6, "all 6 variants produce distinct messages");
+    }
+
     #[test]
     fn binding_multiple_sessions_per_extension() {
         let mut binding = ExtensionHostBinding::new(DrainDeadline::default());

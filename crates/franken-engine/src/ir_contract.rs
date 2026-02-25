@@ -2577,4 +2577,567 @@ mod tests {
             assert_eq!(error_code(&err), *expected);
         }
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: leaf enum serde roundtrips
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn scope_kind_serde_roundtrip() {
+        for kind in [
+            ScopeKind::Global,
+            ScopeKind::Module,
+            ScopeKind::Function,
+            ScopeKind::Block,
+            ScopeKind::Catch,
+        ] {
+            let json = serde_json::to_string(&kind).unwrap();
+            let restored: ScopeKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(kind, restored);
+        }
+    }
+
+    #[test]
+    fn binding_kind_serde_roundtrip() {
+        for kind in [
+            BindingKind::Let,
+            BindingKind::Const,
+            BindingKind::Var,
+            BindingKind::Parameter,
+            BindingKind::Import,
+            BindingKind::FunctionDecl,
+        ] {
+            let json = serde_json::to_string(&kind).unwrap();
+            let restored: BindingKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(kind, restored);
+        }
+    }
+
+    #[test]
+    fn effect_boundary_serde_roundtrip() {
+        for eb in [
+            EffectBoundary::Pure,
+            EffectBoundary::ReadEffect,
+            EffectBoundary::WriteEffect,
+            EffectBoundary::NetworkEffect,
+            EffectBoundary::FsEffect,
+            EffectBoundary::HostcallEffect,
+        ] {
+            let json = serde_json::to_string(&eb).unwrap();
+            let restored: EffectBoundary = serde_json::from_str(&json).unwrap();
+            assert_eq!(eb, restored);
+        }
+    }
+
+    #[test]
+    fn witness_event_kind_serde_roundtrip() {
+        for kind in [
+            WitnessEventKind::HostcallDispatched,
+            WitnessEventKind::CapabilityChecked,
+            WitnessEventKind::ExceptionRaised,
+            WitnessEventKind::GcTriggered,
+            WitnessEventKind::ExecutionCompleted,
+            WitnessEventKind::FlowLabelChecked,
+            WitnessEventKind::DeclassificationRequested,
+        ] {
+            let json = serde_json::to_string(&kind).unwrap();
+            let restored: WitnessEventKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(kind, restored);
+        }
+    }
+
+    #[test]
+    fn execution_outcome_serde_roundtrip() {
+        for outcome in [
+            ExecutionOutcome::Completed,
+            ExecutionOutcome::Exception,
+            ExecutionOutcome::Timeout,
+            ExecutionOutcome::Halted,
+        ] {
+            let json = serde_json::to_string(&outcome).unwrap();
+            let restored: ExecutionOutcome = serde_json::from_str(&json).unwrap();
+            assert_eq!(outcome, restored);
+        }
+    }
+
+    #[test]
+    fn ir_error_code_serde_roundtrip() {
+        for code in [
+            IrErrorCode::SchemaVersionMismatch,
+            IrErrorCode::LevelMismatch,
+            IrErrorCode::SourceHashMismatch,
+            IrErrorCode::HashVerificationFailed,
+            IrErrorCode::MissingCapabilityAnnotation,
+            IrErrorCode::InvalidSpecializationLinkage,
+            IrErrorCode::WitnessIntegrityViolation,
+        ] {
+            let json = serde_json::to_string(&code).unwrap();
+            let restored: IrErrorCode = serde_json::from_str(&json).unwrap();
+            assert_eq!(code, restored);
+        }
+    }
+
+    #[test]
+    fn ir1_literal_serde_roundtrip() {
+        for lit in [
+            Ir1Literal::String("hello".to_string()),
+            Ir1Literal::Integer(i64::MIN),
+            Ir1Literal::Integer(0),
+            Ir1Literal::Boolean(true),
+            Ir1Literal::Boolean(false),
+            Ir1Literal::Null,
+            Ir1Literal::Undefined,
+        ] {
+            let json = serde_json::to_string(&lit).unwrap();
+            let restored: Ir1Literal = serde_json::from_str(&json).unwrap();
+            assert_eq!(lit, restored);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: struct serde roundtrips
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn ir_header_serde_roundtrip() {
+        let header = IrHeader {
+            schema_version: IrSchemaVersion::CURRENT,
+            level: IrLevel::Ir2,
+            source_hash: Some(ContentHash::compute(b"src")),
+            source_label: "test.js".to_string(),
+        };
+        let json = serde_json::to_string(&header).unwrap();
+        let restored: IrHeader = serde_json::from_str(&json).unwrap();
+        assert_eq!(header, restored);
+
+        // Also test with None source_hash
+        let header_none = IrHeader {
+            source_hash: None,
+            ..header
+        };
+        let json2 = serde_json::to_string(&header_none).unwrap();
+        let restored2: IrHeader = serde_json::from_str(&json2).unwrap();
+        assert_eq!(header_none, restored2);
+    }
+
+    #[test]
+    fn flow_annotation_serde_roundtrip() {
+        let fa = FlowAnnotation {
+            data_label: Label::Internal,
+            sink_clearance: Label::Public,
+            declassification_required: true,
+        };
+        let json = serde_json::to_string(&fa).unwrap();
+        let restored: FlowAnnotation = serde_json::from_str(&json).unwrap();
+        assert_eq!(fa, restored);
+    }
+
+    #[test]
+    fn reg_range_serde_roundtrip() {
+        let rr = RegRange {
+            start: 5,
+            count: 3,
+        };
+        let json = serde_json::to_string(&rr).unwrap();
+        let restored: RegRange = serde_json::from_str(&json).unwrap();
+        assert_eq!(rr, restored);
+    }
+
+    #[test]
+    fn ir3_function_desc_serde_roundtrip() {
+        let desc = Ir3FunctionDesc {
+            entry: 10,
+            arity: 2,
+            frame_size: 8,
+            name: Some("myFunc".to_string()),
+        };
+        let json = serde_json::to_string(&desc).unwrap();
+        let restored: Ir3FunctionDesc = serde_json::from_str(&json).unwrap();
+        assert_eq!(desc, restored);
+
+        // Test with None name
+        let desc_anon = Ir3FunctionDesc {
+            name: None,
+            ..desc
+        };
+        let json2 = serde_json::to_string(&desc_anon).unwrap();
+        let restored2: Ir3FunctionDesc = serde_json::from_str(&json2).unwrap();
+        assert_eq!(desc_anon, restored2);
+    }
+
+    #[test]
+    fn specialization_linkage_serde_roundtrip() {
+        let sl = SpecializationLinkage {
+            proof_input_ids: vec!["p1".to_string(), "p2".to_string()],
+            optimization_class: "hostcall_dispatch".to_string(),
+            validity_epoch: 99,
+            rollback_token: ContentHash::compute(b"baseline"),
+        };
+        let json = serde_json::to_string(&sl).unwrap();
+        let restored: SpecializationLinkage = serde_json::from_str(&json).unwrap();
+        assert_eq!(sl, restored);
+    }
+
+    #[test]
+    fn witness_event_serde_roundtrip() {
+        let we = WitnessEvent {
+            seq: 42,
+            kind: WitnessEventKind::FlowLabelChecked,
+            instruction_index: 17,
+            payload_hash: ContentHash::compute(b"flow_check"),
+            timestamp_tick: 5000,
+        };
+        let json = serde_json::to_string(&we).unwrap();
+        let restored: WitnessEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(we, restored);
+    }
+
+    #[test]
+    fn hostcall_decision_record_serde_roundtrip() {
+        let hdr = HostcallDecisionRecord {
+            seq: 3,
+            capability: CapabilityTag("net:connect".to_string()),
+            allowed: false,
+            instruction_index: 22,
+        };
+        let json = serde_json::to_string(&hdr).unwrap();
+        let restored: HostcallDecisionRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(hdr, restored);
+    }
+
+    #[test]
+    fn capability_tag_serde_roundtrip() {
+        let tag = CapabilityTag("fs:write".to_string());
+        let json = serde_json::to_string(&tag).unwrap();
+        let restored: CapabilityTag = serde_json::from_str(&json).unwrap();
+        assert_eq!(tag, restored);
+    }
+
+    #[test]
+    fn ir_contract_event_serde_roundtrip() {
+        let ok_event = IrContractEvent {
+            trace_id: "t-1".to_string(),
+            component: "ir_contract".to_string(),
+            event: "ir0_hash_verified".to_string(),
+            outcome: "ok".to_string(),
+            error_code: None,
+            level: IrLevel::Ir0,
+            content_hash: Some("abcdef".to_string()),
+        };
+        let json = serde_json::to_string(&ok_event).unwrap();
+        let restored: IrContractEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(ok_event, restored);
+
+        let err_event = IrContractEvent {
+            trace_id: "t-2".to_string(),
+            component: "ir_contract".to_string(),
+            event: "ir3_specialization_verified".to_string(),
+            outcome: "error".to_string(),
+            error_code: Some("IR_INVALID_SPECIALIZATION_LINKAGE".to_string()),
+            level: IrLevel::Ir3,
+            content_hash: None,
+        };
+        let json2 = serde_json::to_string(&err_event).unwrap();
+        let restored2: IrContractEvent = serde_json::from_str(&json2).unwrap();
+        assert_eq!(err_event, restored2);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: Display coverage
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn ir_level_display_all_variants() {
+        assert_eq!(IrLevel::Ir0.to_string(), "ir0");
+        assert_eq!(IrLevel::Ir1.to_string(), "ir1");
+        assert_eq!(IrLevel::Ir2.to_string(), "ir2");
+        assert_eq!(IrLevel::Ir3.to_string(), "ir3");
+        assert_eq!(IrLevel::Ir4.to_string(), "ir4");
+    }
+
+    #[test]
+    fn ir_error_code_display_matches_as_str() {
+        for code in [
+            IrErrorCode::SchemaVersionMismatch,
+            IrErrorCode::LevelMismatch,
+            IrErrorCode::SourceHashMismatch,
+            IrErrorCode::HashVerificationFailed,
+            IrErrorCode::MissingCapabilityAnnotation,
+            IrErrorCode::InvalidSpecializationLinkage,
+            IrErrorCode::WitnessIntegrityViolation,
+        ] {
+            assert_eq!(code.to_string(), code.as_str());
+        }
+    }
+
+    #[test]
+    fn ir_error_display_exact_format() {
+        let err = IrError::new(
+            IrErrorCode::LevelMismatch,
+            "expected ir2, got ir3",
+            IrLevel::Ir2,
+        );
+        assert_eq!(
+            err.to_string(),
+            "[ir2] IR_LEVEL_MISMATCH: expected ir2, got ir3"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: IrVerifier error paths
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn verifier_ir1_error_emits_event() {
+        let ir0_hash = ContentHash::compute(b"ir0");
+        let ir1 = Ir1Module::new(ir0_hash, "test.js");
+        let wrong = ContentHash::compute(b"wrong");
+
+        let mut verifier = IrVerifier::new();
+        let err = verifier.verify_ir1(&ir1, &wrong, "t-e1").unwrap_err();
+        assert_eq!(err.code, IrErrorCode::SourceHashMismatch);
+
+        let events = verifier.drain_events();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].outcome, "error");
+        assert_eq!(events[0].level, IrLevel::Ir1);
+        assert_eq!(
+            events[0].error_code.as_deref(),
+            Some("IR_SOURCE_HASH_MISMATCH")
+        );
+    }
+
+    #[test]
+    fn verifier_ir3_error_emits_event() {
+        let source_hash = ContentHash::compute(b"test");
+        let mut ir3 = Ir3Module::new(source_hash, "test.js");
+        ir3.specialization = Some(SpecializationLinkage {
+            proof_input_ids: vec![],
+            optimization_class: "opt".to_string(),
+            validity_epoch: 1,
+            rollback_token: ContentHash::compute(b"rb"),
+        });
+
+        let mut verifier = IrVerifier::new();
+        let err = verifier.verify_ir3(&ir3, "t-e3").unwrap_err();
+        assert_eq!(err.code, IrErrorCode::InvalidSpecializationLinkage);
+
+        let events = verifier.drain_events();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].outcome, "error");
+        assert_eq!(events[0].level, IrLevel::Ir3);
+        assert_eq!(
+            events[0].error_code.as_deref(),
+            Some("IR_INVALID_SPECIALIZATION_LINKAGE")
+        );
+    }
+
+    #[test]
+    fn verifier_ir4_error_emits_event() {
+        let ir3_hash = ContentHash::compute(b"ir3");
+        let ir4 = Ir4Module::new(ir3_hash, "test.js");
+        let wrong = ContentHash::compute(b"wrong");
+
+        let mut verifier = IrVerifier::new();
+        let err = verifier.verify_ir4(&ir4, &wrong, "t-e4").unwrap_err();
+        assert_eq!(err.code, IrErrorCode::WitnessIntegrityViolation);
+
+        let events = verifier.drain_events();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].outcome, "error");
+        assert_eq!(events[0].level, IrLevel::Ir4);
+        assert_eq!(
+            events[0].error_code.as_deref(),
+            Some("IR_WITNESS_INTEGRITY_VIOLATION")
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: verify_ir1_source None source_hash
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn verify_ir1_source_fails_none_source_hash() {
+        let ir1 = Ir1Module {
+            header: IrHeader {
+                schema_version: IrSchemaVersion::CURRENT,
+                level: IrLevel::Ir1,
+                source_hash: None,
+                source_label: "test.js".to_string(),
+            },
+            scopes: Vec::new(),
+            ops: Vec::new(),
+        };
+        let ir0_hash = ContentHash::compute(b"ir0");
+        let err = verify_ir1_source(&ir1, &ir0_hash).unwrap_err();
+        assert_eq!(err.code, IrErrorCode::SourceHashMismatch);
+        assert!(err.message.contains("missing source_hash"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: IrVerifier Default
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn ir_verifier_default() {
+        let mut verifier = IrVerifier::default();
+        let events = verifier.drain_events();
+        assert!(events.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: Ir1Op all-variant serde
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn ir1_op_serde_all_variants() {
+        let ops = vec![
+            Ir1Op::LoadLiteral {
+                value: Ir1Literal::String("s".to_string()),
+            },
+            Ir1Op::LoadBinding { binding_id: 0 },
+            Ir1Op::StoreBinding { binding_id: 1 },
+            Ir1Op::Call { arg_count: 3 },
+            Ir1Op::Return,
+            Ir1Op::ImportModule {
+                specifier: "m".to_string(),
+            },
+            Ir1Op::ExportBinding {
+                name: "x".to_string(),
+                binding_id: 0,
+            },
+            Ir1Op::Await,
+            Ir1Op::Nop,
+        ];
+        for op in &ops {
+            let json = serde_json::to_string(op).unwrap();
+            let restored: Ir1Op = serde_json::from_str(&json).unwrap();
+            assert_eq!(*op, restored);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: Ir3Instruction all-variant serde
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn ir3_instruction_serde_all_variants() {
+        let instrs = vec![
+            Ir3Instruction::LoadInt { dst: 0, value: 42 },
+            Ir3Instruction::LoadStr {
+                dst: 1,
+                pool_index: 0,
+            },
+            Ir3Instruction::LoadBool {
+                dst: 2,
+                value: true,
+            },
+            Ir3Instruction::LoadNull { dst: 3 },
+            Ir3Instruction::LoadUndefined { dst: 4 },
+            Ir3Instruction::Add {
+                dst: 5,
+                lhs: 0,
+                rhs: 1,
+            },
+            Ir3Instruction::Sub {
+                dst: 5,
+                lhs: 0,
+                rhs: 1,
+            },
+            Ir3Instruction::Mul {
+                dst: 5,
+                lhs: 0,
+                rhs: 1,
+            },
+            Ir3Instruction::Div {
+                dst: 5,
+                lhs: 0,
+                rhs: 1,
+            },
+            Ir3Instruction::Move { dst: 0, src: 1 },
+            Ir3Instruction::Jump { target: 10 },
+            Ir3Instruction::JumpIf {
+                cond: 0,
+                target: 11,
+            },
+            Ir3Instruction::Call {
+                callee: 0,
+                args: RegRange { start: 1, count: 2 },
+                dst: 3,
+            },
+            Ir3Instruction::Return { value: 0 },
+            Ir3Instruction::HostCall {
+                capability: CapabilityTag("net:connect".to_string()),
+                args: RegRange { start: 0, count: 1 },
+                dst: 2,
+            },
+            Ir3Instruction::GetProperty {
+                obj: 0,
+                key: 1,
+                dst: 2,
+            },
+            Ir3Instruction::SetProperty {
+                obj: 0,
+                key: 1,
+                val: 2,
+            },
+            Ir3Instruction::Halt,
+        ];
+        for instr in &instrs {
+            let json = serde_json::to_string(instr).unwrap();
+            let restored: Ir3Instruction = serde_json::from_str(&json).unwrap();
+            assert_eq!(*instr, restored);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: Ir2Op with flow serde
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn ir2_op_with_flow_serde_roundtrip() {
+        let op = Ir2Op {
+            inner: Ir1Op::Call { arg_count: 1 },
+            effect: EffectBoundary::NetworkEffect,
+            required_capability: Some(CapabilityTag("net:fetch".to_string())),
+            flow: Some(FlowAnnotation {
+                data_label: Label::Internal,
+                sink_clearance: Label::Public,
+                declassification_required: true,
+            }),
+        };
+        let json = serde_json::to_string(&op).unwrap();
+        let restored: Ir2Op = serde_json::from_str(&json).unwrap();
+        assert_eq!(op, restored);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: ScopeNode serde roundtrip (multiple scope kinds)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn scope_node_all_kinds_serde_roundtrip() {
+        for kind in [
+            ScopeKind::Global,
+            ScopeKind::Module,
+            ScopeKind::Function,
+            ScopeKind::Block,
+            ScopeKind::Catch,
+        ] {
+            let node = ScopeNode {
+                scope_id: ScopeId { depth: 1, index: 2 },
+                parent: Some(ScopeId { depth: 0, index: 0 }),
+                kind,
+                bindings: vec![ResolvedBinding {
+                    name: "x".to_string(),
+                    binding_id: 0,
+                    scope: ScopeId { depth: 1, index: 2 },
+                    kind: BindingKind::Const,
+                }],
+            };
+            let json = serde_json::to_string(&node).unwrap();
+            let restored: ScopeNode = serde_json::from_str(&json).unwrap();
+            assert_eq!(node, restored);
+        }
+    }
 }

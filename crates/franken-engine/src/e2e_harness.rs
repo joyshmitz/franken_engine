@@ -533,6 +533,15 @@ pub struct ReplayVerification {
     pub actual_transcript_len: usize,
 }
 
+/// Replay performance check against virtual-time budget.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReplayPerformance {
+    pub virtual_duration_micros: u64,
+    pub wall_duration_micros: u64,
+    pub faster_than_realtime: bool,
+    pub speedup_milli: u64,
+}
+
 /// Minimal target-environment fingerprint for cross-machine replay diagnosis.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReplayEnvironmentFingerprint {
@@ -654,6 +663,31 @@ pub fn verify_replay(expected: &RunResult, actual: &RunResult) -> ReplayVerifica
         actual_event_count: actual.events.len(),
         expected_transcript_len: expected.random_transcript.len(),
         actual_transcript_len: actual.random_transcript.len(),
+    }
+}
+
+/// Evaluates replay speed against the fixture's virtual-time span.
+pub fn evaluate_replay_performance(
+    result: &RunResult,
+    wall_duration_micros: u64,
+) -> ReplayPerformance {
+    let virtual_duration_micros = result
+        .end_virtual_time_micros
+        .saturating_sub(result.start_virtual_time_micros);
+    let faster_than_realtime = wall_duration_micros <= virtual_duration_micros;
+    let speedup_milli = if wall_duration_micros == 0 {
+        u64::MAX
+    } else {
+        let ratio_milli =
+            (u128::from(virtual_duration_micros) * 1000) / u128::from(wall_duration_micros);
+        ratio_milli.min(u128::from(u64::MAX)) as u64
+    };
+
+    ReplayPerformance {
+        virtual_duration_micros,
+        wall_duration_micros,
+        faster_than_realtime,
+        speedup_milli,
     }
 }
 
@@ -2000,6 +2034,26 @@ mod tests {
         assert_eq!(v.transcript_mismatch_index, Some(0));
         assert_eq!(v.expected_transcript_len, 1);
         assert_eq!(v.actual_transcript_len, 1);
+    }
+
+    #[test]
+    fn replay_performance_faster_than_realtime() {
+        let run = make_run_result("abc", 1);
+        let perf = evaluate_replay_performance(&run, 50);
+        assert_eq!(perf.virtual_duration_micros, 100);
+        assert_eq!(perf.wall_duration_micros, 50);
+        assert!(perf.faster_than_realtime);
+        assert_eq!(perf.speedup_milli, 2000);
+    }
+
+    #[test]
+    fn replay_performance_slower_than_realtime() {
+        let run = make_run_result("abc", 1);
+        let perf = evaluate_replay_performance(&run, 250);
+        assert_eq!(perf.virtual_duration_micros, 100);
+        assert_eq!(perf.wall_duration_micros, 250);
+        assert!(!perf.faster_than_realtime);
+        assert_eq!(perf.speedup_milli, 400);
     }
 
     #[test]

@@ -765,4 +765,100 @@ mod tests {
         let restored: SchemaVersion = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(v, restored);
     }
+
+    // -- Enrichment: ordering --
+
+    #[test]
+    fn decision_type_ordering() {
+        assert!(DecisionType::SecurityAction < DecisionType::PolicyUpdate);
+        assert!(DecisionType::PolicyUpdate < DecisionType::EpochTransition);
+        assert!(DecisionType::EpochTransition < DecisionType::Revocation);
+        assert!(DecisionType::Revocation < DecisionType::ExtensionLifecycle);
+        assert!(DecisionType::ExtensionLifecycle < DecisionType::CapabilityDecision);
+        assert!(DecisionType::CapabilityDecision < DecisionType::ContractEvaluation);
+        assert!(DecisionType::ContractEvaluation < DecisionType::RemoteAuthorization);
+    }
+
+    // -- Enrichment: error trait --
+
+    #[test]
+    fn ledger_error_is_std_error() {
+        let errors: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(LedgerError::MissingChosenAction),
+            Box::new(LedgerError::SchemaValidationFailed {
+                reason: "bad".to_string(),
+            }),
+            Box::new(LedgerError::DuplicateEntryId {
+                entry_id: "e".to_string(),
+            }),
+        ];
+        for e in &errors {
+            assert!(!e.to_string().is_empty());
+        }
+    }
+
+    // -- Enrichment: serde roundtrips --
+
+    #[test]
+    fn decision_type_serde_roundtrip() {
+        for dt in [
+            DecisionType::SecurityAction,
+            DecisionType::PolicyUpdate,
+            DecisionType::EpochTransition,
+            DecisionType::Revocation,
+            DecisionType::ExtensionLifecycle,
+            DecisionType::CapabilityDecision,
+            DecisionType::ContractEvaluation,
+            DecisionType::RemoteAuthorization,
+        ] {
+            let json = serde_json::to_string(&dt).expect("serialize");
+            let restored: DecisionType = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(dt, restored);
+        }
+    }
+
+    #[test]
+    fn constraint_serde_roundtrip() {
+        let c = Constraint {
+            constraint_id: "c-1".to_string(),
+            description: "rate limit".to_string(),
+            active: true,
+        };
+        let json = serde_json::to_string(&c).expect("serialize");
+        let restored: Constraint = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(c, restored);
+    }
+
+    #[test]
+    fn witness_serde_roundtrip() {
+        let w = Witness {
+            witness_id: "w-1".to_string(),
+            witness_type: "monotonicity".to_string(),
+            value: "proof-hash".to_string(),
+        };
+        let json = serde_json::to_string(&w).expect("serialize");
+        let restored: Witness = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(w, restored);
+    }
+
+    #[test]
+    fn chosen_action_serde_roundtrip() {
+        let ca = ChosenAction {
+            action_name: "allow".to_string(),
+            expected_loss_millionths: 100_000,
+            rationale: "lowest loss".to_string(),
+        };
+        let json = serde_json::to_string(&ca).expect("serialize");
+        let restored: ChosenAction = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(ca, restored);
+    }
+
+    // -- Enrichment: default --
+
+    #[test]
+    fn in_memory_ledger_default_is_empty() {
+        let ledger = InMemoryLedger::default();
+        assert_eq!(ledger.len(), 0);
+        assert!(ledger.is_empty());
+    }
 }

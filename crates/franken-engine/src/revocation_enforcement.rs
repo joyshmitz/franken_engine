@@ -1476,6 +1476,28 @@ mod tests {
     // ---------------------------------------------------------------
 
     #[test]
+    // -- Enrichment: Ord --
+
+    #[test]
+    fn enforcement_point_ordering() {
+        assert!(EnforcementPoint::TokenAcceptance < EnforcementPoint::HighRiskOperation);
+        assert!(
+            EnforcementPoint::HighRiskOperation < EnforcementPoint::ExtensionActivation
+        );
+    }
+
+    #[test]
+    fn high_risk_category_ordering() {
+        assert!(HighRiskCategory::PolicyChange < HighRiskCategory::KeyOperation);
+        assert!(HighRiskCategory::KeyOperation < HighRiskCategory::DataExport);
+        assert!(HighRiskCategory::DataExport < HighRiskCategory::CrossZoneAction);
+        assert!(
+            HighRiskCategory::CrossZoneAction
+                < HighRiskCategory::ExtensionLifecycleChange
+        );
+    }
+
+    #[test]
     fn enforcement_stats_default() {
         let stats = EnforcementStats::default();
         assert_eq!(stats.checks, 0);

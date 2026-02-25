@@ -934,4 +934,464 @@ mod tests {
                 .any(|event| event.event == "evidence_export")
         );
     }
+
+    // -- serde roundtrips -----------------------------------------------------
+
+    #[test]
+    fn evidence_severity_serde_roundtrip() {
+        for sev in &[
+            EvidenceSeverity::Info,
+            EvidenceSeverity::Warning,
+            EvidenceSeverity::Critical,
+        ] {
+            let json = serde_json::to_string(sev).unwrap();
+            let back: EvidenceSeverity = serde_json::from_str(&json).unwrap();
+            assert_eq!(*sev, back);
+        }
+    }
+
+    #[test]
+    fn evidence_record_kind_serde_roundtrip() {
+        for kind in &[
+            EvidenceRecordKind::DecisionReceipt,
+            EvidenceRecordKind::HostcallTelemetry,
+            EvidenceRecordKind::ContainmentAction,
+            EvidenceRecordKind::PolicyChange,
+            EvidenceRecordKind::ReplayArtifact,
+        ] {
+            let json = serde_json::to_string(kind).unwrap();
+            let back: EvidenceRecordKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(*kind, back);
+        }
+    }
+
+    #[test]
+    fn structured_log_event_serde_roundtrip() {
+        let event = StructuredLogEvent {
+            trace_id: "t1".to_string(),
+            decision_id: "d1".to_string(),
+            policy_id: "p1".to_string(),
+            component: "test".to_string(),
+            event: "snap".to_string(),
+            outcome: "pass".to_string(),
+            error_code: Some("E001".to_string()),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: StructuredLogEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, back);
+    }
+
+    #[test]
+    fn evidence_export_filter_serde_roundtrip() {
+        let filter = EvidenceExportFilter {
+            extension_id: Some("ext-a".to_string()),
+            trace_id: Some("t1".to_string()),
+            start_timestamp_ns: Some(100),
+            end_timestamp_ns: Some(200),
+            severity: Some(EvidenceSeverity::Warning),
+            decision_type: Some(DecisionType::Revocation),
+        };
+        let json = serde_json::to_string(&filter).unwrap();
+        let back: EvidenceExportFilter = serde_json::from_str(&json).unwrap();
+        assert_eq!(filter, back);
+    }
+
+    #[test]
+    fn gc_pressure_sample_serde_roundtrip() {
+        let sample = GcPressureSample {
+            extension_id: "ext-1".to_string(),
+            used_bytes: 500,
+            budget_bytes: 1000,
+        };
+        let json = serde_json::to_string(&sample).unwrap();
+        let back: GcPressureSample = serde_json::from_str(&json).unwrap();
+        assert_eq!(sample, back);
+    }
+
+    #[test]
+    fn scheduler_lane_sample_serde_roundtrip() {
+        let sample = SchedulerLaneSample {
+            lane: "fast".to_string(),
+            queue_depth: 5,
+            max_depth: 50,
+            tasks_submitted: 100,
+            tasks_scheduled: 90,
+            tasks_completed: 80,
+            tasks_timed_out: 2,
+        };
+        let json = serde_json::to_string(&sample).unwrap();
+        let back: SchedulerLaneSample = serde_json::from_str(&json).unwrap();
+        assert_eq!(sample, back);
+    }
+
+    #[test]
+    fn replay_artifact_record_serde_roundtrip() {
+        let record = ReplayArtifactRecord {
+            trace_id: "t1".to_string(),
+            extension_id: "ext-1".to_string(),
+            timestamp_ns: 42,
+            artifact_id: "a1".to_string(),
+            replay_pointer: "path/to/artifact".to_string(),
+        };
+        let json = serde_json::to_string(&record).unwrap();
+        let back: ReplayArtifactRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(record, back);
+    }
+
+    // -- Display tests --------------------------------------------------------
+
+    #[test]
+    fn evidence_severity_display() {
+        assert_eq!(EvidenceSeverity::Info.to_string(), "info");
+        assert_eq!(EvidenceSeverity::Warning.to_string(), "warning");
+        assert_eq!(EvidenceSeverity::Critical.to_string(), "critical");
+    }
+
+    #[test]
+    fn evidence_record_kind_display() {
+        assert_eq!(
+            EvidenceRecordKind::DecisionReceipt.to_string(),
+            "decision_receipt"
+        );
+        assert_eq!(
+            EvidenceRecordKind::HostcallTelemetry.to_string(),
+            "hostcall_telemetry"
+        );
+        assert_eq!(
+            EvidenceRecordKind::ContainmentAction.to_string(),
+            "containment_action"
+        );
+        assert_eq!(
+            EvidenceRecordKind::PolicyChange.to_string(),
+            "policy_change"
+        );
+        assert_eq!(
+            EvidenceRecordKind::ReplayArtifact.to_string(),
+            "replay_artifact"
+        );
+    }
+
+    // -- parser edge cases ----------------------------------------------------
+
+    #[test]
+    fn parse_evidence_severity_case_insensitive() {
+        assert_eq!(
+            parse_evidence_severity("INFO"),
+            Some(EvidenceSeverity::Info)
+        );
+        assert_eq!(
+            parse_evidence_severity("  Warning  "),
+            Some(EvidenceSeverity::Warning)
+        );
+        assert_eq!(
+            parse_evidence_severity("CRITICAL"),
+            Some(EvidenceSeverity::Critical)
+        );
+    }
+
+    #[test]
+    fn parse_decision_type_all_known_values() {
+        let cases = [
+            ("security_action", DecisionType::SecurityAction),
+            ("policy_update", DecisionType::PolicyUpdate),
+            ("epoch_transition", DecisionType::EpochTransition),
+            ("revocation", DecisionType::Revocation),
+            ("extension_lifecycle", DecisionType::ExtensionLifecycle),
+            ("capability_decision", DecisionType::CapabilityDecision),
+            ("contract_evaluation", DecisionType::ContractEvaluation),
+            ("remote_authorization", DecisionType::RemoteAuthorization),
+        ];
+        for (input, expected) in &cases {
+            assert_eq!(
+                parse_decision_type(input),
+                Some(*expected),
+                "failed for input: {}",
+                input
+            );
+        }
+    }
+
+    #[test]
+    fn parse_decision_type_case_insensitive() {
+        assert_eq!(
+            parse_decision_type("SECURITY_ACTION"),
+            Some(DecisionType::SecurityAction)
+        );
+        assert_eq!(
+            parse_decision_type("  Policy_Update  "),
+            Some(DecisionType::PolicyUpdate)
+        );
+    }
+
+    // -- compute_pressure_millionths ------------------------------------------
+
+    #[test]
+    fn pressure_zero_budget_zero_used_is_zero() {
+        assert_eq!(compute_pressure_millionths(0, 0), 0);
+    }
+
+    #[test]
+    fn pressure_zero_budget_nonzero_used_is_million() {
+        assert_eq!(compute_pressure_millionths(100, 0), 1_000_000);
+    }
+
+    #[test]
+    fn pressure_exact_budget_is_million() {
+        assert_eq!(compute_pressure_millionths(1000, 1000), 1_000_000);
+    }
+
+    #[test]
+    fn pressure_half_budget_is_half_million() {
+        assert_eq!(compute_pressure_millionths(500, 1000), 500_000);
+    }
+
+    #[test]
+    fn pressure_over_budget_capped_at_million() {
+        assert_eq!(compute_pressure_millionths(2000, 1000), 1_000_000);
+    }
+
+    // -- EvidenceExportFilter matching ----------------------------------------
+
+    #[test]
+    fn filter_default_matches_all() {
+        let filter = EvidenceExportFilter::default();
+        assert!(filter.matches_timestamp(0));
+        assert!(filter.matches_timestamp(u64::MAX));
+        assert!(filter.matches_extension(&None));
+        assert!(filter.matches_extension(&Some("any".to_string())));
+        assert!(filter.matches_trace("any"));
+        assert!(filter.matches_severity(EvidenceSeverity::Info));
+        assert!(filter.matches_decision_type(None));
+    }
+
+    #[test]
+    fn filter_timestamp_range() {
+        let filter = EvidenceExportFilter {
+            start_timestamp_ns: Some(100),
+            end_timestamp_ns: Some(200),
+            ..EvidenceExportFilter::default()
+        };
+        assert!(!filter.matches_timestamp(99));
+        assert!(filter.matches_timestamp(100));
+        assert!(filter.matches_timestamp(150));
+        assert!(filter.matches_timestamp(200));
+        assert!(!filter.matches_timestamp(201));
+    }
+
+    #[test]
+    fn filter_extension_match() {
+        let filter = EvidenceExportFilter {
+            extension_id: Some("ext-a".to_string()),
+            ..EvidenceExportFilter::default()
+        };
+        assert!(filter.matches_extension(&Some("ext-a".to_string())));
+        assert!(!filter.matches_extension(&Some("ext-b".to_string())));
+        assert!(!filter.matches_extension(&None));
+    }
+
+    #[test]
+    fn filter_trace_match() {
+        let filter = EvidenceExportFilter {
+            trace_id: Some("t-1".to_string()),
+            ..EvidenceExportFilter::default()
+        };
+        assert!(filter.matches_trace("t-1"));
+        assert!(!filter.matches_trace("t-2"));
+    }
+
+    // -- diagnostics snapshot edge cases --------------------------------------
+
+    #[test]
+    fn diagnostics_empty_state() {
+        let state = RuntimeStateInput {
+            snapshot_timestamp_ns: 0,
+            loaded_extensions: vec![],
+            active_policies: vec![],
+            security_epoch: SecurityEpoch::from_raw(1),
+            gc_pressure: vec![],
+            scheduler_lanes: vec![],
+        };
+        let out = collect_runtime_diagnostics(&state, "t", "d", "p");
+        assert!(out.loaded_extensions.is_empty());
+        assert!(out.active_policies.is_empty());
+        assert!(out.gc_pressure.is_empty());
+        assert!(out.scheduler_lanes.is_empty());
+        assert_eq!(out.logs.len(), 1);
+    }
+
+    #[test]
+    fn diagnostics_deduplicates_policies() {
+        let state = RuntimeStateInput {
+            snapshot_timestamp_ns: 0,
+            loaded_extensions: vec![],
+            active_policies: vec![
+                "a".to_string(),
+                "b".to_string(),
+                "a".to_string(),
+                "b".to_string(),
+            ],
+            security_epoch: SecurityEpoch::from_raw(1),
+            gc_pressure: vec![],
+            scheduler_lanes: vec![],
+        };
+        let out = collect_runtime_diagnostics(&state, "t", "d", "p");
+        assert_eq!(out.active_policies, vec!["a", "b"]);
+    }
+
+    #[test]
+    fn diagnostics_filters_empty_policies() {
+        let state = RuntimeStateInput {
+            snapshot_timestamp_ns: 0,
+            loaded_extensions: vec![],
+            active_policies: vec!["".to_string(), "  ".to_string(), "real".to_string()],
+            security_epoch: SecurityEpoch::from_raw(1),
+            gc_pressure: vec![],
+            scheduler_lanes: vec![],
+        };
+        let out = collect_runtime_diagnostics(&state, "t", "d", "p");
+        assert_eq!(out.active_policies, vec!["real"]);
+    }
+
+    #[test]
+    fn gc_pressure_over_budget_flag() {
+        let state = RuntimeStateInput {
+            snapshot_timestamp_ns: 0,
+            loaded_extensions: vec![],
+            active_policies: vec![],
+            security_epoch: SecurityEpoch::from_raw(1),
+            gc_pressure: vec![
+                GcPressureSample {
+                    extension_id: "over".to_string(),
+                    used_bytes: 2000,
+                    budget_bytes: 1000,
+                },
+                GcPressureSample {
+                    extension_id: "under".to_string(),
+                    used_bytes: 500,
+                    budget_bytes: 1000,
+                },
+            ],
+            scheduler_lanes: vec![],
+        };
+        let out = collect_runtime_diagnostics(&state, "t", "d", "p");
+        let over = out.gc_pressure.iter().find(|g| g.extension_id == "over").unwrap();
+        let under = out.gc_pressure.iter().find(|g| g.extension_id == "under").unwrap();
+        assert!(over.over_budget);
+        assert!(!under.over_budget);
+    }
+
+    // -- render_diagnostics_summary -------------------------------------------
+
+    #[test]
+    fn render_diagnostics_summary_contains_epoch() {
+        let state = sample_runtime_state();
+        let out = collect_runtime_diagnostics(&state, "t", "d", "p");
+        let rendered = render_diagnostics_summary(&out);
+        assert!(rendered.contains("security_epoch: 7"));
+    }
+
+    #[test]
+    fn render_diagnostics_summary_contains_extension_count() {
+        let state = sample_runtime_state();
+        let out = collect_runtime_diagnostics(&state, "t", "d", "p");
+        let rendered = render_diagnostics_summary(&out);
+        assert!(rendered.contains("loaded_extensions: 2"));
+    }
+
+    // -- render_evidence_summary ----------------------------------------------
+
+    #[test]
+    fn render_evidence_summary_nonempty_has_counts() {
+        let input = sample_input();
+        let output = export_evidence_bundle(&input, EvidenceExportFilter::default());
+        let rendered = render_evidence_summary(&output);
+        assert!(rendered.contains("total_records:"));
+        assert!(rendered.contains("counts_by_kind:"));
+        assert!(rendered.contains("counts_by_severity:"));
+    }
+
+    // -- severity functions ---------------------------------------------------
+
+    #[test]
+    fn severity_from_containment_covers_all_actions() {
+        assert_eq!(
+            severity_from_containment_action(ContainmentAction::Allow),
+            EvidenceSeverity::Info
+        );
+        assert_eq!(
+            severity_from_containment_action(ContainmentAction::Challenge),
+            EvidenceSeverity::Warning
+        );
+        assert_eq!(
+            severity_from_containment_action(ContainmentAction::Sandbox),
+            EvidenceSeverity::Warning
+        );
+        assert_eq!(
+            severity_from_containment_action(ContainmentAction::Suspend),
+            EvidenceSeverity::Critical
+        );
+        assert_eq!(
+            severity_from_containment_action(ContainmentAction::Terminate),
+            EvidenceSeverity::Critical
+        );
+        assert_eq!(
+            severity_from_containment_action(ContainmentAction::Quarantine),
+            EvidenceSeverity::Critical
+        );
+    }
+
+    #[test]
+    fn severity_from_hostcall_result() {
+        assert_eq!(
+            severity_from_hostcall(&HostcallResult::Success),
+            EvidenceSeverity::Info
+        );
+        assert_eq!(
+            severity_from_hostcall(&HostcallResult::Denied {
+                reason: "nope".to_string()
+            }),
+            EvidenceSeverity::Warning
+        );
+        assert_eq!(
+            severity_from_hostcall(&HostcallResult::Error { code: 500 }),
+            EvidenceSeverity::Critical
+        );
+        assert_eq!(
+            severity_from_hostcall(&HostcallResult::Timeout),
+            EvidenceSeverity::Critical
+        );
+    }
+
+    // -- EvidenceExportSummary serde ------------------------------------------
+
+    #[test]
+    fn evidence_export_summary_serde_roundtrip() {
+        let mut counts_by_kind = BTreeMap::new();
+        counts_by_kind.insert("decision_receipt".to_string(), 3);
+        let mut counts_by_severity = BTreeMap::new();
+        counts_by_severity.insert("info".to_string(), 2);
+        let summary = EvidenceExportSummary {
+            total_records: 5,
+            counts_by_kind,
+            counts_by_severity,
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        let back: EvidenceExportSummary = serde_json::from_str(&json).unwrap();
+        assert_eq!(summary, back);
+    }
+
+    // -- severity ordering ----------------------------------------------------
+
+    #[test]
+    fn evidence_severity_ordering() {
+        assert!(EvidenceSeverity::Info < EvidenceSeverity::Warning);
+        assert!(EvidenceSeverity::Warning < EvidenceSeverity::Critical);
+    }
+
+    // -- evidence record kind ordering ----------------------------------------
+
+    #[test]
+    fn evidence_record_kind_ordering() {
+        assert!(EvidenceRecordKind::DecisionReceipt < EvidenceRecordKind::ReplayArtifact);
+    }
 }

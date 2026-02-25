@@ -704,6 +704,57 @@ mod tests {
 
     // -- Multiple obligations --
 
+    // -- Enrichment: serde, std::error --
+
+    #[test]
+    fn obligation_state_serde_all_variants() {
+        for state in [
+            ObligationState::Pending,
+            ObligationState::Committed,
+            ObligationState::Aborted,
+            ObligationState::Leaked,
+        ] {
+            let json = serde_json::to_string(&state).expect("serialize");
+            let restored: ObligationState =
+                serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(state, restored);
+        }
+    }
+
+    #[test]
+    fn abort_reason_serde_all_variants() {
+        let reasons = vec![
+            AbortReason::DrainTimeout,
+            AbortReason::UpstreamFailure,
+            AbortReason::PolicyViolation,
+            AbortReason::OperatorAbort,
+            AbortReason::Custom("custom-reason".to_string()),
+        ];
+        for reason in &reasons {
+            let json = serde_json::to_string(reason).expect("serialize");
+            let restored: AbortReason =
+                serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*reason, restored);
+        }
+    }
+
+    #[test]
+    fn obligation_error_implements_std_error() {
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(ObligationError::NotFound { obligation_id: 1 }),
+            Box::new(ObligationError::AlreadyResolved { obligation_id: 2 }),
+            Box::new(ObligationError::Backpressure { max_pending: 10 }),
+            Box::new(ObligationError::Leaked { obligation_id: 3 }),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            let msg = format!("{v}");
+            assert!(!msg.is_empty());
+            displays.insert(msg);
+        }
+        assert_eq!(displays.len(), 4, "all 4 variants produce distinct messages");
+    }
+
     #[test]
     fn multiple_obligations_independent() {
         let mut chan = test_channel();

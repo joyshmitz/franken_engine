@@ -1173,4 +1173,27 @@ mod tests {
         b[63] = 43;
         assert!(!constant_time_eq_64(&a, &b));
     }
+
+    // -- Enrichment: std::error --
+
+    #[test]
+    fn signature_error_implements_std_error() {
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(SignatureError::NonCanonicalObject {
+                detail: "bad order".into(),
+            }),
+            Box::new(SignatureError::PreimageError {
+                detail: "hash fail".into(),
+            }),
+            Box::new(SignatureError::InvalidSigningKey),
+            Box::new(SignatureError::InvalidVerificationKey),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            let msg = format!("{v}");
+            assert!(!msg.is_empty());
+            displays.insert(msg);
+        }
+        assert_eq!(displays.len(), 4, "all 4 tested variants produce distinct messages");
+    }
 }

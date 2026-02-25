@@ -1791,4 +1791,227 @@ mod tests {
         let counts = chain.event_counts();
         assert_eq!(counts.get("chain_verified"), Some(&1));
     }
+
+    // -- Enrichment: remaining serde roundtrips --
+
+    #[test]
+    fn chain_error_serde_remaining_variants() {
+        let errors: Vec<ChainError> = vec![
+            ChainError::HashLinkMismatch {
+                event_seq: 3,
+                expected_prev: Some(EngineObjectId([1; 32])),
+                actual_prev: Some(EngineObjectId([2; 32])),
+            },
+            ChainError::SequenceDiscontinuity {
+                expected_seq: 5,
+                actual_seq: 8,
+            },
+            ChainError::InvalidGenesis {
+                detail: "bad genesis".to_string(),
+            },
+            ChainError::ChainIntegrity {
+                detail: "hash mismatch".to_string(),
+            },
+            ChainError::SignatureInvalid {
+                detail: "invalid sig".to_string(),
+            },
+            ChainError::DuplicateTarget {
+                target_id: EngineObjectId([42; 32]),
+            },
+        ];
+        for err in &errors {
+            let json = serde_json::to_string(err).expect("serialize");
+            let restored: ChainError = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*err, restored);
+        }
+    }
+
+    #[test]
+    fn chain_error_display_remaining_variants() {
+        let s = ChainError::HashLinkMismatch {
+            event_seq: 3,
+            expected_prev: None,
+            actual_prev: Some(EngineObjectId([2; 32])),
+        }
+        .to_string();
+        assert!(s.contains("hash link mismatch"));
+        assert!(s.contains("3"));
+
+        let s = ChainError::SequenceDiscontinuity {
+            expected_seq: 5,
+            actual_seq: 8,
+        }
+        .to_string();
+        assert!(s.contains("5"));
+        assert!(s.contains("8"));
+
+        let s = ChainError::InvalidGenesis {
+            detail: "oops".to_string(),
+        }
+        .to_string();
+        assert!(s.contains("oops"));
+
+        let s = ChainError::ChainIntegrity {
+            detail: "corrupt".to_string(),
+        }
+        .to_string();
+        assert!(s.contains("corrupt"));
+
+        let s = ChainError::SignatureInvalid {
+            detail: "bad".to_string(),
+        }
+        .to_string();
+        assert!(s.contains("bad"));
+
+        let s = ChainError::DuplicateTarget {
+            target_id: EngineObjectId([42; 32]),
+        }
+        .to_string();
+        assert!(s.contains("duplicate"));
+
+        let s = ChainError::MutationRejected { event_seq: 7 }.to_string();
+        assert!(s.contains("7"));
+
+        assert_eq!(ChainError::EmptyChain.to_string(), "chain is empty");
+    }
+
+    #[test]
+    fn revocation_event_serde_roundtrip() {
+        let rev = make_revocation(
+            RevocationTargetType::Token,
+            RevocationReason::Expired,
+            [44; 32],
+            &test_revocation_key(),
+        );
+        let event = RevocationEvent {
+            event_id: EngineObjectId([11; 32]),
+            revocation: rev,
+            prev_event: Some(EngineObjectId([10; 32])),
+            event_seq: 5,
+        };
+        let json = serde_json::to_string(&event).expect("serialize");
+        let restored: RevocationEvent = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(event, restored);
+    }
+
+    #[test]
+    fn revocation_head_serde_roundtrip() {
+        let head = RevocationHead {
+            head_id: EngineObjectId([20; 32]),
+            latest_event: EngineObjectId([19; 32]),
+            head_seq: 10,
+            chain_hash: ContentHash::compute(b"test-chain-hash"),
+            zone: TEST_ZONE.to_string(),
+            signature: Signature::from_bytes(SIGNATURE_SENTINEL),
+        };
+        let json = serde_json::to_string(&head).expect("serialize");
+        let restored: RevocationHead = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(head, restored);
+    }
+
+    #[test]
+    fn chain_event_type_serde_roundtrip() {
+        let variants: Vec<ChainEventType> = vec![
+            ChainEventType::RevocationAppended {
+                event_seq: 3,
+                target_id: EngineObjectId([1; 32]),
+                target_type: RevocationTargetType::Key,
+            },
+            ChainEventType::HeadAdvanced {
+                old_seq: 2,
+                new_seq: 3,
+            },
+            ChainEventType::ChainVerified { chain_length: 10 },
+            ChainEventType::RevocationLookup {
+                target_id: EngineObjectId([2; 32]),
+                is_revoked: true,
+            },
+            ChainEventType::AppendRejected {
+                reason: "dup".to_string(),
+            },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).expect("serialize");
+            let restored: ChainEventType = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*v, restored);
+        }
+    }
+
+    #[test]
+    fn chain_event_serde_roundtrip() {
+        let event = ChainEvent {
+            event_type: ChainEventType::HeadAdvanced {
+                old_seq: 0,
+                new_seq: 1,
+            },
+            zone: TEST_ZONE.to_string(),
+            trace_id: "t-serde".to_string(),
+        };
+        let json = serde_json::to_string(&event).expect("serialize");
+        let restored: ChainEvent = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(event, restored);
+    }
+
+    #[test]
+    fn revocation_event_content_hash_deterministic() {
+        let rev = make_revocation(
+            RevocationTargetType::Key,
+            RevocationReason::Compromised,
+            [77; 32],
+            &test_revocation_key(),
+        );
+        let event = RevocationEvent {
+            event_id: EngineObjectId([11; 32]),
+            revocation: rev,
+            prev_event: None,
+            event_seq: 0,
+        };
+        let h1 = event.content_hash();
+        let h2 = event.content_hash();
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn revocation_target_type_ordering() {
+        assert!(RevocationTargetType::Key < RevocationTargetType::Token);
+        assert!(RevocationTargetType::Token < RevocationTargetType::Attestation);
+    }
+
+    #[test]
+    fn revocation_reason_ordering() {
+        assert!(RevocationReason::Compromised < RevocationReason::Expired);
+        assert!(RevocationReason::Expired < RevocationReason::Superseded);
+    }
+
+    #[test]
+    fn head_advanced_event_emitted_on_second_append() {
+        let mut chain = RevocationChain::new(TEST_ZONE);
+        let sk = test_signing_key();
+
+        let rev1 = make_revocation(
+            RevocationTargetType::Key,
+            RevocationReason::Compromised,
+            [1; 32],
+            &test_revocation_key(),
+        );
+        chain.append(rev1, &sk, "t-h1").unwrap();
+        chain.drain_events();
+
+        let rev2 = make_revocation(
+            RevocationTargetType::Token,
+            RevocationReason::Expired,
+            [2; 32],
+            &test_revocation_key(),
+        );
+        chain.append(rev2, &sk, "t-h2").unwrap();
+
+        let events = chain.drain_events();
+        assert!(events.iter().any(|e| matches!(
+            &e.event_type,
+            ChainEventType::HeadAdvanced {
+                old_seq: 0,
+                new_seq: 1,
+            }
+        )));
+    }
 }

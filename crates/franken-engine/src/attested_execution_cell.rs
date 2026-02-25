@@ -1945,4 +1945,201 @@ mod tests {
         let restored: CellEvent = serde_json::from_str(&json).unwrap();
         assert_eq!(event, restored);
     }
+
+    // -- Enrichment: serde roundtrips --
+
+    #[test]
+    fn cell_lifecycle_serde_roundtrip() {
+        for lc in [
+            CellLifecycle::Provisioning,
+            CellLifecycle::Measured,
+            CellLifecycle::Attested,
+            CellLifecycle::Active,
+            CellLifecycle::Suspended,
+            CellLifecycle::Decommissioned,
+        ] {
+            let json = serde_json::to_string(&lc).unwrap();
+            let restored: CellLifecycle = serde_json::from_str(&json).unwrap();
+            assert_eq!(lc, restored);
+        }
+    }
+
+    #[test]
+    fn cell_function_serde_roundtrip() {
+        for cf in [
+            CellFunction::DecisionReceiptSigner,
+            CellFunction::EvidenceAccumulator,
+            CellFunction::PolicyEvaluator,
+            CellFunction::ProofValidator,
+            CellFunction::ExtensionRuntime,
+        ] {
+            let json = serde_json::to_string(&cf).unwrap();
+            let restored: CellFunction = serde_json::from_str(&json).unwrap();
+            assert_eq!(cf, restored);
+        }
+    }
+
+    #[test]
+    fn platform_kind_serde_roundtrip() {
+        for pk in [
+            PlatformKind::IntelSgx,
+            PlatformKind::ArmCca,
+            PlatformKind::AmdSevSnp,
+            PlatformKind::Software,
+        ] {
+            let json = serde_json::to_string(&pk).unwrap();
+            let restored: PlatformKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(pk, restored);
+        }
+    }
+
+    #[test]
+    fn trust_level_serde_roundtrip() {
+        for tl in [
+            TrustLevel::SoftwareOnly,
+            TrustLevel::Hybrid,
+            TrustLevel::Hardware,
+        ] {
+            let json = serde_json::to_string(&tl).unwrap();
+            let restored: TrustLevel = serde_json::from_str(&json).unwrap();
+            assert_eq!(tl, restored);
+        }
+    }
+
+    #[test]
+    fn lifecycle_receipt_serde_roundtrip() {
+        let receipt = LifecycleReceipt {
+            from_state: CellLifecycle::Provisioning,
+            to_state: CellLifecycle::Measured,
+            timestamp_ns: 1_000,
+            epoch: test_epoch(),
+            reason: "initial measurement".to_string(),
+            signature_bytes: vec![0u8; 64],
+        };
+        let json = serde_json::to_string(&receipt).unwrap();
+        let restored: LifecycleReceipt = serde_json::from_str(&json).unwrap();
+        assert_eq!(receipt, restored);
+    }
+
+    // -- Enrichment: ordering --
+
+    #[test]
+    fn cell_lifecycle_ordering() {
+        assert!(CellLifecycle::Provisioning < CellLifecycle::Measured);
+        assert!(CellLifecycle::Measured < CellLifecycle::Attested);
+        assert!(CellLifecycle::Attested < CellLifecycle::Active);
+        assert!(CellLifecycle::Active < CellLifecycle::Suspended);
+        assert!(CellLifecycle::Suspended < CellLifecycle::Decommissioned);
+    }
+
+    #[test]
+    fn cell_function_ordering() {
+        assert!(CellFunction::DecisionReceiptSigner < CellFunction::EvidenceAccumulator);
+        assert!(CellFunction::EvidenceAccumulator < CellFunction::PolicyEvaluator);
+        assert!(CellFunction::PolicyEvaluator < CellFunction::ProofValidator);
+        assert!(CellFunction::ProofValidator < CellFunction::ExtensionRuntime);
+    }
+
+    #[test]
+    fn platform_kind_ordering() {
+        assert!(PlatformKind::IntelSgx < PlatformKind::ArmCca);
+        assert!(PlatformKind::ArmCca < PlatformKind::AmdSevSnp);
+        assert!(PlatformKind::AmdSevSnp < PlatformKind::Software);
+    }
+
+    // -- Enrichment: error trait --
+
+    #[test]
+    fn cell_error_is_std_error() {
+        let errors: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(CellError::NotMeasured),
+            Box::new(CellError::EmptyLabel),
+            Box::new(CellError::EmptyZone),
+            Box::new(CellError::EmptyAuthority),
+            Box::new(CellError::NotFound {
+                cell_id: "c".to_string(),
+            }),
+        ];
+        for e in &errors {
+            assert!(!e.to_string().is_empty());
+        }
+    }
+
+    // -- Enrichment: cell event type serde --
+
+    #[test]
+    fn cell_event_type_serde_roundtrip() {
+        let event_types = vec![
+            CellEventType::Created,
+            CellEventType::Measured,
+            CellEventType::Attested,
+            CellEventType::Activated,
+            CellEventType::Suspended {
+                reason: "revoked".to_string(),
+            },
+            CellEventType::Decommissioned {
+                reason: "end of life".to_string(),
+            },
+            CellEventType::FallbackActivated {
+                reason: "trust root expired".to_string(),
+            },
+            CellEventType::ReattestationSucceeded,
+        ];
+        for et in &event_types {
+            let json = serde_json::to_string(et).unwrap();
+            let restored: CellEventType = serde_json::from_str(&json).unwrap();
+            assert_eq!(*et, restored);
+        }
+    }
+
+    #[test]
+    fn cell_lifecycle_ord() {
+        assert!(CellLifecycle::Provisioning < CellLifecycle::Measured);
+        assert!(CellLifecycle::Measured < CellLifecycle::Attested);
+        assert!(CellLifecycle::Attested < CellLifecycle::Active);
+        assert!(CellLifecycle::Active < CellLifecycle::Suspended);
+        assert!(CellLifecycle::Suspended < CellLifecycle::Decommissioned);
+    }
+
+    #[test]
+    fn trust_level_ord() {
+        assert!(TrustLevel::SoftwareOnly < TrustLevel::HardwareEnclave);
+    }
+
+    #[test]
+    fn platform_kind_ord() {
+        assert!(PlatformKind::IntelSgxTdx < PlatformKind::ArmTrustZone);
+        assert!(PlatformKind::ArmTrustZone < PlatformKind::SoftwareOnly);
+    }
+
+    #[test]
+    fn cell_function_ord() {
+        assert!(CellFunction::ReceiptSigning < CellFunction::SecureComputation);
+        assert!(CellFunction::SecureComputation < CellFunction::AttestationVerification);
+    }
+
+    #[test]
+    fn cell_error_std_error() {
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(CellError::IdDerivation("bad".into())),
+            Box::new(CellError::NotFound { cell_id: "c1".into() }),
+            Box::new(CellError::Duplicate { cell_id: "c2".into() }),
+            Box::new(CellError::InvalidTransition {
+                from: CellLifecycle::Provisioning,
+                to: CellLifecycle::Active,
+            }),
+            Box::new(CellError::NotOperational { lifecycle: CellLifecycle::Suspended }),
+            Box::new(CellError::AttestationFailed { reason: "expired".into() }),
+            Box::new(CellError::NotMeasured),
+            Box::new(CellError::TrustRootRevoked { key_id: "k1".into() }),
+            Box::new(CellError::EmptyLabel),
+            Box::new(CellError::EmptyZone),
+            Box::new(CellError::EmptyAuthority),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            displays.insert(format!("{v}"));
+        }
+        assert_eq!(displays.len(), 11);
+    }
 }

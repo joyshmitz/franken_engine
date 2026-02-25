@@ -1119,4 +1119,489 @@ mod tests {
                 && finding.split == Some(BenchmarkSplit::FullIntegration)
         }));
     }
+
+    // ── BenchmarkSplit ───────────────────────────────────────────────
+
+    #[test]
+    fn benchmark_split_as_str_all() {
+        assert_eq!(BenchmarkSplit::Baseline.as_str(), "baseline");
+        assert_eq!(BenchmarkSplit::CxThreading.as_str(), "cx_threading");
+        assert_eq!(BenchmarkSplit::DecisionContracts.as_str(), "decision_contracts");
+        assert_eq!(BenchmarkSplit::EvidenceEmission.as_str(), "evidence_emission");
+        assert_eq!(BenchmarkSplit::FullIntegration.as_str(), "full_integration");
+    }
+
+    #[test]
+    fn benchmark_split_display() {
+        assert_eq!(BenchmarkSplit::FullIntegration.to_string(), "full_integration");
+    }
+
+    #[test]
+    fn benchmark_split_ordering() {
+        assert!(BenchmarkSplit::Baseline < BenchmarkSplit::FullIntegration);
+    }
+
+    #[test]
+    fn benchmark_split_serde_roundtrip() {
+        for split in [
+            BenchmarkSplit::Baseline,
+            BenchmarkSplit::CxThreading,
+            BenchmarkSplit::DecisionContracts,
+            BenchmarkSplit::EvidenceEmission,
+            BenchmarkSplit::FullIntegration,
+        ] {
+            let json = serde_json::to_string(&split).unwrap();
+            let back: BenchmarkSplit = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, split);
+        }
+    }
+
+    // ── BenchmarkSplitFailureCode ────────────────────────────────────
+
+    #[test]
+    fn failure_code_display_all() {
+        assert_eq!(BenchmarkSplitFailureCode::MissingSplitMetrics.to_string(), "missing_split_metrics");
+        assert_eq!(BenchmarkSplitFailureCode::InsufficientBaselineRuns.to_string(), "insufficient_baseline_runs");
+        assert_eq!(BenchmarkSplitFailureCode::BaselineVarianceExceeded.to_string(), "baseline_variance_exceeded");
+        assert_eq!(BenchmarkSplitFailureCode::InvalidMetric.to_string(), "invalid_metric");
+        assert_eq!(BenchmarkSplitFailureCode::ThroughputRegressionExceeded.to_string(), "throughput_regression_exceeded");
+        assert_eq!(BenchmarkSplitFailureCode::LatencyRegressionExceeded.to_string(), "latency_regression_exceeded");
+        assert_eq!(BenchmarkSplitFailureCode::MemoryOverheadExceeded.to_string(), "memory_overhead_exceeded");
+        assert_eq!(BenchmarkSplitFailureCode::PreviousRunRegressionExceeded.to_string(), "previous_run_regression_exceeded");
+    }
+
+    #[test]
+    fn failure_code_ordering() {
+        assert!(BenchmarkSplitFailureCode::MissingSplitMetrics < BenchmarkSplitFailureCode::PreviousRunRegressionExceeded);
+    }
+
+    #[test]
+    fn failure_code_serde_roundtrip() {
+        for code in [
+            BenchmarkSplitFailureCode::MissingSplitMetrics,
+            BenchmarkSplitFailureCode::InsufficientBaselineRuns,
+            BenchmarkSplitFailureCode::BaselineVarianceExceeded,
+            BenchmarkSplitFailureCode::InvalidMetric,
+            BenchmarkSplitFailureCode::ThroughputRegressionExceeded,
+            BenchmarkSplitFailureCode::LatencyRegressionExceeded,
+            BenchmarkSplitFailureCode::MemoryOverheadExceeded,
+            BenchmarkSplitFailureCode::PreviousRunRegressionExceeded,
+        ] {
+            let json = serde_json::to_string(&code).unwrap();
+            let back: BenchmarkSplitFailureCode = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, code);
+        }
+    }
+
+    // ── Thresholds ───────────────────────────────────────────────────
+
+    #[test]
+    fn thresholds_default_has_all_splits() {
+        let t = BenchmarkSplitThresholds::default();
+        assert_eq!(t.max_peak_rss_delta_bytes.len(), 5);
+        assert_eq!(t.max_previous_run_throughput_regression_millionths.len(), 5);
+        assert_eq!(t.min_baseline_runs, 10);
+    }
+
+    #[test]
+    fn thresholds_serde_roundtrip() {
+        let t = BenchmarkSplitThresholds::default();
+        let json = serde_json::to_string(&t).unwrap();
+        let back: BenchmarkSplitThresholds = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.min_baseline_runs, t.min_baseline_runs);
+        assert_eq!(back.max_baseline_cv_millionths, t.max_baseline_cv_millionths);
+    }
+
+    // ── InsufficientBaselineRuns ──────────────────────────────────────
+
+    #[test]
+    fn gate_fails_when_insufficient_baseline_runs() {
+        let mut candidate = candidate_snapshot();
+        candidate.baseline_throughput_runs_ops_per_sec = vec![1_000_000; 3]; // < 10
+        let d = evaluate_control_plane_benchmark_split(
+            &input(previous_snapshot(), candidate),
+            &BenchmarkSplitThresholds::default(),
+        );
+        assert!(!d.pass);
+        assert!(d.findings.iter().any(|f| {
+            f.code == BenchmarkSplitFailureCode::InsufficientBaselineRuns
+        }));
+    }
+
+    // ── InvalidMetric (zero throughput) ──────────────────────────────
+
+    #[test]
+    fn gate_finds_zero_throughput_invalid() {
+        let mut candidate = candidate_snapshot();
+        candidate
+            .split_metrics
+            .get_mut(&BenchmarkSplit::Baseline)
+            .unwrap()
+            .throughput_ops_per_sec = 0;
+        let d = evaluate_control_plane_benchmark_split(
+            &input(previous_snapshot(), candidate),
+            &BenchmarkSplitThresholds::default(),
+        );
+        assert!(d.findings.iter().any(|f| {
+            f.code == BenchmarkSplitFailureCode::InvalidMetric
+                && f.split == Some(BenchmarkSplit::Baseline)
+        }));
+    }
+
+    // ── InvalidMetric (all-zero baseline runs) ───────────────────────
+
+    #[test]
+    fn gate_finds_invalid_baseline_cv() {
+        let mut candidate = candidate_snapshot();
+        candidate.baseline_throughput_runs_ops_per_sec = vec![0; 10];
+        let d = evaluate_control_plane_benchmark_split(
+            &input(previous_snapshot(), candidate),
+            &BenchmarkSplitThresholds::default(),
+        );
+        assert!(d.findings.iter().any(|f| {
+            f.code == BenchmarkSplitFailureCode::InvalidMetric
+                && f.metric.as_deref() == Some("baseline_cv")
+        }));
+    }
+
+    // ── CxThreading throughput regression ─────────────────────────────
+
+    #[test]
+    fn gate_detects_cx_threading_throughput_regression() {
+        let mut candidate = candidate_snapshot();
+        // Drop cx throughput significantly below baseline
+        candidate
+            .split_metrics
+            .get_mut(&BenchmarkSplit::CxThreading)
+            .unwrap()
+            .throughput_ops_per_sec = 800_000; // big drop from 1M baseline
+        let d = evaluate_control_plane_benchmark_split(
+            &input(previous_snapshot(), candidate),
+            &BenchmarkSplitThresholds::default(),
+        );
+        assert!(d.findings.iter().any(|f| {
+            f.code == BenchmarkSplitFailureCode::ThroughputRegressionExceeded
+                && f.split == Some(BenchmarkSplit::CxThreading)
+        }));
+    }
+
+    // ── Evidence throughput regression ────────────────────────────────
+
+    #[test]
+    fn gate_detects_evidence_throughput_regression() {
+        let mut candidate = candidate_snapshot();
+        // Drop evidence throughput well below decision contracts
+        candidate
+            .split_metrics
+            .get_mut(&BenchmarkSplit::EvidenceEmission)
+            .unwrap()
+            .throughput_ops_per_sec = 700_000;
+        let d = evaluate_control_plane_benchmark_split(
+            &input(previous_snapshot(), candidate),
+            &BenchmarkSplitThresholds::default(),
+        );
+        assert!(d.findings.iter().any(|f| {
+            f.code == BenchmarkSplitFailureCode::ThroughputRegressionExceeded
+                && f.split == Some(BenchmarkSplit::EvidenceEmission)
+        }));
+    }
+
+    // ── Full integration throughput regression ────────────────────────
+
+    #[test]
+    fn gate_detects_full_integration_throughput_regression() {
+        let mut candidate = candidate_snapshot();
+        candidate
+            .split_metrics
+            .get_mut(&BenchmarkSplit::FullIntegration)
+            .unwrap()
+            .throughput_ops_per_sec = 800_000;
+        let d = evaluate_control_plane_benchmark_split(
+            &input(previous_snapshot(), candidate),
+            &BenchmarkSplitThresholds::default(),
+        );
+        assert!(d.findings.iter().any(|f| {
+            f.code == BenchmarkSplitFailureCode::ThroughputRegressionExceeded
+                && f.split == Some(BenchmarkSplit::FullIntegration)
+        }));
+    }
+
+    // ── Memory overhead exceeded ─────────────────────────────────────
+
+    #[test]
+    fn gate_detects_memory_overhead_exceeded() {
+        let mut candidate = candidate_snapshot();
+        candidate
+            .split_metrics
+            .get_mut(&BenchmarkSplit::CxThreading)
+            .unwrap()
+            .peak_rss_delta_bytes = 100 * 1024 * 1024; // 100MB, limit is 16MB
+        let d = evaluate_control_plane_benchmark_split(
+            &input(previous_snapshot(), candidate),
+            &BenchmarkSplitThresholds::default(),
+        );
+        assert!(d.findings.iter().any(|f| {
+            f.code == BenchmarkSplitFailureCode::MemoryOverheadExceeded
+                && f.split == Some(BenchmarkSplit::CxThreading)
+        }));
+    }
+
+    // ── Previous run regression ──────────────────────────────────────
+
+    #[test]
+    fn gate_detects_previous_run_throughput_regression() {
+        let mut candidate = candidate_snapshot();
+        // Baseline throughput drops significantly vs previous
+        candidate
+            .split_metrics
+            .get_mut(&BenchmarkSplit::Baseline)
+            .unwrap()
+            .throughput_ops_per_sec = 800_000; // 20% drop
+        let d = evaluate_control_plane_benchmark_split(
+            &input(previous_snapshot(), candidate),
+            &BenchmarkSplitThresholds::default(),
+        );
+        assert!(d.findings.iter().any(|f| {
+            f.code == BenchmarkSplitFailureCode::PreviousRunRegressionExceeded
+                && f.metric.as_deref() == Some("throughput_ops_per_sec")
+        }));
+    }
+
+    #[test]
+    fn gate_detects_previous_run_latency_regression() {
+        let mut candidate = candidate_snapshot();
+        // Latency balloons vs previous
+        candidate
+            .split_metrics
+            .get_mut(&BenchmarkSplit::Baseline)
+            .unwrap()
+            .latency_ns
+            .p95_ns = 2_000_000; // 100% increase
+        let d = evaluate_control_plane_benchmark_split(
+            &input(previous_snapshot(), candidate),
+            &BenchmarkSplitThresholds::default(),
+        );
+        assert!(d.findings.iter().any(|f| {
+            f.code == BenchmarkSplitFailureCode::PreviousRunRegressionExceeded
+                && f.metric.as_deref() == Some("latency_ns.p95_p99")
+        }));
+    }
+
+    // ── Helper functions ─────────────────────────────────────────────
+
+    #[test]
+    fn throughput_regression_no_drop() {
+        assert_eq!(throughput_regression_millionths(1000, 1000), 0);
+        assert_eq!(throughput_regression_millionths(1000, 1500), 0);
+    }
+
+    #[test]
+    fn throughput_regression_50_percent() {
+        assert_eq!(throughput_regression_millionths(1000, 500), 500_000);
+    }
+
+    #[test]
+    fn throughput_regression_zero_reference() {
+        assert_eq!(throughput_regression_millionths(0, 100), u64::MAX);
+    }
+
+    #[test]
+    fn latency_regression_no_increase() {
+        assert_eq!(latency_regression_millionths(1000, 1000), 0);
+        assert_eq!(latency_regression_millionths(1000, 500), 0);
+    }
+
+    #[test]
+    fn latency_regression_50_percent() {
+        assert_eq!(latency_regression_millionths(1000, 1500), 500_000);
+    }
+
+    #[test]
+    fn latency_regression_zero_reference() {
+        assert_eq!(latency_regression_millionths(0, 100), u64::MAX);
+    }
+
+    #[test]
+    fn coefficient_of_variation_empty() {
+        assert_eq!(coefficient_of_variation_millionths(&[]), None);
+    }
+
+    #[test]
+    fn coefficient_of_variation_all_zero() {
+        assert_eq!(coefficient_of_variation_millionths(&[0, 0, 0]), None);
+    }
+
+    #[test]
+    fn coefficient_of_variation_identical() {
+        assert_eq!(coefficient_of_variation_millionths(&[100, 100, 100]), Some(0));
+    }
+
+    #[test]
+    fn coefficient_of_variation_normal() {
+        let cv = coefficient_of_variation_millionths(&[100, 110, 90, 105, 95]).unwrap();
+        assert!(cv > 0);
+        assert!(cv < 100_000); // should be around 7%
+    }
+
+    // ── Snapshot hash ────────────────────────────────────────────────
+
+    #[test]
+    fn snapshot_hash_deterministic() {
+        let s = candidate_snapshot();
+        assert_eq!(s.snapshot_hash(), s.snapshot_hash());
+    }
+
+    #[test]
+    fn snapshot_hash_changes_with_data() {
+        assert_ne!(previous_snapshot().snapshot_hash(), candidate_snapshot().snapshot_hash());
+    }
+
+    // ── Decision ID ──────────────────────────────────────────────────
+
+    #[test]
+    fn decision_id_prefix() {
+        let d = evaluate_control_plane_benchmark_split(
+            &input(previous_snapshot(), candidate_snapshot()),
+            &BenchmarkSplitThresholds::default(),
+        );
+        assert!(d.decision_id.starts_with("cp-bench-split-"));
+    }
+
+    #[test]
+    fn decision_id_changes_with_trace() {
+        let mut inp = input(previous_snapshot(), candidate_snapshot());
+        let d1 = evaluate_control_plane_benchmark_split(&inp, &BenchmarkSplitThresholds::default());
+        inp.trace_id = "different-trace".into();
+        let d2 = evaluate_control_plane_benchmark_split(&inp, &BenchmarkSplitThresholds::default());
+        assert_ne!(d1.decision_id, d2.decision_id);
+    }
+
+    // ── pass/rollback symmetry ───────────────────────────────────────
+
+    #[test]
+    fn pass_and_rollback_inverse() {
+        let d = evaluate_control_plane_benchmark_split(
+            &input(previous_snapshot(), candidate_snapshot()),
+            &BenchmarkSplitThresholds::default(),
+        );
+        assert_eq!(d.pass, !d.rollback_required);
+    }
+
+    // ── Logs ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn logs_carry_trace_and_policy() {
+        let d = evaluate_control_plane_benchmark_split(
+            &input(previous_snapshot(), candidate_snapshot()),
+            &BenchmarkSplitThresholds::default(),
+        );
+        for log in &d.logs {
+            assert_eq!(log.trace_id, "trace-cp-bench");
+            assert_eq!(log.policy_id, "policy-cp-bench");
+            assert_eq!(log.component, "control_plane_benchmark_split_gate");
+        }
+    }
+
+    #[test]
+    fn logs_final_event_passes_for_good_input() {
+        let d = evaluate_control_plane_benchmark_split(
+            &input(previous_snapshot(), candidate_snapshot()),
+            &BenchmarkSplitThresholds::default(),
+        );
+        let last = d.logs.last().unwrap();
+        assert_eq!(last.event, "benchmark_split_decision");
+        assert_eq!(last.outcome, "pass");
+        assert!(last.error_code.is_none());
+    }
+
+    #[test]
+    fn logs_baseline_stability_check_present() {
+        let d = evaluate_control_plane_benchmark_split(
+            &input(previous_snapshot(), candidate_snapshot()),
+            &BenchmarkSplitThresholds::default(),
+        );
+        assert!(d.logs.iter().any(|l| l.event == "baseline_stability_check"));
+    }
+
+    // ── Serde roundtrips ─────────────────────────────────────────────
+
+    #[test]
+    fn decision_serde_roundtrip() {
+        let d = evaluate_control_plane_benchmark_split(
+            &input(previous_snapshot(), candidate_snapshot()),
+            &BenchmarkSplitThresholds::default(),
+        );
+        let json = serde_json::to_string(&d).unwrap();
+        let back: BenchmarkSplitGateDecision = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.decision_id, d.decision_id);
+        assert_eq!(back.pass, d.pass);
+        assert_eq!(back.evaluations, d.evaluations);
+    }
+
+    #[test]
+    fn finding_serde_roundtrip() {
+        let f = BenchmarkSplitFinding {
+            code: BenchmarkSplitFailureCode::MemoryOverheadExceeded,
+            split: Some(BenchmarkSplit::CxThreading),
+            metric: Some("peak_rss_delta_bytes".into()),
+            detail: "test".into(),
+            observed_millionths: Some(100),
+            threshold_millionths: Some(50),
+        };
+        let json = serde_json::to_string(&f).unwrap();
+        let back: BenchmarkSplitFinding = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, f);
+    }
+
+    #[test]
+    fn log_event_serde_roundtrip() {
+        let d = evaluate_control_plane_benchmark_split(
+            &input(previous_snapshot(), candidate_snapshot()),
+            &BenchmarkSplitThresholds::default(),
+        );
+        for log in &d.logs {
+            let json = serde_json::to_string(log).unwrap();
+            let back: BenchmarkSplitLogEvent = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, log);
+        }
+    }
+
+    #[test]
+    fn evaluation_serde_roundtrip() {
+        let d = evaluate_control_plane_benchmark_split(
+            &input(previous_snapshot(), candidate_snapshot()),
+            &BenchmarkSplitThresholds::default(),
+        );
+        for eval in &d.evaluations {
+            let json = serde_json::to_string(eval).unwrap();
+            let back: SplitBenchmarkEvaluation = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, eval);
+        }
+    }
+
+    #[test]
+    fn split_metrics_serde_roundtrip() {
+        let m = metrics(1_000_000, 500_000, 800_000, 900_000, 1024);
+        let json = serde_json::to_string(&m).unwrap();
+        let back: SplitBenchmarkMetrics = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, m);
+    }
+
+    // ── Previous snapshot missing split ──────────────────────────────
+
+    #[test]
+    fn gate_fails_when_previous_missing_split() {
+        let mut previous = previous_snapshot();
+        previous.split_metrics.remove(&BenchmarkSplit::CxThreading);
+        let d = evaluate_control_plane_benchmark_split(
+            &input(previous, candidate_snapshot()),
+            &BenchmarkSplitThresholds::default(),
+        );
+        assert!(!d.pass);
+        assert!(d.findings.iter().any(|f| {
+            f.code == BenchmarkSplitFailureCode::MissingSplitMetrics
+                && f.split == Some(BenchmarkSplit::CxThreading)
+                && f.detail.contains("previous")
+        }));
+    }
 }

@@ -832,4 +832,209 @@ mod tests {
         let restored: AuditConfig = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(config, restored);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: Display covers RawPointerExternalState
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn category_display_raw_pointer() {
+        assert_eq!(
+            ForbiddenCallCategory::RawPointerExternalState.to_string(),
+            "raw_pointer_external_state"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: serde roundtrips for remaining types
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn forbidden_pattern_serde_roundtrip() {
+        let pattern = ForbiddenPattern {
+            pattern_id: "test_p".to_string(),
+            category: ForbiddenCallCategory::Network,
+            pattern: "test_pattern".to_string(),
+            reason: "test reason".to_string(),
+            suggested_alternative: "use safe api".to_string(),
+        };
+        let json = serde_json::to_string(&pattern).unwrap();
+        let restored: ForbiddenPattern = serde_json::from_str(&json).unwrap();
+        assert_eq!(pattern, restored);
+    }
+
+    #[test]
+    fn exemption_registry_serde_roundtrip() {
+        let mut reg = ExemptionRegistry::new();
+        reg.add(Exemption {
+            exemption_id: "e1".to_string(),
+            module_path: "m".to_string(),
+            pattern_id: "p".to_string(),
+            reason: "ok".to_string(),
+            witness: "w".to_string(),
+            line: 0,
+        });
+        let json = serde_json::to_string(&reg).unwrap();
+        let restored: ExemptionRegistry = serde_json::from_str(&json).unwrap();
+        assert_eq!(reg, restored);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: ExemptionRegistry
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn exemption_registry_default_is_empty() {
+        let reg = ExemptionRegistry::default();
+        assert!(reg.is_empty());
+        assert_eq!(reg.len(), 0);
+    }
+
+    #[test]
+    fn exemption_registry_exemptions_accessor() {
+        let mut reg = ExemptionRegistry::new();
+        reg.add(Exemption {
+            exemption_id: "e1".to_string(),
+            module_path: "m".to_string(),
+            pattern_id: "p".to_string(),
+            reason: "ok".to_string(),
+            witness: "w".to_string(),
+            line: 5,
+        });
+        assert_eq!(reg.exemptions().len(), 1);
+        assert_eq!(reg.exemptions()[0].exemption_id, "e1");
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: AuditConfig
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn standard_config_has_twelve_patterns() {
+        let config = AuditConfig::standard();
+        assert_eq!(config.patterns.len(), 12);
+        assert!(config.audited_modules.is_empty());
+    }
+
+    #[test]
+    fn audit_module_adds_to_scope() {
+        let mut config = AuditConfig::standard();
+        config.audit_module("engine::core");
+        config.audit_module("engine::gc");
+        assert_eq!(config.audited_modules.len(), 2);
+        assert!(config.audited_modules.contains("engine::core"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: additional detection patterns
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn detects_udp_socket() {
+        let auditor = standard_auditor();
+        let source = "let socket = UdpSocket::bind(\"0.0.0.0:0\");";
+        let findings = auditor.audit_source("m", "f.rs", source);
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.category == ForbiddenCallCategory::Network)
+        );
+    }
+
+    #[test]
+    fn detects_std_net() {
+        let auditor = standard_auditor();
+        let source = "use std::net::TcpListener;";
+        let findings = auditor.audit_source("m", "f.rs", source);
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.pattern_id == "std_net")
+        );
+    }
+
+    #[test]
+    fn detects_std_process() {
+        let auditor = standard_auditor();
+        let source = "use std::process::exit;";
+        let findings = auditor.audit_source("m", "f.rs", source);
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.pattern_id == "std_process")
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: multiple findings on same line
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn multiple_patterns_on_same_line() {
+        let auditor = standard_auditor();
+        // Both std::fs:: and fs::read patterns match here.
+        let source = "let _ = std::fs::read(\"x\");";
+        let findings = auditor.audit_source("m", "f.rs", source);
+        assert!(findings.len() >= 2); // std_fs and fs_read both match
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: audit_all edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn audit_all_empty_sources_passes() {
+        let auditor = standard_auditor();
+        let sources = BTreeMap::new();
+        let result = auditor.audit_all(&sources);
+        assert!(result.passed);
+        assert_eq!(result.violation_count, 0);
+        assert!(result.modules_audited.is_empty());
+    }
+
+    #[test]
+    fn audit_all_counts_exemptions() {
+        let mut exemptions = ExemptionRegistry::new();
+        exemptions.add(Exemption {
+            exemption_id: "e1".to_string(),
+            module_path: "m".to_string(),
+            pattern_id: "std_fs".to_string(),
+            reason: "ok".to_string(),
+            witness: "w".to_string(),
+            line: 0,
+        });
+        exemptions.add(Exemption {
+            exemption_id: "e2".to_string(),
+            module_path: "m".to_string(),
+            pattern_id: "fs_read".to_string(),
+            reason: "ok".to_string(),
+            witness: "w".to_string(),
+            line: 0,
+        });
+
+        let auditor = SourceAuditor::new(AuditConfig::standard(), exemptions);
+        let mut sources = BTreeMap::new();
+        sources.insert(
+            ("m".to_string(), "f.rs".to_string()),
+            "let _ = std::fs::read(\"x\");".to_string(),
+        );
+
+        let result = auditor.audit_all(&sources);
+        assert!(result.passed);
+        assert_eq!(result.violation_count, 0);
+        assert!(result.exemption_count >= 2);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: SourceAuditor accessors
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn auditor_accessors() {
+        let config = AuditConfig::standard();
+        let exemptions = ExemptionRegistry::new();
+        let auditor = SourceAuditor::new(config.clone(), exemptions);
+        assert_eq!(*auditor.config(), config);
+        assert!(auditor.exemptions().is_empty());
+    }
 }

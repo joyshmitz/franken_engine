@@ -2063,4 +2063,451 @@ mod tests {
         assert_eq!(pass.event.outcome, "pass");
         assert_eq!(pass.event.error_code, None);
     }
+
+    // -- ForkError Display for all variants --
+
+    #[test]
+    fn fork_error_display_all_variants() {
+        let cases: Vec<(ForkError, &str)> = vec![
+            (
+                ForkError::SafeModeActive {
+                    incident_seq: 3,
+                    reason: "compromise".to_string(),
+                },
+                "compromise",
+            ),
+            (
+                ForkError::AcknowledgmentRequired { incident_count: 2 },
+                "2 fork incident",
+            ),
+            (
+                ForkError::InvalidResolution {
+                    fork_seq: 5,
+                    resolution_seq: 3,
+                },
+                "does not advance",
+            ),
+            (
+                ForkError::PersistenceFailed {
+                    detail: "disk full".to_string(),
+                },
+                "disk full",
+            ),
+        ];
+        for (err, substring) in cases {
+            assert!(
+                err.to_string().contains(substring),
+                "'{}' should contain '{}'",
+                err, substring
+            );
+        }
+    }
+
+    // -- ForkError::InvalidResolution serde --
+
+    #[test]
+    fn fork_error_invalid_resolution_serde() {
+        let err = ForkError::InvalidResolution {
+            fork_seq: 10,
+            resolution_seq: 5,
+        };
+        let json = serde_json::to_string(&err).unwrap();
+        let restored: ForkError = serde_json::from_str(&json).unwrap();
+        assert_eq!(err, restored);
+    }
+
+    // -- ForkEventType Display for all variants --
+
+    #[test]
+    fn fork_event_type_display_all_variants() {
+        let cases = vec![
+            (
+                ForkEventType::SafeModeEntered {
+                    zone: "z".to_string(),
+                    trigger_seq: 5,
+                },
+                "safe_mode_entered",
+            ),
+            (
+                ForkEventType::SafeModeExited {
+                    zone: "z".to_string(),
+                    acknowledged_incidents: 2,
+                },
+                "safe_mode_exited",
+            ),
+            (
+                ForkEventType::CheckpointRecorded {
+                    zone: "z".to_string(),
+                    checkpoint_seq: 7,
+                },
+                "checkpoint_recorded",
+            ),
+            (
+                ForkEventType::OperationDenied {
+                    zone: "z".to_string(),
+                    operation: "grant".to_string(),
+                },
+                "operation_denied",
+            ),
+            (
+                ForkEventType::HistoryTrimmed {
+                    zone: "z".to_string(),
+                    removed_count: 3,
+                },
+                "history_trimmed",
+            ),
+        ];
+        for (et, substring) in cases {
+            assert!(
+                et.to_string().contains(substring),
+                "'{}' should contain '{}'",
+                et, substring
+            );
+        }
+    }
+
+    // -- SafeModeStartupSource Display --
+
+    #[test]
+    fn safe_mode_startup_source_display() {
+        assert_eq!(
+            SafeModeStartupSource::NotRequested.to_string(),
+            "not-requested"
+        );
+        assert_eq!(SafeModeStartupSource::CliFlag.to_string(), "cli-flag");
+        assert_eq!(
+            SafeModeStartupSource::EnvironmentVariable.to_string(),
+            "environment-variable"
+        );
+    }
+
+    // -- SafeModeStartupError Display --
+
+    #[test]
+    fn safe_mode_startup_error_display() {
+        let err = SafeModeStartupError::MissingField {
+            field: "trace_id".to_string(),
+        };
+        assert!(err.to_string().contains("trace_id"));
+    }
+
+    // -- SafeModeState default --
+
+    #[test]
+    fn safe_mode_state_default() {
+        let state = SafeModeState::default();
+        assert!(!state.active);
+        assert_eq!(state.trigger_seq, None);
+        assert_eq!(state.unacknowledged_count, 0);
+    }
+
+    // -- SAFE_MODE_ENV_FLAGS --
+
+    #[test]
+    fn safe_mode_env_flags_constant() {
+        assert_eq!(SAFE_MODE_ENV_FLAGS.len(), 2);
+        assert_eq!(SAFE_MODE_ENV_FLAGS[0], "FRANKEN_SAFE_MODE");
+        assert_eq!(SAFE_MODE_ENV_FLAGS[1], "FRANKENENGINE_SAFE_MODE");
+    }
+
+    // -- Normal startup (no flags) --
+
+    #[test]
+    fn startup_normal_mode_without_flags() {
+        let input = SafeModeStartupInput {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            cli_safe_mode: false,
+            environment: BTreeMap::new(),
+        };
+        let artifact = evaluate_safe_mode_startup(&input).unwrap();
+        assert!(!artifact.safe_mode_active);
+        assert_eq!(artifact.source, SafeModeStartupSource::NotRequested);
+        assert!(!artifact.restrictions.all_extensions_sandboxed);
+        assert!(!artifact.restrictions.auto_promotion_disabled);
+        assert!(artifact.restricted_features.is_empty());
+    }
+
+    // -- Validation errors --
+
+    #[test]
+    fn startup_rejects_empty_trace_id() {
+        let input = SafeModeStartupInput {
+            trace_id: String::new(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            cli_safe_mode: false,
+            environment: BTreeMap::new(),
+        };
+        let err = evaluate_safe_mode_startup(&input).unwrap_err();
+        assert!(matches!(
+            err,
+            SafeModeStartupError::MissingField { ref field } if field == "trace_id"
+        ));
+    }
+
+    #[test]
+    fn startup_rejects_empty_decision_id() {
+        let input = SafeModeStartupInput {
+            trace_id: "t".to_string(),
+            decision_id: "  ".to_string(),
+            policy_id: "p".to_string(),
+            cli_safe_mode: false,
+            environment: BTreeMap::new(),
+        };
+        let err = evaluate_safe_mode_startup(&input).unwrap_err();
+        assert!(matches!(
+            err,
+            SafeModeStartupError::MissingField { ref field } if field == "decision_id"
+        ));
+    }
+
+    #[test]
+    fn exit_check_rejects_empty_policy_id() {
+        let input = SafeModeExitCheckInput {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: String::new(),
+            active_incidents: 0,
+            pending_quarantines: 0,
+            evidence_ledger_flushed: true,
+        };
+        let err = evaluate_safe_mode_exit(&input).unwrap_err();
+        assert!(matches!(
+            err,
+            SafeModeStartupError::MissingField { ref field } if field == "policy_id"
+        ));
+    }
+
+    // -- Env value parsing edge cases --
+
+    #[test]
+    fn env_value_parsing_accepts_various_truthy_values() {
+        for val in ["1", "true", "True", "TRUE", "yes", "YES", "on", "ON", " 1 "] {
+            let mut env = BTreeMap::new();
+            env.insert("FRANKEN_SAFE_MODE".to_string(), val.to_string());
+            let input = SafeModeStartupInput {
+                trace_id: "t".to_string(),
+                decision_id: "d".to_string(),
+                policy_id: "p".to_string(),
+                cli_safe_mode: false,
+                environment: env,
+            };
+            let artifact = evaluate_safe_mode_startup(&input).unwrap();
+            assert!(
+                artifact.safe_mode_active,
+                "env value '{val}' should activate safe mode"
+            );
+        }
+    }
+
+    #[test]
+    fn env_value_parsing_rejects_falsy_values() {
+        for val in ["0", "false", "no", "off", ""] {
+            let mut env = BTreeMap::new();
+            env.insert("FRANKEN_SAFE_MODE".to_string(), val.to_string());
+            let input = SafeModeStartupInput {
+                trace_id: "t".to_string(),
+                decision_id: "d".to_string(),
+                policy_id: "p".to_string(),
+                cli_safe_mode: false,
+                environment: env,
+            };
+            let artifact = evaluate_safe_mode_startup(&input).unwrap();
+            assert!(
+                !artifact.safe_mode_active,
+                "env value '{val}' should NOT activate safe mode"
+            );
+        }
+    }
+
+    // -- is_safe_mode for unknown zone --
+
+    #[test]
+    fn is_safe_mode_returns_false_for_unknown_zone() {
+        let detector = ForkDetector::with_defaults();
+        assert!(!detector.is_safe_mode("nonexistent"));
+    }
+
+    // -- safe_mode_state for unknown zone --
+
+    #[test]
+    fn safe_mode_state_returns_none_for_unknown_zone() {
+        let detector = ForkDetector::with_defaults();
+        assert!(detector.safe_mode_state("nonexistent").is_none());
+    }
+
+    // -- enforce_safe_mode on non-safe zone --
+
+    #[test]
+    fn enforce_safe_mode_passes_on_normal_zone() {
+        let sk = make_sk(1);
+        let genesis = build_genesis(std::slice::from_ref(&sk), "zone-a");
+        let mut detector = ForkDetector::with_defaults();
+        detector
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-a",
+                checkpoint: &genesis,
+                accepted: true,
+                frontier_seq: 0,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 100,
+                trace_id: "t",
+            })
+            .unwrap();
+
+        detector
+            .enforce_safe_mode("zone-a", "grant", "t-enforce")
+            .expect("non-safe zone should pass");
+    }
+
+    // -- incidents for unknown zone --
+
+    #[test]
+    fn incidents_returns_empty_for_unknown_zone() {
+        let detector = ForkDetector::with_defaults();
+        assert!(detector.incidents("nonexistent").is_empty());
+    }
+
+    #[test]
+    fn unacknowledged_incidents_returns_empty_for_unknown_zone() {
+        let detector = ForkDetector::with_defaults();
+        assert!(detector.unacknowledged_incidents("nonexistent").is_empty());
+    }
+
+    // -- acknowledge_incident for unknown zone --
+
+    #[test]
+    fn acknowledge_incident_returns_false_for_unknown_zone() {
+        let mut detector = ForkDetector::with_defaults();
+        assert!(!detector.acknowledge_incident("nonexistent", "fork-1"));
+    }
+
+    // -- history for unknown zone --
+
+    #[test]
+    fn history_returns_none_for_unknown_zone() {
+        let detector = ForkDetector::with_defaults();
+        assert!(detector.history("nonexistent").is_none());
+    }
+
+    #[test]
+    fn history_size_returns_zero_for_unknown_zone() {
+        let detector = ForkDetector::with_defaults();
+        assert_eq!(detector.history_size("nonexistent"), 0);
+    }
+
+    // -- Serde roundtrips for remaining types --
+
+    #[test]
+    fn checkpoint_history_entry_serde_roundtrip() {
+        let entry = CheckpointHistoryEntry {
+            checkpoint_seq: 5,
+            checkpoint_id: EngineObjectId([0xAA; 32]),
+            epoch: SecurityEpoch::GENESIS,
+            accepted: true,
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let restored: CheckpointHistoryEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry, restored);
+    }
+
+    #[test]
+    fn safe_mode_startup_source_serde_roundtrip() {
+        for source in [
+            SafeModeStartupSource::NotRequested,
+            SafeModeStartupSource::CliFlag,
+            SafeModeStartupSource::EnvironmentVariable,
+        ] {
+            let json = serde_json::to_string(&source).unwrap();
+            let restored: SafeModeStartupSource = serde_json::from_str(&json).unwrap();
+            assert_eq!(source, restored);
+        }
+    }
+
+    #[test]
+    fn safe_mode_restrictions_serde_roundtrip() {
+        let restrictions = SafeModeRestrictions::conservative();
+        let json = serde_json::to_string(&restrictions).unwrap();
+        let restored: SafeModeRestrictions = serde_json::from_str(&json).unwrap();
+        assert_eq!(restrictions, restored);
+    }
+
+    #[test]
+    fn safe_mode_startup_error_serde_roundtrip() {
+        let err = SafeModeStartupError::MissingField {
+            field: "trace_id".to_string(),
+        };
+        let json = serde_json::to_string(&err).unwrap();
+        let restored: SafeModeStartupError = serde_json::from_str(&json).unwrap();
+        assert_eq!(err, restored);
+    }
+
+    // -- exit_safe_mode on missing zone --
+
+    #[test]
+    fn exit_safe_mode_on_unknown_zone_returns_zero() {
+        let mut detector = ForkDetector::with_defaults();
+        let count = detector
+            .exit_safe_mode("nonexistent", "t")
+            .expect("unknown zone should return 0");
+        assert_eq!(count, 0);
+    }
+
+    // -- exit_safe_mode on non-safe zone --
+
+    #[test]
+    // -- Enrichment: std::error --
+
+    #[test]
+    fn fork_error_implements_std_error() {
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(ForkError::ForkDetected {
+                checkpoint_seq: 1,
+                existing_id: EngineObjectId([0xAA; 32]),
+                divergent_id: EngineObjectId([0xBB; 32]),
+            }),
+            Box::new(ForkError::SafeModeActive {
+                incident_seq: 2,
+                reason: "fork".into(),
+            }),
+            Box::new(ForkError::AcknowledgmentRequired { incident_count: 3 }),
+            Box::new(ForkError::InvalidResolution {
+                fork_seq: 4,
+                resolution_seq: 1,
+            }),
+            Box::new(ForkError::PersistenceFailed {
+                detail: "io".into(),
+            }),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            let msg = format!("{v}");
+            assert!(!msg.is_empty());
+            displays.insert(msg);
+        }
+        assert_eq!(displays.len(), 5, "all 5 variants produce distinct messages");
+    }
+
+    #[test]
+    fn exit_safe_mode_on_non_safe_zone_returns_zero() {
+        let sk = make_sk(1);
+        let genesis = build_genesis(std::slice::from_ref(&sk), "zone-a");
+        let mut detector = ForkDetector::with_defaults();
+        detector
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-a",
+                checkpoint: &genesis,
+                accepted: true,
+                frontier_seq: 0,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 100,
+                trace_id: "t",
+            })
+            .unwrap();
+
+        let count = detector.exit_safe_mode("zone-a", "t").unwrap();
+        assert_eq!(count, 0);
+    }
 }

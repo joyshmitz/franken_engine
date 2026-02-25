@@ -1276,4 +1276,19 @@ mod tests {
         // Exercise the declassification
         lattice.use_declassification("auth-api", "t2").unwrap();
     }
+
+    #[test]
+    fn flow_lattice_error_std_error() {
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(FlowLatticeError::ObligationExhausted { obligation_id: "o1".into() }),
+            Box::new(FlowLatticeError::ObligationNotFound { obligation_id: "o2".into() }),
+            Box::new(FlowLatticeError::DuplicateObligation { obligation_id: "o3".into() }),
+            Box::new(FlowLatticeError::FlowBlocked { detail: "taint".into() }),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            displays.insert(format!("{v}"));
+        }
+        assert_eq!(displays.len(), 4);
+    }
 }

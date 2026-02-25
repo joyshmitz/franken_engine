@@ -1102,6 +1102,18 @@ mod tests {
     }
 
     #[test]
+    // -- Enrichment: Ord --
+
+    #[test]
+    fn containment_state_ordering() {
+        assert!(ContainmentState::Running < ContainmentState::Challenged);
+        assert!(ContainmentState::Challenged < ContainmentState::Sandboxed);
+        assert!(ContainmentState::Sandboxed < ContainmentState::Suspended);
+        assert!(ContainmentState::Suspended < ContainmentState::Terminated);
+        assert!(ContainmentState::Terminated < ContainmentState::Quarantined);
+    }
+
+    #[test]
     fn receipt_contains_evidence_refs() {
         let mut executor = setup_executor();
         let ctx = test_context();

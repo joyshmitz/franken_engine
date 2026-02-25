@@ -692,4 +692,321 @@ mod tests {
         assert_eq!(orch.execution_count(), 3);
         assert!(orch.ledger().len() >= 3);
     }
+
+    // -- serde roundtrips -----------------------------------------------------
+
+    #[test]
+    fn loss_matrix_preset_serde_roundtrip() {
+        for preset in &[
+            LossMatrixPreset::Balanced,
+            LossMatrixPreset::Conservative,
+            LossMatrixPreset::Permissive,
+        ] {
+            let json = serde_json::to_string(preset).unwrap();
+            let back: LossMatrixPreset = serde_json::from_str(&json).unwrap();
+            assert_eq!(*preset, back);
+        }
+    }
+
+    #[test]
+    fn extension_package_serde_roundtrip() {
+        let pkg = ExtensionPackage {
+            extension_id: "ext-serde".to_string(),
+            source: "1+2".to_string(),
+            capabilities: vec!["fs_read".to_string(), "net".to_string()],
+            version: "2.0.0".to_string(),
+            metadata: {
+                let mut m = BTreeMap::new();
+                m.insert("author".to_string(), "test".to_string());
+                m
+            },
+        };
+        let json = serde_json::to_string(&pkg).unwrap();
+        let back: ExtensionPackage = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.extension_id, "ext-serde");
+        assert_eq!(back.capabilities.len(), 2);
+        assert_eq!(back.metadata.get("author").unwrap(), "test");
+    }
+
+    // -- OrchestratorConfig defaults ------------------------------------------
+
+    #[test]
+    fn orchestrator_config_default_values() {
+        let cfg = OrchestratorConfig::default();
+        assert_eq!(cfg.loss_matrix_preset, LossMatrixPreset::Balanced);
+        assert!(cfg.force_lane.is_none());
+        assert_eq!(cfg.drain_deadline_ticks, 10_000);
+        assert_eq!(cfg.max_concurrent_sagas, 4);
+        assert_eq!(cfg.epoch, SecurityEpoch::from_raw(1));
+        assert_eq!(cfg.trace_id_prefix, "orch");
+        assert_eq!(cfg.policy_id, "default-policy");
+    }
+
+    // -- OrchestratorError Display --------------------------------------------
+
+    #[test]
+    fn orchestrator_error_display_empty_source() {
+        let err = OrchestratorError::EmptySource;
+        assert!(err.to_string().contains("empty"));
+    }
+
+    #[test]
+    fn orchestrator_error_display_empty_extension_id() {
+        let err = OrchestratorError::EmptyExtensionId;
+        assert!(err.to_string().contains("empty"));
+    }
+
+    // -- validation edge cases ------------------------------------------------
+
+    #[test]
+    fn whitespace_only_source_rejected() {
+        let mut orch = ExecutionOrchestrator::with_defaults();
+        let pkg = ExtensionPackage {
+            extension_id: "ext-ws".to_string(),
+            source: "  \t\n  ".to_string(),
+            capabilities: vec![],
+            version: "1.0.0".to_string(),
+            metadata: BTreeMap::new(),
+        };
+        let err = orch.execute(&pkg).expect_err("whitespace source");
+        assert!(matches!(err, OrchestratorError::EmptySource));
+    }
+
+    #[test]
+    fn whitespace_only_extension_id_rejected() {
+        let mut orch = ExecutionOrchestrator::with_defaults();
+        let pkg = ExtensionPackage {
+            extension_id: "   ".to_string(),
+            source: "42".to_string(),
+            capabilities: vec![],
+            version: "1.0.0".to_string(),
+            metadata: BTreeMap::new(),
+        };
+        let err = orch.execute(&pkg).expect_err("whitespace id");
+        assert!(matches!(err, OrchestratorError::EmptyExtensionId));
+    }
+
+    // -- fresh orchestrator state ---------------------------------------------
+
+    #[test]
+    fn fresh_orchestrator_execution_count_zero() {
+        let orch = ExecutionOrchestrator::with_defaults();
+        assert_eq!(orch.execution_count(), 0);
+    }
+
+    #[test]
+    fn fresh_orchestrator_ledger_empty() {
+        let orch = ExecutionOrchestrator::with_defaults();
+        assert_eq!(orch.ledger().len(), 0);
+    }
+
+    // -- trace / decision id format -------------------------------------------
+
+    #[test]
+    fn trace_id_contains_prefix_and_counter() {
+        let mut orch = ExecutionOrchestrator::with_defaults();
+        let result = orch.execute(&simple_package()).unwrap();
+        assert!(result.trace_id.starts_with("orch:"));
+        assert!(result.trace_id.contains('0'));
+    }
+
+    #[test]
+    fn decision_id_contains_prefix() {
+        let mut orch = ExecutionOrchestrator::with_defaults();
+        let result = orch.execute(&simple_package()).unwrap();
+        assert!(result.decision_id.starts_with("orch:decision:"));
+    }
+
+    #[test]
+    fn trace_id_increments_across_executions() {
+        let mut orch = ExecutionOrchestrator::with_defaults();
+        let r0 = orch.execute(&simple_package()).unwrap();
+        let r1 = orch.execute(&simple_package()).unwrap();
+        assert_ne!(r0.trace_id, r1.trace_id);
+        assert_ne!(r0.decision_id, r1.decision_id);
+    }
+
+    // -- preset variations ----------------------------------------------------
+
+    #[test]
+    fn conservative_preset_executes_successfully() {
+        let cfg = OrchestratorConfig {
+            loss_matrix_preset: LossMatrixPreset::Conservative,
+            ..OrchestratorConfig::default()
+        };
+        let mut orch = ExecutionOrchestrator::new(cfg);
+        let result = orch.execute(&simple_package()).unwrap();
+        assert!(result.posterior.is_valid());
+    }
+
+    #[test]
+    fn permissive_preset_executes_successfully() {
+        let cfg = OrchestratorConfig {
+            loss_matrix_preset: LossMatrixPreset::Permissive,
+            ..OrchestratorConfig::default()
+        };
+        let mut orch = ExecutionOrchestrator::new(cfg);
+        let result = orch.execute(&simple_package()).unwrap();
+        assert!(result.posterior.is_valid());
+    }
+
+    // -- result field checks --------------------------------------------------
+
+    #[test]
+    fn result_source_label_contains_extension_id() {
+        let mut orch = ExecutionOrchestrator::with_defaults();
+        let result = orch.execute(&simple_package()).unwrap();
+        assert!(result.source_label.contains("test-ext-1"));
+    }
+
+    #[test]
+    fn result_lowering_witnesses_populated() {
+        let mut orch = ExecutionOrchestrator::with_defaults();
+        let result = orch.execute(&simple_package()).unwrap();
+        assert!(!result.lowering_witnesses.is_empty());
+    }
+
+    #[test]
+    fn result_epoch_matches_config() {
+        let cfg = OrchestratorConfig {
+            epoch: SecurityEpoch::from_raw(42),
+            ..OrchestratorConfig::default()
+        };
+        let mut orch = ExecutionOrchestrator::new(cfg);
+        let result = orch.execute(&simple_package()).unwrap();
+        assert_eq!(result.epoch, SecurityEpoch::from_raw(42));
+    }
+
+    #[test]
+    fn result_cell_events_populated() {
+        let mut orch = ExecutionOrchestrator::with_defaults();
+        let result = orch.execute(&simple_package()).unwrap();
+        // Cell close should produce at least one event.
+        assert!(!result.cell_events.is_empty());
+    }
+
+    // -- custom trace prefix --------------------------------------------------
+
+    #[test]
+    fn custom_trace_prefix_appears_in_ids() {
+        let cfg = OrchestratorConfig {
+            trace_id_prefix: "myprefix".to_string(),
+            ..OrchestratorConfig::default()
+        };
+        let mut orch = ExecutionOrchestrator::new(cfg);
+        let result = orch.execute(&simple_package()).unwrap();
+        assert!(result.trace_id.starts_with("myprefix:"));
+        assert!(result.decision_id.starts_with("myprefix:decision:"));
+    }
+
+    // -- package with capabilities and metadata -------------------------------
+
+    #[test]
+    fn package_with_capabilities_executes() {
+        let pkg = ExtensionPackage {
+            extension_id: "ext-cap".to_string(),
+            source: "42".to_string(),
+            capabilities: vec!["fs_read".to_string(), "net".to_string()],
+            version: "2.0.0".to_string(),
+            metadata: {
+                let mut m = BTreeMap::new();
+                m.insert("author".to_string(), "tester".to_string());
+                m
+            },
+        };
+        let mut orch = ExecutionOrchestrator::with_defaults();
+        let result = orch.execute(&pkg).unwrap();
+        assert_eq!(result.extension_id, "ext-cap");
+        // Evidence metadata should contain capabilities count.
+        let entry = &result.evidence_entries[0];
+        let cap_count = entry.metadata.get("capabilities_count").unwrap();
+        assert_eq!(cap_count, "2");
+    }
+
+    // -- action_to_saga_type coverage (via different risk scenarios) -----------
+
+    #[test]
+    fn loss_matrix_preset_to_loss_matrix_distinct() {
+        let balanced = LossMatrixPreset::Balanced.to_loss_matrix();
+        let conservative = LossMatrixPreset::Conservative.to_loss_matrix();
+        let permissive = LossMatrixPreset::Permissive.to_loss_matrix();
+        // All three presets should produce different matrices.
+        // At minimum balanced != conservative.
+        assert_ne!(
+            format!("{balanced:?}"),
+            format!("{conservative:?}")
+        );
+        assert_ne!(
+            format!("{balanced:?}"),
+            format!("{permissive:?}")
+        );
+    }
+
+    // -- Enrichment: error trait --
+
+    #[test]
+    fn orchestrator_error_is_std_error() {
+        let e: Box<dyn std::error::Error> = Box::new(OrchestratorError::EmptySource);
+        assert!(!e.to_string().is_empty());
+        let e2: Box<dyn std::error::Error> = Box::new(OrchestratorError::EmptyExtensionId);
+        assert!(!e2.to_string().is_empty());
+    }
+
+    // -- Enrichment: extension package edge cases --
+
+    #[test]
+    fn extension_package_empty_metadata_serde() {
+        let pkg = simple_package();
+        let json = serde_json::to_string(&pkg).expect("serialize");
+        let restored: ExtensionPackage = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(pkg.extension_id, restored.extension_id);
+        assert!(restored.metadata.is_empty());
+    }
+
+    #[test]
+    fn extension_package_with_many_capabilities_serde() {
+        let pkg = ExtensionPackage {
+            extension_id: "ext-many".to_string(),
+            source: "42".to_string(),
+            capabilities: vec![
+                "fs_read".to_string(),
+                "fs_write".to_string(),
+                "net".to_string(),
+            ],
+            version: "3.0.0".to_string(),
+            metadata: BTreeMap::new(),
+        };
+        let json = serde_json::to_string(&pkg).unwrap();
+        let restored: ExtensionPackage = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.capabilities.len(), 3);
+    }
+
+    // -- Enrichment: config variations --
+
+    #[test]
+    fn orchestrator_config_custom_fields() {
+        let cfg = OrchestratorConfig {
+            loss_matrix_preset: LossMatrixPreset::Conservative,
+            drain_deadline_ticks: 50_000,
+            max_concurrent_sagas: 8,
+            policy_id: "custom-policy".to_string(),
+            ..OrchestratorConfig::default()
+        };
+        assert_eq!(cfg.loss_matrix_preset, LossMatrixPreset::Conservative);
+        assert_eq!(cfg.drain_deadline_ticks, 50_000);
+        assert_eq!(cfg.max_concurrent_sagas, 8);
+        assert_eq!(cfg.policy_id, "custom-policy");
+    }
+
+    // -- Enrichment: loss matrix preset serde format --
+
+    #[test]
+    fn loss_matrix_preset_serde_format() {
+        let json = serde_json::to_string(&LossMatrixPreset::Balanced).unwrap();
+        assert!(json.contains("alanced"));
+        let json = serde_json::to_string(&LossMatrixPreset::Conservative).unwrap();
+        assert!(json.contains("onservative"));
+        let json = serde_json::to_string(&LossMatrixPreset::Permissive).unwrap();
+        assert!(json.contains("ermissive"));
+    }
 }

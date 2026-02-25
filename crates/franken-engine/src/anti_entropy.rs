@@ -1861,4 +1861,168 @@ mod tests {
             .contains("mmr_consistency")
         );
     }
+
+    // -- Enrichment: remaining serde/display gaps --
+
+    #[test]
+    fn reconcile_error_serde_remaining_variants() {
+        let errors = vec![
+            ReconcileError::EpochMismatch {
+                local_epoch: SecurityEpoch::from_raw(1),
+                remote_epoch: SecurityEpoch::from_raw(2),
+            },
+            ReconcileError::VerificationFailed {
+                object_hash: "abc".to_string(),
+                reason: "mismatch".to_string(),
+            },
+        ];
+        for err in &errors {
+            let json = serde_json::to_string(err).expect("serialize");
+            let restored: ReconcileError = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*err, restored);
+        }
+    }
+
+    #[test]
+    fn reconcile_error_display_remaining_variants() {
+        let s = ReconcileError::EpochMismatch {
+            local_epoch: SecurityEpoch::from_raw(1),
+            remote_epoch: SecurityEpoch::from_raw(2),
+        }
+        .to_string();
+        assert!(s.contains("epoch"));
+        assert!(s.contains("mismatch"));
+
+        let s = ReconcileError::VerificationFailed {
+            object_hash: "abc".to_string(),
+            reason: "hash mismatch".to_string(),
+        }
+        .to_string();
+        assert!(s.contains("abc"));
+        assert!(s.contains("hash mismatch"));
+    }
+
+    #[test]
+    fn reconcile_object_type_serde_roundtrip() {
+        let variants = [
+            ReconcileObjectType::RevocationEvent,
+            ReconcileObjectType::CheckpointMarker,
+            ReconcileObjectType::EvidenceEntry,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).expect("serialize");
+            let restored: ReconcileObjectType =
+                serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*v, restored);
+        }
+    }
+
+    #[test]
+    fn reconcile_result_serde_roundtrip() {
+        let result = ReconcileResult {
+            objects_to_fetch: vec![make_hash(1), make_hash(2)],
+            objects_to_send: vec![make_hash(3)],
+            fallback_triggered: false,
+        };
+        let json = serde_json::to_string(&result).expect("serialize");
+        let restored: ReconcileResult = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(result, restored);
+    }
+
+    #[test]
+    fn fallback_result_serde_roundtrip() {
+        let result = FallbackResult {
+            objects_to_fetch: vec![make_hash(1)],
+            objects_to_send: vec![make_hash(2)],
+            evidence: FallbackEvidence {
+                fallback_id: "fb-1".to_string(),
+                trigger: FallbackTrigger::PeelFailed { remaining_cells: 3 },
+                original_reconciliation_id: "r1:p1".to_string(),
+                scope_size: 50,
+                differences_found: 2,
+                objects_transferred: 2,
+                duration_ms: 0,
+                epoch_id: 1,
+                trace_id: "t1".to_string(),
+            },
+        };
+        let json = serde_json::to_string(&result).expect("serialize");
+        let restored: FallbackResult = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(result, restored);
+    }
+
+    #[test]
+    fn reconcile_config_default_values() {
+        let config = ReconcileConfig::default();
+        assert_eq!(config.iblt_cells, 256);
+        assert_eq!(config.iblt_hashes, 3);
+        assert_eq!(config.max_retries, 2);
+        assert_eq!(config.retry_scale_factor, 2);
+    }
+
+    #[test]
+    fn fallback_config_default_values() {
+        let config = FallbackConfig::default();
+        assert_eq!(config.max_fallback_rate_pct, 5);
+        assert_eq!(config.monitoring_window, 100);
+    }
+
+    #[test]
+    fn object_id_display_content() {
+        let id = ObjectId {
+            content_hash: ContentHash::compute(b"test"),
+            object_type: ReconcileObjectType::RevocationEvent,
+            epoch: test_epoch(),
+        };
+        let s = id.to_string();
+        assert!(s.contains("revocation_event"));
+    }
+
+    #[test]
+    fn fallback_trigger_display_verification_failed() {
+        let s = FallbackTrigger::VerificationFailed {
+            object_hash: "abc".to_string(),
+            reason: "bad".to_string(),
+        }
+        .to_string();
+        assert!(s.contains("verification_failed"));
+        assert!(s.contains("abc"));
+    }
+
+    // -- Enrichment: std::error --
+
+    #[test]
+    fn reconcile_error_implements_std_error() {
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(ReconcileError::IbltSizeMismatch {
+                local_cells: 100,
+                remote_cells: 200,
+            }),
+            Box::new(ReconcileError::PeelFailed {
+                remaining_cells: 5,
+            }),
+            Box::new(ReconcileError::EpochMismatch {
+                local_epoch: SecurityEpoch::from_raw(1),
+                remote_epoch: SecurityEpoch::from_raw(3),
+            }),
+            Box::new(ReconcileError::VerificationFailed {
+                object_hash: "aabb".into(),
+                reason: "mismatch".into(),
+            }),
+            Box::new(ReconcileError::EmptyObjectSet),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            let msg = format!("{v}");
+            assert!(!msg.is_empty());
+            displays.insert(msg);
+        }
+        assert_eq!(displays.len(), 5, "all 5 variants produce distinct messages");
+    }
+
+    #[test]
+    fn reconcile_object_type_ordering() {
+        assert!(ReconcileObjectType::RevocationEvent < ReconcileObjectType::CheckpointMarker);
+        assert!(ReconcileObjectType::CheckpointMarker < ReconcileObjectType::EvidenceEntry);
+    }
 }

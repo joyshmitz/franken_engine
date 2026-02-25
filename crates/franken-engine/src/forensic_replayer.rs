@@ -1911,4 +1911,80 @@ mod tests {
         assert!(config.verify_receipt_integrity);
         assert_eq!(config.max_steps, 0);
     }
+
+    // -- Enrichment: missing serde roundtrips --
+
+    #[test]
+    fn trace_validation_error_serde_roundtrip() {
+        let errors = vec![
+            TraceValidationError::NonMonotonicTimestamp {
+                record_index: 5,
+                prev_ns: 100,
+                current_ns: 50,
+            },
+            TraceValidationError::InvalidPosterior { step_index: 3 },
+            TraceValidationError::DecisionCountMismatch {
+                decisions: 10,
+                posteriors: 8,
+            },
+            TraceValidationError::EvidenceCountMismatch {
+                evidence: 5,
+                posteriors: 7,
+            },
+            TraceValidationError::EmptyTrace,
+            TraceValidationError::TelemetryIntegrityFailure { record_id: 42 },
+            TraceValidationError::ReceiptIntegrityFailure {
+                receipt_id: "r-1".to_string(),
+            },
+        ];
+        for e in &errors {
+            let json = serde_json::to_string(e).expect("serialize");
+            let restored: TraceValidationError =
+                serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*e, restored);
+        }
+        assert_eq!(errors.len(), 7);
+    }
+
+    #[test]
+    fn decision_change_serde_roundtrip() {
+        let changes = vec![
+            DecisionChange::Identical,
+            DecisionChange::SameActionDifferentMargin {
+                original_margin: 100_000,
+                counterfactual_margin: 200_000,
+            },
+            DecisionChange::DifferentAction {
+                original_action: ContainmentAction::Allow,
+                counterfactual_action: ContainmentAction::Quarantine,
+                original_loss: 50_000,
+                counterfactual_loss: 150_000,
+            },
+        ];
+        for c in &changes {
+            let json = serde_json::to_string(c).expect("serialize");
+            let restored: DecisionChange = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*c, restored);
+        }
+        assert_eq!(changes.len(), 3);
+    }
+
+    #[test]
+    fn replay_error_serde_roundtrip() {
+        let errors = vec![
+            ReplayError::ValidationFailed {
+                errors: vec![TraceValidationError::EmptyTrace],
+            },
+            ReplayError::StepLimitExceeded { limit: 1000 },
+            ReplayError::Internal {
+                detail: "unexpected state".to_string(),
+            },
+        ];
+        for e in &errors {
+            let json = serde_json::to_string(e).expect("serialize");
+            let restored: ReplayError = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*e, restored);
+        }
+        assert_eq!(errors.len(), 3);
+    }
 }

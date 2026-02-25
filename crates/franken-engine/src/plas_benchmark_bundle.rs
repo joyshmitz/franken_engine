@@ -1258,29 +1258,37 @@ mod tests {
 
     #[test]
     fn thresholds_validate_zero_over_privilege() {
-        let mut t = PlasBenchmarkThresholds::default();
-        t.max_over_privilege_ratio_millionths = 0;
+        let t = PlasBenchmarkThresholds {
+            max_over_privilege_ratio_millionths: 0,
+            ..PlasBenchmarkThresholds::default()
+        };
         assert!(t.validate().is_err());
     }
 
     #[test]
     fn thresholds_validate_false_deny_over_million() {
-        let mut t = PlasBenchmarkThresholds::default();
-        t.max_false_deny_rate_millionths = 1_000_001;
+        let t = PlasBenchmarkThresholds {
+            max_false_deny_rate_millionths: 1_000_001,
+            ..PlasBenchmarkThresholds::default()
+        };
         assert!(t.validate().is_err());
     }
 
     #[test]
     fn thresholds_validate_witness_coverage_over_million() {
-        let mut t = PlasBenchmarkThresholds::default();
-        t.min_witness_coverage_millionths = 1_000_001;
+        let t = PlasBenchmarkThresholds {
+            min_witness_coverage_millionths: 1_000_001,
+            ..PlasBenchmarkThresholds::default()
+        };
         assert!(t.validate().is_err());
     }
 
     #[test]
     fn thresholds_validate_escrow_rate_zero() {
-        let mut t = PlasBenchmarkThresholds::default();
-        t.max_escrow_event_rate_per_hour_millionths = Some(0);
+        let t = PlasBenchmarkThresholds {
+            max_escrow_event_rate_per_hour_millionths: Some(0),
+            ..PlasBenchmarkThresholds::default()
+        };
         assert!(t.validate().is_err());
     }
 

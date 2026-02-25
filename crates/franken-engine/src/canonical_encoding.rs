@@ -1262,4 +1262,20 @@ mod tests {
             .unwrap_err();
         assert_eq!(err.input_hash, expected_hash);
     }
+
+    // -- Enrichment: std::error --
+
+    #[test]
+    fn non_canonical_error_implements_std_error() {
+        let err = NonCanonicalError {
+            object_class: ObjectDomain::PolicyObject,
+            input_hash: [0xAA; 32],
+            violation: CanonicalViolation::DuplicateKey {
+                key: "foo".into(),
+            },
+            trace_id: "t-1".into(),
+        };
+        let boxed: &dyn std::error::Error = &err;
+        assert!(!format!("{boxed}").is_empty());
+    }
 }

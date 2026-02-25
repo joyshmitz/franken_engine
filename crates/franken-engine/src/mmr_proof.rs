@@ -1000,4 +1000,26 @@ mod tests {
         let proof2 = mmr2.inclusion_proof(7).unwrap();
         assert_eq!(proof1, proof2);
     }
+
+    #[test]
+    fn proof_error_std_error() {
+        let h1 = ContentHash::compute(b"a");
+        let h2 = ContentHash::compute(b"b");
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(ProofError::IndexOutOfRange { index: 10, stream_length: 5 }),
+            Box::new(ProofError::RootMismatch { expected: h1, computed: h2 }),
+            Box::new(ProofError::InvalidProof { reason: "bad".into() }),
+            Box::new(ProofError::EmptyStream),
+            Box::new(ProofError::ConsistencyFailure {
+                old_length: 5,
+                new_length: 3,
+                reason: "shrunk".into(),
+            }),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            displays.insert(format!("{v}"));
+        }
+        assert_eq!(displays.len(), 5);
+    }
 }

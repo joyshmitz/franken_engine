@@ -1084,6 +1084,74 @@ mod tests {
 
     // -- Signer keys accessor --
 
+    // -- Enrichment: serde, std::error --
+
+    #[test]
+    fn signer_signature_serde_roundtrip() {
+        let (sk, vk) = make_sig_pair(1);
+        let obj = test_obj();
+        let sig = sign_with(&sk, &obj);
+        let ss = SignerSignature::new(vk, sig);
+        let json = serde_json::to_string(&ss).expect("serialize");
+        let restored: SignerSignature =
+            serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(ss, restored);
+    }
+
+    #[test]
+    fn multisig_event_type_serde_all_variants() {
+        let variants = vec![
+            MultiSigEventType::ArrayCreated { signer_count: 3 },
+            MultiSigEventType::SignatureInserted {
+                signer_hex: "aa".to_string(),
+            },
+            MultiSigEventType::QuorumVerified {
+                valid: 2,
+                threshold: 2,
+                total: 3,
+            },
+            MultiSigEventType::QuorumFailed {
+                valid: 1,
+                threshold: 2,
+                total: 3,
+            },
+            MultiSigEventType::SortingViolation {
+                detail: "out of order".to_string(),
+            },
+            MultiSigEventType::DuplicateSigner {
+                key_hex: "bb".to_string(),
+            },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).expect("serialize");
+            let restored: MultiSigEventType =
+                serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*v, restored);
+        }
+    }
+
+    #[test]
+    fn multisig_error_implements_std_error() {
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(MultiSigError::EmptyArray),
+            Box::new(MultiSigError::ZeroQuorumThreshold),
+            Box::new(MultiSigError::ThresholdExceedsSignerCount {
+                threshold: 5,
+                signer_count: 3,
+            }),
+            Box::new(MultiSigError::SignatureError {
+                detail: "bad sig".into(),
+            }),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            let msg = format!("{v}");
+            assert!(!msg.is_empty());
+            displays.insert(msg);
+        }
+        assert_eq!(displays.len(), 4);
+    }
+
     #[test]
     fn signer_keys_returns_sorted_keys() {
         let (sk1, vk1) = make_sig_pair(1);

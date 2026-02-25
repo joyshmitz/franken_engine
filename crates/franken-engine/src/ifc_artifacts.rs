@@ -2170,4 +2170,42 @@ mod tests {
             FlowCheckResult::Denied
         );
     }
+
+    // -- Enrichment: std::error --
+
+    #[test]
+    fn ifc_validation_error_implements_std_error() {
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(IfcValidationError::FullClaimHasUncoveredFlows {
+                claim_id: "c-1".into(),
+                uncovered_count: 3,
+            }),
+            Box::new(IfcValidationError::EmptyClaim {
+                claim_id: "c-2".into(),
+            }),
+            Box::new(IfcValidationError::IncompatibleSchema {
+                expected: IfcSchemaVersion {
+                    major: 1,
+                    minor: 0,
+                    patch: 0,
+                },
+                actual: IfcSchemaVersion {
+                    major: 2,
+                    minor: 0,
+                    patch: 0,
+                },
+            }),
+            Box::new(IfcValidationError::FlowProhibited {
+                source: Label::Secret,
+                sink: Label::Public,
+            }),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            let msg = format!("{v}");
+            assert!(!msg.is_empty());
+            displays.insert(msg);
+        }
+        assert_eq!(displays.len(), 4, "all 4 variants produce distinct messages");
+    }
 }

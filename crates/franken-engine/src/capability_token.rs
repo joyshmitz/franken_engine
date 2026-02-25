@@ -1230,4 +1230,56 @@ mod tests {
     fn token_version_display() {
         assert_eq!(TokenVersion::V2.to_string(), "v2");
     }
+
+    // -- Enrichment: std::error --
+
+    #[test]
+    fn token_error_implements_std_error() {
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(TokenError::SignatureInvalid {
+                detail: "bad".into(),
+            }),
+            Box::new(TokenError::NonCanonical {
+                detail: "order".into(),
+            }),
+            Box::new(TokenError::AudienceRejected {
+                presenter: PrincipalId([0xAA; 32]),
+                audience_size: 0,
+            }),
+            Box::new(TokenError::NotYetValid {
+                current_tick: 50,
+                not_before: 100,
+            }),
+            Box::new(TokenError::Expired {
+                current_tick: 200,
+                expiry: 100,
+            }),
+            Box::new(TokenError::CheckpointBindingFailed {
+                required_seq: 10,
+                verifier_seq: 5,
+            }),
+            Box::new(TokenError::RevocationFreshnessStale {
+                required_seq: 10,
+                verifier_seq: 5,
+            }),
+            Box::new(TokenError::UnsupportedVersion {
+                version: "v99".into(),
+            }),
+            Box::new(TokenError::IdDerivationFailed {
+                detail: "bad".into(),
+            }),
+            Box::new(TokenError::InvertedTemporalWindow {
+                not_before: 200,
+                expiry: 100,
+            }),
+            Box::new(TokenError::EmptyCapabilities),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            let msg = format!("{v}");
+            assert!(!msg.is_empty());
+            displays.insert(msg);
+        }
+        assert_eq!(displays.len(), 11, "all 11 variants produce distinct messages");
+    }
 }

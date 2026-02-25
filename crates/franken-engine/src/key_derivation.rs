@@ -1017,6 +1017,43 @@ mod tests {
     }
 
     #[test]
+    // -- Enrichment: Ord, std::error --
+
+    #[test]
+    fn key_domain_ordering() {
+        assert!(KeyDomain::Symbol < KeyDomain::Session);
+        assert!(KeyDomain::Session < KeyDomain::Authentication);
+        assert!(KeyDomain::Authentication < KeyDomain::Evidence);
+        assert!(KeyDomain::Evidence < KeyDomain::Attestation);
+    }
+
+    #[test]
+    fn key_derivation_error_implements_std_error() {
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(KeyDerivationError::EmptyMasterKey),
+            Box::new(KeyDerivationError::ZeroOutputLength),
+            Box::new(KeyDerivationError::OutputTooLong {
+                requested: 500,
+                max: 256,
+            }),
+            Box::new(KeyDerivationError::EpochMismatch {
+                key_epoch: SecurityEpoch::from_raw(1),
+                current_epoch: SecurityEpoch::from_raw(5),
+            }),
+            Box::new(KeyDerivationError::DerivationFailed {
+                reason: "test".into(),
+            }),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            let msg = format!("{v}");
+            assert!(!msg.is_empty());
+            displays.insert(msg);
+        }
+        assert_eq!(displays.len(), 5, "all 5 variants produce distinct messages");
+    }
+
+    #[test]
     fn error_serialization_round_trip() {
         let errors = vec![
             KeyDerivationError::EmptyMasterKey,

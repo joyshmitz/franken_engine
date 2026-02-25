@@ -1499,6 +1499,26 @@ mod tests {
     // ---------------------------------------------------------------
 
     #[test]
+    // -- Enrichment: Ord --
+
+    #[test]
+    fn freshness_state_ordering() {
+        assert!(FreshnessState::Fresh < FreshnessState::Stale);
+        assert!(FreshnessState::Stale < FreshnessState::Degraded);
+        assert!(FreshnessState::Degraded < FreshnessState::Recovering);
+    }
+
+    #[test]
+    fn operation_type_ordering() {
+        assert!(OperationType::SafeOperation < OperationType::TokenAcceptance);
+        assert!(OperationType::TokenAcceptance < OperationType::ExtensionActivation);
+        assert!(
+            OperationType::ExtensionActivation < OperationType::HighRiskOperation
+        );
+        assert!(OperationType::HighRiskOperation < OperationType::HealthCheck);
+    }
+
+    #[test]
     fn override_preimage_is_deterministic() {
         let t1 = make_override(OperationType::ExtensionActivation, 2000);
         let t2 = make_override(OperationType::ExtensionActivation, 2000);

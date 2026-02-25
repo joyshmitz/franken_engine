@@ -1885,4 +1885,518 @@ mod tests {
         let restored: AutoDemotionMonitor = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(monitor, restored);
     }
+
+    // -- DemotionReason Display all 5 variants --
+
+    #[test]
+    fn demotion_reason_display_all_variants() {
+        let reasons = [
+            (
+                DemotionReason::SemanticDivergence {
+                    divergence_count: 3,
+                    first_divergence_artifact: ContentHash::compute(b"a"),
+                },
+                "semantic divergence",
+            ),
+            (
+                DemotionReason::PerformanceBreach {
+                    metric_name: "latency".to_string(),
+                    observed_millionths: 100,
+                    threshold_millionths: 50,
+                    sustained_duration_ns: 1000,
+                },
+                "performance breach",
+            ),
+            (
+                DemotionReason::RiskThresholdBreach {
+                    observed_risk_millionths: 900_000,
+                    max_risk_millionths: 500_000,
+                },
+                "risk threshold breach",
+            ),
+            (
+                DemotionReason::CapabilityViolation {
+                    attempted_capability: "fs.write".to_string(),
+                    envelope_digest: ContentHash::compute(b"e"),
+                },
+                "capability violation",
+            ),
+            (
+                DemotionReason::OperatorInitiated {
+                    operator_id: "admin".to_string(),
+                    reason: "manual".to_string(),
+                },
+                "operator-initiated",
+            ),
+        ];
+        for (reason, expected_substr) in reasons {
+            let s = reason.to_string();
+            assert!(
+                s.contains(expected_substr),
+                "'{s}' should contain '{expected_substr}'"
+            );
+        }
+    }
+
+    // -- DemotionSeverity Display and as_str --
+
+    #[test]
+    fn demotion_severity_display_and_as_str() {
+        assert_eq!(DemotionSeverity::Advisory.to_string(), "advisory");
+        assert_eq!(DemotionSeverity::Warning.to_string(), "warning");
+        assert_eq!(DemotionSeverity::Critical.to_string(), "critical");
+        assert_eq!(DemotionSeverity::Advisory.as_str(), "advisory");
+        assert_eq!(DemotionSeverity::Warning.as_str(), "warning");
+        assert_eq!(DemotionSeverity::Critical.as_str(), "critical");
+    }
+
+    // -- DemotionError Display remaining variants --
+
+    #[test]
+    fn demotion_error_display_all_variants() {
+        let errors: Vec<(DemotionError, &str)> = vec![
+            (
+                DemotionError::SignatureInvalid {
+                    receipt_id: "r-1".to_string(),
+                },
+                "invalid signature",
+            ),
+            (
+                DemotionError::NoPreviousCell {
+                    slot_id: "s-1".to_string(),
+                },
+                "no previous cell",
+            ),
+            (
+                DemotionError::AlreadyDemoted {
+                    slot_id: "s-1".to_string(),
+                },
+                "already triggered",
+            ),
+        ];
+        for (err, expected_substr) in errors {
+            let s = err.to_string();
+            assert!(
+                s.contains(expected_substr),
+                "'{s}' should contain '{expected_substr}'"
+            );
+        }
+    }
+
+    // -- DemotionReason category all 5 --
+
+    #[test]
+    fn demotion_reason_category_all_variants() {
+        assert_eq!(
+            DemotionReason::SemanticDivergence {
+                divergence_count: 0,
+                first_divergence_artifact: ContentHash::compute(b""),
+            }
+            .category(),
+            "semantic_divergence"
+        );
+        assert_eq!(
+            DemotionReason::PerformanceBreach {
+                metric_name: "x".to_string(),
+                observed_millionths: 0,
+                threshold_millionths: 0,
+                sustained_duration_ns: 0,
+            }
+            .category(),
+            "performance_breach"
+        );
+        assert_eq!(
+            DemotionReason::RiskThresholdBreach {
+                observed_risk_millionths: 0,
+                max_risk_millionths: 0,
+            }
+            .category(),
+            "risk_threshold_breach"
+        );
+        assert_eq!(
+            DemotionReason::CapabilityViolation {
+                attempted_capability: "x".to_string(),
+                envelope_digest: ContentHash::compute(b""),
+            }
+            .category(),
+            "capability_violation"
+        );
+        assert_eq!(
+            DemotionReason::OperatorInitiated {
+                operator_id: "x".to_string(),
+                reason: "y".to_string(),
+            }
+            .category(),
+            "operator_initiated"
+        );
+    }
+
+    // -- Serde roundtrips --
+
+    #[test]
+    fn demotion_reason_serde_roundtrip() {
+        let reasons = vec![
+            DemotionReason::SemanticDivergence {
+                divergence_count: 3,
+                first_divergence_artifact: ContentHash::compute(b"a"),
+            },
+            DemotionReason::PerformanceBreach {
+                metric_name: "latency".to_string(),
+                observed_millionths: 100,
+                threshold_millionths: 50,
+                sustained_duration_ns: 1000,
+            },
+            DemotionReason::RiskThresholdBreach {
+                observed_risk_millionths: 900_000,
+                max_risk_millionths: 500_000,
+            },
+            DemotionReason::CapabilityViolation {
+                attempted_capability: "fs.write".to_string(),
+                envelope_digest: ContentHash::compute(b"e"),
+            },
+            DemotionReason::OperatorInitiated {
+                operator_id: "admin".to_string(),
+                reason: "manual".to_string(),
+            },
+        ];
+        for reason in reasons {
+            let json = serde_json::to_string(&reason).unwrap();
+            let back: DemotionReason = serde_json::from_str(&json).unwrap();
+            assert_eq!(reason, back);
+        }
+    }
+
+    #[test]
+    fn demotion_severity_serde_roundtrip() {
+        for sev in [
+            DemotionSeverity::Advisory,
+            DemotionSeverity::Warning,
+            DemotionSeverity::Critical,
+        ] {
+            let json = serde_json::to_value(sev).unwrap();
+            let back: DemotionSeverity = serde_json::from_value(json).unwrap();
+            assert_eq!(sev, back);
+        }
+    }
+
+    #[test]
+    fn demotion_error_serde_roundtrip() {
+        let errors = vec![
+            DemotionError::SignatureInvalid {
+                receipt_id: "r-1".to_string(),
+            },
+            DemotionError::SlotMismatch {
+                expected: "a".to_string(),
+                got: "b".to_string(),
+            },
+            DemotionError::CandidateBlocked {
+                candidate_digest: "abc".to_string(),
+            },
+            DemotionError::NoPreviousCell {
+                slot_id: "s-1".to_string(),
+            },
+            DemotionError::AlreadyDemoted {
+                slot_id: "s-1".to_string(),
+            },
+        ];
+        for err in errors {
+            let json = serde_json::to_string(&err).unwrap();
+            let back: DemotionError = serde_json::from_str(&json).unwrap();
+            assert_eq!(err, back);
+        }
+    }
+
+    #[test]
+    fn demotion_evidence_item_serde_roundtrip() {
+        let item = DemotionEvidenceItem {
+            artifact_hash: ContentHash::compute(b"evidence"),
+            category: "divergence_trace".to_string(),
+            collected_at_ns: 1_000_000,
+            summary: "divergent output".to_string(),
+        };
+        let json = serde_json::to_string(&item).unwrap();
+        let back: DemotionEvidenceItem = serde_json::from_str(&json).unwrap();
+        assert_eq!(item, back);
+    }
+
+    // -- Observation timestamp for all variants --
+
+    #[test]
+    fn observation_timestamp_all_variants() {
+        let obs1 = MonitoringObservation::OutputComparison {
+            matched: true,
+            input_hash: ContentHash::compute(b"in"),
+            native_output_hash: ContentHash::compute(b"n"),
+            reference_output_hash: ContentHash::compute(b"r"),
+            waiver_covered: false,
+            timestamp_ns: 10,
+        };
+        assert_eq!(obs1.timestamp_ns(), 10);
+
+        let obs2 = MonitoringObservation::PerformanceSample {
+            metric_name: "latency".to_string(),
+            value_millionths: 100,
+            timestamp_ns: 20,
+        };
+        assert_eq!(obs2.timestamp_ns(), 20);
+    }
+
+    // -- Policy blocked candidates --
+
+    #[test]
+    fn policy_block_and_check_candidate() {
+        let mut policy = test_policy();
+        assert!(!policy.is_candidate_blocked("some-digest"));
+        policy.block_candidate("some-digest".to_string());
+        assert!(policy.is_candidate_blocked("some-digest"));
+        assert!(!policy.is_candidate_blocked("other-digest"));
+    }
+
+    // -- DemotionPolicy strict defaults --
+
+    #[test]
+    fn strict_policy_has_all_triggers_enabled() {
+        let policy = DemotionPolicy::strict(test_slot());
+        assert!(policy.semantic_divergence_enabled);
+        assert!(policy.performance_breach_enabled);
+        assert!(policy.risk_threshold_enabled);
+        assert!(policy.capability_violation_enabled);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: remaining serde and edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn monitoring_observation_serde_roundtrip_all_variants() {
+        let observations = vec![
+            MonitoringObservation::OutputComparison {
+                matched: false,
+                input_hash: ContentHash::compute(b"in"),
+                native_output_hash: ContentHash::compute(b"n"),
+                reference_output_hash: ContentHash::compute(b"r"),
+                waiver_covered: true,
+                timestamp_ns: 100,
+            },
+            MonitoringObservation::PerformanceSample {
+                metric_name: "latency_p99_ns".to_string(),
+                value_millionths: 50_000_000,
+                timestamp_ns: 200,
+            },
+            MonitoringObservation::RiskScoreUpdate {
+                risk_millionths: 600_000,
+                timestamp_ns: 300,
+            },
+            MonitoringObservation::CapabilityEvent {
+                capability: "fs:read".to_string(),
+                within_envelope: true,
+                envelope_digest: ContentHash::compute(b"env"),
+                timestamp_ns: 400,
+            },
+        ];
+        for obs in &observations {
+            let json = serde_json::to_string(obs).unwrap();
+            let restored: MonitoringObservation = serde_json::from_str(&json).unwrap();
+            assert_eq!(&restored, obs);
+        }
+    }
+
+    #[test]
+    fn performance_threshold_serde_roundtrip() {
+        let pt = PerformanceThreshold {
+            metric_name: "throughput_ops_sec".to_string(),
+            max_value_millionths: 100_000_000,
+            sustained_duration_ns: 5_000_000_000,
+        };
+        let json = serde_json::to_string(&pt).unwrap();
+        let restored: PerformanceThreshold = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored, pt);
+    }
+
+    #[test]
+    fn demotion_receipt_content_hash_deterministic() {
+        let key = test_signing_key();
+        let receipt = DemotionReceipt::create_signed(
+            &key,
+            CreateDemotionReceiptInput {
+                slot_id: &test_slot(),
+                demoted_cell_digest: "native-a",
+                restored_cell_digest: "delegate-b",
+                rollback_token_used: "token-z",
+                demotion_reason: &DemotionReason::SemanticDivergence {
+                    divergence_count: 1,
+                    first_divergence_artifact: ContentHash::compute(b"div"),
+                },
+                severity: DemotionSeverity::Critical,
+                evidence: &[],
+                timestamp_ns: 5_000_000_000,
+                epoch: SecurityEpoch::from_raw(1),
+                zone: "test",
+            },
+        )
+        .expect("create");
+
+        let h1 = receipt.content_hash();
+        let h2 = receipt.content_hash();
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn demotion_receipt_signature_verifies() {
+        let key = test_signing_key();
+        let vk = key.verification_key();
+        let receipt = DemotionReceipt::create_signed(
+            &key,
+            CreateDemotionReceiptInput {
+                slot_id: &test_slot(),
+                demoted_cell_digest: "nat",
+                restored_cell_digest: "del",
+                rollback_token_used: "tok",
+                demotion_reason: &DemotionReason::OperatorInitiated {
+                    operator_id: "admin".to_string(),
+                    reason: "manual test".to_string(),
+                },
+                severity: DemotionSeverity::Warning,
+                evidence: &[DemotionEvidenceItem {
+                    artifact_hash: ContentHash::compute(b"ev"),
+                    category: "manual".to_string(),
+                    collected_at_ns: 100,
+                    summary: "test evidence".to_string(),
+                }],
+                timestamp_ns: 2_000_000_000,
+                epoch: SecurityEpoch::from_raw(5),
+                zone: "prod",
+            },
+        )
+        .expect("create");
+
+        assert!(receipt.verify_signature(&vk).is_ok());
+
+        // Wrong key should fail.
+        let wrong_vk = VerificationKey([0xAB; 32]);
+        assert!(receipt.verify_signature(&wrong_vk).is_err());
+    }
+
+    #[test]
+    fn demotion_receipt_derive_id_deterministic() {
+        let id1 = DemotionReceipt::derive_receipt_id(
+            &test_slot(),
+            "native",
+            "delegate",
+            1_000_000_000,
+            "zone-a",
+        )
+        .unwrap();
+        let id2 = DemotionReceipt::derive_receipt_id(
+            &test_slot(),
+            "native",
+            "delegate",
+            1_000_000_000,
+            "zone-a",
+        )
+        .unwrap();
+        assert_eq!(id1, id2);
+
+        // Different timestamp -> different ID.
+        let id3 = DemotionReceipt::derive_receipt_id(
+            &test_slot(),
+            "native",
+            "delegate",
+            2_000_000_000,
+            "zone-a",
+        )
+        .unwrap();
+        assert_ne!(id1, id3);
+    }
+
+    #[test]
+    fn policy_unblock_nonexistent_returns_false() {
+        let mut policy = DemotionPolicy::strict(test_slot());
+        assert!(!policy.unblock_candidate("never-blocked"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: struct serde roundtrips
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn trigger_evaluation_serde_roundtrip() {
+        let te = TriggerEvaluation {
+            fired: true,
+            reason: Some(DemotionReason::RiskThresholdBreach {
+                observed_risk_millionths: 900_000,
+                max_risk_millionths: 800_000,
+            }),
+            severity: DemotionSeverity::Critical,
+            evidence: vec![DemotionEvidenceItem {
+                artifact_hash: ContentHash::compute(b"risk"),
+                category: "risk".to_string(),
+                collected_at_ns: 1000,
+                summary: "risk breach".to_string(),
+            }],
+        };
+        let json = serde_json::to_string(&te).unwrap();
+        let restored: TriggerEvaluation = serde_json::from_str(&json).unwrap();
+        assert_eq!(te, restored);
+    }
+
+    #[test]
+    fn observation_result_serde_roundtrip() {
+        let or = ObservationResult {
+            trigger_fired: false,
+            evaluation: None,
+            observations_processed: 10,
+        };
+        let json = serde_json::to_string(&or).unwrap();
+        let restored: ObservationResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(or, restored);
+    }
+
+    #[test]
+    fn auto_demotion_monitor_serde_roundtrip() {
+        let monitor = test_monitor();
+        let json = serde_json::to_string(&monitor).unwrap();
+        let restored: AutoDemotionMonitor = serde_json::from_str(&json).unwrap();
+        assert_eq!(monitor, restored);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: DemotionError is std::error::Error
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn demotion_error_is_std_error() {
+        let err: Box<dyn std::error::Error> = Box::new(DemotionError::AlreadyDemoted {
+            slot_id: "s".to_string(),
+        });
+        assert!(!err.to_string().is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: DemotionReason ordering
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn demotion_reason_ordering() {
+        let a = DemotionReason::SemanticDivergence {
+            divergence_count: 1,
+            first_divergence_artifact: ContentHash::compute(b"a"),
+        };
+        let b = DemotionReason::OperatorInitiated {
+            operator_id: "op".to_string(),
+            reason: "manual".to_string(),
+        };
+        // SemanticDivergence < OperatorInitiated by enum declaration order
+        assert!(a < b);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: DemotionSeverity full ordering chain
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn demotion_severity_full_ordering_chain() {
+        assert!(DemotionSeverity::Advisory < DemotionSeverity::Warning);
+        assert!(DemotionSeverity::Warning < DemotionSeverity::Critical);
+    }
 }

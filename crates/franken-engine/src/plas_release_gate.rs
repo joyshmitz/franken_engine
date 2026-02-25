@@ -1450,4 +1450,101 @@ mod tests {
         sorted_codes.sort();
         assert_eq!(codes, sorted_codes);
     }
+
+    // -- Enrichment: error std::error trait --
+
+    #[test]
+    fn error_is_std_error() {
+        let errors: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(PlasReleaseGateError::InvalidInput {
+                detail: "bad".to_string(),
+            }),
+            Box::new(PlasReleaseGateError::Serialization {
+                detail: "json".to_string(),
+            }),
+        ];
+        for e in &errors {
+            assert!(!e.to_string().is_empty());
+        }
+    }
+
+    // -- Enrichment: failure code ordering --
+
+    #[test]
+    fn failure_code_ordering() {
+        assert!(PlasReleaseGateFailureCode::CohortPlasNotActive
+            < PlasReleaseGateFailureCode::CohortCoverageMissingGrantExercise);
+        assert!(PlasReleaseGateFailureCode::CohortCoverageMissingGrantExercise
+            < PlasReleaseGateFailureCode::MissingCapabilityWitness);
+        assert!(PlasReleaseGateFailureCode::MissingCapabilityWitness
+            < PlasReleaseGateFailureCode::WitnessSignatureVerificationFailed);
+        assert!(PlasReleaseGateFailureCode::WitnessSignatureVerificationFailed
+            < PlasReleaseGateFailureCode::EscrowReplayEvidenceMissing);
+        assert!(PlasReleaseGateFailureCode::EscrowReplayEvidenceMissing
+            < PlasReleaseGateFailureCode::EscrowReplayMismatch);
+        assert!(PlasReleaseGateFailureCode::EscrowReplayMismatch
+            < PlasReleaseGateFailureCode::RevocationWitnessMissing);
+        assert!(PlasReleaseGateFailureCode::RevocationWitnessMissing
+            < PlasReleaseGateFailureCode::RevocationEscrowEventMissing);
+        assert!(PlasReleaseGateFailureCode::RevocationEscrowEventMissing
+            < PlasReleaseGateFailureCode::AmbientAuthorityDetected);
+    }
+
+    // -- Enrichment: failure code display all variants --
+
+    #[test]
+    fn failure_code_display_all_variants() {
+        let codes = [
+            PlasReleaseGateFailureCode::CohortPlasNotActive,
+            PlasReleaseGateFailureCode::CohortCoverageMissingGrantExercise,
+            PlasReleaseGateFailureCode::MissingCapabilityWitness,
+            PlasReleaseGateFailureCode::WitnessSignatureVerificationFailed,
+            PlasReleaseGateFailureCode::EscrowReplayEvidenceMissing,
+            PlasReleaseGateFailureCode::EscrowReplayMismatch,
+            PlasReleaseGateFailureCode::RevocationWitnessMissing,
+            PlasReleaseGateFailureCode::RevocationEscrowEventMissing,
+            PlasReleaseGateFailureCode::AmbientAuthorityDetected,
+        ];
+        for code in &codes {
+            assert!(!code.to_string().is_empty());
+        }
+    }
+
+    // -- Enrichment: error serde all variants --
+
+    #[test]
+    fn error_serde_all_variants() {
+        let errors = [
+            PlasReleaseGateError::InvalidInput {
+                detail: "bad input".to_string(),
+            },
+            PlasReleaseGateError::Serialization {
+                detail: "json fail".to_string(),
+            },
+        ];
+        for err in &errors {
+            let json = serde_json::to_string(err).unwrap();
+            let restored: PlasReleaseGateError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*err, restored);
+        }
+    }
+
+    // -- Enrichment: failure code error_code uniqueness --
+
+    #[test]
+    fn failure_code_error_codes_unique() {
+        let codes = [
+            PlasReleaseGateFailureCode::CohortPlasNotActive,
+            PlasReleaseGateFailureCode::CohortCoverageMissingGrantExercise,
+            PlasReleaseGateFailureCode::MissingCapabilityWitness,
+            PlasReleaseGateFailureCode::WitnessSignatureVerificationFailed,
+            PlasReleaseGateFailureCode::EscrowReplayEvidenceMissing,
+            PlasReleaseGateFailureCode::EscrowReplayMismatch,
+            PlasReleaseGateFailureCode::RevocationWitnessMissing,
+            PlasReleaseGateFailureCode::RevocationEscrowEventMissing,
+            PlasReleaseGateFailureCode::AmbientAuthorityDetected,
+        ];
+        let error_codes: BTreeSet<&str> = codes.iter().map(|c| c.error_code()).collect();
+        assert_eq!(error_codes.len(), codes.len());
+    }
 }

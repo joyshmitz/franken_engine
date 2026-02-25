@@ -1110,6 +1110,70 @@ mod tests {
 
     // -- Determinism --
 
+    // -- Enrichment: serde roundtrips --
+
+    #[test]
+    fn gate_metrics_serde_roundtrip() {
+        let m = GateMetrics::empty()
+            .with("latency_p99", "42ms")
+            .with("throughput", "1000rps");
+        let json = serde_json::to_string(&m).expect("serialize");
+        let restored: GateMetrics = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(m, restored);
+    }
+
+    #[test]
+    fn replay_input_serde_roundtrip() {
+        let ri = ReplayInput {
+            recorded_hash: ContentHash::compute(b"recorded"),
+            replayed_hash: ContentHash::compute(b"replayed"),
+            event_count: 512,
+        };
+        let json = serde_json::to_string(&ri).expect("serialize");
+        let restored: ReplayInput = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(ri, restored);
+    }
+
+    #[test]
+    fn interleaving_input_serde_roundtrip() {
+        let ii = InterleavingInput {
+            total_surfaces: 100,
+            explored_surfaces: 87,
+            unresolved_failures: 3,
+            regression_transcripts: 1,
+        };
+        let json = serde_json::to_string(&ii).expect("serialize");
+        let restored: InterleavingInput = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(ii, restored);
+    }
+
+    #[test]
+    fn conformance_input_serde_roundtrip() {
+        let ci = ConformanceInput {
+            total_vectors: 500,
+            passed_vectors: 498,
+            failed_vectors: 2,
+            categories: vec!["syntax".to_string(), "semantics".to_string()],
+        };
+        let json = serde_json::to_string(&ci).expect("serialize");
+        let restored: ConformanceInput = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(ci, restored);
+    }
+
+    #[test]
+    fn fuzz_input_serde_roundtrip() {
+        let fi = FuzzInput {
+            cpu_hours: 48,
+            crashes: 0,
+            unexpected_panics: 1,
+            bypasses: 0,
+            targets: vec!["parser".to_string(), "interpreter".to_string()],
+        };
+        let json = serde_json::to_string(&fi).expect("serialize");
+        let restored: FuzzInput = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(fi, restored);
+    }
+
     #[test]
     fn deterministic_report_hash() {
         let run = || {

@@ -1123,4 +1123,30 @@ mod tests {
         assert_eq!(batch.len(), 3);
         assert!(batch.iter().all(|t| t.label.lane == SchedulerLane::Cancel));
     }
+
+    // -- Enrichment: std::error --
+
+    #[test]
+    fn lane_error_implements_std_error() {
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(LaneError::LaneMismatch {
+                task_type: "gc".into(),
+                declared_lane: "compute".into(),
+                required_lane: "maintenance".into(),
+            }),
+            Box::new(LaneError::LaneFull {
+                lane: "compute".into(),
+                max_depth: 100,
+            }),
+            Box::new(LaneError::TaskNotFound { task_id: 42 }),
+            Box::new(LaneError::EmptyTraceId),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            let msg = format!("{v}");
+            assert!(!msg.is_empty());
+            displays.insert(msg);
+        }
+        assert_eq!(displays.len(), 4, "all 4 variants produce distinct messages");
+    }
 }

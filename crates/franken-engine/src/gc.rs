@@ -1274,6 +1274,32 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
+    // -- Enrichment: std::error --
+
+    #[test]
+    fn gc_error_implements_std_error() {
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(GcError::HeapNotFound {
+                extension_id: "ext-1".into(),
+            }),
+            Box::new(GcError::DuplicateHeap {
+                extension_id: "ext-2".into(),
+            }),
+            Box::new(GcError::ObjectNotFound {
+                extension_id: "ext-3".into(),
+                object_id: GcObjectId(0),
+            }),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            let msg = format!("{v}");
+            assert!(!msg.is_empty());
+            displays.insert(msg);
+        }
+        assert_eq!(displays.len(), 3);
+    }
+
+    #[test]
     fn gc_event_serde_round_trip() {
         let mut gc = deterministic_collector();
         gc.register_heap("ext-a".into()).unwrap();

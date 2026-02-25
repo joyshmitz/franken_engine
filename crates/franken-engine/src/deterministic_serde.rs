@@ -917,4 +917,30 @@ mod tests {
         // 1 tag + 4 length + 3 chars = 8
         assert_eq!(bytes.len(), 8);
     }
+
+    #[test]
+    fn serde_error_std_error() {
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(SerdeError::SchemaMismatch {
+                expected: SchemaHash([1; 32]),
+                actual: SchemaHash([2; 32]),
+            }),
+            Box::new(SerdeError::UnknownSchema { schema_hash: SchemaHash([3; 32]) }),
+            Box::new(SerdeError::BufferTooShort { expected: 10, actual: 5 }),
+            Box::new(SerdeError::InvalidTag { tag: 0xFF, offset: 0 }),
+            Box::new(SerdeError::InvalidUtf8 { offset: 3 }),
+            Box::new(SerdeError::DuplicateKey { key: "k".into() }),
+            Box::new(SerdeError::NonLexicographicKeys {
+                prev_key: "b".into(),
+                current_key: "a".into(),
+            }),
+            Box::new(SerdeError::RecursionLimitExceeded { offset: 99 }),
+            Box::new(SerdeError::TrailingBytes { count: 4 }),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            displays.insert(format!("{v}"));
+        }
+        assert_eq!(displays.len(), 9);
+    }
 }

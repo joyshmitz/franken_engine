@@ -855,6 +855,62 @@ mod tests {
         assert_eq!(event, restored);
     }
 
+    // -- Enrichment: serde & ordering --
+
+    #[test]
+    fn obligation_status_serde_all_variants() {
+        for status in [
+            ObligationStatus::Pending,
+            ObligationStatus::Committed,
+            ObligationStatus::Aborted,
+        ] {
+            let json = serde_json::to_string(&status).expect("serialize");
+            let restored: ObligationStatus =
+                serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(status, restored);
+        }
+    }
+
+    #[test]
+    fn obligation_serde_roundtrip() {
+        let ob = Obligation {
+            id: "ob-1".to_string(),
+            description: "must finalize".to_string(),
+            status: ObligationStatus::Pending,
+        };
+        let json = serde_json::to_string(&ob).expect("serialize");
+        let restored: Obligation = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(ob, restored);
+    }
+
+    #[test]
+    fn drain_deadline_serde_roundtrip() {
+        let dd = DrainDeadline { max_ticks: 5000 };
+        let json = serde_json::to_string(&dd).expect("serialize");
+        let restored: DrainDeadline = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(dd, restored);
+    }
+
+    #[test]
+    fn region_state_ordering() {
+        assert!(RegionState::Running < RegionState::CancelRequested);
+        assert!(RegionState::CancelRequested < RegionState::Draining);
+        assert!(RegionState::Draining < RegionState::Finalizing);
+        assert!(RegionState::Finalizing < RegionState::Closed);
+    }
+
+    #[test]
+    fn cancel_reason_ordering() {
+        assert!(CancelReason::OperatorShutdown < CancelReason::Quarantine);
+        assert!(CancelReason::Quarantine < CancelReason::Revocation);
+        assert!(CancelReason::Revocation < CancelReason::BudgetExhausted);
+        assert!(CancelReason::BudgetExhausted < CancelReason::ParentClosing);
+        assert!(
+            CancelReason::ParentClosing
+                < CancelReason::Custom("zzz".to_string())
+        );
+    }
+
     #[test]
     fn obligation_nonexistent_returns_false() {
         let mut region = test_region();

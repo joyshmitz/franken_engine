@@ -2104,4 +2104,154 @@ mod tests {
         let restored: MonitoringHook = serde_json::from_str(&json).unwrap();
         assert_eq!(hook, restored);
     }
+
+    // -- Enrichment: ordering --
+
+    #[test]
+    fn schema_version_ordering() {
+        // Only one variant, but confirm Ord is implemented.
+        assert_eq!(SchemaVersion::V1.cmp(&SchemaVersion::V1), std::cmp::Ordering::Equal);
+    }
+
+    #[test]
+    fn delegate_type_ordering() {
+        assert!(DelegateType::QuickJsBacked < DelegateType::WasmBacked);
+        assert!(DelegateType::WasmBacked < DelegateType::ExternalProcess);
+    }
+
+    #[test]
+    fn validation_artifact_kind_ordering() {
+        assert!(ValidationArtifactKind::EquivalenceResult < ValidationArtifactKind::CapabilityPreservation);
+        assert!(ValidationArtifactKind::CapabilityPreservation < ValidationArtifactKind::PerformanceBenchmark);
+        assert!(ValidationArtifactKind::PerformanceBenchmark < ValidationArtifactKind::AdversarialSurvival);
+    }
+
+    #[test]
+    fn gate_verdict_ordering() {
+        assert!(GateVerdict::Approved < GateVerdict::Denied);
+        assert!(GateVerdict::Denied < GateVerdict::Inconclusive);
+    }
+
+    #[test]
+    fn risk_level_ordering() {
+        assert!(RiskLevel::Low < RiskLevel::Medium);
+        assert!(RiskLevel::Medium < RiskLevel::High);
+        assert!(RiskLevel::High < RiskLevel::Critical);
+    }
+
+    #[test]
+    fn replacement_stage_ordering() {
+        assert!(ReplacementStage::Research < ReplacementStage::Shadow);
+        assert!(ReplacementStage::Shadow < ReplacementStage::Canary);
+        assert!(ReplacementStage::Canary < ReplacementStage::Production);
+    }
+
+    // -- Enrichment: error trait --
+
+    #[test]
+    fn self_replacement_error_is_std_error() {
+        let e: Box<dyn std::error::Error> =
+            Box::new(SelfReplacementError::EmptyValidationArtifacts);
+        assert!(!e.to_string().is_empty());
+    }
+
+    // -- Enrichment: serde --
+
+    #[test]
+    fn gate_result_serde_roundtrip() {
+        let gr = GateResult {
+            gate_name: "equivalence".to_string(),
+            passed: true,
+            evidence_refs: vec!["ev-1".to_string()],
+            summary: "all equivalent".to_string(),
+        };
+        let json = serde_json::to_string(&gr).unwrap();
+        let restored: GateResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(gr, restored);
+    }
+
+    #[test]
+    fn signer_entry_serde_roundtrip() {
+        let sk = SigningKey::from_bytes([42u8; 32]);
+        let entry = SignerEntry {
+            role: "admin".to_string(),
+            verification_key: sk.verification_key(),
+            signature: Signature::from_bytes([0u8; 64]),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let restored: SignerEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry, restored);
+    }
+
+    // -- Enrichment: display content --
+
+    #[test]
+    fn validation_artifact_kind_display_content() {
+        assert_eq!(
+            ValidationArtifactKind::EquivalenceResult.to_string(),
+            "equivalence"
+        );
+        assert_eq!(
+            ValidationArtifactKind::AdversarialSurvival.to_string(),
+            "adversarial-survival"
+        );
+    }
+
+    #[test]
+    fn replacement_stage_display_content() {
+        assert_eq!(ReplacementStage::Research.to_string(), "research");
+        assert_eq!(ReplacementStage::Shadow.to_string(), "shadow");
+        assert_eq!(ReplacementStage::Canary.to_string(), "canary");
+        assert_eq!(ReplacementStage::Production.to_string(), "production");
+    }
+
+    #[test]
+    fn delegate_type_ord() {
+        assert!(DelegateType::QuickJsBacked < DelegateType::WasmBacked);
+        assert!(DelegateType::WasmBacked < DelegateType::ExternalProcess);
+    }
+
+    #[test]
+    fn validation_artifact_kind_ord() {
+        assert!(ValidationArtifactKind::EquivalenceResult < ValidationArtifactKind::CapabilityPreservation);
+        assert!(ValidationArtifactKind::CapabilityPreservation < ValidationArtifactKind::PerformanceBenchmark);
+        assert!(ValidationArtifactKind::PerformanceBenchmark < ValidationArtifactKind::AdversarialSurvival);
+    }
+
+    #[test]
+    fn gate_verdict_ord() {
+        assert!(GateVerdict::Approved < GateVerdict::Denied);
+        assert!(GateVerdict::Denied < GateVerdict::Inconclusive);
+    }
+
+    #[test]
+    fn risk_level_ord() {
+        assert!(RiskLevel::Low < RiskLevel::Medium);
+        assert!(RiskLevel::Medium < RiskLevel::High);
+        assert!(RiskLevel::High < RiskLevel::Critical);
+    }
+
+    #[test]
+    fn replacement_stage_ord() {
+        assert!(ReplacementStage::Research < ReplacementStage::Shadow);
+        assert!(ReplacementStage::Shadow < ReplacementStage::Canary);
+        assert!(ReplacementStage::Canary < ReplacementStage::Production);
+    }
+
+    #[test]
+    fn self_replacement_error_std_error() {
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(SelfReplacementError::InsufficientSignatures { required: 3, present: 1 }),
+            Box::new(SelfReplacementError::SignatureInvalid { signer_index: 0, role: "admin".into() }),
+            Box::new(SelfReplacementError::SlotMismatch { expected: "a".into(), got: "b".into() }),
+            Box::new(SelfReplacementError::EmptyValidationArtifacts),
+            Box::new(SelfReplacementError::ValidationFailed { slot_id: "s1".into() }),
+            Box::new(SelfReplacementError::UnsupportedSchemaVersion { version: "v99".into() }),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            displays.insert(format!("{v}"));
+        }
+        assert_eq!(displays.len(), 6);
+    }
 }

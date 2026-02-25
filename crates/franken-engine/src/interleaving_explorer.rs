@@ -1366,4 +1366,153 @@ mod tests {
             InvariantResult::Violated { .. }
         ));
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: leaf enum serde roundtrips
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn operation_type_serde_roundtrip() {
+        for v in [
+            OperationType::CheckpointWrite,
+            OperationType::RevocationPropagation,
+            OperationType::PolicyUpdate,
+            OperationType::EvidenceEmission,
+            OperationType::RegionClose,
+            OperationType::ObligationCommit,
+            OperationType::TaskCompletion,
+            OperationType::FaultInjection,
+            OperationType::CancelInjection,
+            OperationType::TimeAdvance,
+        ] {
+            let json = serde_json::to_string(&v).unwrap();
+            let restored: OperationType = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, restored);
+        }
+    }
+
+    #[test]
+    fn race_severity_serde_roundtrip() {
+        for v in [
+            RaceSeverity::Low,
+            RaceSeverity::Medium,
+            RaceSeverity::High,
+            RaceSeverity::Critical,
+        ] {
+            let json = serde_json::to_string(&v).unwrap();
+            let restored: RaceSeverity = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, restored);
+        }
+    }
+
+    #[test]
+    fn exploration_strategy_serde_roundtrip() {
+        let strategies = vec![
+            ExplorationStrategy::Exhaustive {
+                max_permutations: 100,
+            },
+            ExplorationStrategy::RandomWalk {
+                seed: 42,
+                iterations: 200,
+            },
+            ExplorationStrategy::TargetedRace {
+                race_ids: vec!["r1".to_string()],
+            },
+        ];
+        for s in &strategies {
+            let json = serde_json::to_string(s).unwrap();
+            let restored: ExplorationStrategy = serde_json::from_str(&json).unwrap();
+            assert_eq!(*s, restored);
+        }
+    }
+
+    #[test]
+    fn invariant_result_serde_roundtrip() {
+        let held = InvariantResult::Held;
+        let json = serde_json::to_string(&held).unwrap();
+        let restored: InvariantResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(held, restored);
+
+        let violated = InvariantResult::Violated {
+            description: "bad".to_string(),
+        };
+        let json = serde_json::to_string(&violated).unwrap();
+        let restored: InvariantResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(violated, restored);
+    }
+
+    #[test]
+    fn scenario_action_serde_roundtrip() {
+        let actions = vec![
+            ScenarioAction::RunTask { task_index: 0 },
+            ScenarioAction::CompleteTask { task_index: 1 },
+            ScenarioAction::AdvanceTime { ticks: 100 },
+            ScenarioAction::InjectCancel {
+                region_id: "r-1".to_string(),
+            },
+            ScenarioAction::InjectFault {
+                task_index: 2,
+                fault: FaultKind::Panic,
+            },
+        ];
+        for a in &actions {
+            let json = serde_json::to_string(a).unwrap();
+            let restored: ScenarioAction = serde_json::from_str(&json).unwrap();
+            assert_eq!(*a, restored);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: struct serde roundtrips
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn race_surface_serde_roundtrip() {
+        let rs = RaceSurface {
+            race_id: "rc-1".to_string(),
+            operations: [
+                OperationType::CheckpointWrite,
+                OperationType::RevocationPropagation,
+            ],
+            invariant: "monotonic".to_string(),
+            severity: RaceSeverity::High,
+        };
+        let json = serde_json::to_string(&rs).unwrap();
+        let restored: RaceSurface = serde_json::from_str(&json).unwrap();
+        assert_eq!(rs, restored);
+    }
+
+    #[test]
+    fn scenario_serde_roundtrip() {
+        let sc = Scenario {
+            task_count: 3,
+            actions: vec![
+                ScenarioAction::RunTask { task_index: 0 },
+                ScenarioAction::CompleteTask { task_index: 0 },
+            ],
+            seed: 42,
+        };
+        let json = serde_json::to_string(&sc).unwrap();
+        let restored: Scenario = serde_json::from_str(&json).unwrap();
+        assert_eq!(sc, restored);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: ordering
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn operation_type_ordering() {
+        assert!(OperationType::CheckpointWrite < OperationType::TimeAdvance);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: default
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn race_surface_catalog_default_empty() {
+        let cat = RaceSurfaceCatalog::default();
+        assert!(cat.surfaces.is_empty());
+    }
 }
