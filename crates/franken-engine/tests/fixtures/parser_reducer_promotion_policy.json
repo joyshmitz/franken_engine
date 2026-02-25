@@ -1,0 +1,32 @@
+{
+  "schema_version": "franken-engine.parser-reducer-promotion.policy.v1",
+  "policy_id": "policy-parser-reducer-promotion-v1",
+  "parser_mode": "scalar_reference",
+  "ast_contract_schema": "franken-engine.parser-ast.schema.v1",
+  "diagnostics_schema": "franken-engine.parser-diagnostics.schema.v1",
+  "diagnostics_taxonomy": "franken-engine.parser-diagnostics.taxonomy.v1",
+  "provenance_hash_algorithm": "sha256",
+  "promotion_rules": [
+    {
+      "corpus": "normative",
+      "requires_expected_hash": true,
+      "requires_expected_diagnostic_code": false,
+      "requires_ast_contract_compat": true,
+      "requires_diag_compat": false
+    },
+    {
+      "corpus": "adversarial",
+      "requires_expected_hash": false,
+      "requires_expected_diagnostic_code": true,
+      "requires_ast_contract_compat": true,
+      "requires_diag_compat": true
+    }
+  ],
+  "auto_promote": {
+    "max_source_bytes": 512,
+    "allowed_outcomes": [
+      "promote"
+    ],
+    "requires_replay_command": true
+  }
+}

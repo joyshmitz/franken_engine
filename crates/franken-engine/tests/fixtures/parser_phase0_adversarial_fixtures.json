@@ -1,0 +1,66 @@
+{
+  "schema_version": "franken-engine.parser-phase0.adversarial-fixtures.v1",
+  "parser_mode": "scalar_reference",
+  "fixtures": [
+    {
+      "id": "adv_empty_source_script",
+      "family_id": "adversarial.empty_source",
+      "goal": "script",
+      "source": "   \n\t  ",
+      "expected_parse_error": "empty_source",
+      "expected_diagnostic_code": "FE-PARSER-DIAG-EMPTY-SOURCE-0001",
+      "severity": "error",
+      "provenance_tag": "corpus.adversarial.empty_source.v1"
+    },
+    {
+      "id": "adv_import_missing_clause_module",
+      "family_id": "adversarial.import.missing_clause",
+      "goal": "module",
+      "source": "import",
+      "expected_parse_error": "unsupported_syntax",
+      "expected_diagnostic_code": "FE-PARSER-DIAG-UNSUPPORTED-SYNTAX-0001",
+      "severity": "error",
+      "provenance_tag": "corpus.adversarial.import_missing_clause.v1"
+    },
+    {
+      "id": "adv_export_missing_clause_module",
+      "family_id": "adversarial.export.missing_clause",
+      "goal": "module",
+      "source": "export",
+      "expected_parse_error": "unsupported_syntax",
+      "expected_diagnostic_code": "FE-PARSER-DIAG-UNSUPPORTED-SYNTAX-0001",
+      "severity": "error",
+      "provenance_tag": "corpus.adversarial.export_missing_clause.v1"
+    },
+    {
+      "id": "adv_import_in_script_goal",
+      "family_id": "adversarial.goal_violation.import_in_script",
+      "goal": "script",
+      "source": "import dep from \"pkg\"",
+      "expected_parse_error": "invalid_goal",
+      "expected_diagnostic_code": "FE-PARSER-DIAG-INVALID-GOAL-0001",
+      "severity": "error",
+      "provenance_tag": "corpus.adversarial.import_in_script_goal.v1"
+    },
+    {
+      "id": "adv_export_in_script_goal",
+      "family_id": "adversarial.goal_violation.export_in_script",
+      "goal": "script",
+      "source": "export default 1",
+      "expected_parse_error": "invalid_goal",
+      "expected_diagnostic_code": "FE-PARSER-DIAG-INVALID-GOAL-0001",
+      "severity": "error",
+      "provenance_tag": "corpus.adversarial.export_in_script_goal.v1"
+    },
+    {
+      "id": "adv_import_unquoted_source",
+      "family_id": "adversarial.import.unquoted_source",
+      "goal": "module",
+      "source": "import dep from pkg",
+      "expected_parse_error": "unsupported_syntax",
+      "expected_diagnostic_code": "FE-PARSER-DIAG-UNSUPPORTED-SYNTAX-0001",
+      "severity": "error",
+      "provenance_tag": "corpus.adversarial.import_unquoted_source.v1"
+    }
+  ]
+}
