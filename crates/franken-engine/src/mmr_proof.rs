@@ -1030,4 +1030,180 @@ mod tests {
         }
         assert_eq!(displays.len(), 5);
     }
+
+    // -- Enrichment: ProofType serde roundtrip --
+
+    #[test]
+    fn proof_type_serde_roundtrip() {
+        for pt in [ProofType::Inclusion, ProofType::Consistency] {
+            let json = serde_json::to_string(&pt).unwrap();
+            let restored: ProofType = serde_json::from_str(&json).unwrap();
+            assert_eq!(pt, restored);
+        }
+    }
+
+    // -- Enrichment: RootMismatch and ConsistencyFailure serde roundtrip --
+
+    #[test]
+    fn proof_error_root_mismatch_serde_roundtrip() {
+        let err = ProofError::RootMismatch {
+            expected: ContentHash::compute(b"expected"),
+            computed: ContentHash::compute(b"computed"),
+        };
+        let json = serde_json::to_string(&err).unwrap();
+        let restored: ProofError = serde_json::from_str(&json).unwrap();
+        assert_eq!(err, restored);
+    }
+
+    #[test]
+    fn proof_error_consistency_failure_serde_roundtrip() {
+        let err = ProofError::ConsistencyFailure {
+            old_length: 10,
+            new_length: 20,
+            reason: "test consistency".to_string(),
+        };
+        let json = serde_json::to_string(&err).unwrap();
+        let restored: ProofError = serde_json::from_str(&json).unwrap();
+        assert_eq!(err, restored);
+    }
+
+    // -- Enrichment: Display uniqueness for all ProofError variants --
+
+    #[test]
+    fn proof_error_display_all_variants_unique() {
+        let h1 = ContentHash::compute(b"x");
+        let h2 = ContentHash::compute(b"y");
+        let displays: std::collections::BTreeSet<String> = [
+            ProofError::IndexOutOfRange {
+                index: 5,
+                stream_length: 3,
+            }
+            .to_string(),
+            ProofError::RootMismatch {
+                expected: h1,
+                computed: h2,
+            }
+            .to_string(),
+            ProofError::InvalidProof {
+                reason: "test".into(),
+            }
+            .to_string(),
+            ProofError::EmptyStream.to_string(),
+            ProofError::ConsistencyFailure {
+                old_length: 3,
+                new_length: 5,
+                reason: "test".into(),
+            }
+            .to_string(),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(displays.len(), 5);
+    }
+
+    // -- Enrichment: MmrProof serde deterministic --
+
+    #[test]
+    fn mmr_proof_serde_deterministic() {
+        let mmr = build_mmr(8);
+        let proof = mmr.inclusion_proof(4).unwrap();
+        let json1 = serde_json::to_string(&proof).unwrap();
+        let json2 = serde_json::to_string(&proof).unwrap();
+        assert_eq!(json1, json2);
+    }
+
+    // -- Enrichment: is_all_ones helper --
+
+    #[test]
+    fn is_all_ones_known_values() {
+        assert!(!is_all_ones(0));
+        assert!(is_all_ones(1));
+        assert!(!is_all_ones(2));
+        assert!(is_all_ones(3));
+        assert!(!is_all_ones(4));
+        assert!(is_all_ones(7));
+        assert!(is_all_ones(15));
+        assert!(!is_all_ones(16));
+        assert!(is_all_ones(31));
+        assert!(is_all_ones(63));
+    }
+
+    // -- Enrichment: mmr_size consistency with actual graph construction --
+
+    #[test]
+    fn mmr_size_matches_built_mmr() {
+        for n in 1..=20 {
+            let mmr = build_mmr(n);
+            assert_eq!(
+                mmr.size(),
+                mmr_size(n),
+                "mismatch at n={n}"
+            );
+        }
+    }
+
+    // -- Enrichment: peak_positions known values --
+
+    #[test]
+    fn peak_positions_known_values() {
+        // 1 leaf => size 1, 1 peak at pos 0
+        assert_eq!(peak_positions(1), vec![0]);
+        // 3 nodes (2 leaves) => 1 peak at pos 2
+        assert_eq!(peak_positions(3), vec![2]);
+        // 4 nodes (3 leaves) => peaks at 2, 3
+        assert_eq!(peak_positions(4), vec![2, 3]);
+        // 7 nodes (4 leaves) => 1 peak at pos 6
+        assert_eq!(peak_positions(7), vec![6]);
+    }
+
+    // -- Enrichment: inclusion proof for large MMR --
+
+    #[test]
+    fn inclusion_proof_large_mmr_all_leaves() {
+        let n = 64;
+        let mmr = build_mmr(n);
+        for i in 0..n {
+            let proof = mmr.inclusion_proof(i).unwrap();
+            verify_inclusion(&leaf_hash(i), i, &proof)
+                .unwrap_or_else(|e| panic!("n={n}, i={i}: {e}"));
+        }
+    }
+
+    // -- Enrichment: verify_inclusion rejects wrong proof_type --
+
+    #[test]
+    fn verify_inclusion_rejects_consistency_proof_type() {
+        let mmr = build_mmr(8);
+        let mut proof = mmr.inclusion_proof(0).unwrap();
+        proof.proof_type = ProofType::Consistency;
+        let err = verify_inclusion(&leaf_hash(0), 0, &proof).unwrap_err();
+        assert!(matches!(err, ProofError::InvalidProof { .. }));
+    }
+
+    // -- Enrichment: verify_consistency rejects inclusion proof_type --
+
+    #[test]
+    fn verify_consistency_rejects_inclusion_proof_type() {
+        let mmr = build_mmr(8);
+        let old_root = build_mmr(4).root_hash().unwrap();
+        let mut proof = mmr.consistency_proof(4).unwrap();
+        proof.proof_type = ProofType::Inclusion;
+        let err = verify_consistency(&old_root, &proof).unwrap_err();
+        assert!(matches!(err, ProofError::InvalidProof { .. }));
+    }
+
+    // -- Enrichment: bag_peaks edge cases --
+
+    #[test]
+    fn bag_peaks_empty_returns_zero_hash() {
+        let result = bag_peaks(&[]);
+        assert_eq!(result, ContentHash([0u8; 32]));
+    }
+
+    #[test]
+    fn bag_peaks_single_returns_identity() {
+        let h = ContentHash::compute(b"single-peak");
+        let result = bag_peaks(&[h.clone()]);
+        assert_eq!(result, h);
+    }
 }

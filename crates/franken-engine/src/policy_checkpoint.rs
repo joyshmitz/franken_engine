@@ -1194,4 +1194,220 @@ mod tests {
             assert!(!e.to_string().is_empty());
         }
     }
+
+    // -- Enrichment: Display uniqueness for CheckpointError --
+
+    #[test]
+    fn checkpoint_error_display_all_variants_unique() {
+        let id1 =
+            crate::engine_object_id::derive_id(ObjectDomain::CheckpointArtifact, "z", &checkpoint_schema_id(), b"a")
+                .unwrap();
+        let id2 =
+            crate::engine_object_id::derive_id(ObjectDomain::CheckpointArtifact, "z", &checkpoint_schema_id(), b"b")
+                .unwrap();
+        let displays: std::collections::BTreeSet<String> = [
+            CheckpointError::GenesisMustHaveNoPredecessor.to_string(),
+            CheckpointError::MissingPredecessor.to_string(),
+            CheckpointError::NonMonotonicSequence {
+                prev_seq: 5,
+                current_seq: 3,
+            }
+            .to_string(),
+            CheckpointError::GenesisSequenceNotZero { actual: 7 }.to_string(),
+            CheckpointError::ChainLinkageBroken {
+                expected: id1.clone(),
+                actual: id2.clone(),
+            }
+            .to_string(),
+            CheckpointError::EmptyPolicyHeads.to_string(),
+            CheckpointError::QuorumNotMet {
+                required: 3,
+                provided: 1,
+            }
+            .to_string(),
+            CheckpointError::DuplicatePolicyType {
+                policy_type: PolicyType::RuntimeExecution,
+            }
+            .to_string(),
+            CheckpointError::IdDerivationFailed {
+                detail: "test".into(),
+            }
+            .to_string(),
+            CheckpointError::SignatureInvalid {
+                detail: "bad sig".into(),
+            }
+            .to_string(),
+            CheckpointError::EpochRegression {
+                prev_epoch: SecurityEpoch::from_raw(5),
+                current_epoch: SecurityEpoch::from_raw(3),
+            }
+            .to_string(),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(displays.len(), 11);
+    }
+
+    // -- Enrichment: Display uniqueness for PolicyType --
+
+    #[test]
+    fn policy_type_display_all_variants_unique() {
+        let displays: std::collections::BTreeSet<String> = [
+            PolicyType::RuntimeExecution,
+            PolicyType::CapabilityLattice,
+            PolicyType::ExtensionTrust,
+            PolicyType::EvidenceRetention,
+            PolicyType::RevocationGovernance,
+        ]
+        .iter()
+        .map(|p| p.to_string())
+        .collect();
+        assert_eq!(displays.len(), 5);
+    }
+
+    // -- Enrichment: Display uniqueness for CheckpointEventType --
+
+    #[test]
+    fn checkpoint_event_type_display_all_variants_unique() {
+        let displays: std::collections::BTreeSet<String> = [
+            CheckpointEventType::GenesisCreated.to_string(),
+            CheckpointEventType::ChainCheckpointCreated { prev_seq: 0 }.to_string(),
+            CheckpointEventType::QuorumVerified {
+                valid: 2,
+                threshold: 1,
+            }
+            .to_string(),
+            CheckpointEventType::ChainLinkageVerified.to_string(),
+            CheckpointEventType::EpochTransition {
+                from: SecurityEpoch::from_raw(0),
+                to: SecurityEpoch::from_raw(1),
+            }
+            .to_string(),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(displays.len(), 5);
+    }
+
+    // -- Enrichment: all five policy types in single checkpoint --
+
+    #[test]
+    fn checkpoint_with_all_five_policy_types() {
+        let sk = make_sk(1);
+        let cp = CheckpointBuilder::genesis(
+            SecurityEpoch::GENESIS,
+            DeterministicTimestamp(100),
+            "test-zone",
+        )
+        .add_policy_head(make_policy_head(PolicyType::RuntimeExecution, 1))
+        .add_policy_head(make_policy_head(PolicyType::CapabilityLattice, 1))
+        .add_policy_head(make_policy_head(PolicyType::ExtensionTrust, 1))
+        .add_policy_head(make_policy_head(PolicyType::EvidenceRetention, 1))
+        .add_policy_head(make_policy_head(PolicyType::RevocationGovernance, 1))
+        .build(&[sk])
+        .unwrap();
+        assert_eq!(cp.policy_heads.len(), 5);
+        // Verify sorted order
+        for w in cp.policy_heads.windows(2) {
+            assert!(w[0].policy_type <= w[1].policy_type);
+        }
+    }
+
+    // -- Enrichment: checkpoint schema determinism --
+
+    #[test]
+    fn checkpoint_schema_deterministic() {
+        let s1 = checkpoint_schema();
+        let s2 = checkpoint_schema();
+        assert_eq!(s1.as_bytes(), s2.as_bytes());
+    }
+
+    #[test]
+    fn checkpoint_schema_id_deterministic() {
+        let s1 = checkpoint_schema_id();
+        let s2 = checkpoint_schema_id();
+        assert_eq!(s1, s2);
+    }
+
+    // -- Enrichment: chain linkage verification with genesis predecessor --
+
+    #[test]
+    fn chain_linkage_rejects_genesis_as_current() {
+        let sk = make_sk(1);
+        let genesis1 = build_genesis(std::slice::from_ref(&sk));
+        let genesis2 = build_genesis(&[sk]);
+        // Both genesis checkpoints have no prev_checkpoint
+        let err = verify_chain_linkage(&genesis1, &genesis2).unwrap_err();
+        assert!(matches!(err, CheckpointError::MissingPredecessor));
+    }
+
+    // -- Enrichment: CheckpointEvent serde with all event types --
+
+    #[test]
+    fn checkpoint_event_all_types_serde_roundtrip() {
+        let events = vec![
+            CheckpointEvent {
+                event_type: CheckpointEventType::GenesisCreated,
+                checkpoint_seq: 0,
+                trace_id: "t-0".to_string(),
+            },
+            CheckpointEvent {
+                event_type: CheckpointEventType::ChainCheckpointCreated { prev_seq: 0 },
+                checkpoint_seq: 1,
+                trace_id: "t-1".to_string(),
+            },
+            CheckpointEvent {
+                event_type: CheckpointEventType::QuorumVerified {
+                    valid: 3,
+                    threshold: 2,
+                },
+                checkpoint_seq: 1,
+                trace_id: "t-2".to_string(),
+            },
+            CheckpointEvent {
+                event_type: CheckpointEventType::ChainLinkageVerified,
+                checkpoint_seq: 1,
+                trace_id: "t-3".to_string(),
+            },
+            CheckpointEvent {
+                event_type: CheckpointEventType::EpochTransition {
+                    from: SecurityEpoch::from_raw(0),
+                    to: SecurityEpoch::from_raw(1),
+                },
+                checkpoint_seq: 1,
+                trace_id: "t-4".to_string(),
+            },
+        ];
+        for event in &events {
+            let json = serde_json::to_string(event).expect("serialize");
+            let restored: CheckpointEvent = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*event, restored);
+        }
+    }
+
+    // -- Enrichment: quorum with single signer and threshold 1 --
+
+    #[test]
+    fn quorum_single_signer_threshold_1() {
+        let sk = make_sk(42);
+        let vk = sk.verification_key();
+        let cp = build_genesis(&[sk]);
+        assert!(verify_checkpoint_quorum(&cp, 1, &[vk]).is_ok());
+    }
+
+    // -- Enrichment: DeterministicTimestamp zero --
+
+    #[test]
+    fn deterministic_timestamp_zero_display() {
+        assert_eq!(DeterministicTimestamp(0).to_string(), "tick:0");
+    }
+
+    // -- Enrichment: PolicyHead clone and eq --
+
+    #[test]
+    fn policy_head_clone_eq() {
+        let h = make_policy_head(PolicyType::ExtensionTrust, 3);
+        let h2 = h.clone();
+        assert_eq!(h, h2);
+    }
 }

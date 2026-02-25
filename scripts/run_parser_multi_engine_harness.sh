@@ -62,6 +62,7 @@ run_step() {
 
 run_report_step() {
   local report_stdout_path="${run_dir}/report.stdout"
+  local report_stdout_clean_path="${run_dir}/report.stdout.clean"
   local -a command=(
     cargo run -p frankenengine-engine --bin franken_parser_multi_engine_harness -- \
       --fixture-catalog "$fixture_catalog" \
@@ -89,24 +90,42 @@ run_report_step() {
   echo "==> $command_text"
 
   set +e
-  run_rch "${command[@]}" | tee "$report_stdout_path"
+  run_rch "${command[@]}" 2>&1 | tee "$report_stdout_path"
   local rc=$?
   set -e
 
+  # Normalize ANSI/control sequences so JSON extraction works with colored rch output.
+  sed -E 's/\x1B\[[0-9;]*[[:alpha:]]//g' "$report_stdout_path" >"$report_stdout_clean_path"
+
   if [[ ! -f "$report_path" && -s "$report_stdout_path" ]]; then
-    if jq -e '.' "$report_stdout_path" >/dev/null 2>&1; then
-      cp "$report_stdout_path" "$report_path"
+    if jq -e '.' "$report_stdout_clean_path" >/dev/null 2>&1; then
+      cp "$report_stdout_clean_path" "$report_path"
     else
       local extracted_json_path="${run_dir}/report.stdout.extracted.json"
       awk '
         BEGIN { capture=0 }
-        /^\{/ { capture=1 }
+        /^[[:space:]]*\{/ { capture=1 }
         capture { print }
-      ' "$report_stdout_path" >"$extracted_json_path"
+      ' "$report_stdout_clean_path" >"$extracted_json_path"
       if [[ -s "$extracted_json_path" ]] && jq -e '.' "$extracted_json_path" >/dev/null 2>&1; then
         cp "$extracted_json_path" "$report_path"
       fi
     fi
+  fi
+
+  if [[ "$rc" -ne 0 ]]; then
+    failed_command="$command_text"
+    return "$rc"
+  fi
+
+  if [[ ! -f "$report_path" ]]; then
+    failed_command="${command_text} (report artifact missing)"
+    return 4
+  fi
+
+  if ! jq -e '.summary and .parser_telemetry and .schema_version' "$report_path" >/dev/null 2>&1; then
+    failed_command="${command_text} (report artifact invalid)"
+    return 5
   fi
 
   if [[ -f "$report_path" ]]; then
@@ -119,11 +138,6 @@ run_report_step() {
           fixture_key="$(jq -r '.fixture_id' <<<"$repro_json")"
           jq '.' <<<"$repro_json" >"${repro_packs_dir}/${fixture_key}.json"
         done
-  fi
-
-  if [[ "$rc" -ne 0 ]]; then
-    failed_command="$command_text"
-    return "$rc"
   fi
 }
 

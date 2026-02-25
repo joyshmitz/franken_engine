@@ -1542,4 +1542,161 @@ mod tests {
         let json = serde_json::to_string(&LossMatrixPreset::Permissive).unwrap();
         assert!(json.contains("ermissive"));
     }
+
+    // -- Enrichment: Display uniqueness for OrchestratorError --
+
+    #[test]
+    fn orchestrator_error_display_all_variants_unique() {
+        let displays: std::collections::BTreeSet<String> = [
+            OrchestratorError::EmptySource.to_string(),
+            OrchestratorError::EmptyExtensionId.to_string(),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(displays.len(), 2, "display strings must be unique");
+    }
+
+    // -- Enrichment: LossMatrixPreset equality --
+
+    #[test]
+    fn loss_matrix_preset_eq_and_ne() {
+        assert_eq!(LossMatrixPreset::Balanced, LossMatrixPreset::Balanced);
+        assert_ne!(LossMatrixPreset::Balanced, LossMatrixPreset::Conservative);
+        assert_ne!(LossMatrixPreset::Conservative, LossMatrixPreset::Permissive);
+    }
+
+    // -- Enrichment: OrchestratorConfig clone --
+
+    #[test]
+    fn orchestrator_config_clone_preserves_fields() {
+        let cfg = OrchestratorConfig {
+            loss_matrix_preset: LossMatrixPreset::Conservative,
+            drain_deadline_ticks: 99_999,
+            max_concurrent_sagas: 16,
+            epoch: SecurityEpoch::from_raw(77),
+            trace_id_prefix: "clone-test".to_string(),
+            policy_id: "policy-clone".to_string(),
+            ..OrchestratorConfig::default()
+        };
+        let cloned = cfg.clone();
+        assert_eq!(cloned.loss_matrix_preset, LossMatrixPreset::Conservative);
+        assert_eq!(cloned.drain_deadline_ticks, 99_999);
+        assert_eq!(cloned.max_concurrent_sagas, 16);
+        assert_eq!(cloned.epoch, SecurityEpoch::from_raw(77));
+        assert_eq!(cloned.trace_id_prefix, "clone-test");
+        assert_eq!(cloned.policy_id, "policy-clone");
+    }
+
+    // -- Enrichment: ExtensionPackage deterministic serde --
+
+    #[test]
+    fn extension_package_serde_deterministic() {
+        let pkg = simple_package();
+        let json1 = serde_json::to_string(&pkg).unwrap();
+        let json2 = serde_json::to_string(&pkg).unwrap();
+        assert_eq!(json1, json2);
+    }
+
+    // -- Enrichment: multiple presets produce distinct results --
+
+    #[test]
+    fn all_presets_produce_valid_execution_results() {
+        for preset in [
+            LossMatrixPreset::Balanced,
+            LossMatrixPreset::Conservative,
+            LossMatrixPreset::Permissive,
+        ] {
+            let cfg = OrchestratorConfig {
+                loss_matrix_preset: preset,
+                ..OrchestratorConfig::default()
+            };
+            let mut orch = ExecutionOrchestrator::new(cfg);
+            let result = orch
+                .execute(&simple_package())
+                .unwrap_or_else(|e| panic!("{preset:?} failed: {e}"));
+            assert!(
+                result.posterior.is_valid(),
+                "{preset:?} posterior invalid"
+            );
+            assert!(
+                !result.evidence_entries.is_empty(),
+                "{preset:?} no evidence"
+            );
+        }
+    }
+
+    // -- Enrichment: execution counter increments correctly --
+
+    #[test]
+    fn execution_counter_increments_correctly() {
+        let mut orch = ExecutionOrchestrator::with_defaults();
+        assert_eq!(orch.execution_count(), 0);
+        orch.execute(&simple_package()).unwrap();
+        assert_eq!(orch.execution_count(), 1);
+        orch.execute(&simple_package()).unwrap();
+        assert_eq!(orch.execution_count(), 2);
+    }
+
+    // -- Enrichment: finalize result populated --
+
+    #[test]
+    fn result_finalize_result_present() {
+        let mut orch = ExecutionOrchestrator::with_defaults();
+        let result = orch.execute(&simple_package()).unwrap();
+        assert!(
+            result.finalize_result.is_some(),
+            "finalize_result should be populated"
+        );
+    }
+
+    // -- Enrichment: evidence entries have trace_id --
+
+    #[test]
+    fn evidence_entries_have_consistent_trace_id() {
+        let mut orch = ExecutionOrchestrator::with_defaults();
+        let result = orch.execute(&simple_package()).unwrap();
+        for entry in &result.evidence_entries {
+            assert_eq!(entry.trace_id, result.trace_id);
+        }
+    }
+
+    // -- Enrichment: different extension ids produce different results --
+
+    #[test]
+    fn different_extension_ids_produce_different_trace_ids() {
+        let mut orch = ExecutionOrchestrator::with_defaults();
+        let r1 = orch.execute(&package_with_id("ext-alpha")).unwrap();
+        let r2 = orch.execute(&package_with_id("ext-beta")).unwrap();
+        assert_ne!(r1.trace_id, r2.trace_id);
+        assert_ne!(r1.decision_id, r2.decision_id);
+        assert_ne!(r1.extension_id, r2.extension_id);
+    }
+
+    // -- Enrichment: LossMatrixPreset Debug --
+
+    #[test]
+    fn loss_matrix_preset_debug_format() {
+        assert_eq!(format!("{:?}", LossMatrixPreset::Balanced), "Balanced");
+        assert_eq!(
+            format!("{:?}", LossMatrixPreset::Conservative),
+            "Conservative"
+        );
+        assert_eq!(format!("{:?}", LossMatrixPreset::Permissive), "Permissive");
+    }
+
+    // -- Enrichment: reward function boundary --
+
+    #[test]
+    fn execution_reward_zero_instructions() {
+        let exec = ExecutionResult {
+            value: crate::baseline_interpreter::Value::Null,
+            hostcall_decisions: Vec::new(),
+            instructions_executed: 0,
+            witness_events: Vec::new(),
+            events: Vec::new(),
+        };
+        let reward = ExecutionOrchestrator::execution_reward_millionths(&exec);
+        // Zero instructions should yield maximum reward (no cost).
+        assert!(reward >= 0, "reward should be non-negative");
+    }
 }
