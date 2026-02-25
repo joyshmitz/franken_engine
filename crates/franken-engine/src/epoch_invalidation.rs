@@ -259,6 +259,12 @@ pub enum InvalidationError {
     },
     /// Duplicate specialization ID.
     DuplicateSpecialization { id: EngineObjectId },
+    /// Specialization is in an unexpected state for the requested operation.
+    InvalidState {
+        id: EngineObjectId,
+        expected: String,
+        actual: String,
+    },
 }
 
 impl fmt::Display for InvalidationError {
@@ -285,6 +291,14 @@ impl fmt::Display for InvalidationError {
             Self::DuplicateSpecialization { id } => {
                 write!(f, "duplicate specialization: {id}")
             }
+            Self::InvalidState {
+                id,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "specialization {id}: expected state {expected}, actual {actual}"
+            ),
         }
     }
 }
@@ -605,8 +619,10 @@ impl EpochInvalidationEngine {
             })?;
 
         if spec.state != FallbackState::BaselineFallback {
-            return Err(InvalidationError::AlreadyInFallback {
+            return Err(InvalidationError::InvalidState {
                 id: spec_id.clone(),
+                expected: FallbackState::BaselineFallback.to_string(),
+                actual: spec.state.to_string(),
             });
         }
 
@@ -648,8 +664,10 @@ impl EpochInvalidationEngine {
             })?;
 
         if spec.state != FallbackState::ReSpecializing {
-            return Err(InvalidationError::AlreadyInFallback {
+            return Err(InvalidationError::InvalidState {
                 id: spec_id.clone(),
+                expected: FallbackState::ReSpecializing.to_string(),
+                actual: spec.state.to_string(),
             });
         }
 
@@ -737,7 +755,7 @@ impl EpochInvalidationEngine {
             .ok_or_else(|| InvalidationError::SpecializationNotFound {
                 id: spec_id.clone(),
             })?;
-        let activated_epoch = spec.activated_epoch;
+        let epoch_before_invalidation = self.current_epoch;
         let rollback_hash = spec.rollback_token_hash.clone();
         let baseline_hash = spec.baseline_ir_hash.clone();
 
@@ -764,7 +782,7 @@ impl EpochInvalidationEngine {
             receipt_id: receipt_id.clone(),
             specialization_id: spec_id.clone(),
             reason: reason.clone(),
-            old_epoch: activated_epoch,
+            old_epoch: epoch_before_invalidation,
             new_epoch: self.current_epoch,
             rollback_token_hash: rollback_hash,
             baseline_restoration_hash: baseline_hash,
@@ -1327,7 +1345,7 @@ mod tests {
 
         // Active spec can't begin re-specialization.
         let err = engine.begin_respecialization(&spec_id, 2000).unwrap_err();
-        assert!(matches!(err, InvalidationError::AlreadyInFallback { .. }));
+        assert!(matches!(err, InvalidationError::InvalidState { .. }));
     }
 
     #[test]
@@ -1349,7 +1367,7 @@ mod tests {
                 3000,
             )
             .unwrap_err();
-        assert!(matches!(err, InvalidationError::AlreadyInFallback { .. }));
+        assert!(matches!(err, InvalidationError::InvalidState { .. }));
     }
 
     // --- Churn dampening ---

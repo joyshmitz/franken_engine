@@ -393,11 +393,7 @@ impl FtrlState {
             .zip(self.arm_counts.iter())
             .map(
                 |(&total, &count)| {
-                    if count > 0 {
-                        total / count as i64
-                    } else {
-                        0
-                    }
+                    if count > 0 { total / count as i64 } else { 0 }
                 },
             )
             .collect()
@@ -581,10 +577,14 @@ impl RegretBoundedRouter {
                     expected: self.arms.len(),
                 });
             }
-            for (arm_idx, &r) in counterfactual.iter().enumerate() {
+            // Validate all counterfactual values before mutating state to
+            // maintain transactional semantics on error.
+            for &r in counterfactual {
                 if !(0..=MILLION).contains(&r) {
                     return Err(RouterError::RewardOutOfRange { reward: r });
                 }
+            }
+            for (arm_idx, &r) in counterfactual.iter().enumerate() {
                 self.counterfactual_per_arm_cumulative[arm_idx] =
                     self.counterfactual_per_arm_cumulative[arm_idx].saturating_add(r);
             }
@@ -678,11 +678,7 @@ impl RegretBoundedRouter {
             .zip(self.per_arm_count.iter())
             .map(
                 |(&total, &count)| {
-                    if count > 0 {
-                        total / count as i64
-                    } else {
-                        0
-                    }
+                    if count > 0 { total / count as i64 } else { 0 }
                 },
             )
             .max()
@@ -1381,6 +1377,31 @@ mod tests {
         assert_eq!(router.rounds(), 0);
         assert_eq!(router.counterfactual_rounds, 0);
         assert_eq!(router.counterfactual_per_arm_cumulative, vec![0, 0]);
+    }
+
+    #[test]
+    fn router_invalid_counterfactual_entry_does_not_partially_mutate() {
+        let arms = make_arms(3);
+        let mut router = RegretBoundedRouter::new(arms, 100_000).unwrap();
+        // First two counterfactual entries are valid, third is out of range.
+        // Before the fix, the first two would have been accumulated before the
+        // error return, leaving state inconsistent.
+        let signal = RewardSignal {
+            arm_index: 0,
+            reward_millionths: 500_000,
+            latency_us: 10,
+            success: true,
+            epoch: SecurityEpoch::from_raw(1),
+            counterfactual_rewards_millionths: Some(vec![400_000, 600_000, MILLION + 1]),
+        };
+        assert!(matches!(
+            router.observe_reward(&signal),
+            Err(RouterError::RewardOutOfRange { .. })
+        ));
+        // State must be completely unchanged.
+        assert_eq!(router.rounds(), 0);
+        assert_eq!(router.counterfactual_rounds, 0);
+        assert_eq!(router.counterfactual_per_arm_cumulative, vec![0, 0, 0]);
     }
 
     #[test]

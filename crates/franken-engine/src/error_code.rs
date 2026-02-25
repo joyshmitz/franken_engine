@@ -848,7 +848,10 @@ impl HasErrorCode for SagaError {
             | SagaError::EpochMismatch { .. }
             | SagaError::EmptySteps
             | SagaError::InvalidSagaId { .. }
-            | SagaError::CompensationFailed { .. } => FrankenErrorCode::SagaExecutionError,
+            | SagaError::CompensationFailed { .. }
+            | SagaError::ConcurrencyLimitReached { .. } => {
+                FrankenErrorCode::SagaExecutionError
+            }
         }
     }
 }

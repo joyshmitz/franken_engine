@@ -171,7 +171,7 @@ pub struct RegionEvent {
 // ---------------------------------------------------------------------------
 
 /// A region that follows the cancel → drain → finalize close protocol.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Region {
     pub id: String,
     pub region_type: String,

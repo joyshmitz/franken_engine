@@ -5,7 +5,7 @@
 //
 // Plan reference: bd-mjh3.20.1
 
-use crate::engine_object_id::{derive_id, EngineObjectId, ObjectDomain, SchemaId};
+use crate::engine_object_id::{EngineObjectId, ObjectDomain, SchemaId, derive_id};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -24,9 +24,7 @@ const MILLION: i64 = 1_000_000;
 // ---------------------------------------------------------------------------
 
 /// Canonical test classes spanning all FrankenEngine surfaces.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum TestClass {
     /// Deterministic positive-path coverage of core semantics.
     Core,
@@ -93,9 +91,7 @@ impl fmt::Display for TestClass {
 // ---------------------------------------------------------------------------
 
 /// Ownership surfaces that tests target.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum TestSurface {
     Compiler,
     Runtime,
@@ -160,9 +156,7 @@ impl fmt::Display for TestSurface {
 // ---------------------------------------------------------------------------
 
 /// How a fixture was produced. Determines trust and reproducibility guarantees.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum ProvenanceLevel {
     /// Hand-written by an engineer with known intent.
     Authored,
@@ -294,7 +288,8 @@ impl DeterminismContract {
     #[must_use]
     pub fn validate(&self) -> Vec<ContractViolation> {
         let mut violations = Vec::new();
-        if self.bit_identical_required && self.max_nondeterminism_sources > 0
+        if self.bit_identical_required
+            && self.max_nondeterminism_sources > 0
             && !self.deterministic_rng_required
         {
             violations.push(ContractViolation {
@@ -424,7 +419,11 @@ impl FixtureRegistry {
 
     /// Register a new fixture. Returns error if duplicate ID.
     pub fn register(&mut self, entry: FixtureEntry) -> Result<(), RegistryError> {
-        if self.entries.iter().any(|e| e.fixture_id == entry.fixture_id) {
+        if self
+            .entries
+            .iter()
+            .any(|e| e.fixture_id == entry.fixture_id)
+        {
             return Err(RegistryError::DuplicateFixtureId(entry.fixture_id));
         }
         self.entries.push(entry);
@@ -440,7 +439,10 @@ impl FixtureRegistry {
     /// All fixtures for a given test class.
     #[must_use]
     pub fn by_class(&self, class: TestClass) -> Vec<&FixtureEntry> {
-        self.entries.iter().filter(|e| e.test_class == class).collect()
+        self.entries
+            .iter()
+            .filter(|e| e.test_class == class)
+            .collect()
     }
 
     /// All fixtures covering a given surface.
@@ -550,7 +552,10 @@ impl OwnershipMap {
     /// Look up all ownership entries for a surface.
     #[must_use]
     pub fn by_surface(&self, surface: TestSurface) -> Vec<&OwnershipEntry> {
-        self.entries.iter().filter(|e| e.surface == surface).collect()
+        self.entries
+            .iter()
+            .filter(|e| e.surface == surface)
+            .collect()
     }
 
     /// Unowned fixtures: fixture IDs present in registry but absent from ownership map.
@@ -581,9 +586,7 @@ impl Default for OwnershipMap {
 // ---------------------------------------------------------------------------
 
 /// Outcome of a single test execution.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum TestOutcome {
     Pass,
     Fail,
@@ -676,11 +679,26 @@ impl TestSuiteSummary {
     #[must_use]
     pub fn from_records(records: &[TestExecutionRecord]) -> Self {
         let total = records.len() as u64;
-        let passed = records.iter().filter(|r| r.outcome == TestOutcome::Pass).count() as u64;
-        let failed = records.iter().filter(|r| r.outcome == TestOutcome::Fail).count() as u64;
-        let skipped = records.iter().filter(|r| r.outcome == TestOutcome::Skip).count() as u64;
-        let timed_out = records.iter().filter(|r| r.outcome == TestOutcome::Timeout).count() as u64;
-        let flaky = records.iter().filter(|r| r.outcome == TestOutcome::Flake).count() as u64;
+        let passed = records
+            .iter()
+            .filter(|r| r.outcome == TestOutcome::Pass)
+            .count() as u64;
+        let failed = records
+            .iter()
+            .filter(|r| r.outcome == TestOutcome::Fail)
+            .count() as u64;
+        let skipped = records
+            .iter()
+            .filter(|r| r.outcome == TestOutcome::Skip)
+            .count() as u64;
+        let timed_out = records
+            .iter()
+            .filter(|r| r.outcome == TestOutcome::Timeout)
+            .count() as u64;
+        let flaky = records
+            .iter()
+            .filter(|r| r.outcome == TestOutcome::Flake)
+            .count() as u64;
 
         let pass_rate_millionths = if total > 0 {
             (passed as i64).saturating_mul(MILLION) / total as i64
@@ -700,13 +718,22 @@ impl TestSuiteSummary {
             let class_records: Vec<_> = records.iter().filter(|r| r.test_class == *class).collect();
             if !class_records.is_empty() {
                 let ct = class_records.len() as u64;
-                let cp = class_records.iter().filter(|r| r.outcome == TestOutcome::Pass).count() as u64;
-                let cf = class_records.iter().filter(|r| r.outcome == TestOutcome::Fail).count() as u64;
-                class_breakdown.insert(*class, ClassBreakdown {
-                    total: ct,
-                    passed: cp,
-                    failed: cf,
-                });
+                let cp = class_records
+                    .iter()
+                    .filter(|r| r.outcome == TestOutcome::Pass)
+                    .count() as u64;
+                let cf = class_records
+                    .iter()
+                    .filter(|r| r.outcome == TestOutcome::Fail)
+                    .count() as u64;
+                class_breakdown.insert(
+                    *class,
+                    ClassBreakdown {
+                        total: ct,
+                        passed: cp,
+                        failed: cf,
+                    },
+                );
             }
         }
 
@@ -842,7 +869,9 @@ mod tests {
 
     #[test]
     fn provenance_trust_rank_order() {
-        assert!(ProvenanceLevel::Synthesized.trust_rank() < ProvenanceLevel::Generated.trust_rank());
+        assert!(
+            ProvenanceLevel::Synthesized.trust_rank() < ProvenanceLevel::Generated.trust_rank()
+        );
         assert!(ProvenanceLevel::Generated.trust_rank() < ProvenanceLevel::Captured.trust_rank());
         assert!(ProvenanceLevel::Captured.trust_rank() < ProvenanceLevel::Authored.trust_rank());
     }
@@ -953,7 +982,11 @@ mod tests {
             test_class: class,
             surfaces: BTreeSet::from([TestSurface::Parser]),
             provenance: ProvenanceLevel::Authored,
-            seed: if class.requires_seed() { Some(42) } else { None },
+            seed: if class.requires_seed() {
+                Some(42)
+            } else {
+                None
+            },
             content_hash: "sha256:abc123".to_string(),
             format_version: "1.0.0".to_string(),
             origin_ref: "bd-test".to_string(),
@@ -1062,7 +1095,8 @@ mod tests {
     fn registry_validate_all_clean() {
         let mut r = FixtureRegistry::new();
         r.register(make_fixture("v1", TestClass::Core)).unwrap();
-        r.register(make_fixture("v2", TestClass::Adversarial)).unwrap();
+        r.register(make_fixture("v2", TestClass::Adversarial))
+            .unwrap();
         assert!(r.validate_all().is_empty());
     }
 
@@ -1109,7 +1143,8 @@ mod tests {
     fn registry_serde_roundtrip() {
         let mut r = FixtureRegistry::new();
         r.register(make_fixture("sr1", TestClass::Core)).unwrap();
-        r.register(make_fixture("sr2", TestClass::Adversarial)).unwrap();
+        r.register(make_fixture("sr2", TestClass::Adversarial))
+            .unwrap();
         let json = serde_json::to_string(&r).unwrap();
         let back: FixtureRegistry = serde_json::from_str(&json).unwrap();
         assert_eq!(r, back);
@@ -1197,7 +1232,13 @@ mod tests {
 
     #[test]
     fn test_outcome_serde_roundtrip() {
-        for outcome in [TestOutcome::Pass, TestOutcome::Fail, TestOutcome::Skip, TestOutcome::Timeout, TestOutcome::Flake] {
+        for outcome in [
+            TestOutcome::Pass,
+            TestOutcome::Fail,
+            TestOutcome::Skip,
+            TestOutcome::Timeout,
+            TestOutcome::Flake,
+        ] {
             let json = serde_json::to_string(&outcome).unwrap();
             let back: TestOutcome = serde_json::from_str(&json).unwrap();
             assert_eq!(outcome, back);
@@ -1353,18 +1394,36 @@ mod tests {
 
     #[test]
     fn min_provenance_for_each_class() {
-        assert_eq!(TestClass::Core.min_provenance_level(), ProvenanceLevel::Authored);
-        assert_eq!(TestClass::Edge.min_provenance_level(), ProvenanceLevel::Authored);
-        assert_eq!(TestClass::Adversarial.min_provenance_level(), ProvenanceLevel::Generated);
-        assert_eq!(TestClass::Regression.min_provenance_level(), ProvenanceLevel::Captured);
-        assert_eq!(TestClass::FaultInjection.min_provenance_level(), ProvenanceLevel::Generated);
+        assert_eq!(
+            TestClass::Core.min_provenance_level(),
+            ProvenanceLevel::Authored
+        );
+        assert_eq!(
+            TestClass::Edge.min_provenance_level(),
+            ProvenanceLevel::Authored
+        );
+        assert_eq!(
+            TestClass::Adversarial.min_provenance_level(),
+            ProvenanceLevel::Generated
+        );
+        assert_eq!(
+            TestClass::Regression.min_provenance_level(),
+            ProvenanceLevel::Captured
+        );
+        assert_eq!(
+            TestClass::FaultInjection.min_provenance_level(),
+            ProvenanceLevel::Generated
+        );
     }
 
     #[test]
     fn contract_for_all_classes_is_valid() {
         for class in TestClass::ALL {
             let c = DeterminismContract::for_class(*class);
-            assert!(c.validate().is_empty(), "Contract for {class} has violations");
+            assert!(
+                c.validate().is_empty(),
+                "Contract for {class} has violations"
+            );
         }
     }
 
@@ -1483,5 +1542,799 @@ mod tests {
     fn schema_versions_set() {
         assert!(!TEST_TAXONOMY_SCHEMA_VERSION.is_empty());
         assert!(!FIXTURE_REGISTRY_SCHEMA_VERSION.is_empty());
+    }
+
+    // ================================================================
+    // Enrichment tests — deeper edge-case and cross-cutting coverage
+    // ================================================================
+
+    // -- TestClass enrichment --
+
+    #[test]
+    fn test_class_all_exhaustive() {
+        let all_set: BTreeSet<TestClass> = TestClass::ALL.iter().copied().collect();
+        assert_eq!(all_set.len(), TestClass::ALL.len(), "ALL has no duplicates");
+    }
+
+    #[test]
+    fn test_class_ordering_is_total() {
+        for (i, a) in TestClass::ALL.iter().enumerate() {
+            for b in &TestClass::ALL[i + 1..] {
+                assert!(a < b, "{a} should be < {b}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_class_requires_seed_implies_generated_provenance() {
+        for class in TestClass::ALL {
+            if class.requires_seed() {
+                assert!(
+                    class.min_provenance_level().trust_rank()
+                        <= ProvenanceLevel::Generated.trust_rank(),
+                    "{class} requires seed but min provenance is above Generated"
+                );
+            }
+        }
+    }
+
+    // -- TestSurface enrichment --
+
+    #[test]
+    fn test_surface_all_exhaustive() {
+        let all_set: BTreeSet<TestSurface> = TestSurface::ALL.iter().copied().collect();
+        assert_eq!(
+            all_set.len(),
+            TestSurface::ALL.len(),
+            "ALL has no duplicates"
+        );
+    }
+
+    #[test]
+    fn test_surface_lane_charter_refs_nonempty() {
+        for surface in TestSurface::ALL {
+            let lcr = surface.lane_charter_ref();
+            assert!(!lcr.is_empty(), "{surface} has empty lane charter ref");
+            assert!(
+                lcr.starts_with("bd-"),
+                "{surface} lane charter ref should start with bd-"
+            );
+        }
+    }
+
+    #[test]
+    fn test_surface_ordering_is_total() {
+        for (i, a) in TestSurface::ALL.iter().enumerate() {
+            for b in &TestSurface::ALL[i + 1..] {
+                assert!(a < b, "{a} should be < {b}");
+            }
+        }
+    }
+
+    // -- ProvenanceLevel enrichment --
+
+    #[test]
+    fn provenance_trust_rank_unique() {
+        let ranks: Vec<u8> = [
+            ProvenanceLevel::Synthesized,
+            ProvenanceLevel::Generated,
+            ProvenanceLevel::Captured,
+            ProvenanceLevel::Authored,
+        ]
+        .iter()
+        .map(|p| p.trust_rank())
+        .collect();
+        let set: BTreeSet<u8> = ranks.iter().copied().collect();
+        assert_eq!(ranks.len(), set.len(), "trust ranks must be unique");
+    }
+
+    #[test]
+    fn provenance_serde_all_variants() {
+        for p in [
+            ProvenanceLevel::Authored,
+            ProvenanceLevel::Generated,
+            ProvenanceLevel::Captured,
+            ProvenanceLevel::Synthesized,
+        ] {
+            let json = serde_json::to_string(&p).unwrap();
+            let back: ProvenanceLevel = serde_json::from_str(&json).unwrap();
+            assert_eq!(p, back);
+        }
+    }
+
+    #[test]
+    fn provenance_display_all_unique() {
+        let mut strs = BTreeSet::new();
+        for p in [
+            ProvenanceLevel::Authored,
+            ProvenanceLevel::Generated,
+            ProvenanceLevel::Captured,
+            ProvenanceLevel::Synthesized,
+        ] {
+            assert!(strs.insert(p.to_string()), "duplicate display for {p}");
+        }
+    }
+
+    // -- DeterminismContract enrichment --
+
+    #[test]
+    fn contract_strict_zero_tolerance() {
+        let c = DeterminismContract::strict();
+        assert_eq!(c.numeric_tolerance_millionths, 0);
+        assert_eq!(c.max_nondeterminism_sources, 0);
+    }
+
+    #[test]
+    fn contract_relaxed_zero_tolerance_valid() {
+        let c = DeterminismContract::relaxed(0);
+        assert!(c.validate().is_empty());
+    }
+
+    #[test]
+    fn contract_bit_identical_with_nondet_no_rng_invalid() {
+        let c = DeterminismContract {
+            schema: TEST_TAXONOMY_SCHEMA_VERSION.to_string(),
+            bit_identical_required: true,
+            seed_required: true,
+            virtual_clock_required: true,
+            deterministic_rng_required: false,
+            max_nondeterminism_sources: 2,
+            numeric_tolerance_millionths: 0,
+        };
+        let violations = c.validate();
+        assert!(!violations.is_empty());
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.field == "max_nondeterminism_sources")
+        );
+    }
+
+    #[test]
+    fn contract_bit_identical_with_nondet_and_rng_valid() {
+        let c = DeterminismContract {
+            schema: TEST_TAXONOMY_SCHEMA_VERSION.to_string(),
+            bit_identical_required: true,
+            seed_required: true,
+            virtual_clock_required: true,
+            deterministic_rng_required: true,
+            max_nondeterminism_sources: 1,
+            numeric_tolerance_millionths: 0,
+        };
+        assert!(c.validate().is_empty());
+    }
+
+    #[test]
+    fn contract_multiple_violations() {
+        let c = DeterminismContract {
+            schema: TEST_TAXONOMY_SCHEMA_VERSION.to_string(),
+            bit_identical_required: true,
+            seed_required: false,
+            virtual_clock_required: false,
+            deterministic_rng_required: false,
+            max_nondeterminism_sources: 5,
+            numeric_tolerance_millionths: -100,
+        };
+        let violations = c.validate();
+        assert!(violations.len() >= 2, "expected multiple violations");
+    }
+
+    #[test]
+    fn contract_for_class_regression() {
+        let c = DeterminismContract::for_class(TestClass::Regression);
+        assert!(c.bit_identical_required);
+        assert!(!c.seed_required);
+        assert!(!c.virtual_clock_required);
+        assert_eq!(c.max_nondeterminism_sources, 0);
+    }
+
+    #[test]
+    fn contract_for_class_edge_same_as_core() {
+        let core = DeterminismContract::for_class(TestClass::Core);
+        let edge = DeterminismContract::for_class(TestClass::Edge);
+        assert_eq!(core, edge);
+    }
+
+    #[test]
+    fn contract_schema_matches_module_version() {
+        let c = DeterminismContract::strict();
+        assert_eq!(c.schema, TEST_TAXONOMY_SCHEMA_VERSION);
+    }
+
+    // -- FixtureEntry enrichment --
+
+    #[test]
+    fn fixture_validate_low_provenance_for_core() {
+        let mut f = make_fixture("prov-core", TestClass::Core);
+        f.provenance = ProvenanceLevel::Synthesized;
+        let c = DeterminismContract::for_class(TestClass::Core);
+        let violations = f.validate_against_contract(&c);
+        assert!(
+            violations.iter().any(|v| v.field == "provenance"),
+            "Synthesized provenance should fail for Core class"
+        );
+    }
+
+    #[test]
+    fn fixture_validate_captured_ok_for_regression() {
+        let mut f = make_fixture("reg-001", TestClass::Regression);
+        f.provenance = ProvenanceLevel::Captured;
+        let c = DeterminismContract::for_class(TestClass::Regression);
+        assert!(f.validate_against_contract(&c).is_empty());
+    }
+
+    #[test]
+    fn fixture_validate_authored_ok_for_any_class() {
+        for class in TestClass::ALL {
+            let f = make_fixture(&format!("auth-{}", class.as_str()), *class);
+            let c = DeterminismContract::for_class(*class);
+            let provenance_violations: Vec<_> = f
+                .validate_against_contract(&c)
+                .into_iter()
+                .filter(|v| v.field == "provenance")
+                .collect();
+            assert!(
+                provenance_violations.is_empty(),
+                "Authored provenance should be accepted for {class}"
+            );
+        }
+    }
+
+    #[test]
+    fn fixture_derive_id_deterministic() {
+        let f = make_fixture("det-001", TestClass::Core);
+        let id1 = f.derive_id().unwrap();
+        let id2 = f.derive_id().unwrap();
+        assert_eq!(id1, id2, "derive_id must be deterministic");
+    }
+
+    #[test]
+    fn fixture_derive_id_distinct_for_different_ids() {
+        let f1 = make_fixture("distinct-a", TestClass::Core);
+        let f2 = make_fixture("distinct-b", TestClass::Core);
+        let id1 = f1.derive_id().unwrap();
+        let id2 = f2.derive_id().unwrap();
+        assert_ne!(
+            id1, id2,
+            "different fixture_ids should produce different IDs"
+        );
+    }
+
+    #[test]
+    fn fixture_tags_deterministic_ordering() {
+        let mut f = make_fixture("tags-001", TestClass::Core);
+        f.tags = BTreeSet::from(["alpha".to_string(), "beta".to_string(), "gamma".to_string()]);
+        let json = serde_json::to_string(&f).unwrap();
+        let back: FixtureEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(f.tags, back.tags);
+        let tags_vec: Vec<_> = back.tags.iter().collect();
+        assert_eq!(tags_vec, vec!["alpha", "beta", "gamma"]);
+    }
+
+    #[test]
+    fn fixture_empty_surfaces() {
+        let mut f = make_fixture("no-surface", TestClass::Core);
+        f.surfaces = BTreeSet::new();
+        let json = serde_json::to_string(&f).unwrap();
+        let back: FixtureEntry = serde_json::from_str(&json).unwrap();
+        assert!(back.surfaces.is_empty());
+    }
+
+    #[test]
+    fn fixture_all_surfaces() {
+        let mut f = make_fixture("all-surfaces", TestClass::Core);
+        f.surfaces = TestSurface::ALL.iter().copied().collect();
+        assert_eq!(f.surfaces.len(), 8);
+        let json = serde_json::to_string(&f).unwrap();
+        let back: FixtureEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(f.surfaces, back.surfaces);
+    }
+
+    // -- FixtureRegistry enrichment --
+
+    #[test]
+    fn registry_multi_class_multi_surface_coverage() {
+        let mut r = FixtureRegistry::new();
+        for class in TestClass::ALL {
+            for surface in TestSurface::ALL {
+                let id = format!("{}-{}", class.as_str(), surface.as_str());
+                let mut f = make_fixture(&id, *class);
+                f.surfaces = BTreeSet::from([*surface]);
+                r.register(f).unwrap();
+            }
+        }
+        assert_eq!(r.len(), 40);
+        assert!(
+            r.coverage_gaps().is_empty(),
+            "full matrix should have no gaps"
+        );
+    }
+
+    #[test]
+    fn registry_coverage_matrix_multi_surface_fixture() {
+        let mut r = FixtureRegistry::new();
+        let mut f = make_fixture("multi-surface", TestClass::Core);
+        f.surfaces = BTreeSet::from([
+            TestSurface::Compiler,
+            TestSurface::Runtime,
+            TestSurface::Parser,
+        ]);
+        r.register(f).unwrap();
+        let matrix = r.coverage_matrix();
+        assert_eq!(matrix[&(TestClass::Core, TestSurface::Compiler)], 1);
+        assert_eq!(matrix[&(TestClass::Core, TestSurface::Runtime)], 1);
+        assert_eq!(matrix[&(TestClass::Core, TestSurface::Parser)], 1);
+        assert_eq!(r.coverage_gaps().len(), 37); // 40 - 3
+    }
+
+    #[test]
+    fn registry_validate_all_with_mixed_valid_invalid() {
+        let mut r = FixtureRegistry::new();
+        r.register(make_fixture("good", TestClass::Core)).unwrap();
+        let mut bad = make_fixture("bad-adv", TestClass::Adversarial);
+        bad.seed = None;
+        r.register(bad).unwrap();
+        let results = r.validate_all();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "bad-adv");
+    }
+
+    #[test]
+    fn registry_by_class_empty_for_missing() {
+        let mut r = FixtureRegistry::new();
+        r.register(make_fixture("c", TestClass::Core)).unwrap();
+        assert!(r.by_class(TestClass::FaultInjection).is_empty());
+    }
+
+    #[test]
+    fn registry_by_surface_empty_for_missing() {
+        let mut r = FixtureRegistry::new();
+        r.register(make_fixture("p", TestClass::Core)).unwrap(); // Parser only
+        assert!(r.by_surface(TestSurface::Governance).is_empty());
+    }
+
+    #[test]
+    fn registry_large_scale() {
+        let mut r = FixtureRegistry::new();
+        for i in 0..200 {
+            r.register(make_fixture(&format!("large-{i}"), TestClass::ALL[i % 5]))
+                .unwrap();
+        }
+        assert_eq!(r.len(), 200);
+        assert_eq!(r.by_class(TestClass::Core).len(), 40);
+        assert_eq!(r.by_class(TestClass::Edge).len(), 40);
+    }
+
+    #[test]
+    fn registry_serde_roundtrip_large() {
+        let mut r = FixtureRegistry::new();
+        for i in 0..50 {
+            let mut f = make_fixture(&format!("rt-{i}"), TestClass::ALL[i % 5]);
+            f.tags = BTreeSet::from([format!("tag-{}", i % 3)]);
+            r.register(f).unwrap();
+        }
+        let json = serde_json::to_string(&r).unwrap();
+        let back: FixtureRegistry = serde_json::from_str(&json).unwrap();
+        assert_eq!(r, back);
+    }
+
+    // -- OwnershipMap enrichment --
+
+    #[test]
+    fn ownership_map_multi_agent() {
+        let mut m = OwnershipMap::new();
+        m.add(OwnershipEntry {
+            surface: TestSurface::Parser,
+            test_class: TestClass::Core,
+            lane_charter_ref: "bd-mjh3.10.3".to_string(),
+            owner_agent: "Agent-A".to_string(),
+            fixture_ids: BTreeSet::from(["f1".to_string()]),
+        });
+        m.add(OwnershipEntry {
+            surface: TestSurface::Parser,
+            test_class: TestClass::Edge,
+            lane_charter_ref: "bd-mjh3.10.3".to_string(),
+            owner_agent: "Agent-B".to_string(),
+            fixture_ids: BTreeSet::from(["f2".to_string()]),
+        });
+        let parser_entries = m.by_surface(TestSurface::Parser);
+        assert_eq!(parser_entries.len(), 2);
+    }
+
+    #[test]
+    fn ownership_map_all_fixtures_owned() {
+        let mut reg = FixtureRegistry::new();
+        for i in 0..5 {
+            reg.register(make_fixture(&format!("o-{i}"), TestClass::Core))
+                .unwrap();
+        }
+        let mut m = OwnershipMap::new();
+        m.add(OwnershipEntry {
+            surface: TestSurface::Parser,
+            test_class: TestClass::Core,
+            lane_charter_ref: "bd-mjh3.10.3".to_string(),
+            owner_agent: "OwnerAll".to_string(),
+            fixture_ids: (0..5).map(|i| format!("o-{i}")).collect(),
+        });
+        assert!(m.unowned_fixtures(&reg).is_empty());
+    }
+
+    #[test]
+    fn ownership_map_partial_ownership() {
+        let mut reg = FixtureRegistry::new();
+        for i in 0..4 {
+            reg.register(make_fixture(&format!("p-{i}"), TestClass::Core))
+                .unwrap();
+        }
+        let mut m = OwnershipMap::new();
+        m.add(OwnershipEntry {
+            surface: TestSurface::Parser,
+            test_class: TestClass::Core,
+            lane_charter_ref: "bd-mjh3.10.3".to_string(),
+            owner_agent: "PartialOwner".to_string(),
+            fixture_ids: BTreeSet::from(["p-0".to_string(), "p-1".to_string()]),
+        });
+        let unowned = m.unowned_fixtures(&reg);
+        assert_eq!(unowned.len(), 2);
+        assert!(unowned.contains(&"p-2".to_string()));
+        assert!(unowned.contains(&"p-3".to_string()));
+    }
+
+    #[test]
+    fn ownership_map_empty_registry_no_unowned() {
+        let reg = FixtureRegistry::new();
+        let m = OwnershipMap::new();
+        assert!(m.unowned_fixtures(&reg).is_empty());
+    }
+
+    // -- TestOutcome enrichment --
+
+    #[test]
+    fn test_outcome_ordering() {
+        assert!(TestOutcome::Pass < TestOutcome::Fail);
+        assert!(TestOutcome::Skip < TestOutcome::Timeout);
+    }
+
+    #[test]
+    fn test_outcome_as_str_all_unique() {
+        let strs: BTreeSet<&str> = [
+            TestOutcome::Pass,
+            TestOutcome::Fail,
+            TestOutcome::Skip,
+            TestOutcome::Timeout,
+            TestOutcome::Flake,
+        ]
+        .iter()
+        .map(|o| o.as_str())
+        .collect();
+        assert_eq!(strs.len(), 5);
+    }
+
+    // -- TestExecutionRecord enrichment --
+
+    #[test]
+    fn execution_record_with_seed() {
+        let mut r = make_record("seeded", TestOutcome::Pass);
+        r.seed = Some(42);
+        r.test_class = TestClass::Adversarial;
+        let json = serde_json::to_string(&r).unwrap();
+        let back: TestExecutionRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.seed, Some(42));
+        assert_eq!(back.test_class, TestClass::Adversarial);
+    }
+
+    #[test]
+    fn execution_record_with_notes() {
+        let mut r = make_record("noted", TestOutcome::Fail);
+        r.notes = "Known flaky on CI".to_string();
+        let json = serde_json::to_string(&r).unwrap();
+        let back: TestExecutionRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.notes, "Known flaky on CI");
+    }
+
+    #[test]
+    fn execution_record_all_surfaces() {
+        for surface in TestSurface::ALL {
+            let mut r = make_record(&format!("surf-{}", surface.as_str()), TestOutcome::Pass);
+            r.surface = *surface;
+            let json = serde_json::to_string(&r).unwrap();
+            let back: TestExecutionRecord = serde_json::from_str(&json).unwrap();
+            assert_eq!(back.surface, *surface);
+        }
+    }
+
+    // -- TestSuiteSummary enrichment --
+
+    #[test]
+    fn suite_summary_all_fail() {
+        let records = vec![
+            make_record("f1", TestOutcome::Fail),
+            make_record("f2", TestOutcome::Fail),
+            make_record("f3", TestOutcome::Fail),
+        ];
+        let s = TestSuiteSummary::from_records(&records);
+        assert_eq!(s.total, 3);
+        assert_eq!(s.failed, 3);
+        assert_eq!(s.pass_rate_millionths, 0);
+        assert!(!s.meets_threshold(1));
+    }
+
+    #[test]
+    fn suite_summary_all_skip() {
+        let records = vec![
+            make_record("s1", TestOutcome::Skip),
+            make_record("s2", TestOutcome::Skip),
+        ];
+        let s = TestSuiteSummary::from_records(&records);
+        assert_eq!(s.skipped, 2);
+        assert_eq!(s.pass_rate_millionths, 0);
+    }
+
+    #[test]
+    fn suite_summary_single_record() {
+        let s = TestSuiteSummary::from_records(&[make_record("one", TestOutcome::Pass)]);
+        assert_eq!(s.total, 1);
+        assert_eq!(s.passed, 1);
+        assert_eq!(s.pass_rate_millionths, MILLION);
+        assert!(s.meets_threshold(MILLION));
+    }
+
+    #[test]
+    fn suite_summary_all_determinism_satisfied() {
+        let records = vec![
+            make_record("d1", TestOutcome::Pass),
+            make_record("d2", TestOutcome::Pass),
+        ];
+        let s = TestSuiteSummary::from_records(&records);
+        assert_eq!(s.determinism_rate_millionths, MILLION);
+    }
+
+    #[test]
+    fn suite_summary_no_determinism_satisfied() {
+        let mut r1 = make_record("nd1", TestOutcome::Pass);
+        r1.determinism_satisfied = false;
+        let mut r2 = make_record("nd2", TestOutcome::Fail);
+        r2.determinism_satisfied = false;
+        let s = TestSuiteSummary::from_records(&[r1, r2]);
+        assert_eq!(s.determinism_rate_millionths, 0);
+    }
+
+    #[test]
+    fn suite_summary_surface_breakdown_all_surfaces() {
+        let records: Vec<_> = TestSurface::ALL
+            .iter()
+            .enumerate()
+            .map(|(i, surface)| {
+                let mut r = make_record(&format!("sb-{i}"), TestOutcome::Pass);
+                r.surface = *surface;
+                r
+            })
+            .collect();
+        let s = TestSuiteSummary::from_records(&records);
+        for surface in TestSurface::ALL {
+            assert_eq!(s.surface_breakdown[surface], 1);
+        }
+    }
+
+    #[test]
+    fn suite_summary_class_breakdown_all_classes() {
+        let records: Vec<_> = TestClass::ALL
+            .iter()
+            .enumerate()
+            .map(|(i, class)| {
+                let mut r = make_record(&format!("cb-{i}"), TestOutcome::Pass);
+                r.test_class = *class;
+                r
+            })
+            .collect();
+        let s = TestSuiteSummary::from_records(&records);
+        for class in TestClass::ALL {
+            let cb = &s.class_breakdown[class];
+            assert_eq!(cb.total, 1);
+            assert_eq!(cb.passed, 1);
+            assert_eq!(cb.failed, 0);
+        }
+    }
+
+    #[test]
+    fn suite_summary_meets_threshold_edge_exact() {
+        let records = vec![
+            make_record("t1", TestOutcome::Pass),
+            make_record("t2", TestOutcome::Fail),
+        ];
+        let s = TestSuiteSummary::from_records(&records);
+        assert!(s.meets_threshold(500_000)); // exactly 50%
+        assert!(!s.meets_threshold(500_001)); // 50% + epsilon
+    }
+
+    #[test]
+    fn suite_summary_serde_roundtrip_complex() {
+        let mut records = Vec::new();
+        for (i, class) in TestClass::ALL.iter().enumerate() {
+            for (j, surface) in TestSurface::ALL.iter().enumerate() {
+                let outcome = if (i + j).is_multiple_of(3) {
+                    TestOutcome::Fail
+                } else {
+                    TestOutcome::Pass
+                };
+                let mut r = make_record(&format!("cx-{i}-{j}"), outcome);
+                r.test_class = *class;
+                r.surface = *surface;
+                r.determinism_satisfied = i.is_multiple_of(2);
+                records.push(r);
+            }
+        }
+        let s = TestSuiteSummary::from_records(&records);
+        let json = serde_json::to_string(&s).unwrap();
+        let back: TestSuiteSummary = serde_json::from_str(&json).unwrap();
+        assert_eq!(s, back);
+    }
+
+    // -- RegistryError enrichment --
+
+    #[test]
+    fn registry_error_all_variants_display() {
+        let errors = vec![
+            RegistryError::DuplicateFixtureId("dup".to_string()),
+            RegistryError::FixtureNotFound("missing".to_string()),
+            RegistryError::InvalidFixture("broken".to_string()),
+        ];
+        for e in &errors {
+            let display = e.to_string();
+            assert!(!display.is_empty());
+        }
+    }
+
+    #[test]
+    fn registry_error_serde_all_variants() {
+        let errors = vec![
+            RegistryError::DuplicateFixtureId("dup".to_string()),
+            RegistryError::FixtureNotFound("missing".to_string()),
+            RegistryError::InvalidFixture("broken".to_string()),
+        ];
+        for e in errors {
+            let json = serde_json::to_string(&e).unwrap();
+            let back: RegistryError = serde_json::from_str(&json).unwrap();
+            assert_eq!(e, back);
+        }
+    }
+
+    // -- Cross-cutting enrichment --
+
+    #[test]
+    fn end_to_end_taxonomy_pipeline() {
+        // 1. Build registry with all class × surface combinations
+        let mut reg = FixtureRegistry::new();
+        let mut fixture_ids = BTreeSet::new();
+        for class in TestClass::ALL {
+            for surface in TestSurface::ALL {
+                let id = format!("e2e-{}-{}", class.as_str(), surface.as_str());
+                let mut f = make_fixture(&id, *class);
+                f.surfaces = BTreeSet::from([*surface]);
+                fixture_ids.insert(id.clone());
+                reg.register(f).unwrap();
+            }
+        }
+        assert_eq!(reg.len(), 40);
+        assert!(reg.coverage_gaps().is_empty());
+        assert!(reg.validate_all().is_empty());
+
+        // 2. Build ownership map covering all fixtures
+        let mut omap = OwnershipMap::new();
+        for surface in TestSurface::ALL {
+            let surface_fixtures: BTreeSet<String> = fixture_ids
+                .iter()
+                .filter(|id| id.ends_with(surface.as_str()))
+                .cloned()
+                .collect();
+            omap.add(OwnershipEntry {
+                surface: *surface,
+                test_class: TestClass::Core, // representative
+                lane_charter_ref: surface.lane_charter_ref().to_string(),
+                owner_agent: "E2EAgent".to_string(),
+                fixture_ids: surface_fixtures,
+            });
+        }
+        assert!(omap.unowned_fixtures(&reg).is_empty());
+
+        // 3. Execute and summarize
+        let records: Vec<_> = reg
+            .entries
+            .iter()
+            .enumerate()
+            .map(|(i, f)| {
+                let outcome = if i.is_multiple_of(10) {
+                    TestOutcome::Fail
+                } else {
+                    TestOutcome::Pass
+                };
+                TestExecutionRecord {
+                    fixture_id: f.fixture_id.clone(),
+                    test_class: f.test_class,
+                    surface: *f.surfaces.iter().next().unwrap(),
+                    outcome,
+                    seed: f.seed,
+                    duration_us: 100 + (i as u64) * 10,
+                    determinism_satisfied: true,
+                    evidence_hash: format!("sha256:e2e-{i}"),
+                    notes: String::new(),
+                }
+            })
+            .collect();
+        let summary = TestSuiteSummary::from_records(&records);
+        assert_eq!(summary.total, 40);
+        assert!(summary.passed >= 36);
+        assert!(summary.meets_threshold(900_000)); // >= 90%
+    }
+
+    #[test]
+    fn fixture_id_derivation_stability_across_serde() {
+        let f = make_fixture("stability-check", TestClass::Adversarial);
+        let id_before = f.derive_id().unwrap();
+        let json = serde_json::to_string(&f).unwrap();
+        let back: FixtureEntry = serde_json::from_str(&json).unwrap();
+        let id_after = back.derive_id().unwrap();
+        assert_eq!(
+            id_before, id_after,
+            "ID derivation must survive serde roundtrip"
+        );
+    }
+
+    #[test]
+    fn contract_for_every_class_has_correct_schema() {
+        for class in TestClass::ALL {
+            let c = DeterminismContract::for_class(*class);
+            assert_eq!(c.schema, TEST_TAXONOMY_SCHEMA_VERSION);
+        }
+    }
+
+    #[test]
+    fn coverage_gap_count_monotone_decreasing() {
+        let mut reg = FixtureRegistry::new();
+        let mut prev_gaps = reg.coverage_gaps().len();
+        for (i, class) in TestClass::ALL.iter().enumerate() {
+            for (j, surface) in TestSurface::ALL.iter().enumerate() {
+                let id = format!("mono-{i}-{j}");
+                let mut f = make_fixture(&id, *class);
+                f.surfaces = BTreeSet::from([*surface]);
+                reg.register(f).unwrap();
+                let new_gaps = reg.coverage_gaps().len();
+                assert!(new_gaps <= prev_gaps, "gaps must be monotone decreasing");
+                prev_gaps = new_gaps;
+            }
+        }
+        assert_eq!(prev_gaps, 0);
+    }
+
+    #[test]
+    fn ownership_map_by_surface_empty_for_unregistered_surface() {
+        let m = OwnershipMap::new();
+        assert!(m.by_surface(TestSurface::Security).is_empty());
+    }
+
+    #[test]
+    fn suite_summary_flake_rate_separate_from_fail() {
+        let records = vec![
+            make_record("fr1", TestOutcome::Pass),
+            make_record("fr2", TestOutcome::Flake),
+            make_record("fr3", TestOutcome::Fail),
+        ];
+        let s = TestSuiteSummary::from_records(&records);
+        assert_eq!(s.flaky, 1);
+        assert_eq!(s.failed, 1);
+        assert_eq!(s.passed, 1);
+        assert!(!TestOutcome::Flake.is_success());
+    }
+
+    #[test]
+    fn registry_default_schema_matches_constant() {
+        let r = FixtureRegistry::default();
+        assert_eq!(r.schema, FIXTURE_REGISTRY_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn ownership_map_default_schema_matches_constant() {
+        let m = OwnershipMap::default();
+        assert_eq!(m.schema, TEST_TAXONOMY_SCHEMA_VERSION);
     }
 }

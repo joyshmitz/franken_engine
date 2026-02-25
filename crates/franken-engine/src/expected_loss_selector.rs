@@ -115,7 +115,8 @@ pub struct LossMatrix {
 impl LossMatrix {
     /// Create a loss matrix from explicit entries.
     ///
-    /// Panics if not all 24 (action, state) pairs are present.
+    /// Panics in debug builds if not all 24 (action, state) pairs are present.
+    /// In release builds, missing pairs return a loss of 0.
     pub fn new(matrix_id: impl Into<String>, entries: Vec<LossEntry>) -> Self {
         let m = Self {
             matrix_id: matrix_id.into(),
@@ -956,7 +957,7 @@ fn compute_borderline_sensitivity(
         return (false, BTreeMap::new());
     }
     let margin = runner_up_el.saturating_sub(selected_el);
-    let threshold = (selected_el.unsigned_abs() as i64).max(1) / 10;
+    let threshold = (selected_el.saturating_abs()).max(1) / 10;
     let borderline = margin <= threshold;
 
     if !borderline {
@@ -1151,10 +1152,10 @@ fn compute_regime_shift_score(history_millionths: &[i64], current_roi_millionths
     let center = median_i64(history_millionths);
     let deviations: Vec<i64> = history_millionths
         .iter()
-        .map(|value| value.saturating_sub(center).abs())
+        .map(|value| value.saturating_sub(center).saturating_abs())
         .collect();
     let mad = median_i64(&deviations).max(1);
-    let deviation = current_roi_millionths.saturating_sub(center).abs();
+    let deviation = current_roi_millionths.saturating_sub(center).saturating_abs();
     ((deviation as i128 * MILLION as i128) / mad as i128).min(10_000_000) as i64
 }
 
@@ -1179,9 +1180,9 @@ fn classify_alien_risk_alert(
     conformal_p_value_millionths: i64,
     regime_shift_score_millionths: i64,
 ) -> (AlienRiskAlertLevel, Option<ContainmentAction>) {
-    let base_loss = selected_expected_loss_millionths.abs().max(1);
+    let base_loss = selected_expected_loss_millionths.saturating_abs().max(1);
     let cvar_ratio_millionths =
-        ((tail_cvar_millionths.abs() as i128 * MILLION as i128) / base_loss as i128) as i64;
+        ((tail_cvar_millionths.saturating_abs() as i128 * MILLION as i128) / base_loss as i128) as i64;
 
     let critical = conformal_p_value_millionths <= ALIEN_CRITICAL_PVALUE_MILLIONTHS
         || regime_shift_score_millionths >= ALIEN_CRITICAL_REGIME_SHIFT_MILLIONTHS
@@ -1942,28 +1943,30 @@ mod tests {
             .score_runtime_decision(&input)
             .expect("scoring should succeed");
 
-        // If borderline, verify sensitivity deltas exist.
-        if score.borderline_decision {
+        // Verify borderline is detected and sensitivity deltas exist.
+        assert!(
+            score.borderline_decision,
+            "expected borderline decision for near-equal EL posterior"
+        );
+        assert!(
+            !score.sensitivity_deltas.is_empty(),
+            "borderline decisions must include sensitivity deltas"
+        );
+        // All sensitivity deltas must be non-negative.
+        for (state, delta) in &score.sensitivity_deltas {
             assert!(
-                !score.sensitivity_deltas.is_empty(),
-                "borderline decisions must include sensitivity deltas"
-            );
-            // All sensitivity deltas must be non-negative.
-            for (state, delta) in &score.sensitivity_deltas {
-                assert!(
-                    *delta >= 0,
-                    "sensitivity delta for {state} must be non-negative, got {delta}"
-                );
-            }
-            // Must have a borderline_decision event.
-            assert!(
-                score
-                    .events
-                    .iter()
-                    .any(|e| e.event == "borderline_decision"),
-                "borderline decision must emit borderline_decision event"
+                *delta >= 0,
+                "sensitivity delta for {state} must be non-negative, got {delta}"
             );
         }
+        // Must have a borderline_decision event.
+        assert!(
+            score
+                .events
+                .iter()
+                .any(|e| e.event == "borderline_decision"),
+            "borderline decision must emit borderline_decision event"
+        );
     }
 
     #[test]

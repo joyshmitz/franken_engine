@@ -289,6 +289,11 @@ pub enum SagaError {
         step_index: usize,
         diagnostic: String,
     },
+    /// Concurrency limit reached — too many active sagas.
+    ConcurrencyLimitReached {
+        active_count: usize,
+        max_concurrent: usize,
+    },
 }
 
 impl fmt::Display for SagaError {
@@ -328,6 +333,15 @@ impl fmt::Display for SagaError {
                 write!(
                     f,
                     "saga {saga_id} compensation failed at step {step_index}: {diagnostic}"
+                )
+            }
+            Self::ConcurrencyLimitReached {
+                active_count,
+                max_concurrent,
+            } => {
+                write!(
+                    f,
+                    "concurrency limit reached: {active_count} active sagas (max {max_concurrent})"
                 )
             }
         }
@@ -401,9 +415,9 @@ impl SagaOrchestrator {
             return Err(SagaError::EmptySteps);
         }
         if self.active_count() >= self.max_concurrent {
-            return Err(SagaError::SagaAlreadyTerminal {
-                saga_id: saga_id.to_string(),
-                state: format!("concurrency limit reached ({})", self.max_concurrent),
+            return Err(SagaError::ConcurrencyLimitReached {
+                active_count: self.active_count(),
+                max_concurrent: self.max_concurrent,
             });
         }
 
@@ -1962,6 +1976,10 @@ mod tests {
                 step_index: 2,
                 diagnostic: "fatal".to_string(),
             },
+            SagaError::ConcurrencyLimitReached {
+                active_count: 3,
+                max_concurrent: 3,
+            },
         ];
         for err in &errors {
             let json = serde_json::to_string(err).expect("serialize");
@@ -2220,6 +2238,10 @@ mod tests {
                 step_index: 2,
                 diagnostic: "rollback err".into(),
             }),
+            Box::new(SagaError::ConcurrencyLimitReached {
+                active_count: 5,
+                max_concurrent: 5,
+            }),
         ];
         let mut displays = std::collections::BTreeSet::new();
         for v in &variants {
@@ -2229,8 +2251,8 @@ mod tests {
         }
         assert_eq!(
             displays.len(),
-            7,
-            "all 7 variants produce distinct messages"
+            8,
+            "all 8 variants produce distinct messages"
         );
     }
 

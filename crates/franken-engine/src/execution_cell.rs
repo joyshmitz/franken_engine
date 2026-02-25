@@ -286,11 +286,7 @@ impl ExecutionCell {
         let session_id = session_id.into();
         let trace_id = trace_id.into();
         let child_region = Region::new(&session_id, CellKind::Session.to_string(), &trace_id);
-        self.region.add_child(Region::new(
-            &session_id,
-            CellKind::Session.to_string(),
-            &trace_id,
-        ));
+        self.region.add_child(child_region.clone());
 
         Ok(ExecutionCell {
             cell_id: session_id,
@@ -864,11 +860,15 @@ impl ExtensionHostBinding {
         let policy_id = cell.policy_id.clone();
         let trace_id = cell.trace_id.clone();
         let kind = cell.kind();
+        let budget_before_close = cell.total_budget_consumed_ms();
 
         let deadline = self.default_drain_deadline;
         let result = self
             .manager
             .close_cell(extension_id, cx, reason.clone(), deadline)?;
+
+        // Budget includes all prior execute_effect calls plus the close transition.
+        let total_budget = budget_before_close.saturating_add(CELL_TRANSITION_BUDGET_MS);
 
         let report = CellCloseReport {
             cell_id: extension_id.to_string(),
@@ -878,7 +878,7 @@ impl ExtensionHostBinding {
             obligations_committed: result.obligations_committed,
             obligations_aborted: result.obligations_aborted,
             drain_timeout_escalated: result.drain_timeout_escalated,
-            budget_consumed_ms: CELL_TRANSITION_BUDGET_MS,
+            budget_consumed_ms: total_budget,
             evidence_entries_emitted: 1,
         };
 

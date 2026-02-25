@@ -371,13 +371,16 @@ impl SpectralAnalyzer {
         // using inverse power iteration with deflation.
 
         // Step 1: Find λ_max via standard power iteration.
-        let (lambda_max, _, lambda_max_iterations) = self.power_iteration_max(&laplacian)?;
+        let (lambda_max_est, _, lambda_max_iterations) = self.power_iteration_max(&laplacian)?;
 
         // Step 2: Find Fiedler value (λ₂) via shifted inverse iteration.
         // We use the property that the all-ones vector is the eigenvector
         // of λ₁ = 0, so we deflate by projecting out the uniform component.
         let (fiedler_value, fiedler_vector, fiedler_iterations) =
             self.fiedler_computation(&laplacian)?;
+        // Numerical guard: by spectral theory λ_max >= λ₂ for symmetric
+        // Laplacians; enforce this invariant under fixed-point approximation.
+        let lambda_max = lambda_max_est.max(fiedler_value);
         let fiedler_residual =
             eigen_residual_inf_norm_millionths(&laplacian, &fiedler_vector, fiedler_value);
 
@@ -463,11 +466,13 @@ impl SpectralAnalyzer {
                 new_v[i] = (sum / MILLION as i128) as i64;
             }
 
-            let new_lambda = dot_product_millionths(&new_v, &v);
             normalize_vector_millionths(&mut new_v);
+            // Use Rayleigh quotient on the normalized iterate for a stable
+            // eigenvalue estimate of the symmetric Laplacian.
+            let new_lambda = rayleigh_quotient_millionths(laplacian, &new_v);
 
             if (new_lambda - lambda).abs() < self.convergence_threshold_millionths {
-                return Ok((new_lambda, new_v, iter + 1));
+                return Ok((new_lambda.max(0), new_v, iter + 1));
             }
             lambda = new_lambda;
             v = new_v;
