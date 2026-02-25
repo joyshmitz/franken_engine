@@ -1174,6 +1174,299 @@ mod tests {
         );
     }
 
+    // -- Enrichment: edge cases, overflow, lifecycle depth --
+
+    #[test]
+    fn evalue_overflow_detected() {
+        let blocked = BTreeSet::new();
+        // Use a ratio large enough that two multiplications overflow i64,
+        // but small enough that the first step stays below the trigger threshold.
+        let big_ratio: i64 = 4_000_000_000_000; // 4 trillion
+        let mut gr = EProcessGuardrail::new(
+            "overflow-test",
+            "metric",
+            "test",
+            i64::MAX, // very high threshold — won't trigger before overflow
+            blocked,
+            SecurityEpoch::GENESIS,
+            Box::new(ThresholdLikelihoodRatio {
+                threshold_millionths: 0,
+                high_ratio_millionths: big_ratio,
+                low_ratio_millionths: 1_000_000,
+            }),
+        );
+        // First update: e = 1M * 4e12 / 1M = 4e12 (well below i64::MAX)
+        gr.update(1_000_000).unwrap();
+        // Second update: product = 4e12 * 4e12 = 16e24, / 1e6 = 16e18 > i64::MAX → overflow
+        let result = gr.update(1_000_000);
+        assert!(matches!(result, Err(GuardrailError::EValueOverflow { .. })));
+    }
+
+    #[test]
+    fn update_on_suspended_returns_suspended_error() {
+        let mut gr = test_guardrail();
+        gr.suspend("test");
+        let err = gr.update(15_000).unwrap_err();
+        assert!(matches!(err, GuardrailError::Suspended { .. }));
+    }
+
+    #[test]
+    fn suspend_preserves_evalue_and_count() {
+        let mut gr = test_guardrail();
+        gr.update(5_000).unwrap(); // e = 0.5
+        let ev_before = gr.e_value();
+        let count_before = gr.observation_count();
+        gr.suspend("maintenance");
+        assert_eq!(gr.e_value(), ev_before);
+        assert_eq!(gr.observation_count(), count_before);
+    }
+
+    #[test]
+    fn resume_non_suspended_is_noop() {
+        let mut gr = test_guardrail();
+        assert_eq!(gr.state(), GuardrailState::Active);
+        gr.resume(); // should not emit event
+        assert_eq!(gr.state(), GuardrailState::Active);
+        let events = gr.drain_events();
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn drain_events_idempotent() {
+        let mut gr = test_guardrail();
+        gr.update(5_000).unwrap();
+        let first = gr.drain_events();
+        assert!(!first.is_empty());
+        let second = gr.drain_events();
+        assert!(second.is_empty());
+    }
+
+    #[test]
+    fn threshold_lr_at_exact_threshold() {
+        let lr = ThresholdLikelihoodRatio {
+            threshold_millionths: 10_000,
+            high_ratio_millionths: 5_000_000,
+            low_ratio_millionths: 500_000,
+        };
+        // At exact threshold → high ratio
+        assert_eq!(lr.ratio(10_000), Some(5_000_000));
+    }
+
+    #[test]
+    fn threshold_lr_just_below_threshold() {
+        let lr = ThresholdLikelihoodRatio {
+            threshold_millionths: 10_000,
+            high_ratio_millionths: 5_000_000,
+            low_ratio_millionths: 500_000,
+        };
+        assert_eq!(lr.ratio(9_999), Some(500_000));
+    }
+
+    #[test]
+    fn threshold_lr_family_name() {
+        let lr = ThresholdLikelihoodRatio {
+            threshold_millionths: 0,
+            high_ratio_millionths: 1_000_000,
+            low_ratio_millionths: 1_000_000,
+        };
+        assert_eq!(lr.family(), "threshold");
+    }
+
+    #[test]
+    fn universal_lr_family_name() {
+        let lr = UniversalLikelihoodRatio {
+            null_mean_millionths: 1_000_000,
+        };
+        assert_eq!(lr.family(), "universal");
+    }
+
+    #[test]
+    fn universal_lr_negative_observation() {
+        let lr = UniversalLikelihoodRatio {
+            null_mean_millionths: 500_000,
+        };
+        let ratio = lr.ratio(-250_000).unwrap();
+        assert!(ratio < 0); // negative obs / positive mean = negative ratio
+    }
+
+    #[test]
+    fn observation_count_increments_per_update() {
+        let mut gr = test_guardrail();
+        for i in 0..5 {
+            assert_eq!(gr.observation_count(), i);
+            gr.update(5_000).unwrap();
+        }
+        assert_eq!(gr.observation_count(), 5);
+    }
+
+    #[test]
+    fn registry_empty_permits_everything() {
+        let registry = GuardrailRegistry::new();
+        assert!(!registry.is_blocked("any_action"));
+        assert!(registry.blocked_actions().is_empty());
+        assert!(registry.is_empty());
+    }
+
+    #[test]
+    fn registry_get_nonexistent_returns_none() {
+        let registry = GuardrailRegistry::new();
+        assert!(registry.get("nonexistent").is_none());
+    }
+
+    #[test]
+    fn registry_drain_all_events_empties_all() {
+        let mut registry = GuardrailRegistry::new();
+        let blocked = BTreeSet::new();
+        let mut gr = EProcessGuardrail::new(
+            "gr1",
+            "m",
+            "test",
+            100_000_000,
+            blocked,
+            SecurityEpoch::GENESIS,
+            Box::new(ThresholdLikelihoodRatio {
+                threshold_millionths: 0,
+                high_ratio_millionths: 2_000_000,
+                low_ratio_millionths: 500_000,
+            }),
+        );
+        gr.update(1_000_000).unwrap();
+        registry.add(gr);
+        let events = registry.drain_all_events();
+        assert!(!events.is_empty());
+        let events2 = registry.drain_all_events();
+        assert!(events2.is_empty());
+    }
+
+    #[test]
+    fn registry_blocking_guardrails_multiple_blockers() {
+        let mut registry = GuardrailRegistry::new();
+        // Create two guardrails both blocking "low"
+        for id in ["gr1", "gr2"] {
+            let mut blocked = BTreeSet::new();
+            blocked.insert("low".to_string());
+            let mut gr = EProcessGuardrail::new(
+                id,
+                "m",
+                "test",
+                5_000_000,
+                blocked,
+                SecurityEpoch::GENESIS,
+                Box::new(ThresholdLikelihoodRatio {
+                    threshold_millionths: 0,
+                    high_ratio_millionths: 10_000_000,
+                    low_ratio_millionths: 500_000,
+                }),
+            );
+            gr.update(1_000_000).unwrap(); // triggers
+            registry.add(gr);
+        }
+        let blockers = registry.blocking_guardrails("low");
+        assert_eq!(blockers.len(), 2);
+    }
+
+    #[test]
+    fn registry_update_stream_skips_non_matching() {
+        let mut registry = GuardrailRegistry::new();
+        let blocked = BTreeSet::new();
+        let gr = EProcessGuardrail::new(
+            "gr1",
+            "stream-a",
+            "test",
+            100_000_000,
+            blocked,
+            SecurityEpoch::GENESIS,
+            Box::new(ThresholdLikelihoodRatio {
+                threshold_millionths: 0,
+                high_ratio_millionths: 2_000_000,
+                low_ratio_millionths: 500_000,
+            }),
+        );
+        registry.add(gr);
+        registry.update_stream("stream-b", 1_000_000); // different stream
+        assert_eq!(registry.get("gr1").unwrap().observation_count(), 0);
+    }
+
+    #[test]
+    fn reset_all_skips_active_guardrails() {
+        let mut registry = GuardrailRegistry::new();
+        let blocked = BTreeSet::new();
+        let gr = EProcessGuardrail::new(
+            "active-gr",
+            "m",
+            "test",
+            100_000_000,
+            blocked,
+            SecurityEpoch::GENESIS,
+            Box::new(ThresholdLikelihoodRatio {
+                threshold_millionths: 0,
+                high_ratio_millionths: 2_000_000,
+                low_ratio_millionths: 500_000,
+            }),
+        );
+        registry.add(gr);
+        let receipt = ResetReceipt {
+            authorized_by: "op".to_string(),
+            rationale: "test".to_string(),
+            epoch: SecurityEpoch::from_raw(1),
+        };
+        let errors = registry.reset_all(&receipt);
+        assert!(errors.is_empty()); // no triggered guardrails to reset
+        assert_eq!(
+            registry.get("active-gr").unwrap().state(),
+            GuardrailState::Active
+        );
+    }
+
+    #[test]
+    fn guardrail_error_display_all_variants() {
+        let errors = vec![
+            GuardrailError::Suspended {
+                guardrail_id: "g".into(),
+            },
+            GuardrailError::AlreadyTriggered {
+                guardrail_id: "g".into(),
+            },
+            GuardrailError::InvalidObservation {
+                guardrail_id: "g".into(),
+            },
+            GuardrailError::ResetUnauthorized {
+                guardrail_id: "g".into(),
+            },
+            GuardrailError::NotTriggered {
+                guardrail_id: "g".into(),
+            },
+            GuardrailError::EValueOverflow {
+                guardrail_id: "g".into(),
+            },
+        ];
+        let mut unique = std::collections::BTreeSet::new();
+        for e in &errors {
+            unique.insert(e.to_string());
+        }
+        assert_eq!(unique.len(), 6);
+    }
+
+    #[test]
+    fn guardrail_config_epoch_preserved() {
+        let epoch = SecurityEpoch::from_raw(42);
+        let blocked = BTreeSet::new();
+        let gr = EProcessGuardrail::new(
+            "g",
+            "m",
+            "test",
+            20_000_000,
+            blocked,
+            epoch,
+            Box::new(ThresholdLikelihoodRatio {
+                threshold_millionths: 0,
+                high_ratio_millionths: 1_000_000,
+                low_ratio_millionths: 1_000_000,
+            }),
+        );
+        assert_eq!(gr.config_epoch(), epoch);
+    }
+
     #[test]
     fn threshold_lr_serialization_round_trip() {
         let lr = ThresholdLikelihoodRatio {

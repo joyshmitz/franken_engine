@@ -883,6 +883,221 @@ mod tests {
         assert_eq!(displays.len(), 2);
     }
 
+    // -- Enrichment: edge cases, VOI boundary, scheduling depth --
+
+    #[test]
+    fn voi_score_zero_cost_uses_floor() {
+        let config = ProbeConfig {
+            probe_id: "z".to_string(),
+            kind: ProbeKind::HealthCheck,
+            cost_millionths: 0, // will be clamped to 1
+            information_gain_millionths: 1_000_000,
+            base_relevance_millionths: 1_000_000,
+        };
+        let state = ProbeState::new(config);
+        // cost clamped to max(0,1) = 1, so VOI should be computable
+        let voi = state.voi_score(1_000_000);
+        assert!(voi > 0);
+    }
+
+    #[test]
+    fn voi_score_negative_cost_uses_floor() {
+        let config = ProbeConfig {
+            probe_id: "neg".to_string(),
+            kind: ProbeKind::HealthCheck,
+            cost_millionths: -500_000,
+            information_gain_millionths: 1_000_000,
+            base_relevance_millionths: 1_000_000,
+        };
+        let state = ProbeState::new(config);
+        // cost clamped to max(-500000, 1) = 1
+        let voi = state.voi_score(1_000_000);
+        assert!(voi > 0);
+    }
+
+    #[test]
+    fn voi_score_zero_information_gain() {
+        let config = ProbeConfig {
+            probe_id: "no-info".to_string(),
+            kind: ProbeKind::HealthCheck,
+            cost_millionths: 100_000,
+            information_gain_millionths: 0,
+            base_relevance_millionths: 1_000_000,
+        };
+        let state = ProbeState::new(config);
+        assert_eq!(state.voi_score(1_000_000), 0);
+    }
+
+    #[test]
+    fn mark_executed_failure_records_false() {
+        let mut state = ProbeState::new(health_probe("h"));
+        state.mark_executed(false);
+        assert!(!state.last_success);
+        assert_eq!(state.execution_count, 1);
+        assert_eq!(state.staleness, 0);
+    }
+
+    #[test]
+    fn mark_executed_toggles_success() {
+        let mut state = ProbeState::new(health_probe("h"));
+        state.mark_executed(false);
+        assert!(!state.last_success);
+        state.mark_executed(true);
+        assert!(state.last_success);
+        assert_eq!(state.execution_count, 2);
+    }
+
+    #[test]
+    fn probe_state_initial_values() {
+        let state = ProbeState::new(health_probe("h"));
+        assert_eq!(state.staleness, 0);
+        assert_eq!(state.execution_count, 0);
+        assert!(state.last_success);
+    }
+
+    #[test]
+    fn schedule_zero_budget_defers_all() {
+        let config = SchedulerConfig {
+            scheduler_id: "s".to_string(),
+            base_budget_millionths: 0,
+            regime_budgets: BTreeMap::new(),
+            relevance_overrides: BTreeMap::new(),
+        };
+        let mut sched = MonitorScheduler::new(config);
+        sched.register_probe(health_probe("h1")).unwrap();
+        let result = sched.schedule(Regime::Normal);
+        assert_eq!(result.probes_scheduled, 0);
+        assert_eq!(result.probes_deferred, 1);
+    }
+
+    #[test]
+    fn schedule_empty_scheduler() {
+        let mut sched = MonitorScheduler::new(test_config());
+        let result = sched.schedule(Regime::Normal);
+        assert_eq!(result.probes_scheduled, 0);
+        assert_eq!(result.probes_deferred, 0);
+        assert!(result.decisions.is_empty());
+    }
+
+    #[test]
+    fn schedule_single_probe_exact_budget_fit() {
+        let config = SchedulerConfig {
+            scheduler_id: "s".to_string(),
+            base_budget_millionths: 100_000, // exactly matches health probe cost
+            regime_budgets: BTreeMap::new(),
+            relevance_overrides: BTreeMap::new(),
+        };
+        let mut sched = MonitorScheduler::new(config);
+        sched.register_probe(health_probe("h1")).unwrap();
+        let result = sched.schedule(Regime::Normal);
+        assert_eq!(result.probes_scheduled, 1);
+        assert_eq!(result.budget_used, 100_000);
+    }
+
+    #[test]
+    fn schedule_result_contains_all_decisions() {
+        let mut sched = test_scheduler();
+        let result = sched.schedule(Regime::Normal);
+        // Should have one decision per probe
+        assert_eq!(result.decisions.len(), 3);
+    }
+
+    #[test]
+    fn schedule_deterministic_across_repeated_calls() {
+        let mut sched1 = test_scheduler();
+        let mut sched2 = test_scheduler();
+        let r1 = sched1.schedule(Regime::Normal);
+        let r2 = sched2.schedule(Regime::Normal);
+        assert_eq!(r1.decisions, r2.decisions);
+        assert_eq!(r1.budget_used, r2.budget_used);
+    }
+
+    #[test]
+    fn history_interval_matches_schedule_count() {
+        let mut sched = test_scheduler();
+        for _ in 0..5 {
+            sched.schedule(Regime::Normal);
+        }
+        assert_eq!(sched.history().len(), 5);
+        for (i, h) in sched.history().iter().enumerate() {
+            assert_eq!(h.interval, (i + 1) as u64);
+        }
+    }
+
+    #[test]
+    fn record_execution_multiple_times() {
+        let mut sched = test_scheduler();
+        sched.record_execution("health-1", true).unwrap();
+        sched.record_execution("health-1", false).unwrap();
+        sched.record_execution("health-1", true).unwrap();
+        let state = sched.probe("health-1").unwrap();
+        assert_eq!(state.execution_count, 3);
+        assert!(state.last_success);
+    }
+
+    #[test]
+    fn unregister_then_reregister_works() {
+        let mut sched = MonitorScheduler::new(test_config());
+        sched.register_probe(health_probe("h1")).unwrap();
+        sched.unregister_probe("h1").unwrap();
+        assert_eq!(sched.probe_count(), 0);
+        sched.register_probe(deep_probe("h1")).unwrap();
+        assert_eq!(sched.probe_count(), 1);
+        assert_eq!(
+            sched.probe("h1").unwrap().config.kind,
+            ProbeKind::DeepDiagnostic
+        );
+    }
+
+    #[test]
+    fn budget_for_unknown_regime_falls_back_to_base() {
+        let config = test_config();
+        // Regime::Recovery isn't in the regime_budgets map
+        let budget = config.budget_for_regime(Regime::Recovery);
+        assert_eq!(budget, config.base_budget_millionths);
+    }
+
+    #[test]
+    fn relevance_multiplier_default_is_one() {
+        let config = test_config();
+        let mult = config.relevance_multiplier(Regime::Normal, ProbeKind::HealthCheck);
+        assert_eq!(mult, 1_000_000);
+    }
+
+    #[test]
+    fn probe_query_missing_returns_none() {
+        let sched = MonitorScheduler::new(test_config());
+        assert!(sched.probe("nonexistent").is_none());
+    }
+
+    #[test]
+    fn deferred_probe_has_skip_reason() {
+        let config = SchedulerConfig {
+            scheduler_id: "s".to_string(),
+            base_budget_millionths: 50_000, // too small for any probe
+            regime_budgets: BTreeMap::new(),
+            relevance_overrides: BTreeMap::new(),
+        };
+        let mut sched = MonitorScheduler::new(config);
+        sched.register_probe(health_probe("h1")).unwrap();
+        let result = sched.schedule(Regime::Normal);
+        let decision = &result.decisions[0];
+        assert!(!decision.scheduled);
+        assert!(decision.skip_reason.is_some());
+    }
+
+    #[test]
+    fn calibration_probe_kind_display() {
+        let config = ProbeConfig {
+            probe_id: "cal".to_string(),
+            kind: ProbeKind::CalibrationProbe,
+            cost_millionths: 500_000,
+            information_gain_millionths: 1_000_000,
+            base_relevance_millionths: 1_000_000,
+        };
+        assert_eq!(config.kind.to_string(), "calibration_probe");
+    }
+
     #[test]
     fn relevance_override_affects_scheduling() {
         let mut config = test_config();

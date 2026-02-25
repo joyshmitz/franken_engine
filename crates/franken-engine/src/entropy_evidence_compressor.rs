@@ -1060,4 +1060,232 @@ mod tests {
         tampered.total_count = 999;
         assert!(!tampered.is_consistent());
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: EntropyEstimator properties
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn entropy_estimator_default() {
+        let est = EntropyEstimator::default();
+        assert_eq!(est.total_count, 0);
+        assert_eq!(est.alphabet_size, 0);
+        assert!(est.frequencies.is_empty());
+    }
+
+    #[test]
+    fn entropy_observe_updates_state() {
+        let mut est = EntropyEstimator::new();
+        est.observe(5);
+        assert_eq!(est.total_count, 1);
+        assert_eq!(est.alphabet_size, 1);
+        est.observe(5);
+        assert_eq!(est.total_count, 2);
+        assert_eq!(est.alphabet_size, 1); // same symbol
+        est.observe(10);
+        assert_eq!(est.total_count, 3);
+        assert_eq!(est.alphabet_size, 2);
+    }
+
+    #[test]
+    fn entropy_probability_unknown_symbol_returns_zero() {
+        let mut est = EntropyEstimator::new();
+        est.observe(0);
+        assert_eq!(est.probability_millionths(99), 0);
+    }
+
+    #[test]
+    fn entropy_probability_empty_estimator_returns_zero() {
+        let est = EntropyEstimator::new();
+        assert_eq!(est.probability_millionths(0), 0);
+    }
+
+    #[test]
+    fn entropy_max_for_single_symbol_is_zero() {
+        let mut est = EntropyEstimator::new();
+        for _ in 0..20 {
+            est.observe(0);
+        }
+        assert_eq!(est.max_entropy_millibits(), 0);
+    }
+
+    #[test]
+    fn entropy_below_min_samples_returns_zero() {
+        let mut est = EntropyEstimator::new();
+        // MIN_SAMPLES_FOR_ENTROPY is 10; observe only 9.
+        for i in 0..9 {
+            est.observe(i);
+        }
+        assert_eq!(est.entropy_millibits(), 0);
+    }
+
+    #[test]
+    fn entropy_at_min_samples_returns_nonzero() {
+        let mut est = EntropyEstimator::new();
+        for i in 0..10 {
+            est.observe(i % 2);
+        }
+        assert!(est.entropy_millibits() > 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: EntropyError display and std::error completeness
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn entropy_error_display_all_variants() {
+        let displays: std::collections::BTreeSet<String> = vec![
+            EntropyError::AlphabetTooLarge {
+                size: 300,
+                max: 256,
+            },
+            EntropyError::EmptyInput,
+            EntropyError::UnknownSymbol { symbol: 42 },
+            EntropyError::DecodeError {
+                message: "corrupt".into(),
+            },
+            EntropyError::InsufficientSamples { count: 5, min: 10 },
+            EntropyError::KraftViolation {
+                kraft_sum_millionths: 1_100_000,
+            },
+        ]
+        .into_iter()
+        .map(|e| e.to_string())
+        .collect();
+        assert_eq!(displays.len(), 6, "all 6 variants have distinct Display");
+    }
+
+    #[test]
+    fn entropy_error_implements_std_error() {
+        let errors: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(EntropyError::EmptyInput),
+            Box::new(EntropyError::AlphabetTooLarge { size: 1, max: 0 }),
+            Box::new(EntropyError::UnknownSymbol { symbol: 0 }),
+            Box::new(EntropyError::DecodeError {
+                message: "x".into(),
+            }),
+            Box::new(EntropyError::InsufficientSamples { count: 1, min: 2 }),
+            Box::new(EntropyError::KraftViolation {
+                kraft_sum_millionths: 2_000_000,
+            }),
+        ];
+        for e in &errors {
+            assert!(!e.to_string().is_empty());
+        }
+    }
+
+    #[test]
+    fn entropy_error_serde_all_variants() {
+        let errors = vec![
+            EntropyError::AlphabetTooLarge {
+                size: 300,
+                max: 256,
+            },
+            EntropyError::EmptyInput,
+            EntropyError::UnknownSymbol { symbol: 42 },
+            EntropyError::DecodeError {
+                message: "x".into(),
+            },
+            EntropyError::InsufficientSamples { count: 5, min: 10 },
+            EntropyError::KraftViolation {
+                kraft_sum_millionths: 1_100_000,
+            },
+        ];
+        for err in &errors {
+            let json = serde_json::to_string(err).unwrap();
+            let back: EntropyError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*err, back);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: CompressedEvidence schema
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn compressed_evidence_uses_correct_schema() {
+        let mut est = EntropyEstimator::new();
+        for _ in 0..100 {
+            est.observe(0);
+            est.observe(1);
+        }
+        let coder = ArithmeticCoder::from_estimator(&est).unwrap();
+        let compressed = coder.encode(&[0, 1, 0]).unwrap();
+        assert_eq!(compressed.schema, ENTROPY_SCHEMA_VERSION);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: CompressionCertificate is_within_factor
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn is_within_factor_passing() {
+        let cert = CompressionCertificate {
+            schema: ENTROPY_SCHEMA_VERSION.to_string(),
+            entropy_millibits_per_symbol: MILLION,
+            shannon_lower_bound_bits: 100,
+            achieved_bits: 120,
+            overhead_bits_millionths: 20 * MILLION,
+            overhead_ratio_millionths: 1_200_000,
+            kraft_sum_millionths: MILLION,
+            kraft_satisfied: true,
+            redundancy_millibits: 0,
+            symbol_count: 100,
+            certificate_hash: ContentHash::compute(b"x"),
+        };
+        // 1.2x overhead — within 2.0x factor
+        assert!(cert.is_within_factor(2_000_000));
+        // But not within 1.1x factor
+        assert!(!cert.is_within_factor(1_100_000));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: SufficientStatistic from empty estimator
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn sufficient_statistic_fisher_information_zero_for_few_samples() {
+        let mut est = EntropyEstimator::new();
+        est.observe(0);
+        let ss = SufficientStatistic::from_estimator(&est, 0, 0, ContentHash::compute(b"single"));
+        assert_eq!(ss.fisher_information_millionths(), 0);
+    }
+
+    #[test]
+    fn sufficient_statistic_mean_computation() {
+        let mut est = EntropyEstimator::new();
+        for _ in 0..10 {
+            est.observe(0);
+        }
+        let ss =
+            SufficientStatistic::from_estimator(&est, 500, 1000, ContentHash::compute(b"mean"));
+        // mean = cumulative_llr / total = 500 / 10 = 50
+        assert_eq!(ss.mean_millionths, 50);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: coder with large alphabet
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn coder_alphabet_at_max_size() {
+        let mut est = EntropyEstimator::new();
+        for i in 0..MAX_ALPHABET_SIZE as u32 {
+            est.observe(i);
+        }
+        let coder = ArithmeticCoder::from_estimator(&est).unwrap();
+        assert_eq!(coder.alphabet_size, MAX_ALPHABET_SIZE);
+    }
+
+    #[test]
+    fn coder_alphabet_exceeds_max_rejected() {
+        let mut est = EntropyEstimator::new();
+        for i in 0..=MAX_ALPHABET_SIZE as u32 {
+            est.observe(i);
+        }
+        assert!(matches!(
+            ArithmeticCoder::from_estimator(&est),
+            Err(EntropyError::AlphabetTooLarge { .. })
+        ));
+    }
 }

@@ -1160,4 +1160,196 @@ mod tests {
             panic!("expected pass");
         }
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: MetricKind display all 10 variants unique
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn metric_kind_display_all_unique() {
+        let displays: std::collections::BTreeSet<String> =
+            MetricKind::ALL.iter().map(|k| k.to_string()).collect();
+        assert_eq!(
+            displays.len(),
+            10,
+            "all 10 MetricKinds have distinct Display"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: Threshold serde roundtrip
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn threshold_serde_roundtrip() {
+        let t = Threshold {
+            metric: MetricKind::BundleSizeBytes,
+            milestone: Milestone::Beta,
+            boundary: 5_000_000,
+        };
+        let json = serde_json::to_string(&t).unwrap();
+        let back: Threshold = serde_json::from_str(&json).unwrap();
+        assert_eq!(t, back);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: evaluate with empty thresholds returns vacuous pass
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn evaluate_empty_thresholds_no_pass() {
+        let sc = Scorecard::with_thresholds(vec![], epoch(1));
+        let eval = sc.evaluate(Milestone::Alpha);
+        // No thresholds → pass_count=0, fail_count=0, overall_pass=false.
+        assert!(!eval.overall_pass);
+        assert_eq!(eval.pass_count, 0);
+        assert_eq!(eval.fail_count, 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: current_value for BundleSizeBytes uses max
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn current_value_bundle_size_uses_max() {
+        let mut sc = Scorecard::new(epoch(1));
+        sc.record(sample(MetricKind::BundleSizeBytes, 1_000, 1));
+        sc.record(sample(MetricKind::BundleSizeBytes, 5_000, 1));
+        sc.record(sample(MetricKind::BundleSizeBytes, 3_000, 1));
+        // BundleSizeBytes → max
+        assert_eq!(sc.current_value(MetricKind::BundleSizeBytes), Some(5_000));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: current_value for FallbackFrequency uses mean
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn current_value_fallback_frequency_uses_mean() {
+        let mut sc = Scorecard::new(epoch(1));
+        sc.record(sample(MetricKind::FallbackFrequency, 100_000, 1));
+        sc.record(sample(MetricKind::FallbackFrequency, 200_000, 1));
+        // mean = (100_000 + 200_000) / 2 = 150_000
+        assert_eq!(
+            sc.current_value(MetricKind::FallbackFrequency),
+            Some(150_000)
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: current_value for RenderLatencyP95Us uses p95
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn current_value_render_latency_p95_uses_p95() {
+        let mut sc = Scorecard::new(epoch(1));
+        for i in 0..100 {
+            sc.record(sample(MetricKind::RenderLatencyP95Us, i * 10, 1));
+        }
+        // p95 of [0, 10, 20, ..., 990]
+        let val = sc.current_value(MetricKind::RenderLatencyP95Us).unwrap();
+        assert_eq!(val, 950); // index 95 in sorted 0..99
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: highest_passing_milestone returns GA
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn highest_passing_milestone_ga() {
+        let mut sc = Scorecard::new(epoch(1));
+        for _ in 0..10 {
+            sc.record(sample(MetricKind::CompatibilityPassRate, 999_000, 1));
+            sc.record(sample(MetricKind::ResponsivenessP99Us, 1_000, 1));
+            sc.record(sample(MetricKind::RenderLatencyP50Us, 500, 1));
+            sc.record(sample(MetricKind::RenderLatencyP95Us, 2_000, 1));
+            sc.record(sample(MetricKind::RenderLatencyP99Us, 5_000, 1));
+            sc.record(sample(MetricKind::BundleSizeBytes, 500_000, 1));
+            sc.record(sample(MetricKind::RuntimeMemoryBytes, 10_000_000, 1));
+            sc.record(sample(MetricKind::FallbackFrequency, 1_000, 1));
+            sc.record(sample(MetricKind::RollbackLatencyP99Us, 10_000, 1));
+            sc.record(sample(MetricKind::EvidenceCompleteness, 999_000, 1));
+        }
+        assert_eq!(sc.highest_passing_milestone(), Some(Milestone::Ga));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: report insufficient data mentions "insufficient"
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn report_insufficient_data_says_insufficient() {
+        let sc = Scorecard::new(epoch(1));
+        let report = sc.report(Milestone::Alpha);
+        assert!(
+            report.contains("insufficient"),
+            "report should mention insufficient: {report}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: total observations correct
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn total_observations_across_metrics() {
+        let mut sc = Scorecard::new(epoch(1));
+        sc.record(sample(MetricKind::BundleSizeBytes, 1000, 1));
+        sc.record(sample(MetricKind::BundleSizeBytes, 2000, 1));
+        sc.record(sample(MetricKind::RuntimeMemoryBytes, 3000, 1));
+        assert_eq!(sc.total_observations(), 3);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: shortfall computed correctly
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn shortfall_correct_for_lower_is_better() {
+        let thresholds = vec![Threshold {
+            metric: MetricKind::BundleSizeBytes,
+            milestone: Milestone::Alpha,
+            boundary: 1_000,
+        }];
+        let mut sc = Scorecard::with_thresholds(thresholds, epoch(1));
+        sc.record(sample(MetricKind::BundleSizeBytes, 3_000, 1));
+        let eval = sc.evaluate(Milestone::Alpha);
+        if let ThresholdResult::Fail { shortfall, .. } = &eval.results[0] {
+            assert_eq!(*shortfall, 2_000); // 3000 - 1000
+        } else {
+            panic!("expected fail");
+        }
+    }
+
+    #[test]
+    fn shortfall_correct_for_higher_is_better() {
+        let thresholds = vec![Threshold {
+            metric: MetricKind::CompatibilityPassRate,
+            milestone: Milestone::Alpha,
+            boundary: 900_000,
+        }];
+        let mut sc = Scorecard::with_thresholds(thresholds, epoch(1));
+        sc.record(sample(MetricKind::CompatibilityPassRate, 800_000, 1));
+        let eval = sc.evaluate(Milestone::Alpha);
+        if let ThresholdResult::Fail { shortfall, .. } = &eval.results[0] {
+            assert_eq!(*shortfall, 100_000); // 900k - 800k
+        } else {
+            panic!("expected fail");
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: InsufficientData serde roundtrip
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn insufficient_data_serde_roundtrip() {
+        let result = ThresholdResult::InsufficientData {
+            metric: MetricKind::RuntimeMemoryBytes,
+            milestone: Milestone::Ga,
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let back: ThresholdResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(result, back);
+    }
 }

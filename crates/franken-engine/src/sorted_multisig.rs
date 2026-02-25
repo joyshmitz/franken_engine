@@ -1166,4 +1166,372 @@ mod tests {
         assert_eq!(keys.len(), 2);
         assert!(keys[0].0 < keys[1].0);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: single-entry arrays
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn single_entry_array_new() {
+        let (sk, vk) = make_sig_pair(1);
+        let obj = test_obj();
+        let entries = vec![SignerSignature::new(vk.clone(), sign_with(&sk, &obj))];
+        let arr = SortedSignatureArray::new(entries).unwrap();
+        assert_eq!(arr.len(), 1);
+        assert!(!arr.is_empty());
+        assert!(arr.contains_signer(&vk));
+    }
+
+    #[test]
+    fn single_entry_from_unsorted() {
+        let (sk, vk) = make_sig_pair(5);
+        let obj = test_obj();
+        let entries = vec![SignerSignature::new(vk.clone(), sign_with(&sk, &obj))];
+        let arr = SortedSignatureArray::from_unsorted(entries).unwrap();
+        assert_eq!(arr.len(), 1);
+    }
+
+    #[test]
+    fn is_sorted_single_element() {
+        let (sk, vk) = make_sig_pair(10);
+        let obj = test_obj();
+        let entries = vec![SignerSignature::new(vk, sign_with(&sk, &obj))];
+        assert!(is_sorted(&entries).is_ok());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: insert edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn insert_at_beginning() {
+        let (sk2, vk2) = make_sig_pair(2);
+        let (sk3, vk3) = make_sig_pair(3);
+        let (sk1, vk1) = make_sig_pair(1);
+        let obj = test_obj();
+
+        let entries = vec![
+            SignerSignature::new(vk2.clone(), sign_with(&sk2, &obj)),
+            SignerSignature::new(vk3.clone(), sign_with(&sk3, &obj)),
+        ];
+        let mut arr = SortedSignatureArray::from_unsorted(entries).unwrap();
+        arr.insert(SignerSignature::new(vk1, sign_with(&sk1, &obj)))
+            .unwrap();
+
+        assert_eq!(arr.len(), 3);
+        // First entry should have the smallest key.
+        for i in 1..arr.len() {
+            assert!(arr.entries()[i - 1].signer.0 < arr.entries()[i].signer.0);
+        }
+    }
+
+    #[test]
+    fn insert_at_end() {
+        let (sk1, vk1) = make_sig_pair(1);
+        let (sk2, vk2) = make_sig_pair(2);
+        let (sk4, vk4) = make_sig_pair(4);
+        let obj = test_obj();
+
+        let entries = vec![
+            SignerSignature::new(vk1.clone(), sign_with(&sk1, &obj)),
+            SignerSignature::new(vk2.clone(), sign_with(&sk2, &obj)),
+        ];
+        let mut arr = SortedSignatureArray::from_unsorted(entries).unwrap();
+        arr.insert(SignerSignature::new(vk4, sign_with(&sk4, &obj)))
+            .unwrap();
+        assert_eq!(arr.len(), 3);
+        for i in 1..arr.len() {
+            assert!(arr.entries()[i - 1].signer.0 < arr.entries()[i].signer.0);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: quorum edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn quorum_exact_threshold_match() {
+        let (sk1, vk1) = make_sig_pair(1);
+        let (sk2, vk2) = make_sig_pair(2);
+        let obj = test_obj();
+        let preimage = obj.preimage_bytes();
+
+        let entries = vec![
+            SignerSignature::new(vk1.clone(), sign_with(&sk1, &obj)),
+            SignerSignature::new(vk2.clone(), sign_with(&sk2, &obj)),
+        ];
+        let arr = SortedSignatureArray::from_unsorted(entries).unwrap();
+
+        // threshold == signer count
+        let result = arr
+            .verify_quorum(2, &[vk1, vk2], |vk, sig| {
+                crate::signature_preimage::verify_signature(vk, &preimage, sig)
+            })
+            .unwrap();
+        assert!(result.quorum_met);
+        assert_eq!(result.valid_count, 2);
+    }
+
+    #[test]
+    fn quorum_with_one_of_one() {
+        let (sk, vk) = make_sig_pair(1);
+        let obj = test_obj();
+        let preimage = obj.preimage_bytes();
+
+        let entries = vec![SignerSignature::new(vk.clone(), sign_with(&sk, &obj))];
+        let arr = SortedSignatureArray::new(entries).unwrap();
+
+        let result = arr
+            .verify_quorum(1, &[vk], |vk_ref, sig| {
+                crate::signature_preimage::verify_signature(vk_ref, &preimage, sig)
+            })
+            .unwrap();
+        assert!(result.quorum_met);
+        assert_eq!(result.valid_count, 1);
+        assert_eq!(result.unauthorized_count, 0);
+    }
+
+    #[test]
+    fn quorum_all_unauthorized() {
+        let (sk1, vk1) = make_sig_pair(1);
+        let (_, vk_other) = make_sig_pair(99);
+        let obj = test_obj();
+        let preimage = obj.preimage_bytes();
+
+        let entries = vec![SignerSignature::new(vk1.clone(), sign_with(&sk1, &obj))];
+        let arr = SortedSignatureArray::new(entries).unwrap();
+
+        // Authorized list has only vk_other; vk1 is unauthorized.
+        let err = arr
+            .verify_quorum(1, &[vk_other], |vk, sig| {
+                crate::signature_preimage::verify_signature(vk, &preimage, sig)
+            })
+            .unwrap_err();
+        assert!(matches!(err, MultiSigError::QuorumNotMet { valid: 0, .. }));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: 5-of-5 quorum
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn five_of_five_quorum() {
+        let obj = test_obj();
+        let preimage = obj.preimage_bytes();
+        let pairs: Vec<_> = (10..15).map(make_sig_pair).collect();
+        let entries: Vec<_> = pairs
+            .iter()
+            .map(|(sk, vk)| SignerSignature::new(vk.clone(), sign_with(sk, &obj)))
+            .collect();
+        let authorized: Vec<_> = pairs.iter().map(|(_, vk)| vk.clone()).collect();
+        let arr = SortedSignatureArray::from_unsorted(entries).unwrap();
+
+        let result = arr
+            .verify_quorum(5, &authorized, |vk, sig| {
+                crate::signature_preimage::verify_signature(vk, &preimage, sig)
+            })
+            .unwrap();
+        assert!(result.quorum_met);
+        assert_eq!(result.valid_count, 5);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: MultiSigError display completeness
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn multisig_error_display_all_variants() {
+        let displays: std::collections::BTreeSet<String> = vec![
+            MultiSigError::EmptyArray,
+            MultiSigError::ZeroQuorumThreshold,
+            MultiSigError::UnsortedSignatureArray {
+                position: 3,
+                prev_key_hex: "aa".into(),
+                current_key_hex: "99".into(),
+            },
+            MultiSigError::DuplicateSignerKey {
+                key_hex: "ff".into(),
+                positions: (0, 1),
+            },
+            MultiSigError::QuorumNotMet {
+                required: 3,
+                valid: 1,
+                total: 5,
+            },
+            MultiSigError::ThresholdExceedsSignerCount {
+                threshold: 10,
+                signer_count: 3,
+            },
+            MultiSigError::SignatureError {
+                detail: "invalid".into(),
+            },
+        ]
+        .into_iter()
+        .map(|e| e.to_string())
+        .collect();
+        assert_eq!(displays.len(), 7, "all 7 variants have distinct Display");
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: MultiSigEventType display completeness
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn event_type_display_all_variants() {
+        let displays: std::collections::BTreeSet<String> = vec![
+            MultiSigEventType::ArrayCreated { signer_count: 1 },
+            MultiSigEventType::SignatureInserted {
+                signer_hex: "ab".into(),
+            },
+            MultiSigEventType::QuorumVerified {
+                valid: 2,
+                threshold: 2,
+                total: 3,
+            },
+            MultiSigEventType::QuorumFailed {
+                valid: 0,
+                threshold: 2,
+                total: 3,
+            },
+            MultiSigEventType::SortingViolation {
+                detail: "oops".into(),
+            },
+            MultiSigEventType::DuplicateSigner {
+                key_hex: "dd".into(),
+            },
+        ]
+        .into_iter()
+        .map(|e| e.to_string())
+        .collect();
+        assert_eq!(displays.len(), 6, "all 6 variants have distinct Display");
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: context quorum failure tracking
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn context_tracks_quorum_failure() {
+        let (sk1, vk1) = make_sig_pair(1);
+        let (_, vk2) = make_sig_pair(2);
+        let obj = test_obj();
+        let preimage = obj.preimage_bytes();
+
+        let mut ctx = MultiSigContext::new();
+        let entries = vec![SignerSignature::new(vk1.clone(), sign_with(&sk1, &obj))];
+        let arr = ctx.create_sorted(entries, "t-fail").unwrap();
+
+        // Require 2, only 1 valid → failure.
+        let _ = ctx.verify_quorum(
+            &arr,
+            2,
+            &[vk1, vk2],
+            |vk, sig| crate::signature_preimage::verify_signature(vk, &preimage, sig),
+            "t-fail-q",
+        );
+
+        let counts = ctx.event_counts();
+        assert_eq!(counts.get("quorum_failed"), Some(&1));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: context event_counts accumulate
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn context_event_counts_accumulate() {
+        let (sk1, vk1) = make_sig_pair(1);
+        let (sk2, vk2) = make_sig_pair(2);
+        let obj = test_obj();
+
+        let mut ctx = MultiSigContext::new();
+        let e1 = vec![SignerSignature::new(vk1, sign_with(&sk1, &obj))];
+        ctx.create_sorted(e1, "t-1").unwrap();
+
+        let e2 = vec![SignerSignature::new(vk2, sign_with(&sk2, &obj))];
+        ctx.create_sorted(e2, "t-2").unwrap();
+
+        let counts = ctx.event_counts();
+        assert_eq!(counts.get("array_created"), Some(&2));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: QuorumResult display details
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn quorum_result_display_details() {
+        let result = QuorumResult {
+            quorum_met: false,
+            valid_count: 1,
+            invalid_count: 2,
+            unauthorized_count: 3,
+            total: 6,
+            threshold: 4,
+            invalid_signers: vec![],
+            unauthorized_signers: vec![],
+        };
+        let s = result.to_string();
+        assert!(s.contains("1/6"), "should contain valid/total: {s}");
+        assert!(s.contains("threshold 4"), "should contain threshold: {s}");
+        assert!(s.contains("2 invalid"), "should contain invalid count: {s}");
+        assert!(
+            s.contains("3 unauthorized"),
+            "should contain unauthorized count: {s}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: from_unsorted with already-sorted input
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn from_unsorted_already_sorted_works() {
+        let (sk1, vk1) = make_sig_pair(1);
+        let (sk2, vk2) = make_sig_pair(2);
+        let obj = test_obj();
+
+        let mut entries = vec![
+            SignerSignature::new(vk1, sign_with(&sk1, &obj)),
+            SignerSignature::new(vk2, sign_with(&sk2, &obj)),
+        ];
+        entries.sort();
+        // Already sorted — from_unsorted should still work.
+        let arr = SortedSignatureArray::from_unsorted(entries).unwrap();
+        assert_eq!(arr.len(), 2);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: context empty creation error is SortingViolation
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn context_create_empty_tracks_sorting_violation() {
+        let mut ctx = MultiSigContext::new();
+        let _ = ctx.create_sorted(vec![], "t-empty");
+        let events = ctx.drain_events();
+        assert_eq!(events.len(), 1);
+        assert!(
+            matches!(
+                events[0].event_type,
+                MultiSigEventType::SortingViolation { .. }
+            ),
+            "empty array should produce SortingViolation event"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: SignerSignature ordering is by key only
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn signer_signature_ordering_by_key_only() {
+        let (_, vk1) = make_sig_pair(1);
+        let sig_a = Signature::from_bytes([0x00; SIGNATURE_LEN]);
+        let sig_b = Signature::from_bytes([0xFF; SIGNATURE_LEN]);
+        let ss_a = SignerSignature::new(vk1.clone(), sig_a);
+        let ss_b = SignerSignature::new(vk1, sig_b);
+        // Same key → equal ordering regardless of signature.
+        assert_eq!(ss_a.cmp(&ss_b), std::cmp::Ordering::Equal);
+    }
 }

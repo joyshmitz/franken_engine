@@ -917,4 +917,335 @@ mod tests {
                 .any(|f| f.code == GateFailureCode::ReplayMultiplierExceeded)
         );
     }
+
+    // ── has_required_bundle_fields edge cases ─────────────────────
+
+    #[test]
+    fn artifact_empty_verifier_version_is_missing_field() {
+        let mut input = base_input();
+        input.bundle.artifacts[0].verifier_version = "  ".to_string();
+        let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
+        assert!(!decision.pass);
+        assert!(
+            decision
+                .findings
+                .iter()
+                .any(|f| f.code == GateFailureCode::MissingBundleField)
+        );
+    }
+
+    #[test]
+    fn artifact_empty_replay_command_is_missing_field() {
+        let mut input = base_input();
+        input.bundle.artifacts[0].replay_command = String::new();
+        let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
+        assert!(!decision.pass);
+        assert!(
+            decision
+                .findings
+                .iter()
+                .any(|f| f.code == GateFailureCode::MissingBundleField)
+        );
+    }
+
+    #[test]
+    fn artifact_zero_ir_diff_size_is_missing_field() {
+        let mut input = base_input();
+        input.bundle.artifacts[0].ir_diff_size_bytes = 0;
+        let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
+        assert!(
+            decision
+                .findings
+                .iter()
+                .any(|f| f.code == GateFailureCode::MissingBundleField)
+        );
+    }
+
+    #[test]
+    fn artifact_zero_proof_gen_time_is_missing_field() {
+        let mut input = base_input();
+        input.bundle.artifacts[0].proof_generation_time_ns = 0;
+        let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
+        assert!(
+            decision
+                .findings
+                .iter()
+                .any(|f| f.code == GateFailureCode::MissingBundleField)
+        );
+    }
+
+    #[test]
+    fn artifact_zero_verification_time_is_missing_field() {
+        let mut input = base_input();
+        input.bundle.artifacts[0].verification_time_ns = 0;
+        let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
+        assert!(
+            decision
+                .findings
+                .iter()
+                .any(|f| f.code == GateFailureCode::MissingBundleField)
+        );
+    }
+
+    #[test]
+    fn artifact_zero_pre_ir_hash_is_missing_field() {
+        let mut input = base_input();
+        input.bundle.artifacts[0].pre_ir_hash = [0u8; 32];
+        let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
+        assert!(
+            decision
+                .findings
+                .iter()
+                .any(|f| f.code == GateFailureCode::MissingBundleField)
+        );
+    }
+
+    #[test]
+    fn artifact_zero_post_ir_hash_is_missing_field() {
+        let mut input = base_input();
+        input.bundle.artifacts[0].post_ir_hash = [0u8; 32];
+        let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
+        assert!(
+            decision
+                .findings
+                .iter()
+                .any(|f| f.code == GateFailureCode::MissingBundleField)
+        );
+    }
+
+    // ── fallback edge cases ───────────────────────────────────────
+
+    #[test]
+    fn fallback_with_whitespace_only_receipt_is_invalid() {
+        let mut input = base_input();
+        input.bundle.artifacts[0].proof_verified = false;
+        input.bundle.artifacts[0].optimization_applied = false;
+        input.bundle.artifacts[0].fallback_triggered = true;
+        input.bundle.artifacts[0].fallback_receipt_id = Some("   ".to_string());
+        let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
+        assert!(
+            decision
+                .findings
+                .iter()
+                .any(|f| f.code == GateFailureCode::FallbackPathInvalid)
+        );
+    }
+
+    #[test]
+    fn fallback_without_trigger_is_invalid() {
+        let mut input = base_input();
+        input.bundle.artifacts[0].proof_verified = false;
+        input.bundle.artifacts[0].optimization_applied = false;
+        input.bundle.artifacts[0].fallback_triggered = false;
+        input.bundle.artifacts[0].fallback_receipt_id = Some("receipt-001".to_string());
+        let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
+        assert!(
+            decision
+                .findings
+                .iter()
+                .any(|f| f.code == GateFailureCode::FallbackPathInvalid)
+        );
+    }
+
+    // ── compute_replay_multiplier edge cases ──────────────────────
+
+    #[test]
+    fn replay_multiplier_sub_one_x() {
+        // replay < compile → sub-1x multiplier
+        assert!(compute_replay_multiplier_millionths(50, 100) < 1_000_000);
+        assert_eq!(compute_replay_multiplier_millionths(50, 100), 500_000);
+    }
+
+    #[test]
+    fn replay_multiplier_zero_replay_is_zero() {
+        assert_eq!(compute_replay_multiplier_millionths(0, 100), 0);
+    }
+
+    // ── empty / extra artifacts ───────────────────────────────────
+
+    #[test]
+    fn empty_artifacts_with_expected_passes_fails() {
+        let mut input = base_input();
+        input.bundle.artifacts.clear();
+        let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
+        assert!(!decision.pass);
+        // Should report missing for each expected pass
+        let missing_count = decision
+            .findings
+            .iter()
+            .filter(|f| f.code == GateFailureCode::MissingProofArtifact)
+            .count();
+        assert_eq!(missing_count, 2);
+    }
+
+    #[test]
+    fn extra_artifact_beyond_expected_is_allowed() {
+        let mut input = base_input();
+        input.bundle.artifacts.push(ok_artifact("cse")); // extra, not in expected set
+        let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
+        assert!(decision.pass);
+    }
+
+    #[test]
+    fn no_expected_passes_with_empty_artifacts_passes() {
+        let mut input = base_input();
+        input.expected_optimization_passes.clear();
+        input.bundle.artifacts.clear();
+        let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
+        // Should pass: no expected, no artifacts, archive is CAS, replay under threshold
+        assert!(
+            !decision
+                .findings
+                .iter()
+                .any(|f| f.code == GateFailureCode::MissingProofArtifact)
+        );
+    }
+
+    // ── multiple failures accumulate ──────────────────────────────
+
+    #[test]
+    fn multiple_failure_codes_accumulate() {
+        let mut input = base_input();
+        input.bundle.artifacts[0].proof_verified = false;
+        input.bundle.artifacts[0].optimization_applied = true; // ProofVerificationFailed + FallbackPathInvalid
+        input.bundle.archive_uri = "https://nope".to_string(); // ArchiveNotContentAddressed
+        let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
+        assert!(!decision.pass);
+        let codes: BTreeSet<GateFailureCode> = decision.findings.iter().map(|f| f.code).collect();
+        assert!(codes.contains(&GateFailureCode::ProofVerificationFailed));
+        assert!(codes.contains(&GateFailureCode::FallbackPathInvalid));
+        assert!(codes.contains(&GateFailureCode::ArchiveNotContentAddressed));
+    }
+
+    // ── decision_id uniqueness ────────────────────────────────────
+
+    #[test]
+    fn decision_id_differs_for_different_inputs() {
+        let input_a = base_input();
+        let mut input_b = base_input();
+        input_b.trace_id = "trace-gate-2".to_string();
+        let a = evaluate_release_gate(&input_a, &ReleaseGateThresholds::default());
+        let b = evaluate_release_gate(&input_b, &ReleaseGateThresholds::default());
+        assert_ne!(a.decision_id, b.decision_id);
+    }
+
+    #[test]
+    fn decision_id_is_valid_hex() {
+        let input = base_input();
+        let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
+        assert!(decision.decision_id.len() == 64);
+        assert!(decision.decision_id.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    // ── log event detail checks ───────────────────────────────────
+
+    #[test]
+    fn per_artifact_log_carries_proof_hash() {
+        let input = base_input();
+        let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
+        for log in &decision.logs[..2] {
+            assert!(log.proof_hash.is_some());
+            assert_eq!(log.proof_hash.as_ref().unwrap().len(), 64);
+        }
+    }
+
+    #[test]
+    fn per_artifact_log_carries_timing_and_diff() {
+        let input = base_input();
+        let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
+        let log = &decision.logs[0];
+        assert_eq!(log.verification_time_ns, Some(2_000));
+        assert_eq!(log.ir_diff_size_bytes, Some(48));
+    }
+
+    #[test]
+    fn summary_log_on_failure_includes_first_finding_code() {
+        let mut input = base_input();
+        input.bundle.archive_uri = "https://bad".to_string();
+        let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
+        let summary = decision.logs.last().unwrap();
+        assert_eq!(summary.outcome, "fail");
+        assert!(summary.error_code.is_some());
+    }
+
+    #[test]
+    fn summary_log_on_pass_has_no_error_code() {
+        let input = base_input();
+        let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
+        let summary = decision.logs.last().unwrap();
+        assert_eq!(summary.outcome, "pass");
+        assert!(summary.error_code.is_none());
+    }
+
+    // ── serde roundtrips for remaining types ──────────────────────
+
+    #[test]
+    fn release_gate_input_serde() {
+        let input = base_input();
+        let json = serde_json::to_string(&input).unwrap();
+        let back: ReleaseGateInput = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, input);
+    }
+
+    #[test]
+    fn proof_gate_log_event_serde() {
+        let input = base_input();
+        let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
+        for log in &decision.logs {
+            let json = serde_json::to_string(log).unwrap();
+            let back: ProofGateLogEvent = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, log);
+        }
+    }
+
+    // ── to_hex helper ─────────────────────────────────────────────
+
+    #[test]
+    fn to_hex_empty() {
+        assert_eq!(to_hex(&[]), "");
+    }
+
+    #[test]
+    fn to_hex_known_bytes() {
+        assert_eq!(to_hex(&[0x00, 0xff, 0xab]), "00ffab");
+    }
+
+    // ── content_addressed_archive empty uri ───────────────────────
+
+    #[test]
+    fn content_addressed_archive_empty_uri() {
+        assert!(!is_content_addressed_archive("", &hash("x")));
+    }
+
+    // ── replay at exact threshold boundary ────────────────────────
+
+    #[test]
+    fn replay_at_exact_threshold_passes() {
+        let mut input = base_input();
+        // 5x exactly: replay = 250M, compile = 50M → 5_000_000 millionths
+        input.bundle.replay_time_ns = 250_000_000;
+        input.bundle.original_compile_time_ns = 50_000_000;
+        let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
+        assert!(
+            !decision
+                .findings
+                .iter()
+                .any(|f| f.code == GateFailureCode::ReplayMultiplierExceeded)
+        );
+    }
+
+    #[test]
+    fn replay_just_above_threshold_fails() {
+        let mut input = base_input();
+        // Just above 5x: replay = 251M, compile = 50M → 5_020_000 > 5_000_000
+        input.bundle.replay_time_ns = 251_000_000;
+        input.bundle.original_compile_time_ns = 50_000_000;
+        let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
+        assert!(
+            decision
+                .findings
+                .iter()
+                .any(|f| f.code == GateFailureCode::ReplayMultiplierExceeded)
+        );
+    }
 }

@@ -904,4 +904,219 @@ mod tests {
         assert_eq!(m.get("s1", "a1"), Some(200));
         assert_eq!(m.len(), 1);
     }
+
+    // ── Enrichment: controller initialization ────────────────────
+
+    #[test]
+    fn controller_valid_init_starts_at_zero_decisions() {
+        let ctrl = monitoring_controller();
+        assert_eq!(ctrl.decision_count(), 0);
+        assert!(ctrl.decisions().is_empty());
+    }
+
+    #[test]
+    fn controller_config_accessor() {
+        let ctrl = monitoring_controller();
+        assert_eq!(ctrl.config().controller_id, "mon-ctrl");
+        assert_eq!(ctrl.config().domain, "monitoring_intensity");
+        assert_eq!(ctrl.config().safe_default, "high");
+    }
+
+    // ── Enrichment: posterior ────────────────────────────────────
+
+    #[test]
+    fn posterior_known_state_returns_probability() {
+        let p = normal_posterior();
+        assert_eq!(p.probability("normal"), 900_000);
+        assert_eq!(p.probability("anomalous"), 100_000);
+    }
+
+    #[test]
+    fn posterior_states_returns_all_states() {
+        let p = normal_posterior();
+        let states: Vec<&str> = p.states().collect();
+        assert_eq!(states.len(), 2);
+        assert!(states.contains(&"normal"));
+        assert!(states.contains(&"anomalous"));
+    }
+
+    #[test]
+    fn posterior_empty_has_no_states() {
+        let p = Posterior::new(BTreeMap::new());
+        assert_eq!(p.states().count(), 0);
+    }
+
+    // ── Enrichment: loss matrix ──────────────────────────────────
+
+    #[test]
+    fn loss_matrix_multiple_entries() {
+        let mut m = LossMatrix::new();
+        m.set("s1", "a1", 100);
+        m.set("s1", "a2", 200);
+        m.set("s2", "a1", 300);
+        assert_eq!(m.len(), 3);
+        assert_eq!(m.get("s2", "a1"), Some(300));
+        assert_eq!(m.get("s2", "a2"), None);
+    }
+
+    #[test]
+    fn loss_matrix_negative_loss() {
+        let mut m = LossMatrix::new();
+        m.set("s", "a", -500_000);
+        assert_eq!(m.get("s", "a"), Some(-500_000));
+    }
+
+    // ── Enrichment: guardrail ────────────────────────────────────
+
+    #[test]
+    fn guardrail_empty_blocked_actions_blocks_nothing() {
+        let g = Guardrail {
+            id: "g".to_string(),
+            description: "d".to_string(),
+            blocked_actions: vec![],
+        };
+        assert!(!g.blocks("any"));
+    }
+
+    // ── Enrichment: action selection ─────────────────────────────
+
+    #[test]
+    fn selection_expected_loss_value() {
+        let mut ctrl = monitoring_controller();
+        let posterior = normal_posterior();
+        let sel = ctrl
+            .select_action(&posterior, SecurityEpoch::from_raw(1), "t")
+            .unwrap();
+        // medium: 0.9*300k + 0.1*1M = 270k + 100k = 370k
+        assert_eq!(sel.expected_loss, 370_000);
+    }
+
+    #[test]
+    fn selection_decision_id_format() {
+        let mut ctrl = monitoring_controller();
+        let posterior = normal_posterior();
+        let sel = ctrl
+            .select_action(&posterior, SecurityEpoch::from_raw(1), "t")
+            .unwrap();
+        assert_eq!(sel.decision_id, "mon-ctrl-000001");
+    }
+
+    #[test]
+    fn selection_decision_id_increments() {
+        let mut ctrl = monitoring_controller();
+        let posterior = normal_posterior();
+        let epoch = SecurityEpoch::from_raw(1);
+        let s1 = ctrl.select_action(&posterior, epoch, "t1").unwrap();
+        let s2 = ctrl.select_action(&posterior, epoch, "t2").unwrap();
+        assert_eq!(s1.decision_id, "mon-ctrl-000001");
+        assert_eq!(s2.decision_id, "mon-ctrl-000002");
+    }
+
+    #[test]
+    fn decisions_history_matches_selections() {
+        let mut ctrl = monitoring_controller();
+        let posterior = normal_posterior();
+        let epoch = SecurityEpoch::from_raw(1);
+        let s1 = ctrl.select_action(&posterior, epoch, "t1").unwrap();
+        let s2 = ctrl.select_action(&posterior, epoch, "t2").unwrap();
+        let history = ctrl.decisions();
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0], s1);
+        assert_eq!(history[1], s2);
+    }
+
+    // ── Enrichment: multiple guardrails ──────────────────────────
+
+    #[test]
+    fn multiple_guardrails_accumulate_rejections() {
+        let mut ctrl = monitoring_controller();
+        ctrl.add_guardrail(Guardrail {
+            id: "g1".to_string(),
+            description: "d1".to_string(),
+            blocked_actions: vec!["low".to_string()],
+        });
+        ctrl.add_guardrail(Guardrail {
+            id: "g2".to_string(),
+            description: "d2".to_string(),
+            blocked_actions: vec!["medium".to_string()],
+        });
+        let posterior = normal_posterior();
+        let sel = ctrl
+            .select_action(&posterior, SecurityEpoch::from_raw(1), "t")
+            .unwrap();
+        // Both low and medium blocked, only high left
+        assert_eq!(sel.action, "high");
+        assert!(!sel.is_safe_default);
+        assert_eq!(sel.guardrail_rejections.len(), 2);
+    }
+
+    // ── Enrichment: evidence constraints ─────────────────────────
+
+    #[test]
+    fn evidence_constraints_match_guardrails() {
+        let mut ctrl = monitoring_controller();
+        ctrl.add_guardrail(Guardrail {
+            id: "g1".to_string(),
+            description: "blocks low".to_string(),
+            blocked_actions: vec!["low".to_string()],
+        });
+        let posterior = normal_posterior();
+        let epoch = SecurityEpoch::from_raw(1);
+        let sel = ctrl.select_action(&posterior, epoch, "t").unwrap();
+        let entry = ctrl.build_evidence(&sel, &posterior, epoch, "t").unwrap();
+        assert_eq!(entry.constraints.len(), 1);
+        assert_eq!(entry.constraints[0].constraint_id, "g1");
+        assert!(entry.constraints[0].active);
+    }
+
+    #[test]
+    fn evidence_safe_default_rationale() {
+        let mut ctrl = monitoring_controller();
+        ctrl.add_guardrail(Guardrail {
+            id: "block-all".to_string(),
+            description: "block everything".to_string(),
+            blocked_actions: vec!["low".to_string(), "medium".to_string(), "high".to_string()],
+        });
+        let posterior = normal_posterior();
+        let epoch = SecurityEpoch::from_raw(1);
+        let sel = ctrl.select_action(&posterior, epoch, "t").unwrap();
+        let entry = ctrl.build_evidence(&sel, &posterior, epoch, "t").unwrap();
+        assert!(entry.chosen_action.rationale.contains("safe default"));
+    }
+
+    #[test]
+    fn evidence_normal_selection_rationale() {
+        let mut ctrl = monitoring_controller();
+        let posterior = normal_posterior();
+        let epoch = SecurityEpoch::from_raw(1);
+        let sel = ctrl.select_action(&posterior, epoch, "t").unwrap();
+        let entry = ctrl.build_evidence(&sel, &posterior, epoch, "t").unwrap();
+        assert!(
+            entry
+                .chosen_action
+                .rationale
+                .contains("minimum expected loss")
+        );
+    }
+
+    // ── Enrichment: update_loss_matrix ───────────────────────────
+
+    #[test]
+    fn update_loss_matrix_replaces_completely() {
+        let mut ctrl = monitoring_controller();
+        let mut new_matrix = LossMatrix::new();
+        new_matrix.set("s", "low", 1);
+        ctrl.update_loss_matrix(new_matrix);
+        // Old entries are gone — expected loss for "medium" in state "normal" should be 0
+        let mut probs = BTreeMap::new();
+        probs.insert("normal".to_string(), 1_000_000);
+        let p = Posterior::new(probs);
+        let sel = ctrl
+            .select_action(&p, SecurityEpoch::from_raw(1), "t")
+            .unwrap();
+        // All actions have 0 expected loss except if they have entries in new matrix
+        // "low" has loss 1 for state "s" which isn't in posterior, so all are 0
+        // Ties go to first in action_set order (deterministic)
+        assert_eq!(sel.expected_loss, 0);
+    }
 }

@@ -820,4 +820,256 @@ mod tests {
         let rt = LabRuntime::new(42);
         assert!(rt.task_state(999).is_none());
     }
+
+    // -- Enrichment: edge cases, state transitions, replay depth --
+
+    #[test]
+    fn clock_advance_to_same_tick_is_ok() {
+        let mut clock = VirtualClock::new();
+        clock.advance(50);
+        assert!(clock.advance_to(50)); // same tick, should succeed
+        assert_eq!(clock.now(), 50);
+    }
+
+    #[test]
+    fn clock_default_starts_at_zero() {
+        let clock = VirtualClock::default();
+        assert_eq!(clock.now(), 0);
+    }
+
+    #[test]
+    fn clock_advance_zero_ticks() {
+        let mut clock = VirtualClock::new();
+        clock.advance(100);
+        clock.advance(0);
+        assert_eq!(clock.now(), 100);
+    }
+
+    #[test]
+    fn spawn_multiple_tasks_sequential_ids() {
+        let mut rt = LabRuntime::new(0);
+        let t1 = rt.spawn_task();
+        let t2 = rt.spawn_task();
+        let t3 = rt.spawn_task();
+        assert_eq!(t1, 1);
+        assert_eq!(t2, 2);
+        assert_eq!(t3, 3);
+        assert_eq!(rt.task_count(), 3);
+    }
+
+    #[test]
+    fn run_task_on_completed_returns_completed() {
+        let mut rt = LabRuntime::new(42);
+        let id = rt.spawn_task();
+        rt.run_task(id);
+        rt.complete_task(id);
+        let state = rt.run_task(id);
+        assert_eq!(state, Some(TaskState::Completed));
+    }
+
+    #[test]
+    fn run_task_on_faulted_returns_faulted() {
+        let mut rt = LabRuntime::new(42);
+        let id = rt.spawn_task();
+        rt.inject_fault(id, FaultKind::Panic);
+        let state = rt.run_task(id);
+        assert_eq!(state, Some(TaskState::Faulted));
+    }
+
+    #[test]
+    fn run_task_already_running_stays_running() {
+        let mut rt = LabRuntime::new(42);
+        let id = rt.spawn_task();
+        rt.run_task(id);
+        let state = rt.run_task(id);
+        assert_eq!(state, Some(TaskState::Running));
+    }
+
+    #[test]
+    fn complete_faulted_task_fails() {
+        let mut rt = LabRuntime::new(42);
+        let id = rt.spawn_task();
+        rt.inject_fault(id, FaultKind::Panic);
+        assert!(!rt.complete_task(id));
+    }
+
+    #[test]
+    fn cancel_ready_task_succeeds() {
+        let mut rt = LabRuntime::new(42);
+        let id = rt.spawn_task();
+        assert!(rt.cancel_task(id));
+        assert_eq!(rt.task_state(id), Some(TaskState::Cancelled));
+    }
+
+    #[test]
+    fn cannot_cancel_faulted_task() {
+        let mut rt = LabRuntime::new(42);
+        let id = rt.spawn_task();
+        rt.inject_fault(id, FaultKind::Panic);
+        assert!(!rt.cancel_task(id));
+    }
+
+    #[test]
+    fn region_cancel_independent_regions() {
+        let mut rt = LabRuntime::new(42);
+        rt.inject_cancel("region-a");
+        assert!(rt.is_region_cancelled("region-a"));
+        assert!(!rt.is_region_cancelled("region-b"));
+    }
+
+    #[test]
+    fn region_cancel_persists() {
+        let mut rt = LabRuntime::new(42);
+        rt.inject_cancel("r1");
+        assert!(rt.is_region_cancelled("r1"));
+        assert!(rt.is_region_cancelled("r1"));
+    }
+
+    #[test]
+    fn inject_fault_all_kinds() {
+        for fault in [
+            FaultKind::Panic,
+            FaultKind::ChannelDisconnect,
+            FaultKind::ObligationLeak,
+            FaultKind::DeadlineExpired,
+            FaultKind::RegionClose,
+        ] {
+            let mut rt = LabRuntime::new(42);
+            let id = rt.spawn_task();
+            assert!(rt.inject_fault(id, fault));
+            assert_eq!(rt.task_state(id), Some(TaskState::Faulted));
+        }
+    }
+
+    #[test]
+    fn finalize_no_tasks_yields_pass() {
+        let rt = LabRuntime::new(42);
+        let result = rt.finalize();
+        assert_eq!(result.verdict, Verdict::Pass);
+        assert_eq!(result.tasks_completed, 0);
+        assert_eq!(result.tasks_faulted, 0);
+        assert_eq!(result.tasks_cancelled, 0);
+    }
+
+    #[test]
+    fn finalize_mixed_states_counts() {
+        let mut rt = LabRuntime::new(42);
+        let t1 = rt.spawn_task();
+        let t2 = rt.spawn_task();
+        let t3 = rt.spawn_task();
+        rt.run_task(t1);
+        rt.complete_task(t1);
+        rt.cancel_task(t2);
+        rt.inject_fault(t3, FaultKind::Panic);
+        let result = rt.finalize();
+        assert_eq!(result.tasks_completed, 1);
+        assert_eq!(result.tasks_cancelled, 1);
+        assert_eq!(result.tasks_faulted, 1);
+        assert!(matches!(result.verdict, Verdict::Fail { .. }));
+    }
+
+    #[test]
+    fn event_step_index_starts_at_one() {
+        let mut rt = LabRuntime::new(42);
+        let id = rt.spawn_task();
+        rt.run_task(id);
+        let result = rt.finalize();
+        assert_eq!(result.events[0].step_index, 1);
+    }
+
+    #[test]
+    fn replay_empty_transcript() {
+        let transcript = ScheduleTranscript::new(42);
+        let events = replay_transcript(&transcript);
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn replay_fire_timer_is_noop() {
+        let mut transcript = ScheduleTranscript::new(42);
+        transcript.push(ScheduleAction::FireTimer { timer_id: 99 });
+        let events = replay_transcript(&transcript);
+        assert!(events.is_empty()); // FireTimer generates no events
+    }
+
+    #[test]
+    fn transcript_is_empty_on_new() {
+        let transcript = ScheduleTranscript::new(0);
+        assert!(transcript.is_empty());
+        assert_eq!(transcript.len(), 0);
+    }
+
+    #[test]
+    fn task_state_display_all_variants() {
+        assert_eq!(TaskState::Ready.to_string(), "ready");
+        assert_eq!(TaskState::Running.to_string(), "running");
+        assert_eq!(TaskState::Completed.to_string(), "completed");
+        assert_eq!(TaskState::Faulted.to_string(), "faulted");
+        assert_eq!(TaskState::Cancelled.to_string(), "cancelled");
+    }
+
+    #[test]
+    fn verdict_serde_roundtrip() {
+        for v in [
+            Verdict::Pass,
+            Verdict::Fail {
+                reason: "test failure".to_string(),
+            },
+        ] {
+            let json = serde_json::to_string(&v).unwrap();
+            let restored: Verdict = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, restored);
+        }
+    }
+
+    #[test]
+    fn task_state_serde_roundtrip() {
+        for state in [
+            TaskState::Ready,
+            TaskState::Running,
+            TaskState::Completed,
+            TaskState::Faulted,
+            TaskState::Cancelled,
+        ] {
+            let json = serde_json::to_string(&state).unwrap();
+            let restored: TaskState = serde_json::from_str(&json).unwrap();
+            assert_eq!(state, restored);
+        }
+    }
+
+    #[test]
+    fn schedule_action_serde_all_variants() {
+        let actions = vec![
+            ScheduleAction::RunTask { task_id: 1 },
+            ScheduleAction::AdvanceTime { ticks: 100 },
+            ScheduleAction::InjectCancel {
+                region_id: "r".to_string(),
+            },
+            ScheduleAction::InjectFault {
+                task_id: 2,
+                fault: FaultKind::ObligationLeak,
+            },
+            ScheduleAction::FireTimer { timer_id: 42 },
+        ];
+        for action in &actions {
+            let json = serde_json::to_string(action).unwrap();
+            let restored: ScheduleAction = serde_json::from_str(&json).unwrap();
+            assert_eq!(*action, restored);
+        }
+    }
+
+    #[test]
+    fn final_time_reflects_total_advance() {
+        let mut rt = LabRuntime::new(42);
+        rt.advance_time(100);
+        rt.advance_time(200);
+        let result = rt.finalize();
+        assert_eq!(result.final_time, 300);
+    }
+
+    #[test]
+    fn run_task_nonexistent_returns_none() {
+        let mut rt = LabRuntime::new(42);
+        assert!(rt.run_task(999).is_none());
+    }
 }

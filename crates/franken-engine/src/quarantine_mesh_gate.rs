@@ -1021,4 +1021,333 @@ mod tests {
             }
         }
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: FaultType properties
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn fault_type_ordering() {
+        assert!(FaultType::NetworkPartition < FaultType::ByzantineBehavior);
+        assert!(FaultType::ByzantineBehavior < FaultType::CascadingFailure);
+        assert!(FaultType::CascadingFailure < FaultType::ResourceExhaustion);
+        assert!(FaultType::ResourceExhaustion < FaultType::ClockSkew);
+    }
+
+    #[test]
+    fn fault_type_serde_all_variants() {
+        let variants = [
+            FaultType::NetworkPartition,
+            FaultType::ByzantineBehavior,
+            FaultType::CascadingFailure,
+            FaultType::ResourceExhaustion,
+            FaultType::ClockSkew,
+        ];
+        for ft in &variants {
+            let json = serde_json::to_string(ft).unwrap();
+            let back: FaultType = serde_json::from_str(&json).unwrap();
+            assert_eq!(*ft, back);
+        }
+    }
+
+    #[test]
+    fn fault_type_display_unique() {
+        let displays: std::collections::BTreeSet<String> = [
+            FaultType::NetworkPartition,
+            FaultType::ByzantineBehavior,
+            FaultType::CascadingFailure,
+            FaultType::ResourceExhaustion,
+            FaultType::ClockSkew,
+        ]
+        .iter()
+        .map(|ft| ft.to_string())
+        .collect();
+        assert_eq!(displays.len(), 5);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: scenario-level events
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn per_scenario_events_carry_fault_type_and_target() {
+        let mut runner = QuarantineMeshGateRunner::new(42);
+        let result = runner.run_all();
+
+        let scenario_events: Vec<_> = result
+            .events
+            .iter()
+            .filter(|e| e.event == "fault_scenario_complete")
+            .collect();
+        assert_eq!(scenario_events.len(), 7);
+        for ev in &scenario_events {
+            assert!(
+                ev.fault_type.is_some(),
+                "scenario event should have fault_type"
+            );
+            assert!(
+                ev.target_component.is_some(),
+                "scenario event should have target_component"
+            );
+        }
+    }
+
+    #[test]
+    fn events_trace_and_decision_ids_consistent() {
+        let mut runner = QuarantineMeshGateRunner::new(99);
+        let result = runner.run_all();
+
+        let trace = &result.events[0].trace_id;
+        let decision = &result.events[0].decision_id;
+        for ev in &result.events {
+            assert_eq!(&ev.trace_id, trace, "all events share same trace_id");
+            assert_eq!(
+                &ev.decision_id, decision,
+                "all events share same decision_id"
+            );
+        }
+    }
+
+    #[test]
+    fn trace_id_contains_seed_hex() {
+        let mut runner = QuarantineMeshGateRunner::new(0xDEAD);
+        let result = runner.run_all();
+        let trace = &result.events[0].trace_id;
+        assert!(
+            trace.contains("dead"),
+            "trace_id should contain hex seed: {trace}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: scenario result properties
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn benign_scenario_has_zero_detection_latency() {
+        let mut runner = QuarantineMeshGateRunner::new(42);
+        let result = runner.run_all();
+        let benign = result
+            .scenarios
+            .iter()
+            .find(|s| s.scenario_id == "benign-no-quarantine")
+            .unwrap();
+        assert_eq!(benign.detection_latency_ns, 0);
+    }
+
+    #[test]
+    fn quarantine_scenarios_end_in_quarantined_state() {
+        let mut runner = QuarantineMeshGateRunner::new(42);
+        let result = runner.run_all();
+        for s in &result.scenarios {
+            if s.scenario_id != "benign-no-quarantine" {
+                assert_eq!(
+                    s.final_state,
+                    Some(ContainmentState::Quarantined),
+                    "{} should be quarantined",
+                    s.scenario_id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn each_quarantine_scenario_emits_exactly_one_receipt() {
+        let mut runner = QuarantineMeshGateRunner::new(42);
+        let result = runner.run_all();
+        for s in &result.scenarios {
+            if s.final_state == Some(ContainmentState::Quarantined) {
+                assert_eq!(
+                    s.receipts_emitted, 1,
+                    "{} should emit exactly 1 receipt",
+                    s.scenario_id
+                );
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: summary formats
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn passing_summary_includes_scenario_count() {
+        let mut runner = QuarantineMeshGateRunner::new(42);
+        let result = runner.run_all();
+        let summary = result.summary();
+        assert!(
+            summary.contains("7/7"),
+            "summary should include 7/7: {summary}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: GateValidationResult construction edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn gate_result_seed_matches_runner_seed() {
+        for seed in [0, 1, u64::MAX] {
+            let mut runner = QuarantineMeshGateRunner::new(seed);
+            let result = runner.run_all();
+            assert_eq!(result.seed, seed);
+        }
+    }
+
+    #[test]
+    fn digest_length_is_always_16_hex() {
+        for seed in [0, 1, 42, 99999, u64::MAX] {
+            let mut runner = QuarantineMeshGateRunner::new(seed);
+            let result = runner.run_all();
+            assert_eq!(result.result_digest.len(), 16);
+            assert!(result.result_digest.chars().all(|c| c.is_ascii_hexdigit()));
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: criterion details
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn all_criteria_have_nonempty_name_and_detail() {
+        let mut runner = QuarantineMeshGateRunner::new(42);
+        let result = runner.run_all();
+        for s in &result.scenarios {
+            for c in &s.criteria {
+                assert!(!c.name.is_empty(), "criterion name should not be empty");
+                assert!(!c.detail.is_empty(), "criterion detail should not be empty");
+            }
+        }
+    }
+
+    #[test]
+    fn quarantine_scenarios_have_receipt_criterion() {
+        let mut runner = QuarantineMeshGateRunner::new(42);
+        let result = runner.run_all();
+        for s in &result.scenarios {
+            if s.scenario_id != "benign-no-quarantine" {
+                let has_receipt_criterion = s.criteria.iter().any(|c| c.name == "receipt_signed");
+                assert!(
+                    has_receipt_criterion,
+                    "{} should have receipt_signed criterion",
+                    s.scenario_id
+                );
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: GateValidationEvent with all optional fields
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn gate_validation_event_all_fields_populated_serde() {
+        let event = GateValidationEvent {
+            trace_id: "trace-1".to_string(),
+            decision_id: "dec-1".to_string(),
+            policy_id: "pol-1".to_string(),
+            component: "quarantine_mesh_gate".to_string(),
+            event: "test_event".to_string(),
+            outcome: "pass".to_string(),
+            error_code: Some("E001".to_string()),
+            fault_type: Some(FaultType::ByzantineBehavior),
+            target_component: Some("ext-001".to_string()),
+            quarantine_action: Some("isolate".to_string()),
+            latency_ns: Some(200_000_000),
+            isolation_verified: Some(true),
+            receipt_hash: Some("abc123".to_string()),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: GateValidationEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, back);
+    }
+
+    #[test]
+    fn gate_validation_event_all_nones_serde() {
+        let event = GateValidationEvent {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            component: "c".to_string(),
+            event: "e".to_string(),
+            outcome: "o".to_string(),
+            error_code: None,
+            fault_type: None,
+            target_component: None,
+            quarantine_action: None,
+            latency_ns: None,
+            isolation_verified: None,
+            receipt_hash: None,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: GateValidationEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, back);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: FaultScenario fields
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn fault_scenario_with_no_quarantine_expected_serde() {
+        let scenario = FaultScenario {
+            scenario_id: "benign".to_string(),
+            fault_type: FaultType::NetworkPartition,
+            target_extension: "ext-benign".to_string(),
+            detection_latency_ns: 0,
+            expect_quarantine: false,
+            seed: 0,
+        };
+        let json = serde_json::to_string(&scenario).unwrap();
+        let back: FaultScenario = serde_json::from_str(&json).unwrap();
+        assert_eq!(scenario, back);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: FaultScenarioResult with no criteria
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn fault_scenario_result_empty_criteria_serde() {
+        let result = FaultScenarioResult {
+            scenario_id: "empty".to_string(),
+            fault_type: FaultType::ClockSkew,
+            passed: false,
+            criteria: vec![],
+            receipts_emitted: 0,
+            final_state: None,
+            detection_latency_ns: 0,
+            isolation_verified: false,
+            recovery_verified: false,
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let back: FaultScenarioResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(result, back);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: policy_id is constant
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn policy_id_is_v1() {
+        let mut runner = QuarantineMeshGateRunner::new(42);
+        let result = runner.run_all();
+        for ev in &result.events {
+            assert_eq!(ev.policy_id, "quarantine-mesh-gate-v1");
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: final event on failure path
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn final_event_on_pass_has_no_error_code() {
+        let mut runner = QuarantineMeshGateRunner::new(42);
+        let result = runner.run_all();
+        assert!(result.passed);
+        let final_ev = result.events.last().unwrap();
+        assert!(final_ev.error_code.is_none());
+    }
 }

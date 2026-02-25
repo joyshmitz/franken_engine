@@ -750,4 +750,236 @@ mod tests {
         let restored: ContractVersion = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(v, restored);
     }
+
+    // ── Enrichment: EV score boundary precision ──────────────────
+
+    #[test]
+    fn ev_tier_from_score_exact_boundaries() {
+        // Just below 1.0
+        assert_eq!(EvTier::from_score(0.999999), EvTier::Reject);
+        // Exactly 1.0
+        assert_eq!(EvTier::from_score(1.0), EvTier::Marginal);
+        // Just below 2.0
+        assert_eq!(EvTier::from_score(1.999999), EvTier::Marginal);
+        // Exactly 2.0
+        assert_eq!(EvTier::from_score(2.0), EvTier::Positive);
+        // Just below 5.0
+        assert_eq!(EvTier::from_score(4.999999), EvTier::Positive);
+        // Exactly 5.0
+        assert_eq!(EvTier::from_score(5.0), EvTier::HighImpact);
+    }
+
+    #[test]
+    fn ev_tier_from_score_negative() {
+        assert_eq!(EvTier::from_score(-1.0), EvTier::Reject);
+        assert_eq!(EvTier::from_score(-100.0), EvTier::Reject);
+    }
+
+    #[test]
+    fn ev_tier_from_score_zero() {
+        assert_eq!(EvTier::from_score(0.0), EvTier::Reject);
+    }
+
+    #[test]
+    fn ev_tier_from_score_very_large() {
+        assert_eq!(EvTier::from_score(1_000_000.0), EvTier::HighImpact);
+    }
+
+    // ── Enrichment: negative infinity ────────────────────────────
+
+    #[test]
+    fn ev_negative_infinity_fails() {
+        let mut contract = valid_contract();
+        contract.ev_score = f64::NEG_INFINITY;
+        let errors = contract.validate().unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, ContractValidationError::InvalidEvScore))
+        );
+    }
+
+    // ── Enrichment: rollout ordering edge cases ──────────────────
+
+    #[test]
+    fn rollout_all_four_stages_in_order_passes() {
+        let mut contract = valid_contract();
+        contract.rollout_stages = vec![
+            RolloutStage::Shadow,
+            RolloutStage::Canary,
+            RolloutStage::Ramp,
+            RolloutStage::Default,
+        ];
+        assert!(contract.validate().is_ok());
+    }
+
+    #[test]
+    fn rollout_full_reverse_produces_multiple_ordering_errors() {
+        let mut contract = valid_contract();
+        contract.rollout_stages = vec![
+            RolloutStage::Default,
+            RolloutStage::Ramp,
+            RolloutStage::Canary,
+            RolloutStage::Shadow,
+        ];
+        let errors = contract.validate().unwrap_err();
+        let order_errors = errors
+            .iter()
+            .filter(|e| matches!(e, ContractValidationError::InvalidRolloutOrder { .. }))
+            .count();
+        assert_eq!(order_errors, 3); // positions 1, 2, 3 all violate
+    }
+
+    #[test]
+    fn rollout_single_default_stage_passes() {
+        let mut contract = valid_contract();
+        contract.rollout_stages = vec![RolloutStage::Default];
+        assert!(contract.validate().is_ok());
+    }
+
+    #[test]
+    fn rollout_canary_then_shadow_fails() {
+        let mut contract = valid_contract();
+        contract.rollout_stages = vec![RolloutStage::Canary, RolloutStage::Shadow];
+        let errors = contract.validate().unwrap_err();
+        assert!(errors.iter().any(|e| matches!(
+            e,
+            ContractValidationError::InvalidRolloutOrder { position: 1, .. }
+        )));
+    }
+
+    // ── Enrichment: version compatibility ────────────────────────
+
+    #[test]
+    fn version_0_is_incompatible() {
+        let mut contract = valid_contract();
+        contract.version = ContractVersion::new(0, 9);
+        let errors = contract.validate().unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, ContractValidationError::IncompatibleVersion { .. }))
+        );
+    }
+
+    #[test]
+    fn version_1_99_is_compatible() {
+        let mut contract = valid_contract();
+        contract.version = ContractVersion::new(1, 99);
+        assert!(contract.validate().is_ok());
+    }
+
+    // ── Enrichment: error display completeness ───────────────────
+
+    #[test]
+    fn error_display_ev_below_threshold() {
+        let err = ContractValidationError::EvBelowThreshold {
+            score_str: "1.50".to_string(),
+            tier: "marginal".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("1.50"));
+        assert!(msg.contains("marginal"));
+        assert!(msg.contains("2.0"));
+    }
+
+    #[test]
+    fn error_display_ev_tier_mismatch() {
+        let err = ContractValidationError::EvTierMismatch {
+            score_str: "3.00".to_string(),
+            declared_tier: "high-impact".to_string(),
+            expected_tier: "positive".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("3.00"));
+        assert!(msg.contains("high-impact"));
+        assert!(msg.contains("positive"));
+    }
+
+    #[test]
+    fn error_display_invalid_rollout_order() {
+        let err = ContractValidationError::InvalidRolloutOrder {
+            stage: "shadow".to_string(),
+            position: 3,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("shadow"));
+        assert!(msg.contains("3"));
+    }
+
+    #[test]
+    fn error_display_incompatible_version() {
+        let err = ContractValidationError::IncompatibleVersion {
+            version: "2.0".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("2.0"));
+        assert!(msg.contains("1.0"));
+    }
+
+    #[test]
+    fn error_display_invalid_ev_score() {
+        let err = ContractValidationError::InvalidEvScore;
+        assert_eq!(err.to_string(), "EV score must be a finite number");
+    }
+
+    // ── Enrichment: EvTier display ───────────────────────────────
+
+    #[test]
+    fn ev_tier_display_all_variants() {
+        assert!(EvTier::Reject.to_string().contains("reject"));
+        assert!(EvTier::Marginal.to_string().contains("marginal"));
+        assert!(EvTier::Positive.to_string().contains("positive"));
+        assert!(EvTier::HighImpact.to_string().contains("high-impact"));
+    }
+
+    // ── Enrichment: contract current version constant ────────────
+
+    #[test]
+    fn current_version_is_1_0() {
+        assert_eq!(ContractVersion::CURRENT.major, 1);
+        assert_eq!(ContractVersion::CURRENT.minor, 0);
+    }
+
+    // ── Enrichment: multi-error accumulation ─────────────────────
+
+    #[test]
+    fn incompatible_version_plus_missing_fields() {
+        let contract = EvidenceContract {
+            version: ContractVersion::new(2, 0),
+            change_summary: String::new(),
+            hotspot_evidence: "exists".to_string(),
+            ev_score: 3.0,
+            ev_tier: EvTier::Positive,
+            expected_loss_model: "exists".to_string(),
+            fallback_trigger: "exists".to_string(),
+            rollout_stages: vec![RolloutStage::Shadow],
+            rollback_command: "cmd".to_string(),
+            benchmark_artifacts: "exists".to_string(),
+        };
+        let errors = contract.validate().unwrap_err();
+        // Should have IncompatibleVersion + MissingField(change_summary)
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, ContractValidationError::IncompatibleVersion { .. }))
+        );
+        assert!(errors.iter().any(|e| matches!(
+            e,
+            ContractValidationError::MissingField { field } if field == "change_summary"
+        )));
+    }
+
+    // ── Enrichment: whitespace-only fields ───────────────────────
+
+    #[test]
+    fn tab_only_field_is_missing() {
+        let mut contract = valid_contract();
+        contract.change_summary = "\t\n  \r".to_string();
+        let errors = contract.validate().unwrap_err();
+        assert!(errors.iter().any(|e| matches!(
+            e,
+            ContractValidationError::MissingField { field } if field == "change_summary"
+        )));
+    }
 }

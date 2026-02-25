@@ -670,4 +670,183 @@ mod tests {
         assert_eq!(event, restored);
         assert!(restored.failover_action.is_none());
     }
+
+    // -- Enrichment batch 2: Display uniqueness, serde edge cases, boundary conditions --
+
+    #[test]
+    fn policy_display_variants_are_unique() {
+        let displays: std::collections::BTreeSet<String> =
+            [ObligationLeakPolicy::Lab, ObligationLeakPolicy::Production]
+                .iter()
+                .map(|p| p.to_string())
+                .collect();
+        assert_eq!(
+            displays.len(),
+            2,
+            "all policy Display strings must be unique"
+        );
+    }
+
+    #[test]
+    fn severity_display_variants_are_unique() {
+        let displays: std::collections::BTreeSet<String> = [
+            LeakSeverity::Warning,
+            LeakSeverity::Critical,
+            LeakSeverity::Fatal,
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert_eq!(
+            displays.len(),
+            3,
+            "all severity Display strings must be unique"
+        );
+    }
+
+    #[test]
+    fn failover_action_display_variants_are_unique() {
+        let displays: std::collections::BTreeSet<String> = [
+            FailoverAction::ScopedRegionClose {
+                region_id: "r".to_string(),
+            },
+            FailoverAction::AlertOnly,
+        ]
+        .iter()
+        .map(|a| a.to_string())
+        .collect();
+        assert_eq!(
+            displays.len(),
+            2,
+            "all FailoverAction Display strings must be unique"
+        );
+    }
+
+    #[test]
+    fn leak_metrics_record_idempotent_key_increment() {
+        let mut metrics = LeakMetrics::default();
+        metrics.record("r-1", "c-1", "comp-1");
+        metrics.record("r-1", "c-1", "comp-1");
+        metrics.record("r-1", "c-1", "comp-1");
+        assert_eq!(metrics.total, 3);
+        assert_eq!(metrics.by_region.get("r-1"), Some(&3));
+        assert_eq!(metrics.by_channel.get("c-1"), Some(&3));
+        assert_eq!(metrics.by_component.get("comp-1"), Some(&3));
+    }
+
+    #[test]
+    fn leak_diagnostic_with_empty_strings() {
+        let diag = LeakDiagnostic {
+            obligation_id: 0,
+            channel_id: String::new(),
+            creator_trace_id: String::new(),
+            obligation_age_ticks: 0,
+            region_id: String::new(),
+            component: String::new(),
+        };
+        let json = serde_json::to_string(&diag).unwrap();
+        let restored: LeakDiagnostic = serde_json::from_str(&json).unwrap();
+        assert_eq!(diag, restored);
+        // Display still works with empty fields
+        let s = diag.to_string();
+        assert!(s.contains("obligation leak"));
+    }
+
+    #[test]
+    fn leak_diagnostic_with_max_obligation_id() {
+        let diag = LeakDiagnostic {
+            obligation_id: u64::MAX,
+            channel_id: "c".to_string(),
+            creator_trace_id: "t".to_string(),
+            obligation_age_ticks: u64::MAX,
+            region_id: "r".to_string(),
+            component: "comp".to_string(),
+        };
+        let json = serde_json::to_string(&diag).unwrap();
+        let restored: LeakDiagnostic = serde_json::from_str(&json).unwrap();
+        assert_eq!(diag, restored);
+        let s = diag.to_string();
+        assert!(s.contains(&u64::MAX.to_string()));
+    }
+
+    #[test]
+    fn leak_metrics_serde_with_multiple_dimensions() {
+        let mut metrics = LeakMetrics::default();
+        for i in 0..10 {
+            metrics.record(
+                &format!("region-{}", i % 3),
+                &format!("chan-{}", i % 4),
+                &format!("comp-{}", i % 2),
+            );
+        }
+        assert_eq!(metrics.total, 10);
+        let json = serde_json::to_string(&metrics).unwrap();
+        let restored: LeakMetrics = serde_json::from_str(&json).unwrap();
+        assert_eq!(metrics, restored);
+    }
+
+    #[test]
+    fn multiple_production_leaks_accumulate_events_in_order() {
+        let mut handler = LeakHandler::new(ObligationLeakPolicy::Production);
+        for i in 0..5 {
+            handler.handle_leak(LeakDiagnostic {
+                obligation_id: i,
+                channel_id: format!("chan-{i}"),
+                creator_trace_id: format!("trace-{i}"),
+                obligation_age_ticks: 100 * i,
+                region_id: format!("region-{i}"),
+                component: "comp".to_string(),
+            });
+        }
+        let events = handler.drain_events();
+        assert_eq!(events.len(), 5);
+        for (idx, event) in events.iter().enumerate() {
+            assert_eq!(event.obligation_id, idx as u64);
+        }
+    }
+
+    #[test]
+    fn leak_response_abort_variant_clone_eq() {
+        let diag = test_diagnostic();
+        let response = LeakResponse::Abort {
+            diagnostic: diag.clone(),
+        };
+        let cloned = response.clone();
+        assert_eq!(response, cloned);
+    }
+
+    #[test]
+    fn leak_event_severity_warning_serde() {
+        let event = LeakEvent {
+            trace_id: "t".to_string(),
+            obligation_id: 0,
+            channel_id: "c".to_string(),
+            region_id: "r".to_string(),
+            component: "comp".to_string(),
+            leak_policy: ObligationLeakPolicy::Production,
+            failover_action: None,
+            severity: LeakSeverity::Warning,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let restored: LeakEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, restored);
+    }
+
+    #[test]
+    fn severity_equality_and_copy() {
+        let s1 = LeakSeverity::Critical;
+        let s2 = s1; // Copy
+        assert_eq!(s1, s2);
+        assert!(!(LeakSeverity::Warning == LeakSeverity::Fatal));
+    }
+
+    #[test]
+    fn leak_metrics_default_serde_roundtrip() {
+        let metrics = LeakMetrics::default();
+        let json = serde_json::to_string(&metrics).unwrap();
+        let restored: LeakMetrics = serde_json::from_str(&json).unwrap();
+        assert_eq!(metrics, restored);
+        assert_eq!(restored.total, 0);
+        assert!(restored.by_region.is_empty());
+    }
 }

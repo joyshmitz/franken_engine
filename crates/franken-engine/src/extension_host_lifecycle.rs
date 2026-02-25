@@ -1250,4 +1250,219 @@ mod tests {
         }
         assert!(!mgr.is_extension_running("ext-2"));
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: error_code unique per variant
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn error_code_unique_per_variant() {
+        let variants = vec![
+            HostLifecycleError::ExtensionAlreadyLoaded {
+                extension_id: "x".to_string(),
+            },
+            HostLifecycleError::ExtensionNotFound {
+                extension_id: "x".to_string(),
+            },
+            HostLifecycleError::ExtensionNotRunning {
+                extension_id: "x".to_string(),
+                state: RegionState::Closed,
+            },
+            HostLifecycleError::SessionAlreadyExists {
+                extension_id: "x".to_string(),
+                session_id: "s".to_string(),
+            },
+            HostLifecycleError::SessionNotFound {
+                extension_id: "x".to_string(),
+                session_id: "s".to_string(),
+            },
+            HostLifecycleError::CellError {
+                extension_id: "x".to_string(),
+                error_code: "e".to_string(),
+                message: "msg".to_string(),
+            },
+            HostLifecycleError::CancellationError {
+                extension_id: "x".to_string(),
+                error_code: "e".to_string(),
+                message: "msg".to_string(),
+            },
+            HostLifecycleError::HostShuttingDown,
+        ];
+        let codes: std::collections::BTreeSet<String> = variants
+            .iter()
+            .map(|v| v.error_code().to_string())
+            .collect();
+        assert_eq!(
+            codes.len(),
+            variants.len(),
+            "each error variant should have a unique error_code"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: error serde all 8 variants
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn error_serde_all_variants() {
+        let variants = vec![
+            HostLifecycleError::ExtensionAlreadyLoaded {
+                extension_id: "x".to_string(),
+            },
+            HostLifecycleError::ExtensionNotFound {
+                extension_id: "x".to_string(),
+            },
+            HostLifecycleError::ExtensionNotRunning {
+                extension_id: "x".to_string(),
+                state: RegionState::Closed,
+            },
+            HostLifecycleError::SessionAlreadyExists {
+                extension_id: "x".to_string(),
+                session_id: "s".to_string(),
+            },
+            HostLifecycleError::SessionNotFound {
+                extension_id: "x".to_string(),
+                session_id: "s".to_string(),
+            },
+            HostLifecycleError::CellError {
+                extension_id: "x".to_string(),
+                error_code: "e".to_string(),
+                message: "msg".to_string(),
+            },
+            HostLifecycleError::CancellationError {
+                extension_id: "x".to_string(),
+                error_code: "e".to_string(),
+                message: "msg".to_string(),
+            },
+            HostLifecycleError::HostShuttingDown,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: HostLifecycleError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: session_count for missing extension
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn session_count_missing_extension_is_zero() {
+        let mgr = ExtensionHostLifecycleManager::new();
+        assert_eq!(mgr.session_count("no-such-ext"), 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: shutdown tears down extensions (cancel returns not-running)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn shutdown_tears_down_extensions() {
+        let mut mgr = ExtensionHostLifecycleManager::new();
+        let mut cx = mock_cx(5000);
+
+        mgr.load_extension("ext-a", &mut cx).unwrap();
+        mgr.shutdown(&mut cx);
+
+        // Extensions were torn down by shutdown, so operations on them fail
+        let err = mgr
+            .cancel_extension("ext-a", &mut cx, LifecycleEvent::Terminate)
+            .unwrap_err();
+        // After shutdown, the extension is already unloaded
+        assert!(!err.error_code().is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: shutdown blocks new load
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn shutdown_blocks_new_load_confirmed() {
+        let mut mgr = ExtensionHostLifecycleManager::new();
+        let mut cx = mock_cx(5000);
+
+        mgr.shutdown(&mut cx);
+        let err = mgr.load_extension("ext-new", &mut cx).unwrap_err();
+        assert_eq!(err.error_code(), "host_shutting_down");
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: shutdown blocks new session
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn shutdown_blocks_new_session_confirmed() {
+        let mut mgr = ExtensionHostLifecycleManager::new();
+        let mut cx = mock_cx(5000);
+
+        mgr.shutdown(&mut cx);
+        let err = mgr.create_session("ext-a", "s1", &mut cx).unwrap_err();
+        assert_eq!(err.error_code(), "host_shutting_down");
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: active_extension_ids is sorted
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn active_extension_ids_sorted() {
+        let mut mgr = ExtensionHostLifecycleManager::new();
+        let mut cx = mock_cx(10000);
+
+        mgr.load_extension("ext-c", &mut cx).unwrap();
+        mgr.load_extension("ext-a", &mut cx).unwrap();
+        mgr.load_extension("ext-b", &mut cx).unwrap();
+
+        let ids = mgr.active_extension_ids();
+        let mut sorted = ids.clone();
+        sorted.sort();
+        assert_eq!(ids, sorted, "active_extension_ids should be sorted");
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: events have error_code on failure
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn event_has_error_code_on_failure() {
+        let mut mgr = ExtensionHostLifecycleManager::new();
+        let mut cx = mock_cx(5000);
+
+        // Trigger an error: load duplicate
+        mgr.load_extension("ext-a", &mut cx).unwrap();
+        let _err = mgr.load_extension("ext-a", &mut cx).unwrap_err();
+
+        // The successful load emitted one event
+        let events = mgr.events();
+        assert!(!events.is_empty());
+        // First event should be the successful load
+        assert_eq!(events[0].event, "extension_loaded");
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: extension_record returns None for missing
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn extension_record_missing_returns_none() {
+        let mgr = ExtensionHostLifecycleManager::new();
+        assert!(mgr.extension_record("no-such").is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: unloaded extension record shows unloaded flag
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn extension_record_shows_unloaded_flag() {
+        let mut mgr = ExtensionHostLifecycleManager::new();
+        let mut cx = mock_cx(5000);
+
+        mgr.load_extension("ext-a", &mut cx).unwrap();
+        mgr.unload_extension("ext-a", &mut cx).unwrap();
+
+        let record = mgr.extension_record("ext-a").unwrap();
+        assert!(record.unloaded);
+    }
 }

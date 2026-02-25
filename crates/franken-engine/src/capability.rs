@@ -629,4 +629,181 @@ mod tests {
         let restored: CapabilityDenied = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(denied, restored);
     }
+
+    // ── Enrichment: intersection edge cases ──────────────────────
+
+    #[test]
+    fn intersection_with_self_preserves_capabilities() {
+        let ec = CapabilityProfile::engine_core();
+        let inter = ec.intersect(&ec);
+        assert_eq!(inter.capabilities, ec.capabilities);
+    }
+
+    #[test]
+    fn intersection_with_compute_only_is_empty() {
+        let full = CapabilityProfile::full();
+        let co = CapabilityProfile::compute_only();
+        let inter = full.intersect(&co);
+        assert!(inter.is_empty());
+    }
+
+    #[test]
+    fn intersection_is_commutative() {
+        let ec = CapabilityProfile::engine_core();
+        let pol = CapabilityProfile::policy();
+        let ab = ec.intersect(&pol);
+        let ba = pol.intersect(&ec);
+        assert_eq!(ab.capabilities, ba.capabilities);
+    }
+
+    #[test]
+    fn intersection_result_kind_is_compute_only() {
+        let full = CapabilityProfile::full();
+        let ec = CapabilityProfile::engine_core();
+        let inter = full.intersect(&ec);
+        assert_eq!(inter.kind, ProfileKind::ComputeOnly);
+    }
+
+    // ── Enrichment: has / len / is_empty ─────────────────────────
+
+    #[test]
+    fn full_profile_has_all_16_capabilities() {
+        let full = CapabilityProfile::full();
+        let all = [
+            RuntimeCapability::VmDispatch,
+            RuntimeCapability::GcInvoke,
+            RuntimeCapability::IrLowering,
+            RuntimeCapability::PolicyRead,
+            RuntimeCapability::PolicyWrite,
+            RuntimeCapability::EvidenceEmit,
+            RuntimeCapability::DecisionInvoke,
+            RuntimeCapability::NetworkEgress,
+            RuntimeCapability::LeaseManagement,
+            RuntimeCapability::IdempotencyDerive,
+            RuntimeCapability::ExtensionLifecycle,
+            RuntimeCapability::HeapAllocate,
+            RuntimeCapability::EnvRead,
+            RuntimeCapability::ProcessSpawn,
+            RuntimeCapability::FsRead,
+            RuntimeCapability::FsWrite,
+        ];
+        for cap in &all {
+            assert!(full.has(*cap), "full should have {:?}", cap);
+        }
+        assert_eq!(full.len(), all.len());
+        assert!(!full.is_empty());
+    }
+
+    #[test]
+    fn compute_only_has_no_capability() {
+        let co = CapabilityProfile::compute_only();
+        assert!(!co.has(RuntimeCapability::VmDispatch));
+        assert!(!co.has(RuntimeCapability::FsWrite));
+        assert!(!co.has(RuntimeCapability::ExtensionLifecycle));
+    }
+
+    // ── Enrichment: subsumption transitivity ─────────────────────
+
+    #[test]
+    fn compute_only_subsumes_nothing_but_itself() {
+        let co = CapabilityProfile::compute_only();
+        assert!(co.subsumes(&co));
+        assert!(!co.subsumes(&CapabilityProfile::engine_core()));
+        assert!(!co.subsumes(&CapabilityProfile::policy()));
+        assert!(!co.subsumes(&CapabilityProfile::remote()));
+    }
+
+    #[test]
+    fn no_non_full_profile_subsumes_full() {
+        let full = CapabilityProfile::full();
+        assert!(!CapabilityProfile::engine_core().subsumes(&full));
+        assert!(!CapabilityProfile::policy().subsumes(&full));
+        assert!(!CapabilityProfile::remote().subsumes(&full));
+        assert!(!CapabilityProfile::compute_only().subsumes(&full));
+    }
+
+    // ── Enrichment: require_all edge cases ───────────────────────
+
+    #[test]
+    fn require_all_empty_requirements_succeeds() {
+        let co = CapabilityProfile::compute_only();
+        assert!(require_all(&co, &[], "test-empty").is_ok());
+    }
+
+    #[test]
+    fn require_all_denials_have_correct_component() {
+        let co = CapabilityProfile::compute_only();
+        let denials =
+            require_all(&co, &[RuntimeCapability::VmDispatch], "my-component").unwrap_err();
+        assert_eq!(denials[0].component, "my-component");
+        assert_eq!(denials[0].held_profile, ProfileKind::ComputeOnly);
+    }
+
+    // ── Enrichment: Display completeness ─────────────────────────
+
+    #[test]
+    fn all_runtime_capabilities_have_display() {
+        let all = [
+            RuntimeCapability::VmDispatch,
+            RuntimeCapability::GcInvoke,
+            RuntimeCapability::IrLowering,
+            RuntimeCapability::PolicyRead,
+            RuntimeCapability::PolicyWrite,
+            RuntimeCapability::EvidenceEmit,
+            RuntimeCapability::DecisionInvoke,
+            RuntimeCapability::NetworkEgress,
+            RuntimeCapability::LeaseManagement,
+            RuntimeCapability::IdempotencyDerive,
+            RuntimeCapability::ExtensionLifecycle,
+            RuntimeCapability::HeapAllocate,
+            RuntimeCapability::EnvRead,
+            RuntimeCapability::ProcessSpawn,
+            RuntimeCapability::FsRead,
+            RuntimeCapability::FsWrite,
+        ];
+        for cap in &all {
+            let s = cap.to_string();
+            assert!(!s.is_empty());
+            assert!(s.chars().all(|c| c.is_ascii_lowercase() || c == '_'));
+        }
+    }
+
+    #[test]
+    fn capability_profile_display_includes_count() {
+        let full = CapabilityProfile::full();
+        assert_eq!(full.to_string(), "FullCaps[16]");
+        let co = CapabilityProfile::compute_only();
+        assert_eq!(co.to_string(), "ComputeOnlyCaps[0]");
+    }
+
+    // ── Enrichment: profile disjointness exhaustive ──────────────
+
+    #[test]
+    fn engine_core_policy_remote_union_is_subset_of_full() {
+        let full = CapabilityProfile::full();
+        let ec = CapabilityProfile::engine_core();
+        let pol = CapabilityProfile::policy();
+        let rem = CapabilityProfile::remote();
+        let mut combined = BTreeSet::new();
+        combined.extend(&ec.capabilities);
+        combined.extend(&pol.capabilities);
+        combined.extend(&rem.capabilities);
+        assert!(combined.is_subset(&full.capabilities));
+    }
+
+    // ── Enrichment: deterministic serialization ──────────────────
+
+    #[test]
+    fn capability_denied_serde_preserves_all_fields() {
+        let denied = CapabilityDenied {
+            required: RuntimeCapability::FsWrite,
+            held_profile: ProfileKind::Remote,
+            component: "fs-writer".to_string(),
+        };
+        let json = serde_json::to_string(&denied).unwrap();
+        let back: CapabilityDenied = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.required, RuntimeCapability::FsWrite);
+        assert_eq!(back.held_profile, ProfileKind::Remote);
+        assert_eq!(back.component, "fs-writer");
+    }
 }

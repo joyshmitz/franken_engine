@@ -913,4 +913,185 @@ mod tests {
         assert!(!region.commit_obligation("nonexistent"));
         assert!(!region.abort_obligation("nonexistent"));
     }
+
+    // -- Enrichment batch 2: Display uniqueness, serde edge cases, error trait, boundary conditions --
+
+    #[test]
+    fn region_state_display_all_unique() {
+        let displays: std::collections::BTreeSet<String> = [
+            RegionState::Running,
+            RegionState::CancelRequested,
+            RegionState::Draining,
+            RegionState::Finalizing,
+            RegionState::Closed,
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert_eq!(
+            displays.len(),
+            5,
+            "all RegionState Display strings must be unique"
+        );
+    }
+
+    #[test]
+    fn cancel_reason_display_all_unique() {
+        let displays: std::collections::BTreeSet<String> = [
+            CancelReason::OperatorShutdown,
+            CancelReason::Quarantine,
+            CancelReason::Revocation,
+            CancelReason::BudgetExhausted,
+            CancelReason::ParentClosing,
+            CancelReason::Custom("x".to_string()),
+        ]
+        .iter()
+        .map(|r| r.to_string())
+        .collect();
+        assert_eq!(
+            displays.len(),
+            6,
+            "all CancelReason Display strings must be unique"
+        );
+    }
+
+    #[test]
+    fn phase_order_violation_implements_std_error() {
+        let v = PhaseOrderViolation {
+            current_state: RegionState::Running,
+            attempted_transition: "finalize".to_string(),
+            region_id: "r-1".to_string(),
+        };
+        let err: &dyn std::error::Error = &v;
+        let msg = err.to_string();
+        assert!(msg.contains("phase order violation"));
+        assert!(msg.contains("r-1"));
+        assert!(msg.contains("finalize"));
+        assert!(msg.contains("running"));
+    }
+
+    #[test]
+    fn phase_order_violation_serde_roundtrip() {
+        let v = PhaseOrderViolation {
+            current_state: RegionState::Draining,
+            attempted_transition: "cancel".to_string(),
+            region_id: "r-42".to_string(),
+        };
+        let json = serde_json::to_string(&v).expect("serialize");
+        let restored: PhaseOrderViolation = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(v, restored);
+    }
+
+    #[test]
+    fn cancel_reason_serde_all_variants() {
+        let reasons = [
+            CancelReason::OperatorShutdown,
+            CancelReason::Quarantine,
+            CancelReason::Revocation,
+            CancelReason::BudgetExhausted,
+            CancelReason::ParentClosing,
+            CancelReason::Custom("my_reason".to_string()),
+        ];
+        for reason in &reasons {
+            let json = serde_json::to_string(reason).expect("serialize");
+            let restored: CancelReason = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*reason, restored);
+        }
+    }
+
+    #[test]
+    fn drain_deadline_default_value() {
+        let dd = DrainDeadline::default();
+        assert_eq!(dd.max_ticks, 10_000);
+    }
+
+    #[test]
+    fn drain_tick_on_non_draining_region_returns_false() {
+        let mut region = test_region();
+        // Running state -- drain_tick should return false
+        assert!(!region.drain_tick());
+
+        // CancelRequested state
+        region.cancel(CancelReason::OperatorShutdown).unwrap();
+        assert!(!region.drain_tick());
+    }
+
+    #[test]
+    fn region_cancel_reason_accessor() {
+        let mut region = test_region();
+        assert!(region.cancel_reason().is_none());
+        region.cancel(CancelReason::Quarantine).unwrap();
+        assert_eq!(region.cancel_reason(), Some(&CancelReason::Quarantine));
+    }
+
+    #[test]
+    fn region_child_count_accessor() {
+        let mut region = test_region();
+        assert_eq!(region.child_count(), 0);
+        region.add_child(Region::new("c1", "ext", "t"));
+        assert_eq!(region.child_count(), 1);
+        region.add_child(Region::new("c2", "ext", "t"));
+        assert_eq!(region.child_count(), 2);
+    }
+
+    #[test]
+    fn region_event_count_tracks_own_events_only() {
+        let mut parent = Region::new("parent", "svc", "t");
+        parent.add_child(Region::new("child", "ext", "t"));
+        parent.cancel(CancelReason::OperatorShutdown).unwrap();
+        // Parent should have 1 event (cancel_initiated), child should also have 1
+        // event_count() only counts the parent's own events
+        assert_eq!(parent.event_count(), 1);
+    }
+
+    #[test]
+    fn close_with_resolved_obligations_success() {
+        let mut region = test_region();
+        region.register_obligation("ob-1", "flush");
+        region.register_obligation("ob-2", "commit");
+        region.commit_obligation("ob-1");
+        region.commit_obligation("ob-2");
+
+        let result = region
+            .close(
+                CancelReason::OperatorShutdown,
+                DrainDeadline { max_ticks: 10 },
+            )
+            .unwrap();
+        assert!(result.success);
+        assert_eq!(result.obligations_committed, 2);
+        assert_eq!(result.obligations_aborted, 0);
+    }
+
+    #[test]
+    fn finalize_result_serde_with_escalation() {
+        let result = FinalizeResult {
+            region_id: "r-escalated".to_string(),
+            success: false,
+            obligations_committed: 0,
+            obligations_aborted: 3,
+            drain_timeout_escalated: true,
+        };
+        let json = serde_json::to_string(&result).expect("serialize");
+        let restored: FinalizeResult = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(result, restored);
+    }
+
+    #[test]
+    fn drain_timeout_fires_only_once() {
+        let mut region = test_region();
+        region.register_obligation("ob-1", "slow");
+        region.cancel(CancelReason::OperatorShutdown).unwrap();
+        region.drain(DrainDeadline { max_ticks: 2 }).unwrap();
+
+        // Tick 1: no timeout
+        assert!(!region.drain_tick());
+        // Tick 2: timeout
+        assert!(region.drain_tick());
+        // Tick 3: still timeout but no duplicate escalation event
+        let pre_count = region.event_count();
+        assert!(region.drain_tick());
+        // No new event should be emitted (escalation already recorded)
+        assert_eq!(region.event_count(), pre_count);
+    }
 }

@@ -975,4 +975,130 @@ mod tests {
         let restored: RegimeClassifier = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(c, restored);
     }
+
+    // -- Enrichment: negative observations classify as degraded --
+
+    #[test]
+    fn negative_observations_classify_degraded() {
+        let mut det = test_detector("health");
+        for _ in 0..15 {
+            det.observe(-600_000).unwrap();
+        }
+        assert!(det.regime() >= Regime::Degraded);
+    }
+
+    // -- Enrichment: set_epoch on single detector --
+
+    #[test]
+    fn set_epoch_updates_detector() {
+        let mut det = test_detector("m");
+        let new_epoch = SecurityEpoch::from_raw(42);
+        det.set_epoch(new_epoch);
+
+        // Feed observations to trigger a change event
+        for _ in 0..15 {
+            det.observe(950_000).unwrap();
+        }
+        let events = det.drain_events();
+        if let Some(event) = events.last() {
+            assert_eq!(event.epoch, new_epoch);
+        }
+    }
+
+    // -- Enrichment: multi_stream drain_all_events --
+
+    #[test]
+    fn multi_stream_drain_all_events_collects_from_all() {
+        let mut multi = MultiStreamDetector::new();
+        multi.register(test_detector("a"));
+        multi.register(test_detector("b"));
+
+        // Push both streams to high values to trigger regime changes
+        for _ in 0..15 {
+            multi.observe("a", 950_000).unwrap();
+            multi.observe("b", 950_000).unwrap();
+        }
+
+        let events = multi.drain_all_events();
+        // Both streams should have produced change events
+        let streams: std::collections::BTreeSet<&str> =
+            events.iter().map(|e| e.metric_stream.as_str()).collect();
+        assert!(streams.contains("a"));
+        assert!(streams.contains("b"));
+
+        // Drain again should be empty
+        assert!(multi.drain_all_events().is_empty());
+    }
+
+    // -- Enrichment: detector_config serde roundtrip --
+
+    #[test]
+    fn detector_config_serde_roundtrip() {
+        let config = test_config("hostcall_rate");
+        let json = serde_json::to_string(&config).expect("serialize");
+        let restored: DetectorConfig = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(restored.detector_id, config.detector_id);
+        assert_eq!(restored.metric_stream, config.metric_stream);
+        assert_eq!(restored.max_run_length, config.max_run_length);
+        assert_eq!(restored.hazard_lambda, config.hazard_lambda);
+        assert_eq!(restored.classifier, config.classifier);
+        assert_eq!(restored.prior, config.prior);
+    }
+
+    // -- Enrichment: observation_count accumulates --
+
+    #[test]
+    fn observation_count_accumulates() {
+        let mut det = test_detector("m");
+        for i in 0..25 {
+            det.observe(300_000 + i * 1000).unwrap();
+        }
+        assert_eq!(det.observation_count(), 25);
+    }
+
+    // -- Enrichment: Regime serde all 5 variants --
+
+    #[test]
+    fn regime_serde_all_variants() {
+        let regimes = [
+            Regime::Normal,
+            Regime::Elevated,
+            Regime::Attack,
+            Regime::Degraded,
+            Regime::Recovery,
+        ];
+        for r in &regimes {
+            let json = serde_json::to_string(r).unwrap();
+            let back: Regime = serde_json::from_str(&json).unwrap();
+            assert_eq!(*r, back);
+        }
+    }
+
+    // -- Enrichment: multi_stream regime for missing stream --
+
+    #[test]
+    fn multi_stream_regime_missing_returns_none() {
+        let multi = MultiStreamDetector::new();
+        assert!(multi.regime("no-such").is_none());
+    }
+
+    // -- Enrichment: multi_stream get for missing stream --
+
+    #[test]
+    fn multi_stream_get_missing_returns_none() {
+        let multi = MultiStreamDetector::new();
+        assert!(multi.get("no-such").is_none());
+    }
+
+    // -- Enrichment: constant hazard is independent of run_length --
+
+    #[test]
+    fn constant_hazard_independent_of_run_length() {
+        let h = ConstantHazard { lambda: 50 };
+        let h0 = h.hazard(0);
+        let h100 = h.hazard(100);
+        let h999 = h.hazard(999);
+        assert_eq!(h0, h100);
+        assert_eq!(h100, h999);
+    }
 }

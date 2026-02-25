@@ -1079,4 +1079,318 @@ mod tests {
             assert_eq!(*err, restored);
         }
     }
+
+    // ── Enrichment: DerivationContext edge cases ─────────────────
+
+    #[test]
+    fn context_with_single_entry() {
+        let ctx = DerivationContext::with("key", "val");
+        assert_eq!(ctx.len(), 1);
+        assert!(!ctx.is_empty());
+        assert_eq!(ctx.to_canonical_bytes(), b"key=val");
+    }
+
+    #[test]
+    fn context_nul_separator_between_entries() {
+        let mut ctx = DerivationContext::empty();
+        ctx.add("a", "1");
+        ctx.add("b", "2");
+        let bytes = ctx.to_canonical_bytes();
+        // Format: a=1\0b=2
+        assert_eq!(bytes, b"a=1\0b=2");
+    }
+
+    #[test]
+    fn context_overwrite_entry() {
+        let mut ctx = DerivationContext::empty();
+        ctx.add("k", "old");
+        ctx.add("k", "new");
+        assert_eq!(ctx.len(), 1);
+        assert_eq!(ctx.to_canonical_bytes(), b"k=new");
+    }
+
+    #[test]
+    fn context_empty_value() {
+        let ctx = DerivationContext::with("key", "");
+        assert_eq!(ctx.to_canonical_bytes(), b"key=");
+    }
+
+    #[test]
+    fn context_empty_key() {
+        let ctx = DerivationContext::with("", "val");
+        assert_eq!(ctx.to_canonical_bytes(), b"=val");
+    }
+
+    // ── Enrichment: output length boundaries ─────────────────────
+
+    #[test]
+    fn derive_output_len_one_succeeds() {
+        let deriver = DeterministicTestDeriver;
+        let key = deriver
+            .derive(&DerivationRequest {
+                master_key: test_master_key(),
+                epoch: SecurityEpoch::from_raw(1),
+                domain: KeyDomain::Symbol,
+                context: DerivationContext::empty(),
+                output_len: 1,
+            })
+            .unwrap();
+        assert_eq!(key.key_bytes.len(), 1);
+    }
+
+    #[test]
+    fn derive_output_len_max_succeeds() {
+        let deriver = DeterministicTestDeriver;
+        let key = deriver
+            .derive(&DerivationRequest {
+                master_key: test_master_key(),
+                epoch: SecurityEpoch::from_raw(1),
+                domain: KeyDomain::Symbol,
+                context: DerivationContext::empty(),
+                output_len: DeterministicTestDeriver::MAX_OUTPUT,
+            })
+            .unwrap();
+        assert_eq!(key.key_bytes.len(), 256);
+    }
+
+    #[test]
+    fn derive_output_len_max_plus_one_fails() {
+        let deriver = DeterministicTestDeriver;
+        let err = deriver
+            .derive(&DerivationRequest {
+                master_key: test_master_key(),
+                epoch: SecurityEpoch::from_raw(1),
+                domain: KeyDomain::Symbol,
+                context: DerivationContext::empty(),
+                output_len: DeterministicTestDeriver::MAX_OUTPUT + 1,
+            })
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            KeyDerivationError::OutputTooLong {
+                requested: 257,
+                max: 256,
+            }
+        ));
+    }
+
+    // ── Enrichment: master key length sensitivity ────────────────
+
+    #[test]
+    fn different_master_keys_produce_different_keys() {
+        let deriver = DeterministicTestDeriver;
+        let epoch = SecurityEpoch::from_raw(1);
+        let ctx = DerivationContext::empty();
+
+        let key_a = deriver
+            .derive(&DerivationRequest {
+                master_key: b"master-key-alpha-32-bytes-long!!".to_vec(),
+                epoch,
+                domain: KeyDomain::Symbol,
+                context: ctx.clone(),
+                output_len: 32,
+            })
+            .unwrap();
+
+        let key_b = deriver
+            .derive(&DerivationRequest {
+                master_key: b"master-key-bravo-32-bytes-long!!".to_vec(),
+                epoch,
+                domain: KeyDomain::Symbol,
+                context: ctx,
+                output_len: 32,
+            })
+            .unwrap();
+
+        assert_ne!(key_a.key_bytes, key_b.key_bytes);
+    }
+
+    #[test]
+    fn single_byte_master_key_works() {
+        let deriver = DeterministicTestDeriver;
+        let key = deriver
+            .derive(&DerivationRequest {
+                master_key: vec![0xff],
+                epoch: SecurityEpoch::from_raw(1),
+                domain: KeyDomain::Symbol,
+                context: DerivationContext::empty(),
+                output_len: 32,
+            })
+            .unwrap();
+        assert_eq!(key.key_bytes.len(), 32);
+    }
+
+    // ── Enrichment: DerivedKey validity ──────────────────────────
+
+    #[test]
+    fn derived_key_valid_at_genesis_epoch() {
+        let key = DerivedKey {
+            key_bytes: vec![1],
+            domain: KeyDomain::Symbol,
+            epoch: SecurityEpoch::GENESIS,
+            context_hash: vec![],
+        };
+        assert!(key.is_valid_at(SecurityEpoch::GENESIS));
+        assert!(!key.is_valid_at(SecurityEpoch::from_raw(1)));
+    }
+
+    // ── Enrichment: cache multi-domain ───────────────────────────
+
+    #[test]
+    fn cache_different_domains_cached_independently() {
+        let mut cache = EpochKeyCache::new(
+            DeterministicTestDeriver,
+            test_master_key(),
+            SecurityEpoch::from_raw(1),
+            32,
+        );
+        let ctx = DerivationContext::empty();
+        cache.get_or_derive(KeyDomain::Symbol, &ctx, "t1").unwrap();
+        cache.get_or_derive(KeyDomain::Session, &ctx, "t2").unwrap();
+        assert_eq!(cache.cached_count(), 2);
+        assert_eq!(cache.events().len(), 2);
+    }
+
+    #[test]
+    fn cache_epoch_advance_chain() {
+        let mut cache = EpochKeyCache::new(
+            DeterministicTestDeriver,
+            test_master_key(),
+            SecurityEpoch::from_raw(1),
+            32,
+        );
+        let ctx = DerivationContext::empty();
+
+        for epoch in 1..=5u64 {
+            cache
+                .get_or_derive(KeyDomain::Symbol, &ctx, &format!("t{epoch}"))
+                .unwrap();
+            assert_eq!(cache.cached_count(), 1);
+            if epoch < 5 {
+                cache
+                    .advance_epoch(SecurityEpoch::from_raw(epoch + 1))
+                    .unwrap();
+                assert_eq!(cache.cached_count(), 0);
+            }
+        }
+        assert_eq!(cache.events().len(), 5);
+    }
+
+    // ── Enrichment: context hash determinism ─────────────────────
+
+    #[test]
+    fn same_context_produces_same_context_hash() {
+        let deriver = DeterministicTestDeriver;
+        let mk = test_master_key();
+        let ctx = DerivationContext::with("ext", "test");
+
+        let key1 = deriver
+            .derive(&DerivationRequest {
+                master_key: mk.clone(),
+                epoch: SecurityEpoch::from_raw(1),
+                domain: KeyDomain::Symbol,
+                context: ctx.clone(),
+                output_len: 32,
+            })
+            .unwrap();
+
+        let key2 = deriver
+            .derive(&DerivationRequest {
+                master_key: mk,
+                epoch: SecurityEpoch::from_raw(1),
+                domain: KeyDomain::Symbol,
+                context: ctx,
+                output_len: 32,
+            })
+            .unwrap();
+
+        assert_eq!(key1.context_hash, key2.context_hash);
+    }
+
+    #[test]
+    fn different_contexts_produce_different_context_hashes() {
+        let deriver = DeterministicTestDeriver;
+        let mk = test_master_key();
+
+        let key1 = deriver
+            .derive(&DerivationRequest {
+                master_key: mk.clone(),
+                epoch: SecurityEpoch::from_raw(1),
+                domain: KeyDomain::Symbol,
+                context: DerivationContext::with("ext", "alpha"),
+                output_len: 32,
+            })
+            .unwrap();
+
+        let key2 = deriver
+            .derive(&DerivationRequest {
+                master_key: mk,
+                epoch: SecurityEpoch::from_raw(1),
+                domain: KeyDomain::Symbol,
+                context: DerivationContext::with("ext", "beta"),
+                output_len: 32,
+            })
+            .unwrap();
+
+        assert_ne!(key1.context_hash, key2.context_hash);
+    }
+
+    // ── Enrichment: max_output_len ───────────────────────────────
+
+    #[test]
+    fn deriver_max_output_len() {
+        let deriver = DeterministicTestDeriver;
+        assert_eq!(deriver.max_output_len(), 256);
+    }
+
+    // ── Enrichment: KeyDomain::ALL completeness ──────────────────
+
+    #[test]
+    fn key_domain_all_has_five_entries() {
+        assert_eq!(KeyDomain::ALL.len(), 5);
+    }
+
+    #[test]
+    fn all_domains_have_nonempty_separators() {
+        for domain in KeyDomain::ALL {
+            assert!(!domain.separator().is_empty());
+        }
+    }
+
+    // ── Enrichment: DerivationRequest serde ──────────────────────
+
+    #[test]
+    fn derivation_request_serde_roundtrip() {
+        let req = DerivationRequest {
+            master_key: vec![1, 2, 3],
+            epoch: SecurityEpoch::from_raw(5),
+            domain: KeyDomain::Session,
+            context: DerivationContext::with("k", "v"),
+            output_len: 32,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let back: DerivationRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, req);
+    }
+
+    // ── Enrichment: error display for EpochMismatch/DerivationFailed
+
+    #[test]
+    fn error_display_epoch_mismatch() {
+        let err = KeyDerivationError::EpochMismatch {
+            key_epoch: SecurityEpoch::from_raw(1),
+            current_epoch: SecurityEpoch::from_raw(5),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("1"));
+        assert!(msg.contains("5"));
+    }
+
+    #[test]
+    fn error_display_derivation_failed() {
+        let err = KeyDerivationError::DerivationFailed {
+            reason: "hardware fault".to_string(),
+        };
+        assert!(err.to_string().contains("hardware fault"));
+    }
 }

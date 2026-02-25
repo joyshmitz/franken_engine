@@ -1286,4 +1286,217 @@ mod tests {
             "all 11 variants produce distinct messages"
         );
     }
+
+    // -- Enrichment batch 2: Display uniqueness, serde all variants, boundary, error trait --
+
+    #[test]
+    fn token_error_display_all_variants_contain_key_details() {
+        let display_sig = TokenError::SignatureInvalid {
+            detail: "tampered".to_string(),
+        }
+        .to_string();
+        assert!(display_sig.contains("tampered"));
+
+        let display_nc = TokenError::NonCanonical {
+            detail: "order".to_string(),
+        }
+        .to_string();
+        assert!(display_nc.contains("non-canonical"));
+
+        let display_aud = TokenError::AudienceRejected {
+            presenter: make_principal(1),
+            audience_size: 5,
+        }
+        .to_string();
+        assert!(display_aud.contains("5"));
+
+        let display_nyv = TokenError::NotYetValid {
+            current_tick: 10,
+            not_before: 100,
+        }
+        .to_string();
+        assert!(display_nyv.contains("10"));
+        assert!(display_nyv.contains("100"));
+
+        let display_uv = TokenError::UnsupportedVersion {
+            version: "v99".to_string(),
+        }
+        .to_string();
+        assert!(display_uv.contains("v99"));
+
+        let display_id = TokenError::IdDerivationFailed {
+            detail: "entropy".to_string(),
+        }
+        .to_string();
+        assert!(display_id.contains("entropy"));
+    }
+
+    #[test]
+    fn token_error_serde_all_11_variants() {
+        let errors = vec![
+            TokenError::SignatureInvalid {
+                detail: "bad".to_string(),
+            },
+            TokenError::NonCanonical {
+                detail: "order".to_string(),
+            },
+            TokenError::AudienceRejected {
+                presenter: make_principal(1),
+                audience_size: 3,
+            },
+            TokenError::NotYetValid {
+                current_tick: 50,
+                not_before: 100,
+            },
+            TokenError::Expired {
+                current_tick: 2000,
+                expiry: 1000,
+            },
+            TokenError::CheckpointBindingFailed {
+                required_seq: 20,
+                verifier_seq: 15,
+            },
+            TokenError::RevocationFreshnessStale {
+                required_seq: 10,
+                verifier_seq: 3,
+            },
+            TokenError::UnsupportedVersion {
+                version: "v99".to_string(),
+            },
+            TokenError::IdDerivationFailed {
+                detail: "entropy".to_string(),
+            },
+            TokenError::InvertedTemporalWindow {
+                not_before: 200,
+                expiry: 100,
+            },
+            TokenError::EmptyCapabilities,
+        ];
+        for err in &errors {
+            let json = serde_json::to_string(err).expect("serialize");
+            let restored: TokenError = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*err, restored);
+        }
+    }
+
+    #[test]
+    fn principal_id_hex_is_64_chars() {
+        let p = make_principal(0xAB);
+        let hex = p.to_hex();
+        assert_eq!(hex.len(), 64);
+        assert!(hex.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn principal_id_from_verification_key_deterministic() {
+        let sk = make_sk(42);
+        let vk = sk.verification_key();
+        let p1 = PrincipalId::from_verification_key(&vk);
+        let p2 = PrincipalId::from_verification_key(&vk);
+        assert_eq!(p1, p2);
+    }
+
+    #[test]
+    fn principal_id_serde_roundtrip() {
+        let p = make_principal(0xCD);
+        let json = serde_json::to_string(&p).expect("serialize");
+        let restored: PrincipalId = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(p, restored);
+    }
+
+    #[test]
+    fn checkpoint_ref_serde_roundtrip() {
+        let cr = make_checkpoint_ref(42);
+        let json = serde_json::to_string(&cr).expect("serialize");
+        let restored: CheckpointRef = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(cr, restored);
+    }
+
+    #[test]
+    fn revocation_freshness_ref_serde_roundtrip() {
+        let rf = make_revocation_ref(99);
+        let json = serde_json::to_string(&rf).expect("serialize");
+        let restored: RevocationFreshnessRef = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(rf, restored);
+    }
+
+    #[test]
+    fn token_version_serde_roundtrip() {
+        let v = TokenVersion::V2;
+        let json = serde_json::to_string(&v).expect("serialize");
+        let restored: TokenVersion = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(v, restored);
+    }
+
+    #[test]
+    fn token_event_serde_roundtrip() {
+        let event = TokenEvent {
+            event_type: TokenEventType::TokenRejected {
+                jti: EngineObjectId([7; 32]),
+                reason: "expired".to_string(),
+            },
+            trace_id: "trace-abc".to_string(),
+        };
+        let json = serde_json::to_string(&event).expect("serialize");
+        let restored: TokenEvent = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(event, restored);
+    }
+
+    #[test]
+    fn token_event_type_display_all_variants_unique() {
+        let jti = EngineObjectId([1; 32]);
+        let displays: std::collections::BTreeSet<String> = [
+            TokenEventType::TokenIssued { jti: jti.clone() },
+            TokenEventType::TokenVerified { jti: jti.clone() },
+            TokenEventType::TokenRejected {
+                jti,
+                reason: "expired".to_string(),
+            },
+        ]
+        .iter()
+        .map(|e| e.to_string())
+        .collect();
+        assert_eq!(
+            displays.len(),
+            3,
+            "all TokenEventType Display strings must be unique"
+        );
+    }
+
+    #[test]
+    fn token_with_equal_nbf_expiry_accepted() {
+        let sk = make_sk(1);
+        let token = TokenBuilder::new(
+            sk.clone(),
+            DeterministicTimestamp(500),
+            DeterministicTimestamp(500), // nbf == expiry (zero-width window)
+            SecurityEpoch::GENESIS,
+            "zone-a",
+        )
+        .add_audience(make_principal(10))
+        .add_capability(RuntimeCapability::VmDispatch)
+        .build()
+        .unwrap();
+
+        let ctx = VerificationContext {
+            current_tick: 500,
+            verifier_checkpoint_seq: 10,
+            verifier_revocation_seq: 5,
+        };
+        verify_token(&token, &make_principal(10), &ctx).unwrap();
+    }
+
+    #[test]
+    fn token_schema_deterministic() {
+        let s1 = token_schema();
+        let s2 = token_schema();
+        assert_eq!(s1, s2);
+    }
+
+    #[test]
+    fn token_schema_id_deterministic() {
+        let id1 = token_schema_id();
+        let id2 = token_schema_id();
+        assert_eq!(id1, id2);
+    }
 }

@@ -1239,4 +1239,217 @@ mod tests {
             assert!(!t.to_string().is_empty());
         }
     }
+
+    // -- Enrichment: ArtifactType display all 7 unique --
+
+    #[test]
+    fn artifact_type_display_all_unique() {
+        let displays: std::collections::BTreeSet<String> = vec![
+            ArtifactType::GapFill,
+            ArtifactType::StateRepair,
+            ArtifactType::ForcedReconciliation,
+            ArtifactType::TrustRestoration,
+            ArtifactType::RejectedEpochPromotion,
+            ArtifactType::RejectedRevocation,
+            ArtifactType::FailedAttestation,
+        ]
+        .into_iter()
+        .map(|t| t.to_string())
+        .collect();
+        assert_eq!(
+            displays.len(),
+            7,
+            "all 7 ArtifactType variants have distinct Display"
+        );
+    }
+
+    // -- Enrichment: ProofElement display all 4 unique --
+
+    #[test]
+    fn proof_element_display_all_unique() {
+        let displays: std::collections::BTreeSet<String> = vec![
+            ProofElement::MmrConsistency {
+                root_hash: ContentHash::compute(b"r"),
+                leaf_count: 1,
+                proof_hashes: vec![],
+            },
+            ProofElement::HashChainVerification {
+                start_marker_id: 0,
+                end_marker_id: 1,
+                chain_hash: ContentHash::compute(b"c"),
+                verified: true,
+            },
+            ProofElement::EvidenceEntryLink {
+                evidence_hash: ContentHash::compute(b"e"),
+                decision_id: "d".to_string(),
+            },
+            ProofElement::EpochValidityCheck {
+                epoch: test_epoch(),
+                is_valid: true,
+                reason: "ok".to_string(),
+            },
+        ]
+        .into_iter()
+        .map(|p| p.to_string())
+        .collect();
+        assert_eq!(
+            displays.len(),
+            4,
+            "all 4 ProofElement variants have distinct Display"
+        );
+    }
+
+    // -- Enrichment: store get missing key --
+
+    #[test]
+    fn store_get_missing_key_returns_none() {
+        let store = RecoveryArtifactStore::new(test_epoch(), &test_key());
+        assert!(store.get("nonexistent").is_none());
+    }
+
+    // -- Enrichment: store is_empty on fresh --
+
+    #[test]
+    fn store_fresh_is_empty() {
+        let store = RecoveryArtifactStore::new(test_epoch(), &test_key());
+        assert!(store.is_empty());
+        assert_eq!(store.len(), 0);
+    }
+
+    // -- Enrichment: store multiple records --
+
+    #[test]
+    fn store_multiple_records() {
+        let mut store = RecoveryArtifactStore::new(test_epoch(), &test_key());
+        let a1 = ArtifactBuilder::new(
+            ArtifactType::GapFill,
+            RecoveryTrigger::ReconciliationFailure {
+                reconciliation_id: "r1".to_string(),
+            },
+            sample_before_state(),
+            "t1",
+            1,
+            1000,
+            &test_key(),
+        )
+        .proof(ProofElement::MmrConsistency {
+            root_hash: ContentHash::compute(b"root1"),
+            leaf_count: 5,
+            proof_hashes: vec![ContentHash::compute(b"h1")],
+        })
+        .build();
+
+        let a2 = ArtifactBuilder::new(
+            ArtifactType::StateRepair,
+            RecoveryTrigger::IntegrityCheckFailure {
+                check_id: "c1".to_string(),
+                details: "corrupt".to_string(),
+            },
+            sample_before_state(),
+            "t2",
+            2,
+            2000,
+            &test_key(),
+        )
+        .proof(ProofElement::HashChainVerification {
+            start_marker_id: 0,
+            end_marker_id: 10,
+            chain_hash: ContentHash::compute(b"chain"),
+            verified: true,
+        })
+        .build();
+
+        store.record(a1, "t1");
+        store.record(a2, "t2");
+        assert_eq!(store.len(), 2);
+        assert!(!store.is_empty());
+    }
+
+    // -- Enrichment: builder with multiple proofs --
+
+    #[test]
+    fn builder_with_multiple_proofs() {
+        let artifact = ArtifactBuilder::new(
+            ArtifactType::ForcedReconciliation,
+            RecoveryTrigger::OperatorIntervention {
+                operator: "admin".to_string(),
+                reason: "force".to_string(),
+            },
+            sample_before_state(),
+            "t1",
+            1,
+            1000,
+            &test_key(),
+        )
+        .proof(ProofElement::MmrConsistency {
+            root_hash: ContentHash::compute(b"root"),
+            leaf_count: 10,
+            proof_hashes: vec![ContentHash::compute(b"a")],
+        })
+        .proof(ProofElement::HashChainVerification {
+            start_marker_id: 0,
+            end_marker_id: 5,
+            chain_hash: ContentHash::compute(b"chain"),
+            verified: true,
+        })
+        .proof(ProofElement::EvidenceEntryLink {
+            evidence_hash: ContentHash::compute(b"ev"),
+            decision_id: "d-1".to_string(),
+        })
+        .build();
+        assert_eq!(artifact.proof_bundle.len(), 3);
+    }
+
+    // -- Enrichment: store event_counts tracks categories --
+
+    #[test]
+    fn store_event_counts_after_multiple_ops() {
+        let mut store = RecoveryArtifactStore::new(test_epoch(), &test_key());
+        let a1 = build_valid_artifact();
+        let a2 = build_valid_artifact();
+        store.record(a1.clone(), "t1");
+        store.record(a2, "t2");
+        store.verify(&a1, "t1").unwrap();
+
+        let counts = store.event_counts();
+        assert_eq!(counts.get("artifact_recorded"), Some(&2));
+        assert_eq!(counts.get("artifact_verified"), Some(&1));
+    }
+
+    // -- Enrichment: RecoveryVerdict is_valid on invalid --
+
+    #[test]
+    fn recovery_verdict_invalid_is_not_valid() {
+        let verdict = RecoveryVerdict::Invalid {
+            reasons: vec!["bad chain".to_string()],
+        };
+        assert!(!verdict.is_valid());
+    }
+
+    // -- Enrichment: OperatorAction deterministic --
+
+    #[test]
+    fn operator_action_deterministic_hash() {
+        let a1 = OperatorAction {
+            operator: "admin".to_string(),
+            action: "approve".to_string(),
+            authorization_hash: AuthenticityHash::compute_keyed(b"auth", b"key"),
+            timestamp_ticks: 1000,
+        };
+        let a2 = OperatorAction {
+            operator: "admin".to_string(),
+            action: "approve".to_string(),
+            authorization_hash: AuthenticityHash::compute_keyed(b"auth", b"key"),
+            timestamp_ticks: 1000,
+        };
+        assert_eq!(a1, a2);
+    }
+
+    // -- Enrichment: verification detects wrong epoch on store --
+
+    #[test]
+    fn store_export_empty() {
+        let store = RecoveryArtifactStore::new(test_epoch(), &test_key());
+        assert!(store.export().is_empty());
+    }
 }

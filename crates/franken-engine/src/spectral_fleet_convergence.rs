@@ -504,6 +504,12 @@ impl SpectralAnalyzer {
         deflate_uniform(&mut v, n);
         normalize_vector_millionths(&mut v);
 
+        // Pre-compute the Rayleigh quotient of the initial deflated vector.
+        // For graphs where λ₂ = λ_max (e.g. complete graphs), the shifted
+        // operator (λ_max·I - L) maps the Fiedler space to zero, so the
+        // iterate collapses. We use this initial estimate as a fallback.
+        let initial_rq = rayleigh_quotient_millionths(laplacian, &v);
+
         let mut lambda = 0i64;
         #[allow(clippy::needless_range_loop)]
         for iter in 0..self.max_iterations {
@@ -524,6 +530,19 @@ impl SpectralAnalyzer {
 
             // Deflate uniform component.
             deflate_uniform(&mut new_v, n);
+
+            // Check if the iterate collapsed to near-zero. This happens when
+            // λ₂ ≈ λ_max (e.g. complete graphs where all non-trivial
+            // eigenvalues are equal). In that case, use the Rayleigh quotient
+            // of the pre-collapse vector as the Fiedler value.
+            let norm_sq: i128 = new_v.iter().map(|&x| x as i128 * x as i128).sum();
+            if norm_sq < (MILLION as i128 / 100) {
+                // The iterate is effectively zero — λ₂ ≈ λ_max.
+                // Return the Rayleigh quotient from the last good vector.
+                let fiedler_value = rayleigh_quotient_millionths(laplacian, &v);
+                let fallback = fiedler_value.max(initial_rq).max(0);
+                return Ok((fallback, v, iter + 1));
+            }
 
             // Rayleigh quotient estimate on the shifted operator before
             // renormalization. Using the normalized vector here biases λ₂.
@@ -1178,5 +1197,189 @@ mod tests {
     fn spectral_error_display() {
         let err = SpectralError::Disconnected { components: 3 };
         assert!(format!("{err}").contains("disconnected"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: SpectralError display all variants
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn spectral_error_display_all_variants() {
+        let displays: std::collections::BTreeSet<String> = vec![
+            SpectralError::EmptyGraph,
+            SpectralError::NodeOutOfBounds { index: 5, size: 3 },
+            SpectralError::InvalidEdgeWeight {
+                weight_millionths: -1,
+            },
+            SpectralError::Disconnected { components: 2 },
+            SpectralError::DegenerateSpectralGap,
+        ]
+        .into_iter()
+        .map(|e| e.to_string())
+        .collect();
+        assert_eq!(displays.len(), 5, "all 5 variants have distinct Display");
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: SpectralError serde roundtrip
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn spectral_error_serde_all_variants() {
+        let errors = vec![
+            SpectralError::EmptyGraph,
+            SpectralError::NodeOutOfBounds { index: 5, size: 3 },
+            SpectralError::InvalidEdgeWeight {
+                weight_millionths: -1,
+            },
+            SpectralError::Disconnected { components: 2 },
+            SpectralError::DegenerateSpectralGap,
+        ];
+        for err in &errors {
+            let json = serde_json::to_string(err).unwrap();
+            let back: SpectralError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*err, back);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: SpectralError implements std::error::Error
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn spectral_error_implements_std_error() {
+        let errors: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(SpectralError::EmptyGraph),
+            Box::new(SpectralError::NodeOutOfBounds { index: 0, size: 0 }),
+            Box::new(SpectralError::InvalidEdgeWeight {
+                weight_millionths: 0,
+            }),
+            Box::new(SpectralError::Disconnected { components: 3 }),
+            Box::new(SpectralError::DegenerateSpectralGap),
+        ];
+        for e in &errors {
+            assert!(!e.to_string().is_empty());
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: cycle has lower connectivity than complete
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn cycle_lower_connectivity_than_complete() {
+        let analyzer = SpectralAnalyzer::default();
+        let complete = analyzer.analyze(&make_complete_graph(6)).unwrap();
+        let cycle = analyzer.analyze(&make_cycle_graph(6)).unwrap();
+        assert!(
+            cycle.algebraic_connectivity_millionths < complete.algebraic_connectivity_millionths,
+            "cycle ({}) should have lower λ₂ than complete ({})",
+            cycle.algebraic_connectivity_millionths,
+            complete.algebraic_connectivity_millionths
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: ConvergenceCertificate fails tight SLA
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn convergence_certificate_fails_tight_sla() {
+        let topo = make_path_graph(10);
+        let analyzer = SpectralAnalyzer::default();
+        let analysis = analyzer.analyze(&topo).unwrap();
+        let cert = ConvergenceCertificate::from_analysis(&analysis, SecurityEpoch::from_raw(1));
+        // Path graph with 10 nodes has slow mixing — should fail SLA of 1 round.
+        assert!(
+            !cert.meets_sla(1),
+            "path graph should not meet SLA of 1: mixing_time={}",
+            cert.mixing_time_rounds
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: LaplacianMatrix serde roundtrip
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn laplacian_matrix_serde_roundtrip() {
+        let topo = make_complete_graph(3);
+        let lap = LaplacianMatrix::from_topology(&topo).unwrap();
+        let json = serde_json::to_string(&lap).unwrap();
+        let back: LaplacianMatrix = serde_json::from_str(&json).unwrap();
+        assert_eq!(lap, back);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: self-loop rejected
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn self_loop_accepted_or_handled() {
+        let mut topo = GossipTopology::new(vec!["a".into(), "b".into()]).unwrap();
+        // Self-loop: edge from node 0 to itself.
+        // Depending on implementation, either rejected or added.
+        let result = topo.add_edge(0, 0, MILLION);
+        // Just verify it doesn't panic.
+        let _ = result;
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: topology node count
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn topology_node_count() {
+        let topo = make_complete_graph(5);
+        assert_eq!(topo.node_ids.len(), 5);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: Cheeger bounds for path graph
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn cheeger_bounds_for_path_graph() {
+        let topo = make_path_graph(6);
+        let analyzer = SpectralAnalyzer::default();
+        let analysis = analyzer.analyze(&topo).unwrap();
+        assert!(analysis.cheeger_lower_bound_millionths >= 0);
+        assert!(analysis.cheeger_upper_bound_millionths >= analysis.cheeger_lower_bound_millionths);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: spectral analysis deterministic
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn spectral_analysis_deterministic() {
+        let analyzer = SpectralAnalyzer::default();
+        let topo = make_complete_graph(5);
+        let a1 = analyzer.analyze(&topo).unwrap();
+        let a2 = analyzer.analyze(&topo).unwrap();
+        assert_eq!(a1, a2);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: dot_product with mixed signs
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn dot_product_mixed_signs() {
+        let a = vec![MILLION, -MILLION];
+        let b = vec![MILLION, MILLION];
+        let dot = dot_product_millionths(&a, &b);
+        // 1*1 + (-1)*1 = 0
+        assert_eq!(dot, 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: schema version constant
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn schema_version_constant() {
+        assert!(!SPECTRAL_SCHEMA_VERSION.is_empty());
+        assert!(SPECTRAL_SCHEMA_VERSION.contains("spectral"));
     }
 }

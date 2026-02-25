@@ -1193,4 +1193,183 @@ mod tests {
         let r2 = run();
         assert_eq!(r1.report_hash, r2.report_hash);
     }
+
+    // -- Enrichment: GateStatus display all variants unique --
+
+    #[test]
+    fn gate_status_display_all_unique() {
+        let displays: std::collections::BTreeSet<String> = vec![
+            GateStatus::Pending,
+            GateStatus::Passed,
+            GateStatus::Failed {
+                reasons: vec!["r1".to_string()],
+            },
+            GateStatus::Skipped {
+                reason: "n/a".to_string(),
+            },
+        ]
+        .into_iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert_eq!(
+            displays.len(),
+            4,
+            "all 4 GateStatus variants have distinct Display"
+        );
+    }
+
+    // -- Enrichment: GateThresholds default values --
+
+    #[test]
+    fn gate_thresholds_default_values() {
+        let t = GateThresholds::default();
+        assert_eq!(t.interleaving_coverage_pct, 95);
+        assert_eq!(t.min_conformance_vectors, 500);
+        assert_eq!(t.min_fuzz_cpu_hours, 24);
+    }
+
+    // -- Enrichment: report() returns None for unevaluated --
+
+    #[test]
+    fn report_returns_none_for_unevaluated() {
+        let eval = default_evaluator();
+        assert!(eval.report(GateId::DeterministicReplay).is_none());
+        assert!(eval.report(GateId::FuzzAdversarial).is_none());
+    }
+
+    // -- Enrichment: empty evaluator summary is empty --
+
+    #[test]
+    fn empty_evaluator_summary() {
+        let eval = default_evaluator();
+        assert!(eval.summary().is_empty());
+        assert!(!eval.all_gates_passed());
+    }
+
+    // -- Enrichment: drain_events clears --
+
+    #[test]
+    fn drain_events_clears_buffer() {
+        let mut eval = default_evaluator();
+        eval.evaluate_replay(
+            &ReplayInput {
+                recorded_hash: ContentHash::compute(b"x"),
+                replayed_hash: ContentHash::compute(b"x"),
+                event_count: 1,
+            },
+            "ci",
+            "t",
+            0,
+        );
+        let events = eval.drain_events();
+        assert_eq!(events.len(), 1);
+        assert!(eval.drain_events().is_empty());
+    }
+
+    // -- Enrichment: re-evaluate same gate overwrites --
+
+    #[test]
+    fn re_evaluate_gate_overwrites_report() {
+        let mut eval = default_evaluator();
+        let r1 = eval.evaluate_replay(
+            &ReplayInput {
+                recorded_hash: ContentHash::compute(b"a"),
+                replayed_hash: ContentHash::compute(b"b"),
+                event_count: 1,
+            },
+            "ci-1",
+            "t1",
+            1000,
+        );
+        assert!(!r1.status.is_passed());
+
+        let r2 = eval.evaluate_replay(
+            &ReplayInput {
+                recorded_hash: ContentHash::compute(b"x"),
+                replayed_hash: ContentHash::compute(b"x"),
+                event_count: 1,
+            },
+            "ci-2",
+            "t2",
+            2000,
+        );
+        assert!(r2.status.is_passed());
+
+        // Latest report should be the overwrite
+        let stored = eval.report(GateId::DeterministicReplay).unwrap();
+        assert!(stored.status.is_passed());
+        assert_eq!(stored.ci_run_id, "ci-2");
+    }
+
+    // -- Enrichment: fuzz gate fails with unexpected_panics --
+
+    #[test]
+    fn fuzz_gate_fails_with_unexpected_panics() {
+        let mut eval = default_evaluator();
+        let report = eval.evaluate_fuzz(
+            &FuzzInput {
+                cpu_hours: 48,
+                crashes: 0,
+                unexpected_panics: 2,
+                bypasses: 0,
+                targets: vec![],
+            },
+            "ci-1",
+            "t1",
+            4000,
+        );
+        assert!(!report.status.is_passed());
+        if let GateStatus::Failed { reasons } = &report.status {
+            assert!(reasons[0].contains("2 unexpected panics"));
+        }
+    }
+
+    // -- Enrichment: gate_passed counter only increments on pass --
+
+    #[test]
+    fn gate_passed_counter_only_on_pass() {
+        let mut eval = default_evaluator();
+        eval.evaluate_replay(
+            &ReplayInput {
+                recorded_hash: ContentHash::compute(b"a"),
+                replayed_hash: ContentHash::compute(b"b"), // fail
+                event_count: 1,
+            },
+            "ci",
+            "t",
+            0,
+        );
+        assert_eq!(eval.event_counts().get("gate_evaluated"), Some(&1));
+        assert!(eval.event_counts().get("gate_passed").is_none());
+    }
+
+    // -- Enrichment: GateMetrics empty has no values --
+
+    #[test]
+    fn gate_metrics_empty_has_no_values() {
+        let m = GateMetrics::empty();
+        assert!(m.values.is_empty());
+        assert_eq!(m.get("anything"), None);
+    }
+
+    // -- Enrichment: report trace_id populated --
+
+    #[test]
+    fn report_trace_id_populated() {
+        let mut eval = default_evaluator();
+        let report = eval.evaluate_replay(
+            &ReplayInput {
+                recorded_hash: ContentHash::compute(b"x"),
+                replayed_hash: ContentHash::compute(b"x"),
+                event_count: 42,
+            },
+            "ci-run-1",
+            "trace-abc",
+            1000,
+        );
+        assert_eq!(report.trace_id, "trace-abc");
+        assert_eq!(report.ci_run_id, "ci-run-1");
+        assert_eq!(report.timestamp_ticks, 1000);
+        assert_eq!(report.epoch_id, 1);
+    }
 }

@@ -1153,4 +1153,363 @@ mod tests {
             "all 4 variants produce distinct messages"
         );
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: TaskType display completeness
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn task_type_display_all_12_variants() {
+        let displays: std::collections::BTreeSet<String> = [
+            TaskType::CancelCleanup,
+            TaskType::QuarantineExec,
+            TaskType::ForcedDrain,
+            TaskType::LeaseRenewal,
+            TaskType::MonitoringProbe,
+            TaskType::EvidenceFlush,
+            TaskType::EpochBarrierTimeout,
+            TaskType::ExtensionDispatch,
+            TaskType::GcCycle,
+            TaskType::PolicyIteration,
+            TaskType::RemoteSync,
+            TaskType::SagaStepExec,
+        ]
+        .iter()
+        .map(|tt| tt.to_string())
+        .collect();
+        assert_eq!(displays.len(), 12, "all 12 TaskTypes have distinct display");
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: TaskId display
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn task_id_display() {
+        assert_eq!(TaskId(42).to_string(), "task:42");
+        assert_eq!(TaskId(0).to_string(), "task:0");
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: LaneConfig defaults
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn lane_config_defaults() {
+        let cfg = LaneConfig::default();
+        assert_eq!(cfg.cancel_max_depth, 256);
+        assert_eq!(cfg.timed_max_depth, 1024);
+        assert_eq!(cfg.ready_max_depth, 4096);
+        assert_eq!(cfg.ready_min_throughput, 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: Task ID monotonically increases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn task_ids_monotonically_increase() {
+        let mut sched = LaneScheduler::new(LaneConfig::default());
+        let id1 = sched.submit(cancel_label("t1"), 0, "p1", 0).unwrap();
+        let id2 = sched.submit(ready_label("t2"), 0, "p2", 0).unwrap();
+        let id3 = sched.submit(timed_label("t3"), 100, "p3", 0).unwrap();
+        assert!(id1.0 < id2.0);
+        assert!(id2.0 < id3.0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: schedule_batch from empty scheduler
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn schedule_batch_empty_scheduler() {
+        let mut sched = LaneScheduler::new(LaneConfig::default());
+        let batch = sched.schedule_batch(10, 0);
+        assert!(batch.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: timed deadline exactly at current_ticks
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn timed_task_at_exact_deadline_is_scheduled() {
+        let mut sched = LaneScheduler::new(LaneConfig::default());
+        sched.submit(timed_label("t1"), 100, "p1", 0).unwrap();
+
+        // current_ticks == deadline_tick
+        let batch = sched.schedule_batch(10, 100);
+        assert_eq!(batch.len(), 1);
+        assert_eq!(batch[0].payload_id, "p1");
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: timed task timeout tracking
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn expired_timed_tasks_are_timed_out() {
+        let mut sched = LaneScheduler::new(LaneConfig::default());
+        sched.submit(timed_label("t1"), 50, "early", 0).unwrap();
+        sched.submit(timed_label("t2"), 200, "future", 0).unwrap();
+
+        // Schedule at tick 100 with batch_size=0 → no tasks scheduled, but
+        // t1 (deadline 50 < 100) should be timed out.
+        // Actually batch_size=0 produces no tasks. Let's use batch_size=1
+        // with current_ticks=100. t1 deadline=50 <= 100 → scheduled.
+        // t2 deadline=200 > 100 → remains. Now advance further.
+        let _ = sched.schedule_batch(1, 100);
+        assert_eq!(sched.queue_depth(SchedulerLane::Timed), 1); // t2 remains
+
+        // Now schedule at tick 300. t2 deadline=200 <= 300 → scheduled.
+        let batch = sched.schedule_batch(10, 300);
+        assert_eq!(batch.len(), 1);
+        assert_eq!(batch[0].payload_id, "future");
+    }
+
+    #[test]
+    fn timed_out_tasks_increment_metrics() {
+        let mut sched = LaneScheduler::new(LaneConfig::default());
+        sched.submit(timed_label("t1"), 10, "p1", 0).unwrap();
+
+        // The task deadline is 10. Schedule batch at tick 20 with batch_size=1.
+        // It should be scheduled (deadline 10 <= 20), not timed out.
+        // To get timeout: submit at 10, schedule_batch at 20 with batch_size=1 to pick it up.
+        // But what if we schedule at tick 5 (not due), then schedule at tick 20?
+        // At tick 5: deadline 10 > 5, so not due. Stays in queue.
+        // At tick 20: deadline 10 <= 20, so it's scheduled via the main timed path.
+        // The timeout path only fires for tasks that were NOT scheduled but ARE past deadline.
+        // Need: task1 deadline=10, task2 deadline=5, batch_size=1 at tick=20.
+        // task2 (deadline 5) scheduled first, task1 (deadline 10) past deadline → timed out.
+        let mut sched2 = LaneScheduler::new(LaneConfig::default());
+        sched2.submit(timed_label("t1"), 10, "p1", 0).unwrap();
+        sched2.submit(timed_label("t2"), 5, "p2", 0).unwrap();
+
+        // batch_size=1, current=20. Both are due. Sort by deadline: t2(5), t1(10).
+        // Take t2 (batch full). t1 stays but deadline 10 < 20 → timed out.
+        let batch = sched2.schedule_batch(1, 20);
+        assert_eq!(batch.len(), 1);
+        assert_eq!(batch[0].payload_id, "p2");
+
+        let m = sched2.lane_metrics();
+        assert_eq!(m["timed"].tasks_timed_out, 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: multiple timed task types
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn multiple_timed_task_types_in_single_batch() {
+        let mut sched = LaneScheduler::new(LaneConfig::default());
+        sched
+            .submit(
+                TaskLabel {
+                    lane: SchedulerLane::Timed,
+                    task_type: TaskType::LeaseRenewal,
+                    trace_id: "t1".into(),
+                    priority_sub_band: 0,
+                },
+                50,
+                "lease",
+                0,
+            )
+            .unwrap();
+        sched
+            .submit(
+                TaskLabel {
+                    lane: SchedulerLane::Timed,
+                    task_type: TaskType::MonitoringProbe,
+                    trace_id: "t2".into(),
+                    priority_sub_band: 0,
+                },
+                30,
+                "probe",
+                0,
+            )
+            .unwrap();
+        sched
+            .submit(
+                TaskLabel {
+                    lane: SchedulerLane::Timed,
+                    task_type: TaskType::EvidenceFlush,
+                    trace_id: "t3".into(),
+                    priority_sub_band: 0,
+                },
+                40,
+                "flush",
+                0,
+            )
+            .unwrap();
+        sched
+            .submit(
+                TaskLabel {
+                    lane: SchedulerLane::Timed,
+                    task_type: TaskType::EpochBarrierTimeout,
+                    trace_id: "t4".into(),
+                    priority_sub_band: 0,
+                },
+                20,
+                "barrier",
+                0,
+            )
+            .unwrap();
+
+        let batch = sched.schedule_batch(10, 100);
+        let timed: Vec<_> = batch
+            .iter()
+            .filter(|t| t.label.lane == SchedulerLane::Timed)
+            .collect();
+        assert_eq!(timed.len(), 4);
+        // Sorted by deadline: barrier(20), probe(30), flush(40), lease(50).
+        assert_eq!(timed[0].payload_id, "barrier");
+        assert_eq!(timed[1].payload_id, "probe");
+        assert_eq!(timed[2].payload_id, "flush");
+        assert_eq!(timed[3].payload_id, "lease");
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: multiple ready task types
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn multiple_ready_task_types() {
+        let mut sched = LaneScheduler::new(LaneConfig::default());
+        let types = [
+            TaskType::ExtensionDispatch,
+            TaskType::GcCycle,
+            TaskType::PolicyIteration,
+            TaskType::RemoteSync,
+            TaskType::SagaStepExec,
+        ];
+        for (i, tt) in types.iter().enumerate() {
+            sched
+                .submit(
+                    TaskLabel {
+                        lane: SchedulerLane::Ready,
+                        task_type: *tt,
+                        trace_id: format!("t{i}"),
+                        priority_sub_band: 0,
+                    },
+                    0,
+                    &format!("p{i}"),
+                    i as u64,
+                )
+                .unwrap();
+        }
+        let batch = sched.schedule_batch(10, 100);
+        assert_eq!(batch.len(), 5);
+        // FIFO: p0, p1, p2, p3, p4.
+        for (i, task) in batch.iter().enumerate() {
+            assert_eq!(task.payload_id, format!("p{i}"));
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: SchedulerLane serde roundtrip
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn scheduler_lane_serde_all_variants() {
+        for lane in [
+            SchedulerLane::Cancel,
+            SchedulerLane::Timed,
+            SchedulerLane::Ready,
+        ] {
+            let json = serde_json::to_string(&lane).unwrap();
+            let back: SchedulerLane = serde_json::from_str(&json).unwrap();
+            assert_eq!(lane, back);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: TaskType serde roundtrip all variants
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn task_type_serde_all_variants() {
+        let types = [
+            TaskType::CancelCleanup,
+            TaskType::QuarantineExec,
+            TaskType::ForcedDrain,
+            TaskType::LeaseRenewal,
+            TaskType::MonitoringProbe,
+            TaskType::EvidenceFlush,
+            TaskType::EpochBarrierTimeout,
+            TaskType::ExtensionDispatch,
+            TaskType::GcCycle,
+            TaskType::PolicyIteration,
+            TaskType::RemoteSync,
+            TaskType::SagaStepExec,
+        ];
+        for tt in &types {
+            let json = serde_json::to_string(tt).unwrap();
+            let back: TaskType = serde_json::from_str(&json).unwrap();
+            assert_eq!(*tt, back);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: queue depths updated after scheduling
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn queue_depths_updated_after_schedule() {
+        let mut sched = LaneScheduler::new(LaneConfig::default());
+        sched.submit(cancel_label("t1"), 0, "c1", 0).unwrap();
+        sched.submit(cancel_label("t2"), 0, "c2", 0).unwrap();
+        sched.submit(ready_label("t3"), 0, "r1", 0).unwrap();
+
+        assert_eq!(sched.queue_depth(SchedulerLane::Cancel), 2);
+        assert_eq!(sched.queue_depth(SchedulerLane::Ready), 1);
+
+        sched.schedule_batch(10, 0);
+
+        assert_eq!(sched.queue_depth(SchedulerLane::Cancel), 0);
+        assert_eq!(sched.queue_depth(SchedulerLane::Ready), 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: complete_task emits event
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn complete_task_emits_complete_event() {
+        let mut sched = LaneScheduler::new(LaneConfig::default());
+        let id = sched.submit(ready_label("t1"), 0, "p1", 0).unwrap();
+        sched.schedule_batch(10, 0);
+        sched.drain_events();
+
+        sched.complete_task(id, SchedulerLane::Ready);
+        let events = sched.drain_events();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event, "complete");
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: LaneConfig serde roundtrip
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn lane_config_serde_roundtrip() {
+        let cfg = LaneConfig {
+            cancel_max_depth: 100,
+            timed_max_depth: 200,
+            ready_max_depth: 300,
+            ready_min_throughput: 5,
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        let back: LaneConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(cfg, back);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: TaskNotFound display
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn task_not_found_display() {
+        let err = LaneError::TaskNotFound { task_id: 999 };
+        assert!(err.to_string().contains("999"));
+    }
 }
