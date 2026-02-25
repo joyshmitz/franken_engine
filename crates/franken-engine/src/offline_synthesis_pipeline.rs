@@ -176,14 +176,22 @@ pub struct DecisionEntry {
     pub pre_guardrail_action: String,
 }
 
+/// A (state, entry) pair in a decision table.
+/// Uses Vec instead of BTreeMap because ObservableState cannot be a JSON map key.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DecisionTableRow {
+    pub state: ObservableState,
+    pub entry: DecisionEntry,
+}
+
 /// A pre-computed decision table mapping observable states to actions.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DecisionTable {
     pub table_id: String,
     /// Variable names that form the key.
     pub key_variables: Vec<String>,
-    /// State → decision entry.
-    pub entries: BTreeMap<ObservableState, DecisionEntry>,
+    /// Rows sorted by state for deterministic lookup.
+    pub rows: Vec<DecisionTableRow>,
     /// Safe default action when no entry matches.
     pub safe_default: String,
     /// Content hash of the table (for linking).
@@ -191,17 +199,18 @@ pub struct DecisionTable {
 }
 
 impl DecisionTable {
-    /// Look up the optimal action for a given state.
+    /// Look up the optimal action for a given state (linear scan).
     pub fn lookup(&self, state: &ObservableState) -> &str {
-        self.entries
-            .get(state)
-            .map(|e| e.action.as_str())
+        self.rows
+            .iter()
+            .find(|r| r.state == *state)
+            .map(|r| r.entry.action.as_str())
             .unwrap_or(&self.safe_default)
     }
 
     /// Number of entries.
     pub fn entry_count(&self) -> usize {
-        self.entries.len()
+        self.rows.len()
     }
 }
 
@@ -265,10 +274,8 @@ impl TransitionAutomaton {
                     .get(&g.variable)
                     .is_some_and(|v| eval_cmp(*v, g.op, g.threshold_millionths))
             });
-            if all_guards_pass {
-                if best.is_none() || t.priority > best.unwrap().priority {
-                    best = Some(t);
-                }
+            if all_guards_pass && best.is_none_or(|current| t.priority > current.priority) {
+                best = Some(t);
             }
         }
         match best {
@@ -614,19 +621,19 @@ impl OfflineSynthesisPipeline {
             // Single-variable constraints directly tighten bounds
             if c.terms.len() == 1 {
                 let term = &c.terms[0];
-                if term.coeff_millionths == 1_000_000 {
-                    if let Some(bounds) = variable_bounds.get_mut(&term.var) {
-                        match c.op {
-                            CmpOp::Le => bounds.1 = bounds.1.min(c.rhs_millionths),
-                            CmpOp::Lt => bounds.1 = bounds.1.min(c.rhs_millionths - 1),
-                            CmpOp::Ge => bounds.0 = bounds.0.max(c.rhs_millionths),
-                            CmpOp::Gt => bounds.0 = bounds.0.max(c.rhs_millionths + 1),
-                            CmpOp::Eq => {
-                                bounds.0 = bounds.0.max(c.rhs_millionths);
-                                bounds.1 = bounds.1.min(c.rhs_millionths);
-                            }
-                            CmpOp::Ne => {} // Cannot tighten bounds with !=
+                if term.coeff_millionths == 1_000_000
+                    && let Some(bounds) = variable_bounds.get_mut(&term.var)
+                {
+                    match c.op {
+                        CmpOp::Le => bounds.1 = bounds.1.min(c.rhs_millionths),
+                        CmpOp::Lt => bounds.1 = bounds.1.min(c.rhs_millionths - 1),
+                        CmpOp::Ge => bounds.0 = bounds.0.max(c.rhs_millionths),
+                        CmpOp::Gt => bounds.0 = bounds.0.max(c.rhs_millionths + 1),
+                        CmpOp::Eq => {
+                            bounds.0 = bounds.0.max(c.rhs_millionths);
+                            bounds.1 = bounds.1.min(c.rhs_millionths);
                         }
+                        CmpOp::Ne => {} // Cannot tighten bounds with !=
                     }
                 }
             }
@@ -724,7 +731,7 @@ impl OfflineSynthesisPipeline {
 
         // Generate a decision table for each objective
         for obj in &spec.objectives {
-            let mut entries = BTreeMap::new();
+            let mut rows = Vec::new();
 
             // Discretize variable bounds into grid points
             let grid = self.discretize_grid(&solved.variable_bounds, &obj.terms);
@@ -763,22 +770,25 @@ impl OfflineSynthesisPipeline {
                     format!("opt_{}", obj.id)
                 };
 
-                entries.insert(
-                    state.clone(),
-                    DecisionEntry {
+                rows.push(DecisionTableRow {
+                    state: state.clone(),
+                    entry: DecisionEntry {
                         action: action.clone(),
                         expected_loss_millionths: obj_val,
                         guardrail_blocked,
                         pre_guardrail_action: format!("opt_{}", obj.id),
                     },
-                );
+                });
             }
+
+            // Sort for deterministic ordering
+            rows.sort_by(|a, b| a.state.cmp(&b.state));
 
             let table_hash = deterministic_hash(&format!("table_{}_{}", spec.spec_id, obj.id));
             decision_tables.push(DecisionTable {
                 table_id: format!("dt_{}_{}", spec.spec_id, obj.id),
                 key_variables: obj.terms.iter().map(|t| t.var.clone()).collect(),
-                entries,
+                rows,
                 safe_default: self.safe_default_action.clone(),
                 content_hash: table_hash,
             });
@@ -1044,7 +1054,7 @@ impl OfflineSynthesisPipeline {
                 },
                 EvidenceItem {
                     category: EvidenceCategory::MonotonicityCheck,
-                    description: "Table entries use deterministic BTreeMap ordering".into(),
+                    description: "Table rows use deterministic sorted ordering".into(),
                     confidence_millionths: 1_000_000,
                     artifact_hash: table.content_hash.clone(),
                 },
@@ -1853,15 +1863,67 @@ mod tests {
     #[test]
     fn test_guardrail_blocking_in_table() {
         let p = pipeline();
-        let output = p.synthesize(&simple_spec()).unwrap();
+        // Use a multi-variable constraint that can't be tightened by interval propagation
+        let spec = SynthesisSpec {
+            spec_id: "guardrail_test".into(),
+            variables: vec![
+                SpecVar {
+                    name: "x".into(),
+                    domain: VarDomain::BoundedInt {
+                        lo: 0,
+                        hi: 1_000_000,
+                    },
+                },
+                SpecVar {
+                    name: "y".into(),
+                    domain: VarDomain::BoundedInt {
+                        lo: 0,
+                        hi: 1_000_000,
+                    },
+                },
+            ],
+            constraints: vec![LinearConstraint {
+                id: "sum_cap".into(),
+                terms: vec![
+                    LinearTerm {
+                        var: "x".into(),
+                        coeff_millionths: 1_000_000,
+                    },
+                    LinearTerm {
+                        var: "y".into(),
+                        coeff_millionths: 1_000_000,
+                    },
+                ],
+                op: CmpOp::Le,
+                rhs_millionths: 1_000_000,
+                label: "x + y <= 1.0".into(),
+            }],
+            objectives: vec![OptimizationObjective {
+                id: "obj".into(),
+                direction: OptDirection::Minimize,
+                terms: vec![
+                    LinearTerm {
+                        var: "x".into(),
+                        coeff_millionths: 1_000_000,
+                    },
+                    LinearTerm {
+                        var: "y".into(),
+                        coeff_millionths: 1_000_000,
+                    },
+                ],
+                bound_millionths: None,
+            }],
+            safety_specs: Vec::new(),
+            epoch: 1,
+        };
+        let output = p.synthesize(&spec).unwrap();
         let table = &output.decision_tables[0];
-        // Find entries where guardrail_blocked is true (risk > 800_000)
+        // Multi-var constraint: x+y <= 1_000_000. Grid has points where x+y > 1_000_000.
         let blocked_count = table
-            .entries
-            .values()
-            .filter(|e| e.guardrail_blocked)
+            .rows
+            .iter()
+            .filter(|r| r.entry.guardrail_blocked)
             .count();
-        // Some entries should have risk > 800_000 and be blocked
         assert!(blocked_count > 0);
     }
 
@@ -2045,11 +2107,11 @@ mod tests {
         let p = pipeline();
         let output = p.synthesize(&simple_spec()).unwrap();
         let table = &output.decision_tables[0];
-        for entry in table.entries.values() {
-            if entry.guardrail_blocked {
-                assert_eq!(entry.action, "safe_fallback");
+        for row in &table.rows {
+            if row.entry.guardrail_blocked {
+                assert_eq!(row.entry.action, "safe_fallback");
             }
-            assert!(!entry.pre_guardrail_action.is_empty());
+            assert!(!row.entry.pre_guardrail_action.is_empty());
         }
     }
 

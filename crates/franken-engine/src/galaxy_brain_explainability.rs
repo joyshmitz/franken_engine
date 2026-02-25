@@ -37,22 +37,19 @@ pub const SCHEMA_VERSION: &str = "franken-engine.galaxy-brain-explainability.v1"
 // ---------------------------------------------------------------------------
 
 /// Controls how much detail the explainability engine emits.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, Default,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum VerbosityLevel {
     /// Minimal: chosen action + one-line rationale.
     Minimal,
     /// Standard: chosen action, rejected alternatives, key metrics.
+    #[default]
     Standard,
     /// Full galaxy-brain: complete posterior, counterfactuals, constraint
     /// interaction analysis, and risk breakdowns.
     GalaxyBrain,
-}
-
-impl Default for VerbosityLevel {
-    fn default() -> Self {
-        Self::Standard
-    }
 }
 
 impl fmt::Display for VerbosityLevel {
@@ -667,24 +664,38 @@ pub fn generate_report(index: &ExplanationIndex, epoch: &SecurityEpoch) -> Expla
 // ---------------------------------------------------------------------------
 
 /// Build a lane-routing explanation.
-pub fn explain_lane_routing(
-    decision_id: String,
-    epoch: SecurityEpoch,
-    regime: RegimeLabel,
-    chosen_lane: LaneId,
-    chosen_loss: i64,
-    alternatives: Vec<ExplainedAlternative>,
-    equations: Vec<GoverningEquation>,
-    verbosity: VerbosityLevel,
-) -> Option<DecisionExplanation> {
+#[derive(Debug, Clone)]
+pub struct LaneRoutingExplanationInput {
+    pub decision_id: String,
+    pub epoch: SecurityEpoch,
+    pub regime: RegimeLabel,
+    pub chosen_lane: LaneId,
+    pub chosen_loss_millionths: i64,
+    pub alternatives: Vec<ExplainedAlternative>,
+    pub equations: Vec<GoverningEquation>,
+    pub verbosity: VerbosityLevel,
+}
+
+/// Build a lane-routing explanation.
+pub fn explain_lane_routing(input: LaneRoutingExplanationInput) -> Option<DecisionExplanation> {
+    let LaneRoutingExplanationInput {
+        decision_id,
+        epoch,
+        regime,
+        chosen_lane,
+        chosen_loss_millionths,
+        alternatives,
+        equations,
+        verbosity,
+    } = input;
     let rationale = format!(
         "Routed to lane {} under {} regime; expected loss {}",
-        chosen_lane, regime, chosen_loss,
+        chosen_lane, regime, chosen_loss_millionths,
     );
     ExplanationBuilder::new(decision_id, epoch, DecisionDomain::LaneRouting)
         .verbosity(verbosity)
         .regime(regime)
-        .chosen(LaneAction::RouteTo(chosen_lane), chosen_loss)
+        .chosen(LaneAction::RouteTo(chosen_lane), chosen_loss_millionths)
         .rationale(rationale)
         .alternatives(alternatives)
         .equations(equations)
@@ -692,16 +703,30 @@ pub fn explain_lane_routing(
 }
 
 /// Build a fallback/demotion explanation.
-pub fn explain_fallback(
-    decision_id: String,
-    epoch: SecurityEpoch,
-    regime: RegimeLabel,
-    from_lane: LaneId,
-    reason: DemotionReason,
-    equations: Vec<GoverningEquation>,
-    constraints: Vec<ConstraintInteraction>,
-    verbosity: VerbosityLevel,
-) -> Option<DecisionExplanation> {
+#[derive(Debug, Clone)]
+pub struct FallbackExplanationInput {
+    pub decision_id: String,
+    pub epoch: SecurityEpoch,
+    pub regime: RegimeLabel,
+    pub from_lane: LaneId,
+    pub reason: DemotionReason,
+    pub equations: Vec<GoverningEquation>,
+    pub constraints: Vec<ConstraintInteraction>,
+    pub verbosity: VerbosityLevel,
+}
+
+/// Build a fallback/demotion explanation.
+pub fn explain_fallback(input: FallbackExplanationInput) -> Option<DecisionExplanation> {
+    let FallbackExplanationInput {
+        decision_id,
+        epoch,
+        regime,
+        from_lane,
+        reason,
+        equations,
+        constraints,
+        verbosity,
+    } = input;
     let rationale = format!(
         "Demoted from lane {} due to {reason:?}; switching to safe mode",
         from_lane,
@@ -1417,21 +1442,21 @@ mod tests {
 
     #[test]
     fn explain_lane_routing_builds() {
-        let expl = explain_lane_routing(
-            "d-200".to_string(),
-            test_epoch(),
-            RegimeLabel::Normal,
-            test_lane("js"),
-            100_000,
-            vec![ExplainedAlternative {
+        let expl = explain_lane_routing(LaneRoutingExplanationInput {
+            decision_id: "d-200".to_string(),
+            epoch: test_epoch(),
+            regime: RegimeLabel::Normal,
+            chosen_lane: test_lane("js"),
+            chosen_loss_millionths: 100_000,
+            alternatives: vec![ExplainedAlternative {
                 action: LaneAction::RouteTo(test_lane("wasm")),
                 expected_loss_millionths: 500_000,
                 rejection_reason: RejectionReason::HigherLoss,
                 detail: "5x more expensive".to_string(),
             }],
-            vec![],
-            VerbosityLevel::Standard,
-        )
+            equations: vec![],
+            verbosity: VerbosityLevel::Standard,
+        })
         .unwrap();
 
         assert_eq!(expl.domain, DecisionDomain::LaneRouting);
@@ -1441,13 +1466,13 @@ mod tests {
 
     #[test]
     fn explain_fallback_builds() {
-        let expl = explain_fallback(
-            "d-201".to_string(),
-            test_epoch(),
-            RegimeLabel::Degraded,
-            test_lane("wasm"),
-            DemotionReason::CvarExceeded,
-            vec![GoverningEquation {
+        let expl = explain_fallback(FallbackExplanationInput {
+            decision_id: "d-201".to_string(),
+            epoch: test_epoch(),
+            regime: RegimeLabel::Degraded,
+            from_lane: test_lane("wasm"),
+            reason: DemotionReason::CvarExceeded,
+            equations: vec![GoverningEquation {
                 name: "CVaR".to_string(),
                 formula: "CVaR > threshold".to_string(),
                 parameters: BTreeMap::from([("cvar".to_string(), 800_000)]),
@@ -1455,14 +1480,14 @@ mod tests {
                 threshold_millionths: Some(500_000),
                 threshold_exceeded: true,
             }],
-            vec![ConstraintInteraction {
+            constraints: vec![ConstraintInteraction {
                 constraint_id: "cvar-limit".to_string(),
                 description: "CVaR must not exceed 0.5".to_string(),
                 binding: true,
                 slack_millionths: 0,
             }],
-            VerbosityLevel::GalaxyBrain,
-        )
+            verbosity: VerbosityLevel::GalaxyBrain,
+        })
         .unwrap();
 
         assert_eq!(expl.domain, DecisionDomain::Fallback);
