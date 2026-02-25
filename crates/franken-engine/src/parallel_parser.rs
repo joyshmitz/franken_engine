@@ -8,7 +8,7 @@
 //!
 //! ## Architecture
 //!
-//! 1. **Partition**: input split at deterministic newline-aligned boundaries.
+//! 1. **Partition**: input split at deterministic depth-aware boundaries.
 //! 2. **Parallel lex**: each chunk lexed independently (simulated, no threads).
 //! 3. **Merge**: chunk results merged by start offset with boundary token repair.
 //! 4. **Parity check**: merged output compared against serial reference.
@@ -124,6 +124,8 @@ pub enum SerialReason {
     InputBelowThreshold { input_bytes: u64, threshold: u64 },
     /// Worker count configured to 1 or less.
     SingleWorker,
+    /// No safe deterministic split points were found.
+    NoDeterministicSplitPoints,
     /// Budget exhausted during parallel execution.
     BudgetExhausted { budget_us: u64 },
     /// Parity mismatch detected; fell back to serial.
@@ -140,6 +142,7 @@ impl fmt::Display for SerialReason {
                 threshold,
             } => write!(f, "input {input_bytes}B below threshold {threshold}B"),
             Self::SingleWorker => write!(f, "single worker configured"),
+            Self::NoDeterministicSplitPoints => write!(f, "no deterministic split points"),
             Self::BudgetExhausted { budget_us } => {
                 write!(f, "budget exhausted ({budget_us}us)")
             }
@@ -169,7 +172,209 @@ pub struct ChunkPlan {
     pub worker_count: u32,
 }
 
-/// Compute deterministic chunk boundaries aligned to newline positions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BoundaryKind {
+    Newline,
+    StatementTerminator,
+    BlockBoundary,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PartitionBoundary {
+    end: u64,
+    depth: u32,
+    kind: BoundaryKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PartitionScanState {
+    paren_depth: u32,
+    brace_depth: u32,
+    bracket_depth: u32,
+    in_single_quote: bool,
+    in_double_quote: bool,
+    in_template_quote: bool,
+    in_line_comment: bool,
+    in_block_comment: bool,
+    escape_next: bool,
+}
+
+impl PartitionScanState {
+    #[must_use]
+    const fn current_depth(self) -> u32 {
+        self.paren_depth + self.brace_depth + self.bracket_depth
+    }
+}
+
+fn collect_partition_boundaries(input: &[u8]) -> Vec<PartitionBoundary> {
+    let mut state = PartitionScanState {
+        paren_depth: 0,
+        brace_depth: 0,
+        bracket_depth: 0,
+        in_single_quote: false,
+        in_double_quote: false,
+        in_template_quote: false,
+        in_line_comment: false,
+        in_block_comment: false,
+        escape_next: false,
+    };
+    let mut boundaries = Vec::new();
+    let mut idx = 0usize;
+
+    while idx < input.len() {
+        let byte = input[idx];
+        let next = input.get(idx + 1).copied();
+
+        if state.in_line_comment {
+            if byte == b'\n' {
+                state.in_line_comment = false;
+                boundaries.push(PartitionBoundary {
+                    end: (idx + 1) as u64,
+                    depth: state.current_depth(),
+                    kind: BoundaryKind::Newline,
+                });
+            }
+            idx += 1;
+            continue;
+        }
+
+        if state.in_block_comment {
+            if byte == b'*' && next == Some(b'/') {
+                state.in_block_comment = false;
+                idx += 2;
+                continue;
+            }
+            idx += 1;
+            continue;
+        }
+
+        if state.in_single_quote {
+            if state.escape_next {
+                state.escape_next = false;
+            } else if byte == b'\\' {
+                state.escape_next = true;
+            } else if byte == b'\'' {
+                state.in_single_quote = false;
+            }
+            idx += 1;
+            continue;
+        }
+
+        if state.in_double_quote {
+            if state.escape_next {
+                state.escape_next = false;
+            } else if byte == b'\\' {
+                state.escape_next = true;
+            } else if byte == b'"' {
+                state.in_double_quote = false;
+            }
+            idx += 1;
+            continue;
+        }
+
+        if state.in_template_quote {
+            if state.escape_next {
+                state.escape_next = false;
+            } else if byte == b'\\' {
+                state.escape_next = true;
+            } else if byte == b'`' {
+                state.in_template_quote = false;
+            }
+            idx += 1;
+            continue;
+        }
+
+        if byte == b'/' && next == Some(b'/') {
+            state.in_line_comment = true;
+            idx += 2;
+            continue;
+        }
+        if byte == b'/' && next == Some(b'*') {
+            state.in_block_comment = true;
+            idx += 2;
+            continue;
+        }
+        if byte == b'\'' {
+            state.in_single_quote = true;
+            idx += 1;
+            continue;
+        }
+        if byte == b'"' {
+            state.in_double_quote = true;
+            idx += 1;
+            continue;
+        }
+        if byte == b'`' {
+            state.in_template_quote = true;
+            idx += 1;
+            continue;
+        }
+
+        match byte {
+            b'(' => state.paren_depth = state.paren_depth.saturating_add(1),
+            b')' => state.paren_depth = state.paren_depth.saturating_sub(1),
+            b'{' => state.brace_depth = state.brace_depth.saturating_add(1),
+            b'}' => state.brace_depth = state.brace_depth.saturating_sub(1),
+            b'[' => state.bracket_depth = state.bracket_depth.saturating_add(1),
+            b']' => state.bracket_depth = state.bracket_depth.saturating_sub(1),
+            _ => {}
+        }
+
+        let maybe_kind = match byte {
+            b'\n' => Some(BoundaryKind::Newline),
+            b';' => Some(BoundaryKind::StatementTerminator),
+            b'}' => Some(BoundaryKind::BlockBoundary),
+            _ => None,
+        };
+        if let Some(kind) = maybe_kind {
+            boundaries.push(PartitionBoundary {
+                end: (idx + 1) as u64,
+                depth: state.current_depth(),
+                kind,
+            });
+        }
+
+        idx += 1;
+    }
+
+    boundaries.sort_by_key(|boundary| boundary.end);
+    boundaries.dedup_by_key(|boundary| boundary.end);
+    boundaries
+}
+
+fn select_partition_end(
+    boundaries: &[PartitionBoundary],
+    start: u64,
+    ideal: u64,
+    max_end: u64,
+) -> Option<u64> {
+    boundaries
+        .iter()
+        .filter(|boundary| boundary.end > start && boundary.end <= max_end)
+        .min_by_key(|boundary| {
+            let after_penalty = if boundary.end >= ideal { 0u8 } else { 1u8 };
+            let distance = boundary.end.abs_diff(ideal);
+            let kind_bias = match boundary.kind {
+                BoundaryKind::BlockBoundary => 0u8,
+                BoundaryKind::StatementTerminator => 1u8,
+                BoundaryKind::Newline => 2u8,
+            };
+            (
+                boundary.depth,
+                after_penalty,
+                distance,
+                kind_bias,
+                boundary.end,
+            )
+        })
+        .map(|boundary| boundary.end)
+}
+
+fn has_deterministic_split_points(input: &[u8]) -> bool {
+    !collect_partition_boundaries(input).is_empty()
+}
+
+/// Compute deterministic chunk boundaries using depth-aware split points.
 pub fn compute_chunk_plan(input: &[u8], max_workers: u32) -> ChunkPlan {
     let len = input.len() as u64;
     if len == 0 || max_workers <= 1 {
@@ -183,30 +388,38 @@ pub fn compute_chunk_plan(input: &[u8], max_workers: u32) -> ChunkPlan {
     }
 
     let worker_count = max_workers.min(len as u32);
-    let chunk_size = len / worker_count as u64;
+    let boundaries = collect_partition_boundaries(input);
+    if boundaries.is_empty() {
+        let chunks = vec![(0, len)];
+        let plan_hash = compute_plan_hash(&chunks);
+        return ChunkPlan {
+            chunks,
+            plan_hash,
+            worker_count: 1,
+        };
+    }
+
     let mut chunks = Vec::new();
     let mut start = 0u64;
 
     for i in 0..worker_count {
+        let remaining_chunks = (worker_count - i) as u64;
+        if remaining_chunks == 0 {
+            break;
+        }
+
         if i == worker_count - 1 {
             // Last chunk takes the remainder.
             if start < len {
                 chunks.push((start, len));
             }
         } else {
-            let mut end = start + chunk_size;
-            // Align to next newline to avoid splitting tokens.
-            while end < len && input[end as usize] != b'\n' {
-                end += 1;
-            }
-            // Include the newline itself in this chunk.
-            if end < len {
-                end += 1;
-            }
-            if start < end {
-                chunks.push((start, end));
-                start = end;
-            }
+            let ideal = start + ((len - start) / remaining_chunks);
+            let max_end = len.saturating_sub(remaining_chunks - 1);
+            let selected = select_partition_end(&boundaries, start, ideal, max_end).unwrap_or(max_end);
+            let end = selected.max(start + 1).min(max_end);
+            chunks.push((start, end));
+            start = end;
         }
     }
 
@@ -478,7 +691,7 @@ pub struct RoutingDigest {
     pub decision: ParserMode,
     /// Human-readable rationale.
     pub rationale: String,
-    /// Whether the input contains newlines suitable for partitioning.
+    /// Whether the input contains deterministic safe split points.
     pub has_partition_points: bool,
     /// Estimated overhead ratio (millionths, 1_000_000 = 100%).
     pub estimated_overhead_millionths: u64,
@@ -825,11 +1038,16 @@ pub fn parse(input: &ParseInput<'_>) -> Result<ParseOutput, ParseError> {
     }
 
     // Routing decision.
-    let should_parallel = bytes.len() as u64 >= config.min_parallel_bytes && config.max_workers > 1;
+    let has_split_points = has_deterministic_split_points(bytes);
+    let should_parallel = bytes.len() as u64 >= config.min_parallel_bytes
+        && config.max_workers > 1
+        && has_split_points;
 
     if !should_parallel {
         let reason = if config.max_workers <= 1 {
             SerialReason::SingleWorker
+        } else if !has_split_points {
+            SerialReason::NoDeterministicSplitPoints
         } else {
             SerialReason::InputBelowThreshold {
                 input_bytes: bytes.len() as u64,
@@ -1037,7 +1255,7 @@ fn check_parity(parallel: &[Token], serial: &[Token]) -> ParityResult {
 /// Compute a routing digest for the given input and configuration.
 pub fn compute_routing_digest(source: &str, config: &ParallelConfig) -> RoutingDigest {
     let input_bytes = source.len() as u64;
-    let has_partition_points = source.as_bytes().contains(&b'\n');
+    let has_partition_points = has_deterministic_split_points(source.as_bytes());
     let should_parallel =
         input_bytes >= config.min_parallel_bytes && config.max_workers > 1 && has_partition_points;
 
@@ -1061,7 +1279,7 @@ pub fn compute_routing_digest(source: &str, config: &ParallelConfig) -> RoutingD
             input_bytes, config.min_parallel_bytes
         )
     } else if !has_partition_points {
-        "no newlines for chunk partitioning".to_string()
+        "no deterministic split points".to_string()
     } else {
         format!("parallel with {} effective workers", effective_workers)
     };
@@ -1192,6 +1410,22 @@ mod tests {
     }
 
     #[test]
+    fn no_split_points_route_to_serial() {
+        let config = ParallelConfig {
+            min_parallel_bytes: 1,
+            max_workers: 8,
+            ..default_config()
+        };
+        let input = make_input("identifier_without_any_delimiters", &config);
+        let output = parse(&input).unwrap();
+        assert_eq!(output.mode, ParserMode::Serial);
+        assert!(matches!(
+            output.serial_reason,
+            Some(SerialReason::NoDeterministicSplitPoints)
+        ));
+    }
+
+    #[test]
     fn single_worker_routes_to_serial() {
         let config = ParallelConfig {
             max_workers: 1,
@@ -1275,9 +1509,37 @@ mod tests {
     fn chunk_plan_no_newlines() {
         let input = b"abcdefghij"; // no newlines
         let plan = compute_chunk_plan(input, 2);
-        // Should still partition (but boundary won't align to newline).
-        assert!(!plan.chunks.is_empty());
+        // No deterministic split points => single deterministic chunk.
+        assert_eq!(plan.chunks.len(), 1);
         assert_eq!(plan.chunks.last().unwrap().1, 10);
+    }
+
+    #[test]
+    fn chunk_plan_prefers_low_depth_boundaries() {
+        let source = b"function outer() {\n  if (x) {\n    return y;\n  }\n}\nconst z = 1;\nconst q = 2;\n";
+        let plan = compute_chunk_plan(source, 2);
+        assert_eq!(plan.chunks.len(), 2);
+
+        let split = plan.chunks[0].1 as usize;
+        let first_chunk = std::str::from_utf8(&source[..split]).unwrap();
+        assert!(
+            first_chunk.contains("}\n"),
+            "expected split to occur on/after a block boundary, got: {first_chunk:?}"
+        );
+    }
+
+    #[test]
+    fn chunk_plan_boundaries_are_safe_split_points() {
+        let source = b"const s = \"a;b;c\";\n// comment ;;;\nconst x = 1;\nconst y = 2;\n";
+        let plan = compute_chunk_plan(source, 3);
+        let boundaries = collect_partition_boundaries(source);
+        let boundary_set: BTreeSet<u64> = boundaries.iter().map(|boundary| boundary.end).collect();
+        for &(_, end) in plan.chunks.iter().take(plan.chunks.len().saturating_sub(1)) {
+            assert!(
+                boundary_set.contains(&end),
+                "chunk boundary {end} was not a validated safe split point"
+            );
+        }
     }
 
     // --- Merge tests ---
@@ -1703,7 +1965,7 @@ mod tests {
         let input2 = b"abcdefghij\nk\n";
         let p1 = compute_chunk_plan(input1, 2);
         let p2 = compute_chunk_plan(input2, 2);
-        // Different newline positions produce different chunk boundaries.
+        // Different split-point layouts produce different chunk boundaries.
         assert_ne!(p1.chunks, p2.chunks);
         assert_ne!(p1.plan_hash, p2.plan_hash);
     }
@@ -1884,7 +2146,7 @@ mod tests {
         let digest = compute_routing_digest("abcdefghijklmnop", &config);
         assert_eq!(digest.decision, ParserMode::Serial);
         assert!(!digest.has_partition_points);
-        assert!(digest.rationale.contains("no newlines"));
+        assert!(digest.rationale.contains("no deterministic split points"));
     }
 
     #[test]

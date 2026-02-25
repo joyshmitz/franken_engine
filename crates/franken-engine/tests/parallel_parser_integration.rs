@@ -192,6 +192,13 @@ fn serial_reason_single_worker() {
 }
 
 #[test]
+fn serial_reason_no_deterministic_split_points() {
+    let r = SerialReason::NoDeterministicSplitPoints;
+    assert_eq!(r.to_string(), "no deterministic split points");
+    serde_roundtrip(&r);
+}
+
+#[test]
 fn serial_reason_budget_exhausted() {
     let r = SerialReason::BudgetExhausted { budget_us: 50_000 };
     assert!(r.to_string().contains("50000us"));
@@ -280,8 +287,22 @@ fn chunk_plan_deterministic_same_input() {
 fn chunk_plan_no_newlines() {
     let input = b"abcdefghij";
     let plan = parallel_parser::compute_chunk_plan(input, 2);
-    assert!(!plan.chunks.is_empty());
+    assert_eq!(plan.chunks.len(), 1);
     assert_eq!(plan.chunks.last().unwrap().1, 10);
+}
+
+#[test]
+fn chunk_plan_prefers_low_depth_boundaries() {
+    let source = b"function outer() {\n  if (x) {\n    return y;\n  }\n}\nconst z = 1;\nconst q = 2;\n";
+    let plan = parallel_parser::compute_chunk_plan(source, 2);
+    assert_eq!(plan.chunks.len(), 2);
+
+    let split = plan.chunks[0].1 as usize;
+    let first_chunk = std::str::from_utf8(&source[..split]).unwrap();
+    assert!(
+        first_chunk.contains("}\n"),
+        "expected split on or after a low-depth block boundary, got: {first_chunk:?}"
+    );
 }
 
 #[test]
@@ -975,7 +996,7 @@ fn routing_digest_serial_no_newlines() {
     let d = parallel_parser::compute_routing_digest("abcdefghijklmnop", &config);
     assert_eq!(d.decision, ParserMode::Serial);
     assert!(!d.has_partition_points);
-    assert!(d.rationale.contains("no newlines"));
+    assert!(d.rationale.contains("no deterministic split points"));
 }
 
 #[test]
@@ -1381,6 +1402,22 @@ fn parse_single_worker_routes_serial() {
     assert!(matches!(
         output.serial_reason,
         Some(SerialReason::SingleWorker)
+    ));
+}
+
+#[test]
+fn parse_no_split_points_routes_serial() {
+    let config = ParallelConfig {
+        min_parallel_bytes: 1,
+        max_workers: 8,
+        ..default_config()
+    };
+    let input = make_input("identifier_without_any_delimiters", &config);
+    let output = parallel_parser::parse(&input).unwrap();
+    assert_eq!(output.mode, ParserMode::Serial);
+    assert!(matches!(
+        output.serial_reason,
+        Some(SerialReason::NoDeterministicSplitPoints)
     ));
 }
 
