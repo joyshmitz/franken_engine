@@ -410,6 +410,7 @@ fn witness_diff_serde_roundtrip() {
 fn compare_witnesses_identical() {
     let w = MergeWitness {
         merged_hash: ContentHash::compute(b"test"),
+        witness_hash: ContentHash::compute(b"witness"),
         chunk_count: 4,
         boundary_repairs: 0,
         total_tokens: 100,
@@ -423,12 +424,14 @@ fn compare_witnesses_identical() {
 fn compare_witnesses_hash_only_mismatch() {
     let w1 = MergeWitness {
         merged_hash: ContentHash::compute(b"a"),
+        witness_hash: ContentHash::compute(b"shared"),
         chunk_count: 3,
         boundary_repairs: 1,
         total_tokens: 50,
     };
     let w2 = MergeWitness {
         merged_hash: ContentHash::compute(b"b"),
+        witness_hash: ContentHash::compute(b"shared"),
         chunk_count: 3,
         boundary_repairs: 1,
         total_tokens: 50,
@@ -443,12 +446,14 @@ fn compare_witnesses_hash_only_mismatch() {
 fn compare_witnesses_chunk_count_mismatch() {
     let w1 = MergeWitness {
         merged_hash: ContentHash::compute(b"same"),
+        witness_hash: ContentHash::compute(b"shared"),
         chunk_count: 3,
         boundary_repairs: 0,
         total_tokens: 50,
     };
     let w2 = MergeWitness {
         merged_hash: ContentHash::compute(b"same"),
+        witness_hash: ContentHash::compute(b"shared"),
         chunk_count: 5,
         boundary_repairs: 0,
         total_tokens: 50,
@@ -462,12 +467,14 @@ fn compare_witnesses_chunk_count_mismatch() {
 fn compare_witnesses_boundary_repairs_mismatch() {
     let w1 = MergeWitness {
         merged_hash: ContentHash::compute(b"same"),
+        witness_hash: ContentHash::compute(b"shared"),
         chunk_count: 3,
         boundary_repairs: 0,
         total_tokens: 50,
     };
     let w2 = MergeWitness {
         merged_hash: ContentHash::compute(b"same"),
+        witness_hash: ContentHash::compute(b"shared"),
         chunk_count: 3,
         boundary_repairs: 2,
         total_tokens: 50,
@@ -481,12 +488,14 @@ fn compare_witnesses_boundary_repairs_mismatch() {
 fn compare_witnesses_total_tokens_mismatch() {
     let w1 = MergeWitness {
         merged_hash: ContentHash::compute(b"same"),
+        witness_hash: ContentHash::compute(b"shared"),
         chunk_count: 3,
         boundary_repairs: 0,
         total_tokens: 50,
     };
     let w2 = MergeWitness {
         merged_hash: ContentHash::compute(b"same"),
+        witness_hash: ContentHash::compute(b"shared"),
         chunk_count: 3,
         boundary_repairs: 0,
         total_tokens: 60,
@@ -500,19 +509,21 @@ fn compare_witnesses_total_tokens_mismatch() {
 fn compare_witnesses_all_fields_differ() {
     let w1 = MergeWitness {
         merged_hash: ContentHash::compute(b"a"),
+        witness_hash: ContentHash::compute(b"wa"),
         chunk_count: 1,
         boundary_repairs: 0,
         total_tokens: 10,
     };
     let w2 = MergeWitness {
         merged_hash: ContentHash::compute(b"b"),
+        witness_hash: ContentHash::compute(b"wb"),
         chunk_count: 2,
         boundary_repairs: 3,
         total_tokens: 40,
     };
     let diff = parallel_interference_gate::compare_witnesses(&w1, &w2);
     assert!(!diff.matches);
-    assert_eq!(diff.diffs.len(), 4);
+    assert_eq!(diff.diffs.len(), 5);
 }
 
 // ===========================================================================

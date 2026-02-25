@@ -475,6 +475,50 @@ fn merge_chunks_multiple_tokens_per_chunk() {
 }
 
 #[test]
+fn merge_chunks_independent_of_chunk_iteration_order() {
+    let c0 = ChunkResult {
+        chunk_index: 0,
+        chunk_start: 0,
+        chunk_end: 10,
+        tokens: vec![
+            Token {
+                kind: TokenKind::Identifier,
+                start: 0,
+                end: 1,
+            },
+            Token {
+                kind: TokenKind::Punctuation,
+                start: 1,
+                end: 2,
+            },
+        ],
+        token_count: 2,
+    };
+    let c1 = ChunkResult {
+        chunk_index: 1,
+        chunk_start: 10,
+        chunk_end: 20,
+        tokens: vec![
+            Token {
+                kind: TokenKind::Identifier,
+                start: 0,
+                end: 1,
+            },
+            Token {
+                kind: TokenKind::Punctuation,
+                start: 1,
+                end: 2,
+            },
+        ],
+        token_count: 2,
+    };
+
+    let ordered = parallel_parser::merge_chunks(&[c0.clone(), c1.clone()]);
+    let reversed = parallel_parser::merge_chunks(&[c1, c0]);
+    assert_eq!(ordered, reversed);
+}
+
+#[test]
 fn merge_chunks_empty_token_lists() {
     let c1 = ChunkResult {
         chunk_index: 0,
@@ -654,6 +698,7 @@ fn repair_alternating_kinds_no_merge() {
 fn merge_witness_serde_roundtrip() {
     let w = MergeWitness {
         merged_hash: ContentHash::compute(b"tokens"),
+        witness_hash: ContentHash::compute(b"merge-witness"),
         chunk_count: 3,
         boundary_repairs: 1,
         total_tokens: 42,
@@ -1675,6 +1720,7 @@ fn parse_parallel_merge_witness_present() {
         let mw = output.merge_witness.as_ref().unwrap();
         assert!(mw.chunk_count > 0);
         assert!(mw.total_tokens > 0);
+        assert_ne!(mw.witness_hash, ContentHash::compute(b""));
     }
 }
 

@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::hash_tiers::ContentHash;
 use crate::security_epoch::SecurityEpoch;
-use crate::simd_lexer::{self, LexerConfig, LexerMode, LexerOutput, Token};
+use crate::simd_lexer::{self, LexerConfig, LexerMode, LexerOutput, Token, TokenKind};
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -467,19 +467,87 @@ pub struct ChunkResult {
 /// Merge chunk results into a single ordered token stream.
 /// Adjusts token offsets to be absolute (relative to input start).
 pub fn merge_chunks(chunks: &[ChunkResult]) -> Vec<Token> {
-    let mut all_tokens = Vec::new();
+    #[derive(Debug, Clone)]
+    struct MergeEntry {
+        token: Token,
+        chunk_index: u32,
+        token_ordinal: u32,
+    }
+
+    let mut entries = Vec::new();
     for chunk in chunks {
-        for token in &chunk.tokens {
-            all_tokens.push(Token {
-                kind: token.kind,
-                start: token.start + chunk.chunk_start,
-                end: token.end + chunk.chunk_start,
+        for (token_ordinal, token) in chunk.tokens.iter().enumerate() {
+            entries.push(MergeEntry {
+                token: Token {
+                    kind: token.kind,
+                    start: token.start + chunk.chunk_start,
+                    end: token.end + chunk.chunk_start,
+                },
+                chunk_index: chunk.chunk_index,
+                token_ordinal: token_ordinal as u32,
             });
         }
     }
-    // Stable sort by start offset for deterministic ordering.
-    all_tokens.sort_by_key(|t| (t.start, t.end));
-    all_tokens
+
+    // Canonical source-order merge key: absolute span first, then chunk and local order.
+    entries.sort_by_key(|entry| {
+        (
+            entry.token.start,
+            entry.token.end,
+            entry.chunk_index,
+            entry.token_ordinal,
+        )
+    });
+    entries.into_iter().map(|entry| entry.token).collect()
+}
+
+#[must_use]
+fn token_kind_code(kind: TokenKind) -> u8 {
+    match kind {
+        TokenKind::Identifier => 0,
+        TokenKind::NumericLiteral => 1,
+        TokenKind::StringLiteral => 2,
+        TokenKind::UnterminatedString => 3,
+        TokenKind::TwoCharOperator => 4,
+        TokenKind::Punctuation => 5,
+    }
+}
+
+#[must_use]
+fn compute_chunk_hash(chunk: &ChunkResult) -> ContentHash {
+    let mut bytes = Vec::with_capacity(32 + chunk.tokens.len() * 24);
+    bytes.extend_from_slice(&chunk.chunk_index.to_le_bytes());
+    bytes.extend_from_slice(&chunk.chunk_start.to_le_bytes());
+    bytes.extend_from_slice(&chunk.chunk_end.to_le_bytes());
+    bytes.extend_from_slice(&chunk.token_count.to_le_bytes());
+    for token in &chunk.tokens {
+        bytes.push(token_kind_code(token.kind));
+        bytes.extend_from_slice(&token.start.to_le_bytes());
+        bytes.extend_from_slice(&token.end.to_le_bytes());
+    }
+    ContentHash::compute(&bytes)
+}
+
+#[must_use]
+fn compute_merge_witness_hash(
+    chunks: &[ChunkResult],
+    merged_hash: &ContentHash,
+    boundary_repairs: u64,
+    total_tokens: u64,
+) -> ContentHash {
+    let mut ordered_chunks: Vec<&ChunkResult> = chunks.iter().collect();
+    ordered_chunks.sort_by_key(|chunk| chunk.chunk_index);
+
+    let mut bytes = Vec::with_capacity(64 + ordered_chunks.len() * 40);
+    bytes.extend_from_slice(merged_hash.as_bytes());
+    bytes.extend_from_slice(&boundary_repairs.to_le_bytes());
+    bytes.extend_from_slice(&total_tokens.to_le_bytes());
+    bytes.extend_from_slice(&(ordered_chunks.len() as u32).to_le_bytes());
+    for chunk in ordered_chunks {
+        bytes.extend_from_slice(&chunk.chunk_index.to_le_bytes());
+        bytes.extend_from_slice(compute_chunk_hash(chunk).as_bytes());
+    }
+    ContentHash::compute(&bytes)
 }
 
 /// Repair boundary tokens where a multi-character token was split across chunks.
@@ -510,6 +578,8 @@ pub fn repair_boundary_tokens(tokens: &mut Vec<Token>) {
 pub struct MergeWitness {
     /// Hash of the merged token stream.
     pub merged_hash: ContentHash,
+    /// Hash of merge inputs + metadata for witness verification.
+    pub witness_hash: ContentHash,
     /// Number of chunks merged.
     pub chunk_count: u32,
     /// Number of boundary repairs performed.
@@ -1451,8 +1521,15 @@ pub fn parse(input: &ParseInput<'_>) -> Result<ParseOutput, ParseError> {
     }
 
     let merged_hash = compute_token_hash(&merged_tokens);
+    let witness_hash = compute_merge_witness_hash(
+        &chunk_results,
+        &merged_hash,
+        boundary_repairs,
+        merged_tokens.len() as u64,
+    );
     let merge_witness = MergeWitness {
         merged_hash: merged_hash.clone(),
+        witness_hash,
         chunk_count: chunk_plan.chunks.len() as u32,
         boundary_repairs,
         total_tokens: merged_tokens.len() as u64,
@@ -1936,6 +2013,50 @@ mod tests {
         assert_eq!(merged[1].start, 12); // from chunk2 (10 + 2)
     }
 
+    #[test]
+    fn merge_is_source_order_deterministic_across_chunk_iteration_order() {
+        let chunk0 = ChunkResult {
+            chunk_index: 0,
+            chunk_start: 0,
+            chunk_end: 10,
+            tokens: vec![
+                Token {
+                    kind: simd_lexer::TokenKind::Identifier,
+                    start: 0,
+                    end: 1,
+                },
+                Token {
+                    kind: simd_lexer::TokenKind::Punctuation,
+                    start: 1,
+                    end: 2,
+                },
+            ],
+            token_count: 2,
+        };
+        let chunk1 = ChunkResult {
+            chunk_index: 1,
+            chunk_start: 10,
+            chunk_end: 20,
+            tokens: vec![
+                Token {
+                    kind: simd_lexer::TokenKind::Identifier,
+                    start: 0,
+                    end: 1,
+                },
+                Token {
+                    kind: simd_lexer::TokenKind::Punctuation,
+                    start: 1,
+                    end: 2,
+                },
+            ],
+            token_count: 2,
+        };
+
+        let ordered = merge_chunks(&[chunk0.clone(), chunk1.clone()]);
+        let reversed = merge_chunks(&[chunk1, chunk0]);
+        assert_eq!(ordered, reversed);
+    }
+
     // --- Boundary repair tests ---
 
     #[test]
@@ -2250,6 +2371,7 @@ mod tests {
     fn merge_witness_serde_roundtrip() {
         let witness = MergeWitness {
             merged_hash: ContentHash::compute(b"test"),
+            witness_hash: ContentHash::compute(b"merge-witness-test"),
             chunk_count: 3,
             boundary_repairs: 1,
             total_tokens: 42,
@@ -2257,6 +2379,23 @@ mod tests {
         let json = serde_json::to_string(&witness).unwrap();
         let back: MergeWitness = serde_json::from_str(&json).unwrap();
         assert_eq!(witness, back);
+    }
+
+    #[test]
+    fn merge_witness_hash_deterministic_for_fixed_input() {
+        let mut source = String::new();
+        for i in 0..80 {
+            source.push_str(&format!("const x{i} = {i};\n"));
+        }
+        let config = small_config();
+        let input = make_input(&source, &config);
+        let o1 = parse(&input).unwrap();
+        let o2 = parse(&input).unwrap();
+
+        if let (Some(w1), Some(w2)) = (&o1.merge_witness, &o2.merge_witness) {
+            assert_eq!(w1.witness_hash, w2.witness_hash);
+            assert_eq!(w1.merged_hash, w2.merged_hash);
+        }
     }
 
     // --- Parity result tests ---

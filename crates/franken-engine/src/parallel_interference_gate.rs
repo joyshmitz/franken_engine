@@ -172,6 +172,13 @@ pub fn compare_witnesses(expected: &MergeWitness, actual: &MergeWitness) -> Witn
             actual: format!("{:?}", actual.merged_hash),
         });
     }
+    if expected.witness_hash != actual.witness_hash {
+        diffs.push(WitnessDiffEntry {
+            field: "witness_hash".to_string(),
+            expected: format!("{:?}", expected.witness_hash),
+            actual: format!("{:?}", actual.witness_hash),
+        });
+    }
     if expected.chunk_count != actual.chunk_count {
         diffs.push(WitnessDiffEntry {
             field: "chunk_count".to_string(),
@@ -885,6 +892,7 @@ mod tests {
     fn witness_diff_identical() {
         let witness = MergeWitness {
             merged_hash: ContentHash::compute(b"test"),
+            witness_hash: ContentHash::compute(b"witness"),
             chunk_count: 3,
             boundary_repairs: 1,
             total_tokens: 50,
@@ -898,12 +906,14 @@ mod tests {
     fn witness_diff_hash_mismatch() {
         let w1 = MergeWitness {
             merged_hash: ContentHash::compute(b"a"),
+            witness_hash: ContentHash::compute(b"shared"),
             chunk_count: 3,
             boundary_repairs: 1,
             total_tokens: 50,
         };
         let w2 = MergeWitness {
             merged_hash: ContentHash::compute(b"b"),
+            witness_hash: ContentHash::compute(b"shared"),
             chunk_count: 3,
             boundary_repairs: 1,
             total_tokens: 50,
@@ -918,12 +928,14 @@ mod tests {
     fn witness_diff_multiple_fields() {
         let w1 = MergeWitness {
             merged_hash: ContentHash::compute(b"a"),
+            witness_hash: ContentHash::compute(b"shared"),
             chunk_count: 3,
             boundary_repairs: 1,
             total_tokens: 50,
         };
         let w2 = MergeWitness {
             merged_hash: ContentHash::compute(b"b"),
+            witness_hash: ContentHash::compute(b"shared"),
             chunk_count: 4,
             boundary_repairs: 2,
             total_tokens: 60,
