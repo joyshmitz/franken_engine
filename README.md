@@ -496,6 +496,50 @@ Failover artifacts are written under:
 - `artifacts/parser_failover_controls/<timestamp>/events.jsonl`
 - `artifacts/parser_failover_controls/<timestamp>/commands.txt`
 
+## Parser API Compatibility Gate
+
+`bd-2mds.1.10.3` stabilizes public parser API contracts and integration
+ergonomics with deterministic compatibility vectors + migration policy checks.
+
+```bash
+# parser API compatibility gate (rch-backed check + compatibility vectors + clippy)
+./scripts/run_parser_api_compatibility_gate.sh ci
+```
+
+Contract and vectors:
+
+- [`docs/PARSER_API_COMPATIBILITY_CONTRACT.md`](./docs/PARSER_API_COMPATIBILITY_CONTRACT.md)
+- `crates/franken-engine/tests/fixtures/parser_api_compatibility_contract_v1.json`
+- `crates/franken-engine/tests/parser_api_compatibility_contract.rs`
+
+Artifacts are written under:
+
+- `artifacts/parser_api_compatibility/<timestamp>/run_manifest.json`
+- `artifacts/parser_api_compatibility/<timestamp>/events.jsonl`
+- `artifacts/parser_api_compatibility/<timestamp>/commands.txt`
+
+## Observability Information-Theoretic Gate
+
+`bd-mjh3.17` defines FRX-17 observability channel governance and compression
+contracts, including deterministic probe selection and fail-closed quality
+demotion semantics.
+
+```bash
+# FRX-17 observability gate (rch-backed check + integration tests + clippy)
+./scripts/run_observability_information_theoretic_gate.sh ci
+```
+
+Contract and integration surface:
+
+- [`docs/OBSERVABILITY_INFORMATION_THEORETIC_CHANNEL.md`](./docs/OBSERVABILITY_INFORMATION_THEORETIC_CHANNEL.md)
+- `crates/franken-engine/tests/observability_channel_model.rs`
+
+Artifacts are written under:
+
+- `artifacts/observability_information_theoretic/<timestamp>/run_manifest.json`
+- `artifacts/observability_information_theoretic/<timestamp>/events.jsonl`
+- `artifacts/observability_information_theoretic/<timestamp>/commands.txt`
+
 ## Phase-A Exit Gate
 
 `bd-1csl.1` adds a deterministic Phase-A gate runner that checks critical

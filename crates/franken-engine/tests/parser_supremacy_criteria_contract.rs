@@ -1,0 +1,448 @@
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
+use std::path::Path;
+
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Deserialize)]
+struct CriteriaChangelogEntry {
+    version: String,
+    rationale: String,
+    impact_assessment: String,
+    compatibility_notes: String,
+    changed_at_utc: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum RuleClass {
+    Correctness,
+    Determinism,
+    Performance,
+    Reproducibility,
+    VerificationRigor,
+    UserFacingQuality,
+}
+
+impl RuleClass {
+    fn parse(raw: &str) -> Self {
+        match raw {
+            "correctness" => Self::Correctness,
+            "determinism" => Self::Determinism,
+            "performance" => Self::Performance,
+            "reproducibility" => Self::Reproducibility,
+            "verification_rigor" => Self::VerificationRigor,
+            "user_facing_quality" => Self::UserFacingQuality,
+            other => panic!("unknown rule class: {other}"),
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Correctness => "correctness",
+            Self::Determinism => "determinism",
+            Self::Performance => "performance",
+            Self::Reproducibility => "reproducibility",
+            Self::VerificationRigor => "verification_rigor",
+            Self::UserFacingQuality => "user_facing_quality",
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct RuleDefinition {
+    rule_id: String,
+    rule_class: String,
+    description: String,
+    minimum_millionths: u32,
+    weight_millionths: u32,
+}
+
+#[derive(Debug, Deserialize)]
+struct GatingPolicy {
+    minimum_weighted_score_millionths: u32,
+    hard_fail_classes: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ArtifactBundle {
+    artifact_bundle_id: String,
+    git_sha: String,
+    metrics_millionths: BundleMetrics,
+    expected_verdict: String,
+    replay_command: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct BundleMetrics {
+    correctness: u32,
+    determinism: u32,
+    performance: u32,
+    reproducibility: u32,
+    verification_rigor: u32,
+    user_facing_quality: u32,
+}
+
+#[derive(Debug, Deserialize)]
+struct SupremacyCriteriaFixture {
+    schema_version: String,
+    criteria_version: String,
+    log_schema_version: String,
+    required_log_keys: Vec<String>,
+    criteria_changelog: Vec<CriteriaChangelogEntry>,
+    gating_policy: GatingPolicy,
+    rule_definitions: Vec<RuleDefinition>,
+    artifact_bundles: Vec<ArtifactBundle>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Verdict {
+    Pass,
+    Hold,
+    Fail,
+}
+
+impl Verdict {
+    fn from_raw(raw: &str) -> Self {
+        match raw {
+            "pass" => Self::Pass,
+            "hold" => Self::Hold,
+            "fail" => Self::Fail,
+            other => panic!("unknown verdict: {other}"),
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Pass => "pass",
+            Self::Hold => "hold",
+            Self::Fail => "fail",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EvaluationResult {
+    run_id: String,
+    artifact_bundle_id: String,
+    git_sha: String,
+    criteria_version: String,
+    weighted_score_millionths: u32,
+    verdict: Verdict,
+    replay_command: String,
+    rule_pass: BTreeMap<String, bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct GateEvent {
+    schema_version: String,
+    run_id: String,
+    criteria_version: String,
+    git_sha: String,
+    artifact_bundle_id: String,
+    verdict: String,
+    replay_command: String,
+    component: String,
+    event: String,
+    outcome: String,
+    error_code: Option<String>,
+}
+
+fn load_fixture() -> SupremacyCriteriaFixture {
+    let path = Path::new("tests/fixtures/parser_supremacy_criteria_contract_v1.json");
+    let bytes = fs::read(path).expect("read parser supremacy criteria fixture");
+    serde_json::from_slice(&bytes).expect("deserialize parser supremacy criteria fixture")
+}
+
+fn load_doc() -> String {
+    let path = Path::new("../../docs/PARSER_SUPREMACY_CRITERIA_CONTRACT.md");
+    fs::read_to_string(path).expect("read parser supremacy criteria doc")
+}
+
+fn metric_for_class(metrics: &BundleMetrics, class: RuleClass) -> u32 {
+    match class {
+        RuleClass::Correctness => metrics.correctness,
+        RuleClass::Determinism => metrics.determinism,
+        RuleClass::Performance => metrics.performance,
+        RuleClass::Reproducibility => metrics.reproducibility,
+        RuleClass::VerificationRigor => metrics.verification_rigor,
+        RuleClass::UserFacingQuality => metrics.user_facing_quality,
+    }
+}
+
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const PRIME: u64 = 0x0100_0000_01b3;
+
+    let mut hash = OFFSET;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(PRIME);
+    }
+    hash
+}
+
+fn deterministic_run_id(criteria_version: &str, bundle_id: &str, git_sha: &str) -> String {
+    let joined = format!("{criteria_version}|{bundle_id}|{git_sha}");
+    format!("supremacy-run-{:016x}", fnv1a64(joined.as_bytes()))
+}
+
+fn evaluate_bundle(
+    fixture: &SupremacyCriteriaFixture,
+    bundle: &ArtifactBundle,
+) -> EvaluationResult {
+    let hard_fail_classes: BTreeSet<RuleClass> = fixture
+        .gating_policy
+        .hard_fail_classes
+        .iter()
+        .map(|raw| RuleClass::parse(raw))
+        .collect();
+
+    let mut weighted_numerator = 0_u128;
+    let mut any_rule_failed = false;
+    let mut hard_fail_triggered = false;
+    let mut rule_pass = BTreeMap::new();
+
+    for rule in &fixture.rule_definitions {
+        let class = RuleClass::parse(rule.rule_class.as_str());
+        let metric_value = metric_for_class(&bundle.metrics_millionths, class);
+        let passed = metric_value >= rule.minimum_millionths;
+        rule_pass.insert(rule.rule_id.clone(), passed);
+
+        weighted_numerator = weighted_numerator
+            .saturating_add(u128::from(metric_value) * u128::from(rule.weight_millionths));
+
+        if !passed {
+            any_rule_failed = true;
+            if hard_fail_classes.contains(&class) {
+                hard_fail_triggered = true;
+            }
+        }
+    }
+
+    let weighted_score_millionths = (weighted_numerator / 1_000_000_u128) as u32;
+    let meets_weighted =
+        weighted_score_millionths >= fixture.gating_policy.minimum_weighted_score_millionths;
+
+    let verdict = if hard_fail_triggered {
+        Verdict::Fail
+    } else if any_rule_failed || !meets_weighted {
+        Verdict::Hold
+    } else {
+        Verdict::Pass
+    };
+
+    EvaluationResult {
+        run_id: deterministic_run_id(
+            fixture.criteria_version.as_str(),
+            bundle.artifact_bundle_id.as_str(),
+            bundle.git_sha.as_str(),
+        ),
+        artifact_bundle_id: bundle.artifact_bundle_id.clone(),
+        git_sha: bundle.git_sha.clone(),
+        criteria_version: fixture.criteria_version.clone(),
+        weighted_score_millionths,
+        verdict,
+        replay_command: bundle.replay_command.clone(),
+        rule_pass,
+    }
+}
+
+fn simulate_gate_events(fixture: &SupremacyCriteriaFixture) -> Vec<GateEvent> {
+    let mut events = Vec::new();
+    for bundle in &fixture.artifact_bundles {
+        let result = evaluate_bundle(fixture, bundle);
+        events.push(GateEvent {
+            schema_version: fixture.log_schema_version.clone(),
+            run_id: result.run_id,
+            criteria_version: result.criteria_version,
+            git_sha: result.git_sha,
+            artifact_bundle_id: result.artifact_bundle_id,
+            verdict: result.verdict.as_str().to_string(),
+            replay_command: result.replay_command,
+            component: "parser_supremacy_criteria_gate".to_string(),
+            event: "criteria_evaluated".to_string(),
+            outcome: result.verdict.as_str().to_string(),
+            error_code: if result.verdict == Verdict::Fail {
+                Some("FE-PARSER-SUPREMACY-CRITERIA-0001".to_string())
+            } else {
+                None
+            },
+        });
+    }
+    events
+}
+
+#[test]
+fn parser_supremacy_doc_has_required_sections() {
+    let doc = load_doc();
+    for section in [
+        "# Parser Supremacy Criteria Contract (`bd-2mds.1.8.1`)",
+        "## Required Criteria Dimensions",
+        "## Machine-Checkable Evaluator",
+        "## Deterministic Gate Simulation",
+        "## Criteria Changelog Policy",
+        "## Structured Log Contract",
+        "./scripts/run_parser_supremacy_criteria_gate.sh ci",
+    ] {
+        assert!(
+            doc.contains(section),
+            "required section missing from supremacy criteria doc: {section}"
+        );
+    }
+}
+
+#[test]
+fn parser_supremacy_fixture_contract_is_well_formed() {
+    let fixture = load_fixture();
+
+    assert_eq!(
+        fixture.schema_version,
+        "franken-engine.parser-supremacy-criteria-contract.v1"
+    );
+    assert_eq!(fixture.criteria_version, "0.1.0");
+    assert_eq!(
+        fixture.log_schema_version,
+        "franken-engine.parser-supremacy-criteria.log-event.v1"
+    );
+
+    assert!(!fixture.criteria_changelog.is_empty());
+    for entry in &fixture.criteria_changelog {
+        assert!(!entry.version.trim().is_empty());
+        assert!(!entry.rationale.trim().is_empty());
+        assert!(!entry.impact_assessment.trim().is_empty());
+        assert!(!entry.compatibility_notes.trim().is_empty());
+        assert!(!entry.changed_at_utc.trim().is_empty());
+    }
+
+    for required_key in [
+        "run_id",
+        "criteria_version",
+        "git_sha",
+        "artifact_bundle_id",
+        "verdict",
+        "replay_command",
+    ] {
+        assert!(
+            fixture
+                .required_log_keys
+                .iter()
+                .any(|key| key == required_key),
+            "required log key missing: {required_key}"
+        );
+    }
+
+    let mut rule_ids = BTreeSet::new();
+    let mut classes = BTreeSet::new();
+    let mut weight_total = 0_u64;
+
+    for rule in &fixture.rule_definitions {
+        assert!(rule_ids.insert(rule.rule_id.clone()));
+        assert!(!rule.description.trim().is_empty());
+        assert!(rule.minimum_millionths <= 1_000_000);
+        classes.insert(RuleClass::parse(rule.rule_class.as_str()));
+        weight_total = weight_total.saturating_add(u64::from(rule.weight_millionths));
+    }
+
+    assert_eq!(
+        weight_total, 1_000_000,
+        "rule weights must sum to 1_000_000"
+    );
+    assert_eq!(classes.len(), 6, "all six rule classes must be present");
+
+    let hard_fail_classes: BTreeSet<RuleClass> = fixture
+        .gating_policy
+        .hard_fail_classes
+        .iter()
+        .map(|raw| RuleClass::parse(raw))
+        .collect();
+    for required_hard_fail in [
+        RuleClass::Correctness,
+        RuleClass::Determinism,
+        RuleClass::Reproducibility,
+    ] {
+        assert!(
+            hard_fail_classes.contains(&required_hard_fail),
+            "missing required hard-fail class: {}",
+            required_hard_fail.as_str()
+        );
+    }
+}
+
+#[test]
+fn parser_supremacy_evaluator_enforces_rule_classes() {
+    let fixture = load_fixture();
+    let mut expected = BTreeMap::new();
+
+    for bundle in &fixture.artifact_bundles {
+        expected.insert(
+            bundle.artifact_bundle_id.clone(),
+            Verdict::from_raw(bundle.expected_verdict.as_str()),
+        );
+    }
+
+    for bundle in &fixture.artifact_bundles {
+        let result = evaluate_bundle(&fixture, bundle);
+        let expected_verdict = expected
+            .get(bundle.artifact_bundle_id.as_str())
+            .expect("expected verdict by bundle id");
+        assert_eq!(
+            &result.verdict, expected_verdict,
+            "unexpected supremacy verdict for bundle `{}`",
+            bundle.artifact_bundle_id
+        );
+
+        if result.verdict == Verdict::Pass {
+            assert!(
+                result.rule_pass.values().all(|value| *value),
+                "pass verdict requires all rules to pass"
+            );
+        }
+
+        if bundle.artifact_bundle_id == "bundle-parser-determinism-regression" {
+            assert_eq!(result.verdict, Verdict::Fail);
+            assert!(
+                !result
+                    .rule_pass
+                    .get("determinism-replay")
+                    .copied()
+                    .expect("determinism rule outcome"),
+                "determinism hard-fail should force fail verdict"
+            );
+        }
+    }
+}
+
+#[test]
+fn parser_supremacy_gate_simulation_is_deterministic_and_log_complete() {
+    let fixture = load_fixture();
+    let first = simulate_gate_events(&fixture);
+    let second = simulate_gate_events(&fixture);
+    assert_eq!(first, second, "gate simulation must be deterministic");
+
+    assert_eq!(first.len(), fixture.artifact_bundles.len());
+
+    for event in &first {
+        let value = serde_json::to_value(event).expect("serialize gate event");
+        let object = value.as_object().expect("gate event object");
+
+        for key in &fixture.required_log_keys {
+            assert!(
+                object.contains_key(key),
+                "gate event missing required key `{key}`"
+            );
+            let text = object
+                .get(key)
+                .and_then(|raw| raw.as_str())
+                .unwrap_or_default();
+            assert!(
+                !text.trim().is_empty(),
+                "gate event key `{key}` must not be empty"
+            );
+        }
+
+        assert!(
+            matches!(event.verdict.as_str(), "pass" | "hold" | "fail"),
+            "unexpected verdict value"
+        );
+    }
+}

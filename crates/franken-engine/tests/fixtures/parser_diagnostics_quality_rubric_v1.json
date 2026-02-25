@@ -1,0 +1,94 @@
+{
+  "schema_version": "franken-engine.parser-diagnostics-quality-rubric.v1",
+  "rubric_version": "1.0.0",
+  "max_allowed_regression_millionths": 50000,
+  "score_dimensions": [
+    {
+      "dimension_id": "location_precision",
+      "description": "diagnostic location metadata is present or has deterministic fallback quality",
+      "weight_millionths": 250000
+    },
+    {
+      "dimension_id": "message_clarity",
+      "description": "diagnostic template remains specific and non-empty",
+      "weight_millionths": 250000
+    },
+    {
+      "dimension_id": "actionable_hints",
+      "description": "diagnostic template offers actionable language envelope",
+      "weight_millionths": 250000
+    },
+    {
+      "dimension_id": "deterministic_wording",
+      "description": "normalized diagnostics remain deterministic and taxonomy-aligned",
+      "weight_millionths": 250000
+    }
+  ],
+  "baseline_scores_millionths": {
+    "location_precision": 500000,
+    "message_clarity": 1000000,
+    "actionable_hints": 1000000,
+    "deterministic_wording": 1000000,
+    "composite": 875000
+  },
+  "structured_log_required_keys": [
+    "trace_id",
+    "decision_id",
+    "policy_id",
+    "component",
+    "event",
+    "outcome",
+    "error_code"
+  ],
+  "cases": [
+    {
+      "case_id": "input-empty-source",
+      "family_id": "input.empty_source",
+      "goal": "script",
+      "source": "   ",
+      "expected_error_code": "empty_source",
+      "expected_diagnostic_code": "FE-PARSER-DIAG-EMPTY-SOURCE-0001",
+      "expected_budget_kind": null,
+      "require_span": false,
+      "replay_command": "cargo test -p frankenengine-engine --test parser_diagnostics_quality_rubric diagnostics_rubric_scores_are_deterministic_and_regression_bounded -- --exact"
+    },
+    {
+      "case_id": "goal-invalid-export-script",
+      "family_id": "goal.invalid_goal",
+      "goal": "script",
+      "source": "export default value;",
+      "expected_error_code": "invalid_goal",
+      "expected_diagnostic_code": "FE-PARSER-DIAG-INVALID-GOAL-0001",
+      "expected_budget_kind": null,
+      "require_span": false,
+      "replay_command": "cargo test -p frankenengine-engine --test parser_diagnostics_quality_rubric diagnostics_rubric_scores_are_deterministic_and_regression_bounded -- --exact"
+    },
+    {
+      "case_id": "syntax-unsupported-import-clause",
+      "family_id": "syntax.unsupported_statement",
+      "goal": "module",
+      "source": "import",
+      "expected_error_code": "unsupported_syntax",
+      "expected_diagnostic_code": "FE-PARSER-DIAG-UNSUPPORTED-SYNTAX-0001",
+      "expected_budget_kind": null,
+      "require_span": false,
+      "replay_command": "cargo test -p frankenengine-engine --test parser_diagnostics_quality_rubric diagnostics_rubric_scores_are_deterministic_and_regression_bounded -- --exact"
+    },
+    {
+      "case_id": "resource-budget-token-count",
+      "family_id": "resource.budget_exceeded",
+      "goal": "script",
+      "source": "alpha beta",
+      "expected_error_code": "budget_exceeded",
+      "expected_diagnostic_code": "FE-PARSER-DIAG-BUDGET-EXCEEDED-0001",
+      "expected_budget_kind": "token_count",
+      "require_span": false,
+      "budget_override": {
+        "max_source_bytes": 1024,
+        "max_token_count": 1,
+        "max_recursion_depth": 64
+      },
+      "replay_command": "cargo test -p frankenengine-engine --test parser_diagnostics_quality_rubric diagnostics_rubric_scores_are_deterministic_and_regression_bounded -- --exact"
+    }
+  ]
+}

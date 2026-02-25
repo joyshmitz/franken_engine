@@ -1,0 +1,118 @@
+{
+  "schema_version": "franken-engine.parser-supremacy-criteria-contract.v1",
+  "criteria_version": "0.1.0",
+  "log_schema_version": "franken-engine.parser-supremacy-criteria.log-event.v1",
+  "required_log_keys": [
+    "run_id",
+    "criteria_version",
+    "git_sha",
+    "artifact_bundle_id",
+    "verdict",
+    "replay_command"
+  ],
+  "criteria_changelog": [
+    {
+      "version": "0.1.0",
+      "rationale": "Establish machine-checkable parser supremacy criteria before readiness closure.",
+      "impact_assessment": "Introduces deterministic gating for correctness, determinism, performance, reproducibility, verification rigor, and user-facing quality.",
+      "compatibility_notes": "Additive contract; no backward-incompatible behavior for existing parser artifacts.",
+      "changed_at_utc": "2026-02-25T00:00:00Z"
+    }
+  ],
+  "gating_policy": {
+    "minimum_weighted_score_millionths": 950000,
+    "hard_fail_classes": [
+      "correctness",
+      "determinism",
+      "reproducibility"
+    ]
+  },
+  "rule_definitions": [
+    {
+      "rule_id": "correctness-core",
+      "rule_class": "correctness",
+      "description": "semantic correctness and parser decision parity remain above strict threshold",
+      "minimum_millionths": 995000,
+      "weight_millionths": 300000
+    },
+    {
+      "rule_id": "determinism-replay",
+      "rule_class": "determinism",
+      "description": "deterministic replay invariants stay stable across reruns",
+      "minimum_millionths": 995000,
+      "weight_millionths": 200000
+    },
+    {
+      "rule_id": "performance-budget",
+      "rule_class": "performance",
+      "description": "p95 latency and throughput stay above baseline budget",
+      "minimum_millionths": 900000,
+      "weight_millionths": 150000
+    },
+    {
+      "rule_id": "reproducibility-artifacts",
+      "rule_class": "reproducibility",
+      "description": "artifact bundles remain complete and replayable",
+      "minimum_millionths": 995000,
+      "weight_millionths": 150000
+    },
+    {
+      "rule_id": "verification-rigor-gates",
+      "rule_class": "verification_rigor",
+      "description": "verification gates and structured evidence quality remain strong",
+      "minimum_millionths": 950000,
+      "weight_millionths": 120000
+    },
+    {
+      "rule_id": "user-impact-quality",
+      "rule_class": "user_facing_quality",
+      "description": "diagnostic quality and integration ergonomics stay above operator baseline",
+      "minimum_millionths": 900000,
+      "weight_millionths": 80000
+    }
+  ],
+  "artifact_bundles": [
+    {
+      "artifact_bundle_id": "bundle-parser-stable-001",
+      "git_sha": "1111111111111111111111111111111111111111",
+      "metrics_millionths": {
+        "correctness": 999000,
+        "determinism": 998000,
+        "performance": 930000,
+        "reproducibility": 998000,
+        "verification_rigor": 970000,
+        "user_facing_quality": 920000
+      },
+      "expected_verdict": "pass",
+      "replay_command": "./scripts/run_parser_supremacy_criteria_gate.sh ci --bundle bundle-parser-stable-001"
+    },
+    {
+      "artifact_bundle_id": "bundle-parser-determinism-regression",
+      "git_sha": "2222222222222222222222222222222222222222",
+      "metrics_millionths": {
+        "correctness": 997000,
+        "determinism": 910000,
+        "performance": 940000,
+        "reproducibility": 997000,
+        "verification_rigor": 960000,
+        "user_facing_quality": 930000
+      },
+      "expected_verdict": "fail",
+      "replay_command": "./scripts/run_parser_supremacy_criteria_gate.sh ci --bundle bundle-parser-determinism-regression"
+    },
+    {
+      "artifact_bundle_id": "bundle-parser-performance-hold",
+      "git_sha": "3333333333333333333333333333333333333333",
+      "metrics_millionths": {
+        "correctness": 996000,
+        "determinism": 997000,
+        "performance": 840000,
+        "reproducibility": 996000,
+        "verification_rigor": 955000,
+        "user_facing_quality": 905000
+      },
+      "expected_verdict": "hold",
+      "replay_command": "./scripts/run_parser_supremacy_criteria_gate.sh ci --bundle bundle-parser-performance-hold"
+    }
+  ]
+}

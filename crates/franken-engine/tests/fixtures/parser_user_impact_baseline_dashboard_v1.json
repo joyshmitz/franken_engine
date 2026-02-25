@@ -1,0 +1,195 @@
+{
+  "schema_version": "franken-engine.parser-user-impact-baseline-dashboard.v1",
+  "dashboard_version": "1.0.0",
+  "metric_schema_version": "franken-engine.parser-user-impact-metrics.v1",
+  "max_allowed_regression_millionths": 50000,
+  "metric_definitions": [
+    {
+      "metric_id": "diagnostic_quality",
+      "description": "parser diagnostics remain specific, deterministic, and taxonomy-aligned",
+      "unit": "score_millionths",
+      "direction": "higher_is_better",
+      "weight_millionths": 400000
+    },
+    {
+      "metric_id": "recovery_usefulness",
+      "description": "deterministic recovery scenarios preserve useful event output with replayable traces",
+      "unit": "score_millionths",
+      "direction": "higher_is_better",
+      "weight_millionths": 350000
+    },
+    {
+      "metric_id": "integration_friction",
+      "description": "common parser API workflows produce expected outcomes without ambiguity",
+      "unit": "score_millionths",
+      "direction": "higher_is_better",
+      "weight_millionths": 250000
+    }
+  ],
+  "baseline_scores_millionths": {
+    "diagnostic_quality": 850000,
+    "recovery_usefulness": 800000,
+    "integration_friction": 900000,
+    "composite": 850000
+  },
+  "required_log_keys": [
+    "trace_id",
+    "decision_id",
+    "policy_id",
+    "component",
+    "event",
+    "outcome",
+    "error_code"
+  ],
+  "diagnostic_samples": [
+    {
+      "sample_id": "diag-empty-source",
+      "goal": "script",
+      "source": "   ",
+      "expected_error_code": "empty_source",
+      "expected_diagnostic_code": "FE-PARSER-DIAG-EMPTY-SOURCE-0001",
+      "expected_budget_kind": null
+    },
+    {
+      "sample_id": "diag-invalid-goal-export",
+      "goal": "script",
+      "source": "export default value;",
+      "expected_error_code": "invalid_goal",
+      "expected_diagnostic_code": "FE-PARSER-DIAG-INVALID-GOAL-0001",
+      "expected_budget_kind": null
+    },
+    {
+      "sample_id": "diag-unsupported-import-clause",
+      "goal": "module",
+      "source": "import",
+      "expected_error_code": "unsupported_syntax",
+      "expected_diagnostic_code": "FE-PARSER-DIAG-UNSUPPORTED-SYNTAX-0001",
+      "expected_budget_kind": null
+    },
+    {
+      "sample_id": "diag-budget-token-count",
+      "goal": "script",
+      "source": "alpha beta",
+      "expected_error_code": "budget_exceeded",
+      "expected_diagnostic_code": "FE-PARSER-DIAG-BUDGET-EXCEEDED-0001",
+      "expected_budget_kind": "token_count",
+      "budget_override": {
+        "max_source_bytes": 1024,
+        "max_token_count": 1,
+        "max_recursion_depth": 64
+      }
+    }
+  ],
+  "integration_samples": [
+    {
+      "sample_id": "api-script-expression",
+      "goal": "script",
+      "source": "alpha + beta;",
+      "expect_ok": true
+    },
+    {
+      "sample_id": "api-module-import",
+      "goal": "module",
+      "source": "import foo from \"pkg\";",
+      "expect_ok": true
+    },
+    {
+      "sample_id": "api-script-export-invalid-goal",
+      "goal": "script",
+      "source": "export default foo;",
+      "expect_ok": false
+    }
+  ],
+  "baseline_scenarios": [
+    {
+      "scenario_id": "editor-recovery-minimal-ok",
+      "expected_pass": true,
+      "replay_command": "cargo test -p frankenengine-engine --test parser_user_impact_baseline_dashboard user_impact_baseline_scenarios_are_deterministic_and_replayable -- --exact",
+      "fixture": {
+        "fixture_id": "user-impact-recovery-minimal-ok",
+        "fixture_version": 1,
+        "seed": 7,
+        "virtual_time_start_micros": 1000,
+        "policy_id": "policy-user-impact-baseline-v1",
+        "steps": [
+          {
+            "component": "parser.recovery",
+            "event": "sync_start",
+            "advance_micros": 25,
+            "metadata": {
+              "outcome": "ok"
+            }
+          },
+          {
+            "component": "parser.recovery",
+            "event": "sync_complete",
+            "advance_micros": 40,
+            "metadata": {
+              "outcome": "ok"
+            }
+          }
+        ],
+        "expected_events": [
+          {
+            "component": "parser.recovery",
+            "event": "sync_start",
+            "outcome": "ok",
+            "error_code": null
+          },
+          {
+            "component": "parser.recovery",
+            "event": "sync_complete",
+            "outcome": "ok",
+            "error_code": null
+          }
+        ],
+        "determinism_check": true
+      }
+    },
+    {
+      "scenario_id": "editor-recovery-adversarial-error",
+      "expected_pass": false,
+      "replay_command": "cargo test -p frankenengine-engine --test parser_user_impact_baseline_dashboard user_impact_baseline_scenarios_are_deterministic_and_replayable -- --exact",
+      "fixture": {
+        "fixture_id": "user-impact-recovery-adversarial-error",
+        "fixture_version": 1,
+        "seed": 11,
+        "virtual_time_start_micros": 2000,
+        "policy_id": "policy-user-impact-baseline-v1",
+        "steps": [
+          {
+            "component": "parser.recovery",
+            "event": "sync_start",
+            "advance_micros": 30,
+            "metadata": {
+              "outcome": "ok"
+            }
+          },
+          {
+            "component": "parser.recovery",
+            "event": "sync_failed",
+            "advance_micros": 55,
+            "metadata": {
+              "error_code": "E_RECOVERY_SYNC_LOSS"
+            }
+          }
+        ],
+        "expected_events": [
+          {
+            "component": "parser.recovery",
+            "event": "sync_start",
+            "outcome": "ok",
+            "error_code": null
+          },
+          {
+            "component": "parser.recovery",
+            "event": "sync_failed",
+            "outcome": "error",
+            "error_code": "E_RECOVERY_SYNC_LOSS"
+          }
+        ],
+        "determinism_check": true
+      }
+    }
+  ]
+}

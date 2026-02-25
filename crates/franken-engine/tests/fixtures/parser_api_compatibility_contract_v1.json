@@ -1,0 +1,122 @@
+{
+  "schema_version": "franken-engine.parser-api-compatibility-contract.v1",
+  "contract_version": "1.0.0",
+  "api_schema_version": "franken-engine.parser-public-api.v1",
+  "bead_id": "bd-2mds.1.10.3",
+  "max_allowed_regression_millionths": 0,
+  "required_doc_sections": [
+    "# Parser API Compatibility Contract (`bd-2mds.1.10.3`)",
+    "## Scope",
+    "## Contract Version",
+    "## Stable Public API Surface",
+    "## Compatibility Matrix",
+    "## Migration Policy",
+    "## Ergonomics SLOs",
+    "## Structured Log Contract",
+    "## Deterministic Execution Contract",
+    "## Required Artifacts",
+    "## Operator Verification"
+  ],
+  "required_api_entries": [
+    "Es2020Parser::parse",
+    "CanonicalEs2020Parser::parse_with_options",
+    "CanonicalEs2020Parser::parse_with_event_ir",
+    "CanonicalEs2020Parser::parse_with_materialized_ast",
+    "CanonicalEs2020Parser::scalar_reference_grammar_matrix",
+    "ParserInput<&str>",
+    "ParserInput<String>",
+    "ParserInput<PathBuf>",
+    "ParserInput<StreamInput>"
+  ],
+  "required_structured_log_keys": [
+    "trace_id",
+    "decision_id",
+    "policy_id",
+    "component",
+    "kind",
+    "outcome",
+    "error_code"
+  ],
+  "migration_policy_markers": [
+    "Deprecate before removal",
+    "Publish migration notes",
+    "Reject silent compatibility breaks"
+  ],
+  "ergonomics_slo_millionths": {
+    "integration_success_rate": 1000000,
+    "input_adapter_coverage": 1000000,
+    "migration_readability": 1000000
+  },
+  "compatibility_cases": [
+    {
+      "case_id": "script_inline_identifier",
+      "input_kind": "inline_str",
+      "goal": "script",
+      "source": "alpha;",
+      "expect_ok": true,
+      "expected_error_code": null,
+      "expected_budget_kind": null,
+      "budget_override": null,
+      "replay_command": "PARSER_API_COMPAT_CASE=script_inline_identifier ./scripts/run_parser_api_compatibility_gate.sh test"
+    },
+    {
+      "case_id": "module_owned_import_default",
+      "input_kind": "owned_string",
+      "goal": "module",
+      "source": "import dep from \"pkg\"; export default dep;",
+      "expect_ok": true,
+      "expected_error_code": null,
+      "expected_budget_kind": null,
+      "budget_override": null,
+      "replay_command": "PARSER_API_COMPAT_CASE=module_owned_import_default ./scripts/run_parser_api_compatibility_gate.sh test"
+    },
+    {
+      "case_id": "script_path_identifier",
+      "input_kind": "path",
+      "goal": "script",
+      "source": "omega;",
+      "expect_ok": true,
+      "expected_error_code": null,
+      "expected_budget_kind": null,
+      "budget_override": null,
+      "replay_command": "PARSER_API_COMPAT_CASE=script_path_identifier ./scripts/run_parser_api_compatibility_gate.sh test"
+    },
+    {
+      "case_id": "script_stream_await",
+      "input_kind": "stream",
+      "goal": "script",
+      "source": "await work;",
+      "expect_ok": true,
+      "expected_error_code": null,
+      "expected_budget_kind": null,
+      "budget_override": null,
+      "replay_command": "PARSER_API_COMPAT_CASE=script_stream_await ./scripts/run_parser_api_compatibility_gate.sh test"
+    },
+    {
+      "case_id": "script_rejects_export",
+      "input_kind": "inline_str",
+      "goal": "script",
+      "source": "export default value;",
+      "expect_ok": false,
+      "expected_error_code": "invalid_goal",
+      "expected_budget_kind": null,
+      "budget_override": null,
+      "replay_command": "PARSER_API_COMPAT_CASE=script_rejects_export ./scripts/run_parser_api_compatibility_gate.sh test"
+    },
+    {
+      "case_id": "script_source_budget_enforced",
+      "input_kind": "inline_str",
+      "goal": "script",
+      "source": "beta;",
+      "expect_ok": false,
+      "expected_error_code": "budget_exceeded",
+      "expected_budget_kind": "source_bytes",
+      "budget_override": {
+        "max_source_bytes": 1,
+        "max_token_count": 65536,
+        "max_recursion_depth": 256
+      },
+      "replay_command": "PARSER_API_COMPAT_CASE=script_source_budget_enforced ./scripts/run_parser_api_compatibility_gate.sh test"
+    }
+  ]
+}
