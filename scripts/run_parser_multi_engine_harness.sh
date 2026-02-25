@@ -20,6 +20,7 @@ manifest_path="${run_dir}/run_manifest.json"
 events_path="${run_dir}/events.jsonl"
 commands_path="${run_dir}/commands.txt"
 report_path="${run_dir}/report.json"
+repro_packs_dir="${run_dir}/repro_packs"
 
 trace_id="trace-parser-multi-engine-harness-${timestamp}"
 decision_id="decision-parser-multi-engine-harness-${timestamp}"
@@ -42,6 +43,7 @@ failed_command=""
 manifest_written=false
 divergent_fixtures=0
 nondeterministic_fixtures=0
+repro_pack_fixtures=0
 
 run_step() {
   local command_text="$1"
@@ -93,6 +95,13 @@ run_report_step() {
   if [[ -f "$report_path" ]]; then
     divergent_fixtures="$(jq -r '.summary.divergent_fixtures // 0' "$report_path")"
     nondeterministic_fixtures="$(jq -r '.summary.fixtures_with_nondeterminism // 0' "$report_path")"
+    repro_pack_fixtures="$(jq -r '[.fixture_results[] | select(.repro_pack != null)] | length' "$report_path")"
+    mkdir -p "$repro_packs_dir"
+    jq -c '.fixture_results[] | select(.repro_pack != null) | .repro_pack' "$report_path" \
+      | while IFS= read -r repro_json; do
+          fixture_key="$(jq -r '.fixture_id' <<<"$repro_json")"
+          jq '.' <<<"$repro_json" >"${repro_packs_dir}/${fixture_key}.json"
+        done
   fi
 
   if [[ "$rc" -ne 0 ]]; then
@@ -172,7 +181,7 @@ write_manifest() {
   {
     echo "{"
     echo '  "schema_version": "franken-engine.parser-multi-engine-harness.run-manifest.v1",'
-    echo '  "bead_id": "bd-2mds.1.2.1",'
+    echo '  "bead_id": "bd-2mds.1.2.4.1",'
     echo "  \"component\": \"${component}\","
     echo "  \"mode\": \"${mode}\","
     echo "  \"toolchain\": \"${toolchain}\","
@@ -191,6 +200,7 @@ write_manifest() {
     echo "  \"outcome\": \"${outcome}\","
     echo "  \"divergent_fixtures\": ${divergent_fixtures},"
     echo "  \"nondeterministic_fixtures\": ${nondeterministic_fixtures},"
+    echo "  \"repro_pack_fixtures\": ${repro_pack_fixtures},"
     if [[ -n "$failed_command" ]]; then
       echo "  \"failed_command\": \"${failed_command}\","
     fi
@@ -207,12 +217,14 @@ write_manifest() {
     echo "    \"manifest\": \"${manifest_path}\","
     echo "    \"events\": \"${events_path}\","
     echo "    \"commands\": \"${commands_path}\","
-    echo "    \"report\": \"${report_path}\""
+    echo "    \"report\": \"${report_path}\","
+    echo "    \"repro_packs_dir\": \"${repro_packs_dir}\""
     echo "  },"
     echo '  "operator_verification": ['
     echo "    \"cat ${manifest_path}\","
     echo "    \"cat ${events_path}\","
     echo "    \"cat ${report_path}\","
+    echo "    \"ls ${repro_packs_dir}\","
     echo "    \"${0} report\""
     echo "  ]"
     echo "}"

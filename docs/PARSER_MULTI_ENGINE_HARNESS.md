@@ -1,4 +1,4 @@
-# Parser Multi-Engine Harness (`bd-2mds.1.2.1`, `bd-2mds.1.2.2`, `bd-2mds.1.2.3`)
+# Parser Multi-Engine Harness (`bd-2mds.1.2.1`, `bd-2mds.1.2.2`, `bd-2mds.1.2.3`, `bd-2mds.1.2.4.1`)
 
 Deterministic comparison harness for parser outputs across multiple engines under a controlled environment (`LC_ALL=C`, `TZ=UTC`) with reproducible manifests and one-command replay paths per fixture.
 
@@ -68,6 +68,32 @@ metadata on each fixture row (`drift_classification`) and summary rollups:
 - `drift_minor_fixtures`
 - `drift_critical_fixtures`
 - `drift_counts_by_category`
+
+## Deterministic Minimizer + Repro Pack (PSRP-02.4.1)
+
+Each divergent fixture now emits a deterministic repro-pack payload under
+`fixture_results[].repro_pack` with schema:
+
+- `franken-engine.parser-drift-repro-pack.v1`
+
+Repro-pack fields include:
+
+- fixture identity (`fixture_id`, `family_id`)
+- original/minimized source hashes (`source_hash`, `minimized_source_hash`)
+- minimized source text (`minimized_source`)
+- drift classifier payload (`drift_classification`)
+- one-command replay (`replay_command`)
+- deterministic minimization stats (`minimization`)
+- promotion hook targets (`promotion_hooks`)
+- provenance digest (`provenance_hash`)
+
+Minimization policy:
+
+- deterministic line-based delta reduction
+- fixed seed/env inherited from harness run
+- candidate retained only if drift classification and per-engine outcome-kind
+  signature are preserved
+- bounded rounds/candidate evaluations to keep runs finite and replayable
 
 ## Engine Contract
 
@@ -142,6 +168,7 @@ Each run writes:
 - `artifacts/parser_multi_engine_harness/<timestamp>/events.jsonl`
 - `artifacts/parser_multi_engine_harness/<timestamp>/commands.txt`
 - `artifacts/parser_multi_engine_harness/<timestamp>/report.json`
+- `artifacts/parser_multi_engine_harness/<timestamp>/repro_packs/<fixture_id>.json`
 
 The report includes per-fixture replay commands:
 
