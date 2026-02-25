@@ -130,4 +130,60 @@ fn frx_freeze_manifest_and_lane_charters_reference_program_constitution() {
         semantics_charter.contains("docs/FRX_PROGRAM_CONSTITUTION_V1.md"),
         "semantics lane charter must reference program constitution"
     );
+
+    let verification_charter_path = repo_root().join("docs/FRX_VERIFICATION_LANE_CHARTER_V1.md");
+    let verification_charter =
+        fs::read_to_string(&verification_charter_path).unwrap_or_else(|err| {
+            panic!(
+                "failed to read {}: {err}",
+                verification_charter_path.display()
+            )
+        });
+    assert!(
+        verification_charter.contains("docs/FRX_PROGRAM_CONSTITUTION_V1.md"),
+        "verification lane charter must reference program constitution"
+    );
+
+    let optimization_charter_path = repo_root().join("docs/FRX_OPTIMIZATION_LANE_CHARTER_V1.md");
+    let optimization_charter =
+        fs::read_to_string(&optimization_charter_path).unwrap_or_else(|err| {
+            panic!(
+                "failed to read {}: {err}",
+                optimization_charter_path.display()
+            )
+        });
+    assert!(
+        optimization_charter.contains("docs/FRX_PROGRAM_CONSTITUTION_V1.md"),
+        "optimization lane charter must reference program constitution"
+    );
+
+    let toolchain_charter_path =
+        repo_root().join("docs/FRX_TOOLCHAIN_ECOSYSTEM_LANE_CHARTER_V1.md");
+    let toolchain_charter = fs::read_to_string(&toolchain_charter_path)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", toolchain_charter_path.display()));
+    assert!(
+        toolchain_charter.contains("docs/FRX_PROGRAM_CONSTITUTION_V1.md"),
+        "toolchain lane charter must reference program constitution"
+    );
+
+    let governance_charter_path =
+        repo_root().join("docs/FRX_GOVERNANCE_EVIDENCE_LANE_CHARTER_V1.md");
+    let governance_charter = fs::read_to_string(&governance_charter_path).unwrap_or_else(|err| {
+        panic!(
+            "failed to read {}: {err}",
+            governance_charter_path.display()
+        )
+    });
+    assert!(
+        governance_charter.contains("docs/FRX_PROGRAM_CONSTITUTION_V1.md"),
+        "governance/evidence lane charter must reference program constitution"
+    );
+
+    let adoption_charter_path = repo_root().join("docs/FRX_ADOPTION_RELEASE_LANE_CHARTER_V1.md");
+    let adoption_charter = fs::read_to_string(&adoption_charter_path)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", adoption_charter_path.display()));
+    assert!(
+        adoption_charter.contains("docs/FRX_PROGRAM_CONSTITUTION_V1.md"),
+        "adoption/release lane charter must reference program constitution"
+    );
 }

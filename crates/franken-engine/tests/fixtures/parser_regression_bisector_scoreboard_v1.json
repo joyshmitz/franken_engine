@@ -1,0 +1,158 @@
+{
+  "schema_version": "franken-engine.parser-regression-bisector-scoreboard.v1",
+  "scoreboard_version": "1.0.0",
+  "metric_schema_version": "franken-engine.parser-telemetry.v1",
+  "max_allowed_regression_millionths": 50000,
+  "metric_definitions": [
+    {
+      "metric_id": "throughput_sources_per_second_millionths",
+      "direction": "higher_is_better",
+      "weight_millionths": 350000
+    },
+    {
+      "metric_id": "latency_ns_p95",
+      "direction": "lower_is_better",
+      "weight_millionths": 300000
+    },
+    {
+      "metric_id": "ns_per_token_millionths",
+      "direction": "lower_is_better",
+      "weight_millionths": 200000
+    },
+    {
+      "metric_id": "allocs_per_token_millionths",
+      "direction": "lower_is_better",
+      "weight_millionths": 150000
+    }
+  ],
+  "required_log_keys": [
+    "trace_id",
+    "decision_id",
+    "policy_id",
+    "component",
+    "event",
+    "outcome",
+    "error_code"
+  ],
+  "history": [
+    {
+      "commit": "c001",
+      "run_id": "parser-regression-c001",
+      "generated_at_utc": "2026-02-25T00:01:00Z",
+      "metrics": {
+        "throughput_sources_per_second_millionths": 1940000,
+        "latency_ns_p95": 312000,
+        "ns_per_token_millionths": 208000,
+        "allocs_per_token_millionths": 84000
+      },
+      "replay_command": "./scripts/run_parser_multi_engine_harness.sh report --fixture-limit 8 --seed 7 --commit c001",
+      "artifact_manifest": "artifacts/parser_multi_engine_harness/c001/run_manifest.json",
+      "artifact_report": "artifacts/parser_multi_engine_harness/c001/report.json"
+    },
+    {
+      "commit": "c002",
+      "run_id": "parser-regression-c002",
+      "generated_at_utc": "2026-02-25T00:05:00Z",
+      "metrics": {
+        "throughput_sources_per_second_millionths": 1980000,
+        "latency_ns_p95": 305000,
+        "ns_per_token_millionths": 202000,
+        "allocs_per_token_millionths": 81000
+      },
+      "replay_command": "./scripts/run_parser_multi_engine_harness.sh report --fixture-limit 8 --seed 7 --commit c002",
+      "artifact_manifest": "artifacts/parser_multi_engine_harness/c002/run_manifest.json",
+      "artifact_report": "artifacts/parser_multi_engine_harness/c002/report.json"
+    },
+    {
+      "commit": "c003",
+      "run_id": "parser-regression-c003",
+      "generated_at_utc": "2026-02-25T00:09:00Z",
+      "metrics": {
+        "throughput_sources_per_second_millionths": 2000000,
+        "latency_ns_p95": 300000,
+        "ns_per_token_millionths": 200000,
+        "allocs_per_token_millionths": 80000
+      },
+      "replay_command": "./scripts/run_parser_multi_engine_harness.sh report --fixture-limit 8 --seed 7 --commit c003",
+      "artifact_manifest": "artifacts/parser_multi_engine_harness/c003/run_manifest.json",
+      "artifact_report": "artifacts/parser_multi_engine_harness/c003/report.json"
+    },
+    {
+      "commit": "c004",
+      "run_id": "parser-regression-c004",
+      "generated_at_utc": "2026-02-25T00:13:00Z",
+      "metrics": {
+        "throughput_sources_per_second_millionths": 1960000,
+        "latency_ns_p95": 308000,
+        "ns_per_token_millionths": 204000,
+        "allocs_per_token_millionths": 82000
+      },
+      "replay_command": "./scripts/run_parser_multi_engine_harness.sh report --fixture-limit 8 --seed 7 --commit c004",
+      "artifact_manifest": "artifacts/parser_multi_engine_harness/c004/run_manifest.json",
+      "artifact_report": "artifacts/parser_multi_engine_harness/c004/report.json"
+    },
+    {
+      "commit": "c005",
+      "run_id": "parser-regression-c005",
+      "generated_at_utc": "2026-02-25T00:17:00Z",
+      "metrics": {
+        "throughput_sources_per_second_millionths": 1780000,
+        "latency_ns_p95": 342000,
+        "ns_per_token_millionths": 232000,
+        "allocs_per_token_millionths": 98000
+      },
+      "replay_command": "./scripts/run_parser_multi_engine_harness.sh report --fixture-limit 8 --seed 7 --commit c005",
+      "artifact_manifest": "artifacts/parser_multi_engine_harness/c005/run_manifest.json",
+      "artifact_report": "artifacts/parser_multi_engine_harness/c005/report.json"
+    },
+    {
+      "commit": "c006",
+      "run_id": "parser-regression-c006",
+      "generated_at_utc": "2026-02-25T00:21:00Z",
+      "metrics": {
+        "throughput_sources_per_second_millionths": 1750000,
+        "latency_ns_p95": 350000,
+        "ns_per_token_millionths": 240000,
+        "allocs_per_token_millionths": 102000
+      },
+      "replay_command": "./scripts/run_parser_multi_engine_harness.sh report --fixture-limit 8 --seed 7 --commit c006",
+      "artifact_manifest": "artifacts/parser_multi_engine_harness/c006/run_manifest.json",
+      "artifact_report": "artifacts/parser_multi_engine_harness/c006/report.json"
+    }
+  ],
+  "baseline_commit": "c003",
+  "candidate_commit": "c006",
+  "expected_bisect": {
+    "first_bad_commit": "c005",
+    "search_path": [
+      "c005",
+      "c004"
+    ],
+    "classification": "regression_detected"
+  },
+  "scoreboard_expectations": {
+    "top_improvement_commit": "c003",
+    "worst_regression_commit": "c006",
+    "regression_alert_commits": [
+      "c005",
+      "c006"
+    ]
+  },
+  "incident_replay_drills": [
+    {
+      "drill_id": "bisect-path-stability",
+      "replay_command": "cargo test -p frankenengine-engine --test parser_regression_bisector_scoreboard regression_bisector_matches_expected_path -- --exact",
+      "expected_pass": true
+    },
+    {
+      "drill_id": "scoreboard-ranking-stability",
+      "replay_command": "cargo test -p frankenengine-engine --test parser_regression_bisector_scoreboard scoreboard_publication_matches_expected_rankings -- --exact",
+      "expected_pass": true
+    },
+    {
+      "drill_id": "structured-log-completeness",
+      "replay_command": "cargo test -p frankenengine-engine --test parser_regression_bisector_scoreboard structured_log_contract_and_replay_drills_are_complete -- --exact",
+      "expected_pass": true
+    }
+  ]
+}

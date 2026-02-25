@@ -1,0 +1,141 @@
+{
+  "schema_version": "franken-engine.parser-one-lever-optimization-campaign.v1",
+  "campaign_version": "1.0.0",
+  "metric_schema_version": "franken-engine.parser-telemetry.v1",
+  "required_log_keys": [
+    "trace_id",
+    "decision_id",
+    "policy_id",
+    "component",
+    "event",
+    "outcome",
+    "error_code"
+  ],
+  "campaign_runs": [
+    {
+      "lever_id": "lever.prefetch_dispatch_table",
+      "lever_category": "execution",
+      "commit": "olv001",
+      "run_id": "run-olv001",
+      "generated_at_utc": "2026-02-25T08:00:00Z",
+      "changed_paths": [
+        "crates/franken-engine/src/lexer_dispatch.rs"
+      ],
+      "attribution_note": "Single execution lever adds dispatch-table prefetch in hot parser token loop.",
+      "baseline_metrics": {
+        "throughput_sources_per_second_millionths": 1000000,
+        "latency_ns_p95": 24000000,
+        "ns_per_token_millionths": 1200000,
+        "allocs_per_token_millionths": 220000
+      },
+      "candidate_metrics": {
+        "throughput_sources_per_second_millionths": 1120000,
+        "latency_ns_p95": 21600000,
+        "ns_per_token_millionths": 1080000,
+        "allocs_per_token_millionths": 215600
+      },
+      "ev_inputs": {
+        "impact": 5,
+        "confidence": 4,
+        "reuse": 4,
+        "effort": 3,
+        "friction": 2
+      },
+      "expected_ev_score_millionths": 13333333,
+      "expected_gain_millionths": 100000,
+      "replay_command": "./scripts/run_parser_one_lever_optimization_campaign.sh test",
+      "artifact_manifest": "artifacts/parser_one_lever_optimization_campaign/<timestamp>/run_manifest.json",
+      "artifact_report": "artifacts/parser_one_lever_optimization_campaign/<timestamp>/campaign_report_olv001.json"
+    },
+    {
+      "lever_id": "lever.telemetry_sampling_compression",
+      "lever_category": "telemetry",
+      "commit": "olv002",
+      "run_id": "run-olv002",
+      "generated_at_utc": "2026-02-25T09:00:00Z",
+      "changed_paths": [
+        "crates/franken-engine/src/parser_telemetry.rs",
+        "crates/franken-engine/src/parser_scheduler.rs"
+      ],
+      "attribution_note": "Single telemetry lever compresses sampling writes while preserving parser scheduler semantics.",
+      "baseline_metrics": {
+        "throughput_sources_per_second_millionths": 1000000,
+        "latency_ns_p95": 24000000,
+        "ns_per_token_millionths": 1200000,
+        "allocs_per_token_millionths": 220000
+      },
+      "candidate_metrics": {
+        "throughput_sources_per_second_millionths": 1070000,
+        "latency_ns_p95": 22800000,
+        "ns_per_token_millionths": 1140000,
+        "allocs_per_token_millionths": 209000
+      },
+      "ev_inputs": {
+        "impact": 4,
+        "confidence": 5,
+        "reuse": 4,
+        "effort": 2,
+        "friction": 2
+      },
+      "expected_ev_score_millionths": 20000000,
+      "expected_gain_millionths": 58000,
+      "replay_command": "./scripts/run_parser_one_lever_optimization_campaign.sh test",
+      "artifact_manifest": "artifacts/parser_one_lever_optimization_campaign/<timestamp>/run_manifest.json",
+      "artifact_report": "artifacts/parser_one_lever_optimization_campaign/<timestamp>/campaign_report_olv002.json"
+    },
+    {
+      "lever_id": "lever.arena_slabs_for_ast_nodes",
+      "lever_category": "memory",
+      "commit": "olv003",
+      "run_id": "run-olv003",
+      "generated_at_utc": "2026-02-25T10:00:00Z",
+      "changed_paths": [
+        "crates/franken-engine/src/ast_arena.rs"
+      ],
+      "attribution_note": "Single memory lever introduces arena slab reuse for AST node allocation.",
+      "baseline_metrics": {
+        "throughput_sources_per_second_millionths": 1000000,
+        "latency_ns_p95": 24000000,
+        "ns_per_token_millionths": 1200000,
+        "allocs_per_token_millionths": 220000
+      },
+      "candidate_metrics": {
+        "throughput_sources_per_second_millionths": 1090000,
+        "latency_ns_p95": 23040000,
+        "ns_per_token_millionths": 1152000,
+        "allocs_per_token_millionths": 206800
+      },
+      "ev_inputs": {
+        "impact": 5,
+        "confidence": 3,
+        "reuse": 5,
+        "effort": 4,
+        "friction": 2
+      },
+      "expected_ev_score_millionths": 9375000,
+      "expected_gain_millionths": 62000,
+      "replay_command": "./scripts/run_parser_one_lever_optimization_campaign.sh test",
+      "artifact_manifest": "artifacts/parser_one_lever_optimization_campaign/<timestamp>/run_manifest.json",
+      "artifact_report": "artifacts/parser_one_lever_optimization_campaign/<timestamp>/campaign_report_olv003.json"
+    }
+  ],
+  "expected_ev_ranking": [
+    "lever.telemetry_sampling_compression",
+    "lever.prefetch_dispatch_table",
+    "lever.arena_slabs_for_ast_nodes"
+  ],
+  "expected_gain_ranking": [
+    "lever.prefetch_dispatch_table",
+    "lever.arena_slabs_for_ast_nodes",
+    "lever.telemetry_sampling_compression"
+  ],
+  "expected_selected_lever": "lever.telemetry_sampling_compression",
+  "cross_subsystem_replay_scenarios": [
+    {
+      "scenario_id": "telemetry-scheduler-cross-subsystem",
+      "replay_command": "./scripts/e2e/parser_one_lever_optimization_campaign_replay.sh",
+      "expected_pass": true,
+      "expected_outcome": "pass"
+    }
+  ]
+}
