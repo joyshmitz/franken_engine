@@ -1889,6 +1889,4 @@ mod tests {
     fn gate_outcome_ord() {
         assert!(GateOutcome::Pass < GateOutcome::Fail);
     }
-
-}
 }

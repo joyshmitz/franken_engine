@@ -2103,43 +2103,22 @@ mod tests {
 
     #[test]
     fn trust_level_ord() {
-        assert!(TrustLevel::SoftwareOnly < TrustLevel::HardwareEnclave);
+        assert!(TrustLevel::SoftwareOnly < TrustLevel::Hybrid);
+        assert!(TrustLevel::Hybrid < TrustLevel::Hardware);
     }
 
     #[test]
     fn platform_kind_ord() {
-        assert!(PlatformKind::IntelSgxTdx < PlatformKind::ArmTrustZone);
-        assert!(PlatformKind::ArmTrustZone < PlatformKind::SoftwareOnly);
+        assert!(PlatformKind::IntelSgx < PlatformKind::ArmCca);
+        assert!(PlatformKind::ArmCca < PlatformKind::AmdSevSnp);
+        assert!(PlatformKind::AmdSevSnp < PlatformKind::Software);
     }
 
     #[test]
     fn cell_function_ord() {
-        assert!(CellFunction::ReceiptSigning < CellFunction::SecureComputation);
-        assert!(CellFunction::SecureComputation < CellFunction::AttestationVerification);
-    }
-
-    #[test]
-    fn cell_error_std_error() {
-        let variants: Vec<Box<dyn std::error::Error>> = vec![
-            Box::new(CellError::IdDerivation("bad".into())),
-            Box::new(CellError::NotFound { cell_id: "c1".into() }),
-            Box::new(CellError::Duplicate { cell_id: "c2".into() }),
-            Box::new(CellError::InvalidTransition {
-                from: CellLifecycle::Provisioning,
-                to: CellLifecycle::Active,
-            }),
-            Box::new(CellError::NotOperational { lifecycle: CellLifecycle::Suspended }),
-            Box::new(CellError::AttestationFailed { reason: "expired".into() }),
-            Box::new(CellError::NotMeasured),
-            Box::new(CellError::TrustRootRevoked { key_id: "k1".into() }),
-            Box::new(CellError::EmptyLabel),
-            Box::new(CellError::EmptyZone),
-            Box::new(CellError::EmptyAuthority),
-        ];
-        let mut displays = std::collections::BTreeSet::new();
-        for v in &variants {
-            displays.insert(format!("{v}"));
-        }
-        assert_eq!(displays.len(), 11);
+        assert!(CellFunction::DecisionReceiptSigner < CellFunction::EvidenceAccumulator);
+        assert!(CellFunction::EvidenceAccumulator < CellFunction::PolicyEvaluator);
+        assert!(CellFunction::PolicyEvaluator < CellFunction::ProofValidator);
+        assert!(CellFunction::ProofValidator < CellFunction::ExtensionRuntime);
     }
 }

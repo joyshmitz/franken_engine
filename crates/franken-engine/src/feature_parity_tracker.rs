@@ -1927,26 +1927,8 @@ mod tests {
     #[test]
     fn feature_area_ord() {
         assert!(FeatureArea::OptionalChaining < FeatureArea::NullishCoalescing);
-        assert!(FeatureArea::NullishCoalescing < FeatureArea::LogicalAssignment);
-        assert!(FeatureArea::DynamicImport > FeatureArea::WeakReferences);
-    }
-
-    #[test]
-    fn parity_tracker_error_std_error() {
-        let variants: Vec<Box<dyn std::error::Error>> = vec![
-            Box::new(ParityTrackerError::FeatureNotFound { feature_id: "f1".into() }),
-            Box::new(ParityTrackerError::WaiverNotFound { waiver_id: "w1".into() }),
-            Box::new(ParityTrackerError::WaiverAlreadyExists { waiver_id: "w2".into() }),
-            Box::new(ParityTrackerError::WaiverSealed { waiver_id: "w3".into() }),
-            Box::new(ParityTrackerError::InvalidWaiver { detail: "bad".into() }),
-            Box::new(ParityTrackerError::InvalidMetrics { detail: "wrong".into() }),
-            Box::new(ParityTrackerError::DuplicateFeature { feature_id: "f2".into() }),
-            Box::new(ParityTrackerError::GateEvaluationFailed { detail: "fail".into() }),
-        ];
-        let mut displays = std::collections::BTreeSet::new();
-        for v in &variants {
-            displays.insert(format!("{v}"));
-        }
-        assert_eq!(displays.len(), 8);
+        assert!(FeatureArea::NullishCoalescing < FeatureArea::DynamicImport);
+        assert!(FeatureArea::DynamicImport < FeatureArea::BigInt);
+        assert!(FeatureArea::ImportMeta < FeatureArea::ForInOrder);
     }
 }

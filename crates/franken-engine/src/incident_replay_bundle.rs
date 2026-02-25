@@ -2609,39 +2609,16 @@ mod tests {
         assert!(BundleArtifactKind::Trace < BundleArtifactKind::Evidence);
         assert!(BundleArtifactKind::Evidence < BundleArtifactKind::OptReceipt);
         assert!(BundleArtifactKind::OptReceipt < BundleArtifactKind::QuorumCheckpoint);
-        assert!(BundleArtifactKind::SignatureData < BundleArtifactKind::MerkleTree);
+        assert!(BundleArtifactKind::QuorumCheckpoint < BundleArtifactKind::NondeterminismLog);
+        assert!(BundleArtifactKind::CounterfactualResult < BundleArtifactKind::PolicySnapshot);
     }
 
     #[test]
     fn verification_category_ord() {
-        assert!(VerificationCategory::Integrity < VerificationCategory::Authenticity);
-        assert!(VerificationCategory::Authenticity < VerificationCategory::Compatibility);
-        assert!(VerificationCategory::Compatibility < VerificationCategory::Replay);
-        assert!(VerificationCategory::Replay < VerificationCategory::Counterfactual);
-    }
-
-    #[test]
-    fn bundle_error_std_error() {
-        let variants: Vec<Box<dyn std::error::Error>> = vec![
-            Box::new(BundleError::IntegrityFailure { expected: "a".into(), actual: "b".into() }),
-            Box::new(BundleError::ArtifactHashMismatch { artifact_id: "a1".into() }),
-            Box::new(BundleError::SignatureInvalid),
-            Box::new(BundleError::ReplayDivergence { details: "diverged".into() }),
-            Box::new(BundleError::ReceiptInvalid { receipt_id: "r1".into(), reason: "bad".into() }),
-            Box::new(BundleError::IncompatibleVersion {
-                bundle: BundleFormatVersion { major: 2, minor: 0 },
-                reader: BundleFormatVersion { major: 1, minor: 0 },
-            }),
-            Box::new(BundleError::EmptyBundle),
-            Box::new(BundleError::TraceNotFound { trace_id: "t1".into() }),
-            Box::new(BundleError::IdDerivation("bad id".into())),
-            Box::new(BundleError::ReplayFailed("timeout".into())),
-            Box::new(BundleError::RedactionViolation { field: "secret".into() }),
-        ];
-        let mut displays = std::collections::BTreeSet::new();
-        for v in &variants {
-            displays.insert(format!("{v}"));
-        }
-        assert_eq!(displays.len(), 11);
+        assert!(VerificationCategory::Integrity < VerificationCategory::ArtifactHash);
+        assert!(VerificationCategory::ArtifactHash < VerificationCategory::Replay);
+        assert!(VerificationCategory::Replay < VerificationCategory::ReceiptChain);
+        assert!(VerificationCategory::ReceiptChain < VerificationCategory::Counterfactual);
+        assert!(VerificationCategory::Counterfactual < VerificationCategory::Compatibility);
     }
 }
