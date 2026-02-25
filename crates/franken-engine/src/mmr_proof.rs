@@ -1134,11 +1134,7 @@ mod tests {
     fn mmr_size_matches_built_mmr() {
         for n in 1..=20 {
             let mmr = build_mmr(n);
-            assert_eq!(
-                mmr.size(),
-                mmr_size(n),
-                "mismatch at n={n}"
-            );
+            assert_eq!(mmr.size(), mmr_size(n), "mismatch at n={n}");
         }
     }
 

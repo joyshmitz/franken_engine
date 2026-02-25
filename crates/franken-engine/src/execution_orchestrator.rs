@@ -1614,10 +1614,7 @@ mod tests {
             let result = orch
                 .execute(&simple_package())
                 .unwrap_or_else(|e| panic!("{preset:?} failed: {e}"));
-            assert!(
-                result.posterior.is_valid(),
-                "{preset:?} posterior invalid"
-            );
+            assert!(result.posterior.is_valid(), "{preset:?} posterior invalid");
             assert!(
                 !result.evidence_entries.is_empty(),
                 "{preset:?} no evidence"

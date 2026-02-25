@@ -1199,12 +1199,20 @@ mod tests {
 
     #[test]
     fn checkpoint_error_display_all_variants_unique() {
-        let id1 =
-            crate::engine_object_id::derive_id(ObjectDomain::CheckpointArtifact, "z", &checkpoint_schema_id(), b"a")
-                .unwrap();
-        let id2 =
-            crate::engine_object_id::derive_id(ObjectDomain::CheckpointArtifact, "z", &checkpoint_schema_id(), b"b")
-                .unwrap();
+        let id1 = crate::engine_object_id::derive_id(
+            ObjectDomain::CheckpointArtifact,
+            "z",
+            &checkpoint_schema_id(),
+            b"a",
+        )
+        .unwrap();
+        let id2 = crate::engine_object_id::derive_id(
+            ObjectDomain::CheckpointArtifact,
+            "z",
+            &checkpoint_schema_id(),
+            b"b",
+        )
+        .unwrap();
         let displays: std::collections::BTreeSet<String> = [
             CheckpointError::GenesisMustHaveNoPredecessor.to_string(),
             CheckpointError::MissingPredecessor.to_string(),

@@ -1217,4 +1217,227 @@ mod tests {
         }
         assert_eq!(lane.flush_count, 3);
     }
+
+    // -- Enrichment: WasmSignalKind serde roundtrip --
+
+    #[test]
+    fn wasm_signal_kind_serde_roundtrip() {
+        for kind in [
+            WasmSignalKind::Source,
+            WasmSignalKind::Derived,
+            WasmSignalKind::Effect,
+        ] {
+            let json = serde_json::to_string(&kind).unwrap();
+            let restored: WasmSignalKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(kind, restored);
+        }
+    }
+
+    // -- Enrichment: WasmSignalStatus serde roundtrip --
+
+    #[test]
+    fn wasm_signal_status_serde_roundtrip() {
+        for status in [
+            WasmSignalStatus::Clean,
+            WasmSignalStatus::Dirty,
+            WasmSignalStatus::Evaluating,
+            WasmSignalStatus::Disposed,
+        ] {
+            let json = serde_json::to_string(&status).unwrap();
+            let restored: WasmSignalStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(status, restored);
+        }
+    }
+
+    // -- Enrichment: WasmLaneMode serde roundtrip and ordering --
+
+    #[test]
+    fn wasm_lane_mode_serde_roundtrip() {
+        for mode in [
+            WasmLaneMode::Normal,
+            WasmLaneMode::Safe,
+            WasmLaneMode::Degraded,
+            WasmLaneMode::Halted,
+        ] {
+            let json = serde_json::to_string(&mode).unwrap();
+            let restored: WasmLaneMode = serde_json::from_str(&json).unwrap();
+            assert_eq!(mode, restored);
+        }
+    }
+
+    #[test]
+    fn wasm_lane_mode_ordering() {
+        assert!(WasmLaneMode::Normal < WasmLaneMode::Safe);
+        assert!(WasmLaneMode::Safe < WasmLaneMode::Degraded);
+        assert!(WasmLaneMode::Degraded < WasmLaneMode::Halted);
+    }
+
+    // -- Enrichment: SafeModeReason serde roundtrip --
+
+    #[test]
+    fn safe_mode_reason_serde_roundtrip() {
+        let reasons = vec![
+            SafeModeReason::QueueOverflow {
+                queue_len: 100,
+                limit: 100,
+            },
+            SafeModeReason::DepthExceeded {
+                depth: 200,
+                limit: 128,
+            },
+            SafeModeReason::EvalBudgetExhausted {
+                evals: 50000,
+                limit: 50000,
+            },
+            SafeModeReason::DomOpBudgetExhausted {
+                ops: 10000,
+                limit: 10000,
+            },
+            SafeModeReason::SignalBudgetExhausted {
+                signals: 5000,
+                limit: 5000,
+            },
+        ];
+        for reason in &reasons {
+            let json = serde_json::to_string(reason).unwrap();
+            let restored: SafeModeReason = serde_json::from_str(&json).unwrap();
+            assert_eq!(*reason, restored);
+        }
+    }
+
+    // -- Enrichment: WasmBudget serde roundtrip --
+
+    #[test]
+    fn wasm_budget_serde_roundtrip() {
+        let budget = WasmBudget::default_budget();
+        let json = serde_json::to_string(&budget).unwrap();
+        let restored: WasmBudget = serde_json::from_str(&json).unwrap();
+        assert_eq!(budget, restored);
+    }
+
+    // -- Enrichment: WasmBudget validate all-zero fields --
+
+    #[test]
+    fn budget_all_zero_reports_multiple_errors() {
+        let budget = WasmBudget {
+            max_signals: 0,
+            max_depth: 0,
+            max_pending_updates: 0,
+            max_dom_ops_per_cycle: 0,
+            max_evaluations_per_flush: 100,
+        };
+        let errors = budget.validate();
+        assert!(errors.len() >= 3);
+    }
+
+    // -- Enrichment: WasmFlushResult serde roundtrip --
+
+    #[test]
+    fn flush_result_serde_roundtrip() {
+        let result = WasmFlushResult {
+            cycle: 5,
+            updates_consumed: 10,
+            signals_evaluated: 20,
+            dom_ops_emitted: 3,
+            mode_after: WasmLaneMode::Normal,
+            safe_mode_triggers: vec![],
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let restored: WasmFlushResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(result, restored);
+    }
+
+    // -- Enrichment: AbiDomOp target_element for all variants --
+
+    #[test]
+    fn abi_dom_op_target_all_variants() {
+        let ops = vec![
+            AbiDomOp::Create {
+                element_id: 1,
+                tag_index: 0,
+            },
+            AbiDomOp::Remove { element_id: 2 },
+            AbiDomOp::SetProp {
+                element_id: 3,
+                prop_index: 0,
+                value: vec![],
+            },
+            AbiDomOp::RemoveProp {
+                element_id: 4,
+                prop_index: 0,
+            },
+            AbiDomOp::SetText {
+                element_id: 5,
+                text: vec![],
+            },
+            AbiDomOp::Move {
+                element_id: 6,
+                new_parent: 0,
+                before: 0,
+            },
+        ];
+        for (i, op) in ops.iter().enumerate() {
+            assert_eq!(op.target_element(), (i + 1) as u32);
+        }
+    }
+
+    // -- Enrichment: graph propagate_dirty on disposed signal --
+
+    #[test]
+    fn graph_propagate_dirty_disposed_rejected() {
+        let mut g = WasmSignalGraph::new(64, 100);
+        let s = g.next_id();
+        g.register(s, WasmSignalKind::Source, BTreeSet::new())
+            .unwrap();
+        g.dispose(s).unwrap();
+        assert!(matches!(
+            g.propagate_dirty(s),
+            Err(WasmGraphError::Disposed(_))
+        ));
+    }
+
+    // -- Enrichment: graph propagate_dirty on nonexistent signal --
+
+    #[test]
+    fn graph_propagate_dirty_not_found() {
+        let g = WasmSignalGraph::new(64, 100);
+        assert!(matches!(
+            g.clone().propagate_dirty(WasmSignalId(999)),
+            Err(WasmGraphError::NotFound(_))
+        ));
+    }
+
+    // -- Enrichment: lane total counters accumulate across flushes --
+
+    #[test]
+    fn lane_total_counters_accumulate() {
+        let mut lane = WasmRuntimeLane::with_defaults();
+        let s = lane.graph.next_id();
+        lane.graph
+            .register(s, WasmSignalKind::Source, BTreeSet::new())
+            .unwrap();
+        lane.graph.mark_clean(s).unwrap();
+
+        for i in 0..3u64 {
+            lane.enqueue_update(AbiStateUpdate {
+                signal_id: s,
+                payload: vec![i as u8],
+                sequence: i,
+            })
+            .unwrap();
+            lane.flush();
+        }
+
+        assert_eq!(lane.flush_count, 3);
+        assert!(lane.total_evaluations >= 3);
+    }
+
+    // -- Enrichment: WasmSignalId ordering --
+
+    #[test]
+    fn wasm_signal_id_ordering() {
+        assert!(WasmSignalId(0) < WasmSignalId(1));
+        assert!(WasmSignalId(1) < WasmSignalId(100));
+        assert_eq!(WasmSignalId(42), WasmSignalId(42));
+    }
 }
