@@ -1871,4 +1871,24 @@ mod tests {
         assert!(result.receipt_coverage.unverified_receipts.is_empty());
         assert_eq!(result.receipt_coverage.receipt_refs.len(), 5);
     }
+
+    #[test]
+    fn lane_type_ord() {
+        assert!(LaneType::ProofSpecialized < LaneType::AmbientAuthority);
+        assert!(LaneType::AmbientAuthority < LaneType::Fallback);
+    }
+
+    #[test]
+    fn injection_kind_ord() {
+        assert!(InjectionKind::ProofFailure < InjectionKind::CapabilityRevocation);
+        assert!(InjectionKind::CapabilityRevocation < InjectionKind::EpochTransition);
+        assert!(InjectionKind::EpochTransition < InjectionKind::ProofExpiry);
+    }
+
+    #[test]
+    fn gate_outcome_ord() {
+        assert!(GateOutcome::Pass < GateOutcome::Fail);
+    }
+
+}
 }

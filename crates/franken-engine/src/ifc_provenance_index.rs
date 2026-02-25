@@ -2440,4 +2440,32 @@ mod tests {
         assert_eq!(joined.len(), 2);
         assert!(joined.iter().all(|(_, receipt)| receipt.is_some()));
     }
+
+    #[test]
+    fn flow_decision_ord() {
+        assert!(FlowDecision::Allowed < FlowDecision::Blocked);
+        assert!(FlowDecision::Blocked < FlowDecision::Declassified);
+    }
+
+    #[test]
+    fn lineage_evidence_type_ord() {
+        assert!(LineageEvidenceType::FlowEvent < LineageEvidenceType::FlowProof);
+        assert!(LineageEvidenceType::FlowProof < LineageEvidenceType::DeclassificationReceipt);
+    }
+
+    #[test]
+    fn provenance_error_std_error() {
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(ProvenanceError::EmptyId { record_type: "flow".into() }),
+            Box::new(ProvenanceError::EmptyExtensionId),
+            Box::new(ProvenanceError::DuplicateRecord { key: "k1".into() }),
+            Box::new(ProvenanceError::StorageError("full".into())),
+            Box::new(ProvenanceError::SerializationError("bad json".into())),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            displays.insert(format!("{v}"));
+        }
+        assert_eq!(displays.len(), 5);
+    }
 }

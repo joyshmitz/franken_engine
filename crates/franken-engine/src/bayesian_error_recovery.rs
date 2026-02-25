@@ -1989,4 +1989,22 @@ mod tests {
         // No error sites = no decisions, not recovered.
         assert!(!result.recovered);
     }
+
+    #[test]
+    fn recovery_mode_ord() {
+        assert!(RecoveryMode::StrictDefault < RecoveryMode::DiagnosticRecovery);
+        assert!(RecoveryMode::DiagnosticRecovery < RecoveryMode::ExecutionRecovery);
+    }
+
+    #[test]
+    fn error_state_ord() {
+        assert!(ErrorState::Recoverable < ErrorState::Ambiguous);
+        assert!(ErrorState::Ambiguous < ErrorState::Unrecoverable);
+    }
+
+    #[test]
+    fn recovery_action_ord() {
+        assert!(RecoveryAction::RecoverContinue < RecoveryAction::PartialRecover);
+        assert!(RecoveryAction::PartialRecover < RecoveryAction::FailStrict);
+    }
 }
