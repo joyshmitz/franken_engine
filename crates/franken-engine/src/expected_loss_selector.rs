@@ -29,6 +29,11 @@ use crate::trust_economics::{
 
 const MILLION: i64 = 1_000_000;
 const RUNTIME_DECISION_SCORING_COMPONENT: &str = "runtime_decision_scoring";
+const ALIEN_TAIL_CONFIDENCE_MILLIONTHS: i64 = 900_000; // 90%
+const ALIEN_ELEVATED_PVALUE_MILLIONTHS: i64 = 100_000; // 10%
+const ALIEN_CRITICAL_PVALUE_MILLIONTHS: i64 = 50_000; // 5%
+const ALIEN_ELEVATED_REGIME_SHIFT_MILLIONTHS: i64 = 2_500_000; // 2.5 sigma-equivalent
+const ALIEN_CRITICAL_REGIME_SHIFT_MILLIONTHS: i64 = 4_000_000; // 4.0 sigma-equivalent
 
 // ---------------------------------------------------------------------------
 // ContainmentAction — the action space
@@ -424,6 +429,44 @@ pub struct RuntimeDecisionScoreEvent {
     pub error_code: Option<String>,
 }
 
+/// Alert level computed from compiled alien risk envelope artifacts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AlienRiskAlertLevel {
+    Nominal,
+    Elevated,
+    Critical,
+}
+
+impl fmt::Display for AlienRiskAlertLevel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Nominal => f.write_str("nominal"),
+            Self::Elevated => f.write_str("elevated"),
+            Self::Critical => f.write_str("critical"),
+        }
+    }
+}
+
+/// Compiled alien-artifact risk envelope for runtime decision scoring.
+///
+/// Artifacts:
+/// - tail VaR/CVaR (fixed confidence) from posterior-weighted losses
+/// - conformal p-value + quantile + one-step e-value from ROI history
+/// - robust regime-shift score via median/MAD normalization
+/// - conservative floor-action recommendation table
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AlienRiskEnvelope {
+    pub tail_confidence_millionths: i64,
+    pub tail_var_millionths: i64,
+    pub tail_cvar_millionths: i64,
+    pub conformal_quantile_millionths: i64,
+    pub conformal_p_value_millionths: i64,
+    pub e_value_millionths: i64,
+    pub regime_shift_score_millionths: i64,
+    pub alert_level: AlienRiskAlertLevel,
+    pub recommended_floor_action: Option<ContainmentAction>,
+}
+
 /// Runtime decision scoring artifact with expected-loss + attacker-ROI outputs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeDecisionScore {
@@ -448,6 +491,11 @@ pub struct RuntimeDecisionScore {
     /// Sensitivity report: for each risk state, the posterior delta (millionths) that
     /// would flip the selected action to the runner-up. Empty when not borderline.
     pub sensitivity_deltas: BTreeMap<String, i64>,
+    /// Compiled alien-artifact risk envelope.
+    pub alien_risk_envelope: AlienRiskEnvelope,
+    /// Severity gap between selected action and recommended alien floor action.
+    /// 0 means no floor recommendation or selected action already meets/exceeds floor.
+    pub alien_floor_gap_steps: u32,
     /// Deterministic receipt preimage hash suitable for signed receipt pipelines.
     pub receipt_preimage_hash: ContentHash,
     pub events: Vec<RuntimeDecisionScoreEvent>,
@@ -606,13 +654,6 @@ impl ExpectedLossSelector {
 
         let confidence_interval =
             confidence_interval_from_posterior(selected.1, runner_up.1, &input.posterior);
-        let selection_rationale = build_selection_rationale(
-            selected.0,
-            selected.1,
-            runner_up.0,
-            runner_up.1,
-            &input.posterior,
-        );
 
         let mut roi_history = input.extension_roi_history_millionths.clone();
         roi_history.push(attacker_roi_millionths);
@@ -643,19 +684,63 @@ impl ExpectedLossSelector {
             &self.loss_matrix,
             &input.posterior,
         );
+        let alien_risk_envelope = compute_alien_risk_envelope(
+            selected.0,
+            selected.1,
+            attacker_roi_millionths,
+            &input.extension_roi_history_millionths,
+            &self.loss_matrix,
+            &input.posterior,
+        );
+        let alien_floor_gap_steps =
+            floor_gap_steps(selected.0, alien_risk_envelope.recommended_floor_action);
+        let mut selection_rationale = build_selection_rationale(
+            selected.0,
+            selected.1,
+            runner_up.0,
+            runner_up.1,
+            &input.posterior,
+        );
+        if let Some(floor_action) = alien_risk_envelope.recommended_floor_action
+            && alien_floor_gap_steps > 0
+        {
+            selection_rationale.push_str(&format!(
+                ", alien_floor={floor_action}, alien_floor_gap_steps={alien_floor_gap_steps}"
+            ));
+        }
 
         self.decisions_made += 1;
         let receipt_preimage_hash = compute_runtime_decision_receipt_hash(
             input,
-            selected.0,
-            selected.1,
+            selected,
             &confidence_interval,
             &attacker_roi,
             &fleet_roi_summary,
+            &alien_risk_envelope,
+            alien_floor_gap_steps,
         );
 
         let mut events =
             build_runtime_decision_events(input, &ranked, selected.0, &fleet_assessments);
+        events.push(RuntimeDecisionScoreEvent {
+            trace_id: input.trace_id.clone(),
+            decision_id: input.decision_id.clone(),
+            policy_id: input.policy_id.clone(),
+            component: RUNTIME_DECISION_SCORING_COMPONENT.to_string(),
+            event: "alien_envelope_compiled".to_string(),
+            outcome: format!(
+                "level={} p={} e={} regime={} tail_cvar={} floor={}",
+                alien_risk_envelope.alert_level,
+                alien_risk_envelope.conformal_p_value_millionths,
+                alien_risk_envelope.e_value_millionths,
+                alien_risk_envelope.regime_shift_score_millionths,
+                alien_risk_envelope.tail_cvar_millionths,
+                alien_risk_envelope
+                    .recommended_floor_action
+                    .map_or_else(|| "none".to_string(), |action| action.to_string()),
+            ),
+            error_code: None,
+        });
         if borderline_decision {
             events.push(RuntimeDecisionScoreEvent {
                 trace_id: input.trace_id.clone(),
@@ -670,6 +755,54 @@ impl ExpectedLossSelector {
                     runner_up.0,
                 ),
                 error_code: Some("FE-RUNTIME-SCORING-BORDERLINE".to_string()),
+            });
+        }
+        if let Some(floor_action) = alien_risk_envelope.recommended_floor_action
+            && alien_floor_gap_steps > 0
+        {
+            events.push(RuntimeDecisionScoreEvent {
+                trace_id: input.trace_id.clone(),
+                decision_id: input.decision_id.clone(),
+                policy_id: input.policy_id.clone(),
+                component: RUNTIME_DECISION_SCORING_COMPONENT.to_string(),
+                event: "alien_floor_gap".to_string(),
+                outcome: format!(
+                    "selected={} floor={} gap_steps={}",
+                    selected.0, floor_action, alien_floor_gap_steps
+                ),
+                error_code: Some("FE-RUNTIME-SCORING-ALIEN-FLOOR-GAP".to_string()),
+            });
+        }
+        if alien_risk_envelope.alert_level != AlienRiskAlertLevel::Nominal {
+            let (outcome, error_code) = match alien_risk_envelope.alert_level {
+                AlienRiskAlertLevel::Elevated => (
+                    format!(
+                        "elevated tail_cvar={} p={} regime={}",
+                        alien_risk_envelope.tail_cvar_millionths,
+                        alien_risk_envelope.conformal_p_value_millionths,
+                        alien_risk_envelope.regime_shift_score_millionths
+                    ),
+                    "FE-RUNTIME-SCORING-ALIEN-ELEVATED",
+                ),
+                AlienRiskAlertLevel::Critical => (
+                    format!(
+                        "critical tail_cvar={} p={} regime={}",
+                        alien_risk_envelope.tail_cvar_millionths,
+                        alien_risk_envelope.conformal_p_value_millionths,
+                        alien_risk_envelope.regime_shift_score_millionths
+                    ),
+                    "FE-RUNTIME-SCORING-ALIEN-CRITICAL",
+                ),
+                AlienRiskAlertLevel::Nominal => (String::new(), ""),
+            };
+            events.push(RuntimeDecisionScoreEvent {
+                trace_id: input.trace_id.clone(),
+                decision_id: input.decision_id.clone(),
+                policy_id: input.policy_id.clone(),
+                component: RUNTIME_DECISION_SCORING_COMPONENT.to_string(),
+                event: "alien_risk_alert".to_string(),
+                outcome,
+                error_code: Some(error_code.to_string()),
             });
         }
 
@@ -692,6 +825,8 @@ impl ExpectedLossSelector {
             fleet_roi_summary,
             borderline_decision,
             sensitivity_deltas,
+            alien_risk_envelope,
+            alien_floor_gap_steps,
             receipt_preimage_hash,
             events,
         })
@@ -850,29 +985,220 @@ fn compute_borderline_sensitivity(
 
 fn compute_runtime_decision_receipt_hash(
     input: &RuntimeDecisionScoringInput,
-    selected_action: ContainmentAction,
-    selected_expected_loss_millionths: i64,
+    selected: (ContainmentAction, i64),
     confidence_interval: &DecisionConfidenceInterval,
     attacker_roi: &AttackerRoiAssessment,
     fleet_roi_summary: &FleetRoiSummary,
+    alien_risk_envelope: &AlienRiskEnvelope,
+    alien_floor_gap_steps: u32,
 ) -> ContentHash {
     let preimage = format!(
-        "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
+        "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
         input.trace_id,
         input.decision_id,
         input.policy_id,
         input.extension_id,
         input.policy_version,
         input.timestamp_ns,
-        selected_action,
-        selected_expected_loss_millionths,
+        selected.0,
+        selected.1,
         confidence_interval.lower_millionths,
         confidence_interval.upper_millionths,
         attacker_roi.roi_millionths,
         fleet_roi_summary.extension_count,
         fleet_roi_summary.average_roi_millionths,
+        alien_risk_envelope.tail_confidence_millionths,
+        alien_risk_envelope.tail_var_millionths,
+        alien_risk_envelope.tail_cvar_millionths,
+        alien_risk_envelope.conformal_quantile_millionths,
+        alien_risk_envelope.conformal_p_value_millionths,
+        alien_risk_envelope.e_value_millionths,
+        alien_risk_envelope.regime_shift_score_millionths,
+        alien_risk_envelope.alert_level,
+        alien_risk_envelope
+            .recommended_floor_action
+            .map_or_else(|| "none".to_string(), |action| action.to_string()),
+        alien_floor_gap_steps,
     );
     ContentHash::compute(preimage.as_bytes())
+}
+
+fn floor_gap_steps(
+    selected_action: ContainmentAction,
+    recommended_floor_action: Option<ContainmentAction>,
+) -> u32 {
+    recommended_floor_action.map_or(0, |floor| {
+        floor.severity().saturating_sub(selected_action.severity())
+    })
+}
+
+fn compute_alien_risk_envelope(
+    selected_action: ContainmentAction,
+    selected_expected_loss_millionths: i64,
+    attacker_roi_millionths: i64,
+    roi_history_millionths: &[i64],
+    loss_matrix: &LossMatrix,
+    posterior: &Posterior,
+) -> AlienRiskEnvelope {
+    let (tail_var, tail_cvar) =
+        compute_tail_var_cvar(selected_action, loss_matrix, posterior, ALIEN_TAIL_CONFIDENCE_MILLIONTHS);
+    let (conformal_quantile, conformal_p_value, e_value) = compute_conformal_roi_monitor(
+        roi_history_millionths,
+        attacker_roi_millionths,
+        ALIEN_TAIL_CONFIDENCE_MILLIONTHS,
+    );
+    let regime_shift_score = compute_regime_shift_score(roi_history_millionths, attacker_roi_millionths);
+    let (alert_level, recommended_floor_action) = classify_alien_risk_alert(
+        selected_expected_loss_millionths,
+        tail_cvar,
+        conformal_p_value,
+        regime_shift_score,
+    );
+
+    AlienRiskEnvelope {
+        tail_confidence_millionths: ALIEN_TAIL_CONFIDENCE_MILLIONTHS,
+        tail_var_millionths: tail_var,
+        tail_cvar_millionths: tail_cvar,
+        conformal_quantile_millionths: conformal_quantile,
+        conformal_p_value_millionths: conformal_p_value,
+        e_value_millionths: e_value,
+        regime_shift_score_millionths: regime_shift_score,
+        alert_level,
+        recommended_floor_action,
+    }
+}
+
+fn compute_tail_var_cvar(
+    action: ContainmentAction,
+    loss_matrix: &LossMatrix,
+    posterior: &Posterior,
+    tail_confidence_millionths: i64,
+) -> (i64, i64) {
+    let mut scenarios: Vec<(i64, i64)> = RiskState::ALL
+        .iter()
+        .map(|state| {
+            (
+                loss_matrix.loss(action, *state),
+                posterior.probability(*state).max(0),
+            )
+        })
+        .collect();
+    if scenarios.iter().all(|(_, probability)| *probability == 0) {
+        return (0, 0);
+    }
+
+    scenarios.sort_by_key(|entry| entry.0);
+    let mut cumulative = 0i64;
+    let mut var = scenarios.last().map_or(0, |(loss, _)| *loss);
+    for (loss, probability) in &scenarios {
+        cumulative = cumulative.saturating_add(*probability);
+        if cumulative >= tail_confidence_millionths {
+            var = *loss;
+            break;
+        }
+    }
+
+    let tail_mass = (MILLION - tail_confidence_millionths).max(1);
+    scenarios.sort_by_key(|entry| std::cmp::Reverse(entry.0));
+    let mut remaining = tail_mass;
+    let mut cvar_numerator = 0i128;
+    for (loss, probability) in scenarios {
+        if remaining <= 0 {
+            break;
+        }
+        let take = probability.min(remaining).max(0);
+        cvar_numerator += loss as i128 * take as i128;
+        remaining -= take;
+    }
+    let cvar = (cvar_numerator / tail_mass as i128) as i64;
+    (var, cvar)
+}
+
+fn compute_conformal_roi_monitor(
+    history_millionths: &[i64],
+    current_roi_millionths: i64,
+    quantile_confidence_millionths: i64,
+) -> (i64, i64, i64) {
+    if history_millionths.is_empty() {
+        return (current_roi_millionths, 500_000, 2_000_000);
+    }
+
+    let mut sorted = history_millionths.to_vec();
+    sorted.sort_unstable();
+    let idx = ((sorted.len() as i64 - 1) * quantile_confidence_millionths / MILLION)
+        .clamp(0, sorted.len() as i64 - 1) as usize;
+    let conformal_quantile = sorted[idx];
+
+    let greater_or_equal = history_millionths
+        .iter()
+        .filter(|&&value| value >= current_roi_millionths)
+        .count() as i64;
+    let denominator = history_millionths.len() as i64 + 1;
+    let p_value = ((greater_or_equal + 1) * MILLION / denominator).clamp(1, MILLION);
+    let e_value = ((MILLION as i128 * MILLION as i128) / p_value as i128) as i64;
+    (conformal_quantile, p_value, e_value)
+}
+
+fn compute_regime_shift_score(history_millionths: &[i64], current_roi_millionths: i64) -> i64 {
+    if history_millionths.len() < 4 {
+        return 0;
+    }
+    let center = median_i64(history_millionths);
+    let deviations: Vec<i64> = history_millionths
+        .iter()
+        .map(|value| value.saturating_sub(center).abs())
+        .collect();
+    let mad = median_i64(&deviations).max(1);
+    let deviation = current_roi_millionths.saturating_sub(center).abs();
+    ((deviation as i128 * MILLION as i128) / mad as i128).min(10_000_000) as i64
+}
+
+fn median_i64(values: &[i64]) -> i64 {
+    debug_assert!(!values.is_empty());
+    if values.is_empty() {
+        return 0;
+    }
+    let mut sorted = values.to_vec();
+    sorted.sort_unstable();
+    let mid = sorted.len() / 2;
+    if sorted.len() % 2 == 1 {
+        sorted[mid]
+    } else {
+        ((sorted[mid - 1] as i128 + sorted[mid] as i128) / 2) as i64
+    }
+}
+
+fn classify_alien_risk_alert(
+    selected_expected_loss_millionths: i64,
+    tail_cvar_millionths: i64,
+    conformal_p_value_millionths: i64,
+    regime_shift_score_millionths: i64,
+) -> (AlienRiskAlertLevel, Option<ContainmentAction>) {
+    let base_loss = selected_expected_loss_millionths.abs().max(1);
+    let cvar_ratio_millionths =
+        ((tail_cvar_millionths.abs() as i128 * MILLION as i128) / base_loss as i128) as i64;
+
+    let critical = conformal_p_value_millionths <= ALIEN_CRITICAL_PVALUE_MILLIONTHS
+        || regime_shift_score_millionths >= ALIEN_CRITICAL_REGIME_SHIFT_MILLIONTHS
+        || cvar_ratio_millionths >= 20_000_000; // 20x baseline EL
+    if critical {
+        return (
+            AlienRiskAlertLevel::Critical,
+            Some(ContainmentAction::Suspend),
+        );
+    }
+
+    let elevated = conformal_p_value_millionths <= ALIEN_ELEVATED_PVALUE_MILLIONTHS
+        || regime_shift_score_millionths >= ALIEN_ELEVATED_REGIME_SHIFT_MILLIONTHS
+        || cvar_ratio_millionths >= 8_000_000; // 8x baseline EL
+    if elevated {
+        return (
+            AlienRiskAlertLevel::Elevated,
+            Some(ContainmentAction::Sandbox),
+        );
+    }
+
+    (AlienRiskAlertLevel::Nominal, None)
 }
 
 fn build_runtime_decision_events(
@@ -1416,6 +1742,47 @@ mod tests {
         assert_eq!(artifact.attacker_roi.alert.to_string(), "highly_profitable");
         assert_eq!(artifact.fleet_roi_summary.extension_count, 2);
         assert_eq!(
+            artifact.alien_risk_envelope.tail_confidence_millionths,
+            ALIEN_TAIL_CONFIDENCE_MILLIONTHS
+        );
+        assert!(
+            (1..=MILLION).contains(&artifact.alien_risk_envelope.conformal_p_value_millionths)
+        );
+        assert!(artifact.alien_risk_envelope.e_value_millionths >= MILLION);
+        match artifact.alien_risk_envelope.alert_level {
+            AlienRiskAlertLevel::Nominal => {
+                assert!(artifact.alien_risk_envelope.recommended_floor_action.is_none());
+                assert_eq!(artifact.alien_floor_gap_steps, 0);
+            }
+            AlienRiskAlertLevel::Elevated => {
+                assert_eq!(
+                    artifact.alien_risk_envelope.recommended_floor_action,
+                    Some(ContainmentAction::Sandbox)
+                );
+                assert_eq!(
+                    artifact.alien_floor_gap_steps,
+                    ContainmentAction::Sandbox
+                        .severity()
+                        .saturating_sub(artifact.selected_action.severity())
+                );
+            }
+            AlienRiskAlertLevel::Critical => {
+                assert_eq!(
+                    artifact.alien_risk_envelope.recommended_floor_action,
+                    Some(ContainmentAction::Suspend)
+                );
+                assert_eq!(
+                    artifact.alien_floor_gap_steps,
+                    ContainmentAction::Suspend
+                        .severity()
+                        .saturating_sub(artifact.selected_action.severity())
+                );
+            }
+        }
+        assert!(artifact.events.iter().any(|event| {
+            event.event == "alien_envelope_compiled" && event.error_code.is_none()
+        }));
+        assert_eq!(
             artifact.events[0],
             RuntimeDecisionScoreEvent {
                 trace_id: input.trace_id.clone(),
@@ -1431,6 +1798,40 @@ mod tests {
             event.event == "attacker_roi_alert"
                 && event.outcome == "highly_profitable"
                 && event.error_code.as_deref() == Some("FE-RUNTIME-SCORING-ROI-ALERT")
+        }));
+    }
+
+    #[test]
+    fn alien_envelope_critical_on_extreme_conformal_outlier() {
+        let mut selector = ExpectedLossSelector::balanced();
+        let mut input = sample_runtime_input(certain_benign());
+        input.extension_roi_history_millionths = vec![100_000; 30];
+
+        let artifact = selector
+            .score_runtime_decision(&input)
+            .expect("runtime scoring artifact");
+        assert_eq!(artifact.selected_action, ContainmentAction::Allow);
+        assert_eq!(
+            artifact.alien_risk_envelope.alert_level,
+            AlienRiskAlertLevel::Critical
+        );
+        assert_eq!(
+            artifact.alien_risk_envelope.recommended_floor_action,
+            Some(ContainmentAction::Suspend)
+        );
+        assert_eq!(
+            artifact.alien_floor_gap_steps,
+            ContainmentAction::Suspend
+                .severity()
+                .saturating_sub(artifact.selected_action.severity())
+        );
+        assert!(artifact.events.iter().any(|event| {
+            event.event == "alien_risk_alert"
+                && event.error_code.as_deref() == Some("FE-RUNTIME-SCORING-ALIEN-CRITICAL")
+        }));
+        assert!(artifact.events.iter().any(|event| {
+            event.event == "alien_floor_gap"
+                && event.error_code.as_deref() == Some("FE-RUNTIME-SCORING-ALIEN-FLOOR-GAP")
         }));
     }
 
