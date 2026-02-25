@@ -8,8 +8,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use e2e_harness::{
     ArtifactCollector, DeterministicRunner, FixtureStore, GoldenStore, GoldenVerificationError,
-    LogExpectation, ReplayInputErrorCode, ScenarioStep, TestFixture, assert_structured_logs,
-    audit_collected_artifacts, validate_replay_input, verify_replay,
+    LogExpectation, ReplayInputErrorCode, ScenarioClass, ScenarioMatrixEntry, ScenarioStep,
+    TestFixture, assert_structured_logs, audit_collected_artifacts, run_scenario_matrix,
+    validate_replay_input, verify_replay,
 };
 
 fn test_temp_dir(suffix: &str) -> PathBuf {
@@ -46,6 +47,28 @@ fn sample_fixture() -> TestFixture {
                 metadata: error_metadata,
             },
         ],
+        expected_events: vec![],
+        determinism_check: true,
+    }
+}
+
+fn non_error_fixture(fixture_id: &str, seed: u64, step_count: usize) -> TestFixture {
+    let mut steps = Vec::with_capacity(step_count);
+    for idx in 0..step_count {
+        steps.push(ScenarioStep {
+            component: "scheduler".to_string(),
+            event: format!("tick-{idx}"),
+            advance_micros: 10,
+            metadata: BTreeMap::new(),
+        });
+    }
+    TestFixture {
+        fixture_id: fixture_id.to_string(),
+        fixture_version: TestFixture::CURRENT_VERSION,
+        seed,
+        virtual_time_start_micros: 5_000,
+        policy_id: "policy-matrix".to_string(),
+        steps,
         expected_events: vec![],
         determinism_check: true,
     }
@@ -266,4 +289,94 @@ fn golden_store_reports_missing_baseline() {
         err,
         GoldenVerificationError::MissingBaseline { .. }
     ));
+}
+
+#[test]
+fn scenario_matrix_emits_evidence_packs_for_stress_fault_and_cross_arch() {
+    let runner = DeterministicRunner::default();
+    let root = test_temp_dir("scenario-matrix");
+    let collector = ArtifactCollector::new(root.join("artifacts")).expect("collector");
+
+    let scenarios = vec![
+        ScenarioMatrixEntry {
+            scenario_id: "stress-01".to_string(),
+            scenario_class: ScenarioClass::Stress,
+            fixture: non_error_fixture("stress-fixture", 123, 24),
+            target_arch: None,
+            worker_pool: Some("pool-a".to_string()),
+        },
+        ScenarioMatrixEntry {
+            scenario_id: "fault-01".to_string(),
+            scenario_class: ScenarioClass::FaultInjection,
+            fixture: sample_fixture(),
+            target_arch: None,
+            worker_pool: Some("pool-b".to_string()),
+        },
+        ScenarioMatrixEntry {
+            scenario_id: "cross-arch-01".to_string(),
+            scenario_class: ScenarioClass::CrossArch,
+            fixture: non_error_fixture("cross-arch-fixture", 321, 8),
+            target_arch: Some("aarch64-unknown-linux-gnu".to_string()),
+            worker_pool: Some("pool-cross".to_string()),
+        },
+    ];
+
+    let execution = run_scenario_matrix(&runner, &collector, &scenarios).expect("matrix run");
+    assert_eq!(execution.report.total_scenarios, 3);
+    assert_eq!(execution.report.pass_scenarios, 2);
+    assert_eq!(execution.report.fail_scenarios, 1);
+    assert!(execution.summary_json_path.exists());
+    assert!(execution.summary_markdown_path.exists());
+
+    for pack in &execution.report.scenario_packs {
+        assert!(!pack.scenario_id.is_empty());
+        assert!(pack.replay_pointer.starts_with("replay://"));
+        assert!(
+            collector
+                .root()
+                .join(&pack.artifact_paths.manifest)
+                .exists(),
+            "manifest missing for {}",
+            pack.scenario_id
+        );
+        assert!(
+            collector.root().join(&pack.artifact_paths.events).exists(),
+            "events missing for {}",
+            pack.scenario_id
+        );
+        assert!(
+            collector
+                .root()
+                .join(&pack.artifact_paths.evidence_linkage)
+                .exists(),
+            "evidence linkage missing for {}",
+            pack.scenario_id
+        );
+    }
+
+    let cross_arch = execution
+        .report
+        .scenario_packs
+        .iter()
+        .find(|pack| pack.scenario_class == ScenarioClass::CrossArch)
+        .expect("cross-arch scenario");
+    assert_eq!(
+        cross_arch.target_arch.as_deref(),
+        Some("aarch64-unknown-linux-gnu")
+    );
+
+    let summary_json =
+        fs::read_to_string(&execution.summary_json_path).expect("matrix summary json");
+    assert!(summary_json.contains("stress-01"));
+    assert!(summary_json.contains("fault-01"));
+    assert!(summary_json.contains("cross-arch-01"));
+}
+
+#[test]
+fn scenario_matrix_rejects_empty_input() {
+    let runner = DeterministicRunner::default();
+    let root = test_temp_dir("scenario-matrix-empty");
+    let collector = ArtifactCollector::new(root.join("artifacts")).expect("collector");
+    let err = run_scenario_matrix(&runner, &collector, &[]).expect_err("must reject empty matrix");
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
 }

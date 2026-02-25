@@ -1233,6 +1233,10 @@ impl ArtifactCollector {
         Ok(Self { root })
     }
 
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
     pub fn collect(&self, result: &RunResult) -> io::Result<CollectedArtifacts> {
         let run_root = self.root.join(&result.run_id);
         fs::create_dir_all(&run_root)?;
@@ -1439,6 +1443,197 @@ pub fn audit_collected_artifacts(artifacts: &CollectedArtifacts) -> ArtifactComp
         diagnostics,
         event_count,
         linkage_count,
+    }
+}
+
+/// Scenario class for expanded deterministic matrix execution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScenarioClass {
+    Stress,
+    FaultInjection,
+    CrossArch,
+}
+
+/// One matrix scenario entry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScenarioMatrixEntry {
+    pub scenario_id: String,
+    pub scenario_class: ScenarioClass,
+    pub fixture: TestFixture,
+    #[serde(default)]
+    pub target_arch: Option<String>,
+    #[serde(default)]
+    pub worker_pool: Option<String>,
+}
+
+/// Relative artifact paths for one scenario evidence pack.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScenarioArtifactPaths {
+    pub manifest: String,
+    pub events: String,
+    pub evidence_linkage: String,
+    pub report_json: String,
+    pub report_markdown: String,
+}
+
+/// Evidence pack for one scenario execution.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScenarioEvidencePack {
+    pub scenario_id: String,
+    pub scenario_class: ScenarioClass,
+    pub target_arch: Option<String>,
+    pub worker_pool: Option<String>,
+    pub fixture_id: String,
+    pub run_id: String,
+    pub output_digest: String,
+    pub event_count: usize,
+    pub pass: bool,
+    pub first_error_code: Option<String>,
+    pub replay_pointer: String,
+    pub artifact_paths: ScenarioArtifactPaths,
+    pub completeness: ArtifactCompletenessReport,
+}
+
+/// Aggregated report for a scenario matrix run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScenarioMatrixReport {
+    pub schema_version: String,
+    pub summary_id: String,
+    pub total_scenarios: u64,
+    pub pass_scenarios: u64,
+    pub fail_scenarios: u64,
+    pub scenario_packs: Vec<ScenarioEvidencePack>,
+}
+
+/// Concrete summary outputs for a scenario matrix run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScenarioMatrixExecution {
+    pub report: ScenarioMatrixReport,
+    pub summary_json_path: PathBuf,
+    pub summary_markdown_path: PathBuf,
+}
+
+/// Runs a deterministic scenario matrix and writes a summary evidence pack.
+pub fn run_scenario_matrix(
+    runner: &DeterministicRunner,
+    collector: &ArtifactCollector,
+    scenarios: &[ScenarioMatrixEntry],
+) -> io::Result<ScenarioMatrixExecution> {
+    if scenarios.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "scenario matrix requires at least one scenario",
+        ));
+    }
+
+    let mut packs = Vec::with_capacity(scenarios.len());
+    for scenario in scenarios {
+        if scenario.scenario_id.trim().is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "scenario_id is required",
+            ));
+        }
+
+        let run = runner
+            .run_fixture(&scenario.fixture)
+            .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err.to_string()))?;
+        let artifacts = collector.collect(&run)?;
+        let completeness = audit_collected_artifacts(&artifacts);
+        let report = RunReport::from_result(&run);
+        let pass = report.pass && completeness.complete;
+
+        packs.push(ScenarioEvidencePack {
+            scenario_id: scenario.scenario_id.clone(),
+            scenario_class: scenario.scenario_class,
+            target_arch: scenario.target_arch.clone(),
+            worker_pool: scenario.worker_pool.clone(),
+            fixture_id: run.fixture_id.clone(),
+            run_id: run.run_id.clone(),
+            output_digest: run.output_digest.clone(),
+            event_count: run.events.len(),
+            pass,
+            first_error_code: report.first_error_code,
+            replay_pointer: format!("replay://{}", run.run_id),
+            artifact_paths: ScenarioArtifactPaths {
+                manifest: path_relative_to(collector.root(), &artifacts.manifest_path),
+                events: path_relative_to(collector.root(), &artifacts.events_path),
+                evidence_linkage: path_relative_to(
+                    collector.root(),
+                    &artifacts.evidence_linkage_path,
+                ),
+                report_json: path_relative_to(collector.root(), &artifacts.report_json_path),
+                report_markdown: path_relative_to(
+                    collector.root(),
+                    &artifacts.report_markdown_path,
+                ),
+            },
+            completeness,
+        });
+    }
+
+    let total_scenarios = packs.len() as u64;
+    let pass_scenarios = packs.iter().filter(|pack| pack.pass).count() as u64;
+    let fail_scenarios = total_scenarios.saturating_sub(pass_scenarios);
+    let summary_id = scenario_matrix_summary_id(&packs);
+    let report = ScenarioMatrixReport {
+        schema_version: "franken-engine.e2e-scenario-matrix.report.v1".to_string(),
+        summary_id,
+        total_scenarios,
+        pass_scenarios,
+        fail_scenarios,
+        scenario_packs: packs,
+    };
+
+    let summary_json_path = collector.root().join("scenario_matrix_summary.json");
+    let summary_markdown_path = collector.root().join("scenario_matrix_summary.md");
+    write_atomic(&summary_json_path, &canonical_json_bytes(&report)?)?;
+    write_atomic(
+        &summary_markdown_path,
+        scenario_matrix_summary_markdown(&report).as_bytes(),
+    )?;
+
+    Ok(ScenarioMatrixExecution {
+        report,
+        summary_json_path,
+        summary_markdown_path,
+    })
+}
+
+fn scenario_matrix_summary_id(packs: &[ScenarioEvidencePack]) -> String {
+    let mut preimage = String::new();
+    for pack in packs {
+        let line = format!(
+            "{}:{}:{}:{}:{};",
+            pack.scenario_id, pack.run_id, pack.output_digest, pack.pass, pack.replay_pointer
+        );
+        preimage.push_str(&line);
+    }
+    digest_hex(preimage.as_bytes())
+}
+
+fn scenario_matrix_summary_markdown(report: &ScenarioMatrixReport) -> String {
+    let mut markdown = String::from(
+        "# E2E Scenario Matrix Summary\n\n| scenario_id | class | pass | run_id | output_digest |\n|---|---|---:|---|---|\n",
+    );
+    for pack in &report.scenario_packs {
+        markdown.push_str(&format!(
+            "| {} | {:?} | {} | {} | {} |\n",
+            pack.scenario_id, pack.scenario_class, pack.pass, pack.run_id, pack.output_digest
+        ));
+    }
+    markdown.push_str(&format!(
+        "\n- summary_id: `{}`\n- total_scenarios: `{}`\n- pass_scenarios: `{}`\n- fail_scenarios: `{}`\n",
+        report.summary_id, report.total_scenarios, report.pass_scenarios, report.fail_scenarios
+    ));
+    markdown
+}
+
+fn path_relative_to(root: &Path, path: &Path) -> String {
+    match path.strip_prefix(root) {
+        Ok(relative) => relative.display().to_string(),
+        Err(_) => path.display().to_string(),
     }
 }
 
