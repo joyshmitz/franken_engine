@@ -21,6 +21,8 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::hash_tiers::ContentHash;
+#[cfg(test)]
+use crate::parallel_parser::ScheduleDispatch;
 use crate::parallel_parser::{
     self, MergeWitness, ParallelConfig, ParseInput, ParseOutput, ParserMode, RollbackControl,
     ScheduleTranscript,
@@ -231,6 +233,20 @@ pub fn compare_transcripts(
             field: "execution_order".to_string(),
             expected: format!("{:?}", expected.execution_order),
             actual: format!("{:?}", actual.execution_order),
+        });
+    }
+    if expected.dispatches != actual.dispatches {
+        diffs.push(WitnessDiffEntry {
+            field: "dispatches".to_string(),
+            expected: format!("{:?}", expected.dispatches),
+            actual: format!("{:?}", actual.dispatches),
+        });
+    }
+    if expected.transcript_hash != actual.transcript_hash {
+        diffs.push(WitnessDiffEntry {
+            field: "transcript_hash".to_string(),
+            expected: format!("{:?}", expected.transcript_hash),
+            actual: format!("{:?}", actual.transcript_hash),
         });
     }
 
@@ -936,11 +952,35 @@ mod tests {
 
     #[test]
     fn transcript_diff_identical() {
+        let dispatches = vec![
+            ScheduleDispatch {
+                step_index: 0,
+                chunk_index: 0,
+                worker_slot: 0,
+            },
+            ScheduleDispatch {
+                step_index: 1,
+                chunk_index: 1,
+                worker_slot: 1,
+            },
+            ScheduleDispatch {
+                step_index: 2,
+                chunk_index: 2,
+                worker_slot: 2,
+            },
+            ScheduleDispatch {
+                step_index: 3,
+                chunk_index: 3,
+                worker_slot: 3,
+            },
+        ];
         let t = ScheduleTranscript {
             seed: 42,
             worker_count: 4,
             plan_hash: ContentHash::compute(b"plan"),
             execution_order: vec![0, 1, 2, 3],
+            dispatches: dispatches.clone(),
+            transcript_hash: ContentHash::compute(b"transcript-a"),
         };
         let diff = compare_transcripts(&t, &t);
         assert!(diff.matches);
@@ -948,11 +988,35 @@ mod tests {
 
     #[test]
     fn transcript_diff_seed_mismatch() {
+        let dispatches = vec![
+            ScheduleDispatch {
+                step_index: 0,
+                chunk_index: 0,
+                worker_slot: 0,
+            },
+            ScheduleDispatch {
+                step_index: 1,
+                chunk_index: 1,
+                worker_slot: 1,
+            },
+            ScheduleDispatch {
+                step_index: 2,
+                chunk_index: 2,
+                worker_slot: 2,
+            },
+            ScheduleDispatch {
+                step_index: 3,
+                chunk_index: 3,
+                worker_slot: 3,
+            },
+        ];
         let t1 = ScheduleTranscript {
             seed: 42,
             worker_count: 4,
             plan_hash: ContentHash::compute(b"plan"),
             execution_order: vec![0, 1, 2, 3],
+            dispatches,
+            transcript_hash: ContentHash::compute(b"transcript-a"),
         };
         let t2 = ScheduleTranscript {
             seed: 99,

@@ -416,7 +416,8 @@ pub fn compute_chunk_plan(input: &[u8], max_workers: u32) -> ChunkPlan {
         } else {
             let ideal = start + ((len - start) / remaining_chunks);
             let max_end = len.saturating_sub(remaining_chunks - 1);
-            let selected = select_partition_end(&boundaries, start, ideal, max_end).unwrap_or(max_end);
+            let selected =
+                select_partition_end(&boundaries, start, ideal, max_end).unwrap_or(max_end);
             let end = selected.max(start + 1).min(max_end);
             chunks.push((start, end));
             start = end;
@@ -528,6 +529,330 @@ pub struct ScheduleTranscript {
     pub plan_hash: ContentHash,
     /// Execution order (chunk indices in execution order).
     pub execution_order: Vec<u32>,
+    /// Per-step deterministic worker dispatch decisions.
+    pub dispatches: Vec<ScheduleDispatch>,
+    /// Hash of the full transcript payload.
+    pub transcript_hash: ContentHash,
+}
+
+/// One deterministic scheduler dispatch decision.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScheduleDispatch {
+    /// Zero-based dispatch sequence index.
+    pub step_index: u32,
+    /// Chunk index dispatched at this step.
+    pub chunk_index: u32,
+    /// Worker slot selected for this step.
+    pub worker_slot: u32,
+}
+
+#[must_use]
+fn splitmix64(mut x: u64) -> u64 {
+    x = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    x ^ (x >> 31)
+}
+
+#[must_use]
+fn schedule_rank(seed: u64, plan_hash: &ContentHash, chunk_index: u32) -> u64 {
+    let hash_words = plan_hash.as_bytes();
+    let word_offset = (chunk_index as usize % 4) * 8;
+    let mut word_bytes = [0_u8; 8];
+    word_bytes.copy_from_slice(&hash_words[word_offset..word_offset + 8]);
+    let hash_word = u64::from_be_bytes(word_bytes);
+    let chunk_component = (chunk_index as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    splitmix64(seed ^ hash_word ^ chunk_component)
+}
+
+#[must_use]
+fn deterministic_execution_order(chunk_count: u32, seed: u64, plan_hash: &ContentHash) -> Vec<u32> {
+    let mut order: Vec<u32> = (0..chunk_count).collect();
+    order.sort_by_key(|chunk_index| {
+        (
+            schedule_rank(seed, plan_hash, *chunk_index),
+            *chunk_index as u64,
+        )
+    });
+    order
+}
+
+#[must_use]
+fn build_schedule_dispatches(execution_order: &[u32], worker_count: u32) -> Vec<ScheduleDispatch> {
+    let mut dispatches = Vec::with_capacity(execution_order.len());
+    for (step_index, chunk_index) in execution_order.iter().enumerate() {
+        let worker_slot = if worker_count == 0 {
+            0
+        } else {
+            (step_index as u32) % worker_count
+        };
+        dispatches.push(ScheduleDispatch {
+            step_index: step_index as u32,
+            chunk_index: *chunk_index,
+            worker_slot,
+        });
+    }
+    dispatches
+}
+
+#[must_use]
+fn compute_schedule_transcript_hash(
+    seed: u64,
+    worker_count: u32,
+    plan_hash: &ContentHash,
+    execution_order: &[u32],
+    dispatches: &[ScheduleDispatch],
+) -> ContentHash {
+    let mut bytes = Vec::with_capacity(16 + 32 + execution_order.len() * 4 + dispatches.len() * 12);
+    bytes.extend_from_slice(&seed.to_le_bytes());
+    bytes.extend_from_slice(&worker_count.to_le_bytes());
+    bytes.extend_from_slice(plan_hash.as_bytes());
+    bytes.extend_from_slice(&(execution_order.len() as u32).to_le_bytes());
+    for chunk_index in execution_order {
+        bytes.extend_from_slice(&chunk_index.to_le_bytes());
+    }
+    bytes.extend_from_slice(&(dispatches.len() as u32).to_le_bytes());
+    for dispatch in dispatches {
+        bytes.extend_from_slice(&dispatch.step_index.to_le_bytes());
+        bytes.extend_from_slice(&dispatch.chunk_index.to_le_bytes());
+        bytes.extend_from_slice(&dispatch.worker_slot.to_le_bytes());
+    }
+    ContentHash::compute(&bytes)
+}
+
+/// Build a deterministic scheduler transcript from a chunk plan and seed.
+#[must_use]
+pub fn build_schedule_transcript(chunk_plan: &ChunkPlan, seed: u64) -> ScheduleTranscript {
+    let chunk_count = chunk_plan.chunks.len() as u32;
+    let execution_order = deterministic_execution_order(chunk_count, seed, &chunk_plan.plan_hash);
+    let dispatches = build_schedule_dispatches(&execution_order, chunk_plan.worker_count);
+    let transcript_hash = compute_schedule_transcript_hash(
+        seed,
+        chunk_plan.worker_count,
+        &chunk_plan.plan_hash,
+        &execution_order,
+        &dispatches,
+    );
+    ScheduleTranscript {
+        seed,
+        worker_count: chunk_plan.worker_count,
+        plan_hash: chunk_plan.plan_hash.clone(),
+        execution_order,
+        dispatches,
+        transcript_hash,
+    }
+}
+
+/// Transcript replay validation failures.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TranscriptReplayError {
+    PlanHashMismatch {
+        expected: ContentHash,
+        actual: ContentHash,
+    },
+    WorkerCountMismatch {
+        expected: u32,
+        actual: u32,
+    },
+    InvalidExecutionOrderLength {
+        expected_chunks: u32,
+        actual_entries: u32,
+    },
+    InvalidDispatchCount {
+        expected_steps: u32,
+        actual_steps: u32,
+    },
+    InvalidChunkReference {
+        step_index: u32,
+        chunk_index: u32,
+        chunk_count: u32,
+    },
+    DuplicateChunkReference {
+        chunk_index: u32,
+    },
+    MissingChunkReference {
+        chunk_index: u32,
+    },
+    DispatchStepMismatch {
+        expected_step: u32,
+        actual_step: u32,
+    },
+    DispatchChunkMismatch {
+        step_index: u32,
+        expected_chunk: u32,
+        actual_chunk: u32,
+    },
+    WorkerSlotOutOfRange {
+        step_index: u32,
+        worker_slot: u32,
+        worker_count: u32,
+    },
+    TranscriptHashMismatch {
+        expected: ContentHash,
+        actual: ContentHash,
+    },
+}
+
+impl fmt::Display for TranscriptReplayError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::PlanHashMismatch { .. } => write!(f, "plan hash mismatch"),
+            Self::WorkerCountMismatch { expected, actual } => {
+                write!(
+                    f,
+                    "worker count mismatch: expected {expected}, got {actual}"
+                )
+            }
+            Self::InvalidExecutionOrderLength {
+                expected_chunks,
+                actual_entries,
+            } => write!(
+                f,
+                "execution order length mismatch: expected {expected_chunks}, got {actual_entries}"
+            ),
+            Self::InvalidDispatchCount {
+                expected_steps,
+                actual_steps,
+            } => write!(
+                f,
+                "dispatch count mismatch: expected {expected_steps}, got {actual_steps}"
+            ),
+            Self::InvalidChunkReference {
+                step_index,
+                chunk_index,
+                chunk_count,
+            } => write!(
+                f,
+                "invalid chunk reference at step {step_index}: chunk {chunk_index} >= {chunk_count}"
+            ),
+            Self::DuplicateChunkReference { chunk_index } => {
+                write!(f, "duplicate chunk reference in transcript: {chunk_index}")
+            }
+            Self::MissingChunkReference { chunk_index } => {
+                write!(f, "missing chunk reference in transcript: {chunk_index}")
+            }
+            Self::DispatchStepMismatch {
+                expected_step,
+                actual_step,
+            } => write!(
+                f,
+                "dispatch step mismatch: expected {expected_step}, got {actual_step}"
+            ),
+            Self::DispatchChunkMismatch {
+                step_index,
+                expected_chunk,
+                actual_chunk,
+            } => write!(
+                f,
+                "dispatch chunk mismatch at step {step_index}: expected {expected_chunk}, got {actual_chunk}"
+            ),
+            Self::WorkerSlotOutOfRange {
+                step_index,
+                worker_slot,
+                worker_count,
+            } => write!(
+                f,
+                "worker slot out of range at step {step_index}: {worker_slot} >= {worker_count}"
+            ),
+            Self::TranscriptHashMismatch { .. } => write!(f, "transcript hash mismatch"),
+        }
+    }
+}
+
+/// Replay and validate a scheduler transcript against a chunk plan.
+///
+/// Returns the replay execution order if all transcript invariants hold.
+pub fn replay_schedule_transcript(
+    transcript: &ScheduleTranscript,
+    chunk_plan: &ChunkPlan,
+) -> Result<Vec<u32>, TranscriptReplayError> {
+    if transcript.plan_hash != chunk_plan.plan_hash {
+        return Err(TranscriptReplayError::PlanHashMismatch {
+            expected: chunk_plan.plan_hash.clone(),
+            actual: transcript.plan_hash.clone(),
+        });
+    }
+    if transcript.worker_count != chunk_plan.worker_count {
+        return Err(TranscriptReplayError::WorkerCountMismatch {
+            expected: chunk_plan.worker_count,
+            actual: transcript.worker_count,
+        });
+    }
+
+    let chunk_count = chunk_plan.chunks.len() as u32;
+    if transcript.execution_order.len() as u32 != chunk_count {
+        return Err(TranscriptReplayError::InvalidExecutionOrderLength {
+            expected_chunks: chunk_count,
+            actual_entries: transcript.execution_order.len() as u32,
+        });
+    }
+    if transcript.dispatches.len() != transcript.execution_order.len() {
+        return Err(TranscriptReplayError::InvalidDispatchCount {
+            expected_steps: transcript.execution_order.len() as u32,
+            actual_steps: transcript.dispatches.len() as u32,
+        });
+    }
+
+    let mut seen = vec![false; chunk_count as usize];
+    for (step_index, chunk_index) in transcript.execution_order.iter().copied().enumerate() {
+        if chunk_index >= chunk_count {
+            return Err(TranscriptReplayError::InvalidChunkReference {
+                step_index: step_index as u32,
+                chunk_index,
+                chunk_count,
+            });
+        }
+        if seen[chunk_index as usize] {
+            return Err(TranscriptReplayError::DuplicateChunkReference { chunk_index });
+        }
+        seen[chunk_index as usize] = true;
+
+        let dispatch = &transcript.dispatches[step_index];
+        if dispatch.step_index != step_index as u32 {
+            return Err(TranscriptReplayError::DispatchStepMismatch {
+                expected_step: step_index as u32,
+                actual_step: dispatch.step_index,
+            });
+        }
+        if dispatch.chunk_index != chunk_index {
+            return Err(TranscriptReplayError::DispatchChunkMismatch {
+                step_index: step_index as u32,
+                expected_chunk: chunk_index,
+                actual_chunk: dispatch.chunk_index,
+            });
+        }
+        if transcript.worker_count > 0 && dispatch.worker_slot >= transcript.worker_count {
+            return Err(TranscriptReplayError::WorkerSlotOutOfRange {
+                step_index: step_index as u32,
+                worker_slot: dispatch.worker_slot,
+                worker_count: transcript.worker_count,
+            });
+        }
+    }
+
+    for (chunk_index, observed) in seen.iter().enumerate() {
+        if !*observed {
+            return Err(TranscriptReplayError::MissingChunkReference {
+                chunk_index: chunk_index as u32,
+            });
+        }
+    }
+
+    let expected_hash = compute_schedule_transcript_hash(
+        transcript.seed,
+        transcript.worker_count,
+        &transcript.plan_hash,
+        &transcript.execution_order,
+        &transcript.dispatches,
+    );
+    if transcript.transcript_hash != expected_hash {
+        return Err(TranscriptReplayError::TranscriptHashMismatch {
+            expected: expected_hash,
+            actual: transcript.transcript_hash.clone(),
+        });
+    }
+
+    Ok(transcript.execution_order.clone())
 }
 
 /// Parity result: comparison between parallel and serial outputs.
@@ -816,6 +1141,11 @@ pub fn build_replay_envelope(
     output: &ParseOutput,
     routing_digest: &RoutingDigest,
 ) -> ReplayEnvelope {
+    let transcript_hash = output
+        .schedule_transcript
+        .as_ref()
+        .map(|t| t.transcript_hash.to_hex())
+        .unwrap_or_else(|| "none".to_string());
     ReplayEnvelope {
         schema_version: SCHEMA_VERSION.to_string(),
         input_hash: ContentHash::compute(input.source.as_bytes()),
@@ -832,8 +1162,12 @@ pub fn build_replay_envelope(
         cancellation: None,
         output_hash: output.output_hash.clone(),
         replay_command: format!(
-            "franken-engine parallel-parse --trace-id {} --run-id {} --seed {} --workers {}",
-            input.trace_id, input.run_id, input.config.schedule_seed, input.config.max_workers,
+            "franken-engine parallel-parse --trace-id {} --run-id {} --seed {} --workers {} --transcript-hash {}",
+            input.trace_id,
+            input.run_id,
+            input.config.schedule_seed,
+            input.config.max_workers,
+            transcript_hash,
         ),
     }
 }
@@ -1062,18 +1396,28 @@ pub fn parse(input: &ParseInput<'_>) -> Result<ParseOutput, ParseError> {
     // 1. Compute chunk plan.
     let chunk_plan = compute_chunk_plan(bytes, config.max_workers);
 
-    // 2. Lex each chunk independently.
+    // 2. Build deterministic schedule transcript and self-validate replay invariants.
+    let schedule_transcript = build_schedule_transcript(&chunk_plan, config.schedule_seed);
+    let replay_order =
+        replay_schedule_transcript(&schedule_transcript, &chunk_plan).map_err(|err| {
+            ParseError::InvalidConfig {
+                detail: format!("invalid deterministic schedule transcript: {err}"),
+            }
+        })?;
+
+    // 3. Lex each chunk independently using transcripted execution order.
     let mut chunk_results = Vec::new();
     let mut lexer_config = config.lexer_config.clone();
     lexer_config.emit_tokens = true;
 
-    for (idx, &(start, end)) in chunk_plan.chunks.iter().enumerate() {
+    for chunk_index in replay_order {
+        let (start, end) = chunk_plan.chunks[chunk_index as usize];
         let chunk_bytes = &bytes[start as usize..end as usize];
         let chunk_str = std::str::from_utf8(chunk_bytes).unwrap_or("");
         match simd_lexer::lex(chunk_str, &lexer_config) {
             Ok(output) => {
                 chunk_results.push(ChunkResult {
-                    chunk_index: idx as u32,
+                    chunk_index,
                     chunk_start: start,
                     chunk_end: end,
                     tokens: output.tokens,
@@ -1082,21 +1426,12 @@ pub fn parse(input: &ParseInput<'_>) -> Result<ParseOutput, ParseError> {
             }
             Err(e) => {
                 return Err(ParseError::LexerError {
-                    chunk_index: idx as u32,
+                    chunk_index,
                     detail: format!("{e:?}"),
                 });
             }
         }
     }
-
-    // 3. Build schedule transcript.
-    let execution_order: Vec<u32> = (0..chunk_plan.chunks.len() as u32).collect();
-    let schedule_transcript = ScheduleTranscript {
-        seed: config.schedule_seed,
-        worker_count: chunk_plan.worker_count,
-        plan_hash: chunk_plan.plan_hash.clone(),
-        execution_order,
-    };
 
     // 4. Merge chunks.
     let mut merged_tokens = merge_chunks(&chunk_results);
@@ -1516,7 +1851,8 @@ mod tests {
 
     #[test]
     fn chunk_plan_prefers_low_depth_boundaries() {
-        let source = b"function outer() {\n  if (x) {\n    return y;\n  }\n}\nconst z = 1;\nconst q = 2;\n";
+        let source =
+            b"function outer() {\n  if (x) {\n    return y;\n  }\n}\nconst z = 1;\nconst q = 2;\n";
         let plan = compute_chunk_plan(source, 2);
         assert_eq!(plan.chunks.len(), 2);
 
@@ -1810,15 +2146,102 @@ mod tests {
 
     #[test]
     fn schedule_transcript_serde_roundtrip() {
+        let execution_order = vec![0, 1, 2, 3];
+        let dispatches = vec![
+            ScheduleDispatch {
+                step_index: 0,
+                chunk_index: 0,
+                worker_slot: 0,
+            },
+            ScheduleDispatch {
+                step_index: 1,
+                chunk_index: 1,
+                worker_slot: 1,
+            },
+            ScheduleDispatch {
+                step_index: 2,
+                chunk_index: 2,
+                worker_slot: 2,
+            },
+            ScheduleDispatch {
+                step_index: 3,
+                chunk_index: 3,
+                worker_slot: 3,
+            },
+        ];
+        let plan_hash = ContentHash::compute(b"test");
         let transcript = ScheduleTranscript {
             seed: 42,
             worker_count: 4,
-            plan_hash: ContentHash::compute(b"test"),
-            execution_order: vec![0, 1, 2, 3],
+            plan_hash: plan_hash.clone(),
+            execution_order: execution_order.clone(),
+            dispatches: dispatches.clone(),
+            transcript_hash: compute_schedule_transcript_hash(
+                42,
+                4,
+                &plan_hash,
+                &execution_order,
+                &dispatches,
+            ),
         };
         let json = serde_json::to_string(&transcript).unwrap();
         let back: ScheduleTranscript = serde_json::from_str(&json).unwrap();
         assert_eq!(transcript, back);
+    }
+
+    #[test]
+    fn schedule_transcript_build_and_replay_roundtrip() {
+        let source = "a=1;\nb=2;\nc=3;\nd=4;\ne=5;\nf=6;\n";
+        let chunk_plan = compute_chunk_plan(source.as_bytes(), 4);
+        let transcript = build_schedule_transcript(&chunk_plan, 1234);
+        let replay_order = replay_schedule_transcript(&transcript, &chunk_plan).unwrap();
+        assert_eq!(replay_order, transcript.execution_order);
+        assert_eq!(replay_order.len(), chunk_plan.chunks.len());
+    }
+
+    #[test]
+    fn schedule_transcript_deterministic_same_seed_same_plan() {
+        let source = "a=1;\nb=2;\nc=3;\nd=4;\ne=5;\nf=6;\ng=7;\nh=8;\n";
+        let chunk_plan = compute_chunk_plan(source.as_bytes(), 4);
+        let t1 = build_schedule_transcript(&chunk_plan, 2026);
+        let t2 = build_schedule_transcript(&chunk_plan, 2026);
+        assert_eq!(t1, t2);
+    }
+
+    #[test]
+    fn schedule_transcript_seed_changes_execution_order() {
+        let source = "a=1;\nb=2;\nc=3;\nd=4;\ne=5;\nf=6;\ng=7;\nh=8;\ni=9;\nj=10;\nk=11;\nl=12;\n";
+        let chunk_plan = compute_chunk_plan(source.as_bytes(), 8);
+        let t1 = build_schedule_transcript(&chunk_plan, 11);
+        let t2 = build_schedule_transcript(&chunk_plan, 29);
+        assert_ne!(t1.execution_order, t2.execution_order);
+    }
+
+    #[test]
+    fn schedule_transcript_replay_rejects_plan_hash_mismatch() {
+        let source = "a=1;\nb=2;\nc=3;\nd=4;\n";
+        let chunk_plan = compute_chunk_plan(source.as_bytes(), 4);
+        let transcript = build_schedule_transcript(&chunk_plan, 0);
+        let mut wrong_plan = chunk_plan.clone();
+        wrong_plan.plan_hash = ContentHash::compute(b"different-plan");
+        let err = replay_schedule_transcript(&transcript, &wrong_plan).unwrap_err();
+        assert!(matches!(
+            err,
+            TranscriptReplayError::PlanHashMismatch { .. }
+        ));
+    }
+
+    #[test]
+    fn schedule_transcript_replay_rejects_hash_tamper() {
+        let source = "a=1;\nb=2;\nc=3;\nd=4;\n";
+        let chunk_plan = compute_chunk_plan(source.as_bytes(), 4);
+        let mut transcript = build_schedule_transcript(&chunk_plan, 7);
+        transcript.transcript_hash = ContentHash::compute(b"tampered");
+        let err = replay_schedule_transcript(&transcript, &chunk_plan).unwrap_err();
+        assert!(matches!(
+            err,
+            TranscriptReplayError::TranscriptHashMismatch { .. }
+        ));
     }
 
     // --- Merge witness tests ---

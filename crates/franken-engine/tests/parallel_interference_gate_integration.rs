@@ -16,7 +16,7 @@ use frankenengine_engine::parallel_interference_gate::{
     RootCauseHint, RunRecord, SCHEMA_VERSION, WitnessDiff, WitnessDiffEntry,
 };
 use frankenengine_engine::parallel_parser::{
-    MergeWitness, ParallelConfig, ParserMode, RollbackControl, ScheduleTranscript,
+    MergeWitness, ParallelConfig, ParserMode, RollbackControl, ScheduleDispatch, ScheduleTranscript,
 };
 
 // ---------------------------------------------------------------------------
@@ -43,6 +43,48 @@ fn small_gate_config() -> GateConfig {
             ..ParallelConfig::default()
         },
         require_serial_parity: true,
+    }
+}
+
+fn make_transcript(
+    seed: u64,
+    worker_count: u32,
+    plan_hash: ContentHash,
+    execution_order: Vec<u32>,
+) -> ScheduleTranscript {
+    let dispatches: Vec<ScheduleDispatch> = execution_order
+        .iter()
+        .enumerate()
+        .map(|(step_index, chunk_index)| ScheduleDispatch {
+            step_index: step_index as u32,
+            chunk_index: *chunk_index,
+            worker_slot: if worker_count == 0 {
+                0
+            } else {
+                (step_index as u32) % worker_count
+            },
+        })
+        .collect();
+
+    let mut payload = format!("{seed}:{worker_count}:{}:", plan_hash.to_hex());
+    for chunk_index in &execution_order {
+        payload.push_str(&format!("{chunk_index},"));
+    }
+    for dispatch in &dispatches {
+        payload.push_str(&format!(
+            "{}:{}:{},",
+            dispatch.step_index, dispatch.chunk_index, dispatch.worker_slot
+        ));
+    }
+    let transcript_hash = ContentHash::compute(payload.as_bytes());
+
+    ScheduleTranscript {
+        seed,
+        worker_count,
+        plan_hash,
+        execution_order,
+        dispatches,
+        transcript_hash,
     }
 }
 
@@ -479,12 +521,7 @@ fn compare_witnesses_all_fields_differ() {
 
 #[test]
 fn compare_transcripts_identical() {
-    let t = ScheduleTranscript {
-        seed: 42,
-        worker_count: 4,
-        plan_hash: ContentHash::compute(b"plan"),
-        execution_order: vec![0, 1, 2, 3],
-    };
+    let t = make_transcript(42, 4, ContentHash::compute(b"plan"), vec![0, 1, 2, 3]);
     let diff = parallel_interference_gate::compare_transcripts(&t, &t);
     assert!(diff.matches);
     assert!(diff.diffs.is_empty());
@@ -492,12 +529,7 @@ fn compare_transcripts_identical() {
 
 #[test]
 fn compare_transcripts_seed_differs() {
-    let t1 = ScheduleTranscript {
-        seed: 1,
-        worker_count: 4,
-        plan_hash: ContentHash::compute(b"plan"),
-        execution_order: vec![0, 1, 2],
-    };
+    let t1 = make_transcript(1, 4, ContentHash::compute(b"plan"), vec![0, 1, 2]);
     let t2 = ScheduleTranscript {
         seed: 2,
         ..t1.clone()
@@ -509,12 +541,7 @@ fn compare_transcripts_seed_differs() {
 
 #[test]
 fn compare_transcripts_worker_count_differs() {
-    let t1 = ScheduleTranscript {
-        seed: 1,
-        worker_count: 4,
-        plan_hash: ContentHash::compute(b"plan"),
-        execution_order: vec![0, 1],
-    };
+    let t1 = make_transcript(1, 4, ContentHash::compute(b"plan"), vec![0, 1]);
     let t2 = ScheduleTranscript {
         worker_count: 8,
         ..t1.clone()
@@ -526,12 +553,7 @@ fn compare_transcripts_worker_count_differs() {
 
 #[test]
 fn compare_transcripts_plan_hash_differs() {
-    let t1 = ScheduleTranscript {
-        seed: 1,
-        worker_count: 4,
-        plan_hash: ContentHash::compute(b"plan_a"),
-        execution_order: vec![0, 1],
-    };
+    let t1 = make_transcript(1, 4, ContentHash::compute(b"plan_a"), vec![0, 1]);
     let t2 = ScheduleTranscript {
         plan_hash: ContentHash::compute(b"plan_b"),
         ..t1.clone()
@@ -543,12 +565,7 @@ fn compare_transcripts_plan_hash_differs() {
 
 #[test]
 fn compare_transcripts_execution_order_differs() {
-    let t1 = ScheduleTranscript {
-        seed: 1,
-        worker_count: 4,
-        plan_hash: ContentHash::compute(b"plan"),
-        execution_order: vec![0, 1, 2],
-    };
+    let t1 = make_transcript(1, 4, ContentHash::compute(b"plan"), vec![0, 1, 2]);
     let t2 = ScheduleTranscript {
         execution_order: vec![2, 1, 0],
         ..t1.clone()
@@ -560,21 +577,11 @@ fn compare_transcripts_execution_order_differs() {
 
 #[test]
 fn compare_transcripts_all_fields_differ() {
-    let t1 = ScheduleTranscript {
-        seed: 1,
-        worker_count: 2,
-        plan_hash: ContentHash::compute(b"a"),
-        execution_order: vec![0],
-    };
-    let t2 = ScheduleTranscript {
-        seed: 9,
-        worker_count: 8,
-        plan_hash: ContentHash::compute(b"b"),
-        execution_order: vec![1, 0],
-    };
+    let t1 = make_transcript(1, 2, ContentHash::compute(b"a"), vec![0]);
+    let t2 = make_transcript(9, 8, ContentHash::compute(b"b"), vec![1, 0]);
     let diff = parallel_interference_gate::compare_transcripts(&t1, &t2);
     assert!(!diff.matches);
-    assert_eq!(diff.diffs.len(), 4);
+    assert_eq!(diff.diffs.len(), 6);
 }
 
 // ===========================================================================

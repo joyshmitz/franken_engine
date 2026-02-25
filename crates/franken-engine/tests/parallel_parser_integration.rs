@@ -18,7 +18,7 @@ use frankenengine_engine::parallel_parser::{
     DEFAULT_MERGE_BUFFER_BYTES, DEFAULT_MIN_PARALLEL_BYTES, DEFAULT_OVERHEAD_THRESHOLD_MILLIONTHS,
     FallbackCause, MergeWitness, ParallelConfig, ParityResult, ParseError, ParseInput,
     ParseLogEntry, ParserMode, PerformanceReport, RollbackControl, SCHEMA_VERSION,
-    ScheduleTranscript, SerialReason, ThroughputSample, TimeoutPolicy,
+    ScheduleDispatch, ScheduleTranscript, SerialReason, ThroughputSample, TimeoutPolicy,
 };
 use frankenengine_engine::security_epoch::SecurityEpoch;
 use frankenengine_engine::simd_lexer::{LexerConfig, Token, TokenKind};
@@ -293,7 +293,8 @@ fn chunk_plan_no_newlines() {
 
 #[test]
 fn chunk_plan_prefers_low_depth_boundaries() {
-    let source = b"function outer() {\n  if (x) {\n    return y;\n  }\n}\nconst z = 1;\nconst q = 2;\n";
+    let source =
+        b"function outer() {\n  if (x) {\n    return y;\n  }\n}\nconst z = 1;\nconst q = 2;\n";
     let plan = parallel_parser::compute_chunk_plan(source, 2);
     assert_eq!(plan.chunks.len(), 2);
 
@@ -684,6 +685,29 @@ fn schedule_transcript_serde_roundtrip() {
         worker_count: 4,
         plan_hash: ContentHash::compute(b"plan"),
         execution_order: vec![0, 1, 2, 3],
+        dispatches: vec![
+            ScheduleDispatch {
+                step_index: 0,
+                chunk_index: 0,
+                worker_slot: 0,
+            },
+            ScheduleDispatch {
+                step_index: 1,
+                chunk_index: 1,
+                worker_slot: 1,
+            },
+            ScheduleDispatch {
+                step_index: 2,
+                chunk_index: 2,
+                worker_slot: 2,
+            },
+            ScheduleDispatch {
+                step_index: 3,
+                chunk_index: 3,
+                worker_slot: 3,
+            },
+        ],
+        transcript_hash: ContentHash::compute(b"transcript"),
     };
     serde_roundtrip(&t);
 }
@@ -695,6 +719,8 @@ fn schedule_transcript_empty_order() {
         worker_count: 0,
         plan_hash: ContentHash::compute(b""),
         execution_order: vec![],
+        dispatches: vec![],
+        transcript_hash: ContentHash::compute(b""),
     };
     serde_roundtrip(&t);
 }
@@ -724,6 +750,69 @@ fn schedule_transcript_seed_matches_config() {
         .as_ref()
         .expect("schedule_transcript should be present for parallel parse");
     assert_eq!(transcript.seed, 12345);
+}
+
+#[test]
+fn schedule_transcript_replay_matches_execution_order() {
+    let source = generate_source(120);
+    let config = small_config();
+    let output = parallel_parser::parse(&make_input(&source, &config)).unwrap();
+    if let (Some(plan), Some(transcript)) = (&output.chunk_plan, &output.schedule_transcript) {
+        let replay_order = parallel_parser::replay_schedule_transcript(transcript, plan).unwrap();
+        assert_eq!(replay_order, transcript.execution_order);
+    }
+}
+
+#[test]
+fn schedule_transcript_dispatches_align_with_execution_order() {
+    let source = generate_source(120);
+    let config = small_config();
+    let output = parallel_parser::parse(&make_input(&source, &config)).unwrap();
+    if let Some(transcript) = &output.schedule_transcript {
+        assert_eq!(
+            transcript.dispatches.len(),
+            transcript.execution_order.len()
+        );
+        for (step_index, chunk_index) in transcript.execution_order.iter().enumerate() {
+            let dispatch = &transcript.dispatches[step_index];
+            assert_eq!(dispatch.step_index, step_index as u32);
+            assert_eq!(dispatch.chunk_index, *chunk_index);
+            assert!(dispatch.worker_slot < transcript.worker_count);
+        }
+    }
+}
+
+#[test]
+fn schedule_transcript_hash_deterministic_across_repeated_runs() {
+    let source = generate_source(150);
+    let config = ParallelConfig {
+        schedule_seed: 77,
+        ..small_config()
+    };
+    let o1 = parallel_parser::parse(&make_input(&source, &config)).unwrap();
+    let o2 = parallel_parser::parse(&make_input(&source, &config)).unwrap();
+    if let (Some(t1), Some(t2)) = (&o1.schedule_transcript, &o2.schedule_transcript) {
+        assert_eq!(t1.transcript_hash, t2.transcript_hash);
+        assert_eq!(t1.execution_order, t2.execution_order);
+    }
+}
+
+#[test]
+fn schedule_transcript_hash_changes_with_seed() {
+    let source = generate_source(150);
+    let c1 = ParallelConfig {
+        schedule_seed: 11,
+        ..small_config()
+    };
+    let c2 = ParallelConfig {
+        schedule_seed: 29,
+        ..small_config()
+    };
+    let o1 = parallel_parser::parse(&make_input(&source, &c1)).unwrap();
+    let o2 = parallel_parser::parse(&make_input(&source, &c2)).unwrap();
+    if let (Some(t1), Some(t2)) = (&o1.schedule_transcript, &o2.schedule_transcript) {
+        assert_ne!(t1.transcript_hash, t2.transcript_hash);
+    }
 }
 
 // =======================================================================
@@ -1599,6 +1688,8 @@ fn parse_parallel_schedule_transcript_present() {
         let st = output.schedule_transcript.as_ref().unwrap();
         assert!(st.worker_count > 0);
         assert!(!st.execution_order.is_empty());
+        assert_eq!(st.dispatches.len(), st.execution_order.len());
+        assert_ne!(st.transcript_hash, ContentHash::compute(b""));
     }
 }
 
