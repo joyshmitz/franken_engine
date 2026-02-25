@@ -848,6 +848,9 @@ impl EvidenceReplayChecker {
                 expected: Some(recorded.action.clone()),
                 actual: Some(replayed.action.clone()),
             });
+            if self.config.halt_on_first {
+                return;
+            }
         }
 
         // Calibration score.
@@ -863,6 +866,9 @@ impl EvidenceReplayChecker {
                 expected: Some(format!("{}", recorded.calibration_score)),
                 actual: Some(format!("{}", replayed.calibration_score)),
             });
+            if self.config.halt_on_first {
+                return;
+            }
         }
 
         // Chosen expected loss.
@@ -878,6 +884,9 @@ impl EvidenceReplayChecker {
                 expected: Some(format!("{}", recorded.chosen_expected_loss)),
                 actual: Some(format!("{}", replayed.chosen_expected_loss)),
             });
+            if self.config.halt_on_first {
+                return;
+            }
         }
 
         // Fallback active.
