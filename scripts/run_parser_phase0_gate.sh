@@ -51,18 +51,18 @@ run_mode() {
         cargo check -p frankenengine-engine --lib
       ;;
     test)
-      run_step "cargo test -p frankenengine-engine --test parser_trait_ast --test parser_edge_cases --test parser_phase0_semantic_fixtures --test parser_grammar_closure_backlog --test parser_phase0_metamorphic --test parser_property_regression" \
-        cargo test -p frankenengine-engine --test parser_trait_ast --test parser_edge_cases --test parser_phase0_semantic_fixtures --test parser_grammar_closure_backlog --test parser_phase0_metamorphic --test parser_property_regression
+      run_step "cargo test -p frankenengine-engine --test parser_trait_ast --test parser_edge_cases --test parser_phase0_semantic_fixtures --test parser_grammar_closure_backlog --test parser_phase0_metamorphic --test parser_property_regression --test parser_corpus_promotion_policy" \
+        cargo test -p frankenengine-engine --test parser_trait_ast --test parser_edge_cases --test parser_phase0_semantic_fixtures --test parser_grammar_closure_backlog --test parser_phase0_metamorphic --test parser_property_regression --test parser_corpus_promotion_policy
       ;;
     clippy)
-      run_step "cargo clippy -p frankenengine-engine --test parser_trait_ast --test parser_edge_cases --test parser_phase0_semantic_fixtures --test parser_grammar_closure_backlog --test parser_phase0_metamorphic --test parser_property_regression -- -D warnings" \
-        cargo clippy -p frankenengine-engine --test parser_trait_ast --test parser_edge_cases --test parser_phase0_semantic_fixtures --test parser_grammar_closure_backlog --test parser_phase0_metamorphic --test parser_property_regression -- -D warnings
+      run_step "cargo clippy -p frankenengine-engine --test parser_trait_ast --test parser_edge_cases --test parser_phase0_semantic_fixtures --test parser_grammar_closure_backlog --test parser_phase0_metamorphic --test parser_property_regression --test parser_corpus_promotion_policy -- -D warnings" \
+        cargo clippy -p frankenengine-engine --test parser_trait_ast --test parser_edge_cases --test parser_phase0_semantic_fixtures --test parser_grammar_closure_backlog --test parser_phase0_metamorphic --test parser_property_regression --test parser_corpus_promotion_policy -- -D warnings
       ;;
     ci)
       run_step "cargo check -p frankenengine-engine --lib" \
         cargo check -p frankenengine-engine --lib
-      run_step "cargo test -p frankenengine-engine --test parser_trait_ast --test parser_edge_cases --test parser_phase0_semantic_fixtures --test parser_grammar_closure_backlog --test parser_phase0_metamorphic --test parser_property_regression" \
-        cargo test -p frankenengine-engine --test parser_trait_ast --test parser_edge_cases --test parser_phase0_semantic_fixtures --test parser_grammar_closure_backlog --test parser_phase0_metamorphic --test parser_property_regression
+      run_step "cargo test -p frankenengine-engine --test parser_trait_ast --test parser_edge_cases --test parser_phase0_semantic_fixtures --test parser_grammar_closure_backlog --test parser_phase0_metamorphic --test parser_property_regression --test parser_corpus_promotion_policy" \
+        cargo test -p frankenengine-engine --test parser_trait_ast --test parser_edge_cases --test parser_phase0_semantic_fixtures --test parser_grammar_closure_backlog --test parser_phase0_metamorphic --test parser_property_regression --test parser_corpus_promotion_policy
       run_step "./scripts/generate_parser_phase0_artifacts.sh" \
         ./scripts/generate_parser_phase0_artifacts.sh
       ;;
