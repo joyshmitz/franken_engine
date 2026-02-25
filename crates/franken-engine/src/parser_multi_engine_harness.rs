@@ -10,8 +10,9 @@ use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::ast::ParseGoal;
+use crate::ast::{Expression, ParseGoal, Statement, SyntaxTree};
 use crate::parser::{CanonicalEs2020Parser, Es2020Parser, ParseDiagnosticTaxonomy, ParseErrorCode};
+use crate::simd_lexer::{LexerConfig, LexerMode, lex as lex_tokens};
 
 pub const DEFAULT_MULTI_ENGINE_FIXTURE_CATALOG_PATH: &str =
     "crates/franken-engine/tests/fixtures/parser_phase0_semantic_fixtures.json";
@@ -25,6 +26,7 @@ const EXTERNAL_DIAGNOSTIC_TAXONOMY_VERSION: &str = "external.engine-diagnostic.v
 const DRIFT_CLASSIFICATION_TAXONOMY_VERSION: &str =
     "franken-engine.parser-multi-engine-drift-taxonomy.v1";
 const REPORT_SCHEMA_VERSION: &str = "franken-engine.parser-multi-engine.report.v2";
+const PARSER_TELEMETRY_SCHEMA_VERSION: &str = "franken-engine.parser-telemetry.v1";
 const DRIFT_REPRO_PACK_SCHEMA_VERSION: &str = "franken-engine.parser-drift-repro-pack.v1";
 const MAX_SOURCE_MINIMIZATION_ROUNDS: u32 = 32;
 const MAX_SOURCE_MINIMIZATION_CANDIDATES: u32 = 256;
@@ -182,6 +184,22 @@ pub struct MultiEngineHarnessSummary {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ParserTelemetrySummary {
+    pub schema_version: String,
+    pub sample_count: u64,
+    pub throughput_sources_per_second_millionths: u64,
+    pub throughput_mib_per_second_millionths: u64,
+    pub latency_ns_p50: u64,
+    pub latency_ns_p95: u64,
+    pub latency_ns_p99: u64,
+    pub ns_per_token_millionths: u64,
+    pub allocs_per_token_millionths: u64,
+    pub bytes_per_source_avg: u64,
+    pub tokens_per_source_avg: u64,
+    pub peak_rss_bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct MultiEngineHarnessReport {
     pub schema_version: String,
     pub generated_at_utc: String,
@@ -197,6 +215,7 @@ pub struct MultiEngineHarnessReport {
     pub timezone: String,
     pub fixture_count: u64,
     pub engine_specs: Vec<HarnessEngineSpec>,
+    pub parser_telemetry: ParserTelemetrySummary,
     pub summary: MultiEngineHarnessSummary,
     pub fixture_results: Vec<FixtureComparisonResult>,
 }
@@ -475,6 +494,7 @@ struct FixtureEvaluation {
     nondeterministic_engine_count: u64,
     divergence_reason: Option<String>,
     drift_classification: Option<DriftClassification>,
+    parser_telemetry_samples: Vec<ParserTelemetrySample>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -502,6 +522,115 @@ impl DriftSignature {
 struct SourceMinimizationResult {
     minimized_source: String,
     stats: DriftMinimizationStats,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SourceTelemetryStats {
+    source_bytes: u64,
+    token_count: u64,
+}
+
+impl SourceTelemetryStats {
+    fn from_source(source: &str) -> Self {
+        Self {
+            source_bytes: source.len() as u64,
+            token_count: estimate_lexical_token_count(source),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ParserTelemetrySample {
+    duration_us: u64,
+    source_bytes: u64,
+    token_count: u64,
+    allocation_estimate: u64,
+    peak_rss_bytes: u64,
+}
+
+#[derive(Debug, Default)]
+struct ParserTelemetryAccumulator {
+    samples: Vec<ParserTelemetrySample>,
+}
+
+impl ParserTelemetryAccumulator {
+    fn push(&mut self, sample: ParserTelemetrySample) {
+        self.samples.push(sample);
+    }
+
+    fn finalize(self) -> ParserTelemetrySummary {
+        if self.samples.is_empty() {
+            return ParserTelemetrySummary {
+                schema_version: PARSER_TELEMETRY_SCHEMA_VERSION.to_string(),
+                sample_count: 0,
+                throughput_sources_per_second_millionths: 0,
+                throughput_mib_per_second_millionths: 0,
+                latency_ns_p50: 0,
+                latency_ns_p95: 0,
+                latency_ns_p99: 0,
+                ns_per_token_millionths: 0,
+                allocs_per_token_millionths: 0,
+                bytes_per_source_avg: 0,
+                tokens_per_source_avg: 0,
+                peak_rss_bytes: 0,
+            };
+        }
+
+        let mut duration_ns_samples = self
+            .samples
+            .iter()
+            .map(|sample| sample.duration_us.saturating_mul(1_000))
+            .collect::<Vec<_>>();
+        duration_ns_samples.sort_unstable();
+
+        let total_duration_ns = duration_ns_samples
+            .iter()
+            .fold(0_u128, |acc, value| acc.saturating_add(u128::from(*value)));
+        let total_source_bytes = self.samples.iter().fold(0_u128, |acc, sample| {
+            acc.saturating_add(u128::from(sample.source_bytes))
+        });
+        let total_token_count = self.samples.iter().fold(0_u128, |acc, sample| {
+            acc.saturating_add(u128::from(sample.token_count))
+        });
+        let total_allocation_estimate = self.samples.iter().fold(0_u128, |acc, sample| {
+            acc.saturating_add(u128::from(sample.allocation_estimate))
+        });
+        let peak_rss_bytes = self
+            .samples
+            .iter()
+            .map(|sample| sample.peak_rss_bytes)
+            .max()
+            .unwrap_or(0);
+
+        let sample_count_u128 = self.samples.len() as u128;
+        let throughput_sources_per_second_millionths = ratio_millionths(
+            sample_count_u128.saturating_mul(1_000_000_000),
+            total_duration_ns,
+        );
+        let throughput_mib_per_second_millionths = ratio_millionths(
+            total_source_bytes.saturating_mul(1_000_000_000),
+            total_duration_ns.saturating_mul(1_048_576),
+        );
+        let ns_per_token_millionths =
+            ratio_millionths(total_duration_ns, total_token_count.max(1_u128));
+        let allocs_per_token_millionths =
+            ratio_millionths(total_allocation_estimate, total_token_count.max(1_u128));
+
+        ParserTelemetrySummary {
+            schema_version: PARSER_TELEMETRY_SCHEMA_VERSION.to_string(),
+            sample_count: self.samples.len() as u64,
+            throughput_sources_per_second_millionths,
+            throughput_mib_per_second_millionths,
+            latency_ns_p50: quantile(&duration_ns_samples, 50),
+            latency_ns_p95: quantile(&duration_ns_samples, 95),
+            latency_ns_p99: quantile(&duration_ns_samples, 99),
+            ns_per_token_millionths,
+            allocs_per_token_millionths,
+            bytes_per_source_avg: saturating_u64(total_source_bytes / sample_count_u128),
+            tokens_per_source_avg: saturating_u64(total_token_count / sample_count_u128),
+            peak_rss_bytes,
+        }
+    }
 }
 
 pub fn run_multi_engine_harness(
@@ -542,6 +671,7 @@ pub fn run_multi_engine_harness(
     let mut drift_minor_fixtures = 0_u64;
     let mut drift_critical_fixtures = 0_u64;
     let mut drift_counts_by_category = BTreeMap::<String, u64>::new();
+    let mut parser_telemetry_accumulator = ParserTelemetryAccumulator::default();
 
     for fixture in &selected {
         let goal = parse_goal(fixture.id.as_str(), fixture.goal.as_str())?;
@@ -556,6 +686,9 @@ pub fn run_multi_engine_harness(
             config.policy_id,
         );
         let evaluation = evaluate_fixture(config, fixture, goal, fixture.source.as_str())?;
+        for sample in &evaluation.parser_telemetry_samples {
+            parser_telemetry_accumulator.push(sample.clone());
+        }
 
         if evaluation.equivalent_across_engines {
             equivalent_count += 1;
@@ -635,6 +768,7 @@ pub fn run_multi_engine_harness(
         timezone: config.timezone.clone(),
         fixture_count: fixture_results.len() as u64,
         engine_specs: config.engines.clone(),
+        parser_telemetry: parser_telemetry_accumulator.finalize(),
         summary: MultiEngineHarnessSummary {
             total_fixtures: fixture_results.len() as u64,
             equivalent_fixtures: equivalent_count,
@@ -703,16 +837,32 @@ fn evaluate_fixture(
 ) -> Result<FixtureEvaluation, MultiEngineHarnessError> {
     let mut source_fixture = fixture.clone();
     source_fixture.source = source.to_string();
+    let source_stats = SourceTelemetryStats::from_source(source);
 
     let mut engine_results = Vec::with_capacity(config.engines.len());
     let mut outcome_signatures = BTreeMap::<String, Vec<String>>::new();
     let mut nondeterministic_engine_count = 0_u64;
+    let mut parser_telemetry_samples = Vec::<ParserTelemetrySample>::new();
 
     for engine in &config.engines {
         let derived_seed =
             derive_engine_seed(config.seed, fixture.id.as_str(), engine.engine_id.as_str());
-        let first = execute_engine(engine, &source_fixture, goal, derived_seed, config)?;
-        let second = execute_engine(engine, &source_fixture, goal, derived_seed, config)?;
+        let first = execute_engine(
+            engine,
+            &source_fixture,
+            goal,
+            derived_seed,
+            config,
+            &source_stats,
+        )?;
+        let second = execute_engine(
+            engine,
+            &source_fixture,
+            goal,
+            derived_seed,
+            config,
+            &source_stats,
+        )?;
         let first_normalized =
             normalize_engine_observation(engine.engine_id.as_str(), &first.observation)?;
         let second_normalized =
@@ -744,6 +894,23 @@ fn evaluate_fixture(
             .entry(first_normalized.signature())
             .or_default()
             .push(engine.engine_id.clone());
+
+        if matches!(engine.kind, HarnessEngineKind::FrankenCanonical) {
+            parser_telemetry_samples.push(ParserTelemetrySample {
+                duration_us: first.duration_us,
+                source_bytes: first.source_bytes,
+                token_count: first.token_count,
+                allocation_estimate: first.allocation_estimate,
+                peak_rss_bytes: first.peak_rss_bytes,
+            });
+            parser_telemetry_samples.push(ParserTelemetrySample {
+                duration_us: second.duration_us,
+                source_bytes: second.source_bytes,
+                token_count: second.token_count,
+                allocation_estimate: second.allocation_estimate,
+                peak_rss_bytes: second.peak_rss_bytes,
+            });
+        }
 
         engine_results.push(EngineFixtureResult {
             engine_id: engine.engine_id.clone(),
@@ -780,6 +947,7 @@ fn evaluate_fixture(
         nondeterministic_engine_count,
         divergence_reason,
         drift_classification,
+        parser_telemetry_samples,
     })
 }
 
@@ -1150,6 +1318,10 @@ fn validate_config(config: &MultiEngineHarnessConfig) -> Result<(), MultiEngineH
 struct TimedObservation {
     observation: EngineObservation,
     duration_us: u64,
+    source_bytes: u64,
+    token_count: u64,
+    allocation_estimate: u64,
+    peak_rss_bytes: u64,
 }
 
 fn execute_engine(
@@ -1158,14 +1330,22 @@ fn execute_engine(
     goal: ParseGoal,
     seed: u64,
     config: &MultiEngineHarnessConfig,
+    source_stats: &SourceTelemetryStats,
 ) -> Result<TimedObservation, MultiEngineHarnessError> {
     let started = Instant::now();
+    let mut allocation_estimate = 0_u64;
     let observation = match engine.kind {
         HarnessEngineKind::FrankenCanonical => {
             let parser = CanonicalEs2020Parser;
             match parser.parse(fixture.source.as_str(), goal) {
-                Ok(tree) => EngineObservation::Hash(tree.canonical_hash()),
-                Err(error) => EngineObservation::Error(format!("{:?}", error.code)),
+                Ok(tree) => {
+                    allocation_estimate = estimate_syntax_tree_allocation_count(&tree);
+                    EngineObservation::Hash(tree.canonical_hash())
+                }
+                Err(error) => {
+                    allocation_estimate = 1;
+                    EngineObservation::Error(format!("{:?}", error.code))
+                }
             }
         }
         HarnessEngineKind::FixtureExpectedHash => {
@@ -1179,6 +1359,10 @@ fn execute_engine(
     Ok(TimedObservation {
         observation,
         duration_us: started.elapsed().as_micros() as u64,
+        source_bytes: source_stats.source_bytes,
+        token_count: source_stats.token_count,
+        allocation_estimate,
+        peak_rss_bytes: read_peak_rss_bytes().unwrap_or(0),
     })
 }
 
@@ -1478,6 +1662,98 @@ fn hash_bytes(input: &[u8]) -> String {
     format!("sha256:{}", hex::encode(Sha256::digest(input)))
 }
 
+fn estimate_lexical_token_count(source: &str) -> u64 {
+    let mut config = LexerConfig::default();
+    config.mode = LexerMode::Scalar;
+    config.emit_tokens = false;
+    config.max_tokens = u64::MAX;
+    config.max_source_bytes = u64::MAX;
+    lex_tokens(source, &config)
+        .map(|output| output.token_count)
+        .unwrap_or_else(|_| source.split_whitespace().count() as u64)
+}
+
+fn estimate_syntax_tree_allocation_count(tree: &SyntaxTree) -> u64 {
+    let mut total = 1_u64.saturating_add(tree.body.len() as u64);
+    for statement in &tree.body {
+        total = total.saturating_add(estimate_statement_allocation_count(statement));
+    }
+    total
+}
+
+fn estimate_statement_allocation_count(statement: &Statement) -> u64 {
+    match statement {
+        Statement::Import(import) => {
+            let mut total = 2_u64;
+            if import.binding.is_some() {
+                total = total.saturating_add(1);
+            }
+            total
+        }
+        Statement::Export(export) => 2_u64.saturating_add(match &export.kind {
+            crate::ast::ExportKind::Default(expression) => {
+                estimate_expression_allocation_count(expression)
+            }
+            crate::ast::ExportKind::NamedClause(_) => 1,
+        }),
+        Statement::Expression(expression) => {
+            1_u64.saturating_add(estimate_expression_allocation_count(&expression.expression))
+        }
+    }
+}
+
+fn estimate_expression_allocation_count(expression: &Expression) -> u64 {
+    match expression {
+        Expression::Await(inner) => {
+            2_u64.saturating_add(estimate_expression_allocation_count(inner.as_ref()))
+        }
+        _ => 1,
+    }
+}
+
+fn read_peak_rss_bytes() -> Option<u64> {
+    #[cfg(target_os = "linux")]
+    {
+        let status = fs::read_to_string("/proc/self/status").ok()?;
+        let parse_kib = |prefix: &str| -> Option<u64> {
+            status.lines().find_map(|line| {
+                if !line.starts_with(prefix) {
+                    return None;
+                }
+                let value = line
+                    .split_whitespace()
+                    .nth(1)
+                    .and_then(|token| token.parse::<u64>().ok())?;
+                Some(value.saturating_mul(1024))
+            })
+        };
+        parse_kib("VmHWM:").or_else(|| parse_kib("VmRSS:"))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+}
+
+fn quantile(sorted: &[u64], q_percent: usize) -> u64 {
+    if sorted.is_empty() {
+        return 0;
+    }
+    let idx = (sorted.len() - 1).saturating_mul(q_percent) / 100;
+    sorted[idx]
+}
+
+fn ratio_millionths(numerator: u128, denominator: u128) -> u64 {
+    if denominator == 0 {
+        return 0;
+    }
+    saturating_u64(numerator.saturating_mul(1_000_000) / denominator)
+}
+
+fn saturating_u64(value: u128) -> u64 {
+    u64::try_from(value).unwrap_or(u64::MAX)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1647,6 +1923,64 @@ mod tests {
         assert!(json.contains("\"total_fixtures\":100"));
         assert!(json.contains("\"divergent_fixtures\":3"));
         assert!(json.contains("\"drift_critical_fixtures\":2"));
+    }
+
+    #[test]
+    fn parser_telemetry_accumulator_computes_quantiles_and_rates() {
+        let mut accumulator = ParserTelemetryAccumulator::default();
+        accumulator.push(ParserTelemetrySample {
+            duration_us: 100,
+            source_bytes: 120,
+            token_count: 12,
+            allocation_estimate: 18,
+            peak_rss_bytes: 1024,
+        });
+        accumulator.push(ParserTelemetrySample {
+            duration_us: 200,
+            source_bytes: 240,
+            token_count: 24,
+            allocation_estimate: 30,
+            peak_rss_bytes: 4096,
+        });
+        accumulator.push(ParserTelemetrySample {
+            duration_us: 300,
+            source_bytes: 360,
+            token_count: 36,
+            allocation_estimate: 42,
+            peak_rss_bytes: 2048,
+        });
+
+        let telemetry = accumulator.finalize();
+        assert_eq!(telemetry.schema_version, PARSER_TELEMETRY_SCHEMA_VERSION);
+        assert_eq!(telemetry.sample_count, 3);
+        assert_eq!(telemetry.latency_ns_p50, 200_000);
+        assert_eq!(telemetry.latency_ns_p95, 300_000);
+        assert_eq!(telemetry.latency_ns_p99, 300_000);
+        assert_eq!(telemetry.bytes_per_source_avg, 240);
+        assert_eq!(telemetry.tokens_per_source_avg, 24);
+        assert_eq!(telemetry.peak_rss_bytes, 4096);
+        assert!(telemetry.throughput_sources_per_second_millionths > 0);
+        assert!(telemetry.throughput_mib_per_second_millionths > 0);
+        assert!(telemetry.ns_per_token_millionths > 0);
+        assert!(telemetry.allocs_per_token_millionths > 0);
+    }
+
+    #[test]
+    fn syntax_tree_allocation_estimate_counts_nested_await() {
+        let span = crate::ast::SourceSpan::new(0, 1, 1, 1, 1, 1);
+        let tree = SyntaxTree {
+            goal: ParseGoal::Script,
+            body: vec![Statement::Expression(crate::ast::ExpressionStatement {
+                expression: Expression::Await(Box::new(Expression::Await(Box::new(
+                    Expression::Identifier("value".to_string()),
+                )))),
+                span: span.clone(),
+            })],
+            span,
+        };
+
+        let allocation_estimate = estimate_syntax_tree_allocation_count(&tree);
+        assert!(allocation_estimate >= 6);
     }
 
     #[test]

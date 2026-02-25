@@ -144,6 +144,16 @@ fn harness_detects_external_engine_divergence_deterministically() {
     assert_eq!(classification.category, DriftCategory::Semantic);
     assert_eq!(classification.severity, DriftSeverity::Critical);
     assert_eq!(classification.owner_hint, "parser-core");
+    let repro_pack = report.fixture_results[0]
+        .repro_pack
+        .as_ref()
+        .expect("repro pack should exist for divergent fixture");
+    assert_eq!(repro_pack.fixture_id, report.fixture_results[0].fixture_id);
+    assert_eq!(repro_pack.drift_classification, *classification);
+    assert!(repro_pack.provenance_hash.starts_with("sha256:"));
+    assert!(repro_pack.minimized_source_hash.starts_with("sha256:"));
+    assert!(repro_pack.minimization.minimized_bytes <= repro_pack.minimization.original_bytes);
+    assert_eq!(repro_pack.promotion_hooks.len(), 3);
 }
 
 #[test]
@@ -259,6 +269,12 @@ fn harness_classifies_diagnostics_drift_as_minor() {
     assert_eq!(classification.severity, DriftSeverity::Minor);
     assert_eq!(classification.comparator_decision, "drift_minor");
     assert_eq!(classification.owner_hint, "parser-diagnostics-taxonomy");
+    let repro_pack = fixture
+        .repro_pack
+        .as_ref()
+        .expect("repro pack should exist");
+    assert_eq!(repro_pack.drift_classification, *classification);
+    assert!(repro_pack.minimized_source_hash.starts_with("sha256:"));
 
     let _ = fs::remove_file(fixture_catalog);
 }
