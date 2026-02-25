@@ -11,6 +11,7 @@ artifact_root="${LOCKSTEP_RUNNER_ARTIFACT_ROOT:-artifacts/lockstep_runner}"
 fixture_catalog="${LOCKSTEP_RUNNER_FIXTURE_CATALOG:-crates/franken-engine/tests/fixtures/parser_phase0_semantic_fixtures.json}"
 fixture_limit="${LOCKSTEP_RUNNER_FIXTURE_LIMIT:-8}"
 fixture_id="${LOCKSTEP_RUNNER_FIXTURE_ID:-}"
+runtime_specs="${LOCKSTEP_RUNNER_RUNTIME_SPECS:-}"
 seed="${LOCKSTEP_RUNNER_SEED:-7}"
 fail_on_divergence="${LOCKSTEP_RUNNER_FAIL_ON_DIVERGENCE:-0}"
 
@@ -77,6 +78,9 @@ run_report_step() {
 
   if [[ -n "$fixture_id" ]]; then
     command+=(--fixture-id "$fixture_id")
+  fi
+  if [[ -n "$runtime_specs" ]]; then
+    command+=(--runtime-specs "$runtime_specs")
   fi
   if [[ "$fail_on_divergence" == "1" ]]; then
     command+=(--fail-on-divergence)
@@ -209,6 +213,7 @@ write_manifest() {
     echo "  \"fixture_catalog\": \"${fixture_catalog}\","
     echo "  \"fixture_limit\": \"${fixture_limit}\","
     echo "  \"fixture_id\": \"${fixture_id}\","
+    echo "  \"runtime_specs\": \"${runtime_specs}\","
     echo "  \"seed\": ${seed},"
     echo "  \"fail_on_divergence\": ${fail_on_divergence},"
     echo "  \"generated_at_utc\": \"${timestamp}\","
