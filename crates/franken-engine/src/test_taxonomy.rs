@@ -5,7 +5,7 @@
 //
 // Plan reference: bd-mjh3.20.1
 
-use crate::engine_object_id::{EngineObjectId, ObjectDomain};
+use crate::engine_object_id::{derive_id, EngineObjectId, ObjectDomain, SchemaId};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -391,9 +391,16 @@ impl FixtureEntry {
 
     /// Derive an EngineObjectId for this fixture.
     pub fn derive_id(&self) -> Result<EngineObjectId, crate::engine_object_id::IdError> {
-        EngineObjectId::derive_id(
-            ObjectDomain::Conformance,
-            format!("fixture:{}", self.fixture_id).as_bytes(),
+        let schema = SchemaId::from_definition(b"franken-engine.test-taxonomy.fixture-entry.v1");
+        let canonical = format!(
+            "{}|{}|{}",
+            self.fixture_id, self.format_version, self.content_hash
+        );
+        derive_id(
+            ObjectDomain::EvidenceRecord,
+            &format!("fixture:{}", self.fixture_id),
+            &schema,
+            canonical.as_bytes(),
         )
     }
 }
@@ -984,7 +991,7 @@ mod tests {
     fn fixture_derive_id() {
         let f = make_fixture("core-003", TestClass::Core);
         let id = f.derive_id().unwrap();
-        assert!(!id.as_hex().is_empty());
+        assert!(!id.to_hex().is_empty());
     }
 
     #[test]

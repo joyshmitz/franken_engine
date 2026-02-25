@@ -583,10 +583,13 @@ impl ConvergenceCertificate {
         let partition_sizes = (analysis.partition_a.len(), analysis.partition_b.len());
 
         let cert_bytes = format!(
-            "{}:{}:{}:{}",
+            "{}:{}:{}:{}:{}:{}:{}",
             analysis.num_nodes,
             analysis.spectral_gap_millionths,
             analysis.mixing_time_bound,
+            analysis.lambda_max_millionths,
+            analysis.fiedler_iterations,
+            analysis.fiedler_residual_millionths,
             epoch.as_u64()
         );
 

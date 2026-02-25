@@ -393,7 +393,11 @@ impl FtrlState {
             .zip(self.arm_counts.iter())
             .map(
                 |(&total, &count)| {
-                    if count > 0 { total / count as i64 } else { 0 }
+                    if count > 0 {
+                        total / count as i64
+                    } else {
+                        0
+                    }
                 },
             )
             .collect()
@@ -674,7 +678,11 @@ impl RegretBoundedRouter {
             .zip(self.per_arm_count.iter())
             .map(
                 |(&total, &count)| {
-                    if count > 0 { total / count as i64 } else { 0 }
+                    if count > 0 {
+                        total / count as i64
+                    } else {
+                        0
+                    }
                 },
             )
             .max()

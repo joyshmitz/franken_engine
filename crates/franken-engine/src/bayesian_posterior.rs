@@ -551,7 +551,7 @@ impl BayesianPosteriorUpdater {
         } else {
             -MILLION // Max negative LLR when malicious likelihood is 0.
         };
-        self.cumulative_llr_millionths += llr_step;
+        self.cumulative_llr_millionths = self.cumulative_llr_millionths.saturating_add(llr_step);
 
         // BOCPD update: evaluate how well current posterior predicts data vs the prior.
         let predictive_continuation = (self.posterior.p_benign * likelihoods[0] / MILLION)
@@ -1340,6 +1340,16 @@ mod tests {
             "LLR should be <= 0 for benign evidence: {}",
             updater.log_likelihood_ratio()
         );
+    }
+
+    #[test]
+    fn llr_accumulation_saturates_at_i64_max() {
+        let mut updater = BayesianPosteriorUpdater::new(Posterior::default_prior(), "ext-001");
+        updater.cumulative_llr_millionths = i64::MAX;
+
+        updater.update(&malicious_evidence());
+
+        assert_eq!(updater.log_likelihood_ratio(), i64::MAX);
     }
 
     #[test]
