@@ -1,0 +1,17 @@
+{
+  "schema_version": "frx.react.observable.trace.v1",
+  "trace_id": "trace-frx-react-009",
+  "decision_id": "decision-frx-react-009",
+  "policy_id": "policy-frx-react-corpus-v1",
+  "component": "frx_react_corpus",
+  "scenario_id": "frx-react-009",
+  "fixture_ref": "compat.events.dispatch.capture_bubble_stop",
+  "seed": 1009,
+  "events": [
+    {"seq": 1, "phase": "event", "actor": "Parent", "event": "capture:onClickCapture", "decision_path": "event_dispatch", "timing_us": 800, "outcome": "ok"},
+    {"seq": 2, "phase": "event", "actor": "Child", "event": "bubble:onClick:stopPropagation", "decision_path": "event_dispatch", "timing_us": 1200, "outcome": "ok"},
+    {"seq": 3, "phase": "event", "actor": "Parent", "event": "bubble_skipped_due_to_stop", "decision_path": "event_dispatch", "timing_us": 1500, "outcome": "ok"}
+  ],
+  "outcome": "pass",
+  "error_code": null
+}

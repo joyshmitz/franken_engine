@@ -1,0 +1,25 @@
+{
+  "schema_version": "frx.react.fixture.v1",
+  "scenario_id": "frx-react-006",
+  "fixture_ref": "compat.errors.boundary.capture_recover",
+  "runtime_mode": "client",
+  "semantic_focus": [
+    "error_boundary",
+    "recovery"
+  ],
+  "stimulus": [
+    {
+      "step": "mount.crash_child",
+      "payload": "throw=true"
+    },
+    {
+      "step": "reset.boundary",
+      "payload": "throw=false"
+    }
+  ],
+  "expected_observable": [
+    "boundary_captures_error",
+    "boundary_recovers_after_reset"
+  ],
+  "component_source": "class Boundary extends React.Component{componentDidCatch(e){...}} function Child(){if(throwFlag){throw new Error('boom')}return <ok/>;}"
+}

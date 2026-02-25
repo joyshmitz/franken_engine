@@ -1,0 +1,17 @@
+{
+  "schema_version": "frx.react.observable.trace.v1",
+  "trace_id": "trace-frx-react-003",
+  "decision_id": "decision-frx-react-003",
+  "policy_id": "policy-frx-react-corpus-v1",
+  "component": "frx_react_corpus",
+  "scenario_id": "frx-react-003",
+  "fixture_ref": "compat.hooks.order.reducer_context_transition",
+  "seed": 1003,
+  "events": [
+    {"seq": 1, "phase": "render", "actor": "Provider", "event": "hook_order:useReducer,useContext", "decision_path": "client_default", "timing_us": 1300, "outcome": "ok"},
+    {"seq": 2, "phase": "update", "actor": "Provider", "event": "dispatch:start", "decision_path": "client_default", "timing_us": 1700, "outcome": "ok"},
+    {"seq": 3, "phase": "commit", "actor": "Child", "event": "context_value:running", "decision_path": "client_default", "timing_us": 2100, "outcome": "ok"}
+  ],
+  "outcome": "pass",
+  "error_code": null
+}

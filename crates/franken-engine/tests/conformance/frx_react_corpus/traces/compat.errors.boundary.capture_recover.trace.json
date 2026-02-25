@@ -1,0 +1,18 @@
+{
+  "schema_version": "frx.react.observable.trace.v1",
+  "trace_id": "trace-frx-react-006",
+  "decision_id": "decision-frx-react-006",
+  "policy_id": "policy-frx-react-corpus-v1",
+  "component": "frx_react_corpus",
+  "scenario_id": "frx-react-006",
+  "fixture_ref": "compat.errors.boundary.capture_recover",
+  "seed": 1006,
+  "events": [
+    {"seq": 1, "phase": "render", "actor": "Child", "event": "throw_error:boom", "decision_path": "boundary_capture", "timing_us": 1000, "outcome": "error"},
+    {"seq": 2, "phase": "error_boundary", "actor": "Boundary", "event": "componentDidCatch", "decision_path": "boundary_capture", "timing_us": 1400, "outcome": "ok"},
+    {"seq": 3, "phase": "commit", "actor": "Boundary", "event": "fallback_rendered", "decision_path": "boundary_capture", "timing_us": 1700, "outcome": "ok"},
+    {"seq": 4, "phase": "update", "actor": "Boundary", "event": "reset_and_recover", "decision_path": "boundary_capture", "timing_us": 2200, "outcome": "ok"}
+  ],
+  "outcome": "pass",
+  "error_code": null
+}

@@ -1,0 +1,17 @@
+{
+  "schema_version": "frx.react.observable.trace.v1",
+  "trace_id": "trace-frx-react-007",
+  "decision_id": "decision-frx-react-007",
+  "policy_id": "policy-frx-react-corpus-v1",
+  "component": "frx_react_corpus",
+  "scenario_id": "frx-react-007",
+  "fixture_ref": "compat.hydration.server_client_mismatch",
+  "seed": 1007,
+  "events": [
+    {"seq": 1, "phase": "hydrate", "actor": "Hydrator", "event": "server_markup_loaded", "decision_path": "hydrate_path", "timing_us": 1200, "outcome": "ok"},
+    {"seq": 2, "phase": "hydrate", "actor": "Hydrator", "event": "mismatch_detected:text", "decision_path": "hydrate_path", "timing_us": 1600, "outcome": "warn"},
+    {"seq": 3, "phase": "hydrate", "actor": "Hydrator", "event": "recover_client_render", "decision_path": "hydrate_path", "timing_us": 2100, "outcome": "ok"}
+  ],
+  "outcome": "pass",
+  "error_code": null
+}

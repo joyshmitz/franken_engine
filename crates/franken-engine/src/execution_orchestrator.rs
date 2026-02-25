@@ -27,7 +27,7 @@ use crate::bayesian_posterior::{
 use crate::containment_executor::{
     ContainmentContext, ContainmentError, ContainmentExecutor, ContainmentReceipt, SandboxPolicy,
 };
-use crate::control_plane::mocks::{trace_id_from_seed, MockBudget, MockCx};
+use crate::control_plane::mocks::{MockBudget, MockCx, trace_id_from_seed};
 use crate::entropy_evidence_compressor::{
     ArithmeticCoder, CompressionCertificate, EntropyEstimator,
 };
@@ -42,11 +42,11 @@ use crate::expected_loss_selector::{
 use crate::hash_tiers::ContentHash;
 use crate::ir_contract::{Ir0Module, Ir3Module};
 use crate::lowering_pipeline::{
-    lower_ir0_to_ir3, LoweringContext, LoweringEvent, LoweringPipelineError, PassWitness,
+    LoweringContext, LoweringEvent, LoweringPipelineError, PassWitness, lower_ir0_to_ir3,
 };
 use crate::optimal_stopping::{
     EscalationPolicy, Observation as StoppingObservation, OptimalStoppingCertificate,
-    StoppingDecision, STOPPING_SCHEMA_VERSION,
+    STOPPING_SCHEMA_VERSION, StoppingDecision,
 };
 use crate::parser::{CanonicalEs2020Parser, ParseError, ParserOptions};
 use crate::region_lifecycle::{CancelReason, DrainDeadline, FinalizeResult};
@@ -55,8 +55,8 @@ use crate::regret_bounded_router::{
     RouterSummary,
 };
 use crate::saga_orchestrator::{
-    eviction_saga_steps, quarantine_saga_steps, revocation_saga_steps, SagaError, SagaOrchestrator,
-    SagaType,
+    SagaError, SagaOrchestrator, SagaType, eviction_saga_steps, quarantine_saga_steps,
+    revocation_saga_steps,
 };
 use crate::security_epoch::SecurityEpoch;
 use crate::tropical_semiring::{
@@ -201,6 +201,19 @@ pub struct OrchestratorResult {
 
     // Epoch
     pub epoch: SecurityEpoch,
+}
+
+struct EvidenceRecordInput<'a> {
+    trace_id: &'a str,
+    decision_id: &'a str,
+    package: &'a ExtensionPackage,
+    decision: &'a ActionDecision,
+    effective_action: ContainmentAction,
+    exec: &'a ExecutionResult,
+    update: &'a UpdateResult,
+    ir3_schedule_cost: Option<TropicalWeight>,
+    adaptive_router_summary: Option<&'a RouterSummary>,
+    optimal_stopping_certificate: Option<&'a OptimalStoppingCertificate>,
 }
 
 // ---------------------------------------------------------------------------
@@ -433,18 +446,19 @@ impl ExecutionOrchestrator {
         }
 
         // Step 9: Record evidence.
-        let (entry, evidence_compression_certificate) = self.phase_record_evidence(
-            &trace_id,
-            &decision_id,
-            package,
-            &action_decision,
-            containment_action,
-            &exec_result,
-            &update_result,
-            ir3_schedule_cost,
-            adaptive_router_summary.as_ref(),
-            optimal_stopping_certificate.as_ref(),
-        )?;
+        let (entry, evidence_compression_certificate) =
+            self.phase_record_evidence(EvidenceRecordInput {
+                trace_id: &trace_id,
+                decision_id: &decision_id,
+                package,
+                decision: &action_decision,
+                effective_action: containment_action,
+                exec: &exec_result,
+                update: &update_result,
+                ir3_schedule_cost,
+                adaptive_router_summary: adaptive_router_summary.as_ref(),
+                optimal_stopping_certificate: optimal_stopping_certificate.as_ref(),
+            })?;
         let evidence_entries = vec![entry];
 
         // Step 10: Containment + saga (if action > Allow).
@@ -522,17 +536,20 @@ impl ExecutionOrchestrator {
 
     fn phase_record_evidence(
         &mut self,
-        trace_id: &str,
-        decision_id: &str,
-        package: &ExtensionPackage,
-        decision: &ActionDecision,
-        effective_action: ContainmentAction,
-        exec: &ExecutionResult,
-        update: &UpdateResult,
-        ir3_schedule_cost: Option<TropicalWeight>,
-        adaptive_router_summary: Option<&RouterSummary>,
-        optimal_stopping_certificate: Option<&OptimalStoppingCertificate>,
+        input: EvidenceRecordInput<'_>,
     ) -> Result<(EvidenceEntry, Option<CompressionCertificate>), OrchestratorError> {
+        let EvidenceRecordInput {
+            trace_id,
+            decision_id,
+            package,
+            decision,
+            effective_action,
+            exec,
+            update,
+            ir3_schedule_cost,
+            adaptive_router_summary,
+            optimal_stopping_certificate,
+        } = input;
         let mut builder = EvidenceEntryBuilder::new(
             trace_id,
             decision_id,
@@ -892,12 +909,13 @@ impl ExecutionOrchestrator {
         optimal_stopping_certificate: Option<&OptimalStoppingCertificate>,
         ir3_schedule_cost: Option<TropicalWeight>,
     ) -> Vec<u32> {
-        let mut symbols = Vec::new();
-        symbols.push(10 + decision.action.severity() as u32);
-        symbols.push(20 + effective_action.severity() as u32);
-        symbols.push(30 + Self::risk_state_symbol(update.posterior.map_estimate()));
-        symbols.push(40 + (exec.instructions_executed.min(u32::MAX as u64) as u32 % 1000));
-        symbols.push(50 + (exec.hostcall_decisions.len() as u32 % 1000));
+        let mut symbols = vec![
+            10 + decision.action.severity(),
+            20 + effective_action.severity(),
+            30 + Self::risk_state_symbol(update.posterior.map_estimate()),
+            40 + (exec.instructions_executed.min(u32::MAX as u64) as u32 % 1000),
+            50 + (exec.hostcall_decisions.len() as u32 % 1000),
+        ];
 
         for capability in &package.capabilities {
             symbols.push(1_000 + (Self::stable_symbol(capability) % 10_000));
@@ -1070,6 +1088,23 @@ mod tests {
         assert!(result.posterior.is_valid());
         assert!(!result.evidence_entries.is_empty());
         assert_eq!(result.epoch, SecurityEpoch::from_raw(1));
+    }
+
+    #[test]
+    fn end_to_end_emits_integrated_artifacts() {
+        let mut orch = ExecutionOrchestrator::with_defaults();
+        let result = orch.execute(&simple_package()).expect("execute");
+
+        assert!(result.adaptive_router_summary.is_some());
+        assert!(result.ir3_schedule_cost.is_some());
+        assert!(result.optimal_stopping_certificate.is_some());
+        assert!(result.evidence_compression_certificate.is_some());
+
+        let entry = &result.evidence_entries[0];
+        assert!(entry.metadata.contains_key("adaptive_router_regime"));
+        assert!(entry.metadata.contains_key("adaptive_router_regret"));
+        assert!(entry.metadata.contains_key("ir3_schedule_cost"));
+        assert!(entry.metadata.contains_key("optimal_stopping_algorithm"));
     }
 
     #[test]

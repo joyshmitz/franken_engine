@@ -1,0 +1,25 @@
+{
+  "schema_version": "frx.react.fixture.v1",
+  "scenario_id": "frx-react-001",
+  "fixture_ref": "compat.render.dom_snapshot_basic",
+  "runtime_mode": "client",
+  "semantic_focus": [
+    "render",
+    "state"
+  ],
+  "stimulus": [
+    {
+      "step": "mount",
+      "payload": "count=0"
+    },
+    {
+      "step": "click.increment",
+      "payload": "count=1"
+    }
+  ],
+  "expected_observable": [
+    "render_commit",
+    "dom_snapshot"
+  ],
+  "component_source": "function App(){const [count,setCount]=useState(0);return <button onClick={()=>setCount(c=>c+1)}>{count}</button>; }"
+}

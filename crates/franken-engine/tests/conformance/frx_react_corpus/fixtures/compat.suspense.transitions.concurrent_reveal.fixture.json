@@ -1,0 +1,26 @@
+{
+  "schema_version": "frx.react.fixture.v1",
+  "scenario_id": "frx-react-005",
+  "fixture_ref": "compat.suspense.transitions.concurrent_reveal",
+  "runtime_mode": "client",
+  "semantic_focus": [
+    "suspense",
+    "concurrent",
+    "transition"
+  ],
+  "stimulus": [
+    {
+      "step": "startTransition.load",
+      "payload": "resource=pending"
+    },
+    {
+      "step": "resource.resolve",
+      "payload": "resource=ready"
+    }
+  ],
+  "expected_observable": [
+    "fallback_visible_then_reveal",
+    "transition_priority_preserved"
+  ],
+  "component_source": "function App(){const [r,setR]=useState(pending());const [isPending,start]=useTransition();return <Suspense fallback={<Spinner/>}><Pane data={r}/></Suspense>; }"
+}

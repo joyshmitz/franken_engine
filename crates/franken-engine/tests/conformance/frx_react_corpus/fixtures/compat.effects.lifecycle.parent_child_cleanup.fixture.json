@@ -1,0 +1,26 @@
+{
+  "schema_version": "frx.react.fixture.v1",
+  "scenario_id": "frx-react-004",
+  "fixture_ref": "compat.effects.lifecycle.parent_child_cleanup",
+  "runtime_mode": "client",
+  "semantic_focus": [
+    "effects",
+    "cleanup",
+    "lifecycle"
+  ],
+  "stimulus": [
+    {
+      "step": "mount.parent+child",
+      "payload": "visible=true"
+    },
+    {
+      "step": "set.visible.false",
+      "payload": "unmount child"
+    }
+  ],
+  "expected_observable": [
+    "child_cleanup_before_parent_cleanup",
+    "effect_order_deterministic"
+  ],
+  "component_source": "function Parent(){useEffect(()=>()=>log('p-clean'));return visible?<Child/>:null;}function Child(){useEffect(()=>()=>log('c-clean'));return null;}"
+}

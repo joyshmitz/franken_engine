@@ -1,0 +1,18 @@
+{
+  "schema_version": "frx.react.observable.trace.v1",
+  "trace_id": "trace-frx-react-005",
+  "decision_id": "decision-frx-react-005",
+  "policy_id": "policy-frx-react-corpus-v1",
+  "component": "frx_react_corpus",
+  "scenario_id": "frx-react-005",
+  "fixture_ref": "compat.suspense.transitions.concurrent_reveal",
+  "seed": 1005,
+  "events": [
+    {"seq": 1, "phase": "transition", "actor": "App", "event": "startTransition", "decision_path": "concurrent_transition", "timing_us": 1200, "outcome": "ok"},
+    {"seq": 2, "phase": "suspense", "actor": "Boundary", "event": "fallback_visible", "decision_path": "concurrent_transition", "timing_us": 1700, "outcome": "ok"},
+    {"seq": 3, "phase": "suspense", "actor": "Boundary", "event": "resource_resolved", "decision_path": "concurrent_transition", "timing_us": 2400, "outcome": "ok"},
+    {"seq": 4, "phase": "commit", "actor": "Boundary", "event": "reveal_content", "decision_path": "concurrent_transition", "timing_us": 2900, "outcome": "ok"}
+  ],
+  "outcome": "pass",
+  "error_code": null
+}

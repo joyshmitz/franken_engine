@@ -1,0 +1,22 @@
+{
+  "schema_version": "frx.react.fixture.v1",
+  "scenario_id": "frx-react-009",
+  "fixture_ref": "compat.events.dispatch.capture_bubble_stop",
+  "runtime_mode": "client",
+  "semantic_focus": [
+    "events",
+    "dispatch",
+    "propagation"
+  ],
+  "stimulus": [
+    {
+      "step": "click.target",
+      "payload": "stopPropagation in bubble"
+    }
+  ],
+  "expected_observable": [
+    "capture_before_bubble",
+    "bubble_stop_respected"
+  ],
+  "component_source": "<Parent onClickCapture={...}><Child onClick={e=>e.stopPropagation()}/></Parent>"
+}

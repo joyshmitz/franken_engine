@@ -1,0 +1,27 @@
+{
+  "schema_version": "frx.react.fixture.v1",
+  "scenario_id": "frx-react-002",
+  "fixture_ref": "compat.hooks.order.state_effect_memo_ref",
+  "runtime_mode": "client",
+  "semantic_focus": [
+    "hooks",
+    "order",
+    "memo",
+    "ref"
+  ],
+  "stimulus": [
+    {
+      "step": "mount",
+      "payload": "toggle=false"
+    },
+    {
+      "step": "set.toggle.true",
+      "payload": "toggle=true"
+    }
+  ],
+  "expected_observable": [
+    "hook_order_stable",
+    "effect_cleanup_before_recreate"
+  ],
+  "component_source": "function C(){const r=useRef(null);const [t,setT]=useState(false);const v=useMemo(()=>t?1:0,[t]);useEffect(()=>()=>{},[v]);return <div ref={r}>{v}</div>; }"
+}

@@ -1,0 +1,26 @@
+{
+  "schema_version": "frx.react.fixture.v1",
+  "scenario_id": "frx-react-003",
+  "fixture_ref": "compat.hooks.order.reducer_context_transition",
+  "runtime_mode": "client",
+  "semantic_focus": [
+    "hooks",
+    "reducer",
+    "context"
+  ],
+  "stimulus": [
+    {
+      "step": "mount",
+      "payload": "state=idle"
+    },
+    {
+      "step": "dispatch.start",
+      "payload": "state=running"
+    }
+  ],
+  "expected_observable": [
+    "reducer_transition",
+    "context_consumer_update"
+  ],
+  "component_source": "function Provider(){const [s,d]=useReducer(reducer,'idle');return <Ctx.Provider value={s}><Child dispatch={d}/></Ctx.Provider>; }"
+}

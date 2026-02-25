@@ -1,0 +1,27 @@
+{
+  "schema_version": "frx.react.fixture.v1",
+  "scenario_id": "frx-react-008",
+  "fixture_ref": "compat.state.batching.microtask_transition",
+  "runtime_mode": "client",
+  "semantic_focus": [
+    "state",
+    "batching",
+    "microtask",
+    "concurrent"
+  ],
+  "stimulus": [
+    {
+      "step": "queueMicrotask.setA",
+      "payload": "a=1"
+    },
+    {
+      "step": "queueMicrotask.setB",
+      "payload": "b=1"
+    }
+  ],
+  "expected_observable": [
+    "coalesced_commit",
+    "visibility_after_commit"
+  ],
+  "component_source": "queueMicrotask(()=>setA(1));queueMicrotask(()=>setB(1));"
+}

@@ -1,0 +1,26 @@
+{
+  "schema_version": "frx.react.fixture.v1",
+  "scenario_id": "frx-react-010",
+  "fixture_ref": "compat.render.portal_ref_forwarding_edge",
+  "runtime_mode": "client",
+  "semantic_focus": [
+    "render",
+    "portal",
+    "ref_edge"
+  ],
+  "stimulus": [
+    {
+      "step": "mount.portal",
+      "payload": "target=#overlay"
+    },
+    {
+      "step": "focus.via.forwarded_ref",
+      "payload": "invoke ref.current.focus()"
+    }
+  ],
+  "expected_observable": [
+    "portal_mount_order_stable",
+    "forwarded_ref_targets_portal_node"
+  ],
+  "component_source": "const Input=forwardRef(...);createPortal(<Input ref={r}/>,overlayNode);"
+}

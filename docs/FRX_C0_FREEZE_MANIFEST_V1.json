@@ -7,7 +7,9 @@
     "compatibility_constitution": "docs/FRX_COMPATIBILITY_CONSTITUTION_V1.md",
     "forbidden_regressions": "docs/frx_forbidden_regressions_v1.json",
     "compile_vs_fallback": "docs/frx_compile_vs_fallback_v1.json",
-    "semantics_lane_charter": "docs/FRX_SEMANTICS_LANE_CHARTER_V1.md"
+    "semantics_lane_charter": "docs/FRX_SEMANTICS_LANE_CHARTER_V1.md",
+    "compiler_lane_charter": "docs/FRX_COMPILER_LANE_CHARTER_V1.md",
+    "compiler_lane_contract": "docs/frx_compiler_lane_contract_v1.json"
   },
   "promotion_block_rule": {
     "rule_id": "C0-BLOCK-001",

@@ -1,0 +1,25 @@
+{
+  "schema_version": "frx.react.fixture.v1",
+  "scenario_id": "frx-react-007",
+  "fixture_ref": "compat.hydration.server_client_mismatch",
+  "runtime_mode": "hydrate",
+  "semantic_focus": [
+    "hydration",
+    "server_client_boundary"
+  ],
+  "stimulus": [
+    {
+      "step": "server.render",
+      "payload": "text='A'"
+    },
+    {
+      "step": "client.hydrate",
+      "payload": "text='B'"
+    }
+  ],
+  "expected_observable": [
+    "mismatch_detected",
+    "deterministic_recovery_path"
+  ],
+  "component_source": "hydrateRoot(node,<App text={clientText}/>);"
+}

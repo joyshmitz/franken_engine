@@ -1,0 +1,17 @@
+{
+  "schema_version": "frx.react.observable.trace.v1",
+  "trace_id": "trace-frx-react-008",
+  "decision_id": "decision-frx-react-008",
+  "policy_id": "policy-frx-react-corpus-v1",
+  "component": "frx_react_corpus",
+  "scenario_id": "frx-react-008",
+  "fixture_ref": "compat.state.batching.microtask_transition",
+  "seed": 1008,
+  "events": [
+    {"seq": 1, "phase": "scheduler", "actor": "App", "event": "enqueue_microtask:setA", "decision_path": "concurrent_batch", "timing_us": 900, "outcome": "ok"},
+    {"seq": 2, "phase": "scheduler", "actor": "App", "event": "enqueue_microtask:setB", "decision_path": "concurrent_batch", "timing_us": 1100, "outcome": "ok"},
+    {"seq": 3, "phase": "commit", "actor": "App", "event": "single_batched_commit:a=1,b=1", "decision_path": "concurrent_batch", "timing_us": 1900, "outcome": "ok"}
+  ],
+  "outcome": "pass",
+  "error_code": null
+}

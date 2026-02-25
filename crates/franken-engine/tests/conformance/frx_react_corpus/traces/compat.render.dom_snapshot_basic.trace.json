@@ -1,0 +1,18 @@
+{
+  "schema_version": "frx.react.observable.trace.v1",
+  "trace_id": "trace-frx-react-001",
+  "decision_id": "decision-frx-react-001",
+  "policy_id": "policy-frx-react-corpus-v1",
+  "component": "frx_react_corpus",
+  "scenario_id": "frx-react-001",
+  "fixture_ref": "compat.render.dom_snapshot_basic",
+  "seed": 1001,
+  "events": [
+    {"seq": 1, "phase": "render", "actor": "App", "event": "mount_begin", "decision_path": "client_default", "timing_us": 1100, "outcome": "ok"},
+    {"seq": 2, "phase": "commit", "actor": "App", "event": "dom_snapshot:button:0", "decision_path": "client_default", "timing_us": 1300, "outcome": "ok"},
+    {"seq": 3, "phase": "update", "actor": "App", "event": "state_update:count=1", "decision_path": "client_default", "timing_us": 1700, "outcome": "ok"},
+    {"seq": 4, "phase": "commit", "actor": "App", "event": "dom_snapshot:button:1", "decision_path": "client_default", "timing_us": 1900, "outcome": "ok"}
+  ],
+  "outcome": "pass",
+  "error_code": null
+}

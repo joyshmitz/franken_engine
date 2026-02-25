@@ -1,0 +1,19 @@
+{
+  "schema_version": "frx.react.observable.trace.v1",
+  "trace_id": "trace-frx-react-002",
+  "decision_id": "decision-frx-react-002",
+  "policy_id": "policy-frx-react-corpus-v1",
+  "component": "frx_react_corpus",
+  "scenario_id": "frx-react-002",
+  "fixture_ref": "compat.hooks.order.state_effect_memo_ref",
+  "seed": 1002,
+  "events": [
+    {"seq": 1, "phase": "render", "actor": "C", "event": "hook_order:useRef,useState,useMemo,useEffect", "decision_path": "client_default", "timing_us": 1200, "outcome": "ok"},
+    {"seq": 2, "phase": "effect", "actor": "C", "event": "effect_create:v=0", "decision_path": "client_default", "timing_us": 1500, "outcome": "ok"},
+    {"seq": 3, "phase": "update", "actor": "C", "event": "state_update:toggle=true", "decision_path": "client_default", "timing_us": 1800, "outcome": "ok"},
+    {"seq": 4, "phase": "effect", "actor": "C", "event": "effect_cleanup:v=0", "decision_path": "client_default", "timing_us": 2100, "outcome": "ok"},
+    {"seq": 5, "phase": "effect", "actor": "C", "event": "effect_create:v=1", "decision_path": "client_default", "timing_us": 2300, "outcome": "ok"}
+  ],
+  "outcome": "pass",
+  "error_code": null
+}
