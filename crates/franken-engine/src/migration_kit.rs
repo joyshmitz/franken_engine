@@ -2874,12 +2874,25 @@ mod tests {
             MigrationKitError::BehaviorValidationFailed { detail: "d".into() },
             MigrationKitError::RemediationUnavailable { detail: "e".into() },
             MigrationKitError::InvalidPackageJson { detail: "f".into() },
-            MigrationKitError::UnsupportedApiDetected { api: "g".into(), detail: "h".into() },
-            MigrationKitError::IncompatibleDependency { name: "i".into(), reason: "j".into() },
-            MigrationKitError::LockstepMismatch { runtime: "k".into(), detail: "l".into() },
+            MigrationKitError::UnsupportedApiDetected {
+                api: "g".into(),
+                detail: "h".into(),
+            },
+            MigrationKitError::IncompatibleDependency {
+                name: "i".into(),
+                reason: "j".into(),
+            },
+            MigrationKitError::LockstepMismatch {
+                runtime: "k".into(),
+                detail: "l".into(),
+            },
             MigrationKitError::ReportGenerationFailed { detail: "m".into() },
             MigrationKitError::DeterminismViolation { detail: "n".into() },
-            MigrationKitError::TooManyEntries { kind: "o".into(), count: 99, max: 50 },
+            MigrationKitError::TooManyEntries {
+                kind: "o".into(),
+                count: 99,
+                max: 50,
+            },
             MigrationKitError::InternalError { detail: "p".into() },
         ];
         for err in &errors {
@@ -2896,19 +2909,71 @@ mod tests {
     #[test]
     fn migration_kit_error_display_all_variants() {
         let cases: Vec<(MigrationKitError, &str)> = vec![
-            (MigrationKitError::AnalysisFailed { detail: "x".into() }, "analysis failed: x"),
-            (MigrationKitError::ManifestGenerationFailed { detail: "x".into() }, "manifest generation failed: x"),
-            (MigrationKitError::CapabilityInferenceFailed { detail: "x".into() }, "capability inference failed: x"),
-            (MigrationKitError::BehaviorValidationFailed { detail: "x".into() }, "behavior validation failed: x"),
-            (MigrationKitError::RemediationUnavailable { detail: "x".into() }, "remediation unavailable: x"),
-            (MigrationKitError::InvalidPackageJson { detail: "x".into() }, "invalid package.json: x"),
-            (MigrationKitError::UnsupportedApiDetected { api: "a".into(), detail: "d".into() }, "unsupported API 'a': d"),
-            (MigrationKitError::IncompatibleDependency { name: "n".into(), reason: "r".into() }, "incompatible dependency 'n': r"),
-            (MigrationKitError::LockstepMismatch { runtime: "Bun".into(), detail: "x".into() }, "lockstep mismatch for Bun: x"),
-            (MigrationKitError::ReportGenerationFailed { detail: "x".into() }, "report generation failed: x"),
-            (MigrationKitError::DeterminismViolation { detail: "x".into() }, "determinism violation: x"),
-            (MigrationKitError::TooManyEntries { kind: "api".into(), count: 99, max: 50 }, "too many api entries: 99 exceeds max 50"),
-            (MigrationKitError::InternalError { detail: "x".into() }, "internal error: x"),
+            (
+                MigrationKitError::AnalysisFailed { detail: "x".into() },
+                "analysis failed: x",
+            ),
+            (
+                MigrationKitError::ManifestGenerationFailed { detail: "x".into() },
+                "manifest generation failed: x",
+            ),
+            (
+                MigrationKitError::CapabilityInferenceFailed { detail: "x".into() },
+                "capability inference failed: x",
+            ),
+            (
+                MigrationKitError::BehaviorValidationFailed { detail: "x".into() },
+                "behavior validation failed: x",
+            ),
+            (
+                MigrationKitError::RemediationUnavailable { detail: "x".into() },
+                "remediation unavailable: x",
+            ),
+            (
+                MigrationKitError::InvalidPackageJson { detail: "x".into() },
+                "invalid package.json: x",
+            ),
+            (
+                MigrationKitError::UnsupportedApiDetected {
+                    api: "a".into(),
+                    detail: "d".into(),
+                },
+                "unsupported API 'a': d",
+            ),
+            (
+                MigrationKitError::IncompatibleDependency {
+                    name: "n".into(),
+                    reason: "r".into(),
+                },
+                "incompatible dependency 'n': r",
+            ),
+            (
+                MigrationKitError::LockstepMismatch {
+                    runtime: "Bun".into(),
+                    detail: "x".into(),
+                },
+                "lockstep mismatch for Bun: x",
+            ),
+            (
+                MigrationKitError::ReportGenerationFailed { detail: "x".into() },
+                "report generation failed: x",
+            ),
+            (
+                MigrationKitError::DeterminismViolation { detail: "x".into() },
+                "determinism violation: x",
+            ),
+            (
+                MigrationKitError::TooManyEntries {
+                    kind: "api".into(),
+                    count: 99,
+                    max: 50,
+                },
+                "too many api entries: 99 exceeds max 50",
+            ),
+            (
+                MigrationKitError::InternalError { detail: "x".into() },
+                "internal error: x",
+            ),
         ];
         for (err, expected) in &cases {
             assert_eq!(err.to_string(), *expected);
@@ -2962,11 +3027,26 @@ mod tests {
 
     #[test]
     fn api_support_level_all_weights() {
-        assert_eq!(ApiSupportLevel::FullySupported.compatibility_weight_millionths(), 1_000_000);
-        assert_eq!(ApiSupportLevel::PartiallySupported.compatibility_weight_millionths(), 700_000);
-        assert_eq!(ApiSupportLevel::Deprecated.compatibility_weight_millionths(), 500_000);
-        assert_eq!(ApiSupportLevel::RequiresPolyfill.compatibility_weight_millionths(), 400_000);
-        assert_eq!(ApiSupportLevel::Unsupported.compatibility_weight_millionths(), 0);
+        assert_eq!(
+            ApiSupportLevel::FullySupported.compatibility_weight_millionths(),
+            1_000_000
+        );
+        assert_eq!(
+            ApiSupportLevel::PartiallySupported.compatibility_weight_millionths(),
+            700_000
+        );
+        assert_eq!(
+            ApiSupportLevel::Deprecated.compatibility_weight_millionths(),
+            500_000
+        );
+        assert_eq!(
+            ApiSupportLevel::RequiresPolyfill.compatibility_weight_millionths(),
+            400_000
+        );
+        assert_eq!(
+            ApiSupportLevel::Unsupported.compatibility_weight_millionths(),
+            0
+        );
     }
 
     #[test]
@@ -2984,7 +3064,10 @@ mod tests {
         assert_eq!(RemediationEffort::Low.weight_millionths(), 300_000);
         assert_eq!(RemediationEffort::Medium.weight_millionths(), 500_000);
         assert_eq!(RemediationEffort::High.weight_millionths(), 800_000);
-        assert_eq!(RemediationEffort::Significant.weight_millionths(), 1_000_000);
+        assert_eq!(
+            RemediationEffort::Significant.weight_millionths(),
+            1_000_000
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -3134,6 +3217,10 @@ mod tests {
             assert!(!msg.is_empty());
             displays.insert(msg);
         }
-        assert_eq!(displays.len(), 7, "all 7 tested variants produce distinct messages");
+        assert_eq!(
+            displays.len(),
+            7,
+            "all 7 tested variants produce distinct messages"
+        );
     }
 }

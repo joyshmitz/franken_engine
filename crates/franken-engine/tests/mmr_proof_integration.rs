@@ -741,7 +741,10 @@ fn identical_sequences_produce_identical_consistency_proofs() {
     for (old_n, new_n) in [(4, 8), (3, 7), (5, 10)] {
         let proof1 = build_mmr(new_n).consistency_proof(old_n).unwrap();
         let proof2 = build_mmr(new_n).consistency_proof(old_n).unwrap();
-        assert_eq!(proof1, proof2, "consistency mismatch old={old_n}, new={new_n}");
+        assert_eq!(
+            proof1, proof2,
+            "consistency mismatch old={old_n}, new={new_n}"
+        );
     }
 }
 
@@ -848,15 +851,16 @@ fn large_mmr_all_inclusion_proofs_verify() {
     // Verify a spread of leaf indices
     for i in (0..256).step_by(17) {
         let proof = mmr.inclusion_proof(i).unwrap();
-        verify_inclusion(&leaf_hash(i), i, &proof)
-            .unwrap_or_else(|e| panic!("index {i}: {e}"));
+        verify_inclusion(&leaf_hash(i), i, &proof).unwrap_or_else(|e| panic!("index {i}: {e}"));
     }
 }
 
 #[test]
 fn custom_leaf_content_inclusion_roundtrip() {
     let mut mmr = MerkleMountainRange::new(5);
-    let payloads: Vec<Vec<u8>> = (0..8).map(|i| format!("payload-{i}").into_bytes()).collect();
+    let payloads: Vec<Vec<u8>> = (0..8)
+        .map(|i| format!("payload-{i}").into_bytes())
+        .collect();
     let hashes: Vec<ContentHash> = payloads.iter().map(|p| ContentHash::compute(p)).collect();
 
     for h in &hashes {
@@ -933,8 +937,7 @@ fn mmr_three_leaves_all_proofs() {
     let mmr = build_mmr(3);
     for i in 0..3 {
         let proof = mmr.inclusion_proof(i).unwrap();
-        verify_inclusion(&leaf_hash(i), i, &proof)
-            .unwrap_or_else(|e| panic!("leaf {i}: {e}"));
+        verify_inclusion(&leaf_hash(i), i, &proof).unwrap_or_else(|e| panic!("leaf {i}: {e}"));
     }
     // Consistency from 1, 2 to 3
     for old_n in 1..=3 {

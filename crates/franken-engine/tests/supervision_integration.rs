@@ -6,8 +6,8 @@
 use std::collections::BTreeSet;
 
 use frankenengine_engine::supervision::{
-    HealthStatus, RestartBudget, RestartPolicy, ServiceConfig, ServiceState, Severity,
-    Supervisor, SupervisorAction, SupervisorEvent,
+    HealthStatus, RestartBudget, RestartPolicy, ServiceConfig, ServiceState, Severity, Supervisor,
+    SupervisorAction, SupervisorEvent,
 };
 
 // =========================================================================
@@ -24,7 +24,11 @@ fn severity_display_all_variants() {
         (Severity::RootEscalation, "root_escalation"),
     ];
     for (variant, expected) in &cases {
-        assert_eq!(variant.to_string(), *expected, "Display mismatch for {variant:?}");
+        assert_eq!(
+            variant.to_string(),
+            *expected,
+            "Display mismatch for {variant:?}"
+        );
     }
 }
 
@@ -129,7 +133,12 @@ fn service_config_construction() {
 // Section 3: Service lifecycle — happy path
 // =========================================================================
 
-fn make_config(id: &str, policy: RestartPolicy, max_restarts: u32, window_ticks: u64) -> ServiceConfig {
+fn make_config(
+    id: &str,
+    policy: RestartPolicy,
+    max_restarts: u32,
+    window_ticks: u64,
+) -> ServiceConfig {
     ServiceConfig {
         service_id: id.to_string(),
         restart_policy: policy,
@@ -181,7 +190,9 @@ fn multiple_restarts_within_budget() {
     sup.start_service("svc-a");
 
     for i in 0..3 {
-        let action = sup.report_failure("svc-a", &format!("crash-{i}"), (i + 1) * 10).unwrap();
+        let action = sup
+            .report_failure("svc-a", &format!("crash-{i}"), (i + 1) * 10)
+            .unwrap();
         assert_eq!(action, SupervisorAction::Restart);
     }
     assert_eq!(sup.restart_count("svc-a"), Some(3));

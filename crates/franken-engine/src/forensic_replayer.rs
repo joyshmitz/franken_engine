@@ -1939,8 +1939,7 @@ mod tests {
         ];
         for e in &errors {
             let json = serde_json::to_string(e).expect("serialize");
-            let restored: TraceValidationError =
-                serde_json::from_str(&json).expect("deserialize");
+            let restored: TraceValidationError = serde_json::from_str(&json).expect("deserialize");
             assert_eq!(*e, restored);
         }
         assert_eq!(errors.len(), 7);

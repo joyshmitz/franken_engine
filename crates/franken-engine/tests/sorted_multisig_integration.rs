@@ -20,12 +20,12 @@ use std::collections::BTreeMap;
 use frankenengine_engine::deterministic_serde::{CanonicalValue, SchemaHash};
 use frankenengine_engine::engine_object_id::ObjectDomain;
 use frankenengine_engine::signature_preimage::{
-    verify_signature, Signature, SignatureContext, SignaturePreimage, SigningKey,
-    VerificationKey, SIGNATURE_LEN, SIGNATURE_SENTINEL, SIGNING_KEY_LEN,
+    SIGNATURE_LEN, SIGNATURE_SENTINEL, SIGNING_KEY_LEN, Signature, SignatureContext,
+    SignaturePreimage, SigningKey, VerificationKey, verify_signature,
 };
 use frankenengine_engine::sorted_multisig::{
-    is_sorted, MultiSigContext, MultiSigError, MultiSigEvent, MultiSigEventType,
-    QuorumResult, SignerSignature, SortedSignatureArray,
+    MultiSigContext, MultiSigError, MultiSigEvent, MultiSigEventType, QuorumResult,
+    SignerSignature, SortedSignatureArray, is_sorted,
 };
 
 // ---------------------------------------------------------------------------
@@ -257,8 +257,8 @@ fn duplicate_key_error_reports_positions() {
     let entries = vec![SignerSignature::new(vk1.clone(), sign_with(&sk1, &obj))];
     let mut arr = SortedSignatureArray::new(entries).unwrap();
 
-    if let Err(MultiSigError::DuplicateSignerKey { key_hex, positions }) = arr
-        .insert(SignerSignature::new(vk1.clone(), sign_with(&sk1, &obj)))
+    if let Err(MultiSigError::DuplicateSignerKey { key_hex, positions }) =
+        arr.insert(SignerSignature::new(vk1.clone(), sign_with(&sk1, &obj)))
     {
         assert!(!key_hex.is_empty());
         assert_eq!(positions.0, 0); // Position of existing entry.
@@ -343,9 +343,10 @@ fn insert_in_middle() {
 fn contains_signer_true_for_included_key() {
     let (sk1, vk1) = make_sig_pair(130);
     let obj = test_obj();
-    let arr = SortedSignatureArray::new(vec![
-        SignerSignature::new(vk1.clone(), sign_with(&sk1, &obj)),
-    ])
+    let arr = SortedSignatureArray::new(vec![SignerSignature::new(
+        vk1.clone(),
+        sign_with(&sk1, &obj),
+    )])
     .unwrap();
     assert!(arr.contains_signer(&vk1));
 }
@@ -355,10 +356,8 @@ fn contains_signer_false_for_absent_key() {
     let (sk1, vk1) = make_sig_pair(140);
     let (_, vk2) = make_sig_pair(150);
     let obj = test_obj();
-    let arr = SortedSignatureArray::new(vec![
-        SignerSignature::new(vk1, sign_with(&sk1, &obj)),
-    ])
-    .unwrap();
+    let arr =
+        SortedSignatureArray::new(vec![SignerSignature::new(vk1, sign_with(&sk1, &obj))]).unwrap();
     assert!(!arr.contains_signer(&vk2));
 }
 
@@ -488,9 +487,7 @@ fn quorum_unauthorized_signers_skipped() {
 
     // Only vk1 authorized; vk2/vk3 unauthorized.
     let result = arr
-        .verify_quorum(1, &[vk1], |vk, sig| {
-            verify_signature(vk, &preimage, sig)
-        })
+        .verify_quorum(1, &[vk1], |vk, sig| verify_signature(vk, &preimage, sig))
         .unwrap();
 
     assert!(result.quorum_met);
@@ -505,9 +502,7 @@ fn quorum_all_unauthorized_fails() {
     let (_, vk_other) = make_sig_pair(200);
     let obj = test_obj();
 
-    let entries = vec![
-        SignerSignature::new(vk1.clone(), sign_with(&sk1, &obj)),
-    ];
+    let entries = vec![SignerSignature::new(vk1.clone(), sign_with(&sk1, &obj))];
     let arr = SortedSignatureArray::from_unsorted(entries).unwrap();
     let preimage = obj.preimage_bytes();
 
@@ -529,9 +524,7 @@ fn quorum_zero_threshold_rejected() {
     let entries = vec![SignerSignature::new(vk1.clone(), sign_with(&sk1, &obj))];
     let arr = SortedSignatureArray::new(entries).unwrap();
 
-    let err = arr
-        .verify_quorum(0, &[vk1], |_, _| Ok(()))
-        .unwrap_err();
+    let err = arr.verify_quorum(0, &[vk1], |_, _| Ok(())).unwrap_err();
     assert!(matches!(err, MultiSigError::ZeroQuorumThreshold));
 }
 
@@ -624,7 +617,10 @@ fn is_sorted_rejects_duplicates() {
 
 #[test]
 fn multisig_error_display_empty_array() {
-    assert_eq!(MultiSigError::EmptyArray.to_string(), "empty signature array");
+    assert_eq!(
+        MultiSigError::EmptyArray.to_string(),
+        "empty signature array"
+    );
 }
 
 #[test]
@@ -1263,10 +1259,12 @@ fn quorum_with_closure_returning_error() {
     // Verification function that always fails.
     let err = arr
         .verify_quorum(1, std::slice::from_ref(&vk1), |_vk, _sig| {
-            Err(frankenengine_engine::signature_preimage::SignatureError::VerificationFailed {
-                signer: vk1.clone(),
-                reason: "test failure".to_string(),
-            })
+            Err(
+                frankenengine_engine::signature_preimage::SignatureError::VerificationFailed {
+                    signer: vk1.clone(),
+                    reason: "test failure".to_string(),
+                },
+            )
         })
         .unwrap_err();
 

@@ -1778,12 +1778,16 @@ mod tests {
         assert_eq!(receipts.len(), 2);
 
         // Verify the actions are now registered.
-        assert!(engine
-            .action_registry
-            .is_executed("ext-1", ContainmentAction::Terminate));
-        assert!(engine
-            .action_registry
-            .is_executed("ext-2", ContainmentAction::Sandbox));
+        assert!(
+            engine
+                .action_registry
+                .is_executed("ext-1", ContainmentAction::Terminate)
+        );
+        assert!(
+            engine
+                .action_registry
+                .is_executed("ext-2", ContainmentAction::Sandbox)
+        );
     }
 
     #[test]

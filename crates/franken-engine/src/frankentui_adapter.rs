@@ -3912,10 +3912,22 @@ mod tests {
         assert!(dashboard.region_rows.is_empty());
         assert!(dashboard.cancellation_events.is_empty());
         assert!(dashboard.safe_mode_activations.is_empty());
-        assert_eq!(dashboard.decision_outcomes, DecisionOutcomesPanelView::default());
-        assert_eq!(dashboard.obligation_status, ObligationStatusPanelView::default());
-        assert_eq!(dashboard.region_lifecycle, RegionLifecyclePanelView::default());
-        assert_eq!(dashboard.replay_health.last_run_status, ReplayHealthStatus::Unknown);
+        assert_eq!(
+            dashboard.decision_outcomes,
+            DecisionOutcomesPanelView::default()
+        );
+        assert_eq!(
+            dashboard.obligation_status,
+            ObligationStatusPanelView::default()
+        );
+        assert_eq!(
+            dashboard.region_lifecycle,
+            RegionLifecyclePanelView::default()
+        );
+        assert_eq!(
+            dashboard.replay_health.last_run_status,
+            ReplayHealthStatus::Unknown
+        );
         assert_eq!(
             dashboard.schema_version.compatibility_status,
             SchemaCompatibilityStatus::Unknown
@@ -4844,7 +4856,11 @@ mod tests {
 
     #[test]
     fn update_kind_serde_roundtrip() {
-        for k in [UpdateKind::Snapshot, UpdateKind::Delta, UpdateKind::Heartbeat] {
+        for k in [
+            UpdateKind::Snapshot,
+            UpdateKind::Delta,
+            UpdateKind::Heartbeat,
+        ] {
             let json = serde_json::to_string(&k).unwrap();
             let restored: UpdateKind = serde_json::from_str(&json).unwrap();
             assert_eq!(restored, k);
@@ -5121,8 +5137,8 @@ mod tests {
         let json = serde_json::to_string(&CancellationKind::Quarantine).unwrap();
         assert_eq!(json, "\"quarantine\"");
 
-        let json = serde_json::to_string(&DashboardAlertMetric::ObligationFailureRateMillionths)
-            .unwrap();
+        let json =
+            serde_json::to_string(&DashboardAlertMetric::ObligationFailureRateMillionths).unwrap();
         assert_eq!(json, "\"obligation_failure_rate_millionths\"");
     }
 
@@ -5146,7 +5162,10 @@ mod tests {
 
     #[test]
     fn declassification_outcome_serde_roundtrip() {
-        for v in [DeclassificationOutcome::Approved, DeclassificationOutcome::Denied] {
+        for v in [
+            DeclassificationOutcome::Approved,
+            DeclassificationOutcome::Denied,
+        ] {
             let json = serde_json::to_string(&v).unwrap();
             let restored: DeclassificationOutcome = serde_json::from_str(&json).unwrap();
             assert_eq!(v, restored);
@@ -5291,7 +5310,10 @@ mod tests {
 
     #[test]
     fn override_review_status_default_is_pending() {
-        assert_eq!(OverrideReviewStatus::default(), OverrideReviewStatus::Pending);
+        assert_eq!(
+            OverrideReviewStatus::default(),
+            OverrideReviewStatus::Pending
+        );
     }
 
     #[test]

@@ -41,8 +41,8 @@ fn make_simple_event(seq: u64, ext: &str, pause_ns: u64) -> GcEvent {
 #[test]
 fn pause_budget_default_values() {
     let b = PauseBudget::default();
-    assert_eq!(b.p50_ns, 500_000);    // 500 us
-    assert_eq!(b.p95_ns, 2_000_000);  // 2 ms
+    assert_eq!(b.p50_ns, 500_000); // 500 us
+    assert_eq!(b.p95_ns, 2_000_000); // 2 ms
     assert_eq!(b.p99_ns, 10_000_000); // 10 ms
 }
 

@@ -16,18 +16,40 @@ use frankenengine_engine::bulkhead::{
 
 #[test]
 fn bulkhead_class_display() {
-    assert_eq!(BulkheadClass::RemoteInFlight.to_string(), "remote_in_flight");
-    assert_eq!(BulkheadClass::BackgroundMaintenance.to_string(), "background_maintenance");
+    assert_eq!(
+        BulkheadClass::RemoteInFlight.to_string(),
+        "remote_in_flight"
+    );
+    assert_eq!(
+        BulkheadClass::BackgroundMaintenance.to_string(),
+        "background_maintenance"
+    );
     assert_eq!(BulkheadClass::SagaExecution.to_string(), "saga_execution");
     assert_eq!(BulkheadClass::EvidenceFlush.to_string(), "evidence_flush");
 }
 
 #[test]
 fn default_configs_match_expected_limits() {
-    assert_eq!(BulkheadClass::RemoteInFlight.default_config().max_concurrent, 64);
-    assert_eq!(BulkheadClass::BackgroundMaintenance.default_config().max_concurrent, 16);
-    assert_eq!(BulkheadClass::SagaExecution.default_config().max_concurrent, 8);
-    assert_eq!(BulkheadClass::EvidenceFlush.default_config().max_concurrent, 4);
+    assert_eq!(
+        BulkheadClass::RemoteInFlight
+            .default_config()
+            .max_concurrent,
+        64
+    );
+    assert_eq!(
+        BulkheadClass::BackgroundMaintenance
+            .default_config()
+            .max_concurrent,
+        16
+    );
+    assert_eq!(
+        BulkheadClass::SagaExecution.default_config().max_concurrent,
+        8
+    );
+    assert_eq!(
+        BulkheadClass::EvidenceFlush.default_config().max_concurrent,
+        4
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -59,22 +81,31 @@ fn empty_creates_none() {
 #[test]
 fn register_custom_bulkhead() {
     let mut reg = BulkheadRegistry::empty();
-    reg.register("custom", BulkheadConfig {
-        max_concurrent: 10,
-        max_queue_depth: 20,
-        pressure_threshold_pct: 80,
-    }).unwrap();
+    reg.register(
+        "custom",
+        BulkheadConfig {
+            max_concurrent: 10,
+            max_queue_depth: 20,
+            pressure_threshold_pct: 80,
+        },
+    )
+    .unwrap();
     assert_eq!(reg.bulkhead_count(), 1);
 }
 
 #[test]
 fn register_rejects_zero_concurrent() {
     let mut reg = BulkheadRegistry::empty();
-    let err = reg.register("bad", BulkheadConfig {
-        max_concurrent: 0,
-        max_queue_depth: 10,
-        pressure_threshold_pct: 80,
-    }).unwrap_err();
+    let err = reg
+        .register(
+            "bad",
+            BulkheadConfig {
+                max_concurrent: 0,
+                max_queue_depth: 10,
+                pressure_threshold_pct: 80,
+            },
+        )
+        .unwrap_err();
     assert!(matches!(err, BulkheadError::InvalidConfig { .. }));
 }
 
@@ -85,9 +116,15 @@ fn register_rejects_zero_concurrent() {
 #[test]
 fn acquire_and_release_basic() {
     let mut reg = BulkheadRegistry::empty();
-    reg.register("test", BulkheadConfig {
-        max_concurrent: 2, max_queue_depth: 4, pressure_threshold_pct: 80,
-    }).unwrap();
+    reg.register(
+        "test",
+        BulkheadConfig {
+            max_concurrent: 2,
+            max_queue_depth: 4,
+            pressure_threshold_pct: 80,
+        },
+    )
+    .unwrap();
 
     let p1 = reg.acquire("test", "t1").unwrap();
     assert_eq!(reg.active_count("test"), Some(1));
@@ -105,9 +142,15 @@ fn acquire_and_release_basic() {
 #[test]
 fn acquire_queues_when_full() {
     let mut reg = BulkheadRegistry::empty();
-    reg.register("test", BulkheadConfig {
-        max_concurrent: 1, max_queue_depth: 2, pressure_threshold_pct: 80,
-    }).unwrap();
+    reg.register(
+        "test",
+        BulkheadConfig {
+            max_concurrent: 1,
+            max_queue_depth: 2,
+            pressure_threshold_pct: 80,
+        },
+    )
+    .unwrap();
 
     let _p1 = reg.acquire("test", "t1").unwrap();
     let _p2 = reg.acquire("test", "t2").unwrap(); // queued
@@ -117,9 +160,15 @@ fn acquire_queues_when_full() {
 #[test]
 fn acquire_rejects_when_both_full() {
     let mut reg = BulkheadRegistry::empty();
-    reg.register("test", BulkheadConfig {
-        max_concurrent: 1, max_queue_depth: 1, pressure_threshold_pct: 80,
-    }).unwrap();
+    reg.register(
+        "test",
+        BulkheadConfig {
+            max_concurrent: 1,
+            max_queue_depth: 1,
+            pressure_threshold_pct: 80,
+        },
+    )
+    .unwrap();
 
     let _p1 = reg.acquire("test", "t1").unwrap();
     let _p2 = reg.acquire("test", "t2").unwrap(); // queued
@@ -137,9 +186,15 @@ fn acquire_nonexistent_bulkhead() {
 #[test]
 fn release_nonexistent_permit() {
     let mut reg = BulkheadRegistry::empty();
-    reg.register("test", BulkheadConfig {
-        max_concurrent: 2, max_queue_depth: 4, pressure_threshold_pct: 80,
-    }).unwrap();
+    reg.register(
+        "test",
+        BulkheadConfig {
+            max_concurrent: 2,
+            max_queue_depth: 4,
+            pressure_threshold_pct: 80,
+        },
+    )
+    .unwrap();
     let err = reg.release("test", PermitId(999), "t").unwrap_err();
     assert!(matches!(err, BulkheadError::PermitNotFound { .. }));
 }
@@ -147,9 +202,15 @@ fn release_nonexistent_permit() {
 #[test]
 fn release_promotes_waiter() {
     let mut reg = BulkheadRegistry::empty();
-    reg.register("test", BulkheadConfig {
-        max_concurrent: 1, max_queue_depth: 4, pressure_threshold_pct: 80,
-    }).unwrap();
+    reg.register(
+        "test",
+        BulkheadConfig {
+            max_concurrent: 1,
+            max_queue_depth: 4,
+            pressure_threshold_pct: 80,
+        },
+    )
+    .unwrap();
 
     let p1 = reg.acquire("test", "t1").unwrap();
     let _p2 = reg.acquire("test", "t2").unwrap(); // queued
@@ -164,9 +225,15 @@ fn release_promotes_waiter() {
 #[test]
 fn release_queued_permit() {
     let mut reg = BulkheadRegistry::empty();
-    reg.register("test", BulkheadConfig {
-        max_concurrent: 1, max_queue_depth: 4, pressure_threshold_pct: 80,
-    }).unwrap();
+    reg.register(
+        "test",
+        BulkheadConfig {
+            max_concurrent: 1,
+            max_queue_depth: 4,
+            pressure_threshold_pct: 80,
+        },
+    )
+    .unwrap();
 
     let _p1 = reg.acquire("test", "t1").unwrap();
     let p2 = reg.acquire("test", "t2").unwrap(); // queued
@@ -183,9 +250,15 @@ fn release_queued_permit() {
 #[test]
 fn pressure_detected_at_threshold() {
     let mut reg = BulkheadRegistry::empty();
-    reg.register("test", BulkheadConfig {
-        max_concurrent: 10, max_queue_depth: 20, pressure_threshold_pct: 80,
-    }).unwrap();
+    reg.register(
+        "test",
+        BulkheadConfig {
+            max_concurrent: 10,
+            max_queue_depth: 20,
+            pressure_threshold_pct: 80,
+        },
+    )
+    .unwrap();
 
     for i in 0..7 {
         reg.acquire("test", &format!("t{i}")).unwrap();
@@ -199,9 +272,15 @@ fn pressure_detected_at_threshold() {
 #[test]
 fn pressure_event_emitted() {
     let mut reg = BulkheadRegistry::empty();
-    reg.register("test", BulkheadConfig {
-        max_concurrent: 2, max_queue_depth: 4, pressure_threshold_pct: 50,
-    }).unwrap();
+    reg.register(
+        "test",
+        BulkheadConfig {
+            max_concurrent: 2,
+            max_queue_depth: 4,
+            pressure_threshold_pct: 50,
+        },
+    )
+    .unwrap();
 
     reg.acquire("test", "t1").unwrap();
     reg.acquire("test", "t2").unwrap();
@@ -223,16 +302,28 @@ fn is_at_pressure_nonexistent_returns_none() {
 #[test]
 fn reconfigure_preserves_permits() {
     let mut reg = BulkheadRegistry::empty();
-    reg.register("test", BulkheadConfig {
-        max_concurrent: 2, max_queue_depth: 4, pressure_threshold_pct: 80,
-    }).unwrap();
+    reg.register(
+        "test",
+        BulkheadConfig {
+            max_concurrent: 2,
+            max_queue_depth: 4,
+            pressure_threshold_pct: 80,
+        },
+    )
+    .unwrap();
 
     let _p1 = reg.acquire("test", "t1").unwrap();
     let _p2 = reg.acquire("test", "t2").unwrap();
 
-    reg.reconfigure("test", BulkheadConfig {
-        max_concurrent: 1, max_queue_depth: 4, pressure_threshold_pct: 80,
-    }).unwrap();
+    reg.reconfigure(
+        "test",
+        BulkheadConfig {
+            max_concurrent: 1,
+            max_queue_depth: 4,
+            pressure_threshold_pct: 80,
+        },
+    )
+    .unwrap();
 
     assert_eq!(reg.active_count("test"), Some(2));
 }
@@ -240,21 +331,41 @@ fn reconfigure_preserves_permits() {
 #[test]
 fn reconfigure_rejects_zero() {
     let mut reg = BulkheadRegistry::empty();
-    reg.register("test", BulkheadConfig {
-        max_concurrent: 2, max_queue_depth: 4, pressure_threshold_pct: 80,
-    }).unwrap();
-    let err = reg.reconfigure("test", BulkheadConfig {
-        max_concurrent: 0, max_queue_depth: 4, pressure_threshold_pct: 80,
-    }).unwrap_err();
+    reg.register(
+        "test",
+        BulkheadConfig {
+            max_concurrent: 2,
+            max_queue_depth: 4,
+            pressure_threshold_pct: 80,
+        },
+    )
+    .unwrap();
+    let err = reg
+        .reconfigure(
+            "test",
+            BulkheadConfig {
+                max_concurrent: 0,
+                max_queue_depth: 4,
+                pressure_threshold_pct: 80,
+            },
+        )
+        .unwrap_err();
     assert!(matches!(err, BulkheadError::InvalidConfig { .. }));
 }
 
 #[test]
 fn reconfigure_nonexistent_fails() {
     let mut reg = BulkheadRegistry::empty();
-    let err = reg.reconfigure("ghost", BulkheadConfig {
-        max_concurrent: 1, max_queue_depth: 1, pressure_threshold_pct: 80,
-    }).unwrap_err();
+    let err = reg
+        .reconfigure(
+            "ghost",
+            BulkheadConfig {
+                max_concurrent: 1,
+                max_queue_depth: 1,
+                pressure_threshold_pct: 80,
+            },
+        )
+        .unwrap_err();
     assert!(matches!(err, BulkheadError::BulkheadNotFound { .. }));
 }
 
@@ -265,9 +376,15 @@ fn reconfigure_nonexistent_fails() {
 #[test]
 fn snapshot_reflects_state() {
     let mut reg = BulkheadRegistry::empty();
-    reg.register("test", BulkheadConfig {
-        max_concurrent: 5, max_queue_depth: 10, pressure_threshold_pct: 80,
-    }).unwrap();
+    reg.register(
+        "test",
+        BulkheadConfig {
+            max_concurrent: 5,
+            max_queue_depth: 10,
+            pressure_threshold_pct: 80,
+        },
+    )
+    .unwrap();
 
     reg.acquire("test", "t1").unwrap();
     reg.acquire("test", "t2").unwrap();
@@ -287,9 +404,15 @@ fn snapshot_reflects_state() {
 #[test]
 fn acquire_emits_event() {
     let mut reg = BulkheadRegistry::empty();
-    reg.register("test", BulkheadConfig {
-        max_concurrent: 10, max_queue_depth: 20, pressure_threshold_pct: 80,
-    }).unwrap();
+    reg.register(
+        "test",
+        BulkheadConfig {
+            max_concurrent: 10,
+            max_queue_depth: 20,
+            pressure_threshold_pct: 80,
+        },
+    )
+    .unwrap();
     reg.acquire("test", "trace-1").unwrap();
 
     let events = reg.drain_events();
@@ -301,9 +424,15 @@ fn acquire_emits_event() {
 #[test]
 fn release_emits_event() {
     let mut reg = BulkheadRegistry::empty();
-    reg.register("test", BulkheadConfig {
-        max_concurrent: 2, max_queue_depth: 4, pressure_threshold_pct: 80,
-    }).unwrap();
+    reg.register(
+        "test",
+        BulkheadConfig {
+            max_concurrent: 2,
+            max_queue_depth: 4,
+            pressure_threshold_pct: 80,
+        },
+    )
+    .unwrap();
     let p = reg.acquire("test", "t1").unwrap();
     reg.drain_events();
     reg.release("test", p, "t1").unwrap();
@@ -316,9 +445,15 @@ fn release_emits_event() {
 #[test]
 fn reject_emits_event() {
     let mut reg = BulkheadRegistry::empty();
-    reg.register("test", BulkheadConfig {
-        max_concurrent: 1, max_queue_depth: 0, pressure_threshold_pct: 80,
-    }).unwrap();
+    reg.register(
+        "test",
+        BulkheadConfig {
+            max_concurrent: 1,
+            max_queue_depth: 0,
+            pressure_threshold_pct: 80,
+        },
+    )
+    .unwrap();
     reg.acquire("test", "t1").unwrap();
     reg.drain_events();
 
@@ -331,9 +466,15 @@ fn reject_emits_event() {
 #[test]
 fn event_counts_track() {
     let mut reg = BulkheadRegistry::empty();
-    reg.register("test", BulkheadConfig {
-        max_concurrent: 10, max_queue_depth: 10, pressure_threshold_pct: 80,
-    }).unwrap();
+    reg.register(
+        "test",
+        BulkheadConfig {
+            max_concurrent: 10,
+            max_queue_depth: 10,
+            pressure_threshold_pct: 80,
+        },
+    )
+    .unwrap();
     let p1 = reg.acquire("test", "t1").unwrap();
     let p2 = reg.acquire("test", "t2").unwrap();
     reg.release("test", p1, "t1").unwrap();
@@ -367,13 +508,17 @@ fn error_display_permit_not_found() {
 
 #[test]
 fn error_display_not_found() {
-    let err = BulkheadError::BulkheadNotFound { bulkhead_id: "ghost".to_string() };
+    let err = BulkheadError::BulkheadNotFound {
+        bulkhead_id: "ghost".to_string(),
+    };
     assert!(err.to_string().contains("ghost"));
 }
 
 #[test]
 fn error_display_invalid_config() {
-    let err = BulkheadError::InvalidConfig { reason: "bad".to_string() };
+    let err = BulkheadError::InvalidConfig {
+        reason: "bad".to_string(),
+    };
     assert!(err.to_string().contains("bad"));
 }
 
@@ -404,7 +549,11 @@ fn bulkhead_class_serde_roundtrip() {
 
 #[test]
 fn bulkhead_config_serde_roundtrip() {
-    let config = BulkheadConfig { max_concurrent: 64, max_queue_depth: 128, pressure_threshold_pct: 80 };
+    let config = BulkheadConfig {
+        max_concurrent: 64,
+        max_queue_depth: 128,
+        pressure_threshold_pct: 80,
+    };
     let json = serde_json::to_string(&config).unwrap();
     let restored: BulkheadConfig = serde_json::from_str(&json).unwrap();
     assert_eq!(config, restored);
@@ -430,10 +579,18 @@ fn bulkhead_event_serde_roundtrip() {
 #[test]
 fn bulkhead_error_serde_roundtrip() {
     let errors = [
-        BulkheadError::BulkheadFull { bulkhead_id: "t".to_string(), max_concurrent: 10, queue_depth: 5 },
+        BulkheadError::BulkheadFull {
+            bulkhead_id: "t".to_string(),
+            max_concurrent: 10,
+            queue_depth: 5,
+        },
         BulkheadError::PermitNotFound { permit_id: 42 },
-        BulkheadError::BulkheadNotFound { bulkhead_id: "g".to_string() },
-        BulkheadError::InvalidConfig { reason: "bad".to_string() },
+        BulkheadError::BulkheadNotFound {
+            bulkhead_id: "g".to_string(),
+        },
+        BulkheadError::InvalidConfig {
+            reason: "bad".to_string(),
+        },
     ];
     for err in &errors {
         let json = serde_json::to_string(err).unwrap();
@@ -465,9 +622,15 @@ fn snapshot_serde_roundtrip() {
 fn deterministic_acquire_release_sequence() {
     let run = || -> Vec<BulkheadEvent> {
         let mut reg = BulkheadRegistry::empty();
-        reg.register("test", BulkheadConfig {
-            max_concurrent: 2, max_queue_depth: 4, pressure_threshold_pct: 80,
-        }).unwrap();
+        reg.register(
+            "test",
+            BulkheadConfig {
+                max_concurrent: 2,
+                max_queue_depth: 4,
+                pressure_threshold_pct: 80,
+            },
+        )
+        .unwrap();
         let p1 = reg.acquire("test", "t1").unwrap();
         let p2 = reg.acquire("test", "t2").unwrap();
         reg.release("test", p1, "t1").unwrap();
@@ -522,9 +685,15 @@ fn queue_depth_nonexistent_returns_none() {
 #[test]
 fn fill_to_capacity_and_drain() {
     let mut reg = BulkheadRegistry::empty();
-    reg.register("test", BulkheadConfig {
-        max_concurrent: 3, max_queue_depth: 0, pressure_threshold_pct: 80,
-    }).unwrap();
+    reg.register(
+        "test",
+        BulkheadConfig {
+            max_concurrent: 3,
+            max_queue_depth: 0,
+            pressure_threshold_pct: 80,
+        },
+    )
+    .unwrap();
 
     let p1 = reg.acquire("test", "t1").unwrap();
     let p2 = reg.acquire("test", "t2").unwrap();

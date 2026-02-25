@@ -9,13 +9,12 @@
 
 use std::collections::BTreeSet;
 
+use frankenengine_engine::engine_object_id::EngineObjectId;
 use frankenengine_engine::flow_envelope::{
     EnvelopeError, EnvelopeEvent, EnvelopeInput, FallbackQuality, FlowConfidenceInterval,
-    FlowDiscoveryMethod, FlowEnvelope, FlowEnvelopeRef, FlowEnvelopeSynthesizer,
-    FlowProofMethod, FlowProofObligation, FlowRequirement, SynthesisPass, SynthesisPassResult,
-    error_code,
+    FlowDiscoveryMethod, FlowEnvelope, FlowEnvelopeRef, FlowEnvelopeSynthesizer, FlowProofMethod,
+    FlowProofObligation, FlowRequirement, SynthesisPass, SynthesisPassResult, error_code,
 };
-use frankenengine_engine::engine_object_id::EngineObjectId;
 use frankenengine_engine::hash_tiers::ContentHash;
 use frankenengine_engine::ifc_artifacts::{FlowRule, Label};
 use frankenengine_engine::security_epoch::SecurityEpoch;
@@ -704,20 +703,28 @@ fn synthesizer_static_pass_separates_safe_from_unsafe_flows() {
     assert_eq!(result.pass, SynthesisPass::StaticFlowAnalysis);
     // 2 safe flows: Public->Internal, Internal->Confidential
     assert_eq!(result.required_flows.len(), 2);
-    assert!(result
-        .required_flows
-        .contains(&rule(Label::Public, Label::Internal)));
-    assert!(result
-        .required_flows
-        .contains(&rule(Label::Internal, Label::Confidential)));
+    assert!(
+        result
+            .required_flows
+            .contains(&rule(Label::Public, Label::Internal))
+    );
+    assert!(
+        result
+            .required_flows
+            .contains(&rule(Label::Internal, Label::Confidential))
+    );
     // 2 declassification flows: Confidential->Public, Secret->Internal
     assert_eq!(result.removable_flows.len(), 2);
-    assert!(result
-        .removable_flows
-        .contains(&rule(Label::Confidential, Label::Public)));
-    assert!(result
-        .removable_flows
-        .contains(&rule(Label::Secret, Label::Internal)));
+    assert!(
+        result
+            .removable_flows
+            .contains(&rule(Label::Confidential, Label::Public))
+    );
+    assert!(
+        result
+            .removable_flows
+            .contains(&rule(Label::Secret, Label::Internal))
+    );
 }
 
 #[test]
@@ -728,21 +735,24 @@ fn synthesizer_dynamic_pass_promotes_essential_flows() {
     let static_result = synth.static_pass(&upper, "trace-integ-2");
 
     // Oracle says Confidential->Public is essential, Secret->Internal is not
-    let oracle = |r: &FlowRule| {
-        r.source_label == Label::Confidential && r.sink_clearance == Label::Public
-    };
+    let oracle =
+        |r: &FlowRule| r.source_label == Label::Confidential && r.sink_clearance == Label::Public;
     let dynamic_result = synth.dynamic_pass(&static_result, &oracle, "trace-integ-2");
 
     // 3 required: 2 safe + 1 promoted
     assert_eq!(dynamic_result.required_flows.len(), 3);
-    assert!(dynamic_result
-        .required_flows
-        .contains(&rule(Label::Confidential, Label::Public)));
+    assert!(
+        dynamic_result
+            .required_flows
+            .contains(&rule(Label::Confidential, Label::Public))
+    );
     // 1 still removable: Secret->Internal
     assert_eq!(dynamic_result.removable_flows.len(), 1);
-    assert!(dynamic_result
-        .removable_flows
-        .contains(&rule(Label::Secret, Label::Internal)));
+    assert!(
+        dynamic_result
+            .removable_flows
+            .contains(&rule(Label::Secret, Label::Internal))
+    );
 }
 
 #[test]
@@ -872,8 +882,7 @@ fn synthesizer_fallback_partial_ablation() {
 
 #[test]
 fn synthesizer_rejects_empty_extension_id() {
-    let mut synth =
-        FlowEnvelopeSynthesizer::new("", 30_000_000_000, SecurityEpoch::from_raw(1));
+    let mut synth = FlowEnvelopeSynthesizer::new("", 30_000_000_000, SecurityEpoch::from_raw(1));
     let upper = test_upper_bound();
     let oracle = |_: &FlowRule| false;
     let err = synth.synthesize(&upper, &oracle, "p", 0, "t").unwrap_err();
@@ -892,8 +901,7 @@ fn synthesizer_rejects_empty_upper_bound() {
 
 #[test]
 fn synthesizer_fallback_rejects_empty_extension_id() {
-    let mut synth =
-        FlowEnvelopeSynthesizer::new("", 30_000_000_000, SecurityEpoch::from_raw(1));
+    let mut synth = FlowEnvelopeSynthesizer::new("", 30_000_000_000, SecurityEpoch::from_raw(1));
     let upper = test_upper_bound();
     let err = synth
         .synthesize_fallback(&upper, "p", 0, FallbackQuality::StaticBound, "t")
@@ -918,11 +926,8 @@ fn synthesizer_fallback_rejects_empty_upper_bound() {
 
 #[test]
 fn synthesizer_events_emitted_for_full_synthesis() {
-    let mut synth = FlowEnvelopeSynthesizer::new(
-        "ext-integ-ev1",
-        30_000_000_000,
-        SecurityEpoch::from_raw(1),
-    );
+    let mut synth =
+        FlowEnvelopeSynthesizer::new("ext-integ-ev1", 30_000_000_000, SecurityEpoch::from_raw(1));
     let upper = test_upper_bound();
     let oracle = |_: &FlowRule| false;
     synth
@@ -953,11 +958,8 @@ fn synthesizer_events_trace_id_preserved() {
 
 #[test]
 fn synthesizer_events_component_is_flow_envelope() {
-    let mut synth = FlowEnvelopeSynthesizer::new(
-        "ext-integ-comp",
-        30_000_000_000,
-        SecurityEpoch::from_raw(1),
-    );
+    let mut synth =
+        FlowEnvelopeSynthesizer::new("ext-integ-comp", 30_000_000_000, SecurityEpoch::from_raw(1));
     let upper = test_upper_bound();
     let oracle = |_: &FlowRule| false;
     synth.synthesize(&upper, &oracle, "p", 0, "t").unwrap();
@@ -1001,18 +1003,12 @@ fn synthesis_is_deterministic_across_instances() {
     let oracle = |_: &FlowRule| false;
     let upper = test_upper_bound();
 
-    let mut s1 = FlowEnvelopeSynthesizer::new(
-        "ext-det-integ",
-        30_000_000_000,
-        SecurityEpoch::from_raw(1),
-    );
+    let mut s1 =
+        FlowEnvelopeSynthesizer::new("ext-det-integ", 30_000_000_000, SecurityEpoch::from_raw(1));
     let e1 = s1.synthesize(&upper, &oracle, "p1", 100, "t1").unwrap();
 
-    let mut s2 = FlowEnvelopeSynthesizer::new(
-        "ext-det-integ",
-        30_000_000_000,
-        SecurityEpoch::from_raw(1),
-    );
+    let mut s2 =
+        FlowEnvelopeSynthesizer::new("ext-det-integ", 30_000_000_000, SecurityEpoch::from_raw(1));
     let e2 = s2.synthesize(&upper, &oracle, "p1", 100, "t2").unwrap();
 
     assert_eq!(e1.envelope_id, e2.envelope_id);
@@ -1074,9 +1070,7 @@ fn dynamic_pass_promotes_essential_flow_to_required() {
         30_000_000_000,
         SecurityEpoch::from_raw(1),
     );
-    let envelope = synth
-        .synthesize(&upper, &oracle, "p1", 100, "t1")
-        .unwrap();
+    let envelope = synth.synthesize(&upper, &oracle, "p1", 100, "t1").unwrap();
     let secret_flow = rule(Label::Secret, Label::Internal);
     assert!(envelope.allows_flow(&secret_flow));
     assert!(!envelope.denies_flow(&secret_flow));
@@ -1122,8 +1116,7 @@ fn flow_envelope_ref_inequality_on_id() {
 
 #[test]
 fn synthesizer_serde_roundtrip() {
-    let synth =
-        FlowEnvelopeSynthesizer::new("ext-ser", 30_000_000_000, SecurityEpoch::from_raw(1));
+    let synth = FlowEnvelopeSynthesizer::new("ext-ser", 30_000_000_000, SecurityEpoch::from_raw(1));
     let json = serde_json::to_string(&synth).unwrap();
     let deser: FlowEnvelopeSynthesizer = serde_json::from_str(&json).unwrap();
     assert_eq!(synth.extension_id, deser.extension_id);
@@ -1268,16 +1261,11 @@ fn synthesizer_with_custom_labels() {
 
 #[test]
 fn synthesizer_proof_obligations_match_required() {
-    let mut synth = FlowEnvelopeSynthesizer::new(
-        "ext-integ-po",
-        30_000_000_000,
-        SecurityEpoch::from_raw(1),
-    );
+    let mut synth =
+        FlowEnvelopeSynthesizer::new("ext-integ-po", 30_000_000_000, SecurityEpoch::from_raw(1));
     let upper = test_upper_bound();
     let oracle = |_: &FlowRule| true; // all essential
-    let envelope = synth
-        .synthesize(&upper, &oracle, "p", 100, "t")
-        .unwrap();
+    let envelope = synth.synthesize(&upper, &oracle, "p", 100, "t").unwrap();
 
     // Each required flow should have a proof obligation
     for flow in &envelope.required_flows {
@@ -1294,16 +1282,11 @@ fn synthesizer_proof_obligations_match_required() {
 
 #[test]
 fn synthesizer_proof_methods_match_flow_safety() {
-    let mut synth = FlowEnvelopeSynthesizer::new(
-        "ext-integ-pm",
-        30_000_000_000,
-        SecurityEpoch::from_raw(1),
-    );
+    let mut synth =
+        FlowEnvelopeSynthesizer::new("ext-integ-pm", 30_000_000_000, SecurityEpoch::from_raw(1));
     let upper = test_upper_bound();
     let oracle = |_: &FlowRule| true;
-    let envelope = synth
-        .synthesize(&upper, &oracle, "p", 100, "t")
-        .unwrap();
+    let envelope = synth.synthesize(&upper, &oracle, "p", 100, "t").unwrap();
 
     for obl in &envelope.proof_obligations {
         if obl.rule.source_label.can_flow_to(&obl.rule.sink_clearance) {
@@ -1320,16 +1303,11 @@ fn synthesizer_proof_methods_match_flow_safety() {
 
 #[test]
 fn synthesizer_confidence_reflects_pass_results() {
-    let mut synth = FlowEnvelopeSynthesizer::new(
-        "ext-integ-ci",
-        30_000_000_000,
-        SecurityEpoch::from_raw(1),
-    );
+    let mut synth =
+        FlowEnvelopeSynthesizer::new("ext-integ-ci", 30_000_000_000, SecurityEpoch::from_raw(1));
     let upper = test_upper_bound();
     let oracle = |_: &FlowRule| false;
-    let envelope = synth
-        .synthesize(&upper, &oracle, "p", 100, "t")
-        .unwrap();
+    let envelope = synth.synthesize(&upper, &oracle, "p", 100, "t").unwrap();
 
     // n_trials = required + removable, n_essential = required
     assert_eq!(envelope.confidence.n_trials, 4); // 2 required + 2 removable
@@ -1339,11 +1317,8 @@ fn synthesizer_confidence_reflects_pass_results() {
 
 #[test]
 fn fallback_confidence_is_zero() {
-    let mut synth = FlowEnvelopeSynthesizer::new(
-        "ext-integ-fbc",
-        30_000_000_000,
-        SecurityEpoch::from_raw(1),
-    );
+    let mut synth =
+        FlowEnvelopeSynthesizer::new("ext-integ-fbc", 30_000_000_000, SecurityEpoch::from_raw(1));
     let upper = test_upper_bound();
     let envelope = synth
         .synthesize_fallback(&upper, "p", 100, FallbackQuality::StaticBound, "t")

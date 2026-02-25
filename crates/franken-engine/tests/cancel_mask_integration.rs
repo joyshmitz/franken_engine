@@ -6,8 +6,7 @@
 #![forbid(unsafe_code)]
 
 use frankenengine_engine::cancel_mask::{
-    CancelMaskContext, MaskBounds, MaskError, MaskEvent, MaskJustification, MaskOutcome,
-    MaskPolicy,
+    CancelMaskContext, MaskBounds, MaskError, MaskEvent, MaskJustification, MaskOutcome, MaskPolicy,
 };
 
 // ---------------------------------------------------------------------------
@@ -48,10 +47,22 @@ fn standard_policy_allows_four_operations() {
 #[test]
 fn policy_bounds_for_known_operations() {
     let policy = MaskPolicy::standard();
-    assert_eq!(policy.bounds_for("checkpoint_write"), Some(MaskBounds { max_ops: 32 }));
-    assert_eq!(policy.bounds_for("evidence_append"), Some(MaskBounds { max_ops: 16 }));
-    assert_eq!(policy.bounds_for("two_phase_commit"), Some(MaskBounds { max_ops: 64 }));
-    assert_eq!(policy.bounds_for("hash_link_finalize"), Some(MaskBounds { max_ops: 8 }));
+    assert_eq!(
+        policy.bounds_for("checkpoint_write"),
+        Some(MaskBounds { max_ops: 32 })
+    );
+    assert_eq!(
+        policy.bounds_for("evidence_append"),
+        Some(MaskBounds { max_ops: 16 })
+    );
+    assert_eq!(
+        policy.bounds_for("two_phase_commit"),
+        Some(MaskBounds { max_ops: 64 })
+    );
+    assert_eq!(
+        policy.bounds_for("hash_link_finalize"),
+        Some(MaskBounds { max_ops: 8 })
+    );
     assert_eq!(policy.bounds_for("unknown"), None);
 }
 
@@ -62,8 +73,17 @@ fn policy_bounds_for_known_operations() {
 #[test]
 fn mask_error_display() {
     assert_eq!(MaskError::NestingDenied.to_string(), "mask nesting denied");
-    assert!(MaskError::OperationNotAllowed { operation_name: "x".to_string() }.to_string().contains("x"));
-    assert_eq!(MaskError::AlreadyReleased.to_string(), "mask already released");
+    assert!(
+        MaskError::OperationNotAllowed {
+            operation_name: "x".to_string()
+        }
+        .to_string()
+        .contains("x")
+    );
+    assert_eq!(
+        MaskError::AlreadyReleased.to_string(),
+        "mask already released"
+    );
 }
 
 #[test]
@@ -109,7 +129,12 @@ fn create_mask_denied_for_disallowed() {
         atomicity_reason: "none".to_string(),
     };
     let err = ctx.create_mask(&just).unwrap_err();
-    assert_eq!(err, MaskError::OperationNotAllowed { operation_name: "long_computation".to_string() });
+    assert_eq!(
+        err,
+        MaskError::OperationNotAllowed {
+            operation_name: "long_computation".to_string()
+        }
+    );
 }
 
 #[test]
@@ -277,7 +302,8 @@ fn hash_link_finalize_tight_bounds() {
         operation_name: "hash_link_finalize".to_string(),
         expected_ops_hint: 4,
         atomicity_reason: "hash chain append".to_string(),
-    }).unwrap();
+    })
+    .unwrap();
 
     for _ in 0..7 {
         assert!(ctx.tick());
@@ -321,7 +347,8 @@ fn deterministic_event_sequence() {
             operation_name: "evidence_append".to_string(),
             expected_ops_hint: 3,
             atomicity_reason: "atomic append".to_string(),
-        }).unwrap();
+        })
+        .unwrap();
         for _ in 0..16 {
             ctx.tick();
         }
@@ -368,7 +395,11 @@ fn mask_event_serde_roundtrip() {
 
 #[test]
 fn mask_outcome_serde_roundtrip() {
-    let outcomes = [MaskOutcome::CleanRelease, MaskOutcome::BoundExceeded, MaskOutcome::CancelDeferred];
+    let outcomes = [
+        MaskOutcome::CleanRelease,
+        MaskOutcome::BoundExceeded,
+        MaskOutcome::CancelDeferred,
+    ];
     for o in &outcomes {
         let json = serde_json::to_string(o).unwrap();
         let restored: MaskOutcome = serde_json::from_str(&json).unwrap();
@@ -380,7 +411,9 @@ fn mask_outcome_serde_roundtrip() {
 fn mask_error_serde_roundtrip() {
     let errors = [
         MaskError::NestingDenied,
-        MaskError::OperationNotAllowed { operation_name: "x".to_string() },
+        MaskError::OperationNotAllowed {
+            operation_name: "x".to_string(),
+        },
         MaskError::AlreadyReleased,
     ];
     for err in &errors {

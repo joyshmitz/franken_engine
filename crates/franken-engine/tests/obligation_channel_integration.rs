@@ -132,8 +132,7 @@ fn obligation_error_display_leaked() {
 
 #[test]
 fn obligation_error_is_std_error() {
-    let err: Box<dyn std::error::Error> =
-        Box::new(ObligationError::NotFound { obligation_id: 1 });
+    let err: Box<dyn std::error::Error> = Box::new(ObligationError::NotFound { obligation_id: 1 });
     assert!(err.to_string().contains("not found"));
 }
 
@@ -328,14 +327,18 @@ fn double_abort_returns_already_resolved() {
     let mut chan = make_channel(10, false);
     let id = chan.send("t").unwrap();
     chan.abort(id, &AbortReason::DrainTimeout, "h").unwrap();
-    let err = chan.abort(id, &AbortReason::DrainTimeout, "h2").unwrap_err();
+    let err = chan
+        .abort(id, &AbortReason::DrainTimeout, "h2")
+        .unwrap_err();
     assert_eq!(err, ObligationError::AlreadyResolved { obligation_id: id });
 }
 
 #[test]
 fn abort_nonexistent_returns_not_found() {
     let mut chan = make_channel(10, false);
-    let err = chan.abort(999, &AbortReason::OperatorAbort, "h").unwrap_err();
+    let err = chan
+        .abort(999, &AbortReason::OperatorAbort, "h")
+        .unwrap_err();
     assert_eq!(err, ObligationError::NotFound { obligation_id: 999 });
 }
 
@@ -353,7 +356,9 @@ fn abort_after_commit_returns_already_resolved() {
     let mut chan = make_channel(10, false);
     let id = chan.send("t").unwrap();
     chan.commit(id, "h").unwrap();
-    let err = chan.abort(id, &AbortReason::OperatorAbort, "h2").unwrap_err();
+    let err = chan
+        .abort(id, &AbortReason::OperatorAbort, "h2")
+        .unwrap_err();
     assert_eq!(err, ObligationError::AlreadyResolved { obligation_id: id });
 }
 
@@ -605,11 +610,7 @@ fn drain_events_clears_buffer() {
 
 #[test]
 fn events_carry_correct_channel_and_trace_ids() {
-    let mut chan = ObligationChannel::new(
-        "my-channel",
-        "my-trace",
-        ChannelConfig::default(),
-    );
+    let mut chan = ObligationChannel::new("my-channel", "my-trace", ChannelConfig::default());
     chan.send("creator-x").unwrap();
     let events = chan.drain_events();
     assert_eq!(events[0].channel_id, "my-channel");
@@ -642,7 +643,8 @@ fn event_commit_has_resolution_type_and_hash() {
 fn event_abort_has_resolution_type_and_hash() {
     let mut chan = make_channel(10, false);
     let id = chan.send("t").unwrap();
-    chan.abort(id, &AbortReason::PolicyViolation, "abort-hash").unwrap();
+    chan.abort(id, &AbortReason::PolicyViolation, "abort-hash")
+        .unwrap();
     let events = chan.drain_events();
     let abort_event = &events[1];
     assert_eq!(abort_event.state, ObligationState::Aborted);
@@ -921,7 +923,8 @@ fn events_order_matches_operation_order() {
     let id1 = chan.send("a").unwrap();
     let id2 = chan.send("b").unwrap();
     chan.commit(id2, "h2").unwrap();
-    chan.abort(id1, &AbortReason::PolicyViolation, "h1").unwrap();
+    chan.abort(id1, &AbortReason::PolicyViolation, "h1")
+        .unwrap();
     let events = chan.drain_events();
     assert_eq!(events.len(), 4);
     assert_eq!(events[0].obligation_id, id1); // send id1

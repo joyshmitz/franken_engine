@@ -2456,7 +2456,9 @@ mod tests {
     #[test]
     fn provenance_error_std_error() {
         let variants: Vec<Box<dyn std::error::Error>> = vec![
-            Box::new(ProvenanceError::EmptyId { record_type: "flow".into() }),
+            Box::new(ProvenanceError::EmptyId {
+                record_type: "flow".into(),
+            }),
             Box::new(ProvenanceError::EmptyExtensionId),
             Box::new(ProvenanceError::DuplicateRecord { key: "k1".into() }),
             Box::new(ProvenanceError::StorageError("full".into())),

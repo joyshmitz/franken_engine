@@ -1920,7 +1920,9 @@ mod tests {
     #[test]
     fn compiler_error_std_error() {
         let variants: Vec<Box<dyn std::error::Error>> = vec![
-            Box::new(CompilerError::EmptyPolicy { policy_id: PolicyId::new("p1") }),
+            Box::new(CompilerError::EmptyPolicy {
+                policy_id: PolicyId::new("p1"),
+            }),
             Box::new(CompilerError::PolicyTooLarge {
                 policy_id: PolicyId::new("p2"),
                 node_count: 5000,

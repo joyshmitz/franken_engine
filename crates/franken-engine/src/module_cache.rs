@@ -1235,7 +1235,10 @@ mod tests {
 
     #[test]
     fn module_cache_key_serde_round_trip() {
-        let key = ModuleCacheKey::new("mod:serde", ModuleVersionFingerprint::new(source_hash("k"), 3, 7));
+        let key = ModuleCacheKey::new(
+            "mod:serde",
+            ModuleVersionFingerprint::new(source_hash("k"), 3, 7),
+        );
         let json = serde_json::to_string(&key).expect("serialize");
         let decoded: ModuleCacheKey = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(decoded, key);
@@ -1243,7 +1246,10 @@ mod tests {
 
     #[test]
     fn module_cache_entry_serde_round_trip() {
-        let key = ModuleCacheKey::new("mod:entry", ModuleVersionFingerprint::new(source_hash("e"), 1, 1));
+        let key = ModuleCacheKey::new(
+            "mod:entry",
+            ModuleVersionFingerprint::new(source_hash("e"), 1, 1),
+        );
         let entry = ModuleCacheEntry {
             key,
             artifact_hash: ContentHash::compute(b"artifact-serde"),
@@ -1467,7 +1473,12 @@ mod tests {
         let v = ModuleVersionFingerprint::new(source_hash("s"), 1, 1);
         cache
             .insert(
-                CacheInsertRequest::new("mod:local", v.clone(), ContentHash::compute(b"a"), "/l.js"),
+                CacheInsertRequest::new(
+                    "mod:local",
+                    v.clone(),
+                    ContentHash::compute(b"a"),
+                    "/l.js",
+                ),
                 &ctx,
             )
             .unwrap();
@@ -1485,7 +1496,12 @@ mod tests {
         let v = ModuleVersionFingerprint::new(source_hash("r"), 1, 1);
         remote
             .insert(
-                CacheInsertRequest::new("mod:remote", v.clone(), ContentHash::compute(b"ar"), "/r.js"),
+                CacheInsertRequest::new(
+                    "mod:remote",
+                    v.clone(),
+                    ContentHash::compute(b"ar"),
+                    "/r.js",
+                ),
                 &ctx,
             )
             .unwrap();
@@ -1597,7 +1613,10 @@ mod tests {
 
     #[test]
     fn module_cache_entry_canonical_value_is_deterministic() {
-        let key = ModuleCacheKey::new("mod:det2", ModuleVersionFingerprint::new(source_hash("d"), 1, 1));
+        let key = ModuleCacheKey::new(
+            "mod:det2",
+            ModuleVersionFingerprint::new(source_hash("d"), 1, 1),
+        );
         let entry = ModuleCacheEntry {
             key,
             artifact_hash: ContentHash::compute(b"det-artifact"),

@@ -3260,7 +3260,10 @@ mod tests {
 
     #[test]
     fn mutation_operator_display_all() {
-        assert_eq!(MutationOperator::PointMutation.to_string(), "point_mutation");
+        assert_eq!(
+            MutationOperator::PointMutation.to_string(),
+            "point_mutation"
+        );
         assert_eq!(MutationOperator::Crossover.to_string(), "crossover");
         assert_eq!(MutationOperator::Insertion.to_string(), "insertion");
         assert_eq!(MutationOperator::Deletion.to_string(), "deletion");
@@ -3286,7 +3289,10 @@ mod tests {
 
     #[test]
     fn threat_category_display_all() {
-        assert_eq!(ThreatCategory::CredentialTheft.to_string(), "credential_theft");
+        assert_eq!(
+            ThreatCategory::CredentialTheft.to_string(),
+            "credential_theft"
+        );
         assert_eq!(
             ThreatCategory::PrivilegeEscalation.to_string(),
             "privilege_escalation"
@@ -3577,8 +3583,10 @@ mod tests {
 
     #[test]
     fn grammar_validation_rejects_zero_version() {
-        let mut grammar = AttackGrammar::default();
-        grammar.version = 0;
+        let grammar = AttackGrammar {
+            version: 0,
+            ..AttackGrammar::default()
+        };
         let err = grammar.validate().unwrap_err();
         assert!(err.to_string().contains("version"));
     }

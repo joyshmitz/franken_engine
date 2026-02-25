@@ -76,9 +76,7 @@ fn mk_heartbeat(node: &str, seq: u64, ts_ns: u64) -> HeartbeatLiveness {
     HeartbeatLiveness {
         node_id: NodeId::new(node),
         policy_version: 1,
-        evidence_frontier_hash: ContentHash::compute(
-            format!("pfrontier-{node}-{seq}").as_bytes(),
-        ),
+        evidence_frontier_hash: ContentHash::compute(format!("pfrontier-{node}-{seq}").as_bytes()),
         local_health: BTreeMap::new(),
         epoch: SecurityEpoch::from_raw(1),
         sequence: seq,
@@ -193,7 +191,10 @@ fn protocol_version_current() {
 #[test]
 fn protocol_version_display() {
     assert_eq!(ProtocolVersion::CURRENT.to_string(), "1.0");
-    let v = ProtocolVersion { major: 3, minor: 14 };
+    let v = ProtocolVersion {
+        major: 3,
+        minor: 14,
+    };
     assert_eq!(v.to_string(), "3.14");
 }
 
@@ -221,7 +222,10 @@ fn protocol_version_incompatible_different_major() {
 
 #[test]
 fn protocol_version_serde_roundtrip() {
-    let v = ProtocolVersion { major: 42, minor: 7 };
+    let v = ProtocolVersion {
+        major: 42,
+        minor: 7,
+    };
     let json = serde_json::to_string(&v).unwrap();
     let decoded: ProtocolVersion = serde_json::from_str(&json).unwrap();
     assert_eq!(v, decoded);
@@ -349,15 +353,14 @@ fn evidence_packet_construction() {
 #[test]
 fn evidence_packet_serde_roundtrip() {
     let mut packet = mk_evidence("node-1", "ext-1", 1, 500_000);
-    packet.extensions.insert("custom-key".into(), "custom-val".into());
+    packet
+        .extensions
+        .insert("custom-key".into(), "custom-val".into());
 
     let json = serde_json::to_string(&packet).unwrap();
     let decoded: EvidencePacket = serde_json::from_str(&json).unwrap();
     assert_eq!(packet, decoded);
-    assert_eq!(
-        decoded.extensions.get("custom-key").unwrap(),
-        "custom-val"
-    );
+    assert_eq!(decoded.extensions.get("custom-key").unwrap(), "custom-val");
 }
 
 #[test]
@@ -431,10 +434,7 @@ fn reconciliation_request_construction() {
     };
 
     assert_eq!(req.requested_ranges.len(), 2);
-    assert_eq!(
-        req.requested_ranges[&NodeId::new("node-1")].len(),
-        6
-    );
+    assert_eq!(req.requested_ranges[&NodeId::new("node-1")].len(), 6);
 }
 
 #[test]
@@ -501,14 +501,12 @@ fn quorum_checkpoint_with_decisions_serde_roundtrip() {
             s
         },
         evidence_summary_hash: ContentHash::compute(b"sum"),
-        containment_decisions: vec![
-            ResolvedContainmentDecision {
-                extension_id: "ext-1".into(),
-                resolved_action: ContainmentAction::Terminate,
-                contributing_intent_ids: vec!["i1".into(), "i2".into()],
-                epoch: SecurityEpoch::from_raw(1),
-            },
-        ],
+        containment_decisions: vec![ResolvedContainmentDecision {
+            extension_id: "ext-1".into(),
+            resolved_action: ContainmentAction::Terminate,
+            contributing_intent_ids: vec!["i1".into(), "i2".into()],
+            epoch: SecurityEpoch::from_raw(1),
+        }],
         quorum_signatures: sigs,
         timestamp_ns: 10_000_000_000,
         protocol_version: ProtocolVersion::CURRENT,
@@ -627,7 +625,13 @@ fn fleet_message_evidence_serde_roundtrip() {
 
 #[test]
 fn fleet_message_intent_serde_roundtrip() {
-    let msg = FleetMessage::Intent(mk_intent("n1", "ext-1", ContainmentAction::Quarantine, 1, 1));
+    let msg = FleetMessage::Intent(mk_intent(
+        "n1",
+        "ext-1",
+        ContainmentAction::Quarantine,
+        1,
+        1,
+    ));
     let json = serde_json::to_string(&msg).unwrap();
     let decoded: FleetMessage = serde_json::from_str(&json).unwrap();
     assert_eq!(msg, decoded);
@@ -886,7 +890,8 @@ fn accumulator_additive_deltas() {
 fn accumulator_negative_deltas() {
     let mut acc = EvidenceAccumulator::new();
     acc.ingest(&mk_evidence("n1", "ext-1", 1, 500_000)).unwrap();
-    acc.ingest(&mk_evidence("n2", "ext-1", 1, -200_000)).unwrap();
+    acc.ingest(&mk_evidence("n2", "ext-1", 1, -200_000))
+        .unwrap();
     assert_eq!(acc.posterior_delta("ext-1"), 300_000);
 }
 
@@ -938,10 +943,12 @@ fn accumulator_summary_hash_deterministic() {
 #[test]
 fn accumulator_summary_hash_different_state_different_hash() {
     let mut acc1 = EvidenceAccumulator::new();
-    acc1.ingest(&mk_evidence("n1", "ext-1", 1, 300_000)).unwrap();
+    acc1.ingest(&mk_evidence("n1", "ext-1", 1, 300_000))
+        .unwrap();
 
     let mut acc2 = EvidenceAccumulator::new();
-    acc2.ingest(&mk_evidence("n1", "ext-1", 1, 400_000)).unwrap();
+    acc2.ingest(&mk_evidence("n1", "ext-1", 1, 400_000))
+        .unwrap();
 
     assert_ne!(acc1.summary_hash(), acc2.summary_hash());
 }
@@ -959,8 +966,10 @@ fn accumulator_empty_summary_hash() {
 #[test]
 fn accumulator_saturating_add_no_overflow() {
     let mut acc = EvidenceAccumulator::new();
-    acc.ingest(&mk_evidence("n1", "ext-1", 1, i64::MAX)).unwrap();
-    acc.ingest(&mk_evidence("n2", "ext-1", 1, 1_000_000)).unwrap();
+    acc.ingest(&mk_evidence("n1", "ext-1", 1, i64::MAX))
+        .unwrap();
+    acc.ingest(&mk_evidence("n2", "ext-1", 1, 1_000_000))
+        .unwrap();
     assert_eq!(acc.posterior_delta("ext-1"), i64::MAX);
 }
 
@@ -1252,14 +1261,18 @@ fn fleet_state_next_sequence_monotonic() {
 #[test]
 fn fleet_state_process_evidence_success() {
     let mut state = mk_fleet("local");
-    state.process_evidence(&mk_evidence("r1", "ext-1", 1, 500_000)).unwrap();
+    state
+        .process_evidence(&mk_evidence("r1", "ext-1", 1, 500_000))
+        .unwrap();
     assert_eq!(state.evidence.posterior_delta("ext-1"), 500_000);
 }
 
 #[test]
 fn fleet_state_process_evidence_replay_rejected() {
     let mut state = mk_fleet("local");
-    state.process_evidence(&mk_evidence("r1", "ext-1", 1, 500_000)).unwrap();
+    state
+        .process_evidence(&mk_evidence("r1", "ext-1", 1, 500_000))
+        .unwrap();
 
     // Same node, same seq
     let err = state
@@ -1321,7 +1334,13 @@ fn fleet_state_process_multiple_intents_same_extension() {
         .process_intent(&mk_intent("n1", "ext-1", ContainmentAction::Sandbox, 1, 1))
         .unwrap();
     state
-        .process_intent(&mk_intent("n2", "ext-1", ContainmentAction::Terminate, 1, 1))
+        .process_intent(&mk_intent(
+            "n2",
+            "ext-1",
+            ContainmentAction::Terminate,
+            1,
+            1,
+        ))
         .unwrap();
 
     assert_eq!(state.pending_intents["ext-1"].len(), 2);
@@ -1334,14 +1353,18 @@ fn fleet_state_process_multiple_intents_same_extension() {
 #[test]
 fn fleet_state_process_heartbeat_success() {
     let mut state = mk_fleet("local");
-    state.process_heartbeat(&mk_heartbeat("r1", 1, 5_000_000_000)).unwrap();
+    state
+        .process_heartbeat(&mk_heartbeat("r1", 1, 5_000_000_000))
+        .unwrap();
     assert_eq!(state.health.known_node_count(), 1);
 }
 
 #[test]
 fn fleet_state_process_heartbeat_replay_rejected() {
     let mut state = mk_fleet("local");
-    state.process_heartbeat(&mk_heartbeat("r1", 1, 5_000_000_000)).unwrap();
+    state
+        .process_heartbeat(&mk_heartbeat("r1", 1, 5_000_000_000))
+        .unwrap();
 
     let err = state
         .process_heartbeat(&mk_heartbeat("r1", 1, 6_000_000_000))
@@ -1353,7 +1376,10 @@ fn fleet_state_process_heartbeat_replay_rejected() {
 fn fleet_state_process_heartbeat_incompatible_version() {
     let mut state = mk_fleet("local");
     let mut hb = mk_heartbeat("r1", 1, 5_000_000_000);
-    hb.protocol_version = ProtocolVersion { major: 99, minor: 0 };
+    hb.protocol_version = ProtocolVersion {
+        major: 99,
+        minor: 0,
+    };
 
     let err = state.process_heartbeat(&hb).unwrap_err();
     assert!(matches!(err, ProtocolError::IncompatibleVersion { .. }));
@@ -1370,7 +1396,13 @@ fn fleet_state_resolve_intents_picks_highest_severity() {
         .process_intent(&mk_intent("n1", "ext-1", ContainmentAction::Sandbox, 1, 1))
         .unwrap();
     state
-        .process_intent(&mk_intent("n2", "ext-1", ContainmentAction::Terminate, 1, 1))
+        .process_intent(&mk_intent(
+            "n2",
+            "ext-1",
+            ContainmentAction::Terminate,
+            1,
+            1,
+        ))
         .unwrap();
 
     let winner = state.resolve_intents("ext-1").unwrap();
@@ -1392,11 +1424,17 @@ fn fleet_state_build_checkpoint_success() {
     let mut state = mk_fleet("local");
 
     // Need healthy nodes for quorum
-    state.process_heartbeat(&mk_heartbeat("n1", 1, 5_000_000_000)).unwrap();
-    state.process_heartbeat(&mk_heartbeat("n2", 2, 5_000_000_000)).unwrap();
+    state
+        .process_heartbeat(&mk_heartbeat("n1", 1, 5_000_000_000))
+        .unwrap();
+    state
+        .process_heartbeat(&mk_heartbeat("n2", 2, 5_000_000_000))
+        .unwrap();
 
     // Add some evidence and intents
-    state.process_evidence(&mk_evidence("n1", "ext-1", 2, 300_000)).unwrap();
+    state
+        .process_evidence(&mk_evidence("n1", "ext-1", 2, 300_000))
+        .unwrap();
     state
         .process_intent(&mk_intent("n2", "ext-1", ContainmentAction::Sandbox, 3, 1))
         .unwrap();
@@ -1418,7 +1456,9 @@ fn fleet_state_build_checkpoint_quorum_not_reached() {
     let mut state = mk_fleet("local");
 
     // Register nodes with old heartbeat
-    state.process_heartbeat(&mk_heartbeat("n1", 1, 1_000_000_000)).unwrap();
+    state
+        .process_heartbeat(&mk_heartbeat("n1", 1, 1_000_000_000))
+        .unwrap();
 
     // At time 20s with 15s timeout, node is partitioned → 0 healthy < 1 required
     let sig = mk_sig("local");
@@ -1430,12 +1470,16 @@ fn fleet_state_build_checkpoint_quorum_not_reached() {
 fn fleet_state_build_checkpoint_increments_seq() {
     let mut state = mk_fleet("local");
 
-    state.process_heartbeat(&mk_heartbeat("n1", 1, 5_000_000_000)).unwrap();
+    state
+        .process_heartbeat(&mk_heartbeat("n1", 1, 5_000_000_000))
+        .unwrap();
 
     let sig1 = mk_sig("local");
     let c1 = state.build_checkpoint(6_000_000_000, sig1).unwrap();
 
-    state.process_heartbeat(&mk_heartbeat("n1", 2, 7_000_000_000)).unwrap();
+    state
+        .process_heartbeat(&mk_heartbeat("n1", 2, 7_000_000_000))
+        .unwrap();
     let sig2 = mk_sig("local");
     let c2 = state.build_checkpoint(8_000_000_000, sig2).unwrap();
 
@@ -1450,7 +1494,9 @@ fn fleet_state_build_checkpoint_increments_seq() {
 #[test]
 fn fleet_state_partitioned_nodes_empty_when_all_healthy() {
     let mut state = mk_fleet("local");
-    state.process_heartbeat(&mk_heartbeat("n1", 1, 10_000_000_000)).unwrap();
+    state
+        .process_heartbeat(&mk_heartbeat("n1", 1, 10_000_000_000))
+        .unwrap();
 
     let partitioned = state.partitioned_nodes(11_000_000_000);
     assert!(partitioned.is_empty());
@@ -1459,7 +1505,9 @@ fn fleet_state_partitioned_nodes_empty_when_all_healthy() {
 #[test]
 fn fleet_state_partitioned_nodes_detected() {
     let mut state = mk_fleet("local");
-    state.process_heartbeat(&mk_heartbeat("n1", 1, 1_000_000_000)).unwrap();
+    state
+        .process_heartbeat(&mk_heartbeat("n1", 1, 1_000_000_000))
+        .unwrap();
 
     // 20s with default 15s timeout
     let partitioned = state.partitioned_nodes(20_000_000_000);
@@ -1473,8 +1521,12 @@ fn fleet_state_partitioned_nodes_detected() {
 #[test]
 fn fleet_state_serde_roundtrip() {
     let mut state = mk_fleet("local");
-    state.process_evidence(&mk_evidence("r1", "ext-1", 1, 500_000)).unwrap();
-    state.process_heartbeat(&mk_heartbeat("r2", 1, 5_000_000_000)).unwrap();
+    state
+        .process_evidence(&mk_evidence("r1", "ext-1", 1, 500_000))
+        .unwrap();
+    state
+        .process_heartbeat(&mk_heartbeat("r2", 1, 5_000_000_000))
+        .unwrap();
 
     let json = serde_json::to_string(&state).unwrap();
     let decoded: FleetProtocolState = serde_json::from_str(&json).unwrap();
@@ -1544,12 +1596,20 @@ fn e2e_evidence_accumulation_to_checkpoint() {
     let mut state = mk_fleet("local");
 
     // Register healthy nodes
-    state.process_heartbeat(&mk_heartbeat("n1", 1, 5_000_000_000)).unwrap();
-    state.process_heartbeat(&mk_heartbeat("n2", 2, 5_000_000_000)).unwrap();
+    state
+        .process_heartbeat(&mk_heartbeat("n1", 1, 5_000_000_000))
+        .unwrap();
+    state
+        .process_heartbeat(&mk_heartbeat("n2", 2, 5_000_000_000))
+        .unwrap();
 
     // Accumulate evidence
-    state.process_evidence(&mk_evidence("n1", "ext-1", 2, 300_000)).unwrap();
-    state.process_evidence(&mk_evidence("n2", "ext-1", 3, 250_000)).unwrap();
+    state
+        .process_evidence(&mk_evidence("n1", "ext-1", 2, 300_000))
+        .unwrap();
+    state
+        .process_evidence(&mk_evidence("n2", "ext-1", 3, 250_000))
+        .unwrap();
 
     // Submit intents
     state
@@ -1583,8 +1643,12 @@ fn e2e_partition_detection_via_stale_heartbeats() {
     let mut state = mk_fleet("local");
 
     // Fresh heartbeats from n1, n2
-    state.process_heartbeat(&mk_heartbeat("n1", 1, 5_000_000_000)).unwrap();
-    state.process_heartbeat(&mk_heartbeat("n2", 1, 5_000_000_000)).unwrap();
+    state
+        .process_heartbeat(&mk_heartbeat("n1", 1, 5_000_000_000))
+        .unwrap();
+    state
+        .process_heartbeat(&mk_heartbeat("n2", 1, 5_000_000_000))
+        .unwrap();
 
     // At 6s: all healthy
     let partitioned = state.partitioned_nodes(6_000_000_000);
@@ -1595,7 +1659,9 @@ fn e2e_partition_detection_via_stale_heartbeats() {
     assert_eq!(partitioned.len(), 2);
 
     // n1 sends fresh heartbeat, n2 stays stale
-    state.process_heartbeat(&mk_heartbeat("n1", 2, 24_000_000_000)).unwrap();
+    state
+        .process_heartbeat(&mk_heartbeat("n1", 2, 24_000_000_000))
+        .unwrap();
     let partitioned = state.partitioned_nodes(25_000_000_000);
     assert_eq!(partitioned.len(), 1);
     assert!(partitioned.contains(&NodeId::new("n2")));
@@ -1605,10 +1671,18 @@ fn e2e_partition_detection_via_stale_heartbeats() {
 fn e2e_multiple_extensions_independent_accumulation() {
     let mut state = mk_fleet("local");
 
-    state.process_evidence(&mk_evidence("n1", "ext-a", 1, 100_000)).unwrap();
-    state.process_evidence(&mk_evidence("n1", "ext-b", 2, 200_000)).unwrap();
-    state.process_evidence(&mk_evidence("n2", "ext-a", 1, 50_000)).unwrap();
-    state.process_evidence(&mk_evidence("n2", "ext-b", 2, -100_000)).unwrap();
+    state
+        .process_evidence(&mk_evidence("n1", "ext-a", 1, 100_000))
+        .unwrap();
+    state
+        .process_evidence(&mk_evidence("n1", "ext-b", 2, 200_000))
+        .unwrap();
+    state
+        .process_evidence(&mk_evidence("n2", "ext-a", 1, 50_000))
+        .unwrap();
+    state
+        .process_evidence(&mk_evidence("n2", "ext-b", 2, -100_000))
+        .unwrap();
 
     assert_eq!(state.evidence.posterior_delta("ext-a"), 150_000);
     assert_eq!(state.evidence.posterior_delta("ext-b"), 100_000);
@@ -1621,10 +1695,14 @@ fn e2e_sequence_tracking_across_message_types() {
     let mut state = mk_fleet("local");
 
     // evidence at seq 1
-    state.process_evidence(&mk_evidence("n1", "ext-1", 1, 100_000)).unwrap();
+    state
+        .process_evidence(&mk_evidence("n1", "ext-1", 1, 100_000))
+        .unwrap();
 
     // heartbeat at seq 2 (same node)
-    state.process_heartbeat(&mk_heartbeat("n1", 2, 5_000_000_000)).unwrap();
+    state
+        .process_heartbeat(&mk_heartbeat("n1", 2, 5_000_000_000))
+        .unwrap();
 
     // intent at seq 3 (same node)
     state
@@ -1632,6 +1710,8 @@ fn e2e_sequence_tracking_across_message_types() {
         .unwrap();
 
     // Replay at seq 2 should fail
-    let err = state.process_evidence(&mk_evidence("n1", "ext-2", 2, 50_000)).unwrap_err();
+    let err = state
+        .process_evidence(&mk_evidence("n1", "ext-2", 2, 50_000))
+        .unwrap_err();
     assert!(matches!(err, ProtocolError::ReplayDetected { .. }));
 }

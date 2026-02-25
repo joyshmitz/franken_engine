@@ -1568,9 +1568,7 @@ mod tests {
         assert_eq!(verifier.epoch, SecurityEpoch::from_raw(42));
         verifier.advance_epoch(SecurityEpoch::from_raw(43));
         // Next challenge should use the new epoch.
-        let challenge = verifier
-            .generate_challenge([2u8; 32], 5000, 1000)
-            .unwrap();
+        let challenge = verifier.generate_challenge([2u8; 32], 5000, 1000).unwrap();
         assert_eq!(challenge.epoch, SecurityEpoch::from_raw(43));
     }
 
@@ -1656,8 +1654,7 @@ mod tests {
         ];
         for v in &variants {
             let json = serde_json::to_string(v).expect("serialize");
-            let restored: ReattestationTrigger =
-                serde_json::from_str(&json).expect("deserialize");
+            let restored: ReattestationTrigger = serde_json::from_str(&json).expect("deserialize");
             assert_eq!(*v, restored);
         }
     }

@@ -167,9 +167,7 @@ fn gate_status_passed_display() {
 
 #[test]
 fn gate_status_failed_display_no_reasons() {
-    let status = GateStatus::Failed {
-        reasons: vec![],
-    };
+    let status = GateStatus::Failed { reasons: vec![] };
     assert_eq!(status.to_string(), "failed()");
 }
 
@@ -201,12 +199,7 @@ fn gate_status_skipped_display() {
 fn gate_status_is_passed_predicate() {
     assert!(GateStatus::Passed.is_passed());
     assert!(!GateStatus::Pending.is_passed());
-    assert!(
-        !GateStatus::Failed {
-            reasons: vec![]
-        }
-        .is_passed()
-    );
+    assert!(!GateStatus::Failed { reasons: vec![] }.is_passed());
     assert!(
         !GateStatus::Skipped {
             reason: String::new()
@@ -219,12 +212,7 @@ fn gate_status_is_passed_predicate() {
 fn gate_status_is_terminal_predicate() {
     assert!(!GateStatus::Pending.is_terminal());
     assert!(GateStatus::Passed.is_terminal());
-    assert!(
-        GateStatus::Failed {
-            reasons: vec![]
-        }
-        .is_terminal()
-    );
+    assert!(GateStatus::Failed { reasons: vec![] }.is_terminal());
     assert!(
         GateStatus::Skipped {
             reason: String::new()

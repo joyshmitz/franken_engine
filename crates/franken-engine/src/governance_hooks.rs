@@ -3150,7 +3150,6 @@ mod tests {
         assert_eq!(cfg.max_export_entries, 100_000);
     }
 
-    #[test]
     // -- Enrichment: std::error --
 
     #[test]
@@ -3196,7 +3195,11 @@ mod tests {
             assert!(!msg.is_empty());
             displays.insert(msg);
         }
-        assert_eq!(displays.len(), 10, "all 10 variants produce distinct messages");
+        assert_eq!(
+            displays.len(),
+            10,
+            "all 10 variants produce distinct messages"
+        );
     }
 
     #[test]

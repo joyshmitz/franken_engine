@@ -738,7 +738,6 @@ mod tests {
         }
     }
 
-    #[test]
     // -- Enrichment: serde & Display --
 
     #[test]
@@ -749,8 +748,7 @@ mod tests {
             CheckpointAction::Abort,
         ] {
             let json = serde_json::to_string(&action).expect("serialize");
-            let restored: CheckpointAction =
-                serde_json::from_str(&json).expect("deserialize");
+            let restored: CheckpointAction = serde_json::from_str(&json).expect("deserialize");
             assert_eq!(action, restored);
         }
     }

@@ -971,16 +971,8 @@ mod tests {
         let leaf_a = make_principal(99);
         let leaf_b = make_principal(88);
 
-        let link0_a = make_bound_token(
-            &root_sk,
-            leaf_a.clone(),
-            &[RuntimeCapability::VmDispatch],
-        );
-        let link0_b = make_bound_token(
-            &root_sk,
-            leaf_b.clone(),
-            &[RuntimeCapability::VmDispatch],
-        );
+        let link0_a = make_bound_token(&root_sk, leaf_a.clone(), &[RuntimeCapability::VmDispatch]);
+        let link0_b = make_bound_token(&root_sk, leaf_b.clone(), &[RuntimeCapability::VmDispatch]);
 
         let ctx = make_ctx(&root_sk);
         let proof_a = verify_chain(
@@ -1258,8 +1250,7 @@ mod tests {
             expiry_tick: 1000,
         };
         let json = serde_json::to_string(&summary).expect("serialize");
-        let restored: DelegationLinkSummary =
-            serde_json::from_str(&json).expect("deserialize");
+        let restored: DelegationLinkSummary = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(summary, restored);
     }
 
@@ -1347,7 +1338,6 @@ mod tests {
 
     // -- Max depth boundary --
 
-    #[test]
     // -- Enrichment: std::error --
 
     #[test]
@@ -1367,7 +1357,11 @@ mod tests {
             assert!(!msg.is_empty());
             displays.insert(msg);
         }
-        assert_eq!(displays.len(), 4, "all 4 variants produce distinct messages");
+        assert_eq!(
+            displays.len(),
+            4,
+            "all 4 variants produce distinct messages"
+        );
     }
 
     #[test]

@@ -132,7 +132,10 @@ fn scenario_kind_serde_round_trip_all_variants() {
 #[test]
 fn scenario_kind_serde_json_representation_is_string() {
     let json = serde_json::to_string(&ScenarioKind::Startup).unwrap();
-    assert!(json.starts_with('"'), "ScenarioKind JSON should be a quoted string");
+    assert!(
+        json.starts_with('"'),
+        "ScenarioKind JSON should be a quoted string"
+    );
     assert!(json.contains("Startup"));
 }
 
@@ -214,7 +217,10 @@ fn scenario_result_from_startup_has_correct_kind() {
 fn scenario_result_from_startup_has_assertions() {
     let mut cx = mock_cx(5000);
     let result = run_scenario(ScenarioKind::Startup, 1, &mut cx);
-    assert!(!result.assertions.is_empty(), "startup should produce assertions");
+    assert!(
+        !result.assertions.is_empty(),
+        "startup should produce assertions"
+    );
 }
 
 #[test]
@@ -236,7 +242,11 @@ fn scenario_result_startup_extensions_loaded() {
     let mut cx = mock_cx(5000);
     let result = run_scenario(ScenarioKind::Startup, 1, &mut cx);
     assert!(!result.extensions_loaded.is_empty());
-    assert!(result.extensions_loaded.contains(&"ext-startup-1".to_string()));
+    assert!(
+        result
+            .extensions_loaded
+            .contains(&"ext-startup-1".to_string())
+    );
 }
 
 #[test]
@@ -323,7 +333,10 @@ fn run_scenario_startup_passes() {
 fn run_scenario_normal_shutdown_passes() {
     let mut cx = mock_cx(20000);
     let result = run_scenario(ScenarioKind::NormalShutdown, 2, &mut cx);
-    assert!(result.passed, "normal_shutdown scenario failed: {result:#?}");
+    assert!(
+        result.passed,
+        "normal_shutdown scenario failed: {result:#?}"
+    );
 }
 
 #[test]
@@ -358,7 +371,10 @@ fn run_scenario_degraded_mode_passes() {
 fn run_scenario_multi_extension_passes() {
     let mut cx = mock_cx(50000);
     let result = run_scenario(ScenarioKind::MultiExtension, 7, &mut cx);
-    assert!(result.passed, "multi_extension scenario failed: {result:#?}");
+    assert!(
+        result.passed,
+        "multi_extension scenario failed: {result:#?}"
+    );
 }
 
 // ===========================================================================
@@ -414,7 +430,10 @@ fn quarantine_emits_quarantine_event() {
         .iter()
         .filter(|e| e.event == "extension_quarantine")
         .collect();
-    assert!(!quarantine_events.is_empty(), "quarantine should emit extension_quarantine event");
+    assert!(
+        !quarantine_events.is_empty(),
+        "quarantine should emit extension_quarantine event"
+    );
 }
 
 #[test]
@@ -637,7 +656,11 @@ fn determinism_assertions_identical_across_runs() {
     let suite2 = run_all_scenarios(42, &mut cx2);
 
     for (s1, s2) in suite1.scenarios.iter().zip(suite2.scenarios.iter()) {
-        assert_eq!(s1.assertions, s2.assertions, "assertions differ for {:?}", s1.kind);
+        assert_eq!(
+            s1.assertions, s2.assertions,
+            "assertions differ for {:?}",
+            s1.kind
+        );
     }
 }
 
@@ -670,7 +693,11 @@ fn determinism_different_seeds_same_verdict() {
     for seed in [1, 42, 99, 255, 1000, 65535] {
         let mut cx = mock_cx(100000);
         let suite = run_all_scenarios(seed, &mut cx);
-        assert_eq!(suite.verdict, Verdict::Pass, "suite with seed {seed} should pass");
+        assert_eq!(
+            suite.verdict,
+            Verdict::Pass,
+            "suite with seed {seed} should pass"
+        );
     }
 }
 
@@ -826,9 +853,7 @@ fn error_create_session_on_missing_extension() {
     let mut mgr = ExtensionHostLifecycleManager::new();
     let mut cx = mock_cx(5000);
 
-    let err = mgr
-        .create_session("missing", "s1", &mut cx)
-        .unwrap_err();
+    let err = mgr.create_session("missing", "s1", &mut cx).unwrap_err();
     assert_eq!(err.error_code(), "host_extension_not_found");
 }
 
@@ -860,9 +885,7 @@ fn error_close_missing_session() {
     let mut cx = mock_cx(5000);
 
     mgr.load_extension("ext-1", &mut cx).unwrap();
-    let err = mgr
-        .close_session("ext-1", "missing", &mut cx)
-        .unwrap_err();
+    let err = mgr.close_session("ext-1", "missing", &mut cx).unwrap_err();
     assert_eq!(err.error_code(), "host_session_not_found");
 }
 
@@ -1415,10 +1438,7 @@ fn manager_drain_cancellation_events() {
         .unwrap();
 
     let cancel_events = mgr.drain_cancellation_events();
-    assert!(
-        !cancel_events.is_empty(),
-        "cancellation should emit events"
-    );
+    assert!(!cancel_events.is_empty(), "cancellation should emit events");
 }
 
 #[test]

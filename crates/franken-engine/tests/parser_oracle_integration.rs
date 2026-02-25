@@ -8,13 +8,13 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use frankenengine_engine::parser_oracle::{
-    DriftClass, GateAction, OracleDecision, OracleFixtureCatalog, OracleFixtureResult,
-    OracleFixtureSpec, OracleGateMode, OraclePartition, OracleSummary, ParserOracleConfig,
-    ParserOracleError, DEFAULT_FIXTURE_CATALOG_PATH, derive_seed, load_fixture_catalog,
-    partition_fixtures, run_parser_oracle, ExpectedLossModel,
-};
 use frankenengine_engine::parser::ParserMode;
+use frankenengine_engine::parser_oracle::{
+    DEFAULT_FIXTURE_CATALOG_PATH, DriftClass, ExpectedLossModel, GateAction, OracleDecision,
+    OracleFixtureCatalog, OracleFixtureResult, OracleFixtureSpec, OracleGateMode, OraclePartition,
+    OracleSummary, ParserOracleConfig, ParserOracleError, derive_seed, load_fixture_catalog,
+    partition_fixtures, run_parser_oracle,
+};
 
 // =========================================================================
 // Helper: construct an OracleSummary for decision/loss testing
@@ -598,8 +598,7 @@ fn parser_oracle_config_with_defaults_nightly() {
 
 #[test]
 fn parser_oracle_config_clone_eq() {
-    let a =
-        ParserOracleConfig::with_defaults(OraclePartition::Full, OracleGateMode::ReportOnly, 1);
+    let a = ParserOracleConfig::with_defaults(OraclePartition::Full, OracleGateMode::ReportOnly, 1);
     let b = a.clone();
     assert_eq!(a, b);
 }
@@ -843,8 +842,7 @@ fn load_fixture_catalog_nonexistent_file() {
 
 #[test]
 fn load_fixture_catalog_nonexistent_deep_path() {
-    let err =
-        load_fixture_catalog(Path::new("/a/b/c/d/e/f/missing_catalog.json")).unwrap_err();
+    let err = load_fixture_catalog(Path::new("/a/b/c/d/e/f/missing_catalog.json")).unwrap_err();
     assert!(err.to_string().contains("failed to read"));
 }
 

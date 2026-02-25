@@ -810,8 +810,7 @@ mod tests {
             FaultKind::RegionClose,
         ] {
             let json = serde_json::to_string(&kind).expect("serialize");
-            let restored: FaultKind =
-                serde_json::from_str(&json).expect("deserialize");
+            let restored: FaultKind = serde_json::from_str(&json).expect("deserialize");
             assert_eq!(kind, restored);
         }
     }

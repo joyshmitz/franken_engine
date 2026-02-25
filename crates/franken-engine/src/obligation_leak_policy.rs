@@ -465,15 +465,13 @@ mod tests {
         assert_eq!(event, restored);
     }
 
-    #[test]
     // -- Enrichment: serde roundtrips --
 
     #[test]
     fn obligation_leak_policy_serde_both_variants() {
         for policy in [ObligationLeakPolicy::Lab, ObligationLeakPolicy::Production] {
             let json = serde_json::to_string(&policy).expect("serialize");
-            let restored: ObligationLeakPolicy =
-                serde_json::from_str(&json).expect("deserialize");
+            let restored: ObligationLeakPolicy = serde_json::from_str(&json).expect("deserialize");
             assert_eq!(policy, restored);
         }
     }
@@ -501,8 +499,7 @@ mod tests {
         ];
         for action in actions {
             let json = serde_json::to_string(&action).expect("serialize");
-            let restored: FailoverAction =
-                serde_json::from_str(&json).expect("deserialize");
+            let restored: FailoverAction = serde_json::from_str(&json).expect("deserialize");
             assert_eq!(action, restored);
         }
     }

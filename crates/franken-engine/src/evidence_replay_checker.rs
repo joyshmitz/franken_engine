@@ -2065,7 +2065,9 @@ mod tests {
         assert!(ReplayErrorCode::HashMismatch < ReplayErrorCode::ChainBroken);
         assert!(ReplayErrorCode::ChainBroken < ReplayErrorCode::EntryTruncated);
         assert!(ReplayErrorCode::SequenceGap < ReplayErrorCode::TimestampMonotonicityViolation);
-        assert!(ReplayErrorCode::SchemaMigrationDetected < ReplayErrorCode::PolicyVersionDiscontinuity);
+        assert!(
+            ReplayErrorCode::SchemaMigrationDetected < ReplayErrorCode::PolicyVersionDiscontinuity
+        );
         assert!(ReplayErrorCode::PolicyVersionDiscontinuity < ReplayErrorCode::EpochRegression);
     }
 
@@ -2073,6 +2075,8 @@ mod tests {
     fn replay_violation_type_ord() {
         assert!(ReplayViolationType::OutcomeDivergence < ReplayViolationType::ArtifactHashMismatch);
         assert!(ReplayViolationType::ArtifactHashMismatch < ReplayViolationType::ChainHashMismatch);
-        assert!(ReplayViolationType::SequenceGap < ReplayViolationType::TimestampMonotonicityViolation);
+        assert!(
+            ReplayViolationType::SequenceGap < ReplayViolationType::TimestampMonotonicityViolation
+        );
     }
 }

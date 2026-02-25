@@ -14,10 +14,11 @@ use std::collections::BTreeSet;
 use frankenengine_engine::deterministic_serde::{CanonicalValue, SchemaHash};
 use frankenengine_engine::engine_object_id::ObjectDomain;
 use frankenengine_engine::signature_preimage::{
+    SIGNATURE_LEN, SIGNATURE_SENTINEL, SIGNING_KEY_LEN, Signature, SignatureContext,
+    SignatureError, SignatureEvent, SignatureEventType,
+    SignaturePreimage as SignaturePreimageTrait, SigningKey, VERIFICATION_KEY_LEN, VerificationKey,
     build_preimage, check_canonical_for_signing, preimage_hash, sign_object, sign_preimage,
-    verify_object, verify_signature, Signature, SignatureContext, SignatureError, SignatureEvent,
-    SignatureEventType, SignaturePreimage as SignaturePreimageTrait, SigningKey, VerificationKey,
-    SIGNATURE_LEN, SIGNATURE_SENTINEL, SIGNING_KEY_LEN, VERIFICATION_KEY_LEN,
+    verify_object, verify_signature,
 };
 
 // ===========================================================================
@@ -57,9 +58,9 @@ fn test_schema() -> SchemaHash {
 
 fn test_signing_key() -> SigningKey {
     SigningKey::from_bytes([
-        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E,
-        0x0F, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C,
-        0x1D, 0x1E, 0x1F, 0x20,
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+        0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E,
+        0x1F, 0x20,
     ])
 }
 
@@ -232,7 +233,10 @@ fn signature_partially_zero_is_not_sentinel() {
 fn signature_display_contains_hex_and_ellipsis() {
     let sig = Signature::from_bytes([0xAB; SIGNATURE_LEN]);
     let display = sig.to_string();
-    assert!(display.contains("..."), "display missing ellipsis: {display}");
+    assert!(
+        display.contains("..."),
+        "display missing ellipsis: {display}"
+    );
     // First 8 bytes of lower half
     assert!(
         display.contains("abababab"),
@@ -281,7 +285,10 @@ fn error_display_verification_failed() {
         reason: "bad signature".to_string(),
     };
     let display = err.to_string();
-    assert!(display.contains("bad signature"), "missing reason: {display}");
+    assert!(
+        display.contains("bad signature"),
+        "missing reason: {display}"
+    );
     assert!(
         display.contains("verification failed"),
         "missing prefix: {display}"
@@ -666,9 +673,7 @@ fn canonical_check_passes_for_null() {
 
 #[test]
 fn canonical_check_passes_for_string() {
-    assert!(
-        check_canonical_for_signing(&CanonicalValue::String("hello".to_string())).is_ok()
-    );
+    assert!(check_canonical_for_signing(&CanonicalValue::String("hello".to_string())).is_ok());
 }
 
 #[test]
@@ -912,9 +917,7 @@ fn multi_sig_same_preimage_different_signatures() {
 fn signature_event_serde_roundtrip() {
     let vk = test_signing_key().verification_key();
     let event = SignatureEvent {
-        event_type: SignatureEventType::Signed {
-            signer: vk.clone(),
-        },
+        event_type: SignatureEventType::Signed { signer: vk.clone() },
         domain: ObjectDomain::PolicyObject,
         trace_id: "t-serde".to_string(),
     };
@@ -927,9 +930,7 @@ fn signature_event_serde_roundtrip() {
 fn signature_event_type_verified_serde_roundtrip() {
     let vk = VerificationKey::from_bytes([0x11; VERIFICATION_KEY_LEN]);
     let event = SignatureEvent {
-        event_type: SignatureEventType::Verified {
-            signer: vk,
-        },
+        event_type: SignatureEventType::Verified { signer: vk },
         domain: ObjectDomain::EvidenceRecord,
         trace_id: "t-verified".to_string(),
     };

@@ -16,8 +16,8 @@ use frankenengine_engine::capability_token::{
     TokenId,
 };
 use frankenengine_engine::delegation_chain::{
-    AuthorizationProof, ChainError, DelegationChain, DelegationLinkSummary,
-    DelegationVerificationContext, NoRevocationOracle, RevocationOracle, DEFAULT_MAX_CHAIN_DEPTH,
+    AuthorizationProof, ChainError, DEFAULT_MAX_CHAIN_DEPTH, DelegationChain,
+    DelegationLinkSummary, DelegationVerificationContext, NoRevocationOracle, RevocationOracle,
     principal_id_from_verification_key, verify_chain,
 };
 use frankenengine_engine::engine_object_id::EngineObjectId;
@@ -221,8 +221,7 @@ fn verification_context_serde_round_trip() {
     let root_sk = make_sk(1);
     let ctx = make_ctx(&root_sk);
     let json = serde_json::to_string(&ctx).expect("serialize");
-    let restored: DelegationVerificationContext =
-        serde_json::from_str(&json).expect("deserialize");
+    let restored: DelegationVerificationContext = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(ctx, restored);
 }
 
@@ -358,10 +357,7 @@ fn chain_error_display_zone_mismatch() {
 #[test]
 fn chain_error_display_revoked_link() {
     let token_id = EngineObjectId([0xDE; 32]);
-    let err = ChainError::RevokedLink {
-        index: 0,
-        token_id,
-    };
+    let err = ChainError::RevokedLink { index: 0, token_id };
     let s = err.to_string();
     assert!(s.contains("revoked"));
     assert!(s.contains("0"));
@@ -1286,16 +1282,8 @@ fn different_leaf_delegates_produce_different_chain_hashes() {
     let leaf_a = make_principal(10);
     let leaf_b = make_principal(20);
 
-    let link_a = make_bound_token(
-        &root_sk,
-        leaf_a.clone(),
-        &[RuntimeCapability::VmDispatch],
-    );
-    let link_b = make_bound_token(
-        &root_sk,
-        leaf_b.clone(),
-        &[RuntimeCapability::VmDispatch],
-    );
+    let link_a = make_bound_token(&root_sk, leaf_a.clone(), &[RuntimeCapability::VmDispatch]);
+    let link_b = make_bound_token(&root_sk, leaf_b.clone(), &[RuntimeCapability::VmDispatch]);
 
     let chain_a = DelegationChain::new(vec![link_a]);
     let chain_b = DelegationChain::new(vec![link_b]);
@@ -1406,7 +1394,11 @@ fn chain_error_variants_are_distinguishable() {
         ChainError::MissingRevocationFreshnessBinding { index: 0 },
     ];
     let displays: BTreeSet<String> = errors.iter().map(|e| e.to_string()).collect();
-    assert_eq!(displays.len(), errors.len(), "all error messages must be unique");
+    assert_eq!(
+        displays.len(),
+        errors.len(),
+        "all error messages must be unique"
+    );
 }
 
 #[test]

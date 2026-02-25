@@ -17,7 +17,7 @@ use frankenengine_engine::ifc_artifacts::{
     FlowEnvelope, FlowPolicy, FlowProof, FlowRule, IfcSchemaVersion, IfcValidationError,
     Ir2LabelSource, Label, ProofMethod,
 };
-use frankenengine_engine::signature_preimage::{SigningKey, SIGNATURE_SENTINEL, Signature};
+use frankenengine_engine::signature_preimage::{SIGNATURE_SENTINEL, Signature, SigningKey};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -99,10 +99,7 @@ fn make_claim(strength: ClaimStrength) -> ConfinementClaim {
         claim_id: "claim-integ-001".to_string(),
         component_id: "component-integ-abc".to_string(),
         policy_ref: "pol-integ-001".to_string(),
-        flow_proofs: vec![
-            "proof-integ-001".to_string(),
-            "proof-integ-002".to_string(),
-        ],
+        flow_proofs: vec!["proof-integ-001".to_string(), "proof-integ-002".to_string()],
         uncovered_flows: if strength == ClaimStrength::Full {
             vec![]
         } else {
@@ -234,10 +231,7 @@ fn label_can_flow_to_upward() {
 #[test]
 fn label_can_flow_to_same() {
     for label in Label::all_builtin() {
-        assert!(
-            label.can_flow_to(&label),
-            "{label} should flow to itself"
-        );
+        assert!(label.can_flow_to(&label), "{label} should flow to itself");
     }
 }
 
@@ -486,17 +480,32 @@ fn clearance_class_can_receive_never_sink() {
 
 #[test]
 fn clearance_class_max_receivable_label_level() {
-    assert_eq!(ClearanceClass::OpenSink.max_receivable_label_level(), Some(4));
-    assert_eq!(ClearanceClass::RestrictedSink.max_receivable_label_level(), Some(1));
-    assert_eq!(ClearanceClass::AuditedSink.max_receivable_label_level(), Some(2));
-    assert_eq!(ClearanceClass::SealedSink.max_receivable_label_level(), Some(3));
+    assert_eq!(
+        ClearanceClass::OpenSink.max_receivable_label_level(),
+        Some(4)
+    );
+    assert_eq!(
+        ClearanceClass::RestrictedSink.max_receivable_label_level(),
+        Some(1)
+    );
+    assert_eq!(
+        ClearanceClass::AuditedSink.max_receivable_label_level(),
+        Some(2)
+    );
+    assert_eq!(
+        ClearanceClass::SealedSink.max_receivable_label_level(),
+        Some(3)
+    );
     assert_eq!(ClearanceClass::NeverSink.max_receivable_label_level(), None);
 }
 
 #[test]
 fn clearance_class_display() {
     assert_eq!(ClearanceClass::OpenSink.to_string(), "open_sink");
-    assert_eq!(ClearanceClass::RestrictedSink.to_string(), "restricted_sink");
+    assert_eq!(
+        ClearanceClass::RestrictedSink.to_string(),
+        "restricted_sink"
+    );
     assert_eq!(ClearanceClass::AuditedSink.to_string(), "audited_sink");
     assert_eq!(ClearanceClass::SealedSink.to_string(), "sealed_sink");
     assert_eq!(ClearanceClass::NeverSink.to_string(), "never_sink");
@@ -983,7 +992,10 @@ fn flow_check_result_serde_roundtrip_all_variants() {
 fn proof_method_display() {
     assert_eq!(ProofMethod::StaticAnalysis.to_string(), "static_analysis");
     assert_eq!(ProofMethod::RuntimeCheck.to_string(), "runtime_check");
-    assert_eq!(ProofMethod::Declassification.to_string(), "declassification");
+    assert_eq!(
+        ProofMethod::Declassification.to_string(),
+        "declassification"
+    );
 }
 
 #[test]

@@ -2252,8 +2252,7 @@ mod tests {
             threshold_pass: true,
         };
         let json = serde_json::to_string(&summary).unwrap();
-        let restored: CrossRepoConformanceStabilitySummary =
-            serde_json::from_str(&json).unwrap();
+        let restored: CrossRepoConformanceStabilitySummary = serde_json::from_str(&json).unwrap();
         assert_eq!(summary, restored);
     }
 
@@ -2264,9 +2263,15 @@ mod tests {
                 field: "f".to_string(),
                 detail: "d".to_string(),
             }),
-            Box::new(GovernanceScorecardError::SerializationFailure("s".to_string())),
-            Box::new(GovernanceScorecardError::SignatureFailure("sig".to_string())),
-            Box::new(GovernanceScorecardError::LedgerWriteFailure("lw".to_string())),
+            Box::new(GovernanceScorecardError::SerializationFailure(
+                "s".to_string(),
+            )),
+            Box::new(GovernanceScorecardError::SignatureFailure(
+                "sig".to_string(),
+            )),
+            Box::new(GovernanceScorecardError::LedgerWriteFailure(
+                "lw".to_string(),
+            )),
         ];
         for e in &errs {
             assert!(!e.to_string().is_empty());

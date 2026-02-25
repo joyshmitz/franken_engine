@@ -1006,9 +1006,17 @@ mod tests {
         let h1 = ContentHash::compute(b"a");
         let h2 = ContentHash::compute(b"b");
         let variants: Vec<Box<dyn std::error::Error>> = vec![
-            Box::new(ProofError::IndexOutOfRange { index: 10, stream_length: 5 }),
-            Box::new(ProofError::RootMismatch { expected: h1, computed: h2 }),
-            Box::new(ProofError::InvalidProof { reason: "bad".into() }),
+            Box::new(ProofError::IndexOutOfRange {
+                index: 10,
+                stream_length: 5,
+            }),
+            Box::new(ProofError::RootMismatch {
+                expected: h1,
+                computed: h2,
+            }),
+            Box::new(ProofError::InvalidProof {
+                reason: "bad".into(),
+            }),
             Box::new(ProofError::EmptyStream),
             Box::new(ProofError::ConsistencyFailure {
                 old_length: 5,

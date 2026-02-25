@@ -644,11 +644,7 @@ fn registry_permitted_actions() {
     gr.update(1_000_000).unwrap(); // triggers
     registry.add(gr);
 
-    let all = vec![
-        "low".to_string(),
-        "medium".to_string(),
-        "high".to_string(),
-    ];
+    let all = vec!["low".to_string(), "medium".to_string(), "high".to_string()];
     let permitted = registry.permitted_actions(&all);
     assert_eq!(permitted.len(), 2);
     assert!(permitted.contains(&&"medium".to_string()));

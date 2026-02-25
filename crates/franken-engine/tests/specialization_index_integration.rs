@@ -8,13 +8,13 @@
 
 use std::collections::BTreeSet;
 
-use frankenengine_engine::engine_object_id::{derive_id, EngineObjectId, ObjectDomain, SchemaId};
+use frankenengine_engine::engine_object_id::{EngineObjectId, ObjectDomain, SchemaId, derive_id};
 use frankenengine_engine::proof_specialization_receipt::{OptimizationClass, ProofType};
 use frankenengine_engine::security_epoch::SecurityEpoch;
 use frankenengine_engine::specialization_index::{
-    error_code, AuditChainEntry, BenchmarkOutcome, ExtensionSpecializationSummary,
-    InvalidationEntry, InvalidationReason, SpecializationIndex, SpecializationIndexError,
-    SpecializationIndexEvent, SpecializationRecord,
+    AuditChainEntry, BenchmarkOutcome, ExtensionSpecializationSummary, InvalidationEntry,
+    InvalidationReason, SpecializationIndex, SpecializationIndexError, SpecializationIndexEvent,
+    SpecializationRecord, error_code,
 };
 use frankenengine_engine::storage_adapter::InMemoryStorageAdapter;
 
@@ -76,11 +76,7 @@ fn make_benchmark(bm_id: &str, receipt_tag: &str) -> BenchmarkOutcome {
     }
 }
 
-fn make_invalidation(
-    receipt_tag: &str,
-    reason: InvalidationReason,
-    ts: u64,
-) -> InvalidationEntry {
+fn make_invalidation(receipt_tag: &str, reason: InvalidationReason, ts: u64) -> InvalidationEntry {
     InvalidationEntry {
         receipt_id: make_id(receipt_tag),
         reason,
@@ -451,7 +447,9 @@ fn error_code_all_variants_stable() {
         "SI_DUPLICATE_BENCHMARK"
     );
     assert_eq!(
-        error_code(&SpecializationIndexError::SerializationFailed("x".to_string())),
+        error_code(&SpecializationIndexError::SerializationFailed(
+            "x".to_string()
+        )),
         "SI_SERIALIZATION_FAILED"
     );
     assert_eq!(
@@ -543,7 +541,12 @@ fn delete_existing_receipt_returns_true() {
     let rec = make_record("del-1", 1);
     index.insert_receipt(&rec, "t-d1").unwrap();
     assert!(index.delete_receipt(&rec.receipt_id, "t-d2").unwrap());
-    assert!(index.get_receipt(&rec.receipt_id, "t-d3").unwrap().is_none());
+    assert!(
+        index
+            .get_receipt(&rec.receipt_id, "t-d3")
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[test]
@@ -879,9 +882,7 @@ fn query_invalidations_with_from_filter() {
         index.record_invalidation(&entry, "t-inv").unwrap();
     }
     // from_ns = 2000 should include ts=2000 and ts=3000
-    let filtered = index
-        .query_invalidations(Some(2_000), None, "t-q")
-        .unwrap();
+    let filtered = index.query_invalidations(Some(2_000), None, "t-q").unwrap();
     assert_eq!(filtered.len(), 2);
 }
 
@@ -903,9 +904,7 @@ fn query_invalidations_with_to_filter() {
         index.record_invalidation(&entry, "t-inv").unwrap();
     }
     // to_ns = 2000 should include ts=1000 and ts=2000
-    let filtered = index
-        .query_invalidations(None, Some(2_000), "t-q")
-        .unwrap();
+    let filtered = index.query_invalidations(None, Some(2_000), "t-q").unwrap();
     assert_eq!(filtered.len(), 2);
 }
 
@@ -1455,10 +1454,7 @@ fn full_lifecycle_insert_benchmark_invalidate_audit_summary() {
     index.record_invalidation(&inv, "t-7").unwrap();
 
     // 5. Verify r1 is now inactive
-    let fetched = index
-        .get_receipt(&r1.receipt_id, "t-8")
-        .unwrap()
-        .unwrap();
+    let fetched = index.get_receipt(&r1.receipt_id, "t-8").unwrap().unwrap();
     assert!(!fetched.active);
 
     // 6. Active query should exclude r1
@@ -1565,10 +1561,7 @@ fn delete_does_not_affect_other_receipts() {
 
     index.delete_receipt(&r1.receipt_id, "t-del").unwrap();
 
-    assert!(index
-        .get_receipt(&r1.receipt_id, "t-3")
-        .unwrap()
-        .is_none());
+    assert!(index.get_receipt(&r1.receipt_id, "t-3").unwrap().is_none());
     assert!(index.get_receipt(&r2.receipt_id, "t-4").unwrap().is_some());
 }
 
@@ -1605,9 +1598,7 @@ fn receipt_with_empty_proof_list() {
 fn receipt_with_large_proof_list() {
     let mut index = make_index();
     let mut rec = make_record("large-proofs", 1);
-    rec.proof_input_ids = (0..50)
-        .map(|i| make_id(&format!("lp-{i}")))
-        .collect();
+    rec.proof_input_ids = (0..50).map(|i| make_id(&format!("lp-{i}"))).collect();
     rec.proof_types = vec![ProofType::CapabilityWitness]; // only 1 type
     index.insert_receipt(&rec, "t-1").unwrap();
 

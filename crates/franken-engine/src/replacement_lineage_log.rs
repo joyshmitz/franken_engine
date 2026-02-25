@@ -3447,10 +3447,18 @@ mod tests {
     #[test]
     fn lineage_log_error_serde_all_variants() {
         let errors: Vec<LineageLogError> = vec![
-            LineageLogError::SequenceMismatch { expected: 5, got: 3 },
+            LineageLogError::SequenceMismatch {
+                expected: 5,
+                got: 3,
+            },
             LineageLogError::ChainBreak { sequence: 7 },
-            LineageLogError::DuplicateReceipt { receipt_id: "r-1".to_string() },
-            LineageLogError::CheckpointBeyondLog { checkpoint_length: 10, log_length: 5 },
+            LineageLogError::DuplicateReceipt {
+                receipt_id: "r-1".to_string(),
+            },
+            LineageLogError::CheckpointBeyondLog {
+                checkpoint_length: 10,
+                log_length: 5,
+            },
             LineageLogError::CheckpointNotFound { checkpoint_seq: 9 },
             LineageLogError::InvalidCheckpointOrder { older: 2, newer: 1 },
             LineageLogError::EmptyLog,
@@ -3468,10 +3476,15 @@ mod tests {
 
     #[test]
     fn lineage_log_error_display_remaining_variants() {
-        let err = LineageLogError::DuplicateReceipt { receipt_id: "r-1".to_string() };
+        let err = LineageLogError::DuplicateReceipt {
+            receipt_id: "r-1".to_string(),
+        };
         assert_eq!(err.to_string(), "duplicate receipt: r-1");
 
-        let err = LineageLogError::CheckpointBeyondLog { checkpoint_length: 10, log_length: 5 };
+        let err = LineageLogError::CheckpointBeyondLog {
+            checkpoint_length: 10,
+            log_length: 5,
+        };
         assert_eq!(err.to_string(), "checkpoint length 10 beyond log length 5");
     }
 
@@ -3582,10 +3595,21 @@ mod tests {
     #[test]
     fn lineage_index_error_serde_all_variants() {
         let errors: Vec<LineageIndexError> = vec![
-            LineageIndexError::Storage(StorageError::NotFound { store: StoreKind::ReplacementLineage, key: "k".to_string() }),
-            LineageIndexError::Serialization { operation: "write".to_string(), detail: "err".to_string() },
-            LineageIndexError::CorruptRecord { key: "k".to_string(), detail: "bad".to_string() },
-            LineageIndexError::InvalidInput { detail: "empty".to_string() },
+            LineageIndexError::Storage(StorageError::NotFound {
+                store: StoreKind::ReplacementLineage,
+                key: "k".to_string(),
+            }),
+            LineageIndexError::Serialization {
+                operation: "write".to_string(),
+                detail: "err".to_string(),
+            },
+            LineageIndexError::CorruptRecord {
+                key: "k".to_string(),
+                detail: "bad".to_string(),
+            },
+            LineageIndexError::InvalidInput {
+                detail: "empty".to_string(),
+            },
         ];
         for err in &errors {
             let json = serde_json::to_string(err).unwrap();
@@ -3604,7 +3628,10 @@ mod tests {
             operation: "write".to_string(),
             detail: "codec failure".to_string(),
         };
-        assert_eq!(err.to_string(), "serialization error (write): codec failure");
+        assert_eq!(
+            err.to_string(),
+            "serialization error (write): codec failure"
+        );
 
         let err = LineageIndexError::CorruptRecord {
             key: "slot:a".to_string(),

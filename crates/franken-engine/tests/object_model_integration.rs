@@ -1149,13 +1149,17 @@ fn heap_assign_copies_enumerable_properties() {
     let mut heap = ObjectHeap::new();
     let target = heap.alloc_plain();
     let source = heap.alloc_plain();
-    heap.set_property(source, str_key("a"), int_val(1))
-        .unwrap();
-    heap.set_property(source, str_key("b"), int_val(2))
-        .unwrap();
+    heap.set_property(source, str_key("a"), int_val(1)).unwrap();
+    heap.set_property(source, str_key("b"), int_val(2)).unwrap();
     heap.assign(target, &[source]).unwrap();
-    assert_eq!(heap.get_property(target, &str_key("a")).unwrap(), int_val(1));
-    assert_eq!(heap.get_property(target, &str_key("b")).unwrap(), int_val(2));
+    assert_eq!(
+        heap.get_property(target, &str_key("a")).unwrap(),
+        int_val(1)
+    );
+    assert_eq!(
+        heap.get_property(target, &str_key("b")).unwrap(),
+        int_val(2)
+    );
 }
 
 #[test]
@@ -1167,8 +1171,14 @@ fn heap_assign_multiple_sources() {
     heap.set_property(s1, str_key("a"), int_val(1)).unwrap();
     heap.set_property(s2, str_key("b"), int_val(2)).unwrap();
     heap.assign(target, &[s1, s2]).unwrap();
-    assert_eq!(heap.get_property(target, &str_key("a")).unwrap(), int_val(1));
-    assert_eq!(heap.get_property(target, &str_key("b")).unwrap(), int_val(2));
+    assert_eq!(
+        heap.get_property(target, &str_key("a")).unwrap(),
+        int_val(1)
+    );
+    assert_eq!(
+        heap.get_property(target, &str_key("b")).unwrap(),
+        int_val(2)
+    );
 }
 
 #[test]
@@ -1189,10 +1199,7 @@ fn heap_create_without_proto() {
 #[test]
 fn heap_from_entries() {
     let mut heap = ObjectHeap::new();
-    let entries = vec![
-        ("a".to_string(), int_val(1)),
-        ("b".to_string(), int_val(2)),
-    ];
+    let entries = vec![("a".to_string(), int_val(1)), ("b".to_string(), int_val(2))];
     let obj = heap.from_entries(entries);
     assert_eq!(heap.get_property(obj, &str_key("a")).unwrap(), int_val(1));
     assert_eq!(heap.get_property(obj, &str_key("b")).unwrap(), int_val(2));
@@ -1219,7 +1226,10 @@ fn heap_has_own_false_for_inherited() {
 fn heap_object_is() {
     assert!(ObjectHeap::object_is(&int_val(42), &int_val(42)));
     assert!(!ObjectHeap::object_is(&int_val(1), &int_val(2)));
-    assert!(ObjectHeap::object_is(&JsValue::Undefined, &JsValue::Undefined));
+    assert!(ObjectHeap::object_is(
+        &JsValue::Undefined,
+        &JsValue::Undefined
+    ));
 }
 
 // ===========================================================================
@@ -1449,8 +1459,7 @@ fn invariant_check_get_own_property_non_configurable_reported_absent() {
     target
         .define_own_property(str_key("x"), PropertyDescriptor::data_frozen(int_val(1)))
         .unwrap();
-    let result =
-        ProxyInvariantChecker::check_get_own_property(&target, &str_key("x"), &None);
+    let result = ProxyInvariantChecker::check_get_own_property(&target, &str_key("x"), &None);
     assert!(result.is_err());
 }
 
@@ -1461,8 +1470,7 @@ fn invariant_check_get_own_property_non_extensible_existing_reported_absent() {
         .define_own_property(str_key("x"), PropertyDescriptor::data(int_val(1)))
         .unwrap();
     target.prevent_extensions();
-    let result =
-        ProxyInvariantChecker::check_get_own_property(&target, &str_key("x"), &None);
+    let result = ProxyInvariantChecker::check_get_own_property(&target, &str_key("x"), &None);
     assert!(result.is_err());
 }
 
@@ -1471,11 +1479,8 @@ fn invariant_check_get_own_property_non_extensible_new_reported_present() {
     let mut target = OrdinaryObject::default();
     target.prevent_extensions();
     let desc = PropertyDescriptor::data(int_val(1));
-    let result = ProxyInvariantChecker::check_get_own_property(
-        &target,
-        &str_key("new"),
-        &Some(desc),
-    );
+    let result =
+        ProxyInvariantChecker::check_get_own_property(&target, &str_key("new"), &Some(desc));
     assert!(result.is_err());
 }
 
@@ -1532,8 +1537,7 @@ fn invariant_check_get_non_configurable_non_writable_wrong_value() {
             },
         )
         .unwrap();
-    let result =
-        ProxyInvariantChecker::check_get(&target, &str_key("x"), &int_val(99));
+    let result = ProxyInvariantChecker::check_get(&target, &str_key("x"), &int_val(99));
     assert!(result.is_err());
 }
 
@@ -1551,8 +1555,7 @@ fn invariant_check_get_non_configurable_non_writable_same_value_ok() {
             },
         )
         .unwrap();
-    let result =
-        ProxyInvariantChecker::check_get(&target, &str_key("x"), &int_val(42));
+    let result = ProxyInvariantChecker::check_get(&target, &str_key("x"), &int_val(42));
     assert!(result.is_ok());
 }
 
@@ -1570,12 +1573,10 @@ fn invariant_check_get_non_configurable_accessor_no_getter_must_return_undefined
             },
         )
         .unwrap();
-    let result =
-        ProxyInvariantChecker::check_get(&target, &str_key("x"), &int_val(1));
+    let result = ProxyInvariantChecker::check_get(&target, &str_key("x"), &int_val(1));
     assert!(result.is_err());
     // Undefined should be ok
-    let result2 =
-        ProxyInvariantChecker::check_get(&target, &str_key("x"), &JsValue::Undefined);
+    let result2 = ProxyInvariantChecker::check_get(&target, &str_key("x"), &JsValue::Undefined);
     assert!(result2.is_ok());
 }
 
@@ -1593,8 +1594,7 @@ fn invariant_check_set_non_configurable_non_writable_different_value() {
             },
         )
         .unwrap();
-    let result =
-        ProxyInvariantChecker::check_set(&target, &str_key("x"), &int_val(99), true);
+    let result = ProxyInvariantChecker::check_set(&target, &str_key("x"), &int_val(99), true);
     assert!(result.is_err());
 }
 
@@ -1612,16 +1612,14 @@ fn invariant_check_set_non_configurable_accessor_no_setter() {
             },
         )
         .unwrap();
-    let result =
-        ProxyInvariantChecker::check_set(&target, &str_key("x"), &int_val(1), true);
+    let result = ProxyInvariantChecker::check_set(&target, &str_key("x"), &int_val(1), true);
     assert!(result.is_err());
 }
 
 #[test]
 fn invariant_check_set_ok_when_trap_result_false() {
     let target = OrdinaryObject::default();
-    let result =
-        ProxyInvariantChecker::check_set(&target, &str_key("x"), &int_val(1), false);
+    let result = ProxyInvariantChecker::check_set(&target, &str_key("x"), &int_val(1), false);
     assert!(result.is_ok());
 }
 
@@ -1631,8 +1629,7 @@ fn invariant_check_delete_non_configurable() {
     target
         .define_own_property(str_key("x"), PropertyDescriptor::data_frozen(int_val(1)))
         .unwrap();
-    let result =
-        ProxyInvariantChecker::check_delete(&target, &str_key("x"), true);
+    let result = ProxyInvariantChecker::check_delete(&target, &str_key("x"), true);
     assert!(result.is_err());
 }
 
@@ -1643,8 +1640,7 @@ fn invariant_check_delete_non_extensible_existing() {
         .define_own_property(str_key("x"), PropertyDescriptor::data(int_val(1)))
         .unwrap();
     target.prevent_extensions();
-    let result =
-        ProxyInvariantChecker::check_delete(&target, &str_key("x"), true);
+    let result = ProxyInvariantChecker::check_delete(&target, &str_key("x"), true);
     // data(1) is configurable, but target is non-extensible and property exists
     assert!(result.is_err());
 }
@@ -1652,8 +1648,7 @@ fn invariant_check_delete_non_extensible_existing() {
 #[test]
 fn invariant_check_delete_ok_when_false() {
     let target = OrdinaryObject::default();
-    let result =
-        ProxyInvariantChecker::check_delete(&target, &str_key("x"), false);
+    let result = ProxyInvariantChecker::check_delete(&target, &str_key("x"), false);
     assert!(result.is_ok());
 }
 
@@ -1758,12 +1753,8 @@ fn invariant_check_define_own_property_non_extensible_new_property() {
     let mut target = OrdinaryObject::default();
     target.prevent_extensions();
     let desc = PropertyDescriptor::data(int_val(1));
-    let result = ProxyInvariantChecker::check_define_own_property(
-        &target,
-        &str_key("new"),
-        &desc,
-        true,
-    );
+    let result =
+        ProxyInvariantChecker::check_define_own_property(&target, &str_key("new"), &desc, true);
     assert!(result.is_err());
 }
 
@@ -1774,12 +1765,8 @@ fn invariant_check_define_own_property_non_configurable_when_target_configurable
         .define_own_property(str_key("x"), PropertyDescriptor::data(int_val(1)))
         .unwrap();
     let desc = PropertyDescriptor::data_frozen(int_val(1));
-    let result = ProxyInvariantChecker::check_define_own_property(
-        &target,
-        &str_key("x"),
-        &desc,
-        true,
-    );
+    let result =
+        ProxyInvariantChecker::check_define_own_property(&target, &str_key("x"), &desc, true);
     assert!(result.is_err());
 }
 
@@ -1801,7 +1788,10 @@ fn reflect_set() {
     let mut heap = ObjectHeap::new();
     let obj = heap.alloc_plain();
     assert!(Reflect::set(&mut heap, obj, str_key("x"), int_val(42)).unwrap());
-    assert_eq!(Reflect::get(&heap, obj, &str_key("x")).unwrap(), int_val(42));
+    assert_eq!(
+        Reflect::get(&heap, obj, &str_key("x")).unwrap(),
+        int_val(42)
+    );
 }
 
 #[test]
@@ -1868,14 +1858,19 @@ fn reflect_prevent_extensions() {
 fn reflect_define_property() {
     let mut heap = ObjectHeap::new();
     let obj = heap.alloc_plain();
-    assert!(Reflect::define_property(
-        &mut heap,
-        obj,
-        str_key("x"),
-        PropertyDescriptor::data(int_val(42))
-    )
-    .unwrap());
-    assert_eq!(Reflect::get(&heap, obj, &str_key("x")).unwrap(), int_val(42));
+    assert!(
+        Reflect::define_property(
+            &mut heap,
+            obj,
+            str_key("x"),
+            PropertyDescriptor::data(int_val(42))
+        )
+        .unwrap()
+    );
+    assert_eq!(
+        Reflect::get(&heap, obj, &str_key("x")).unwrap(),
+        int_val(42)
+    );
 }
 
 #[test]
@@ -2113,8 +2108,12 @@ fn deep_prototype_chain_for_in() {
         .unwrap();
     for i in 1..=10 {
         current = heap.alloc(Some(current));
-        heap.set_property(current, PropertyKey::String(format!("level{i}")), int_val(i))
-            .unwrap();
+        heap.set_property(
+            current,
+            PropertyKey::String(format!("level{i}")),
+            int_val(i),
+        )
+        .unwrap();
     }
     let keys = heap.for_in_keys(current).unwrap();
     assert!(keys.contains(&"base".to_string()));
@@ -2206,8 +2205,12 @@ fn heap_many_properties_on_one_object() {
     let mut heap = ObjectHeap::new();
     let obj = heap.alloc_plain();
     for i in 0..200 {
-        heap.set_property(obj, PropertyKey::String(format!("prop_{i}")), JsValue::Int(i))
-            .unwrap();
+        heap.set_property(
+            obj,
+            PropertyKey::String(format!("prop_{i}")),
+            JsValue::Int(i),
+        )
+        .unwrap();
     }
     let keys = heap.keys(obj).unwrap();
     assert_eq!(keys.len(), 200);

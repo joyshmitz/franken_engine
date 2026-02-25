@@ -1995,17 +1995,21 @@ mod tests {
     #[test]
     fn specializations_by_class_empty() {
         let engine = test_engine();
-        assert!(engine
-            .specializations_by_class(&OptimizationClass::TraceSpecialization)
-            .is_empty());
+        assert!(
+            engine
+                .specializations_by_class(&OptimizationClass::TraceSpecialization)
+                .is_empty()
+        );
     }
 
     #[test]
     fn specializations_by_state_empty() {
         let engine = test_engine();
-        assert!(engine
-            .specializations_by_state(FallbackState::Active)
-            .is_empty());
+        assert!(
+            engine
+                .specializations_by_state(FallbackState::Active)
+                .is_empty()
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -2341,12 +2345,8 @@ mod tests {
                 valid_until_epoch: SecurityEpoch::from_raw(110),
                 source_proof_ids: proofs.clone(),
                 linked_policy_id: "policy-001".to_string(),
-                rollback_token_hash: ContentHash::compute(
-                    format!("rb-proof-{i}").as_bytes(),
-                ),
-                baseline_ir_hash: ContentHash::compute(
-                    format!("bl-proof-{i}").as_bytes(),
-                ),
+                rollback_token_hash: ContentHash::compute(format!("rb-proof-{i}").as_bytes()),
+                baseline_ir_hash: ContentHash::compute(format!("bl-proof-{i}").as_bytes()),
                 activated_epoch: SecurityEpoch::from_raw(90),
                 activated_at_ns: 1000,
             })
@@ -2477,9 +2477,7 @@ mod tests {
         let r1 = e1
             .invalidate_specialization(&sid, reason.clone(), 2000)
             .unwrap();
-        let r2 = e2
-            .invalidate_specialization(&sid, reason, 2000)
-            .unwrap();
+        let r2 = e2.invalidate_specialization(&sid, reason, 2000).unwrap();
 
         assert_ne!(r1.signature, r2.signature);
     }

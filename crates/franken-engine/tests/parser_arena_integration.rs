@@ -1621,10 +1621,7 @@ fn determinism_handle_audit() {
     let tree = mixed_statement_tree();
     let arena1 = default_arena(&tree);
     let arena2 = default_arena(&tree);
-    assert_eq!(
-        arena1.handle_audit_entries(),
-        arena2.handle_audit_entries()
-    );
+    assert_eq!(arena1.handle_audit_entries(), arena2.handle_audit_entries());
 }
 
 #[test]
@@ -1688,8 +1685,7 @@ fn cross_concern_all_audit_entries_are_valid_serde() {
     let arena = default_arena(&tree);
     for entry in arena.handle_audit_entries() {
         let json = serde_json::to_string(&entry).expect("serialize entry");
-        let decoded: HandleAuditEntry =
-            serde_json::from_str(&json).expect("deserialize entry");
+        let decoded: HandleAuditEntry = serde_json::from_str(&json).expect("deserialize entry");
         assert_eq!(decoded, entry);
     }
 }

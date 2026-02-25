@@ -254,7 +254,11 @@ fn error_all_error_codes_unique() {
         HostLifecycleError::HostShuttingDown,
     ];
     let codes: BTreeSet<&str> = variants.iter().map(|v| v.error_code()).collect();
-    assert_eq!(codes.len(), variants.len(), "all error_codes must be unique");
+    assert_eq!(
+        codes.len(),
+        variants.len(),
+        "all error_codes must be unique"
+    );
 }
 
 #[test]
@@ -429,7 +433,10 @@ fn manager_new_creates_empty_manager() {
 fn manager_default_equals_new() {
     let mgr_new = ExtensionHostLifecycleManager::new();
     let mgr_default = ExtensionHostLifecycleManager::default();
-    assert_eq!(mgr_new.loaded_extension_count(), mgr_default.loaded_extension_count());
+    assert_eq!(
+        mgr_new.loaded_extension_count(),
+        mgr_default.loaded_extension_count()
+    );
     assert_eq!(mgr_new.is_shutting_down(), mgr_default.is_shutting_down());
     assert_eq!(mgr_new.events().len(), mgr_default.events().len());
 }
@@ -683,9 +690,7 @@ fn close_session_not_found_returns_error() {
 fn close_session_extension_not_found_returns_error() {
     let mut mgr = ExtensionHostLifecycleManager::new();
     let mut cx = mock_cx(5000);
-    let err = mgr
-        .close_session("ext-missing", "s1", &mut cx)
-        .unwrap_err();
+    let err = mgr.close_session("ext-missing", "s1", &mut cx).unwrap_err();
     assert_eq!(err.error_code(), "host_extension_not_found");
 }
 
@@ -848,9 +853,7 @@ fn cancel_extension_emits_event_with_event_name() {
     mgr.cancel_extension("ext-a", &mut cx, LifecycleEvent::Quarantine)
         .unwrap();
     let events = mgr.events();
-    let cancel_ev = events
-        .iter()
-        .find(|e| e.event.starts_with("extension_"));
+    let cancel_ev = events.iter().find(|e| e.event.starts_with("extension_"));
     assert!(cancel_ev.is_some());
 }
 
@@ -1071,7 +1074,10 @@ fn deterministic_event_sequence_single_extension() {
 
     let events1 = run();
     let events2 = run();
-    assert_eq!(events1, events2, "identical inputs must produce identical events");
+    assert_eq!(
+        events1, events2,
+        "identical inputs must produce identical events"
+    );
 }
 
 #[test]
@@ -1252,7 +1258,10 @@ fn cancellation_events_emitted_on_unload() {
     mgr.unload_extension("ext-a", &mut cx).unwrap();
 
     let cancel_events = mgr.drain_cancellation_events();
-    assert!(!cancel_events.is_empty(), "cancellation events should be emitted on unload");
+    assert!(
+        !cancel_events.is_empty(),
+        "cancellation events should be emitted on unload"
+    );
 }
 
 #[test]
@@ -1317,7 +1326,10 @@ fn cell_manager_tracks_session_cells() {
 
     // Session cell ID is deterministic: ext-a::session::s1
     let session_cell = mgr.cell_manager().get("ext-a::session::s1");
-    assert!(session_cell.is_some(), "session cell should be registered in cell manager");
+    assert!(
+        session_cell.is_some(),
+        "session cell should be registered in cell manager"
+    );
 }
 
 #[test]
@@ -1556,7 +1568,10 @@ fn interleaved_load_unload_load() {
     let result = mgr.load_extension("ext-a", &mut cx);
     // The manager keeps the old record, so this triggers ExtensionAlreadyLoaded
     assert!(result.is_err());
-    assert_eq!(result.unwrap_err().error_code(), "host_extension_already_loaded");
+    assert_eq!(
+        result.unwrap_err().error_code(),
+        "host_extension_already_loaded"
+    );
 }
 
 #[test]

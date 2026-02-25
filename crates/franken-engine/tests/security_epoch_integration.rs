@@ -427,9 +427,11 @@ fn validate_artifact_not_yet_valid() {
     };
     tracker.validate_artifact(&meta).unwrap(); // control: this is valid
     let errors = tracker.validate_artifact(&meta_future).unwrap_err();
-    assert!(errors
-        .iter()
-        .any(|e| matches!(e, EpochValidationError::NotYetValid { .. })));
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e, EpochValidationError::NotYetValid { .. }))
+    );
 }
 
 #[test]
@@ -446,9 +448,11 @@ fn validate_artifact_expired() {
         SecurityEpoch::from_raw(5),
     );
     let errors = tracker.validate_artifact(&meta).unwrap_err();
-    assert!(errors
-        .iter()
-        .any(|e| matches!(e, EpochValidationError::Expired { .. })));
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e, EpochValidationError::Expired { .. }))
+    );
 }
 
 #[test]
@@ -460,9 +464,11 @@ fn validate_artifact_future_artifact() {
         valid_until_epoch: None,
     };
     let errors = tracker.validate_artifact(&meta).unwrap_err();
-    assert!(errors
-        .iter()
-        .any(|e| matches!(e, EpochValidationError::FutureArtifact { .. })));
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e, EpochValidationError::FutureArtifact { .. }))
+    );
 }
 
 #[test]
@@ -474,9 +480,11 @@ fn validate_artifact_inverted_window() {
         SecurityEpoch::from_raw(5),
     );
     let errors = tracker.validate_artifact(&meta).unwrap_err();
-    assert!(errors
-        .iter()
-        .any(|e| matches!(e, EpochValidationError::InvertedWindow { .. })));
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e, EpochValidationError::InvertedWindow { .. }))
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -501,10 +509,7 @@ fn stamp_windowed_uses_current_epoch() {
     tracker
         .advance(TransitionReason::PolicyKeyRotation, "t1")
         .unwrap();
-    let meta = tracker.stamp_windowed(
-        SecurityEpoch::from_raw(0),
-        SecurityEpoch::from_raw(10),
-    );
+    let meta = tracker.stamp_windowed(SecurityEpoch::from_raw(0), SecurityEpoch::from_raw(10));
     assert_eq!(meta.epoch_id, tracker.current());
     assert_eq!(meta.valid_from_epoch, SecurityEpoch::GENESIS);
     assert_eq!(meta.valid_until_epoch, Some(SecurityEpoch::from_raw(10)));

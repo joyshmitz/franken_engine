@@ -865,8 +865,7 @@ mod tests {
             ObligationStatus::Aborted,
         ] {
             let json = serde_json::to_string(&status).expect("serialize");
-            let restored: ObligationStatus =
-                serde_json::from_str(&json).expect("deserialize");
+            let restored: ObligationStatus = serde_json::from_str(&json).expect("deserialize");
             assert_eq!(status, restored);
         }
     }
@@ -905,10 +904,7 @@ mod tests {
         assert!(CancelReason::Quarantine < CancelReason::Revocation);
         assert!(CancelReason::Revocation < CancelReason::BudgetExhausted);
         assert!(CancelReason::BudgetExhausted < CancelReason::ParentClosing);
-        assert!(
-            CancelReason::ParentClosing
-                < CancelReason::Custom("zzz".to_string())
-        );
+        assert!(CancelReason::ParentClosing < CancelReason::Custom("zzz".to_string()));
     }
 
     #[test]

@@ -157,12 +157,18 @@ fn scheduler_lane_hash_is_consistent() {
 
 #[test]
 fn task_type_cancel_cleanup_required_lane() {
-    assert_eq!(TaskType::CancelCleanup.required_lane(), SchedulerLane::Cancel);
+    assert_eq!(
+        TaskType::CancelCleanup.required_lane(),
+        SchedulerLane::Cancel
+    );
 }
 
 #[test]
 fn task_type_quarantine_exec_required_lane() {
-    assert_eq!(TaskType::QuarantineExec.required_lane(), SchedulerLane::Cancel);
+    assert_eq!(
+        TaskType::QuarantineExec.required_lane(),
+        SchedulerLane::Cancel
+    );
 }
 
 #[test]
@@ -177,12 +183,18 @@ fn task_type_lease_renewal_required_lane() {
 
 #[test]
 fn task_type_monitoring_probe_required_lane() {
-    assert_eq!(TaskType::MonitoringProbe.required_lane(), SchedulerLane::Timed);
+    assert_eq!(
+        TaskType::MonitoringProbe.required_lane(),
+        SchedulerLane::Timed
+    );
 }
 
 #[test]
 fn task_type_evidence_flush_required_lane() {
-    assert_eq!(TaskType::EvidenceFlush.required_lane(), SchedulerLane::Timed);
+    assert_eq!(
+        TaskType::EvidenceFlush.required_lane(),
+        SchedulerLane::Timed
+    );
 }
 
 #[test]
@@ -208,7 +220,10 @@ fn task_type_gc_cycle_required_lane() {
 
 #[test]
 fn task_type_policy_iteration_required_lane() {
-    assert_eq!(TaskType::PolicyIteration.required_lane(), SchedulerLane::Ready);
+    assert_eq!(
+        TaskType::PolicyIteration.required_lane(),
+        SchedulerLane::Ready
+    );
 }
 
 #[test]
@@ -691,10 +706,20 @@ fn submit_updates_total_queue_depth() {
 fn submit_with_all_cancel_task_types() {
     let mut sched = default_scheduler();
     sched
-        .submit(cancel_label_typed(TaskType::CancelCleanup, "t1"), 0, "p1", 0)
+        .submit(
+            cancel_label_typed(TaskType::CancelCleanup, "t1"),
+            0,
+            "p1",
+            0,
+        )
         .unwrap();
     sched
-        .submit(cancel_label_typed(TaskType::QuarantineExec, "t2"), 0, "p2", 0)
+        .submit(
+            cancel_label_typed(TaskType::QuarantineExec, "t2"),
+            0,
+            "p2",
+            0,
+        )
         .unwrap();
     sched
         .submit(cancel_label_typed(TaskType::ForcedDrain, "t3"), 0, "p3", 0)
@@ -709,10 +734,20 @@ fn submit_with_all_timed_task_types() {
         .submit(timed_label_typed(TaskType::LeaseRenewal, "t1"), 10, "p1", 0)
         .unwrap();
     sched
-        .submit(timed_label_typed(TaskType::MonitoringProbe, "t2"), 20, "p2", 0)
+        .submit(
+            timed_label_typed(TaskType::MonitoringProbe, "t2"),
+            20,
+            "p2",
+            0,
+        )
         .unwrap();
     sched
-        .submit(timed_label_typed(TaskType::EvidenceFlush, "t3"), 30, "p3", 0)
+        .submit(
+            timed_label_typed(TaskType::EvidenceFlush, "t3"),
+            30,
+            "p3",
+            0,
+        )
         .unwrap();
     sched
         .submit(
@@ -729,13 +764,23 @@ fn submit_with_all_timed_task_types() {
 fn submit_with_all_ready_task_types() {
     let mut sched = default_scheduler();
     sched
-        .submit(ready_label_typed(TaskType::ExtensionDispatch, "t1"), 0, "p1", 0)
+        .submit(
+            ready_label_typed(TaskType::ExtensionDispatch, "t1"),
+            0,
+            "p1",
+            0,
+        )
         .unwrap();
     sched
         .submit(ready_label_typed(TaskType::GcCycle, "t2"), 0, "p2", 0)
         .unwrap();
     sched
-        .submit(ready_label_typed(TaskType::PolicyIteration, "t3"), 0, "p3", 0)
+        .submit(
+            ready_label_typed(TaskType::PolicyIteration, "t3"),
+            0,
+            "p3",
+            0,
+        )
         .unwrap();
     sched
         .submit(ready_label_typed(TaskType::RemoteSync, "t4"), 0, "p4", 0)
@@ -825,13 +870,7 @@ fn submit_rejects_full_cancel_lane() {
     sched.submit(cancel_label("t1"), 0, "p1", 0).unwrap();
     sched.submit(cancel_label("t2"), 0, "p2", 0).unwrap();
     let err = sched.submit(cancel_label("t3"), 0, "p3", 0).unwrap_err();
-    assert!(matches!(
-        err,
-        LaneError::LaneFull {
-            max_depth: 2,
-            ..
-        }
-    ));
+    assert!(matches!(err, LaneError::LaneFull { max_depth: 2, .. }));
 }
 
 #[test]
@@ -1039,7 +1078,10 @@ fn anti_starvation_guarantees_ready_progress_when_cancel_fills_batch() {
         .iter()
         .filter(|t| t.label.lane == SchedulerLane::Ready)
         .count();
-    assert!(ready_count >= 2, "anti-starvation must guarantee >= 2 ready tasks");
+    assert!(
+        ready_count >= 2,
+        "anti-starvation must guarantee >= 2 ready tasks"
+    );
 }
 
 #[test]
@@ -1123,7 +1165,9 @@ fn timed_tasks_past_deadline_not_in_batch_are_timed_out() {
     let mut sched = default_scheduler();
     // Submit two timed tasks; only schedule one via batch_size=1
     sched.submit(timed_label("t1"), 50, "early", 0).unwrap();
-    sched.submit(timed_label("t2"), 80, "late-expired", 0).unwrap();
+    sched
+        .submit(timed_label("t2"), 80, "late-expired", 0)
+        .unwrap();
 
     // current_ticks=100. Task with deadline 50 is scheduled. Task with deadline 80
     // is past deadline (80 < 100) but was not pulled in batch. It gets timed out.
@@ -1153,7 +1197,9 @@ fn timed_tasks_at_exact_deadline_are_not_timed_out() {
 fn timed_tasks_with_zero_deadline_are_never_timed_out() {
     let mut sched = default_scheduler();
     // deadline_tick=0 means no deadline, should not be timed out
-    sched.submit(timed_label("t1"), 0, "no-deadline", 0).unwrap();
+    sched
+        .submit(timed_label("t1"), 0, "no-deadline", 0)
+        .unwrap();
 
     // Not due (0 <= 100 is true, so it IS scheduled actually)
     let batch = sched.schedule_batch(10, 100);
@@ -1164,7 +1210,9 @@ fn timed_tasks_with_zero_deadline_are_never_timed_out() {
 #[test]
 fn timeout_emits_events_and_counts() {
     let mut sched = default_scheduler();
-    sched.submit(timed_label("t1"), 10, "will-expire", 0).unwrap();
+    sched
+        .submit(timed_label("t1"), 10, "will-expire", 0)
+        .unwrap();
     sched.drain_events(); // clear submit event
 
     // current_ticks=100, deadline=10. Not scheduled because batch_size=0.
@@ -1450,11 +1498,15 @@ fn full_lifecycle_submit_schedule_complete() {
     let mut sched = default_scheduler();
 
     // Submit tasks across all lanes.
-    let c1 = sched.submit(cancel_label("c1"), 0, "cancel-payload", 0).unwrap();
+    let c1 = sched
+        .submit(cancel_label("c1"), 0, "cancel-payload", 0)
+        .unwrap();
     let ti1 = sched
         .submit(timed_label("ti1"), 50, "timed-payload", 0)
         .unwrap();
-    let r1 = sched.submit(ready_label("r1"), 0, "ready-payload", 0).unwrap();
+    let r1 = sched
+        .submit(ready_label("r1"), 0, "ready-payload", 0)
+        .unwrap();
 
     assert_eq!(sched.total_queue_depth(), 3);
 
@@ -1485,14 +1537,22 @@ fn multiple_rounds_of_scheduling() {
     let mut sched = default_scheduler();
 
     // Round 1: submit and schedule cancel tasks.
-    sched.submit(cancel_label("c1"), 0, "c-payload-1", 0).unwrap();
-    sched.submit(cancel_label("c2"), 0, "c-payload-2", 0).unwrap();
+    sched
+        .submit(cancel_label("c1"), 0, "c-payload-1", 0)
+        .unwrap();
+    sched
+        .submit(cancel_label("c2"), 0, "c-payload-2", 0)
+        .unwrap();
     let batch1 = sched.schedule_batch(10, 0);
     assert_eq!(batch1.len(), 2);
 
     // Round 2: submit and schedule timed + ready tasks.
-    sched.submit(timed_label("ti1"), 50, "t-payload-1", 10).unwrap();
-    sched.submit(ready_label("r1"), 0, "r-payload-1", 10).unwrap();
+    sched
+        .submit(timed_label("ti1"), 50, "t-payload-1", 10)
+        .unwrap();
+    sched
+        .submit(ready_label("r1"), 0, "r-payload-1", 10)
+        .unwrap();
     let batch2 = sched.schedule_batch(10, 100);
     assert_eq!(batch2.len(), 2);
 
@@ -1509,24 +1569,54 @@ fn mixed_task_types_per_lane() {
 
     // All three cancel task types.
     sched
-        .submit(cancel_label_typed(TaskType::CancelCleanup, "cc"), 0, "p-cc", 0)
+        .submit(
+            cancel_label_typed(TaskType::CancelCleanup, "cc"),
+            0,
+            "p-cc",
+            0,
+        )
         .unwrap();
     sched
-        .submit(cancel_label_typed(TaskType::QuarantineExec, "qe"), 0, "p-qe", 0)
+        .submit(
+            cancel_label_typed(TaskType::QuarantineExec, "qe"),
+            0,
+            "p-qe",
+            0,
+        )
         .unwrap();
     sched
-        .submit(cancel_label_typed(TaskType::ForcedDrain, "fd"), 0, "p-fd", 0)
+        .submit(
+            cancel_label_typed(TaskType::ForcedDrain, "fd"),
+            0,
+            "p-fd",
+            0,
+        )
         .unwrap();
 
     // All four timed task types.
     sched
-        .submit(timed_label_typed(TaskType::LeaseRenewal, "lr"), 10, "p-lr", 0)
+        .submit(
+            timed_label_typed(TaskType::LeaseRenewal, "lr"),
+            10,
+            "p-lr",
+            0,
+        )
         .unwrap();
     sched
-        .submit(timed_label_typed(TaskType::MonitoringProbe, "mp"), 20, "p-mp", 0)
+        .submit(
+            timed_label_typed(TaskType::MonitoringProbe, "mp"),
+            20,
+            "p-mp",
+            0,
+        )
         .unwrap();
     sched
-        .submit(timed_label_typed(TaskType::EvidenceFlush, "ef"), 30, "p-ef", 0)
+        .submit(
+            timed_label_typed(TaskType::EvidenceFlush, "ef"),
+            30,
+            "p-ef",
+            0,
+        )
         .unwrap();
     sched
         .submit(
@@ -1539,19 +1629,34 @@ fn mixed_task_types_per_lane() {
 
     // All five ready task types.
     sched
-        .submit(ready_label_typed(TaskType::ExtensionDispatch, "ed"), 0, "p-ed", 0)
+        .submit(
+            ready_label_typed(TaskType::ExtensionDispatch, "ed"),
+            0,
+            "p-ed",
+            0,
+        )
         .unwrap();
     sched
         .submit(ready_label_typed(TaskType::GcCycle, "gc"), 0, "p-gc", 0)
         .unwrap();
     sched
-        .submit(ready_label_typed(TaskType::PolicyIteration, "pi"), 0, "p-pi", 0)
+        .submit(
+            ready_label_typed(TaskType::PolicyIteration, "pi"),
+            0,
+            "p-pi",
+            0,
+        )
         .unwrap();
     sched
         .submit(ready_label_typed(TaskType::RemoteSync, "rs"), 0, "p-rs", 0)
         .unwrap();
     sched
-        .submit(ready_label_typed(TaskType::SagaStepExec, "ss"), 0, "p-ss", 0)
+        .submit(
+            ready_label_typed(TaskType::SagaStepExec, "ss"),
+            0,
+            "p-ss",
+            0,
+        )
         .unwrap();
 
     assert_eq!(sched.total_queue_depth(), 12);
@@ -1719,7 +1824,9 @@ fn trace_id_validation_runs_before_lane_validation() {
 #[test]
 fn serde_round_trip_of_scheduled_task_from_batch() {
     let mut sched = default_scheduler();
-    sched.submit(cancel_label("serde-trace"), 0, "serde-payload", 42).unwrap();
+    sched
+        .submit(cancel_label("serde-trace"), 0, "serde-payload", 42)
+        .unwrap();
 
     let batch = sched.schedule_batch(10, 50);
     let task = &batch[0];
@@ -1784,12 +1891,7 @@ fn large_batch_stress_test() {
     }
     for i in 0..100 {
         sched
-            .submit(
-                timed_label(&format!("ti{i}")),
-                i + 1,
-                &format!("tp{i}"),
-                i,
-            )
+            .submit(timed_label(&format!("ti{i}")), i + 1, &format!("tp{i}"), i)
             .unwrap();
     }
     for i in 0..100 {
@@ -1821,7 +1923,9 @@ fn large_batch_stress_test() {
 #[test]
 fn timed_task_with_deadline_exactly_equal_to_current_is_scheduled() {
     let mut sched = default_scheduler();
-    sched.submit(timed_label("t1"), 100, "exact-match", 0).unwrap();
+    sched
+        .submit(timed_label("t1"), 100, "exact-match", 0)
+        .unwrap();
 
     let batch = sched.schedule_batch(10, 100);
     assert_eq!(batch.len(), 1);

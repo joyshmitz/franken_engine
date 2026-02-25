@@ -102,7 +102,10 @@ fn safety_action_as_str_stable_across_calls() {
         let first = action.as_str();
         let second = action.as_str();
         assert_eq!(first, second);
-        assert!(!first.is_empty(), "as_str should not be empty for {action:?}");
+        assert!(
+            !first.is_empty(),
+            "as_str should not be empty for {action:?}"
+        );
     }
 }
 
@@ -664,7 +667,10 @@ fn evaluate_propagates_trace_id_from_context() {
         let mut cx2 = test_cx_with_seed(99, 100);
         r.evaluate(&mut cx2, &req).unwrap()
     };
-    assert_eq!(result.trace_id, result2.trace_id, "same seed should produce same trace_id");
+    assert_eq!(
+        result.trace_id, result2.trace_id,
+        "same seed should produce same trace_id"
+    );
 }
 
 // ---------------------------------------------------------------------------

@@ -983,10 +983,20 @@ mod tests {
     fn add_zone_rejects_duplicate_name() {
         let mut hierarchy = ZoneHierarchy::new("community");
         hierarchy
-            .add_zone(ZoneCreateRequest::new("owner", TrustZoneClass::Owner, 1, "root"))
+            .add_zone(ZoneCreateRequest::new(
+                "owner",
+                TrustZoneClass::Owner,
+                1,
+                "root",
+            ))
             .unwrap();
         let err = hierarchy
-            .add_zone(ZoneCreateRequest::new("owner", TrustZoneClass::Owner, 1, "root"))
+            .add_zone(ZoneCreateRequest::new(
+                "owner",
+                TrustZoneClass::Owner,
+                1,
+                "root",
+            ))
             .unwrap_err();
         assert!(matches!(err, TrustZoneError::ZoneAlreadyExists { .. }));
     }
@@ -1040,7 +1050,12 @@ mod tests {
         hierarchy.assign_entity("ext-1", "community", "t").unwrap();
         let err = hierarchy
             .transition_entity(ZoneTransitionRequest::new(
-                "ext-1", "nonexistent", "t", "p", "d", true,
+                "ext-1",
+                "nonexistent",
+                "t",
+                "p",
+                "d",
+                true,
             ))
             .unwrap_err();
         assert!(matches!(err, TrustZoneError::ZoneMissing { .. }));
@@ -1058,7 +1073,9 @@ mod tests {
     #[test]
     fn compute_effective_ceiling_for_missing_zone_fails() {
         let hierarchy = ZoneHierarchy::standard("m", 1).unwrap();
-        let err = hierarchy.compute_effective_ceiling("nonexistent").unwrap_err();
+        let err = hierarchy
+            .compute_effective_ceiling("nonexistent")
+            .unwrap_err();
         assert!(matches!(err, TrustZoneError::ZoneMissing { .. }));
     }
 
@@ -1248,6 +1265,10 @@ mod tests {
             assert!(!msg.is_empty());
             displays.insert(msg);
         }
-        assert_eq!(displays.len(), 5, "all 5 tested variants produce distinct messages");
+        assert_eq!(
+            displays.len(),
+            5,
+            "all 5 tested variants produce distinct messages"
+        );
     }
 }

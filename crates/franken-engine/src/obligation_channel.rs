@@ -715,8 +715,7 @@ mod tests {
             ObligationState::Leaked,
         ] {
             let json = serde_json::to_string(&state).expect("serialize");
-            let restored: ObligationState =
-                serde_json::from_str(&json).expect("deserialize");
+            let restored: ObligationState = serde_json::from_str(&json).expect("deserialize");
             assert_eq!(state, restored);
         }
     }
@@ -732,8 +731,7 @@ mod tests {
         ];
         for reason in &reasons {
             let json = serde_json::to_string(reason).expect("serialize");
-            let restored: AbortReason =
-                serde_json::from_str(&json).expect("deserialize");
+            let restored: AbortReason = serde_json::from_str(&json).expect("deserialize");
             assert_eq!(*reason, restored);
         }
     }
@@ -752,7 +750,11 @@ mod tests {
             assert!(!msg.is_empty());
             displays.insert(msg);
         }
-        assert_eq!(displays.len(), 4, "all 4 variants produce distinct messages");
+        assert_eq!(
+            displays.len(),
+            4,
+            "all 4 variants produce distinct messages"
+        );
     }
 
     #[test]

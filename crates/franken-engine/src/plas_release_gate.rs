@@ -1472,22 +1472,38 @@ mod tests {
 
     #[test]
     fn failure_code_ordering() {
-        assert!(PlasReleaseGateFailureCode::CohortPlasNotActive
-            < PlasReleaseGateFailureCode::CohortCoverageMissingGrantExercise);
-        assert!(PlasReleaseGateFailureCode::CohortCoverageMissingGrantExercise
-            < PlasReleaseGateFailureCode::MissingCapabilityWitness);
-        assert!(PlasReleaseGateFailureCode::MissingCapabilityWitness
-            < PlasReleaseGateFailureCode::WitnessSignatureVerificationFailed);
-        assert!(PlasReleaseGateFailureCode::WitnessSignatureVerificationFailed
-            < PlasReleaseGateFailureCode::EscrowReplayEvidenceMissing);
-        assert!(PlasReleaseGateFailureCode::EscrowReplayEvidenceMissing
-            < PlasReleaseGateFailureCode::EscrowReplayMismatch);
-        assert!(PlasReleaseGateFailureCode::EscrowReplayMismatch
-            < PlasReleaseGateFailureCode::RevocationWitnessMissing);
-        assert!(PlasReleaseGateFailureCode::RevocationWitnessMissing
-            < PlasReleaseGateFailureCode::RevocationEscrowEventMissing);
-        assert!(PlasReleaseGateFailureCode::RevocationEscrowEventMissing
-            < PlasReleaseGateFailureCode::AmbientAuthorityDetected);
+        assert!(
+            PlasReleaseGateFailureCode::CohortPlasNotActive
+                < PlasReleaseGateFailureCode::CohortCoverageMissingGrantExercise
+        );
+        assert!(
+            PlasReleaseGateFailureCode::CohortCoverageMissingGrantExercise
+                < PlasReleaseGateFailureCode::MissingCapabilityWitness
+        );
+        assert!(
+            PlasReleaseGateFailureCode::MissingCapabilityWitness
+                < PlasReleaseGateFailureCode::WitnessSignatureVerificationFailed
+        );
+        assert!(
+            PlasReleaseGateFailureCode::WitnessSignatureVerificationFailed
+                < PlasReleaseGateFailureCode::EscrowReplayEvidenceMissing
+        );
+        assert!(
+            PlasReleaseGateFailureCode::EscrowReplayEvidenceMissing
+                < PlasReleaseGateFailureCode::EscrowReplayMismatch
+        );
+        assert!(
+            PlasReleaseGateFailureCode::EscrowReplayMismatch
+                < PlasReleaseGateFailureCode::RevocationWitnessMissing
+        );
+        assert!(
+            PlasReleaseGateFailureCode::RevocationWitnessMissing
+                < PlasReleaseGateFailureCode::RevocationEscrowEventMissing
+        );
+        assert!(
+            PlasReleaseGateFailureCode::RevocationEscrowEventMissing
+                < PlasReleaseGateFailureCode::AmbientAuthorityDetected
+        );
     }
 
     // -- Enrichment: failure code display all variants --

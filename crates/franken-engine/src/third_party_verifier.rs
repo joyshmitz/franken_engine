@@ -1313,7 +1313,10 @@ mod tests {
 
     #[test]
     fn verdict_exit_code_verified() {
-        assert_eq!(VerificationVerdict::Verified.exit_code(), EXIT_CODE_VERIFIED);
+        assert_eq!(
+            VerificationVerdict::Verified.exit_code(),
+            EXIT_CODE_VERIFIED
+        );
     }
 
     #[test]
@@ -1390,7 +1393,11 @@ mod tests {
         let bundle = make_containment_bundle(result);
         let report = verify_containment_claim(&bundle);
         assert_eq!(report.verdict, VerificationVerdict::Failed);
-        let failed = report.checks.iter().find(|c| c.name == "scenario_count_matches").unwrap();
+        let failed = report
+            .checks
+            .iter()
+            .find(|c| c.name == "scenario_count_matches")
+            .unwrap();
         assert!(!failed.passed);
         assert_eq!(failed.error_code.as_deref(), Some(CODE_CONTAINMENT_COUNTS));
     }
@@ -1403,7 +1410,11 @@ mod tests {
         let bundle = make_containment_bundle(result);
         let report = verify_containment_claim(&bundle);
         assert_eq!(report.verdict, VerificationVerdict::Failed);
-        let failed = report.checks.iter().find(|c| c.name == "passed_count_matches").unwrap();
+        let failed = report
+            .checks
+            .iter()
+            .find(|c| c.name == "passed_count_matches")
+            .unwrap();
         assert!(!failed.passed);
     }
 
@@ -2037,6 +2048,9 @@ mod tests {
             }
         }"#;
         let bundle: ContainmentClaimBundle = serde_json::from_str(json).unwrap();
-        assert_eq!(bundle.detection_latency_sla_ns, DEFAULT_CONTAINMENT_LATENCY_SLA_NS);
+        assert_eq!(
+            bundle.detection_latency_sla_ns,
+            DEFAULT_CONTAINMENT_LATENCY_SLA_NS
+        );
     }
 }

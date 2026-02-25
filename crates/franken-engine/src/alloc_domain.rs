@@ -672,11 +672,20 @@ mod tests {
 
     #[test]
     fn allocation_domain_display_all_variants() {
-        assert_eq!(AllocationDomain::ExtensionHeap.to_string(), "extension-heap");
+        assert_eq!(
+            AllocationDomain::ExtensionHeap.to_string(),
+            "extension-heap"
+        );
         assert_eq!(AllocationDomain::RuntimeHeap.to_string(), "runtime-heap");
         assert_eq!(AllocationDomain::IrArena.to_string(), "ir-arena");
-        assert_eq!(AllocationDomain::EvidenceArena.to_string(), "evidence-arena");
-        assert_eq!(AllocationDomain::ScratchBuffer.to_string(), "scratch-buffer");
+        assert_eq!(
+            AllocationDomain::EvidenceArena.to_string(),
+            "evidence-arena"
+        );
+        assert_eq!(
+            AllocationDomain::ScratchBuffer.to_string(),
+            "scratch-buffer"
+        );
     }
 
     #[test]

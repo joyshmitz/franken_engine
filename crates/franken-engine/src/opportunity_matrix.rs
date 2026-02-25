@@ -991,9 +991,7 @@ mod tests {
     // ── hotspot_profile_from_flamegraphs ─────────────────────────────
 
     fn test_flamegraph(kind: FlamegraphKind, stacks: Vec<(&str, u64)>) -> FlamegraphArtifact {
-        use crate::flamegraph_pipeline::{
-            FlamegraphEvidenceLink, FlamegraphMetadata,
-        };
+        use crate::flamegraph_pipeline::{FlamegraphEvidenceLink, FlamegraphMetadata};
         FlamegraphArtifact {
             schema_version: "v1".into(),
             artifact_id: "art-1".into(),
@@ -1017,10 +1015,12 @@ mod tests {
             },
             folded_stacks: stacks
                 .into_iter()
-                .map(|(stack, count)| crate::flamegraph_pipeline::FoldedStackSample {
-                    stack: stack.to_string(),
-                    sample_count: count,
-                })
+                .map(
+                    |(stack, count)| crate::flamegraph_pipeline::FoldedStackSample {
+                        stack: stack.to_string(),
+                        sample_count: count,
+                    },
+                )
                 .collect(),
             folded_stacks_text: String::new(),
             svg: String::new(),
@@ -1048,10 +1048,7 @@ mod tests {
 
     #[test]
     fn hotspot_profile_aggregates_across_artifacts() {
-        let fg1 = test_flamegraph(
-            FlamegraphKind::Cpu,
-            vec![("vm;dispatch", 50)],
-        );
+        let fg1 = test_flamegraph(FlamegraphKind::Cpu, vec![("vm;dispatch", 50)]);
         let fg2 = test_flamegraph(
             FlamegraphKind::Allocation,
             vec![("vm;dispatch", 30), ("gc;collect", 20)],
@@ -1064,10 +1061,7 @@ mod tests {
 
     #[test]
     fn hotspot_profile_empty_stacks_skipped() {
-        let fg = test_flamegraph(
-            FlamegraphKind::Cpu,
-            vec![("  ", 100), ("vm;run", 50)],
-        );
+        let fg = test_flamegraph(FlamegraphKind::Cpu, vec![("  ", 100), ("vm;run", 50)]);
         let profile = hotspot_profile_from_flamegraphs(&[fg]);
         assert_eq!(profile.len(), 1);
         assert_eq!(profile[0].function, "run");
@@ -1162,19 +1156,20 @@ mod tests {
 
     #[test]
     fn derive_candidates_hotpath_weight_sums_correctly() {
-        let hotspots = vec![
-            HotspotProfileEntry {
-                module: "a".into(),
-                function: "f".into(),
-                sample_count: 100,
-            },
-        ];
+        let hotspots = vec![HotspotProfileEntry {
+            module: "a".into(),
+            function: "f".into(),
+            sample_count: 100,
+        }];
         let derived = derive_candidates_from_hotspots(
             &hotspots, 1_000_000, 1, 100_000, 1_000_000, 1_000_000, 10,
         );
         assert_eq!(derived.len(), 1);
         // Sole hotspot gets weight 1_000_000 (100%)
-        assert_eq!(derived[0].hotpath_weight_override_millionths, Some(1_000_000));
+        assert_eq!(
+            derived[0].hotpath_weight_override_millionths,
+            Some(1_000_000)
+        );
     }
 
     // ── Missing hotspot rejection ────────────────────────────────────
@@ -1219,7 +1214,9 @@ mod tests {
         });
         let d = run_opportunity_matrix_scoring(&req);
         assert_eq!(d.historical_tracking.len(), 2);
-        assert!(d.historical_tracking[0].completed_at_utc <= d.historical_tracking[1].completed_at_utc);
+        assert!(
+            d.historical_tracking[0].completed_at_utc <= d.historical_tracking[1].completed_at_utc
+        );
     }
 
     // ── Events ───────────────────────────────────────────────────────

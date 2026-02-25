@@ -155,15 +155,21 @@ fn handle_audit_entries_are_deterministic() {
 
     assert_eq!(entries_a, entries_b);
     assert!(!entries_a.is_empty());
-    assert!(entries_a
-        .iter()
-        .any(|entry| entry.handle_kind == HandleAuditKind::Node));
-    assert!(entries_a
-        .iter()
-        .any(|entry| entry.handle_kind == HandleAuditKind::Expression));
-    assert!(entries_a
-        .iter()
-        .any(|entry| entry.handle_kind == HandleAuditKind::Span));
+    assert!(
+        entries_a
+            .iter()
+            .any(|entry| entry.handle_kind == HandleAuditKind::Node)
+    );
+    assert!(
+        entries_a
+            .iter()
+            .any(|entry| entry.handle_kind == HandleAuditKind::Expression)
+    );
+    assert!(
+        entries_a
+            .iter()
+            .any(|entry| entry.handle_kind == HandleAuditKind::Span)
+    );
 }
 
 #[test]

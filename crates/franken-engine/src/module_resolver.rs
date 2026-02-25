@@ -1667,7 +1667,7 @@ mod tests {
 
     #[test]
     fn allow_all_policy_default_serde() {
-        let p = AllowAllPolicy::default();
+        let p = AllowAllPolicy;
         let json = serde_json::to_string(&p).expect("serialize");
         let restored: AllowAllPolicy = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(p, restored);

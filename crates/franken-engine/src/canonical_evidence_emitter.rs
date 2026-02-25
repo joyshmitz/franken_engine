@@ -1408,11 +1408,19 @@ mod tests {
     #[test]
     fn emission_error_std_error() {
         let variants: Vec<Box<dyn std::error::Error>> = vec![
-            Box::new(EmissionError::MissingField { field: "ctx".into() }),
-            Box::new(EmissionError::LedgerWriteFailure { reason: "disk".into() }),
-            Box::new(EmissionError::ValidationFailure { reason: "bad".into() }),
+            Box::new(EmissionError::MissingField {
+                field: "ctx".into(),
+            }),
+            Box::new(EmissionError::LedgerWriteFailure {
+                reason: "disk".into(),
+            }),
+            Box::new(EmissionError::ValidationFailure {
+                reason: "bad".into(),
+            }),
             Box::new(EmissionError::BufferFull { capacity: 64 }),
-            Box::new(EmissionError::NotRequired { action: HighImpactAction::Sandbox }),
+            Box::new(EmissionError::NotRequired {
+                action: HighImpactAction::Sandbox,
+            }),
         ];
         let mut displays = std::collections::BTreeSet::new();
         for v in &variants {

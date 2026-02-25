@@ -22,11 +22,26 @@ fn capability_display_all_variants() {
     assert_eq!(RuntimeCapability::PolicyRead.to_string(), "policy_read");
     assert_eq!(RuntimeCapability::PolicyWrite.to_string(), "policy_write");
     assert_eq!(RuntimeCapability::EvidenceEmit.to_string(), "evidence_emit");
-    assert_eq!(RuntimeCapability::DecisionInvoke.to_string(), "decision_invoke");
-    assert_eq!(RuntimeCapability::NetworkEgress.to_string(), "network_egress");
-    assert_eq!(RuntimeCapability::LeaseManagement.to_string(), "lease_management");
-    assert_eq!(RuntimeCapability::IdempotencyDerive.to_string(), "idempotency_derive");
-    assert_eq!(RuntimeCapability::ExtensionLifecycle.to_string(), "extension_lifecycle");
+    assert_eq!(
+        RuntimeCapability::DecisionInvoke.to_string(),
+        "decision_invoke"
+    );
+    assert_eq!(
+        RuntimeCapability::NetworkEgress.to_string(),
+        "network_egress"
+    );
+    assert_eq!(
+        RuntimeCapability::LeaseManagement.to_string(),
+        "lease_management"
+    );
+    assert_eq!(
+        RuntimeCapability::IdempotencyDerive.to_string(),
+        "idempotency_derive"
+    );
+    assert_eq!(
+        RuntimeCapability::ExtensionLifecycle.to_string(),
+        "extension_lifecycle"
+    );
     assert_eq!(RuntimeCapability::HeapAllocate.to_string(), "heap_allocate");
     assert_eq!(RuntimeCapability::EnvRead.to_string(), "env_read");
     assert_eq!(RuntimeCapability::ProcessSpawn.to_string(), "process_spawn");
@@ -114,9 +129,15 @@ fn compute_only_caps() {
 
 #[test]
 fn capability_profile_display() {
-    assert_eq!(CapabilityProfile::engine_core().to_string(), "EngineCoreCaps[4]");
+    assert_eq!(
+        CapabilityProfile::engine_core().to_string(),
+        "EngineCoreCaps[4]"
+    );
     assert_eq!(CapabilityProfile::full().to_string(), "FullCaps[16]");
-    assert_eq!(CapabilityProfile::compute_only().to_string(), "ComputeOnlyCaps[0]");
+    assert_eq!(
+        CapabilityProfile::compute_only().to_string(),
+        "ComputeOnlyCaps[0]"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -207,7 +228,15 @@ fn require_capability_fails() {
 #[test]
 fn require_all_succeeds() {
     let full = CapabilityProfile::full();
-    require_all(&full, &[RuntimeCapability::VmDispatch, RuntimeCapability::PolicyWrite], "test").unwrap();
+    require_all(
+        &full,
+        &[
+            RuntimeCapability::VmDispatch,
+            RuntimeCapability::PolicyWrite,
+        ],
+        "test",
+    )
+    .unwrap();
 }
 
 #[test]
@@ -215,9 +244,14 @@ fn require_all_collects_all_denials() {
     let co = CapabilityProfile::compute_only();
     let denials = require_all(
         &co,
-        &[RuntimeCapability::VmDispatch, RuntimeCapability::NetworkEgress, RuntimeCapability::PolicyWrite],
+        &[
+            RuntimeCapability::VmDispatch,
+            RuntimeCapability::NetworkEgress,
+            RuntimeCapability::PolicyWrite,
+        ],
         "test",
-    ).unwrap_err();
+    )
+    .unwrap_err();
     assert_eq!(denials.len(), 3);
 }
 
@@ -287,7 +321,13 @@ fn runtime_capability_serde_roundtrip() {
 
 #[test]
 fn profile_kind_serde_roundtrip() {
-    let kinds = [ProfileKind::Full, ProfileKind::EngineCore, ProfileKind::Policy, ProfileKind::Remote, ProfileKind::ComputeOnly];
+    let kinds = [
+        ProfileKind::Full,
+        ProfileKind::EngineCore,
+        ProfileKind::Policy,
+        ProfileKind::Remote,
+        ProfileKind::ComputeOnly,
+    ];
     for k in &kinds {
         let json = serde_json::to_string(k).unwrap();
         let restored: ProfileKind = serde_json::from_str(&json).unwrap();

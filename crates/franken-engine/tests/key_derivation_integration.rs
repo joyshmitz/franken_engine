@@ -213,7 +213,10 @@ fn context_empty_serde_roundtrip() {
 #[test]
 fn deriver_max_output_len() {
     let deriver = DeterministicTestDeriver;
-    assert_eq!(deriver.max_output_len(), DeterministicTestDeriver::MAX_OUTPUT);
+    assert_eq!(
+        deriver.max_output_len(),
+        DeterministicTestDeriver::MAX_OUTPUT
+    );
     assert_eq!(deriver.max_output_len(), 256);
 }
 
@@ -229,7 +232,11 @@ fn derive_produces_correct_length() {
             output_len: len,
         };
         let key = deriver.derive(&request).unwrap();
-        assert_eq!(key.key_bytes.len(), len, "wrong length for output_len={len}");
+        assert_eq!(
+            key.key_bytes.len(),
+            len,
+            "wrong length for output_len={len}"
+        );
     }
 }
 
@@ -464,7 +471,10 @@ fn derived_key_display_format() {
         context_hash: vec![],
     };
     let display = key.to_string();
-    assert!(display.contains("authentication"), "missing domain: {display}");
+    assert!(
+        display.contains("authentication"),
+        "missing domain: {display}"
+    );
     assert!(display.contains("7"), "missing epoch: {display}");
     assert!(display.contains("64 bytes"), "missing length: {display}");
 }
@@ -699,12 +709,8 @@ fn cache_different_domains_cached_separately() {
         32,
     );
     let ctx = DerivationContext::empty();
-    cache
-        .get_or_derive(KeyDomain::Symbol, &ctx, "t1")
-        .unwrap();
-    cache
-        .get_or_derive(KeyDomain::Session, &ctx, "t2")
-        .unwrap();
+    cache.get_or_derive(KeyDomain::Symbol, &ctx, "t1").unwrap();
+    cache.get_or_derive(KeyDomain::Session, &ctx, "t2").unwrap();
     cache
         .get_or_derive(KeyDomain::Evidence, &ctx, "t3")
         .unwrap();
@@ -750,9 +756,7 @@ fn cache_invalidates_on_epoch_advance() {
     assert_eq!(cache.cached_count(), 1);
 
     // Advance epoch — cache should be cleared
-    cache
-        .advance_epoch(SecurityEpoch::from_raw(2))
-        .unwrap();
+    cache.advance_epoch(SecurityEpoch::from_raw(2)).unwrap();
     assert_eq!(cache.cached_count(), 0);
     assert_eq!(cache.current_epoch(), SecurityEpoch::from_raw(2));
 
@@ -778,9 +782,7 @@ fn cache_multiple_epoch_advances() {
     let mut keys = Vec::new();
     for epoch in 1..=5 {
         if epoch > 1 {
-            cache
-                .advance_epoch(SecurityEpoch::from_raw(epoch))
-                .unwrap();
+            cache.advance_epoch(SecurityEpoch::from_raw(epoch)).unwrap();
         }
         let key = cache
             .get_or_derive(KeyDomain::Symbol, &ctx, &format!("t-{epoch}"))
@@ -803,9 +805,7 @@ fn cache_rejects_non_monotonic_epoch_advance() {
         SecurityEpoch::from_raw(5),
         32,
     );
-    let err = cache
-        .advance_epoch(SecurityEpoch::from_raw(3))
-        .unwrap_err();
+    let err = cache.advance_epoch(SecurityEpoch::from_raw(3)).unwrap_err();
     assert!(matches!(err, KeyDerivationError::EpochMismatch { .. }));
 }
 
@@ -817,9 +817,7 @@ fn cache_rejects_same_epoch_advance() {
         SecurityEpoch::from_raw(5),
         32,
     );
-    let err = cache
-        .advance_epoch(SecurityEpoch::from_raw(5))
-        .unwrap_err();
+    let err = cache.advance_epoch(SecurityEpoch::from_raw(5)).unwrap_err();
     assert!(matches!(err, KeyDerivationError::EpochMismatch { .. }));
 }
 
@@ -928,9 +926,7 @@ fn cache_events_persist_across_epoch_advances() {
     cache
         .get_or_derive(KeyDomain::Symbol, &DerivationContext::empty(), "t-e1")
         .unwrap();
-    cache
-        .advance_epoch(SecurityEpoch::from_raw(2))
-        .unwrap();
+    cache.advance_epoch(SecurityEpoch::from_raw(2)).unwrap();
     cache
         .get_or_derive(KeyDomain::Symbol, &DerivationContext::empty(), "t-e2")
         .unwrap();
@@ -959,9 +955,7 @@ fn old_epoch_key_rejected_after_advance() {
         .unwrap()
         .clone();
 
-    cache
-        .advance_epoch(SecurityEpoch::from_raw(2))
-        .unwrap();
+    cache.advance_epoch(SecurityEpoch::from_raw(2)).unwrap();
 
     let err = cache.validate_key(&old_key).unwrap_err();
     assert!(matches!(
@@ -986,17 +980,11 @@ fn derive_all_domains_at_every_epoch_produces_unique_keys() {
 
     for epoch in 1..=3 {
         if epoch > 1 {
-            cache
-                .advance_epoch(SecurityEpoch::from_raw(epoch))
-                .unwrap();
+            cache.advance_epoch(SecurityEpoch::from_raw(epoch)).unwrap();
         }
         for domain in KeyDomain::ALL {
             let key = cache
-                .get_or_derive(
-                    *domain,
-                    &ctx,
-                    &format!("e{epoch}-{domain}"),
-                )
+                .get_or_derive(*domain, &ctx, &format!("e{epoch}-{domain}"))
                 .unwrap();
             all_key_bytes.insert(key.key_bytes.clone());
         }
@@ -1025,9 +1013,7 @@ fn full_cache_replay_is_deterministic() {
             .get_or_derive(KeyDomain::Session, &ctx, "trace-r1")
             .unwrap()
             .clone();
-        cache
-            .advance_epoch(SecurityEpoch::from_raw(2))
-            .unwrap();
+        cache.advance_epoch(SecurityEpoch::from_raw(2)).unwrap();
         let k2 = cache
             .get_or_derive(KeyDomain::Session, &ctx, "trace-r2")
             .unwrap()
@@ -1060,7 +1046,10 @@ fn derived_key_carries_correct_domain_and_epoch() {
             let key = deriver.derive(&request).unwrap();
             assert_eq!(key.domain, *domain);
             assert_eq!(key.epoch, SecurityEpoch::from_raw(epoch_raw));
-            assert!(!key.context_hash.is_empty(), "context_hash should not be empty");
+            assert!(
+                !key.context_hash.is_empty(),
+                "context_hash should not be empty"
+            );
         }
     }
 }

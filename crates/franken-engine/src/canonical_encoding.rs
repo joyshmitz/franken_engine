@@ -1270,9 +1270,7 @@ mod tests {
         let err = NonCanonicalError {
             object_class: ObjectDomain::PolicyObject,
             input_hash: [0xAA; 32],
-            violation: CanonicalViolation::DuplicateKey {
-                key: "foo".into(),
-            },
+            violation: CanonicalViolation::DuplicateKey { key: "foo".into() },
             trace_id: "t-1".into(),
         };
         let boxed: &dyn std::error::Error = &err;

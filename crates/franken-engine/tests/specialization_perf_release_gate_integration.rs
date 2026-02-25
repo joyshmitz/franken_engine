@@ -11,9 +11,9 @@ use std::collections::BTreeSet;
 use frankenengine_engine::hash_tiers::ContentHash;
 use frankenengine_engine::security_epoch::SecurityEpoch;
 use frankenengine_engine::specialization_perf_release_gate::{
-    BenchmarkComparison, BenchmarkSample, FallbackTestResult, GateDecision, GateFailureCode,
-    GateFinding, GateInput, GateLogEvent, LaneType, ReceiptChainReplayResult,
-    ReceiptCoverageEntry, StatisticalSummary, evaluate, GATE_COMPONENT, GATE_SCHEMA_VERSION,
+    BenchmarkComparison, BenchmarkSample, FallbackTestResult, GATE_COMPONENT, GATE_SCHEMA_VERSION,
+    GateDecision, GateFailureCode, GateFinding, GateInput, GateLogEvent, LaneType,
+    ReceiptChainReplayResult, ReceiptCoverageEntry, StatisticalSummary, evaluate,
 };
 
 // ---------------------------------------------------------------------------
@@ -342,7 +342,12 @@ fn comparison_serde_round_trip() {
 #[test]
 fn comparison_large_values() {
     let c = BenchmarkComparison::from_samples(
-        sample("big", LaneType::ProofSpecialized, u64::MAX / 2, u64::MAX / 2),
+        sample(
+            "big",
+            LaneType::ProofSpecialized,
+            u64::MAX / 2,
+            u64::MAX / 2,
+        ),
         sample("big", LaneType::AmbientAuthority, u64::MAX, u64::MAX),
     );
     // Should not overflow thanks to i128 arithmetic
@@ -662,10 +667,7 @@ fn gate_failure_code_display_all_variants() {
             GateFailureCode::ReceiptChainReplayFailed,
             "receipt_chain_replay_failed",
         ),
-        (
-            GateFailureCode::InsufficientSamples,
-            "insufficient_samples",
-        ),
+        (GateFailureCode::InsufficientSamples, "insufficient_samples"),
         (GateFailureCode::EmptyInput, "empty_input"),
     ];
     for (code, expected) in &cases {
@@ -1071,10 +1073,7 @@ fn evaluate_comparison_logs_have_correct_lane() {
     let decision = evaluate(&input);
     for log in &decision.logs[..3] {
         assert_eq!(log.event, "benchmark_comparison");
-        assert_eq!(
-            log.lane_type.as_deref(),
-            Some("proof_specialized")
-        );
+        assert_eq!(log.lane_type.as_deref(), Some("proof_specialized"));
     }
 }
 
@@ -1326,10 +1325,7 @@ fn evaluate_receipt_coverage_finding_has_affected_item() {
         .filter(|f| f.code == GateFailureCode::InsufficientReceiptCoverage)
         .collect();
     assert!(!receipt_findings.is_empty());
-    assert_eq!(
-        receipt_findings[0].affected_item,
-        Some("opt-b".to_string())
-    );
+    assert_eq!(receipt_findings[0].affected_item, Some("opt-b".to_string()));
 }
 
 // ===========================================================================
@@ -1572,10 +1568,7 @@ fn integration_fallback_performance_regression_is_per_test() {
         .filter(|f| f.code == GateFailureCode::FallbackPerformanceRegression)
         .collect();
     assert_eq!(perf_findings.len(), 1);
-    assert_eq!(
-        perf_findings[0].affected_item,
-        Some("slow-fb".to_string())
-    );
+    assert_eq!(perf_findings[0].affected_item, Some("slow-fb".to_string()));
 }
 
 #[test]
@@ -1646,8 +1639,8 @@ fn integration_speedup_outcome_in_logs() {
     let mut input = full_input(2);
     // First: speedup, Second: regression
     input.comparisons = vec![
-        comparison("fast", 80, 100),   // positive
-        comparison("slow", 120, 100),  // negative
+        comparison("fast", 80, 100),  // positive
+        comparison("slow", 120, 100), // negative
     ];
     input.min_samples = 1;
     let decision = evaluate(&input);

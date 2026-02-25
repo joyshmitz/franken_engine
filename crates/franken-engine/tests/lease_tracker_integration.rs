@@ -28,7 +28,10 @@ fn epoch(n: u64) -> SecurityEpoch {
 fn lease_id_display() {
     assert_eq!(LeaseId::from_raw(0).to_string(), "lease:0");
     assert_eq!(LeaseId::from_raw(42).to_string(), "lease:42");
-    assert_eq!(LeaseId::from_raw(u64::MAX).to_string(), format!("lease:{}", u64::MAX));
+    assert_eq!(
+        LeaseId::from_raw(u64::MAX).to_string(),
+        format!("lease:{}", u64::MAX)
+    );
 }
 
 #[test]
@@ -343,9 +346,7 @@ fn renew_released_fails() {
 #[test]
 fn renew_unknown_fails() {
     let mut store = LeaseStore::new(epoch(1));
-    let err = store
-        .renew(&LeaseId::from_raw(999), 0, "t")
-        .unwrap_err();
+    let err = store.renew(&LeaseId::from_raw(999), 0, "t").unwrap_err();
     assert!(matches!(err, LeaseError::LeaseNotFound { lease_id: 999 }));
 }
 
@@ -517,19 +518,15 @@ fn scan_correct_escalation_per_type() {
     store
         .grant("ep", LeaseType::RemoteEndpoint, 10, 0, "t")
         .unwrap();
-    store
-        .grant("op", LeaseType::Operation, 10, 0, "t")
-        .unwrap();
-    store
-        .grant("sess", LeaseType::Session, 10, 0, "t")
-        .unwrap();
+    store.grant("op", LeaseType::Operation, 10, 0, "t").unwrap();
+    store.grant("sess", LeaseType::Session, 10, 0, "t").unwrap();
 
     let actions = store.scan_expired(100, "t-scan");
     assert_eq!(actions.len(), 3);
 
-    let has_endpoint = actions.iter().any(|a| {
-        matches!(a, EscalationAction::MarkEndpointUnreachable { holder } if holder == "ep")
-    });
+    let has_endpoint = actions.iter().any(
+        |a| matches!(a, EscalationAction::MarkEndpointUnreachable { holder } if holder == "ep"),
+    );
     let has_operation = actions
         .iter()
         .any(|a| matches!(a, EscalationAction::CancelOperation { holder } if holder == "op"));
@@ -610,13 +607,7 @@ fn multiple_epoch_advances() {
     let mut store = LeaseStore::new(epoch(1));
     for ep in 2..=10 {
         store
-            .grant(
-                &format!("n-{ep}"),
-                LeaseType::RemoteEndpoint,
-                1000,
-                0,
-                "t",
-            )
+            .grant(&format!("n-{ep}"), LeaseType::RemoteEndpoint, 1000, 0, "t")
             .unwrap();
         let actions = store.advance_epoch(epoch(ep), "t");
         assert!(!actions.is_empty());
@@ -857,9 +848,11 @@ fn expiration_emits_event_with_escalation() {
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].event, "expiration");
     assert_eq!(events[0].status, "expired");
-    assert!(events[0]
-        .escalation_action
-        .contains("mark_endpoint_unreachable"));
+    assert!(
+        events[0]
+            .escalation_action
+            .contains("mark_endpoint_unreachable")
+    );
 }
 
 #[test]
@@ -875,9 +868,11 @@ fn epoch_invalidation_emits_event() {
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].event, "epoch_invalidation");
     assert_eq!(events[0].epoch_id, 2);
-    assert!(events[0]
-        .escalation_action
-        .contains("mark_endpoint_unreachable"));
+    assert!(
+        events[0]
+            .escalation_action
+            .contains("mark_endpoint_unreachable")
+    );
 }
 
 #[test]
@@ -1171,9 +1166,7 @@ fn full_lifecycle_epoch_transition_with_mixed_states() {
     let id2 = store
         .grant("n2", LeaseType::Operation, 1000, 0, "t")
         .unwrap();
-    let _id3 = store
-        .grant("n3", LeaseType::Session, 1000, 0, "t")
-        .unwrap();
+    let _id3 = store.grant("n3", LeaseType::Session, 1000, 0, "t").unwrap();
 
     // Release one, expire another
     store.release(&id1, "t").unwrap();

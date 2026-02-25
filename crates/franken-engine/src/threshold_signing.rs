@@ -1592,7 +1592,6 @@ mod tests {
         );
     }
 
-    #[test]
     // -- Enrichment: Ord, std::error --
 
     #[test]
@@ -1642,7 +1641,11 @@ mod tests {
             assert!(!msg.is_empty());
             displays.insert(msg);
         }
-        assert_eq!(displays.len(), 12, "all 12 variants produce distinct messages");
+        assert_eq!(
+            displays.len(),
+            12,
+            "all 12 variants produce distinct messages"
+        );
     }
 
     #[test]

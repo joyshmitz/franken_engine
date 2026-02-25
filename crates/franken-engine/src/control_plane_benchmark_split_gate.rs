@@ -1126,14 +1126,23 @@ mod tests {
     fn benchmark_split_as_str_all() {
         assert_eq!(BenchmarkSplit::Baseline.as_str(), "baseline");
         assert_eq!(BenchmarkSplit::CxThreading.as_str(), "cx_threading");
-        assert_eq!(BenchmarkSplit::DecisionContracts.as_str(), "decision_contracts");
-        assert_eq!(BenchmarkSplit::EvidenceEmission.as_str(), "evidence_emission");
+        assert_eq!(
+            BenchmarkSplit::DecisionContracts.as_str(),
+            "decision_contracts"
+        );
+        assert_eq!(
+            BenchmarkSplit::EvidenceEmission.as_str(),
+            "evidence_emission"
+        );
         assert_eq!(BenchmarkSplit::FullIntegration.as_str(), "full_integration");
     }
 
     #[test]
     fn benchmark_split_display() {
-        assert_eq!(BenchmarkSplit::FullIntegration.to_string(), "full_integration");
+        assert_eq!(
+            BenchmarkSplit::FullIntegration.to_string(),
+            "full_integration"
+        );
     }
 
     #[test]
@@ -1160,19 +1169,46 @@ mod tests {
 
     #[test]
     fn failure_code_display_all() {
-        assert_eq!(BenchmarkSplitFailureCode::MissingSplitMetrics.to_string(), "missing_split_metrics");
-        assert_eq!(BenchmarkSplitFailureCode::InsufficientBaselineRuns.to_string(), "insufficient_baseline_runs");
-        assert_eq!(BenchmarkSplitFailureCode::BaselineVarianceExceeded.to_string(), "baseline_variance_exceeded");
-        assert_eq!(BenchmarkSplitFailureCode::InvalidMetric.to_string(), "invalid_metric");
-        assert_eq!(BenchmarkSplitFailureCode::ThroughputRegressionExceeded.to_string(), "throughput_regression_exceeded");
-        assert_eq!(BenchmarkSplitFailureCode::LatencyRegressionExceeded.to_string(), "latency_regression_exceeded");
-        assert_eq!(BenchmarkSplitFailureCode::MemoryOverheadExceeded.to_string(), "memory_overhead_exceeded");
-        assert_eq!(BenchmarkSplitFailureCode::PreviousRunRegressionExceeded.to_string(), "previous_run_regression_exceeded");
+        assert_eq!(
+            BenchmarkSplitFailureCode::MissingSplitMetrics.to_string(),
+            "missing_split_metrics"
+        );
+        assert_eq!(
+            BenchmarkSplitFailureCode::InsufficientBaselineRuns.to_string(),
+            "insufficient_baseline_runs"
+        );
+        assert_eq!(
+            BenchmarkSplitFailureCode::BaselineVarianceExceeded.to_string(),
+            "baseline_variance_exceeded"
+        );
+        assert_eq!(
+            BenchmarkSplitFailureCode::InvalidMetric.to_string(),
+            "invalid_metric"
+        );
+        assert_eq!(
+            BenchmarkSplitFailureCode::ThroughputRegressionExceeded.to_string(),
+            "throughput_regression_exceeded"
+        );
+        assert_eq!(
+            BenchmarkSplitFailureCode::LatencyRegressionExceeded.to_string(),
+            "latency_regression_exceeded"
+        );
+        assert_eq!(
+            BenchmarkSplitFailureCode::MemoryOverheadExceeded.to_string(),
+            "memory_overhead_exceeded"
+        );
+        assert_eq!(
+            BenchmarkSplitFailureCode::PreviousRunRegressionExceeded.to_string(),
+            "previous_run_regression_exceeded"
+        );
     }
 
     #[test]
     fn failure_code_ordering() {
-        assert!(BenchmarkSplitFailureCode::MissingSplitMetrics < BenchmarkSplitFailureCode::PreviousRunRegressionExceeded);
+        assert!(
+            BenchmarkSplitFailureCode::MissingSplitMetrics
+                < BenchmarkSplitFailureCode::PreviousRunRegressionExceeded
+        );
     }
 
     #[test]
@@ -1209,7 +1245,10 @@ mod tests {
         let json = serde_json::to_string(&t).unwrap();
         let back: BenchmarkSplitThresholds = serde_json::from_str(&json).unwrap();
         assert_eq!(back.min_baseline_runs, t.min_baseline_runs);
-        assert_eq!(back.max_baseline_cv_millionths, t.max_baseline_cv_millionths);
+        assert_eq!(
+            back.max_baseline_cv_millionths,
+            t.max_baseline_cv_millionths
+        );
     }
 
     // ── InsufficientBaselineRuns ──────────────────────────────────────
@@ -1223,9 +1262,11 @@ mod tests {
             &BenchmarkSplitThresholds::default(),
         );
         assert!(!d.pass);
-        assert!(d.findings.iter().any(|f| {
-            f.code == BenchmarkSplitFailureCode::InsufficientBaselineRuns
-        }));
+        assert!(
+            d.findings
+                .iter()
+                .any(|f| { f.code == BenchmarkSplitFailureCode::InsufficientBaselineRuns })
+        );
     }
 
     // ── InvalidMetric (zero throughput) ──────────────────────────────
@@ -1433,7 +1474,10 @@ mod tests {
 
     #[test]
     fn coefficient_of_variation_identical() {
-        assert_eq!(coefficient_of_variation_millionths(&[100, 100, 100]), Some(0));
+        assert_eq!(
+            coefficient_of_variation_millionths(&[100, 100, 100]),
+            Some(0)
+        );
     }
 
     #[test]
@@ -1453,7 +1497,10 @@ mod tests {
 
     #[test]
     fn snapshot_hash_changes_with_data() {
-        assert_ne!(previous_snapshot().snapshot_hash(), candidate_snapshot().snapshot_hash());
+        assert_ne!(
+            previous_snapshot().snapshot_hash(),
+            candidate_snapshot().snapshot_hash()
+        );
     }
 
     // ── Decision ID ──────────────────────────────────────────────────

@@ -10,7 +10,8 @@ use std::collections::BTreeSet;
 
 use frankenengine_engine::reputation::{
     EvidenceNode, EvidenceSource, EvidenceType, ExtensionNode, IncidentNode, IncidentSeverity,
-    ProvenanceRecord, PublisherNode, ReputationGraph, ResolutionStatus, TrustLevel, TrustTransition,
+    ProvenanceRecord, PublisherNode, ReputationGraph, ResolutionStatus, TrustLevel,
+    TrustTransition,
 };
 use frankenengine_engine::security_epoch::SecurityEpoch;
 use frankenengine_engine::trust_card::{
@@ -221,10 +222,16 @@ fn trust_card_display_contains_key_fields() {
     assert!(text.contains("suspicious"), "must contain trust level");
     assert!(text.contains("45/100"), "must contain risk score");
     assert!(text.contains("degrading"), "must contain risk trend");
-    assert!(text.contains("+25"), "must contain risk driver contribution");
+    assert!(
+        text.contains("+25"),
+        "must contain risk driver contribution"
+    );
     assert!(text.contains("+3"), "must contain positive evidence count");
     assert!(text.contains("-2"), "must contain negative evidence count");
-    assert!(text.contains("restrict"), "must contain recommendation action");
+    assert!(
+        text.contains("restrict"),
+        "must contain recommendation action"
+    );
     assert!(text.contains("high risk"), "must contain rationale");
 }
 
@@ -302,7 +309,10 @@ fn generate_card_for_unknown_extension() {
     assert_eq!(card.version, "1.0.0");
     assert_eq!(card.current_trust_level, TrustLevel::Unknown);
     assert_eq!(card.publisher_trust_score, Some(500_000));
-    assert!(card.risk_score > 0, "unknown extension should have some risk");
+    assert!(
+        card.risk_score > 0,
+        "unknown extension should have some risk"
+    );
     assert_eq!(card.epoch, SecurityEpoch::from_raw(1));
     assert_eq!(card.generated_at_ns, 10_000_000_000);
 }
@@ -398,9 +408,15 @@ fn risk_drivers_include_unverified_publisher() {
         .generate(&graph, "ext-1", SecurityEpoch::from_raw(1), 10_000_000_000)
         .unwrap();
 
-    let descriptions: Vec<&str> = card.risk_drivers.iter().map(|d| d.description.as_str()).collect();
+    let descriptions: Vec<&str> = card
+        .risk_drivers
+        .iter()
+        .map(|d| d.description.as_str())
+        .collect();
     assert!(
-        descriptions.iter().any(|d| d.contains("unverified publisher")),
+        descriptions
+            .iter()
+            .any(|d| d.contains("unverified publisher")),
         "expected unverified publisher driver, got: {descriptions:?}"
     );
 }
@@ -461,14 +477,21 @@ fn risk_score_capped_at_100() {
         .generate(&graph, "ext-1", SecurityEpoch::from_raw(1), 10_000_000_000)
         .unwrap();
 
-    assert!(card.risk_score <= 100, "risk score must cap at 100, got {}", card.risk_score);
+    assert!(
+        card.risk_score <= 100,
+        "risk score must cap at 100, got {}",
+        card.risk_score
+    );
 }
 
 #[test]
 fn risk_drivers_include_negative_evidence() {
     let mut graph = test_graph_with_extension();
     graph
-        .add_evidence("ext-1", test_evidence("ev-bad", EvidenceType::IncidentRecord))
+        .add_evidence(
+            "ext-1",
+            test_evidence("ev-bad", EvidenceType::IncidentRecord),
+        )
         .unwrap();
 
     // Use higher max_risk_drivers so negative evidence isn't truncated.
@@ -484,7 +507,11 @@ fn risk_drivers_include_negative_evidence() {
         .risk_drivers
         .iter()
         .any(|d| d.description.contains("negative evidence"));
-    assert!(has_neg, "expected negative evidence driver in: {:?}", card.risk_drivers);
+    assert!(
+        has_neg,
+        "expected negative evidence driver in: {:?}",
+        card.risk_drivers
+    );
 }
 
 #[test]
@@ -510,7 +537,10 @@ fn risk_drivers_include_trust_level_for_degraded() {
         .risk_drivers
         .iter()
         .any(|d| d.description.contains("trust level"));
-    assert!(has_trust_driver, "expected trust level driver for suspicious");
+    assert!(
+        has_trust_driver,
+        "expected trust level driver for suspicious"
+    );
 }
 
 // =========================================================================
@@ -521,19 +551,31 @@ fn risk_drivers_include_trust_level_for_degraded() {
 fn evidence_summary_counts_by_type() {
     let mut graph = test_graph_with_extension();
     graph
-        .add_evidence("ext-1", test_evidence("ev-1", EvidenceType::ProvenanceAttestation))
+        .add_evidence(
+            "ext-1",
+            test_evidence("ev-1", EvidenceType::ProvenanceAttestation),
+        )
         .unwrap();
     graph
         .add_evidence("ext-1", test_evidence("ev-2", EvidenceType::IncidentRecord))
         .unwrap();
     graph
-        .add_evidence("ext-1", test_evidence("ev-3", EvidenceType::BehavioralObservation))
+        .add_evidence(
+            "ext-1",
+            test_evidence("ev-3", EvidenceType::BehavioralObservation),
+        )
         .unwrap();
     graph
-        .add_evidence("ext-1", test_evidence("ev-4", EvidenceType::OperatorAssessment))
+        .add_evidence(
+            "ext-1",
+            test_evidence("ev-4", EvidenceType::OperatorAssessment),
+        )
         .unwrap();
     graph
-        .add_evidence("ext-1", test_evidence("ev-5", EvidenceType::ThreatIntelligence))
+        .add_evidence(
+            "ext-1",
+            test_evidence("ev-5", EvidenceType::ThreatIntelligence),
+        )
         .unwrap();
 
     let generator = TrustCardGenerator::new();
@@ -798,7 +840,10 @@ fn recommendation_review_for_trusted_with_negative_evidence() {
         )
         .unwrap();
     graph
-        .add_evidence("ext-1", test_evidence("ev-bad", EvidenceType::IncidentRecord))
+        .add_evidence(
+            "ext-1",
+            test_evidence("ev-bad", EvidenceType::IncidentRecord),
+        )
         .unwrap();
 
     let generator = TrustCardGenerator::new();
@@ -1077,7 +1122,10 @@ fn format_compact_is_single_line() {
         .unwrap();
 
     let compact = TrustCardGenerator::format_card(&card, CardFormat::Compact);
-    assert!(!compact.contains('\n'), "compact format must be single line");
+    assert!(
+        !compact.contains('\n'),
+        "compact format must be single line"
+    );
     assert!(compact.contains("pkg-ext-1"));
     assert!(compact.contains("/100"));
 }
@@ -1258,7 +1306,11 @@ fn pipeline_subscription_filter_excludes_unsubscribed() {
         5_000,
     );
     pipeline.on_trust_transition(&tt1);
-    assert_eq!(pipeline.pending_count(), 0, "ext-1 not subscribed, should be filtered");
+    assert_eq!(
+        pipeline.pending_count(),
+        0,
+        "ext-1 not subscribed, should be filtered"
+    );
 
     let tt2 = make_transition(
         "ext-2",
@@ -1317,7 +1369,10 @@ fn pipeline_notification_includes_no_linked_evidence_summary() {
     );
     pipeline.on_trust_transition(&tt);
     let notifications = pipeline.drain_notifications();
-    assert_eq!(notifications[0].triggering_evidence_summary, "no linked evidence");
+    assert_eq!(
+        notifications[0].triggering_evidence_summary,
+        "no linked evidence"
+    );
 }
 
 #[test]
@@ -1383,7 +1438,14 @@ fn cache_invalidated_on_graph_change() {
         .unwrap();
 
     graph
-        .transition_trust("ext-1", TrustLevel::Provisional, vec![], 1, epoch, now + 1_000)
+        .transition_trust(
+            "ext-1",
+            TrustLevel::Provisional,
+            vec![],
+            1,
+            epoch,
+            now + 1_000,
+        )
         .unwrap();
 
     assert!(
@@ -1482,7 +1544,11 @@ fn cache_regenerates_on_stale_get_or_generate() {
 
 #[test]
 fn risk_trend_serde_roundtrip() {
-    for trend in [RiskTrend::Improving, RiskTrend::Stable, RiskTrend::Degrading] {
+    for trend in [
+        RiskTrend::Improving,
+        RiskTrend::Stable,
+        RiskTrend::Degrading,
+    ] {
         let json = serde_json::to_string(&trend).unwrap();
         let restored: RiskTrend = serde_json::from_str(&json).unwrap();
         assert_eq!(trend, restored);
@@ -1681,15 +1747,28 @@ fn card_generation_deterministic_replay() {
 
     let generator = TrustCardGenerator::new();
     let card1 = generator
-        .generate(&build(), "ext-1", SecurityEpoch::from_raw(1), 10_000_000_000)
+        .generate(
+            &build(),
+            "ext-1",
+            SecurityEpoch::from_raw(1),
+            10_000_000_000,
+        )
         .unwrap();
     let card2 = generator
-        .generate(&build(), "ext-1", SecurityEpoch::from_raw(1), 10_000_000_000)
+        .generate(
+            &build(),
+            "ext-1",
+            SecurityEpoch::from_raw(1),
+            10_000_000_000,
+        )
         .unwrap();
 
     let json1 = serde_json::to_string(&card1).unwrap();
     let json2 = serde_json::to_string(&card2).unwrap();
-    assert_eq!(json1, json2, "identical inputs must produce identical cards");
+    assert_eq!(
+        json1, json2,
+        "identical inputs must produce identical cards"
+    );
 }
 
 #[test]
@@ -1788,24 +1867,42 @@ fn multiple_evidence_types_classified_correctly() {
     let mut graph = test_graph_with_extension();
     // Positive types
     graph
-        .add_evidence("ext-1", test_evidence("ev-p1", EvidenceType::ProvenanceAttestation))
+        .add_evidence(
+            "ext-1",
+            test_evidence("ev-p1", EvidenceType::ProvenanceAttestation),
+        )
         .unwrap();
     graph
-        .add_evidence("ext-1", test_evidence("ev-p2", EvidenceType::OperatorAssessment))
+        .add_evidence(
+            "ext-1",
+            test_evidence("ev-p2", EvidenceType::OperatorAssessment),
+        )
         .unwrap();
     // Negative types
     graph
-        .add_evidence("ext-1", test_evidence("ev-n1", EvidenceType::IncidentRecord))
+        .add_evidence(
+            "ext-1",
+            test_evidence("ev-n1", EvidenceType::IncidentRecord),
+        )
         .unwrap();
     graph
-        .add_evidence("ext-1", test_evidence("ev-n2", EvidenceType::ThreatIntelligence))
+        .add_evidence(
+            "ext-1",
+            test_evidence("ev-n2", EvidenceType::ThreatIntelligence),
+        )
         .unwrap();
     // Neutral types
     graph
-        .add_evidence("ext-1", test_evidence("ev-u1", EvidenceType::BehavioralObservation))
+        .add_evidence(
+            "ext-1",
+            test_evidence("ev-u1", EvidenceType::BehavioralObservation),
+        )
         .unwrap();
     graph
-        .add_evidence("ext-1", test_evidence("ev-u2", EvidenceType::AdversarialCampaignResult))
+        .add_evidence(
+            "ext-1",
+            test_evidence("ev-u2", EvidenceType::AdversarialCampaignResult),
+        )
         .unwrap();
     graph
         .add_evidence("ext-1", test_evidence("ev-u3", EvidenceType::FleetEvidence))

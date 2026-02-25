@@ -1,8 +1,10 @@
+use std::fs;
 use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use frankenengine_engine::parser_multi_engine_harness::{
-    HarnessEngineKind, HarnessEngineSpec, MultiEngineHarnessConfig, MultiEngineHarnessError,
-    run_multi_engine_harness,
+    DriftCategory, DriftSeverity, HarnessEngineKind, HarnessEngineSpec, MultiEngineHarnessConfig,
+    MultiEngineHarnessError, run_multi_engine_harness,
 };
 
 type EngineSignature = (String, String, bool, bool);
@@ -10,13 +12,42 @@ type FixtureSignature = (String, Vec<EngineSignature>);
 
 fn test_config(seed: u64) -> MultiEngineHarnessConfig {
     let mut config = MultiEngineHarnessConfig::with_defaults(seed);
-    config.fixture_catalog_path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/parser_phase0_semantic_fixtures.json");
+    config.fixture_catalog_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/parser_phase0_semantic_fixtures.json");
     config.fixture_limit = Some(2);
     config.trace_id = "trace-parser-multi-engine-integration".to_string();
     config.decision_id = "decision-parser-multi-engine-integration".to_string();
     config.policy_id = "policy-parser-multi-engine-integration-v1".to_string();
     config
+}
+
+fn write_empty_source_fixture_catalog() -> PathBuf {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock should be after epoch")
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "franken-engine-parser-harness-empty-source-{timestamp}.json"
+    ));
+    let payload = serde_json::json!({
+        "schema_version": "franken-engine.parser-phase0.semantic-fixtures.v1",
+        "parser_mode": "scalar_reference",
+        "fixtures": [
+            {
+                "id": "empty-source-diagnostic-parity",
+                "family_id": "diagnostics.empty_source",
+                "goal": "script",
+                "source": "   ",
+                "expected_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+            }
+        ]
+    });
+    fs::write(
+        &path,
+        serde_json::to_vec_pretty(&payload).expect("catalog payload should serialize"),
+    )
+    .expect("fixture catalog should write");
+    path
 }
 
 fn stable_fixture_signatures(
@@ -59,7 +90,9 @@ fn harness_report_is_stable_for_same_seed_and_fixture_slice() {
 
     for fixture in &left.fixture_results {
         assert!(
-            fixture.replay_command.contains("franken_parser_multi_engine_harness"),
+            fixture
+                .replay_command
+                .contains("franken_parser_multi_engine_harness"),
             "missing replay command for fixture `{}`",
             fixture.fixture_id
         );
@@ -104,6 +137,13 @@ fn harness_detects_external_engine_divergence_deterministically() {
             .is_some_and(|reason| reason.contains("external_mock")),
         "divergence reason should name external engine"
     );
+    let classification = report.fixture_results[0]
+        .drift_classification
+        .as_ref()
+        .expect("drift classification");
+    assert_eq!(classification.category, DriftCategory::Semantic);
+    assert_eq!(classification.severity, DriftSeverity::Critical);
+    assert_eq!(classification.owner_hint, "parser-core");
 }
 
 #[test]
@@ -119,4 +159,106 @@ fn harness_returns_explicit_error_when_fixture_filter_is_missing() {
         ),
         "unexpected error variant: {err}"
     );
+}
+
+#[test]
+fn harness_normalizes_equivalent_parse_errors_across_engines() {
+    let fixture_catalog = write_empty_source_fixture_catalog();
+
+    let mut config = MultiEngineHarnessConfig::with_defaults(23);
+    config.fixture_catalog_path = fixture_catalog.clone();
+    config.fixture_limit = Some(1);
+    config.trace_id = "trace-parser-multi-engine-diagnostic-normalization".to_string();
+    config.decision_id = "decision-parser-multi-engine-diagnostic-normalization".to_string();
+    config.policy_id = "policy-parser-multi-engine-diagnostic-normalization-v1".to_string();
+    config.engines = vec![
+        HarnessEngineSpec::franken_canonical("frankenengine-engine@workspace"),
+        HarnessEngineSpec {
+            engine_id: "external_lc_error".to_string(),
+            display_name: "External Lowercase Error".to_string(),
+            kind: HarnessEngineKind::ExternalCommand,
+            version_pin: "external-lc-error@v1".to_string(),
+            command: Some("sh".to_string()),
+            args: vec![
+                "-c".to_string(),
+                "cat >/dev/null; printf '{\"error_code\":\"empty_source\"}\\n'".to_string(),
+            ],
+        },
+    ];
+
+    let report = run_multi_engine_harness(&config).expect("run should succeed");
+    assert_eq!(report.summary.total_fixtures, 1);
+    assert_eq!(report.summary.equivalent_fixtures, 1);
+    assert_eq!(report.summary.divergent_fixtures, 0);
+
+    let fixture = report
+        .fixture_results
+        .first()
+        .expect("fixture result should exist");
+    assert!(
+        fixture.equivalent_across_engines,
+        "normalized diagnostics should be equivalent across engines"
+    );
+    assert_eq!(fixture.engine_results.len(), 2);
+    let first = fixture.engine_results[0]
+        .first_run
+        .normalized_diagnostic
+        .as_ref()
+        .expect("franken diagnostic artifact");
+    let second = fixture.engine_results[1]
+        .first_run
+        .normalized_diagnostic
+        .as_ref()
+        .expect("external diagnostic artifact");
+    assert_eq!(first.diagnostic_code, second.diagnostic_code);
+    assert_eq!(first.canonical_hash, second.canonical_hash);
+
+    let _ = fs::remove_file(fixture_catalog);
+}
+
+#[test]
+fn harness_classifies_diagnostics_drift_as_minor() {
+    let fixture_catalog = write_empty_source_fixture_catalog();
+
+    let mut config = MultiEngineHarnessConfig::with_defaults(29);
+    config.fixture_catalog_path = fixture_catalog.clone();
+    config.fixture_limit = Some(1);
+    config.trace_id = "trace-parser-multi-engine-diagnostic-drift".to_string();
+    config.decision_id = "decision-parser-multi-engine-diagnostic-drift".to_string();
+    config.policy_id = "policy-parser-multi-engine-diagnostic-drift-v1".to_string();
+    config.engines = vec![
+        HarnessEngineSpec::franken_canonical("frankenengine-engine@workspace"),
+        HarnessEngineSpec {
+            engine_id: "external_invalid_goal".to_string(),
+            display_name: "External Invalid Goal".to_string(),
+            kind: HarnessEngineKind::ExternalCommand,
+            version_pin: "external-invalid-goal@v1".to_string(),
+            command: Some("sh".to_string()),
+            args: vec![
+                "-c".to_string(),
+                "cat >/dev/null; printf '{\"error_code\":\"invalid_goal\"}\\n'".to_string(),
+            ],
+        },
+    ];
+
+    let report = run_multi_engine_harness(&config).expect("run should succeed");
+    assert_eq!(report.summary.total_fixtures, 1);
+    assert_eq!(report.summary.divergent_fixtures, 1);
+    assert_eq!(report.summary.drift_minor_fixtures, 1);
+    assert_eq!(report.summary.drift_critical_fixtures, 0);
+
+    let fixture = report
+        .fixture_results
+        .first()
+        .expect("fixture result should exist");
+    let classification = fixture
+        .drift_classification
+        .as_ref()
+        .expect("classification should exist");
+    assert_eq!(classification.category, DriftCategory::Diagnostics);
+    assert_eq!(classification.severity, DriftSeverity::Minor);
+    assert_eq!(classification.comparator_decision, "drift_minor");
+    assert_eq!(classification.owner_hint, "parser-diagnostics-taxonomy");
+
+    let _ = fs::remove_file(fixture_catalog);
 }

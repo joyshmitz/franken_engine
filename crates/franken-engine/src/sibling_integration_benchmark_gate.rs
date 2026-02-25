@@ -1057,15 +1057,27 @@ mod tests {
 
     #[test]
     fn control_plane_operation_as_str() {
-        assert_eq!(ControlPlaneOperation::EvidenceWrite.as_str(), "evidence_write");
+        assert_eq!(
+            ControlPlaneOperation::EvidenceWrite.as_str(),
+            "evidence_write"
+        );
         assert_eq!(ControlPlaneOperation::PolicyQuery.as_str(), "policy_query");
-        assert_eq!(ControlPlaneOperation::TelemetryIngestion.as_str(), "telemetry_ingestion");
-        assert_eq!(ControlPlaneOperation::TuiDataUpdate.as_str(), "tui_data_update");
+        assert_eq!(
+            ControlPlaneOperation::TelemetryIngestion.as_str(),
+            "telemetry_ingestion"
+        );
+        assert_eq!(
+            ControlPlaneOperation::TuiDataUpdate.as_str(),
+            "tui_data_update"
+        );
     }
 
     #[test]
     fn control_plane_operation_display() {
-        assert_eq!(ControlPlaneOperation::TuiDataUpdate.to_string(), "tui_data_update");
+        assert_eq!(
+            ControlPlaneOperation::TuiDataUpdate.to_string(),
+            "tui_data_update"
+        );
     }
 
     #[test]
@@ -1142,16 +1154,28 @@ mod tests {
     fn thresholds_default_has_all_integrations() {
         let t = BenchmarkGateThresholds::default();
         assert_eq!(t.required_integrations.len(), 4);
-        assert!(t.required_integrations.contains(&SiblingIntegration::Frankentui));
-        assert!(t.required_integrations.contains(&SiblingIntegration::FastapiRust));
+        assert!(
+            t.required_integrations
+                .contains(&SiblingIntegration::Frankentui)
+        );
+        assert!(
+            t.required_integrations
+                .contains(&SiblingIntegration::FastapiRust)
+        );
     }
 
     #[test]
     fn thresholds_default_has_all_operations() {
         let t = BenchmarkGateThresholds::default();
         assert_eq!(t.per_operation.len(), 4);
-        assert!(t.per_operation.contains_key(&ControlPlaneOperation::EvidenceWrite));
-        assert!(t.per_operation.contains_key(&ControlPlaneOperation::TuiDataUpdate));
+        assert!(
+            t.per_operation
+                .contains_key(&ControlPlaneOperation::EvidenceWrite)
+        );
+        assert!(
+            t.per_operation
+                .contains_key(&ControlPlaneOperation::TuiDataUpdate)
+        );
     }
 
     #[test]
@@ -1350,7 +1374,9 @@ mod tests {
     #[test]
     fn logs_final_event_fail_on_failure() {
         let mut candidate = candidate_snapshot_pass();
-        candidate.integrations.remove(&SiblingIntegration::Frankensqlite);
+        candidate
+            .integrations
+            .remove(&SiblingIntegration::Frankensqlite);
         let input = BenchmarkGateInput {
             trace_id: "t".into(),
             policy_id: "p".into(),
@@ -1476,7 +1502,9 @@ mod tests {
     #[test]
     fn gate_fails_when_baseline_missing_integration() {
         let mut baseline = base_snapshot();
-        baseline.integrations.remove(&SiblingIntegration::Frankentui);
+        baseline
+            .integrations
+            .remove(&SiblingIntegration::Frankentui);
         let input = BenchmarkGateInput {
             trace_id: "t".into(),
             policy_id: "p".into(),

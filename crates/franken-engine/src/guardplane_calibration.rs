@@ -1429,7 +1429,7 @@ mod tests {
 
     #[test]
     fn error_codes_are_unique() {
-        let errors = vec![
+        let errors = [
             CalibrationError::EmptyCampaignBatch,
             CalibrationError::CampaignValidationFailed {
                 detail: String::new(),

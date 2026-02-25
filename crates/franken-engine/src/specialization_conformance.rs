@@ -2554,7 +2554,9 @@ mod tests {
 
     #[test]
     fn transformation_type_ord() {
-        assert!(TransformationType::HostcallDispatchElision < TransformationType::LabelCheckElision);
+        assert!(
+            TransformationType::HostcallDispatchElision < TransformationType::LabelCheckElision
+        );
         assert!(TransformationType::LabelCheckElision < TransformationType::PathRemoval);
         assert!(TransformationType::PathRemoval < TransformationType::SuperinstructionFusion);
     }

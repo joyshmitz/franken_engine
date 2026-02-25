@@ -10,8 +10,8 @@ use std::collections::BTreeSet;
 
 use frankenengine_engine::hash_tiers::ContentHash;
 use frankenengine_engine::idempotency_key::{
-    derive_idempotency_key, DedupEntry, DedupResult, DedupStatus, IdempotencyError,
-    IdempotencyEvent, IdempotencyKey, IdempotencyStore, KeyDerivationInput, RetryConfig,
+    DedupEntry, DedupResult, DedupStatus, IdempotencyError, IdempotencyEvent, IdempotencyKey,
+    IdempotencyStore, KeyDerivationInput, RetryConfig, derive_idempotency_key,
 };
 use frankenengine_engine::security_epoch::SecurityEpoch;
 
@@ -339,9 +339,7 @@ fn completed_returns_cached_result() {
     let input = make_input("comp", "t", 0);
     let key = store.derive_key(&input);
     store.check_and_claim(&key, &input, 100).unwrap();
-    store
-        .mark_completed(&key, result_hash(b"output"))
-        .unwrap();
+    store.mark_completed(&key, result_hash(b"output")).unwrap();
 
     let result = store.check_and_claim(&key, &input, 101).unwrap();
     if let DedupResult::CachedResult {
@@ -375,9 +373,7 @@ fn mark_completed_on_missing_entry() {
     let mut store = IdempotencyStore::new(epoch(1), session_key());
     let input = make_input("comp", "t", 0);
     let key = store.derive_key(&input);
-    let err = store
-        .mark_completed(&key, result_hash(b"x"))
-        .unwrap_err();
+    let err = store.mark_completed(&key, result_hash(b"x")).unwrap_err();
     assert!(matches!(err, IdempotencyError::EntryNotFound { .. }));
 }
 
@@ -404,9 +400,7 @@ fn multiple_independent_computations() {
     assert!(matches!(r_b, DedupResult::New));
     assert_eq!(store.entry_count(), 2);
 
-    store
-        .mark_completed(&key_a, result_hash(b"out-a"))
-        .unwrap();
+    store.mark_completed(&key_a, result_hash(b"out-a")).unwrap();
     store.mark_failed(&key_b, "ERR_B").unwrap();
 
     // Check each independently.
@@ -443,9 +437,7 @@ fn future_epoch_key_rejected() {
     let mut store = IdempotencyStore::new(epoch(1), session_key());
     let input = make_input("comp", "t", 0);
     let future_key = derive_idempotency_key(&session_key(), epoch(5), &input);
-    let err = store
-        .check_and_claim(&future_key, &input, 100)
-        .unwrap_err();
+    let err = store.check_and_claim(&future_key, &input, 100).unwrap_err();
     assert!(matches!(err, IdempotencyError::EpochMismatch { .. }));
 }
 
@@ -484,9 +476,7 @@ fn old_key_fails_after_epoch_advance() {
 
     store.advance_epoch(epoch(2), b"new-session".to_vec());
 
-    let err = store
-        .check_and_claim(&key_epoch1, &input, 200)
-        .unwrap_err();
+    let err = store.check_and_claim(&key_epoch1, &input, 200).unwrap_err();
     assert!(matches!(err, IdempotencyError::EpochMismatch { .. }));
 }
 
@@ -578,16 +568,20 @@ fn different_computations_use_different_retry_configs() {
     // "strict" computation: attempt 0 is at max (0), attempt 1 fails
     let input_strict = make_input("strict", "t", 1);
     let key_strict = store.derive_key(&input_strict);
-    assert!(store
-        .check_and_claim(&key_strict, &input_strict, 10)
-        .is_err());
+    assert!(
+        store
+            .check_and_claim(&key_strict, &input_strict, 10)
+            .is_err()
+    );
 
     // Default computation: attempt 3 is at max (3), should succeed
     let input_default = make_input("other_comp", "t", 3);
     let key_default = store.derive_key(&input_default);
-    assert!(store
-        .check_and_claim(&key_default, &input_default, 10)
-        .is_ok());
+    assert!(
+        store
+            .check_and_claim(&key_default, &input_default, 10)
+            .is_ok()
+    );
 }
 
 #[test]
@@ -734,11 +728,11 @@ fn full_retry_sequence_until_success() {
     for attempt in 0..2 {
         let input = make_input("comp", "t", attempt);
         let key = store.derive_key(&input);
-        let r = store.check_and_claim(&key, &input, 100 + u64::from(attempt)).unwrap();
-        assert!(matches!(r, DedupResult::New));
-        store
-            .mark_failed(&key, &format!("err_{attempt}"))
+        let r = store
+            .check_and_claim(&key, &input, 100 + u64::from(attempt))
             .unwrap();
+        assert!(matches!(r, DedupResult::New));
+        store.mark_failed(&key, &format!("err_{attempt}")).unwrap();
     }
 
     // Attempt 2: success
@@ -746,9 +740,7 @@ fn full_retry_sequence_until_success() {
     let key2 = store.derive_key(&input2);
     let r2 = store.check_and_claim(&key2, &input2, 102).unwrap();
     assert!(matches!(r2, DedupResult::New));
-    store
-        .mark_completed(&key2, result_hash(b"final"))
-        .unwrap();
+    store.mark_completed(&key2, result_hash(b"final")).unwrap();
 
     // Re-check attempt 2 returns cached
     let r2_again = store.check_and_claim(&key2, &input2, 103).unwrap();
@@ -799,9 +791,7 @@ fn check_and_claim_emits_event_for_cached() {
     let input = make_input("comp", "t", 0);
     let key = store.derive_key(&input);
     store.check_and_claim(&key, &input, 100).unwrap();
-    store
-        .mark_completed(&key, result_hash(b"out"))
-        .unwrap();
+    store.mark_completed(&key, result_hash(b"out")).unwrap();
     store.drain_events(); // clear grant event
 
     store.check_and_claim(&key, &input, 101).unwrap();
@@ -862,9 +852,7 @@ fn result_counts_accumulate() {
     store.check_and_claim(&key, &input, 101).unwrap(); // duplicate_in_progress
     store.check_and_claim(&key, &input, 102).unwrap(); // duplicate_in_progress again
 
-    store
-        .mark_completed(&key, result_hash(b"r"))
-        .unwrap();
+    store.mark_completed(&key, result_hash(b"r")).unwrap();
     store.check_and_claim(&key, &input, 103).unwrap(); // cached
     store.check_and_claim(&key, &input, 104).unwrap(); // cached
 
@@ -1065,9 +1053,7 @@ fn deterministic_event_replay() {
         let input = make_input("comp", "t", 0);
         let key = store.derive_key(&input);
         store.check_and_claim(&key, &input, 100).unwrap();
-        store
-            .mark_completed(&key, result_hash(b"out"))
-            .unwrap();
+        store.mark_completed(&key, result_hash(b"out")).unwrap();
         store.check_and_claim(&key, &input, 101).unwrap();
         store.drain_events()
     };
@@ -1101,9 +1087,7 @@ fn full_lifecycle_derive_claim_complete_cache_hit() {
     assert!(matches!(r1, DedupResult::New));
 
     // 3. Complete
-    store
-        .mark_completed(&key, result_hash(b"result"))
-        .unwrap();
+    store.mark_completed(&key, result_hash(b"result")).unwrap();
 
     // 4. Cache hit
     let r2 = store.check_and_claim(&key, &input, 101).unwrap();
@@ -1152,9 +1136,7 @@ fn full_lifecycle_epoch_transition() {
     let input = make_input("comp", "t", 0);
     let key1 = store.derive_key(&input);
     store.check_and_claim(&key1, &input, 100).unwrap();
-    store
-        .mark_completed(&key1, result_hash(b"r1"))
-        .unwrap();
+    store.mark_completed(&key1, result_hash(b"r1")).unwrap();
 
     // Advance epoch
     store.advance_epoch(epoch(2), b"new-session-key".to_vec());
@@ -1191,19 +1173,13 @@ fn concurrent_computations_with_mixed_outcomes() {
     store.mark_failed(&keys[1], "ERR_1").unwrap();
 
     // Re-check each
-    let r0 = store
-        .check_and_claim(&keys[0], &inputs[0], 101)
-        .unwrap();
+    let r0 = store.check_and_claim(&keys[0], &inputs[0], 101).unwrap();
     assert!(matches!(r0, DedupResult::CachedResult { .. }));
 
-    let r1 = store
-        .check_and_claim(&keys[1], &inputs[1], 101)
-        .unwrap();
+    let r1 = store.check_and_claim(&keys[1], &inputs[1], 101).unwrap();
     assert!(matches!(r1, DedupResult::PreviouslyFailed { .. }));
 
-    let r2 = store
-        .check_and_claim(&keys[2], &inputs[2], 101)
-        .unwrap();
+    let r2 = store.check_and_claim(&keys[2], &inputs[2], 101).unwrap();
     assert!(matches!(r2, DedupResult::DuplicateInProgress));
 }
 

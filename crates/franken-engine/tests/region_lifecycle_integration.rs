@@ -23,7 +23,11 @@ fn region_state_display_all_variants() {
         (RegionState::Closed, "closed"),
     ];
     for (variant, expected) in &cases {
-        assert_eq!(variant.to_string(), *expected, "Display mismatch for {variant:?}");
+        assert_eq!(
+            variant.to_string(),
+            *expected,
+            "Display mismatch for {variant:?}"
+        );
     }
 }
 
@@ -410,7 +414,7 @@ fn drain_tick_returns_true_at_deadline() {
 
     assert!(!region.drain_tick()); // tick 1
     assert!(!region.drain_tick()); // tick 2
-    assert!(region.drain_tick());  // tick 3 = max_ticks
+    assert!(region.drain_tick()); // tick 3 = max_ticks
 }
 
 #[test]
@@ -469,7 +473,10 @@ fn drain_timeout_escalation_fires_only_once() {
         .iter()
         .filter(|e| e.outcome == "drain_timeout_escalation")
         .count();
-    assert_eq!(escalation_count, 1, "escalation event should fire only once");
+    assert_eq!(
+        escalation_count, 1,
+        "escalation event should fire only once"
+    );
 }
 
 #[test]
@@ -666,7 +673,10 @@ fn finalize_with_pending_emits_finalize_with_pending_event() {
     region.finalize().unwrap();
 
     let events = region.drain_events();
-    let finalize_event = events.iter().find(|e| e.outcome.starts_with("finalize")).unwrap();
+    let finalize_event = events
+        .iter()
+        .find(|e| e.outcome.starts_with("finalize"))
+        .unwrap();
     assert_eq!(finalize_event.outcome, "finalize_with_pending");
 }
 
@@ -706,7 +716,10 @@ fn drain_tick_records_elapsed_in_events() {
     region.finalize().unwrap();
     let events = region.drain_events();
     // The finalize events should show drain_elapsed_ticks = 5
-    let finalize_event = events.iter().find(|e| e.outcome == "finalize_success").unwrap();
+    let finalize_event = events
+        .iter()
+        .find(|e| e.outcome == "finalize_success")
+        .unwrap();
     assert_eq!(finalize_event.drain_elapsed_ticks, 5);
 }
 
@@ -976,7 +989,11 @@ fn drain_deadline_zero_ticks_immediately_times_out() {
 fn drain_deadline_max_u64_no_overflow() {
     let mut region = Region::new("r", "ext", "t");
     region.cancel(CancelReason::OperatorShutdown).unwrap();
-    region.drain(DrainDeadline { max_ticks: u64::MAX }).unwrap();
+    region
+        .drain(DrainDeadline {
+            max_ticks: u64::MAX,
+        })
+        .unwrap();
     // Should not timeout on a single tick
     assert!(!region.drain_tick());
 }
@@ -987,7 +1004,10 @@ fn close_shortcut_with_unresolved_obligations_drains_to_timeout() {
     region.register_obligation("ob-1", "stuck");
     // close with short deadline will loop up to max_ticks
     let result = region
-        .close(CancelReason::OperatorShutdown, DrainDeadline { max_ticks: 5 })
+        .close(
+            CancelReason::OperatorShutdown,
+            DrainDeadline { max_ticks: 5 },
+        )
         .unwrap();
     // After drain ticks, timeout escalation should have fired
     assert!(result.drain_timeout_escalated);

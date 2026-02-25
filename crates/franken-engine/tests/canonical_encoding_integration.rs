@@ -10,7 +10,7 @@ use frankenengine_engine::canonical_encoding::{
     NonCanonicalError,
 };
 use frankenengine_engine::deterministic_serde::{
-    encode_value, serialize_with_schema, CanonicalValue, SchemaHash,
+    CanonicalValue, SchemaHash, encode_value, serialize_with_schema,
 };
 use frankenengine_engine::engine_object_id::ObjectDomain;
 use frankenengine_engine::hash_tiers::ContentHash;
@@ -765,12 +765,7 @@ fn reject_duplicate_map_keys() {
 fn cross_class_schema_mismatch() {
     let mut guard = CanonicalGuard::new();
     let s_policy = guard.register_class(ObjectDomain::PolicyObject, "Policy", 1, b"policy-def");
-    guard.register_class(
-        ObjectDomain::EvidenceRecord,
-        "Evidence",
-        1,
-        b"evidence-def",
-    );
+    guard.register_class(ObjectDomain::EvidenceRecord, "Evidence", 1, b"evidence-def");
 
     // Policy-schema bytes presented to EvidenceRecord class.
     let policy_bytes = make_canonical_payload(&s_policy, &CanonicalValue::U64(1));
@@ -794,9 +789,21 @@ fn multiple_classes_independent_validation() {
     let b2 = make_canonical_payload(&s2, &CanonicalValue::String("test".to_string()));
     let b3 = make_canonical_payload(&s3, &CanonicalValue::Bool(true));
 
-    assert!(guard.validate(ObjectDomain::PolicyObject, &b1, "t-m1").is_ok());
-    assert!(guard.validate(ObjectDomain::EvidenceRecord, &b2, "t-m2").is_ok());
-    assert!(guard.validate(ObjectDomain::Revocation, &b3, "t-m3").is_ok());
+    assert!(
+        guard
+            .validate(ObjectDomain::PolicyObject, &b1, "t-m1")
+            .is_ok()
+    );
+    assert!(
+        guard
+            .validate(ObjectDomain::EvidenceRecord, &b2, "t-m2")
+            .is_ok()
+    );
+    assert!(
+        guard
+            .validate(ObjectDomain::Revocation, &b3, "t-m3")
+            .is_ok()
+    );
 
     assert_eq!(guard.acceptance_count(), 3);
     assert_eq!(guard.rejection_count(), 0);
@@ -1406,7 +1413,12 @@ fn register_all_domain_classes() {
         ObjectDomain::KeyBundle,
     ];
     for (i, domain) in domains.iter().enumerate() {
-        guard.register_class(*domain, &format!("Schema{i}"), 1, format!("def-{i}").as_bytes());
+        guard.register_class(
+            *domain,
+            &format!("Schema{i}"),
+            1,
+            format!("def-{i}").as_bytes(),
+        );
     }
     assert_eq!(guard.registered_class_count(), domains.len());
     for domain in &domains {
@@ -1599,8 +1611,7 @@ fn validate_from_registry_rejects_leading_padding() {
     assert!(
         matches!(
             err.violation,
-            CanonicalViolation::SchemaViolation { .. }
-                | CanonicalViolation::LeadingPadding { .. }
+            CanonicalViolation::SchemaViolation { .. } | CanonicalViolation::LeadingPadding { .. }
         ),
         "unexpected violation: {:?}",
         err.violation

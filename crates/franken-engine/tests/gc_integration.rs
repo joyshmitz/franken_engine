@@ -355,9 +355,7 @@ fn gc_error_serde_round_trip_all_variants() {
             extension_id: "ext".into(),
             object_id: id,
         },
-        GcError::DomainError(
-            frankenengine_engine::alloc_domain::AllocDomainError::BudgetOverflow,
-        ),
+        GcError::DomainError(frankenengine_engine::alloc_domain::AllocDomainError::BudgetOverflow),
     ];
     for err in &errors {
         let json = serde_json::to_string(err).expect("serialize");
@@ -1903,9 +1901,7 @@ fn allocate_tracked_then_collect_tracked_cycle() {
 
     // Allocate-collect-allocate-collect cycle
     for i in 0..5 {
-        let (id, _) = gc
-            .allocate_tracked("ext", (i + 1) * 100, &mut reg)
-            .unwrap();
+        let (id, _) = gc.allocate_tracked("ext", (i + 1) * 100, &mut reg).unwrap();
         gc.unroot("ext", id).unwrap();
         let event = gc.collect_tracked("ext", &mut reg).unwrap();
         assert_eq!(event.bytes_reclaimed, (i + 1) * 100);

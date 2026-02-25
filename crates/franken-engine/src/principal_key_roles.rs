@@ -1573,16 +1573,20 @@ mod tests {
 
     #[test]
     fn key_role_error_display_bundle_creation_failed() {
-        assert!(KeyRoleError::BundleCreationFailed
-            .to_string()
-            .contains("bundle creation failed"));
+        assert!(
+            KeyRoleError::BundleCreationFailed
+                .to_string()
+                .contains("bundle creation failed")
+        );
     }
 
     #[test]
     fn key_role_error_display_bundle_signature_invalid() {
-        assert!(KeyRoleError::BundleSignatureInvalid
-            .to_string()
-            .contains("signature invalid"));
+        assert!(
+            KeyRoleError::BundleSignatureInvalid
+                .to_string()
+                .contains("signature invalid")
+        );
     }
 
     #[test]
@@ -1600,9 +1604,11 @@ mod tests {
 
     #[test]
     fn key_role_error_display_principal_not_found() {
-        assert!(KeyRoleError::PrincipalNotFound
-            .to_string()
-            .contains("principal not found"));
+        assert!(
+            KeyRoleError::PrincipalNotFound
+                .to_string()
+                .contains("principal not found")
+        );
     }
 
     #[test]
@@ -1694,7 +1700,6 @@ mod tests {
 
     // -- verification_keys_for_role excludes revoked --------------------------
 
-    #[test]
     // -- Enrichment: Ord, std::error --
 
     #[test]
@@ -1744,7 +1749,11 @@ mod tests {
             assert!(!msg.is_empty());
             displays.insert(msg);
         }
-        assert_eq!(displays.len(), 8, "all 8 variants produce distinct messages");
+        assert_eq!(
+            displays.len(),
+            8,
+            "all 8 variants produce distinct messages"
+        );
     }
 
     #[test]
@@ -1766,6 +1775,10 @@ mod tests {
             .unwrap();
 
         // Pending keys are not verifiable.
-        assert!(store.verification_keys_for_role(KeyRole::Signing).is_empty());
+        assert!(
+            store
+                .verification_keys_for_role(KeyRole::Signing)
+                .is_empty()
+        );
     }
 }

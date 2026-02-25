@@ -1101,7 +1101,6 @@ mod tests {
         );
     }
 
-    #[test]
     // -- Enrichment: Ord --
 
     #[test]

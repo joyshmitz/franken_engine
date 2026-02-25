@@ -2180,7 +2180,12 @@ mod tests {
         let mut channel = SessionHostcallChannel::new();
         let hs = handshake("", "trace", 100);
         let err = channel
-            .create_session(hs, &signing_key(1), &signing_key(2), SessionConfig::default())
+            .create_session(
+                hs,
+                &signing_key(1),
+                &signing_key(2),
+                SessionConfig::default(),
+            )
             .unwrap_err();
         assert!(matches!(err, SessionChannelError::InvalidIdentity { .. }));
     }
@@ -2191,7 +2196,12 @@ mod tests {
         let mut hs = handshake("sess-1", "trace", 100);
         hs.extension_id = String::new();
         let err = channel
-            .create_session(hs, &signing_key(1), &signing_key(2), SessionConfig::default())
+            .create_session(
+                hs,
+                &signing_key(1),
+                &signing_key(2),
+                SessionConfig::default(),
+            )
             .unwrap_err();
         assert!(matches!(err, SessionChannelError::InvalidIdentity { .. }));
     }
@@ -2202,7 +2212,12 @@ mod tests {
         let mut hs = handshake("sess-1", "trace", 100);
         hs.host_id = "x".repeat(129);
         let err = channel
-            .create_session(hs, &signing_key(1), &signing_key(2), SessionConfig::default())
+            .create_session(
+                hs,
+                &signing_key(1),
+                &signing_key(2),
+                SessionConfig::default(),
+            )
             .unwrap_err();
         assert!(matches!(err, SessionChannelError::InvalidIdentity { .. }));
     }
@@ -2213,7 +2228,12 @@ mod tests {
         let mut hs = handshake("sess-1", "trace", 100);
         hs.host_id = hs.extension_id.clone();
         let err = channel
-            .create_session(hs, &signing_key(1), &signing_key(2), SessionConfig::default())
+            .create_session(
+                hs,
+                &signing_key(1),
+                &signing_key(2),
+                SessionConfig::default(),
+            )
             .unwrap_err();
         assert!(matches!(err, SessionChannelError::InvalidHandshake { .. }));
     }
@@ -2642,8 +2662,7 @@ mod tests {
         ];
         for err in &errors {
             let json = serde_json::to_string(err).expect("serialize");
-            let restored: SessionChannelError =
-                serde_json::from_str(&json).expect("deserialize");
+            let restored: SessionChannelError = serde_json::from_str(&json).expect("deserialize");
             assert_eq!(*err, restored);
         }
     }
@@ -2749,10 +2768,7 @@ mod tests {
             .unwrap();
 
         let replay = {
-            let session = channel
-                .sessions
-                .get(&handle.session_id)
-                .unwrap();
+            let session = channel.sessions.get(&handle.session_id).unwrap();
             session.inbound.front().cloned().unwrap()
         };
 
@@ -2779,7 +2795,9 @@ mod tests {
             let session = channel.sessions.get_mut(&handle.session_id).unwrap();
             session.inbound.push_back(replay2);
         }
-        let err = channel.receive(&handle, "trace", 120, None, None).unwrap_err();
+        let err = channel
+            .receive(&handle, "trace", 120, None, None)
+            .unwrap_err();
         // Should NOT be SessionExpired because the window was reset.
         assert!(matches!(err, SessionChannelError::ReplayDetected { .. }));
         assert_eq!(
@@ -2806,10 +2824,7 @@ mod tests {
     fn shared_buffer_sequence_exhaustion_expires_session() {
         let mut channel = SessionHostcallChannel::new();
         let handle = create_basic_session(&mut channel, "sess-shared-exhaust");
-        let session = channel
-            .sessions
-            .get_mut(&handle.session_id)
-            .unwrap();
+        let session = channel.sessions.get_mut(&handle.session_id).unwrap();
         session.next_sequence = u64::MAX;
 
         let err = channel

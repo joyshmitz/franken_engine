@@ -1520,7 +1520,10 @@ fn parse_parallel_parity_check_included() {
     let source = generate_source(50);
     let input = make_input(&source, &config);
     let output = parallel_parser::parse(&input).unwrap();
-    let pr = output.parity_result.as_ref().expect("parity_result should be present");
+    let pr = output
+        .parity_result
+        .as_ref()
+        .expect("parity_result should be present");
     assert!(pr.parity_ok, "parity check should pass");
 }
 

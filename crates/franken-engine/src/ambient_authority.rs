@@ -946,11 +946,7 @@ mod tests {
         let auditor = standard_auditor();
         let source = "use std::net::TcpListener;";
         let findings = auditor.audit_source("m", "f.rs", source);
-        assert!(
-            findings
-                .iter()
-                .any(|f| f.pattern_id == "std_net")
-        );
+        assert!(findings.iter().any(|f| f.pattern_id == "std_net"));
     }
 
     #[test]
@@ -958,11 +954,7 @@ mod tests {
         let auditor = standard_auditor();
         let source = "use std::process::exit;";
         let findings = auditor.audit_source("m", "f.rs", source);
-        assert!(
-            findings
-                .iter()
-                .any(|f| f.pattern_id == "std_process")
-        );
+        assert!(findings.iter().any(|f| f.pattern_id == "std_process"));
     }
 
     // -----------------------------------------------------------------------

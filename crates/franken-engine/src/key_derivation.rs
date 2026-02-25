@@ -1016,7 +1016,6 @@ mod tests {
         assert_eq!(ctx, restored);
     }
 
-    #[test]
     // -- Enrichment: Ord, std::error --
 
     #[test]
@@ -1050,7 +1049,11 @@ mod tests {
             assert!(!msg.is_empty());
             displays.insert(msg);
         }
-        assert_eq!(displays.len(), 5, "all 5 variants produce distinct messages");
+        assert_eq!(
+            displays.len(),
+            5,
+            "all 5 variants produce distinct messages"
+        );
     }
 
     #[test]

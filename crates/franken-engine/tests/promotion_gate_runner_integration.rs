@@ -10,12 +10,12 @@
 use std::collections::BTreeSet;
 
 use frankenengine_engine::promotion_gate_runner::{
-    AdversarialTestResult, CandidateCapabilityRequest, EvidenceArtifact, EvidenceBundle,
-    GateEvaluation, GateKind, GateRunnerConfig, GateRunnerInput, GateRunnerLogEvent,
-    GateRunnerOutput, GateStrictness, PerformanceMeasurement, aggregate_verdict, assess_risk,
-    evaluate_adversarial_survival, evaluate_capability_preservation, evaluate_equivalence,
-    evaluate_performance_threshold, log_gate_evaluation, run_promotion_gates,
-    EquivalenceTestCase,
+    AdversarialTestResult, CandidateCapabilityRequest, EquivalenceTestCase, EvidenceArtifact,
+    EvidenceBundle, GateEvaluation, GateKind, GateRunnerConfig, GateRunnerInput,
+    GateRunnerLogEvent, GateRunnerOutput, GateStrictness, PerformanceMeasurement,
+    aggregate_verdict, assess_risk, evaluate_adversarial_survival,
+    evaluate_capability_preservation, evaluate_equivalence, evaluate_performance_threshold,
+    log_gate_evaluation, run_promotion_gates,
 };
 use frankenengine_engine::security_epoch::SecurityEpoch;
 use frankenengine_engine::self_replacement::{GateVerdict, RiskLevel};
@@ -173,10 +173,7 @@ fn gate_kind_all_order_is_stable() {
 fn gate_kind_as_str_unique() {
     let mut seen = BTreeSet::new();
     for gate in GateKind::all() {
-        assert!(
-            seen.insert(gate.as_str()),
-            "duplicate as_str for {gate:?}"
-        );
+        assert!(seen.insert(gate.as_str()), "duplicate as_str for {gate:?}");
     }
     assert_eq!(seen.len(), 4);
 }
@@ -251,7 +248,10 @@ fn gate_kind_hash_in_btreeset() {
 fn gate_strictness_standard_all_required() {
     for gate in GateKind::all() {
         let s = GateStrictness::standard(*gate);
-        assert!(s.required, "standard strictness for {gate:?} must be required");
+        assert!(
+            s.required,
+            "standard strictness for {gate:?} must be required"
+        );
         assert_eq!(s.gate, *gate);
     }
 }
@@ -592,10 +592,7 @@ fn evaluate_capability_preservation_within_envelope() {
     let eval = evaluate_capability_preservation(&req, &strictness);
     assert!(eval.passed);
     assert_eq!(eval.gate, GateKind::CapabilityPreservation);
-    assert!(
-        eval.summary
-            .contains("within authority envelope")
-    );
+    assert!(eval.summary.contains("within authority envelope"));
 }
 
 #[test]
@@ -621,10 +618,11 @@ fn evaluate_capability_preservation_excess_evidence_lists_capabilities() {
     let req = exceeding_capability_request();
     let strictness = GateStrictness::standard(GateKind::CapabilityPreservation);
     let eval = evaluate_capability_preservation(&req, &strictness);
-    assert!(eval
-        .evidence
-        .iter()
-        .any(|e| e.starts_with("excess_capabilities=")));
+    assert!(
+        eval.evidence
+            .iter()
+            .any(|e| e.starts_with("excess_capabilities="))
+    );
 }
 
 #[test]
@@ -681,10 +679,11 @@ fn evaluate_performance_throughput_failure_only() {
     let strictness = GateStrictness::standard(GateKind::PerformanceThreshold);
     let eval = evaluate_performance_threshold(&measurements, &strictness);
     assert!(!eval.passed);
-    assert!(eval
-        .evidence
-        .iter()
-        .any(|e| e.contains("throughput_failures")));
+    assert!(
+        eval.evidence
+            .iter()
+            .any(|e| e.contains("throughput_failures"))
+    );
 }
 
 #[test]
@@ -699,10 +698,7 @@ fn evaluate_performance_latency_failure_only() {
     let strictness = GateStrictness::standard(GateKind::PerformanceThreshold);
     let eval = evaluate_performance_threshold(&measurements, &strictness);
     assert!(!eval.passed);
-    assert!(eval
-        .evidence
-        .iter()
-        .any(|e| e.contains("latency_failures")));
+    assert!(eval.evidence.iter().any(|e| e.contains("latency_failures")));
 }
 
 #[test]
@@ -725,8 +721,8 @@ fn evaluate_performance_both_failures() {
 fn evaluate_performance_at_exact_threshold_passes() {
     let measurements = vec![PerformanceMeasurement {
         benchmark_id: "exact".to_string(),
-        throughput_millionths: 500_000,  // exactly at min
-        latency_ns: 100_000_000,         // exactly at max
+        throughput_millionths: 500_000, // exactly at min
+        latency_ns: 100_000_000,        // exactly at max
         iterations: 100,
         seed: 1,
     }];
@@ -852,10 +848,11 @@ fn evaluate_adversarial_evidence_contains_stats() {
     let eval = evaluate_adversarial_survival(&results, &strictness);
     assert!(eval.evidence.iter().any(|e| e.contains("total_tests=5")));
     assert!(eval.evidence.iter().any(|e| e.contains("passed=5")));
-    assert!(eval
-        .evidence
-        .iter()
-        .any(|e| e.contains("pass_rate_millionths=")));
+    assert!(
+        eval.evidence
+            .iter()
+            .any(|e| e.contains("pass_rate_millionths="))
+    );
 }
 
 #[test]
@@ -863,10 +860,7 @@ fn evaluate_adversarial_failed_tests_in_evidence() {
     let results = mixed_adversarial_results();
     let strictness = GateStrictness::standard(GateKind::AdversarialSurvival);
     let eval = evaluate_adversarial_survival(&results, &strictness);
-    assert!(eval
-        .evidence
-        .iter()
-        .any(|e| e.contains("failed_tests=")));
+    assert!(eval.evidence.iter().any(|e| e.contains("failed_tests=")));
 }
 
 #[test]
@@ -1114,7 +1108,7 @@ fn risk_mixed_required_and_advisory_failures() {
     // 1 required fail + 1 advisory fail = 2 total, 1 advisory
     // failed_count=2, advisory_failures=1, not equal, so check failed_count<=2 -> High
     let evals = vec![
-        make_gate_evaluation(GateKind::Equivalence, false, true),  // required fail
+        make_gate_evaluation(GateKind::Equivalence, false, true), // required fail
         make_gate_evaluation(GateKind::CapabilityPreservation, false, false), // advisory
         make_gate_evaluation(GateKind::PerformanceThreshold, true, true),
     ];
@@ -1158,7 +1152,11 @@ fn config_strictness_for_missing_gate() {
         gate_strictness: vec![GateStrictness::standard(GateKind::Equivalence)],
     };
     assert!(config.strictness_for(GateKind::Equivalence).is_some());
-    assert!(config.strictness_for(GateKind::AdversarialSurvival).is_none());
+    assert!(
+        config
+            .strictness_for(GateKind::AdversarialSurvival)
+            .is_none()
+    );
 }
 
 #[test]
@@ -1259,7 +1257,10 @@ fn evidence_bundle_counts_add_up() {
         total_passed: 30,
         total_failed: 20,
     };
-    assert_eq!(bundle.total_passed + bundle.total_failed, bundle.total_test_cases);
+    assert_eq!(
+        bundle.total_passed + bundle.total_failed,
+        bundle.total_test_cases
+    );
 }
 
 // =========================================================================
@@ -1311,8 +1312,7 @@ fn full_run_equivalence_fail_denied() {
 
 #[test]
 fn full_run_capability_exceed_denied() {
-    let config =
-        GateRunnerConfig::standard(test_slot_id(), "candidate-greedy".to_string(), 42);
+    let config = GateRunnerConfig::standard(test_slot_id(), "candidate-greedy".to_string(), 42);
     let input = GateRunnerInput {
         equivalence_cases: passing_equivalence_cases(5),
         capability_request: exceeding_capability_request(),
@@ -1338,8 +1338,7 @@ fn full_run_performance_fail_denied() {
 
 #[test]
 fn full_run_adversarial_fail_denied() {
-    let config =
-        GateRunnerConfig::standard(test_slot_id(), "candidate-vuln".to_string(), 42);
+    let config = GateRunnerConfig::standard(test_slot_id(), "candidate-vuln".to_string(), 42);
     let input = GateRunnerInput {
         equivalence_cases: passing_equivalence_cases(5),
         capability_request: passing_capability_request(),
@@ -1352,8 +1351,7 @@ fn full_run_adversarial_fail_denied() {
 
 #[test]
 fn full_run_all_fail_denied_critical() {
-    let config =
-        GateRunnerConfig::standard(test_slot_id(), "candidate-terrible".to_string(), 42);
+    let config = GateRunnerConfig::standard(test_slot_id(), "candidate-terrible".to_string(), 42);
     let input = GateRunnerInput {
         equivalence_cases: failing_equivalence_cases(5),
         capability_request: exceeding_capability_request(),
@@ -1618,8 +1616,7 @@ fn log_event_for_all_gates_serde() {
             let eval = make_gate_evaluation(*gate, passed, true);
             let event = log_gate_evaluation(&config, &eval);
             let json = serde_json::to_string(&event).expect("serialize");
-            let decoded: GateRunnerLogEvent =
-                serde_json::from_str(&json).expect("deserialize");
+            let decoded: GateRunnerLogEvent = serde_json::from_str(&json).expect("deserialize");
             assert_eq!(event, decoded);
         }
     }
@@ -1766,12 +1763,9 @@ fn serde_round_trip_full_pipeline_output() {
     let input_json = serde_json::to_string(&input).expect("serialize input");
     let output_json = serde_json::to_string(&output).expect("serialize output");
 
-    let config2: GateRunnerConfig =
-        serde_json::from_str(&config_json).expect("deserialize config");
-    let input2: GateRunnerInput =
-        serde_json::from_str(&input_json).expect("deserialize input");
-    let output2: GateRunnerOutput =
-        serde_json::from_str(&output_json).expect("deserialize output");
+    let config2: GateRunnerConfig = serde_json::from_str(&config_json).expect("deserialize config");
+    let input2: GateRunnerInput = serde_json::from_str(&input_json).expect("deserialize input");
+    let output2: GateRunnerOutput = serde_json::from_str(&output_json).expect("deserialize output");
 
     assert_eq!(config, config2);
     assert_eq!(input, input2);
@@ -1806,9 +1800,10 @@ fn large_scale_performance_all_pass() {
     let strictness = GateStrictness::standard(GateKind::PerformanceThreshold);
     let eval = evaluate_performance_threshold(&measurements, &strictness);
     assert!(eval.passed);
-    assert!(eval
-        .summary
-        .contains("all 100 benchmarks within thresholds"));
+    assert!(
+        eval.summary
+            .contains("all 100 benchmarks within thresholds")
+    );
 }
 
 #[test]

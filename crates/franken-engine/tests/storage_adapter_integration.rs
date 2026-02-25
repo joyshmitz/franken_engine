@@ -18,8 +18,8 @@ use std::collections::BTreeMap;
 
 use frankenengine_engine::storage_adapter::{
     BatchPutEntry, EventContext, FrankensqliteBackend, FrankensqliteStorageAdapter,
-    InMemoryStorageAdapter, MigrationReceipt, StorageAdapter, StorageError, StorageEvent,
-    StoreKind, StoreQuery, StoreRecord, STORAGE_SCHEMA_VERSION,
+    InMemoryStorageAdapter, MigrationReceipt, STORAGE_SCHEMA_VERSION, StorageAdapter, StorageError,
+    StorageEvent, StoreKind, StoreQuery, StoreRecord,
 };
 
 // ---------------------------------------------------------------------------
@@ -27,8 +27,7 @@ use frankenengine_engine::storage_adapter::{
 // ---------------------------------------------------------------------------
 
 fn ctx() -> EventContext {
-    EventContext::new("trace-int", "decision-int", "policy-int")
-        .expect("valid test context")
+    EventContext::new("trace-int", "decision-int", "policy-int").expect("valid test context")
 }
 
 fn ctx_custom(trace: &str, decision: &str, policy: &str) -> EventContext {
@@ -197,10 +196,7 @@ impl FrankensqliteBackend for MockBackend {
         if self.fail_batch {
             return Err("batch failure".into());
         }
-        let mut staged = self
-            .stores
-            .remove(&store)
-            .unwrap_or_default();
+        let mut staged = self.stores.remove(&store).unwrap_or_default();
         let mut out = Vec::with_capacity(entries.len());
         for entry in entries {
             out.push(staged.put(
@@ -250,14 +246,38 @@ fn store_kind_as_str_exhaustive() {
 #[test]
 fn store_kind_integration_point_exhaustive() {
     let expected = [
-        (StoreKind::ReplayIndex, "frankensqlite::control_plane::replay_index"),
-        (StoreKind::EvidenceIndex, "frankensqlite::control_plane::evidence_index"),
-        (StoreKind::BenchmarkLedger, "frankensqlite::benchmark::ledger"),
-        (StoreKind::PolicyCache, "frankensqlite::control_plane::policy_cache"),
-        (StoreKind::PlasWitness, "frankensqlite::analysis::plas_witness"),
-        (StoreKind::ReplacementLineage, "frankensqlite::replacement::lineage_log"),
-        (StoreKind::IfcProvenance, "frankensqlite::control_plane::ifc_provenance"),
-        (StoreKind::SpecializationIndex, "frankensqlite::control_plane::specialization_index"),
+        (
+            StoreKind::ReplayIndex,
+            "frankensqlite::control_plane::replay_index",
+        ),
+        (
+            StoreKind::EvidenceIndex,
+            "frankensqlite::control_plane::evidence_index",
+        ),
+        (
+            StoreKind::BenchmarkLedger,
+            "frankensqlite::benchmark::ledger",
+        ),
+        (
+            StoreKind::PolicyCache,
+            "frankensqlite::control_plane::policy_cache",
+        ),
+        (
+            StoreKind::PlasWitness,
+            "frankensqlite::analysis::plas_witness",
+        ),
+        (
+            StoreKind::ReplacementLineage,
+            "frankensqlite::replacement::lineage_log",
+        ),
+        (
+            StoreKind::IfcProvenance,
+            "frankensqlite::control_plane::ifc_provenance",
+        ),
+        (
+            StoreKind::SpecializationIndex,
+            "frankensqlite::control_plane::specialization_index",
+        ),
     ];
     for (kind, point) in expected {
         assert_eq!(kind.integration_point(), point, "StoreKind::{kind:?}");
@@ -298,8 +318,10 @@ fn store_kind_as_str_values_are_unique() {
 
 #[test]
 fn store_kind_integration_points_are_unique() {
-    let points: std::collections::BTreeSet<&str> =
-        ALL_STORE_KINDS.iter().map(|k| k.integration_point()).collect();
+    let points: std::collections::BTreeSet<&str> = ALL_STORE_KINDS
+        .iter()
+        .map(|k| k.integration_point())
+        .collect();
     assert_eq!(points.len(), ALL_STORE_KINDS.len());
 }
 
@@ -429,7 +451,11 @@ fn storage_error_codes_exhaustive() {
         ),
     ];
     for (err, expected_code) in cases {
-        assert_eq!(err.code(), expected_code, "StorageError code mismatch for: {err}");
+        assert_eq!(
+            err.code(),
+            expected_code,
+            "StorageError code mismatch for: {err}"
+        );
     }
 }
 
@@ -476,7 +502,10 @@ fn storage_error_display_invalid_query() {
         detail: "limit cannot be zero".into(),
     };
     let display = err.to_string();
-    assert!(display.contains("limit cannot be zero"), "Display: {display}");
+    assert!(
+        display.contains("limit cannot be zero"),
+        "Display: {display}"
+    );
 }
 
 #[test]
@@ -510,7 +539,10 @@ fn storage_error_display_migration_failed() {
         reason: "downgrade not allowed".into(),
     };
     let display = err.to_string();
-    assert!(display.contains("downgrade not allowed"), "Display: {display}");
+    assert!(
+        display.contains("downgrade not allowed"),
+        "Display: {display}"
+    );
 }
 
 #[test]
@@ -904,9 +936,7 @@ fn in_memory_get_nonexistent_returns_none() {
 #[test]
 fn in_memory_get_rejects_empty_key() {
     let mut adapter = InMemoryStorageAdapter::new();
-    let err = adapter
-        .get(StoreKind::ReplayIndex, "", &ctx())
-        .unwrap_err();
+    let err = adapter.get(StoreKind::ReplayIndex, "", &ctx()).unwrap_err();
     assert!(matches!(err, StorageError::InvalidKey { .. }));
 }
 
@@ -986,9 +1016,7 @@ fn in_memory_delete_then_get_returns_none() {
     adapter
         .delete(StoreKind::ReplayIndex, "k", &context)
         .unwrap();
-    let got = adapter
-        .get(StoreKind::ReplayIndex, "k", &context)
-        .unwrap();
+    let got = adapter.get(StoreKind::ReplayIndex, "k", &context).unwrap();
     assert!(got.is_none());
 }
 
@@ -1285,7 +1313,11 @@ fn in_memory_put_batch_empty_entries_succeeds() {
 #[test]
 fn in_memory_ensure_schema_version_match() {
     let adapter = InMemoryStorageAdapter::new();
-    assert!(adapter.ensure_schema_version(STORAGE_SCHEMA_VERSION).is_ok());
+    assert!(
+        adapter
+            .ensure_schema_version(STORAGE_SCHEMA_VERSION)
+            .is_ok()
+    );
 }
 
 #[test]
@@ -1424,9 +1456,7 @@ fn in_memory_fail_writes_allows_reads() {
     let mut adapter = InMemoryStorageAdapter::new().with_fail_writes(true);
     let context = ctx();
     // get should succeed (not a write)
-    let got = adapter
-        .get(StoreKind::ReplayIndex, "k", &context)
-        .unwrap();
+    let got = adapter.get(StoreKind::ReplayIndex, "k", &context).unwrap();
     assert!(got.is_none());
     // query should succeed
     let rows = adapter
@@ -1478,9 +1508,7 @@ fn in_memory_events_record_put_failure() {
 #[test]
 fn in_memory_events_record_get() {
     let mut adapter = InMemoryStorageAdapter::new();
-    adapter
-        .get(StoreKind::ReplayIndex, "k", &ctx())
-        .unwrap();
+    adapter.get(StoreKind::ReplayIndex, "k", &ctx()).unwrap();
     let events = adapter.events();
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].event, "get");
@@ -1502,9 +1530,7 @@ fn in_memory_events_record_query() {
 #[test]
 fn in_memory_events_record_delete() {
     let mut adapter = InMemoryStorageAdapter::new();
-    adapter
-        .delete(StoreKind::ReplayIndex, "k", &ctx())
-        .unwrap();
+    adapter.delete(StoreKind::ReplayIndex, "k", &ctx()).unwrap();
     let events = adapter.events();
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].event, "delete");
@@ -1563,7 +1589,10 @@ fn in_memory_adapter_serde_round_trip() {
 
     let json = serde_json::to_string(&adapter).unwrap();
     let back: InMemoryStorageAdapter = serde_json::from_str(&json).unwrap();
-    assert_eq!(back.current_schema_version(), adapter.current_schema_version());
+    assert_eq!(
+        back.current_schema_version(),
+        adapter.current_schema_version()
+    );
     assert_eq!(back.backend_name(), adapter.backend_name());
 }
 
@@ -1896,7 +1925,11 @@ fn frankensqlite_batch_backend_failure() {
 fn frankensqlite_ensure_schema_version_match() {
     let backend = MockBackend::default();
     let adapter = FrankensqliteStorageAdapter::new(backend).unwrap();
-    assert!(adapter.ensure_schema_version(STORAGE_SCHEMA_VERSION).is_ok());
+    assert!(
+        adapter
+            .ensure_schema_version(STORAGE_SCHEMA_VERSION)
+            .is_ok()
+    );
 }
 
 #[test]
@@ -1967,9 +2000,7 @@ fn frankensqlite_events_record_operations() {
             &context,
         )
         .unwrap();
-    adapter
-        .get(StoreKind::ReplayIndex, "k", &context)
-        .unwrap();
+    adapter.get(StoreKind::ReplayIndex, "k", &context).unwrap();
     adapter
         .query(StoreKind::ReplayIndex, &StoreQuery::default(), &context)
         .unwrap();
@@ -2157,9 +2188,7 @@ fn cross_concern_events_accumulate_across_operations() {
             &context,
         )
         .unwrap();
-    adapter
-        .get(StoreKind::ReplayIndex, "k", &context)
-        .unwrap();
+    adapter.get(StoreKind::ReplayIndex, "k", &context).unwrap();
     adapter
         .delete(StoreKind::ReplayIndex, "k", &context)
         .unwrap();
@@ -2464,11 +2493,7 @@ fn cross_concern_large_batch_preserves_order() {
         .unwrap();
 
     let rows = adapter
-        .query(
-            StoreKind::BenchmarkLedger,
-            &StoreQuery::default(),
-            &context,
-        )
+        .query(StoreKind::BenchmarkLedger, &StoreQuery::default(), &context)
         .unwrap();
     assert_eq!(rows.len(), 50);
     // Query results are canonicalized by key

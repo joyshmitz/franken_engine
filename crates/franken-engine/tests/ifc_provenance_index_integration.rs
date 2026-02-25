@@ -11,9 +11,9 @@ use frankenengine_engine::ifc_artifacts::{
     ClaimStrength, DeclassificationDecision, Label, ProofMethod,
 };
 use frankenengine_engine::ifc_provenance_index::{
-    ConfinementClaimRecord, ConfinementStatus, DeclassReceiptRecord, FlowDecision,
-    FlowEventRecord, FlowProofRecord, IfcProvenanceIndex, LineageEvidenceType, LineageHop,
-    LineagePath, ProvenanceError, ProvenanceEvent, RecordCounts, error_code,
+    ConfinementClaimRecord, ConfinementStatus, DeclassReceiptRecord, FlowDecision, FlowEventRecord,
+    FlowProofRecord, IfcProvenanceIndex, LineageEvidenceType, LineageHop, LineagePath,
+    ProvenanceError, ProvenanceEvent, RecordCounts, error_code,
 };
 use frankenengine_engine::storage_adapter::{EventContext, InMemoryStorageAdapter};
 
@@ -29,13 +29,7 @@ fn make_index() -> IfcProvenanceIndex<InMemoryStorageAdapter> {
     IfcProvenanceIndex::new(InMemoryStorageAdapter::new())
 }
 
-fn flow_event(
-    id: &str,
-    ext: &str,
-    src: Label,
-    sink: Label,
-    dec: FlowDecision,
-) -> FlowEventRecord {
+fn flow_event(id: &str, ext: &str, src: Label, sink: Label, dec: FlowDecision) -> FlowEventRecord {
     FlowEventRecord {
         event_id: id.to_string(),
         extension_id: ext.to_string(),
@@ -213,7 +207,13 @@ fn error_codes_stable_for_all_variants() {
 
 #[test]
 fn flow_event_record_construction() {
-    let ev = flow_event("ev1", "ext-a", Label::Public, Label::Internal, FlowDecision::Allowed);
+    let ev = flow_event(
+        "ev1",
+        "ext-a",
+        Label::Public,
+        Label::Internal,
+        FlowDecision::Allowed,
+    );
     assert_eq!(ev.event_id, "ev1");
     assert_eq!(ev.extension_id, "ext-a");
     assert_eq!(ev.source_label, Label::Public);
@@ -350,7 +350,13 @@ fn record_counts_total_zero() {
 fn insert_and_query_flow_event() {
     let mut idx = make_index();
     let ctx = test_ctx();
-    let ev = flow_event("ev1", "ext-a", Label::Public, Label::Internal, FlowDecision::Allowed);
+    let ev = flow_event(
+        "ev1",
+        "ext-a",
+        Label::Public,
+        Label::Internal,
+        FlowDecision::Allowed,
+    );
     idx.insert_flow_event(&ev, &ctx).unwrap();
 
     let results = idx.flow_events_by_extension("ext-a", &ctx).unwrap();
@@ -404,7 +410,13 @@ fn insert_and_query_confinement_claim() {
 fn get_single_flow_event_by_id() {
     let mut idx = make_index();
     let ctx = test_ctx();
-    let ev = flow_event("ev1", "ext-a", Label::Public, Label::Internal, FlowDecision::Allowed);
+    let ev = flow_event(
+        "ev1",
+        "ext-a",
+        Label::Public,
+        Label::Internal,
+        FlowDecision::Allowed,
+    );
     idx.insert_flow_event(&ev, &ctx).unwrap();
 
     let found = idx.get_flow_event("ev1", &ctx).unwrap();
@@ -466,7 +478,13 @@ fn get_single_confinement_claim_by_id() {
 fn reject_empty_event_id() {
     let mut idx = make_index();
     let ctx = test_ctx();
-    let ev = flow_event("", "ext-a", Label::Public, Label::Internal, FlowDecision::Allowed);
+    let ev = flow_event(
+        "",
+        "ext-a",
+        Label::Public,
+        Label::Internal,
+        FlowDecision::Allowed,
+    );
     let err = idx.insert_flow_event(&ev, &ctx).unwrap_err();
     assert!(matches!(err, ProvenanceError::EmptyId { .. }));
     assert_eq!(error_code(&err), "PROV_EMPTY_ID");
@@ -476,7 +494,13 @@ fn reject_empty_event_id() {
 fn reject_empty_extension_id_on_flow_event() {
     let mut idx = make_index();
     let ctx = test_ctx();
-    let ev = flow_event("ev1", "", Label::Public, Label::Internal, FlowDecision::Allowed);
+    let ev = flow_event(
+        "ev1",
+        "",
+        Label::Public,
+        Label::Internal,
+        FlowDecision::Allowed,
+    );
     let err = idx.insert_flow_event(&ev, &ctx).unwrap_err();
     assert_eq!(err, ProvenanceError::EmptyExtensionId);
 }
@@ -556,12 +580,24 @@ fn queries_filter_by_extension_id() {
     let mut idx = make_index();
     let ctx = test_ctx();
     idx.insert_flow_event(
-        &flow_event("ev1", "ext-a", Label::Public, Label::Internal, FlowDecision::Allowed),
+        &flow_event(
+            "ev1",
+            "ext-a",
+            Label::Public,
+            Label::Internal,
+            FlowDecision::Allowed,
+        ),
         &ctx,
     )
     .unwrap();
     idx.insert_flow_event(
-        &flow_event("ev2", "ext-b", Label::Internal, Label::Confidential, FlowDecision::Blocked),
+        &flow_event(
+            "ev2",
+            "ext-b",
+            Label::Internal,
+            Label::Confidential,
+            FlowDecision::Blocked,
+        ),
         &ctx,
     )
     .unwrap();
@@ -580,27 +616,37 @@ fn queries_return_empty_for_unknown_extension() {
     let mut idx = make_index();
     let ctx = test_ctx();
     idx.insert_flow_event(
-        &flow_event("ev1", "ext-a", Label::Public, Label::Internal, FlowDecision::Allowed),
+        &flow_event(
+            "ev1",
+            "ext-a",
+            Label::Public,
+            Label::Internal,
+            FlowDecision::Allowed,
+        ),
         &ctx,
     )
     .unwrap();
 
-    assert!(idx
-        .flow_events_by_extension("ext-unknown", &ctx)
-        .unwrap()
-        .is_empty());
-    assert!(idx
-        .flow_proofs_by_extension("ext-unknown", &ctx)
-        .unwrap()
-        .is_empty());
-    assert!(idx
-        .declass_receipts_by_extension("ext-unknown", &ctx)
-        .unwrap()
-        .is_empty());
-    assert!(idx
-        .confinement_claims_by_extension("ext-unknown", &ctx)
-        .unwrap()
-        .is_empty());
+    assert!(
+        idx.flow_events_by_extension("ext-unknown", &ctx)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        idx.flow_proofs_by_extension("ext-unknown", &ctx)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        idx.declass_receipts_by_extension("ext-unknown", &ctx)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        idx.confinement_claims_by_extension("ext-unknown", &ctx)
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]
@@ -636,7 +682,13 @@ fn source_to_sink_lineage_single_hop_event() {
     let mut idx = make_index();
     let ctx = test_ctx();
     idx.insert_flow_event(
-        &flow_event("ev1", "ext-a", Label::Public, Label::Internal, FlowDecision::Allowed),
+        &flow_event(
+            "ev1",
+            "ext-a",
+            Label::Public,
+            Label::Internal,
+            FlowDecision::Allowed,
+        ),
         &ctx,
     )
     .unwrap();
@@ -646,7 +698,10 @@ fn source_to_sink_lineage_single_hop_event() {
         .unwrap();
     assert_eq!(paths.len(), 1);
     assert_eq!(paths[0].hops.len(), 1);
-    assert_eq!(paths[0].hops[0].evidence_type, LineageEvidenceType::FlowEvent);
+    assert_eq!(
+        paths[0].hops[0].evidence_type,
+        LineageEvidenceType::FlowEvent
+    );
     assert_eq!(paths[0].hops[0].evidence_ref, "ev1");
 }
 
@@ -724,7 +779,13 @@ fn source_to_sink_lineage_multi_hop() {
     let ctx = test_ctx();
     // Chain: Public -> Internal -> Confidential
     idx.insert_flow_event(
-        &flow_event("ev1", "ext-a", Label::Public, Label::Internal, FlowDecision::Allowed),
+        &flow_event(
+            "ev1",
+            "ext-a",
+            Label::Public,
+            Label::Internal,
+            FlowDecision::Allowed,
+        ),
         &ctx,
     )
     .unwrap();
@@ -757,7 +818,13 @@ fn source_to_sink_lineage_three_hop_chain() {
     let ctx = test_ctx();
     // Chain: Public -> Internal -> Confidential -> Secret
     idx.insert_flow_event(
-        &flow_event("e1", "ext-a", Label::Public, Label::Internal, FlowDecision::Allowed),
+        &flow_event(
+            "e1",
+            "ext-a",
+            Label::Public,
+            Label::Internal,
+            FlowDecision::Allowed,
+        ),
         &ctx,
     )
     .unwrap();
@@ -808,7 +875,13 @@ fn source_to_sink_lineage_isolated_by_extension() {
     let mut idx = make_index();
     let ctx = test_ctx();
     idx.insert_flow_event(
-        &flow_event("ev1", "ext-a", Label::Public, Label::Internal, FlowDecision::Allowed),
+        &flow_event(
+            "ev1",
+            "ext-a",
+            Label::Public,
+            Label::Internal,
+            FlowDecision::Allowed,
+        ),
         &ctx,
     )
     .unwrap();
@@ -828,7 +901,13 @@ fn sink_provenance_collects_direct_sources() {
     let mut idx = make_index();
     let ctx = test_ctx();
     idx.insert_flow_event(
-        &flow_event("ev1", "ext-a", Label::Public, Label::Internal, FlowDecision::Allowed),
+        &flow_event(
+            "ev1",
+            "ext-a",
+            Label::Public,
+            Label::Internal,
+            FlowDecision::Allowed,
+        ),
         &ctx,
     )
     .unwrap();
@@ -884,9 +963,7 @@ fn sink_provenance_includes_allowed_declass_receipts() {
     )
     .unwrap();
 
-    let sources = idx
-        .sink_provenance("ext-a", &Label::Public, &ctx)
-        .unwrap();
+    let sources = idx.sink_provenance("ext-a", &Label::Public, &ctx).unwrap();
     assert!(sources.contains(&Label::Secret));
 }
 
@@ -906,9 +983,7 @@ fn sink_provenance_excludes_denied_declass() {
     )
     .unwrap();
 
-    let sources = idx
-        .sink_provenance("ext-a", &Label::Public, &ctx)
-        .unwrap();
+    let sources = idx.sink_provenance("ext-a", &Label::Public, &ctx).unwrap();
     assert!(!sources.contains(&Label::Secret));
 }
 
@@ -918,7 +993,13 @@ fn sink_provenance_transitive_sources() {
     let ctx = test_ctx();
     // Public -> Internal -> Confidential
     idx.insert_flow_event(
-        &flow_event("ev1", "ext-a", Label::Public, Label::Internal, FlowDecision::Allowed),
+        &flow_event(
+            "ev1",
+            "ext-a",
+            Label::Public,
+            Label::Internal,
+            FlowDecision::Allowed,
+        ),
         &ctx,
     )
     .unwrap();
@@ -959,17 +1040,38 @@ fn flow_events_by_time_range_inclusive() {
     let mut idx = make_index();
     let ctx = test_ctx();
     idx.insert_flow_event(
-        &flow_event_at("ev1", "ext-a", Label::Public, Label::Internal, FlowDecision::Allowed, 100),
+        &flow_event_at(
+            "ev1",
+            "ext-a",
+            Label::Public,
+            Label::Internal,
+            FlowDecision::Allowed,
+            100,
+        ),
         &ctx,
     )
     .unwrap();
     idx.insert_flow_event(
-        &flow_event_at("ev2", "ext-a", Label::Public, Label::Internal, FlowDecision::Allowed, 200),
+        &flow_event_at(
+            "ev2",
+            "ext-a",
+            Label::Public,
+            Label::Internal,
+            FlowDecision::Allowed,
+            200,
+        ),
         &ctx,
     )
     .unwrap();
     idx.insert_flow_event(
-        &flow_event_at("ev3", "ext-a", Label::Public, Label::Internal, FlowDecision::Allowed, 300),
+        &flow_event_at(
+            "ev3",
+            "ext-a",
+            Label::Public,
+            Label::Internal,
+            FlowDecision::Allowed,
+            300,
+        ),
         &ctx,
     )
     .unwrap();
@@ -985,7 +1087,14 @@ fn flow_events_by_time_range_excludes_outside() {
     let mut idx = make_index();
     let ctx = test_ctx();
     idx.insert_flow_event(
-        &flow_event_at("ev1", "ext-a", Label::Public, Label::Internal, FlowDecision::Allowed, 50),
+        &flow_event_at(
+            "ev1",
+            "ext-a",
+            Label::Public,
+            Label::Internal,
+            FlowDecision::Allowed,
+            50,
+        ),
         &ctx,
     )
     .unwrap();
@@ -1123,7 +1232,13 @@ fn confinement_status_proven_and_unproven() {
 
     // Two event flows
     idx.insert_flow_event(
-        &flow_event("ev1", "ext-a", Label::Public, Label::Internal, FlowDecision::Allowed),
+        &flow_event(
+            "ev1",
+            "ext-a",
+            Label::Public,
+            Label::Internal,
+            FlowDecision::Allowed,
+        ),
         &ctx,
     )
     .unwrap();
@@ -1166,7 +1281,13 @@ fn confinement_status_full_coverage() {
     let ctx = test_ctx();
 
     idx.insert_flow_event(
-        &flow_event("ev1", "ext-a", Label::Public, Label::Internal, FlowDecision::Allowed),
+        &flow_event(
+            "ev1",
+            "ext-a",
+            Label::Public,
+            Label::Internal,
+            FlowDecision::Allowed,
+        ),
         &ctx,
     )
     .unwrap();
@@ -1260,7 +1381,13 @@ fn join_events_without_receipt_ref() {
     let mut idx = make_index();
     let ctx = test_ctx();
 
-    let ev = flow_event("ev1", "ext-a", Label::Public, Label::Internal, FlowDecision::Allowed);
+    let ev = flow_event(
+        "ev1",
+        "ext-a",
+        Label::Public,
+        Label::Internal,
+        FlowDecision::Allowed,
+    );
     idx.insert_flow_event(&ev, &ctx).unwrap();
 
     let joined = idx.join_events_with_receipts("ext-a", &ctx).unwrap();
@@ -1297,7 +1424,13 @@ fn events_emitted_on_flow_event_insert() {
     let mut idx = make_index();
     let ctx = test_ctx();
     idx.insert_flow_event(
-        &flow_event("ev1", "ext-a", Label::Public, Label::Internal, FlowDecision::Allowed),
+        &flow_event(
+            "ev1",
+            "ext-a",
+            Label::Public,
+            Label::Internal,
+            FlowDecision::Allowed,
+        ),
         &ctx,
     )
     .unwrap();
@@ -1339,9 +1472,7 @@ fn events_emitted_on_receipt_insert() {
     .unwrap();
 
     let events = idx.events();
-    assert!(events
-        .iter()
-        .any(|e| e.event == "declass_receipt_inserted"));
+    assert!(events.iter().any(|e| e.event == "declass_receipt_inserted"));
 }
 
 #[test]
@@ -1355,9 +1486,11 @@ fn events_emitted_on_claim_insert() {
     .unwrap();
 
     let events = idx.events();
-    assert!(events
-        .iter()
-        .any(|e| e.event == "confinement_claim_inserted"));
+    assert!(
+        events
+            .iter()
+            .any(|e| e.event == "confinement_claim_inserted")
+    );
 }
 
 #[test]
@@ -1374,7 +1507,13 @@ fn drain_events_clears_accumulated() {
     let mut idx = make_index();
     let ctx = test_ctx();
     idx.insert_flow_event(
-        &flow_event("ev1", "ext-a", Label::Public, Label::Internal, FlowDecision::Allowed),
+        &flow_event(
+            "ev1",
+            "ext-a",
+            Label::Public,
+            Label::Internal,
+            FlowDecision::Allowed,
+        ),
         &ctx,
     )
     .unwrap();
@@ -1391,7 +1530,13 @@ fn drain_events_clears_accumulated() {
 
 #[test]
 fn flow_event_record_serde_roundtrip() {
-    let ev = flow_event("ev1", "ext-a", Label::Public, Label::Internal, FlowDecision::Allowed);
+    let ev = flow_event(
+        "ev1",
+        "ext-a",
+        Label::Public,
+        Label::Internal,
+        FlowDecision::Allowed,
+    );
     let json = serde_json::to_string(&ev).unwrap();
     let deser: FlowEventRecord = serde_json::from_str(&json).unwrap();
     assert_eq!(ev, deser);
@@ -1594,7 +1739,13 @@ fn deterministic_replay_same_operations_same_results() {
     let run = || {
         let mut idx = make_index();
         idx.insert_flow_event(
-            &flow_event("ev1", "ext-a", Label::Public, Label::Internal, FlowDecision::Allowed),
+            &flow_event(
+                "ev1",
+                "ext-a",
+                Label::Public,
+                Label::Internal,
+                FlowDecision::Allowed,
+            ),
             &ctx,
         )
         .unwrap();
@@ -1729,7 +1880,13 @@ fn custom_label_in_flow_event() {
         name: "pii".to_string(),
         level: 3,
     };
-    let ev = flow_event("ev1", "ext-a", custom.clone(), Label::Secret, FlowDecision::Allowed);
+    let ev = flow_event(
+        "ev1",
+        "ext-a",
+        custom.clone(),
+        Label::Secret,
+        FlowDecision::Allowed,
+    );
     idx.insert_flow_event(&ev, &ctx).unwrap();
 
     let results = idx.flow_events_by_extension("ext-a", &ctx).unwrap();
@@ -1747,14 +1904,18 @@ fn custom_label_lineage_traversal() {
         level: 3,
     };
     idx.insert_flow_event(
-        &flow_event("ev1", "ext-a", pii.clone(), Label::Secret, FlowDecision::Allowed),
+        &flow_event(
+            "ev1",
+            "ext-a",
+            pii.clone(),
+            Label::Secret,
+            FlowDecision::Allowed,
+        ),
         &ctx,
     )
     .unwrap();
 
-    let paths = idx
-        .source_to_sink_lineage("ext-a", &pii, &ctx)
-        .unwrap();
+    let paths = idx.source_to_sink_lineage("ext-a", &pii, &ctx).unwrap();
     assert_eq!(paths.len(), 1);
     assert_eq!(paths[0].hops[0].source_label, pii);
 }
@@ -1849,7 +2010,13 @@ fn end_to_end_multi_extension_scenario() {
 
     // Extension A: Public -> Internal (event + proof)
     idx.insert_flow_event(
-        &flow_event("a-ev1", "ext-a", Label::Public, Label::Internal, FlowDecision::Allowed),
+        &flow_event(
+            "a-ev1",
+            "ext-a",
+            Label::Public,
+            Label::Internal,
+            FlowDecision::Allowed,
+        ),
         &ctx,
     )
     .unwrap();
@@ -1904,16 +2071,18 @@ fn end_to_end_multi_extension_scenario() {
     assert!(joined[0].1.is_some());
 
     // Verify isolation
-    assert!(idx
-        .flow_events_by_extension("ext-a", &ctx)
-        .unwrap()
-        .iter()
-        .all(|e| e.extension_id == "ext-a"));
-    assert!(idx
-        .flow_events_by_extension("ext-b", &ctx)
-        .unwrap()
-        .iter()
-        .all(|e| e.extension_id == "ext-b"));
+    assert!(
+        idx.flow_events_by_extension("ext-a", &ctx)
+            .unwrap()
+            .iter()
+            .all(|e| e.extension_id == "ext-a")
+    );
+    assert!(
+        idx.flow_events_by_extension("ext-b", &ctx)
+            .unwrap()
+            .iter()
+            .all(|e| e.extension_id == "ext-b")
+    );
 
     // Verify lineage for ext-b
     let paths = idx

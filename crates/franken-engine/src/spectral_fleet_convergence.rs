@@ -499,8 +499,9 @@ impl SpectralAnalyzer {
             let new_lambda = dot_product_millionths(&new_v, &v);
             normalize_vector_millionths(&mut new_v);
             if (new_lambda - lambda).abs() < self.convergence_threshold_millionths {
-                // λ₂ = λ_max - eigenvalue_of_shifted_matrix
-                let fiedler_value = lambda_max - new_lambda;
+                // Recover λ₂ from the converged vector using the Rayleigh
+                // quotient on the original Laplacian for numerical robustness.
+                let fiedler_value = rayleigh_quotient_millionths(laplacian, &new_v);
                 return Ok((fiedler_value.max(0), new_v));
             }
             lambda = new_lambda;
@@ -615,6 +616,30 @@ fn dot_product_millionths(a: &[i64], b: &[i64]) -> i64 {
         .map(|(&ai, &bi)| ai as i128 * bi as i128)
         .sum();
     (sum / MILLION as i128) as i64
+}
+
+/// Apply Laplacian matrix to a vector in millionths.
+fn apply_laplacian_millionths(laplacian: &LaplacianMatrix, v: &[i64]) -> Vec<i64> {
+    let n = laplacian.dim;
+    let mut out = vec![0i64; n];
+    #[allow(clippy::needless_range_loop)]
+    for i in 0..n {
+        let mut sum = 0i128;
+        #[allow(clippy::needless_range_loop)]
+        for j in 0..n {
+            sum += laplacian.get(i, j) as i128 * v[j] as i128;
+        }
+        out[i] = (sum / MILLION as i128) as i64;
+    }
+    out
+}
+
+/// Rayleigh quotient v^T L v / v^T v in millionths.
+fn rayleigh_quotient_millionths(laplacian: &LaplacianMatrix, v: &[i64]) -> i64 {
+    let lv = apply_laplacian_millionths(laplacian, v);
+    let numerator = dot_product_millionths(&lv, v) as i128;
+    let denominator = dot_product_millionths(v, v).max(1) as i128;
+    (numerator * MILLION as i128 / denominator) as i64
 }
 
 /// Integer square root of i128.
@@ -978,6 +1003,8 @@ mod tests {
 
         assert_eq!(analysis.num_nodes, 2);
         assert!(analysis.algebraic_connectivity_millionths > 0);
+        // For a 2-node graph with unit weight, Laplacian eigenvalues are 0 and 2.
+        assert!((analysis.algebraic_connectivity_millionths - 2 * MILLION).abs() < 200_000);
     }
 
     // === Helper functions ===

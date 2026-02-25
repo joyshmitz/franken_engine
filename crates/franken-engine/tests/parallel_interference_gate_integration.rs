@@ -10,10 +10,10 @@ use std::collections::BTreeSet;
 
 use frankenengine_engine::hash_tiers::ContentHash;
 use frankenengine_engine::parallel_interference_gate::{
-    self, FlakeRate, GateConfig, GateDecision, GateResult, InterferenceClass,
-    InterferenceIncident, InterferenceSeverity, OperatorSummary, ReplayBundle, RootCauseHint,
-    RunRecord, WitnessDiff, WitnessDiffEntry, COMPONENT, DEFAULT_FLAKE_THRESHOLD_MILLIONTHS,
-    DEFAULT_MAX_WORKER_VARIATIONS, DEFAULT_REPEATS_PER_SEED, DEFAULT_SEED_COUNT, SCHEMA_VERSION,
+    self, COMPONENT, DEFAULT_FLAKE_THRESHOLD_MILLIONTHS, DEFAULT_MAX_WORKER_VARIATIONS,
+    DEFAULT_REPEATS_PER_SEED, DEFAULT_SEED_COUNT, FlakeRate, GateConfig, GateDecision, GateResult,
+    InterferenceClass, InterferenceIncident, InterferenceSeverity, OperatorSummary, ReplayBundle,
+    RootCauseHint, RunRecord, SCHEMA_VERSION, WitnessDiff, WitnessDiffEntry,
 };
 use frankenengine_engine::parallel_parser::{
     MergeWitness, ParallelConfig, ParserMode, RollbackControl, ScheduleTranscript,
@@ -223,7 +223,12 @@ fn interference_severity_clone_eq() {
 
 #[test]
 fn interference_incident_construction_and_fields() {
-    let incident = make_incident(InterferenceClass::Scheduler, InterferenceSeverity::Warning, 7, 4);
+    let incident = make_incident(
+        InterferenceClass::Scheduler,
+        InterferenceSeverity::Warning,
+        7,
+        4,
+    );
     assert_eq!(incident.class, InterferenceClass::Scheduler);
     assert_eq!(incident.severity, InterferenceSeverity::Warning);
     assert_eq!(incident.seed, 7);
@@ -237,8 +242,12 @@ fn interference_incident_construction_and_fields() {
 
 #[test]
 fn interference_incident_with_mismatch_index() {
-    let mut incident =
-        make_incident(InterferenceClass::MergeOrder, InterferenceSeverity::Critical, 1, 8);
+    let mut incident = make_incident(
+        InterferenceClass::MergeOrder,
+        InterferenceSeverity::Critical,
+        1,
+        8,
+    );
     incident.mismatch_token_index = Some(42);
     assert_eq!(incident.mismatch_token_index, Some(42));
 }
@@ -265,8 +274,12 @@ fn interference_incident_serde_roundtrip() {
 
 #[test]
 fn interference_incident_serde_no_mismatch_index() {
-    let incident =
-        make_incident(InterferenceClass::ArtifactPipeline, InterferenceSeverity::Warning, 0, 2);
+    let incident = make_incident(
+        InterferenceClass::ArtifactPipeline,
+        InterferenceSeverity::Warning,
+        0,
+        2,
+    );
     let json = serde_json::to_string(&incident).unwrap();
     let back: InterferenceIncident = serde_json::from_str(&json).unwrap();
     assert_eq!(incident, back);
@@ -724,7 +737,11 @@ fn gate_decision_ordering() {
 
 #[test]
 fn gate_decision_serde_roundtrip() {
-    for d in [GateDecision::Promote, GateDecision::Hold, GateDecision::Reject] {
+    for d in [
+        GateDecision::Promote,
+        GateDecision::Hold,
+        GateDecision::Reject,
+    ] {
         let json = serde_json::to_string(&d).unwrap();
         let back: GateDecision = serde_json::from_str(&json).unwrap();
         assert_eq!(d, back);
@@ -1080,8 +1097,18 @@ fn operator_summary_promote_clean() {
 #[test]
 fn operator_summary_hold_with_incidents() {
     let incidents = vec![
-        make_incident(InterferenceClass::Scheduler, InterferenceSeverity::Warning, 0, 2),
-        make_incident(InterferenceClass::Scheduler, InterferenceSeverity::Warning, 1, 2),
+        make_incident(
+            InterferenceClass::Scheduler,
+            InterferenceSeverity::Warning,
+            0,
+            2,
+        ),
+        make_incident(
+            InterferenceClass::Scheduler,
+            InterferenceSeverity::Warning,
+            1,
+            2,
+        ),
         make_incident(
             InterferenceClass::MergeOrder,
             InterferenceSeverity::Warning,
@@ -1095,9 +1122,15 @@ fn operator_summary_hold_with_incidents() {
     assert_eq!(summary.incident_count, 3);
     assert!(!summary.root_cause_hints.is_empty());
     // Scheduler has 2 incidents, should be ranked first
-    assert_eq!(summary.root_cause_hints[0].class, InterferenceClass::Scheduler);
+    assert_eq!(
+        summary.root_cause_hints[0].class,
+        InterferenceClass::Scheduler
+    );
     assert_eq!(summary.root_cause_hints[0].count, 2);
-    assert_eq!(summary.root_cause_hints[1].class, InterferenceClass::MergeOrder);
+    assert_eq!(
+        summary.root_cause_hints[1].class,
+        InterferenceClass::MergeOrder
+    );
     assert_eq!(summary.root_cause_hints[1].count, 1);
     assert!(summary.recommended_action.contains("Investigate"));
 }
@@ -1138,7 +1171,12 @@ fn operator_summary_serde_roundtrip() {
 fn operator_summary_root_cause_severity_escalation() {
     // Same class, different severities: should take max severity
     let incidents = vec![
-        make_incident(InterferenceClass::Scheduler, InterferenceSeverity::Info, 0, 2),
+        make_incident(
+            InterferenceClass::Scheduler,
+            InterferenceSeverity::Info,
+            0,
+            2,
+        ),
         make_incident(
             InterferenceClass::Scheduler,
             InterferenceSeverity::Warning,
@@ -1149,8 +1187,14 @@ fn operator_summary_root_cause_severity_escalation() {
     let result = make_gate_result_with_incidents(incidents);
     let summary = parallel_interference_gate::generate_operator_summary(&result);
     assert_eq!(summary.root_cause_hints.len(), 1);
-    assert_eq!(summary.root_cause_hints[0].class, InterferenceClass::Scheduler);
-    assert_eq!(summary.root_cause_hints[0].severity, InterferenceSeverity::Warning);
+    assert_eq!(
+        summary.root_cause_hints[0].class,
+        InterferenceClass::Scheduler
+    );
+    assert_eq!(
+        summary.root_cause_hints[0].severity,
+        InterferenceSeverity::Warning
+    );
     assert_eq!(summary.root_cause_hints[0].count, 2);
 }
 
@@ -1163,7 +1207,12 @@ fn operator_summary_root_cause_has_remediation() {
             0,
             2,
         ),
-        make_incident(InterferenceClass::TimeoutRace, InterferenceSeverity::Warning, 1, 4),
+        make_incident(
+            InterferenceClass::TimeoutRace,
+            InterferenceSeverity::Warning,
+            1,
+            4,
+        ),
     ];
     let result = make_gate_result_with_incidents(incidents);
     let summary = parallel_interference_gate::generate_operator_summary(&result);
@@ -1266,8 +1315,18 @@ fn build_replay_bundle_none_on_clean_run() {
 #[test]
 fn build_replay_bundle_some_on_incidents() {
     let incidents = vec![
-        make_incident(InterferenceClass::MergeOrder, InterferenceSeverity::Warning, 1, 2),
-        make_incident(InterferenceClass::Scheduler, InterferenceSeverity::Warning, 3, 4),
+        make_incident(
+            InterferenceClass::MergeOrder,
+            InterferenceSeverity::Warning,
+            1,
+            2,
+        ),
+        make_incident(
+            InterferenceClass::Scheduler,
+            InterferenceSeverity::Warning,
+            3,
+            4,
+        ),
     ];
     let result = make_gate_result_with_incidents(incidents);
     let bundle = parallel_interference_gate::build_replay_bundle(&result).unwrap();
@@ -1281,9 +1340,24 @@ fn build_replay_bundle_some_on_incidents() {
 #[test]
 fn build_replay_bundle_deduplicates_seeds_and_workers() {
     let incidents = vec![
-        make_incident(InterferenceClass::MergeOrder, InterferenceSeverity::Warning, 1, 2),
-        make_incident(InterferenceClass::Scheduler, InterferenceSeverity::Warning, 1, 2),
-        make_incident(InterferenceClass::TimeoutRace, InterferenceSeverity::Warning, 3, 4),
+        make_incident(
+            InterferenceClass::MergeOrder,
+            InterferenceSeverity::Warning,
+            1,
+            2,
+        ),
+        make_incident(
+            InterferenceClass::Scheduler,
+            InterferenceSeverity::Warning,
+            1,
+            2,
+        ),
+        make_incident(
+            InterferenceClass::TimeoutRace,
+            InterferenceSeverity::Warning,
+            3,
+            4,
+        ),
     ];
     let result = make_gate_result_with_incidents(incidents);
     let bundle = parallel_interference_gate::build_replay_bundle(&result).unwrap();
@@ -1300,8 +1374,18 @@ fn build_replay_bundle_deduplicates_seeds_and_workers() {
 #[test]
 fn build_replay_bundle_replay_commands_per_incident() {
     let incidents = vec![
-        make_incident(InterferenceClass::MergeOrder, InterferenceSeverity::Warning, 0, 2),
-        make_incident(InterferenceClass::Scheduler, InterferenceSeverity::Warning, 1, 4),
+        make_incident(
+            InterferenceClass::MergeOrder,
+            InterferenceSeverity::Warning,
+            0,
+            2,
+        ),
+        make_incident(
+            InterferenceClass::Scheduler,
+            InterferenceSeverity::Warning,
+            1,
+            4,
+        ),
     ];
     let result = make_gate_result_with_incidents(incidents);
     let bundle = parallel_interference_gate::build_replay_bundle(&result).unwrap();
@@ -1386,8 +1470,14 @@ fn apply_gate_to_rollback_three_failures_triggers_rollback() {
     let mut rollback = RollbackControl::default();
 
     // First two should not trigger
-    assert!(!parallel_interference_gate::apply_gate_to_rollback(&result, &mut rollback));
-    assert!(!parallel_interference_gate::apply_gate_to_rollback(&result, &mut rollback));
+    assert!(!parallel_interference_gate::apply_gate_to_rollback(
+        &result,
+        &mut rollback
+    ));
+    assert!(!parallel_interference_gate::apply_gate_to_rollback(
+        &result,
+        &mut rollback
+    ));
     // Third should trigger auto-rollback (threshold = 3)
     let triggered = parallel_interference_gate::apply_gate_to_rollback(&result, &mut rollback);
     assert!(triggered);
@@ -1448,9 +1538,24 @@ fn full_pipeline_evaluate_then_summary_then_replay() {
 #[test]
 fn full_pipeline_with_synthetic_incidents() {
     let incidents = vec![
-        make_incident(InterferenceClass::MergeOrder, InterferenceSeverity::Warning, 0, 2),
-        make_incident(InterferenceClass::Scheduler, InterferenceSeverity::Warning, 1, 4),
-        make_incident(InterferenceClass::MergeOrder, InterferenceSeverity::Warning, 2, 2),
+        make_incident(
+            InterferenceClass::MergeOrder,
+            InterferenceSeverity::Warning,
+            0,
+            2,
+        ),
+        make_incident(
+            InterferenceClass::Scheduler,
+            InterferenceSeverity::Warning,
+            1,
+            4,
+        ),
+        make_incident(
+            InterferenceClass::MergeOrder,
+            InterferenceSeverity::Warning,
+            2,
+            2,
+        ),
     ];
     let result = make_gate_result_with_incidents(incidents);
 
@@ -1458,7 +1563,10 @@ fn full_pipeline_with_synthetic_incidents() {
     assert_eq!(summary.decision, GateDecision::Hold);
     assert_eq!(summary.incident_count, 3);
     // MergeOrder has 2 incidents, Scheduler has 1 => MergeOrder first
-    assert_eq!(summary.root_cause_hints[0].class, InterferenceClass::MergeOrder);
+    assert_eq!(
+        summary.root_cause_hints[0].class,
+        InterferenceClass::MergeOrder
+    );
     assert_eq!(summary.root_cause_hints[0].count, 2);
 
     let bundle = parallel_interference_gate::build_replay_bundle(&result).unwrap();
@@ -1666,7 +1774,12 @@ fn evaluate_gate_workers_sorted() {
 #[test]
 fn operator_summary_multiple_classes_sorted_by_count() {
     let incidents = vec![
-        make_incident(InterferenceClass::TimeoutRace, InterferenceSeverity::Warning, 0, 2),
+        make_incident(
+            InterferenceClass::TimeoutRace,
+            InterferenceSeverity::Warning,
+            0,
+            2,
+        ),
         make_incident(
             InterferenceClass::BackpressureDrift,
             InterferenceSeverity::Warning,
@@ -1685,18 +1798,29 @@ fn operator_summary_multiple_classes_sorted_by_count() {
             3,
             4,
         ),
-        make_incident(InterferenceClass::TimeoutRace, InterferenceSeverity::Warning, 4, 2),
+        make_incident(
+            InterferenceClass::TimeoutRace,
+            InterferenceSeverity::Warning,
+            4,
+            2,
+        ),
     ];
     let result = make_gate_result_with_incidents(incidents);
     let summary = parallel_interference_gate::generate_operator_summary(&result);
     // BackpressureDrift has 3 incidents, TimeoutRace has 2
-    assert_eq!(summary.root_cause_hints[0].class, InterferenceClass::BackpressureDrift);
+    assert_eq!(
+        summary.root_cause_hints[0].class,
+        InterferenceClass::BackpressureDrift
+    );
     assert_eq!(summary.root_cause_hints[0].count, 3);
     assert_eq!(
         summary.root_cause_hints[0].severity,
         InterferenceSeverity::Warning
     );
-    assert_eq!(summary.root_cause_hints[1].class, InterferenceClass::TimeoutRace);
+    assert_eq!(
+        summary.root_cause_hints[1].class,
+        InterferenceClass::TimeoutRace
+    );
     assert_eq!(summary.root_cause_hints[1].count, 2);
 }
 
@@ -1711,8 +1835,12 @@ fn all_types_debug_format() {
     let _ = format!("{:?}", InterferenceSeverity::Info);
     let _ = format!("{:?}", GateDecision::Promote);
 
-    let incident =
-        make_incident(InterferenceClass::Scheduler, InterferenceSeverity::Warning, 0, 2);
+    let incident = make_incident(
+        InterferenceClass::Scheduler,
+        InterferenceSeverity::Warning,
+        0,
+        2,
+    );
     let _ = format!("{:?}", incident);
 
     let diff = WitnessDiff {
@@ -1784,9 +1912,24 @@ fn all_types_debug_format() {
 #[test]
 fn replay_bundle_seeds_and_workers_are_sorted() {
     let incidents = vec![
-        make_incident(InterferenceClass::Scheduler, InterferenceSeverity::Warning, 9, 8),
-        make_incident(InterferenceClass::MergeOrder, InterferenceSeverity::Warning, 1, 2),
-        make_incident(InterferenceClass::TimeoutRace, InterferenceSeverity::Warning, 5, 4),
+        make_incident(
+            InterferenceClass::Scheduler,
+            InterferenceSeverity::Warning,
+            9,
+            8,
+        ),
+        make_incident(
+            InterferenceClass::MergeOrder,
+            InterferenceSeverity::Warning,
+            1,
+            2,
+        ),
+        make_incident(
+            InterferenceClass::TimeoutRace,
+            InterferenceSeverity::Warning,
+            5,
+            4,
+        ),
     ];
     let result = make_gate_result_with_incidents(incidents);
     let bundle = parallel_interference_gate::build_replay_bundle(&result).unwrap();
@@ -1837,5 +1980,12 @@ fn gate_decision_in_btreeset() {
     set.insert(GateDecision::Promote);
     set.insert(GateDecision::Hold);
     let items: Vec<_> = set.into_iter().collect();
-    assert_eq!(items, vec![GateDecision::Promote, GateDecision::Hold, GateDecision::Reject]);
+    assert_eq!(
+        items,
+        vec![
+            GateDecision::Promote,
+            GateDecision::Hold,
+            GateDecision::Reject
+        ]
+    );
 }

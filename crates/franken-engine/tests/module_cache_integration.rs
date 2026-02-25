@@ -186,18 +186,24 @@ fn cache_error_code_stable_codes_unique_and_prefixed() {
             stable.starts_with("FE-MODCACHE-"),
             "code {stable} should start with FE-MODCACHE-"
         );
-        assert!(
-            seen.insert(stable),
-            "duplicate stable code: {stable}"
-        );
+        assert!(seen.insert(stable), "duplicate stable code: {stable}");
     }
 }
 
 #[test]
 fn cache_error_code_specific_values() {
-    assert_eq!(CacheErrorCode::ModuleRevoked.stable_code(), "FE-MODCACHE-0001");
-    assert_eq!(CacheErrorCode::VersionRegression.stable_code(), "FE-MODCACHE-0002");
-    assert_eq!(CacheErrorCode::EmptyModuleId.stable_code(), "FE-MODCACHE-0003");
+    assert_eq!(
+        CacheErrorCode::ModuleRevoked.stable_code(),
+        "FE-MODCACHE-0001"
+    );
+    assert_eq!(
+        CacheErrorCode::VersionRegression.stable_code(),
+        "FE-MODCACHE-0002"
+    );
+    assert_eq!(
+        CacheErrorCode::EmptyModuleId.stable_code(),
+        "FE-MODCACHE-0003"
+    );
 }
 
 #[test]
@@ -818,7 +824,11 @@ fn event_sequences_are_monotonically_increasing() {
     cache.invalidate_policy_change("mod:e2", 5, &c);
 
     let seqs: Vec<u64> = cache.events().iter().map(|e| e.seq).collect();
-    assert!(seqs.len() >= 4, "expected multiple events, got {}", seqs.len());
+    assert!(
+        seqs.len() >= 4,
+        "expected multiple events, got {}",
+        seqs.len()
+    );
     for window in seqs.windows(2) {
         assert!(
             window[1] > window[0],
@@ -837,7 +847,11 @@ fn error_events_are_recorded_even_on_failure() {
     // Even though insert failed, an event should have been recorded
     assert!(!cache.events().is_empty());
     let last = cache.events().last().unwrap();
-    assert!(last.error_code.contains("MODCACHE"), "error_code: {}", last.error_code);
+    assert!(
+        last.error_code.contains("MODCACHE"),
+        "error_code: {}",
+        last.error_code
+    );
 }
 
 #[test]
@@ -955,7 +969,10 @@ fn module_cache_json_serialization_fails_due_to_non_string_key() {
     let mut cache = ModuleCache::new();
     insert_module(&mut cache, "mod:a", fp("sa", 1, 1), "aa", "/a.js").unwrap();
     let result = serde_json::to_string(&cache);
-    assert!(result.is_err(), "BTreeMap<ModuleCacheKey, _> cannot serialize to JSON");
+    assert!(
+        result.is_err(),
+        "BTreeMap<ModuleCacheKey, _> cannot serialize to JSON"
+    );
 }
 
 // ===========================================================================
@@ -1086,5 +1103,9 @@ fn inserted_seq_advances_per_insert() {
     let seqs: Vec<u64> = snap.entries.iter().map(|e| e.inserted_seq).collect();
     // All insert_seq values should be unique
     let unique: BTreeSet<u64> = seqs.iter().copied().collect();
-    assert_eq!(unique.len(), seqs.len(), "inserted_seq values must be unique");
+    assert_eq!(
+        unique.len(),
+        seqs.len(),
+        "inserted_seq values must be unique"
+    );
 }

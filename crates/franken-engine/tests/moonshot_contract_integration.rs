@@ -59,9 +59,9 @@ fn valid_ev_model() -> EvModel {
     EvModel {
         success_distribution: DistributionType::PointEstimate,
         distribution_params: params,
-        cost_millionths: 1_000_000,                 // 1.0
-        benefit_on_success_millionths: 10_000_000,  // 10.0
-        harm_on_failure_millionths: -500_000,       // -0.5
+        cost_millionths: 1_000_000,                // 1.0
+        benefit_on_success_millionths: 10_000_000, // 10.0
+        harm_on_failure_millionths: -500_000,      // -0.5
     }
 }
 
@@ -70,7 +70,9 @@ fn valid_risk_budget() -> RiskBudget {
     caps.insert(RiskDimension::SecurityRegression, 50_000);
     caps.insert(RiskDimension::PerformanceRegression, 100_000);
     caps.insert(RiskDimension::OperationalBurden, 200_000);
-    RiskBudget { dimension_caps: caps }
+    RiskBudget {
+        dimension_caps: caps,
+    }
 }
 
 fn valid_obligations() -> Vec<ArtifactObligation> {
@@ -235,9 +237,18 @@ fn stage_serde_round_trip_all_variants() {
 #[test]
 fn measurement_method_display_all_variants() {
     assert_eq!(MeasurementMethod::Benchmark.to_string(), "benchmark");
-    assert_eq!(MeasurementMethod::EvidenceQuery.to_string(), "evidence_query");
-    assert_eq!(MeasurementMethod::FleetTelemetry.to_string(), "fleet_telemetry");
-    assert_eq!(MeasurementMethod::OperatorReview.to_string(), "operator_review");
+    assert_eq!(
+        MeasurementMethod::EvidenceQuery.to_string(),
+        "evidence_query"
+    );
+    assert_eq!(
+        MeasurementMethod::FleetTelemetry.to_string(),
+        "fleet_telemetry"
+    );
+    assert_eq!(
+        MeasurementMethod::OperatorReview.to_string(),
+        "operator_review"
+    );
 }
 
 #[test]
@@ -253,13 +264,22 @@ fn measurement_method_ordering() {
 
 #[test]
 fn metric_direction_equality() {
-    assert_eq!(MetricDirection::HigherIsBetter, MetricDirection::HigherIsBetter);
-    assert_ne!(MetricDirection::HigherIsBetter, MetricDirection::LowerIsBetter);
+    assert_eq!(
+        MetricDirection::HigherIsBetter,
+        MetricDirection::HigherIsBetter
+    );
+    assert_ne!(
+        MetricDirection::HigherIsBetter,
+        MetricDirection::LowerIsBetter
+    );
 }
 
 #[test]
 fn metric_direction_serde_round_trip() {
-    let dirs = [MetricDirection::HigherIsBetter, MetricDirection::LowerIsBetter];
+    let dirs = [
+        MetricDirection::HigherIsBetter,
+        MetricDirection::LowerIsBetter,
+    ];
     for d in &dirs {
         let json = serde_json::to_string(d).unwrap();
         let decoded: MetricDirection = serde_json::from_str(&json).unwrap();
@@ -273,7 +293,10 @@ fn metric_direction_serde_round_trip() {
 
 #[test]
 fn distribution_type_display_all_variants() {
-    assert_eq!(DistributionType::PointEstimate.to_string(), "point_estimate");
+    assert_eq!(
+        DistributionType::PointEstimate.to_string(),
+        "point_estimate"
+    );
     assert_eq!(DistributionType::Uniform.to_string(), "uniform");
     assert_eq!(DistributionType::Beta.to_string(), "beta");
     assert_eq!(DistributionType::LogNormal.to_string(), "log_normal");
@@ -293,9 +316,18 @@ fn distribution_type_ordering() {
 
 #[test]
 fn risk_dimension_display_all_variants() {
-    assert_eq!(RiskDimension::SecurityRegression.to_string(), "security_regression");
-    assert_eq!(RiskDimension::PerformanceRegression.to_string(), "performance_regression");
-    assert_eq!(RiskDimension::OperationalBurden.to_string(), "operational_burden");
+    assert_eq!(
+        RiskDimension::SecurityRegression.to_string(),
+        "security_regression"
+    );
+    assert_eq!(
+        RiskDimension::PerformanceRegression.to_string(),
+        "performance_regression"
+    );
+    assert_eq!(
+        RiskDimension::OperationalBurden.to_string(),
+        "operational_burden"
+    );
     assert_eq!(
         RiskDimension::CrossInitiativeInterference.to_string(),
         "cross_initiative_interference"
@@ -309,9 +341,18 @@ fn risk_dimension_display_all_variants() {
 #[test]
 fn artifact_type_display_all_variants() {
     assert_eq!(ArtifactType::Proof.to_string(), "proof");
-    assert_eq!(ArtifactType::BenchmarkResult.to_string(), "benchmark_result");
-    assert_eq!(ArtifactType::ConformanceEvidence.to_string(), "conformance_evidence");
-    assert_eq!(ArtifactType::OperatorDocumentation.to_string(), "operator_documentation");
+    assert_eq!(
+        ArtifactType::BenchmarkResult.to_string(),
+        "benchmark_result"
+    );
+    assert_eq!(
+        ArtifactType::ConformanceEvidence.to_string(),
+        "conformance_evidence"
+    );
+    assert_eq!(
+        ArtifactType::OperatorDocumentation.to_string(),
+        "operator_documentation"
+    );
     assert_eq!(ArtifactType::RiskAssessment.to_string(), "risk_assessment");
 }
 
@@ -321,10 +362,22 @@ fn artifact_type_display_all_variants() {
 
 #[test]
 fn kill_trigger_display_all_variants() {
-    assert_eq!(KillTrigger::BudgetExhaustedNoSignal.to_string(), "budget_exhausted_no_signal");
-    assert_eq!(KillTrigger::MetricRegression.to_string(), "metric_regression");
-    assert_eq!(KillTrigger::ReproducibilityFailure.to_string(), "reproducibility_failure");
-    assert_eq!(KillTrigger::RiskConstraintViolation.to_string(), "risk_constraint_violation");
+    assert_eq!(
+        KillTrigger::BudgetExhaustedNoSignal.to_string(),
+        "budget_exhausted_no_signal"
+    );
+    assert_eq!(
+        KillTrigger::MetricRegression.to_string(),
+        "metric_regression"
+    );
+    assert_eq!(
+        KillTrigger::ReproducibilityFailure.to_string(),
+        "reproducibility_failure"
+    );
+    assert_eq!(
+        KillTrigger::RiskConstraintViolation.to_string(),
+        "risk_constraint_violation"
+    );
     assert_eq!(KillTrigger::TimeExpiry.to_string(), "time_expiry");
 }
 
@@ -335,7 +388,14 @@ fn kill_trigger_display_all_variants() {
 #[test]
 fn contract_version_display() {
     assert_eq!(ContractVersion { major: 1, minor: 0 }.to_string(), "1.0");
-    assert_eq!(ContractVersion { major: 3, minor: 14 }.to_string(), "3.14");
+    assert_eq!(
+        ContractVersion {
+            major: 3,
+            minor: 14
+        }
+        .to_string(),
+        "3.14"
+    );
     assert_eq!(ContractVersion { major: 0, minor: 0 }.to_string(), "0.0");
 }
 
@@ -362,7 +422,10 @@ fn contract_version_serde_round_trip() {
 
 #[test]
 fn contract_error_display_empty_contract_id() {
-    assert_eq!(ContractError::EmptyContractId.to_string(), "contract ID is empty");
+    assert_eq!(
+        ContractError::EmptyContractId.to_string(),
+        "contract ID is empty"
+    );
 }
 
 #[test]
@@ -417,12 +480,20 @@ fn contract_error_display_invalid_rollback() {
 fn contract_error_serde_round_trip_all_variants() {
     let errors = vec![
         ContractError::EmptyContractId,
-        ContractError::InvalidHypothesis { reason: "test".into() },
+        ContractError::InvalidHypothesis {
+            reason: "test".into(),
+        },
         ContractError::EmptyTargetMetrics,
-        ContractError::InvalidEvModel { reason: "bad".into() },
-        ContractError::InvalidRiskBudget { reason: "none".into() },
+        ContractError::InvalidEvModel {
+            reason: "bad".into(),
+        },
+        ContractError::InvalidRiskBudget {
+            reason: "none".into(),
+        },
         ContractError::EmptyKillCriteria,
-        ContractError::InvalidRollback { reason: "empty".into() },
+        ContractError::InvalidRollback {
+            reason: "empty".into(),
+        },
     ];
     for err in &errors {
         let json = serde_json::to_string(err).unwrap();
@@ -893,7 +964,11 @@ fn kill_criteria_time_expiry_triggered() {
     // 130 days > 120 days max.
     let elapsed_ns = 130 * 86_400_000_000_000u64;
     let triggered = c.check_kill_criteria(&metrics, elapsed_ns, 0);
-    assert!(triggered.iter().any(|k| k.trigger == KillTrigger::TimeExpiry));
+    assert!(
+        triggered
+            .iter()
+            .any(|k| k.trigger == KillTrigger::TimeExpiry)
+    );
 }
 
 #[test]
@@ -902,7 +977,11 @@ fn kill_criteria_time_expiry_not_triggered_under_limit() {
     let metrics = BTreeMap::new();
     let elapsed_ns = 100 * 86_400_000_000_000u64; // 100 days < 120 days
     let triggered = c.check_kill_criteria(&metrics, elapsed_ns, 0);
-    assert!(!triggered.iter().any(|k| k.trigger == KillTrigger::TimeExpiry));
+    assert!(
+        !triggered
+            .iter()
+            .any(|k| k.trigger == KillTrigger::TimeExpiry)
+    );
 }
 
 #[test]
@@ -912,7 +991,11 @@ fn kill_criteria_time_expiry_exact_boundary_not_triggered() {
     // Exactly 120 days = max_duration_ns; must exceed, not equal.
     let elapsed_ns = 10_368_000_000_000_000u64;
     let triggered = c.check_kill_criteria(&metrics, elapsed_ns, 0);
-    assert!(!triggered.iter().any(|k| k.trigger == KillTrigger::TimeExpiry));
+    assert!(
+        !triggered
+            .iter()
+            .any(|k| k.trigger == KillTrigger::TimeExpiry)
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -924,21 +1007,29 @@ fn kill_criteria_budget_exhausted_triggered_when_no_metrics_improving() {
     let c = valid_contract();
     let mut metrics = BTreeMap::new();
     // Both metrics worse than threshold (higher than threshold for lower-is-better).
-    metrics.insert("fp_rate".into(), 20_000i64);   // 2% > 1% threshold
-    metrics.insert("recall".into(), 800_000i64);    // 80% < 90% threshold
+    metrics.insert("fp_rate".into(), 20_000i64); // 2% > 1% threshold
+    metrics.insert("recall".into(), 800_000i64); // 80% < 90% threshold
     let triggered = c.check_kill_criteria(&metrics, 0, 950_000); // 95% budget
-    assert!(triggered.iter().any(|k| k.trigger == KillTrigger::BudgetExhaustedNoSignal));
+    assert!(
+        triggered
+            .iter()
+            .any(|k| k.trigger == KillTrigger::BudgetExhaustedNoSignal)
+    );
 }
 
 #[test]
 fn kill_criteria_budget_exhausted_not_triggered_when_one_metric_improving() {
     let c = valid_contract();
     let mut metrics = BTreeMap::new();
-    metrics.insert("fp_rate".into(), 5_000i64);    // 0.5% < 1% threshold => improving
-    metrics.insert("recall".into(), 800_000i64);    // below threshold
+    metrics.insert("fp_rate".into(), 5_000i64); // 0.5% < 1% threshold => improving
+    metrics.insert("recall".into(), 800_000i64); // below threshold
     // Budget > 90% but at least one metric improving, so not triggered.
     let triggered = c.check_kill_criteria(&metrics, 0, 950_000);
-    assert!(!triggered.iter().any(|k| k.trigger == KillTrigger::BudgetExhaustedNoSignal));
+    assert!(
+        !triggered
+            .iter()
+            .any(|k| k.trigger == KillTrigger::BudgetExhaustedNoSignal)
+    );
 }
 
 #[test]
@@ -949,7 +1040,11 @@ fn kill_criteria_budget_exhausted_not_triggered_when_budget_below_90_percent() {
     metrics.insert("recall".into(), 800_000i64);
     // Budget at 89% < 90%.
     let triggered = c.check_kill_criteria(&metrics, 0, 890_000);
-    assert!(!triggered.iter().any(|k| k.trigger == KillTrigger::BudgetExhaustedNoSignal));
+    assert!(
+        !triggered
+            .iter()
+            .any(|k| k.trigger == KillTrigger::BudgetExhaustedNoSignal)
+    );
 }
 
 #[test]
@@ -960,7 +1055,11 @@ fn kill_criteria_budget_boundary_at_exactly_90_percent() {
     metrics.insert("recall".into(), 800_000i64);
     // Budget exactly at 90% => triggered (>= 900_000).
     let triggered = c.check_kill_criteria(&metrics, 0, 900_000);
-    assert!(triggered.iter().any(|k| k.trigger == KillTrigger::BudgetExhaustedNoSignal));
+    assert!(
+        triggered
+            .iter()
+            .any(|k| k.trigger == KillTrigger::BudgetExhaustedNoSignal)
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -974,7 +1073,11 @@ fn kill_criteria_metric_regression_triggered_lower_is_better() {
     // fp_rate at 60_000 (6%) > regression threshold 50_000 (5%) for lower-is-better.
     metrics.insert("fp_rate".into(), 60_000i64);
     let triggered = c.check_kill_criteria(&metrics, 0, 0);
-    assert!(triggered.iter().any(|k| k.trigger == KillTrigger::MetricRegression));
+    assert!(
+        triggered
+            .iter()
+            .any(|k| k.trigger == KillTrigger::MetricRegression)
+    );
 }
 
 #[test]
@@ -984,7 +1087,11 @@ fn kill_criteria_metric_regression_not_triggered_when_under_threshold() {
     // fp_rate at 40_000 (4%) < regression threshold 50_000 (5%) => OK.
     metrics.insert("fp_rate".into(), 40_000i64);
     let triggered = c.check_kill_criteria(&metrics, 0, 0);
-    assert!(!triggered.iter().any(|k| k.trigger == KillTrigger::MetricRegression));
+    assert!(
+        !triggered
+            .iter()
+            .any(|k| k.trigger == KillTrigger::MetricRegression)
+    );
 }
 
 #[test]
@@ -994,7 +1101,11 @@ fn kill_criteria_metric_regression_exact_boundary() {
     // Exactly at threshold: 50_000 not > 50_000 for lower-is-better => not regressed.
     metrics.insert("fp_rate".into(), 50_000i64);
     let triggered = c.check_kill_criteria(&metrics, 0, 0);
-    assert!(!triggered.iter().any(|k| k.trigger == KillTrigger::MetricRegression));
+    assert!(
+        !triggered
+            .iter()
+            .any(|k| k.trigger == KillTrigger::MetricRegression)
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1007,7 +1118,11 @@ fn kill_criteria_risk_violation_not_auto_triggered() {
     let metrics = BTreeMap::new();
     // Even with extreme inputs, RiskConstraintViolation is external-only.
     let triggered = c.check_kill_criteria(&metrics, u64::MAX, u64::MAX);
-    assert!(!triggered.iter().any(|k| k.trigger == KillTrigger::RiskConstraintViolation));
+    assert!(
+        !triggered
+            .iter()
+            .any(|k| k.trigger == KillTrigger::RiskConstraintViolation)
+    );
 }
 
 #[test]
@@ -1015,7 +1130,11 @@ fn kill_criteria_reproducibility_failure_not_auto_triggered() {
     let c = valid_contract();
     let metrics = BTreeMap::new();
     let triggered = c.check_kill_criteria(&metrics, u64::MAX, u64::MAX);
-    assert!(!triggered.iter().any(|k| k.trigger == KillTrigger::ReproducibilityFailure));
+    assert!(
+        !triggered
+            .iter()
+            .any(|k| k.trigger == KillTrigger::ReproducibilityFailure)
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1027,14 +1146,26 @@ fn kill_criteria_multiple_triggers_simultaneously() {
     let c = valid_contract();
     let mut metrics = BTreeMap::new();
     // All metrics worse => budget exhausted check will fire.
-    metrics.insert("fp_rate".into(), 60_000i64);  // > regression threshold 50_000
-    metrics.insert("recall".into(), 800_000i64);   // < target 900_000
-    let elapsed_ns = 200 * 86_400_000_000_000u64;  // > 120 days
+    metrics.insert("fp_rate".into(), 60_000i64); // > regression threshold 50_000
+    metrics.insert("recall".into(), 800_000i64); // < target 900_000
+    let elapsed_ns = 200 * 86_400_000_000_000u64; // > 120 days
     let triggered = c.check_kill_criteria(&metrics, elapsed_ns, 950_000);
     // Should trigger: TimeExpiry, BudgetExhaustedNoSignal, MetricRegression
-    assert!(triggered.iter().any(|k| k.trigger == KillTrigger::TimeExpiry));
-    assert!(triggered.iter().any(|k| k.trigger == KillTrigger::BudgetExhaustedNoSignal));
-    assert!(triggered.iter().any(|k| k.trigger == KillTrigger::MetricRegression));
+    assert!(
+        triggered
+            .iter()
+            .any(|k| k.trigger == KillTrigger::TimeExpiry)
+    );
+    assert!(
+        triggered
+            .iter()
+            .any(|k| k.trigger == KillTrigger::BudgetExhaustedNoSignal)
+    );
+    assert!(
+        triggered
+            .iter()
+            .any(|k| k.trigger == KillTrigger::MetricRegression)
+    );
     assert!(triggered.len() >= 3);
 }
 
@@ -1042,12 +1173,12 @@ fn kill_criteria_multiple_triggers_simultaneously() {
 fn kill_criteria_no_triggers_when_all_ok() {
     let c = valid_contract();
     let mut metrics = BTreeMap::new();
-    metrics.insert("fp_rate".into(), 5_000i64);    // 0.5% < 1% target, < 5% regression
-    metrics.insert("recall".into(), 950_000i64);    // 95% > 90% target
+    metrics.insert("fp_rate".into(), 5_000i64); // 0.5% < 1% target, < 5% regression
+    metrics.insert("recall".into(), 950_000i64); // 95% > 90% target
     let triggered = c.check_kill_criteria(
         &metrics,
         50 * 86_400_000_000_000, // 50 days < 120 days
-        500_000,                  // 50% budget < 90%
+        500_000,                 // 50% budget < 90%
     );
     assert!(triggered.is_empty());
 }
@@ -1224,7 +1355,11 @@ fn kill_criteria_with_unknown_metric_ids() {
     metrics.insert("nonexistent_metric".into(), 999_999i64);
     // Unknown metric IDs are simply ignored.
     let triggered = c.check_kill_criteria(&metrics, 0, 0);
-    assert!(!triggered.iter().any(|k| k.trigger == KillTrigger::MetricRegression));
+    assert!(
+        !triggered
+            .iter()
+            .any(|k| k.trigger == KillTrigger::MetricRegression)
+    );
 }
 
 #[test]

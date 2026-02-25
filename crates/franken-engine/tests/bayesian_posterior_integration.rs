@@ -479,7 +479,10 @@ fn updater_single_malicious_update_increases_malicious_prob() {
     let before = updater.posterior().p_malicious;
     updater.update(&malicious_evidence());
     let after = updater.posterior().p_malicious;
-    assert!(after > before, "malicious evidence should increase P(Malicious)");
+    assert!(
+        after > before,
+        "malicious evidence should increase P(Malicious)"
+    );
 }
 
 #[test]
@@ -625,11 +628,8 @@ fn updater_with_model_uses_custom_model() {
         timing_anomaly_threshold: 250_000,
         resource_threshold: 350_000,
     };
-    let mut updater = BayesianPosteriorUpdater::with_model(
-        Posterior::default_prior(),
-        "ext-custom",
-        model,
-    );
+    let mut updater =
+        BayesianPosteriorUpdater::with_model(Posterior::default_prior(), "ext-custom", model);
     let result = updater.update(&benign_evidence());
     assert!(result.posterior.is_valid());
 }
@@ -640,13 +640,18 @@ fn updater_serde_roundtrip() {
     updater.update(&benign_evidence());
     updater.update(&malicious_evidence());
     let json = serde_json::to_string(&updater).expect("serialize");
-    let restored: BayesianPosteriorUpdater =
-        serde_json::from_str(&json).expect("deserialize");
+    let restored: BayesianPosteriorUpdater = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(updater.posterior(), restored.posterior());
     assert_eq!(updater.update_count(), restored.update_count());
-    assert_eq!(updater.log_likelihood_ratio(), restored.log_likelihood_ratio());
+    assert_eq!(
+        updater.log_likelihood_ratio(),
+        restored.log_likelihood_ratio()
+    );
     assert_eq!(updater.extension_id(), restored.extension_id());
-    assert_eq!(updater.evidence_hashes().len(), restored.evidence_hashes().len());
+    assert_eq!(
+        updater.evidence_hashes().len(),
+        restored.evidence_hashes().len()
+    );
 }
 
 #[test]
@@ -973,8 +978,7 @@ fn updater_serde_preserves_determinism() {
     updater.update(&malicious_evidence());
 
     let json = serde_json::to_string(&updater).expect("serialize");
-    let mut restored: BayesianPosteriorUpdater =
-        serde_json::from_str(&json).expect("deserialize");
+    let mut restored: BayesianPosteriorUpdater = serde_json::from_str(&json).expect("deserialize");
 
     // Both should produce the same result for the same next evidence.
     let ev = anomalous_evidence();

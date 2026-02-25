@@ -68,9 +68,7 @@ fn mk_heartbeat(node: &str, seq: u64, ts_ns: u64) -> HeartbeatLiveness {
     HeartbeatLiveness {
         node_id: NodeId::new(node),
         policy_version: 1,
-        evidence_frontier_hash: ContentHash::compute(
-            format!("ifrontier-{node}-{seq}").as_bytes(),
-        ),
+        evidence_frontier_hash: ContentHash::compute(format!("ifrontier-{node}-{seq}").as_bytes()),
         local_health: BTreeMap::new(),
         epoch: SecurityEpoch::from_raw(1),
         sequence: seq,
@@ -386,7 +384,10 @@ fn convergence_config_serde_roundtrip() {
     let json = serde_json::to_string(&cfg).unwrap();
     let decoded: ConvergenceConfig = serde_json::from_str(&json).unwrap();
     assert_eq!(cfg.thresholds, decoded.thresholds);
-    assert_eq!(cfg.degraded_tightening_factor, decoded.degraded_tightening_factor);
+    assert_eq!(
+        cfg.degraded_tightening_factor,
+        decoded.degraded_tightening_factor
+    );
     assert_eq!(cfg.convergence_timeout_ns, decoded.convergence_timeout_ns);
     assert_eq!(cfg.max_escalation_depth, decoded.max_escalation_depth);
 }
@@ -536,10 +537,22 @@ fn event_type_display_all_variants() {
         (ConvergenceEventType::ActionExecuted, "action_executed"),
         (ConvergenceEventType::PartitionEntered, "partition_entered"),
         (ConvergenceEventType::PartitionExited, "partition_exited"),
-        (ConvergenceEventType::ReconciliationConflict, "reconciliation_conflict"),
-        (ConvergenceEventType::ConvergenceVerified, "convergence_verified"),
-        (ConvergenceEventType::ConvergenceDiverged, "convergence_diverged"),
-        (ConvergenceEventType::EscalationTriggered, "escalation_triggered"),
+        (
+            ConvergenceEventType::ReconciliationConflict,
+            "reconciliation_conflict",
+        ),
+        (
+            ConvergenceEventType::ConvergenceVerified,
+            "convergence_verified",
+        ),
+        (
+            ConvergenceEventType::ConvergenceDiverged,
+            "convergence_diverged",
+        ),
+        (
+            ConvergenceEventType::EscalationTriggered,
+            "escalation_triggered",
+        ),
         (ConvergenceEventType::EvidenceLag, "evidence_lag"),
     ];
     for (variant, expected) in cases {
@@ -608,7 +621,9 @@ fn action_registry_record_replaces_at_same_severity() {
     reg.record(mk_receipt("a2", "ext-1", ContainmentAction::Sandbox, "n"));
     // Still 1 action (replaced)
     assert_eq!(reg.total_actions(), 1);
-    let receipt = reg.get_receipt("ext-1", ContainmentAction::Sandbox).unwrap();
+    let receipt = reg
+        .get_receipt("ext-1", ContainmentAction::Sandbox)
+        .unwrap();
     assert_eq!(receipt.action_id, "a2");
 }
 
@@ -652,7 +667,12 @@ fn action_registry_receipts_for_extension_sorted_by_severity() {
     // Register out of order: Terminate before Sandbox
     reg.record(mk_receipt("a2", "ext-1", ContainmentAction::Terminate, "n"));
     reg.record(mk_receipt("a1", "ext-1", ContainmentAction::Sandbox, "n"));
-    reg.record(mk_receipt("a3", "ext-1", ContainmentAction::Quarantine, "n"));
+    reg.record(mk_receipt(
+        "a3",
+        "ext-1",
+        ContainmentAction::Quarantine,
+        "n",
+    ));
 
     let receipts = reg.receipts_for_extension("ext-1");
     assert_eq!(receipts.len(), 3);
@@ -670,7 +690,10 @@ fn action_registry_receipts_empty_for_unknown_extension() {
 #[test]
 fn action_registry_get_receipt_returns_none_for_unexecuted() {
     let reg = ActionRegistry::new();
-    assert!(reg.get_receipt("ext-1", ContainmentAction::Sandbox).is_none());
+    assert!(
+        reg.get_receipt("ext-1", ContainmentAction::Sandbox)
+            .is_none()
+    );
 }
 
 #[test]
@@ -931,8 +954,12 @@ fn engine_evaluate_all_multiple_extensions() {
     let engine = mk_engine("local");
     let mut fleet = mk_fleet("local");
 
-    fleet.process_evidence(&mk_evidence("r1", "ext-a", 1, 300_000)).unwrap();
-    fleet.process_evidence(&mk_evidence("r1", "ext-b", 2, 600_000)).unwrap();
+    fleet
+        .process_evidence(&mk_evidence("r1", "ext-a", 1, 300_000))
+        .unwrap();
+    fleet
+        .process_evidence(&mk_evidence("r1", "ext-b", 2, 600_000))
+        .unwrap();
 
     let decisions = engine.evaluate_all(&fleet);
     assert_eq!(decisions.len(), 2);
@@ -947,7 +974,9 @@ fn engine_process_fleet_state_produces_receipts() {
     let mut engine = mk_engine("local");
     let mut fleet = mk_fleet("local");
 
-    fleet.process_evidence(&mk_evidence("r1", "ext-1", 1, 850_000)).unwrap();
+    fleet
+        .process_evidence(&mk_evidence("r1", "ext-1", 1, 850_000))
+        .unwrap();
 
     let receipts = engine.process_fleet_state(&fleet, 1_000_000_000);
     assert_eq!(receipts.len(), 1);
@@ -959,7 +988,9 @@ fn engine_process_fleet_state_idempotent() {
     let mut engine = mk_engine("local");
     let mut fleet = mk_fleet("local");
 
-    fleet.process_evidence(&mk_evidence("r1", "ext-1", 1, 300_000)).unwrap();
+    fleet
+        .process_evidence(&mk_evidence("r1", "ext-1", 1, 300_000))
+        .unwrap();
 
     let first = engine.process_fleet_state(&fleet, 1_000_000_000);
     assert_eq!(first.len(), 1);
@@ -977,7 +1008,9 @@ fn engine_partition_normal_stays_normal_if_no_partitioned_nodes() {
     let mut engine = mk_engine("local");
     let mut fleet = mk_fleet("local");
 
-    fleet.process_heartbeat(&mk_heartbeat("r1", 1, 5_000_000_000)).unwrap();
+    fleet
+        .process_heartbeat(&mk_heartbeat("r1", 1, 5_000_000_000))
+        .unwrap();
 
     // All healthy
     engine.update_partition_state(&fleet, 6_000_000_000);
@@ -989,8 +1022,12 @@ fn engine_partition_normal_to_degraded() {
     let mut engine = mk_engine("local");
     let mut fleet = mk_fleet("local");
 
-    fleet.process_heartbeat(&mk_heartbeat("r1", 1, 1_000_000_000)).unwrap();
-    fleet.process_heartbeat(&mk_heartbeat("r2", 1, 1_000_000_000)).unwrap();
+    fleet
+        .process_heartbeat(&mk_heartbeat("r1", 1, 1_000_000_000))
+        .unwrap();
+    fleet
+        .process_heartbeat(&mk_heartbeat("r2", 1, 1_000_000_000))
+        .unwrap();
 
     // 20s with 15s timeout
     engine.update_partition_state(&fleet, 20_000_000_000);
@@ -1005,12 +1042,16 @@ fn engine_partition_degraded_to_healing() {
     let mut engine = mk_engine("local");
     let mut fleet = mk_fleet("local");
 
-    fleet.process_heartbeat(&mk_heartbeat("r1", 1, 1_000_000_000)).unwrap();
+    fleet
+        .process_heartbeat(&mk_heartbeat("r1", 1, 1_000_000_000))
+        .unwrap();
     engine.update_partition_state(&fleet, 20_000_000_000);
     assert!(matches!(engine.partition_mode, PartitionMode::Degraded(_)));
 
     // Fresh heartbeat
-    fleet.process_heartbeat(&mk_heartbeat("r1", 2, 19_000_000_000)).unwrap();
+    fleet
+        .process_heartbeat(&mk_heartbeat("r1", 2, 19_000_000_000))
+        .unwrap();
     engine.update_partition_state(&fleet, 20_000_000_000);
     assert!(matches!(engine.partition_mode, PartitionMode::Healing(_)));
 }
@@ -1020,12 +1061,16 @@ fn engine_partition_healing_to_normal() {
     let mut engine = mk_engine("local");
     let mut fleet = mk_fleet("local");
 
-    fleet.process_heartbeat(&mk_heartbeat("r1", 1, 1_000_000_000)).unwrap();
+    fleet
+        .process_heartbeat(&mk_heartbeat("r1", 1, 1_000_000_000))
+        .unwrap();
 
     // Normal → Degraded
     engine.update_partition_state(&fleet, 20_000_000_000);
     // Degraded → Healing
-    fleet.process_heartbeat(&mk_heartbeat("r1", 2, 19_000_000_000)).unwrap();
+    fleet
+        .process_heartbeat(&mk_heartbeat("r1", 2, 19_000_000_000))
+        .unwrap();
     engine.update_partition_state(&fleet, 20_000_000_000);
     // Healing → Normal
     engine.update_partition_state(&fleet, 20_000_000_001);
@@ -1040,14 +1085,22 @@ fn engine_partition_healing_back_to_degraded_on_repartition() {
     let mut engine = mk_engine("local");
     let mut fleet = mk_fleet("local");
 
-    fleet.process_heartbeat(&mk_heartbeat("r1", 1, 1_000_000_000)).unwrap();
-    fleet.process_heartbeat(&mk_heartbeat("r2", 1, 1_000_000_000)).unwrap();
+    fleet
+        .process_heartbeat(&mk_heartbeat("r1", 1, 1_000_000_000))
+        .unwrap();
+    fleet
+        .process_heartbeat(&mk_heartbeat("r2", 1, 1_000_000_000))
+        .unwrap();
 
     // Normal → Degraded
     engine.update_partition_state(&fleet, 20_000_000_000);
     // Degraded → Healing (r1 healed)
-    fleet.process_heartbeat(&mk_heartbeat("r1", 2, 19_000_000_000)).unwrap();
-    fleet.process_heartbeat(&mk_heartbeat("r2", 2, 19_000_000_000)).unwrap();
+    fleet
+        .process_heartbeat(&mk_heartbeat("r1", 2, 19_000_000_000))
+        .unwrap();
+    fleet
+        .process_heartbeat(&mk_heartbeat("r2", 2, 19_000_000_000))
+        .unwrap();
     engine.update_partition_state(&fleet, 20_000_000_000);
     assert!(matches!(engine.partition_mode, PartitionMode::Healing(_)));
 
@@ -1086,7 +1139,9 @@ fn engine_escalation_full_chain() {
     let r4 = engine.escalate("ext-1", 300_000, 5, 4_000_000_000).unwrap();
     assert_eq!(r4.action_type, ContainmentAction::Quarantine);
     // no further escalation
-    let err = engine.escalate("ext-1", 300_000, 5, 5_000_000_000).unwrap_err();
+    let err = engine
+        .escalate("ext-1", 300_000, 5, 5_000_000_000)
+        .unwrap_err();
     assert!(matches!(err, ConvergenceError::AlreadyAtMaxSeverity { .. }));
 }
 
@@ -1097,7 +1152,9 @@ fn engine_escalation_max_depth_error() {
 
     engine.escalate("ext-1", 300_000, 5, 1_000_000_000).unwrap();
     // depth = 1 after first escalation
-    let err = engine.escalate("ext-1", 300_000, 5, 2_000_000_000).unwrap_err();
+    let err = engine
+        .escalate("ext-1", 300_000, 5, 2_000_000_000)
+        .unwrap_err();
     assert!(matches!(err, ConvergenceError::MaxEscalationReached { .. }));
 }
 
@@ -1132,13 +1189,18 @@ fn engine_verify_converged_checkpoint() {
     let mut engine = mk_engine("local");
     let mut fleet = mk_fleet("local");
 
-    fleet.process_evidence(&mk_evidence("r1", "ext-1", 1, 300_000)).unwrap();
+    fleet
+        .process_evidence(&mk_evidence("r1", "ext-1", 1, 300_000))
+        .unwrap();
 
     let hash = fleet.evidence.summary_hash();
     let checkpoint = mk_checkpoint(1, hash, vec![]);
 
     let result = engine.verify_against_checkpoint(&fleet, &checkpoint, 5_000_000_000);
-    assert!(matches!(result, ConvergenceVerification::Converged { checkpoint_seq: 1 }));
+    assert!(matches!(
+        result,
+        ConvergenceVerification::Converged { checkpoint_seq: 1 }
+    ));
 
     let verified = engine.events_of_type(&ConvergenceEventType::ConvergenceVerified);
     assert_eq!(verified.len(), 1);
@@ -1183,8 +1245,16 @@ fn engine_apply_checkpoint_decisions_creates_receipts() {
 
     let receipts = engine.apply_checkpoint_decisions(&decisions, 5_000_000_000);
     assert_eq!(receipts.len(), 2);
-    assert!(engine.action_registry.is_executed("ext-1", ContainmentAction::Terminate));
-    assert!(engine.action_registry.is_executed("ext-2", ContainmentAction::Sandbox));
+    assert!(
+        engine
+            .action_registry
+            .is_executed("ext-1", ContainmentAction::Terminate)
+    );
+    assert!(
+        engine
+            .action_registry
+            .is_executed("ext-2", ContainmentAction::Sandbox)
+    );
 }
 
 #[test]
@@ -1282,7 +1352,10 @@ fn engine_reconciliation_conflict_emits_event() {
 
     let events = engine.events_of_type(&ConvergenceEventType::ReconciliationConflict);
     assert_eq!(events.len(), 1);
-    assert_eq!(events[0].fields.get("resolved_action").unwrap(), "quarantine");
+    assert_eq!(
+        events[0].fields.get("resolved_action").unwrap(),
+        "quarantine"
+    );
 }
 
 #[test]
@@ -1450,7 +1523,11 @@ fn engine_serde_roundtrip_with_state() {
     let decoded: ConvergenceEngine = serde_json::from_str(&json).unwrap();
     assert_eq!(decoded.node_id, mk_node("local"));
     assert_eq!(decoded.action_registry.total_actions(), 1);
-    assert!(decoded.action_registry.is_executed("ext-1", ContainmentAction::Sandbox));
+    assert!(
+        decoded
+            .action_registry
+            .is_executed("ext-1", ContainmentAction::Sandbox)
+    );
 }
 
 // =========================================================================
@@ -1519,8 +1596,12 @@ fn e2e_evidence_to_receipt_to_checkpoint_verification() {
     let mut fleet = mk_fleet("local");
 
     // Accumulate evidence past suspend threshold
-    fleet.process_evidence(&mk_evidence("a", "ext-1", 1, 300_000)).unwrap();
-    fleet.process_evidence(&mk_evidence("b", "ext-1", 1, 250_000)).unwrap();
+    fleet
+        .process_evidence(&mk_evidence("a", "ext-1", 1, 300_000))
+        .unwrap();
+    fleet
+        .process_evidence(&mk_evidence("b", "ext-1", 1, 250_000))
+        .unwrap();
 
     let receipts = engine.process_fleet_state(&fleet, 5_000_000_000);
     assert_eq!(receipts.len(), 1);
@@ -1551,12 +1632,16 @@ fn e2e_partition_tightening_with_evidence() {
     }
 
     // Only n1 alive at 20s
-    fleet.process_heartbeat(&mk_heartbeat("n1", 4, 19_000_000_000)).unwrap();
+    fleet
+        .process_heartbeat(&mk_heartbeat("n1", 4, 19_000_000_000))
+        .unwrap();
     engine.update_partition_state(&fleet, 20_000_000_000);
     assert!(matches!(engine.partition_mode, PartitionMode::Degraded(_)));
 
     // 170_000 triggers sandbox under tightened thresholds (150_000) but not normal (200_000)
-    fleet.process_evidence(&mk_evidence("n1", "ext-1", 5, 170_000)).unwrap();
+    fleet
+        .process_evidence(&mk_evidence("n1", "ext-1", 5, 170_000))
+        .unwrap();
     let receipts = engine.process_fleet_state(&fleet, 20_000_000_001);
     assert_eq!(receipts.len(), 1);
     assert_eq!(receipts[0].action_type, ContainmentAction::Sandbox);
@@ -1590,11 +1675,17 @@ fn e2e_multiple_extensions_different_severities() {
     let mut fleet = mk_fleet("local");
 
     // ext-1: just above sandbox
-    fleet.process_evidence(&mk_evidence("r1", "ext-1", 1, 250_000)).unwrap();
+    fleet
+        .process_evidence(&mk_evidence("r1", "ext-1", 1, 250_000))
+        .unwrap();
     // ext-2: above terminate
-    fleet.process_evidence(&mk_evidence("r1", "ext-2", 2, 850_000)).unwrap();
+    fleet
+        .process_evidence(&mk_evidence("r1", "ext-2", 2, 850_000))
+        .unwrap();
     // ext-3: below any threshold
-    fleet.process_evidence(&mk_evidence("r1", "ext-3", 3, 50_000)).unwrap();
+    fleet
+        .process_evidence(&mk_evidence("r1", "ext-3", 3, 50_000))
+        .unwrap();
 
     let receipts = engine.process_fleet_state(&fleet, 1_000_000_000);
     assert_eq!(receipts.len(), 2); // ext-1 and ext-2

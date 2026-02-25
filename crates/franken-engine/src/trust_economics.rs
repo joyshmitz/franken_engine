@@ -1885,9 +1885,7 @@ mod tests {
                 populated: 3,
                 expected: 9,
             }),
-            Box::new(TrustEconomicsError::CascadeProbabilityOutOfRange {
-                value: 2_000_000,
-            }),
+            Box::new(TrustEconomicsError::CascadeProbabilityOutOfRange { value: 2_000_000 }),
             Box::new(TrustEconomicsError::ZeroAttackerCost),
             Box::new(TrustEconomicsError::AsymmetryViolation {
                 action: "allow".into(),
@@ -1905,6 +1903,10 @@ mod tests {
             assert!(!msg.is_empty());
             displays.insert(msg);
         }
-        assert_eq!(displays.len(), 5, "all 5 variants produce distinct messages");
+        assert_eq!(
+            displays.len(),
+            5,
+            "all 5 variants produce distinct messages"
+        );
     }
 }

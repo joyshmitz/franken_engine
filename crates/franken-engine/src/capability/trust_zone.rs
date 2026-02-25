@@ -1359,7 +1359,11 @@ mod tests {
     #[test]
     fn enforce_ceiling_passes_for_within_ceiling() {
         let mut hierarchy = ZoneHierarchy::standard("root", 1).unwrap();
-        let community_caps = hierarchy.zone("community").unwrap().effective_ceiling.clone();
+        let community_caps = hierarchy
+            .zone("community")
+            .unwrap()
+            .effective_ceiling
+            .clone();
         hierarchy
             .enforce_ceiling("community", &community_caps, "t-pass")
             .unwrap();
@@ -1407,12 +1411,8 @@ mod tests {
     #[test]
     fn cross_zone_same_zone_always_passes() {
         let mut checker = CrossZoneReferenceChecker::new();
-        let req = CrossZoneReferenceRequest::new(
-            "team",
-            "team",
-            ReferenceType::Authority,
-            "t-same",
-        );
+        let req =
+            CrossZoneReferenceRequest::new("team", "team", ReferenceType::Authority, "t-same");
         checker.validate(req).unwrap();
         assert_eq!(checker.events().len(), 1);
         assert_eq!(checker.events()[0].outcome, ZoneEventOutcome::Pass);
@@ -1423,7 +1423,8 @@ mod tests {
         let mut checker = CrossZoneReferenceChecker::new();
         checker
             .validate(CrossZoneReferenceRequest::new(
-                "a", "a",
+                "a",
+                "a",
                 ReferenceType::Provenance,
                 "t-1",
             ))
@@ -1487,9 +1488,7 @@ mod tests {
     #[test]
     fn hierarchy_drain_events() {
         let mut hierarchy = ZoneHierarchy::standard("root", 1).unwrap();
-        hierarchy
-            .assign_entity("ext-a", "team", "t-1")
-            .unwrap();
+        hierarchy.assign_entity("ext-a", "team", "t-1").unwrap();
         assert!(!hierarchy.events().is_empty());
         let drained = hierarchy.drain_events();
         assert!(!drained.is_empty());
@@ -1681,9 +1680,10 @@ mod tests {
 
     #[test]
     fn cross_zone_reference_request_serde_roundtrip() {
-        let req = CrossZoneReferenceRequest::new("team", "community", ReferenceType::Provenance, "t-1")
-            .with_policy_id("p-1")
-            .with_decision_id("d-1");
+        let req =
+            CrossZoneReferenceRequest::new("team", "community", ReferenceType::Provenance, "t-1")
+                .with_policy_id("p-1")
+                .with_decision_id("d-1");
         let json = serde_json::to_string(&req).unwrap();
         let back: CrossZoneReferenceRequest = serde_json::from_str(&json).unwrap();
         assert_eq!(req, back);
@@ -1746,20 +1746,12 @@ mod tests {
         let hierarchy = ZoneHierarchy::standard("root", 1).unwrap();
         let team = hierarchy.zone("team").unwrap();
         let schema = SchemaId::from_definition(b"test-schema-v1");
-        let id1 = derive_zone_scoped_object_id(
-            team,
-            ObjectDomain::EvidenceRecord,
-            &schema,
-            b"payload",
-        )
-        .unwrap();
-        let id2 = derive_zone_scoped_object_id(
-            team,
-            ObjectDomain::EvidenceRecord,
-            &schema,
-            b"payload",
-        )
-        .unwrap();
+        let id1 =
+            derive_zone_scoped_object_id(team, ObjectDomain::EvidenceRecord, &schema, b"payload")
+                .unwrap();
+        let id2 =
+            derive_zone_scoped_object_id(team, ObjectDomain::EvidenceRecord, &schema, b"payload")
+                .unwrap();
         assert_eq!(id1, id2);
     }
 }

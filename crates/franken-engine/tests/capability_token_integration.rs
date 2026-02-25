@@ -11,8 +11,8 @@ use std::collections::BTreeSet;
 use frankenengine_engine::capability::RuntimeCapability;
 use frankenengine_engine::capability_token::{
     CapabilityToken, CheckpointRef, PrincipalId, RevocationFreshnessRef, TokenBuilder, TokenError,
-    TokenEventType, TokenVersion, VerificationContext, verify_token, token_schema, token_schema_id,
-    TokenEvent,
+    TokenEvent, TokenEventType, TokenVersion, VerificationContext, token_schema, token_schema_id,
+    verify_token,
 };
 use frankenengine_engine::engine_object_id::EngineObjectId;
 use frankenengine_engine::hash_tiers::ContentHash;

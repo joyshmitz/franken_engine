@@ -2189,7 +2189,6 @@ mod tests {
         assert_eq!(orch.total_count(), 0);
     }
 
-    #[test]
     // -- Enrichment: std::error --
 
     #[test]
@@ -2228,7 +2227,11 @@ mod tests {
             assert!(!msg.is_empty());
             displays.insert(msg);
         }
-        assert_eq!(displays.len(), 7, "all 7 variants produce distinct messages");
+        assert_eq!(
+            displays.len(),
+            7,
+            "all 7 variants produce distinct messages"
+        );
     }
 
     #[test]

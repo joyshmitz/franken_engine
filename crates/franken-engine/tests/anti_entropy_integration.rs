@@ -12,9 +12,9 @@ use std::collections::BTreeSet;
 
 use frankenengine_engine::anti_entropy::{
     FallbackConfig, FallbackEvidence, FallbackProtocol, FallbackRateAlert, FallbackRateMonitor,
-    FallbackRequest, FallbackResult, FallbackTrigger, Iblt, IbltCell, ObjectId,
-    ReconcileConfig, ReconcileError, ReconcileEvent, ReconcileObjectType, ReconcileResult,
-    ReconcileSession, SymmetricDiff,
+    FallbackRequest, FallbackResult, FallbackTrigger, Iblt, IbltCell, ObjectId, ReconcileConfig,
+    ReconcileError, ReconcileEvent, ReconcileObjectType, ReconcileResult, ReconcileSession,
+    SymmetricDiff,
 };
 use frankenengine_engine::hash_tiers::ContentHash;
 use frankenengine_engine::security_epoch::SecurityEpoch;
@@ -71,9 +71,18 @@ fn tiny_config() -> ReconcileConfig {
 
 #[test]
 fn reconcile_object_type_display_all_variants() {
-    assert_eq!(ReconcileObjectType::RevocationEvent.to_string(), "revocation_event");
-    assert_eq!(ReconcileObjectType::CheckpointMarker.to_string(), "checkpoint_marker");
-    assert_eq!(ReconcileObjectType::EvidenceEntry.to_string(), "evidence_entry");
+    assert_eq!(
+        ReconcileObjectType::RevocationEvent.to_string(),
+        "revocation_event"
+    );
+    assert_eq!(
+        ReconcileObjectType::CheckpointMarker.to_string(),
+        "checkpoint_marker"
+    );
+    assert_eq!(
+        ReconcileObjectType::EvidenceEntry.to_string(),
+        "evidence_entry"
+    );
 }
 
 #[test]
@@ -524,9 +533,7 @@ fn reconcile_error_serde_round_trip_all_variants() {
             local_cells: 64,
             remote_cells: 256,
         },
-        ReconcileError::PeelFailed {
-            remaining_cells: 7,
-        },
+        ReconcileError::PeelFailed { remaining_cells: 7 },
         ReconcileError::EpochMismatch {
             local_epoch: SecurityEpoch::from_raw(1),
             remote_epoch: SecurityEpoch::from_raw(99),
@@ -726,9 +733,7 @@ fn session_build_iblt_deterministic() {
 
 #[test]
 fn fallback_trigger_display_peel_failed() {
-    let t = FallbackTrigger::PeelFailed {
-        remaining_cells: 5,
-    };
+    let t = FallbackTrigger::PeelFailed { remaining_cells: 5 };
     let s = t.to_string();
     assert!(s.contains("peel_failed"));
     assert!(s.contains("5"));
@@ -771,9 +776,7 @@ fn fallback_trigger_display_mmr_consistency() {
 #[test]
 fn fallback_trigger_serde_round_trip_all_variants() {
     let triggers = vec![
-        FallbackTrigger::PeelFailed {
-            remaining_cells: 5,
-        },
+        FallbackTrigger::PeelFailed { remaining_cells: 5 },
         FallbackTrigger::VerificationFailed {
             object_hash: "abc123".to_string(),
             reason: "hash mismatch".to_string(),
@@ -862,9 +865,7 @@ fn fallback_protocol_execute_computes_difference() {
     let result = fb.execute(FallbackRequest {
         local_hashes: &local,
         remote_hashes: &remote,
-        trigger: FallbackTrigger::PeelFailed {
-            remaining_cells: 5,
-        },
+        trigger: FallbackTrigger::PeelFailed { remaining_cells: 5 },
         reconciliation_id: "recon-1",
         peer: "peer-1",
         trace_id: "t1",
@@ -907,9 +908,7 @@ fn fallback_protocol_perspectives_are_symmetric() {
     let result_a = fb_a.execute(FallbackRequest {
         local_hashes: &local,
         remote_hashes: &remote,
-        trigger: FallbackTrigger::PeelFailed {
-            remaining_cells: 3,
-        },
+        trigger: FallbackTrigger::PeelFailed { remaining_cells: 3 },
         reconciliation_id: "r1",
         peer: "peer-b",
         trace_id: "t1",
@@ -919,9 +918,7 @@ fn fallback_protocol_perspectives_are_symmetric() {
     let result_b = fb_b.execute(FallbackRequest {
         local_hashes: &remote,
         remote_hashes: &local,
-        trigger: FallbackTrigger::PeelFailed {
-            remaining_cells: 3,
-        },
+        trigger: FallbackTrigger::PeelFailed { remaining_cells: 3 },
         reconciliation_id: "r1",
         peer: "peer-a",
         trace_id: "t1",
@@ -963,9 +960,7 @@ fn fallback_protocol_drain_events_clears() {
     fb.execute(FallbackRequest {
         local_hashes: &objects,
         remote_hashes: &objects,
-        trigger: FallbackTrigger::PeelFailed {
-            remaining_cells: 0,
-        },
+        trigger: FallbackTrigger::PeelFailed { remaining_cells: 0 },
         reconciliation_id: "r1",
         peer: "peer-1",
         trace_id: "t1",
@@ -989,9 +984,7 @@ fn fallback_protocol_seq_increments() {
     let r1 = fb.execute(FallbackRequest {
         local_hashes: &objects,
         remote_hashes: &objects,
-        trigger: FallbackTrigger::PeelFailed {
-            remaining_cells: 0,
-        },
+        trigger: FallbackTrigger::PeelFailed { remaining_cells: 0 },
         reconciliation_id: "r1",
         peer: "peer-1",
         trace_id: "t1",
@@ -999,9 +992,7 @@ fn fallback_protocol_seq_increments() {
     let r2 = fb.execute(FallbackRequest {
         local_hashes: &objects,
         remote_hashes: &objects,
-        trigger: FallbackTrigger::PeelFailed {
-            remaining_cells: 0,
-        },
+        trigger: FallbackTrigger::PeelFailed { remaining_cells: 0 },
         reconciliation_id: "r2",
         peer: "peer-1",
         trace_id: "t2",
@@ -1034,9 +1025,7 @@ fn fallback_agrees_with_iblt_for_small_diff() {
     let fb_result = fb.execute(FallbackRequest {
         local_hashes: &local,
         remote_hashes: &remote,
-        trigger: FallbackTrigger::PeelFailed {
-            remaining_cells: 0,
-        },
+        trigger: FallbackTrigger::PeelFailed { remaining_cells: 0 },
         reconciliation_id: "r1",
         peer: "peer-1",
         trace_id: "t1",
@@ -1064,9 +1053,7 @@ fn incremental_fallback_matches_full_result() {
     let full = fb_full.execute(FallbackRequest {
         local_hashes: &local,
         remote_hashes: &remote,
-        trigger: FallbackTrigger::PeelFailed {
-            remaining_cells: 3,
-        },
+        trigger: FallbackTrigger::PeelFailed { remaining_cells: 3 },
         reconciliation_id: "r1",
         peer: "peer-1",
         trace_id: "t1",
@@ -1077,9 +1064,7 @@ fn incremental_fallback_matches_full_result() {
         FallbackRequest {
             local_hashes: &local,
             remote_hashes: &remote,
-            trigger: FallbackTrigger::PeelFailed {
-                remaining_cells: 3,
-            },
+            trigger: FallbackTrigger::PeelFailed { remaining_cells: 3 },
             reconciliation_id: "r1",
             peer: "peer-1",
             trace_id: "t1",
@@ -1135,9 +1120,7 @@ fn incremental_fallback_with_one_range_equals_full() {
         FallbackRequest {
             local_hashes: &local,
             remote_hashes: &remote,
-            trigger: FallbackTrigger::PeelFailed {
-                remaining_cells: 0,
-            },
+            trigger: FallbackTrigger::PeelFailed { remaining_cells: 0 },
             reconciliation_id: "r1",
             peer: "peer-1",
             trace_id: "t1",
@@ -1315,9 +1298,7 @@ fn deterministic_fallback_replay() {
         fb.execute(FallbackRequest {
             local_hashes: &local,
             remote_hashes: &remote,
-            trigger: FallbackTrigger::PeelFailed {
-                remaining_cells: 3,
-            },
+            trigger: FallbackTrigger::PeelFailed { remaining_cells: 3 },
             reconciliation_id: "r1",
             peer: "peer-1",
             trace_id: "t1",
@@ -1338,9 +1319,7 @@ fn deterministic_incremental_fallback_replay() {
             FallbackRequest {
                 local_hashes: &local,
                 remote_hashes: &remote,
-                trigger: FallbackTrigger::PeelFailed {
-                    remaining_cells: 3,
-                },
+                trigger: FallbackTrigger::PeelFailed { remaining_cells: 3 },
                 reconciliation_id: "r1",
                 peer: "peer-1",
                 trace_id: "t1",
@@ -1364,9 +1343,7 @@ fn fallback_result_serde_round_trip() {
         objects_to_send: vec![make_hash(2), make_hash(3)],
         evidence: FallbackEvidence {
             fallback_id: "fb-t1-1".to_string(),
-            trigger: FallbackTrigger::PeelFailed {
-                remaining_cells: 5,
-            },
+            trigger: FallbackTrigger::PeelFailed { remaining_cells: 5 },
             original_reconciliation_id: "r1:peer-1".to_string(),
             scope_size: 100,
             differences_found: 3,
@@ -1446,9 +1423,7 @@ fn fallback_evidence_original_reconciliation_id_format() {
     let result = fb.execute(FallbackRequest {
         local_hashes: &objects,
         remote_hashes: &objects,
-        trigger: FallbackTrigger::PeelFailed {
-            remaining_cells: 0,
-        },
+        trigger: FallbackTrigger::PeelFailed { remaining_cells: 0 },
         reconciliation_id: "recon-42",
         peer: "node-7",
         trace_id: "trace-1",

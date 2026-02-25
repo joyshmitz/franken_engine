@@ -729,8 +729,7 @@ mod tests {
             RolloutStage::Default,
         ] {
             let json = serde_json::to_string(&stage).expect("serialize");
-            let restored: RolloutStage =
-                serde_json::from_str(&json).expect("deserialize");
+            let restored: RolloutStage = serde_json::from_str(&json).expect("deserialize");
             assert_eq!(stage, restored);
         }
     }

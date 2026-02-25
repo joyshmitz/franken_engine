@@ -553,9 +553,7 @@ mod tests {
             policy_id: "p-1".to_string(),
             commit_sha: "abc123".to_string(),
             commit_message: "perf: optimize interpreter".to_string(),
-            changed_paths: vec![
-                "crates/franken-engine/src/baseline_interpreter.rs".to_string(),
-            ],
+            changed_paths: vec!["crates/franken-engine/src/baseline_interpreter.rs".to_string()],
             evidence: full_evidence(score),
         }
     }
@@ -662,10 +660,7 @@ mod tests {
     fn classify_artifacts_beads_workflows_exempt() {
         assert_eq!(classify_changed_path("artifacts/report.txt"), None);
         assert_eq!(classify_changed_path(".beads/issues.jsonl"), None);
-        assert_eq!(
-            classify_changed_path(".github/workflows/ci.yml"),
-            None
-        );
+        assert_eq!(classify_changed_path(".github/workflows/ci.yml"), None);
     }
 
     #[test]
@@ -700,10 +695,7 @@ mod tests {
 
     #[test]
     fn extract_override_reason_empty_reason_returns_none() {
-        assert_eq!(
-            extract_override_reason("[multi-lever: ]"),
-            None
-        );
+        assert_eq!(extract_override_reason("[multi-lever: ]"), None);
     }
 
     #[test]
@@ -769,10 +761,7 @@ mod tests {
         req.trace_id = "".to_string();
         let decision = evaluate_one_lever_policy(&req);
         assert!(decision.blocked);
-        assert_eq!(
-            decision.error_code.as_deref(),
-            Some(ERROR_INVALID_REQUEST)
-        );
+        assert_eq!(decision.error_code.as_deref(), Some(ERROR_INVALID_REQUEST));
         assert!(decision.missing_requirements[0].contains("trace_id"));
     }
 
@@ -860,10 +849,7 @@ mod tests {
         req.evidence.delta_report_ref = None;
         let decision = evaluate_one_lever_policy(&req);
         assert!(!decision.allows_change());
-        assert_eq!(
-            decision.error_code.as_deref(),
-            Some(ERROR_MISSING_EVIDENCE)
-        );
+        assert_eq!(decision.error_code.as_deref(), Some(ERROR_MISSING_EVIDENCE));
         assert!(
             decision
                 .missing_requirements
@@ -882,10 +868,7 @@ mod tests {
         req.evidence.opportunity_score_millionths = None;
         let decision = evaluate_one_lever_policy(&req);
         assert!(!decision.allows_change());
-        assert_eq!(
-            decision.error_code.as_deref(),
-            Some(ERROR_MISSING_EVIDENCE)
-        );
+        assert_eq!(decision.error_code.as_deref(), Some(ERROR_MISSING_EVIDENCE));
     }
 
     // ── evaluate_one_lever_policy: multi-lever ──────────────────────
@@ -920,8 +903,8 @@ mod tests {
             decision_id: "d-1".to_string(),
             policy_id: "p-1".to_string(),
             commit_sha: "abc".to_string(),
-            commit_message:
-                "perf: coupled fix [multi-lever: gc and interpreter are inseparable]".to_string(),
+            commit_message: "perf: coupled fix [multi-lever: gc and interpreter are inseparable]"
+                .to_string(),
             changed_paths: vec![
                 "crates/franken-engine/src/baseline_interpreter.rs".to_string(),
                 "crates/franken-engine/src/gc_pause.rs".to_string(),

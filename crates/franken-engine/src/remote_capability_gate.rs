@@ -800,8 +800,7 @@ mod tests {
         ];
         for op in &all {
             let json = serde_json::to_string(op).expect("serialize");
-            let restored: RemoteOperationType =
-                serde_json::from_str(&json).expect("deserialize");
+            let restored: RemoteOperationType = serde_json::from_str(&json).expect("deserialize");
             assert_eq!(*op, restored);
         }
     }
@@ -836,7 +835,11 @@ mod tests {
             assert!(!msg.is_empty());
             displays.insert(msg);
         }
-        assert_eq!(displays.len(), 4, "all 4 variants produce distinct messages");
+        assert_eq!(
+            displays.len(),
+            4,
+            "all 4 variants produce distinct messages"
+        );
     }
 
     #[test]

@@ -1495,7 +1495,8 @@ mod tests {
             assert!(
                 err.to_string().contains(substring),
                 "'{}' should contain '{}'",
-                err, substring
+                err,
+                substring
             );
         }
     }
@@ -1547,7 +1548,8 @@ mod tests {
             assert!(
                 et.to_string().contains(substring),
                 "'{}' should contain '{}'",
-                et, substring
+                et,
+                substring
             );
         }
     }
@@ -1614,7 +1616,7 @@ mod tests {
         let genesis_b = build_genesis(&[sk], "zone-b");
 
         let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
-        mgr.accept_checkpoint("zone-a", &genesis_a, 1, &[vk.clone()], "t-a")
+        mgr.accept_checkpoint("zone-a", &genesis_a, 1, std::slice::from_ref(&vk), "t-a")
             .unwrap();
         mgr.accept_checkpoint("zone-b", &genesis_b, 1, &[vk], "t-b")
             .unwrap();
@@ -1751,7 +1753,7 @@ mod tests {
         let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
         assert_eq!(mgr.backend().persist_count, 0);
 
-        mgr.accept_checkpoint("zone-a", &genesis, 1, &[vk.clone()], "t-0")
+        mgr.accept_checkpoint("zone-a", &genesis, 1, std::slice::from_ref(&vk), "t-0")
             .unwrap();
         assert_eq!(mgr.backend().persist_count, 1);
 
@@ -1783,8 +1785,14 @@ mod tests {
                 std::slice::from_ref(&sk),
                 "zone-a",
             );
-            mgr.accept_checkpoint("zone-a", &cp, 1, std::slice::from_ref(&vk), &format!("t-{i}"))
-                .unwrap();
+            mgr.accept_checkpoint(
+                "zone-a",
+                &cp,
+                1,
+                std::slice::from_ref(&vk),
+                &format!("t-{i}"),
+            )
+            .unwrap();
             prev = cp;
         }
 
@@ -1848,9 +1856,7 @@ mod tests {
                 zone: "z4".into(),
                 detail: "not enough".into(),
             }),
-            Box::new(FrontierError::UnknownZone {
-                zone: "z5".into(),
-            }),
+            Box::new(FrontierError::UnknownZone { zone: "z5".into() }),
             Box::new(FrontierError::EpochRegression {
                 zone: "z6".into(),
                 frontier_epoch: SecurityEpoch::from_raw(5),
@@ -1867,6 +1873,10 @@ mod tests {
             assert!(!msg.is_empty());
             displays.insert(msg);
         }
-        assert_eq!(displays.len(), 7, "all 7 variants produce distinct messages");
+        assert_eq!(
+            displays.len(),
+            7,
+            "all 7 variants produce distinct messages"
+        );
     }
 }

@@ -1552,7 +1552,11 @@ mod tests {
             assert!(!msg.is_empty());
             displays.insert(msg);
         }
-        assert_eq!(displays.len(), 9, "all 9 tested variants produce distinct messages");
+        assert_eq!(
+            displays.len(),
+            9,
+            "all 9 tested variants produce distinct messages"
+        );
     }
 
     #[test]
@@ -1563,7 +1567,9 @@ mod tests {
 
     #[test]
     fn optimization_class_ord() {
-        assert!(OptimizationClass::HostcallDispatchSpecialization < OptimizationClass::IfcCheckElision);
+        assert!(
+            OptimizationClass::HostcallDispatchSpecialization < OptimizationClass::IfcCheckElision
+        );
         assert!(OptimizationClass::IfcCheckElision < OptimizationClass::SuperinstructionFusion);
         assert!(OptimizationClass::SuperinstructionFusion < OptimizationClass::PathElimination);
     }

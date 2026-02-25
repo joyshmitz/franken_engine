@@ -17,8 +17,14 @@ use frankenengine_engine::checkpoint::{
 #[test]
 fn reason_display() {
     assert_eq!(CheckpointReason::Periodic.to_string(), "periodic");
-    assert_eq!(CheckpointReason::CancelPending.to_string(), "cancel_pending");
-    assert_eq!(CheckpointReason::BudgetExhausted.to_string(), "budget_exhausted");
+    assert_eq!(
+        CheckpointReason::CancelPending.to_string(),
+        "cancel_pending"
+    );
+    assert_eq!(
+        CheckpointReason::BudgetExhausted.to_string(),
+        "budget_exhausted"
+    );
     assert_eq!(CheckpointReason::Explicit.to_string(), "explicit");
 }
 
@@ -32,13 +38,19 @@ fn loop_site_display_all_variants() {
     assert_eq!(LoopSite::GcScanning.to_string(), "gc_scanning");
     assert_eq!(LoopSite::GcSweep.to_string(), "gc_sweep");
     assert_eq!(LoopSite::PolicyIteration.to_string(), "policy_iteration");
-    assert_eq!(LoopSite::ContractEvaluation.to_string(), "contract_evaluation");
+    assert_eq!(
+        LoopSite::ContractEvaluation.to_string(),
+        "contract_evaluation"
+    );
     assert_eq!(LoopSite::ReplayStep.to_string(), "replay_step");
     assert_eq!(LoopSite::ModuleDecode.to_string(), "module_decode");
     assert_eq!(LoopSite::ModuleVerify.to_string(), "module_verify");
     assert_eq!(LoopSite::IrLowering.to_string(), "ir_lowering");
     assert_eq!(LoopSite::IrCompilation.to_string(), "ir_compilation");
-    assert_eq!(LoopSite::Custom("test".to_string()).to_string(), "custom:test");
+    assert_eq!(
+        LoopSite::Custom("test".to_string()).to_string(),
+        "custom:test"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -101,7 +113,10 @@ fn test_guard() -> (CheckpointGuard, CancellationToken) {
         LoopSite::PolicyIteration,
         "policy",
         "trace-1",
-        DensityConfig { max_iterations: 10, max_total_iterations: 100 },
+        DensityConfig {
+            max_iterations: 10,
+            max_total_iterations: 100,
+        },
         token.clone(),
     );
     (guard, token)
@@ -179,8 +194,13 @@ fn cancel_preempts_density() {
 fn budget_exhaustion_triggers_abort() {
     let token = CancellationToken::new();
     let mut guard = CheckpointGuard::new(
-        LoopSite::GcScanning, "gc", "t",
-        DensityConfig { max_iterations: 50, max_total_iterations: 100 },
+        LoopSite::GcScanning,
+        "gc",
+        "t",
+        DensityConfig {
+            max_iterations: 50,
+            max_total_iterations: 100,
+        },
         token,
     );
     for _ in 0..100 {
@@ -208,7 +228,9 @@ fn explicit_checkpoint_resets_counter() {
         guard.tick();
         guard.check();
     }
-    let periodic_count = guard.drain_events().iter()
+    let periodic_count = guard
+        .drain_events()
+        .iter()
         .filter(|e| e.reason == CheckpointReason::Periodic)
         .count();
     assert_eq!(periodic_count, 0);
@@ -295,8 +317,13 @@ fn deterministic_checkpoint_sequence() {
     let run = |cancel_at: Option<u64>| -> Vec<CheckpointEvent> {
         let token = CancellationToken::new();
         let mut guard = CheckpointGuard::new(
-            LoopSite::ReplayStep, "replay", "t",
-            DensityConfig { max_iterations: 5, max_total_iterations: 50 },
+            LoopSite::ReplayStep,
+            "replay",
+            "t",
+            DensityConfig {
+                max_iterations: 5,
+                max_total_iterations: 50,
+            },
             token.clone(),
         );
         for i in 0..25 {
@@ -336,7 +363,11 @@ fn checkpoint_reason_serde_roundtrip() {
 
 #[test]
 fn checkpoint_action_serde_roundtrip() {
-    let actions = [CheckpointAction::Continue, CheckpointAction::Drain, CheckpointAction::Abort];
+    let actions = [
+        CheckpointAction::Continue,
+        CheckpointAction::Drain,
+        CheckpointAction::Abort,
+    ];
     for a in &actions {
         let json = serde_json::to_string(a).unwrap();
         let restored: CheckpointAction = serde_json::from_str(&json).unwrap();

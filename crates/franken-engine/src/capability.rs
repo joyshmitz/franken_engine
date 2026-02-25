@@ -569,8 +569,7 @@ mod tests {
         ];
         for cap in &all {
             let json = serde_json::to_string(cap).expect("serialize");
-            let restored: RuntimeCapability =
-                serde_json::from_str(&json).expect("deserialize");
+            let restored: RuntimeCapability = serde_json::from_str(&json).expect("deserialize");
             assert_eq!(*cap, restored);
         }
     }
@@ -586,8 +585,7 @@ mod tests {
         ];
         for kind in &all {
             let json = serde_json::to_string(kind).expect("serialize");
-            let restored: ProfileKind =
-                serde_json::from_str(&json).expect("deserialize");
+            let restored: ProfileKind = serde_json::from_str(&json).expect("deserialize");
             assert_eq!(*kind, restored);
         }
     }

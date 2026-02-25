@@ -10,10 +10,10 @@
 
 use std::collections::BTreeMap;
 
+use frankenengine_engine::control_plane::ContextAdapter;
 use frankenengine_engine::control_plane::mocks::{
     MockBudget, MockCx, decision_id_from_seed, policy_id_from_seed, trace_id_from_seed,
 };
-use frankenengine_engine::control_plane::ContextAdapter;
 use frankenengine_engine::evidence_emission::{
     ActionCategory, CanonicalEvidenceEmitter, CanonicalEvidenceEntry, EmitterConfig,
     EvidenceEmissionError, EvidenceEmissionEvent, EvidenceEmissionRequest, EvidenceEntryId,
@@ -918,8 +918,7 @@ fn canonical_evidence_entry_serde_roundtrip() {
     em.set_epoch(SecurityEpoch::from_raw(5));
     let mut cx = mock_cx();
     let mut req = make_request(ActionCategory::DecisionContract, "allow");
-    req.metadata
-        .insert("key".to_string(), "value".to_string());
+    req.metadata.insert("key".to_string(), "value".to_string());
     em.emit(&mut cx, &req).unwrap();
 
     let entry = &em.entries()[0];

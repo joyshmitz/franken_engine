@@ -849,7 +849,6 @@ mod tests {
     // Enrichment: release with bound_exceeded does not emit duplicate event
     // -----------------------------------------------------------------------
 
-    #[test]
     // -- Enrichment: std::error --
 
     #[test]
@@ -867,7 +866,11 @@ mod tests {
             assert!(!msg.is_empty());
             displays.insert(msg);
         }
-        assert_eq!(displays.len(), 3, "all 3 variants produce distinct messages");
+        assert_eq!(
+            displays.len(),
+            3,
+            "all 3 variants produce distinct messages"
+        );
     }
 
     #[test]

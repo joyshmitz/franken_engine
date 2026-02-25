@@ -9,7 +9,7 @@
 
 use std::collections::BTreeMap;
 
-use frankenengine_engine::golden_vectors::{from_hex, to_hex, GoldenVector, GoldenVectorSet};
+use frankenengine_engine::golden_vectors::{GoldenVector, GoldenVectorSet, from_hex, to_hex};
 
 // ---------------------------------------------------------------------------
 // Section 1: GoldenVector construction and field access
@@ -104,10 +104,7 @@ fn golden_vector_set_construction() {
     let set = GoldenVectorSet {
         vector_format_version: "1.0.0".to_string(),
         category: "deterministic_serde".to_string(),
-        vectors: vec![
-            sample_vector("vec_a", false),
-            sample_vector("vec_b", true),
-        ],
+        vectors: vec![sample_vector("vec_a", false), sample_vector("vec_b", true)],
     };
     assert_eq!(set.vector_format_version, "1.0.0");
     assert_eq!(set.category, "deterministic_serde");

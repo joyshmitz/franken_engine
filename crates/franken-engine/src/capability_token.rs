@@ -1280,6 +1280,10 @@ mod tests {
             assert!(!msg.is_empty());
             displays.insert(msg);
         }
-        assert_eq!(displays.len(), 11, "all 11 variants produce distinct messages");
+        assert_eq!(
+            displays.len(),
+            11,
+            "all 11 variants produce distinct messages"
+        );
     }
 }

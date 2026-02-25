@@ -13,9 +13,9 @@
 use std::collections::BTreeSet;
 
 use frankenengine_engine::ast::{
-    ExportDeclaration, ExportKind, Expression, ExpressionStatement, ImportDeclaration, ParseGoal,
-    SourceSpan, Statement, SyntaxTree, CANONICAL_AST_CONTRACT_VERSION,
-    CANONICAL_AST_HASH_ALGORITHM, CANONICAL_AST_HASH_PREFIX, CANONICAL_AST_SCHEMA_VERSION,
+    CANONICAL_AST_CONTRACT_VERSION, CANONICAL_AST_HASH_ALGORITHM, CANONICAL_AST_HASH_PREFIX,
+    CANONICAL_AST_SCHEMA_VERSION, ExportDeclaration, ExportKind, Expression, ExpressionStatement,
+    ImportDeclaration, ParseGoal, SourceSpan, Statement, SyntaxTree,
 };
 
 // ---------------------------------------------------------------------------

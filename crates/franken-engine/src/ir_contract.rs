@@ -2734,10 +2734,7 @@ mod tests {
 
     #[test]
     fn reg_range_serde_roundtrip() {
-        let rr = RegRange {
-            start: 5,
-            count: 3,
-        };
+        let rr = RegRange { start: 5, count: 3 };
         let json = serde_json::to_string(&rr).unwrap();
         let restored: RegRange = serde_json::from_str(&json).unwrap();
         assert_eq!(rr, restored);
@@ -2756,10 +2753,7 @@ mod tests {
         assert_eq!(desc, restored);
 
         // Test with None name
-        let desc_anon = Ir3FunctionDesc {
-            name: None,
-            ..desc
-        };
+        let desc_anon = Ir3FunctionDesc { name: None, ..desc };
         let json2 = serde_json::to_string(&desc_anon).unwrap();
         let restored2: Ir3FunctionDesc = serde_json::from_str(&json2).unwrap();
         assert_eq!(desc_anon, restored2);

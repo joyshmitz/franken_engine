@@ -1262,7 +1262,6 @@ mod tests {
 
     // -- Full lifecycle --
 
-    #[test]
     // -- Enrichment: std::error --
 
     #[test]
@@ -1288,7 +1287,11 @@ mod tests {
             assert!(!msg.is_empty());
             displays.insert(msg);
         }
-        assert_eq!(displays.len(), 6, "all 6 variants produce distinct messages");
+        assert_eq!(
+            displays.len(),
+            6,
+            "all 6 variants produce distinct messages"
+        );
     }
 
     #[test]

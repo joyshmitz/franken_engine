@@ -838,8 +838,7 @@ mod tests {
     fn scheduler_config_serde_roundtrip() {
         let config = test_config();
         let json = serde_json::to_string(&config).expect("serialize");
-        let restored: SchedulerConfig =
-            serde_json::from_str(&json).expect("deserialize");
+        let restored: SchedulerConfig = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(config, restored);
     }
 
@@ -854,8 +853,7 @@ mod tests {
             skip_reason: None,
         };
         let json = serde_json::to_string(&dec).expect("serialize");
-        let restored: ScheduleDecision =
-            serde_json::from_str(&json).expect("deserialize");
+        let restored: ScheduleDecision = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(dec, restored);
     }
 

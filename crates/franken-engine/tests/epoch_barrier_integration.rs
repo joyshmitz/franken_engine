@@ -551,10 +551,7 @@ fn barrier_error_display_transition_already_in_progress() {
     let err = BarrierError::TransitionAlreadyInProgress {
         current_epoch: SecurityEpoch::from_raw(3),
     };
-    assert_eq!(
-        err.to_string(),
-        "transition already in progress at epoch:3"
-    );
+    assert_eq!(err.to_string(), "transition already in progress at epoch:3");
 }
 
 #[test]
@@ -826,10 +823,7 @@ fn large_epoch_gap_transition() {
         .expect("transition");
     assert_eq!(evidence.old_epoch, SecurityEpoch::from_raw(1));
     assert_eq!(evidence.new_epoch, SecurityEpoch::from_raw(1_000_000));
-    assert_eq!(
-        barrier.current_epoch(),
-        SecurityEpoch::from_raw(1_000_000)
-    );
+    assert_eq!(barrier.current_epoch(), SecurityEpoch::from_raw(1_000_000));
 }
 
 #[test]

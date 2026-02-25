@@ -833,15 +833,9 @@ mod tests {
     #[test]
     fn control_plane_adapter_error_is_std_error() {
         let errors: Vec<Box<dyn std::error::Error>> = vec![
-            Box::new(ControlPlaneAdapterError::BudgetExhausted {
-                requested_ms: 100,
-            }),
-            Box::new(ControlPlaneAdapterError::DecisionGateway {
-                code: "DG_TIMEOUT",
-            }),
-            Box::new(ControlPlaneAdapterError::EvidenceEmission {
-                code: "EE_FAIL",
-            }),
+            Box::new(ControlPlaneAdapterError::BudgetExhausted { requested_ms: 100 }),
+            Box::new(ControlPlaneAdapterError::DecisionGateway { code: "DG_TIMEOUT" }),
+            Box::new(ControlPlaneAdapterError::EvidenceEmission { code: "EE_FAIL" }),
         ];
         for e in &errors {
             assert!(!e.to_string().is_empty());

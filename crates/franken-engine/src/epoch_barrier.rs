@@ -943,8 +943,7 @@ mod tests {
             BarrierState::Finalizing,
         ] {
             let json = serde_json::to_string(&state).expect("serialize");
-            let restored: BarrierState =
-                serde_json::from_str(&json).expect("deserialize");
+            let restored: BarrierState = serde_json::from_str(&json).expect("deserialize");
             assert_eq!(state, restored);
         }
     }
@@ -960,8 +959,7 @@ mod tests {
             CriticalOpKind::RemoteOperation,
         ] {
             let json = serde_json::to_string(&kind).expect("serialize");
-            let restored: CriticalOpKind =
-                serde_json::from_str(&json).expect("deserialize");
+            let restored: CriticalOpKind = serde_json::from_str(&json).expect("deserialize");
             assert_eq!(kind, restored);
         }
     }
@@ -994,7 +992,11 @@ mod tests {
             assert!(!msg.is_empty());
             displays.insert(msg);
         }
-        assert_eq!(displays.len(), 5, "all 5 variants produce distinct messages");
+        assert_eq!(
+            displays.len(),
+            5,
+            "all 5 variants produce distinct messages"
+        );
     }
 
     #[test]

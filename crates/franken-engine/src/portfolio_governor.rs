@@ -1975,8 +1975,7 @@ mod tests {
         ];
         for k in &kinds {
             let json = serde_json::to_string(k).expect("serialize");
-            let restored: GovernorDecisionKind =
-                serde_json::from_str(&json).expect("deserialize");
+            let restored: GovernorDecisionKind = serde_json::from_str(&json).expect("deserialize");
             assert_eq!(*k, restored);
         }
     }

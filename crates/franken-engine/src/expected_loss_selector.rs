@@ -1040,14 +1040,19 @@ fn compute_alien_risk_envelope(
     loss_matrix: &LossMatrix,
     posterior: &Posterior,
 ) -> AlienRiskEnvelope {
-    let (tail_var, tail_cvar) =
-        compute_tail_var_cvar(selected_action, loss_matrix, posterior, ALIEN_TAIL_CONFIDENCE_MILLIONTHS);
+    let (tail_var, tail_cvar) = compute_tail_var_cvar(
+        selected_action,
+        loss_matrix,
+        posterior,
+        ALIEN_TAIL_CONFIDENCE_MILLIONTHS,
+    );
     let (conformal_quantile, conformal_p_value, e_value) = compute_conformal_roi_monitor(
         roi_history_millionths,
         attacker_roi_millionths,
         ALIEN_TAIL_CONFIDENCE_MILLIONTHS,
     );
-    let regime_shift_score = compute_regime_shift_score(roi_history_millionths, attacker_roi_millionths);
+    let regime_shift_score =
+        compute_regime_shift_score(roi_history_millionths, attacker_roi_millionths);
     let (alert_level, recommended_floor_action) = classify_alien_risk_alert(
         selected_expected_loss_millionths,
         tail_cvar,
@@ -1745,13 +1750,16 @@ mod tests {
             artifact.alien_risk_envelope.tail_confidence_millionths,
             ALIEN_TAIL_CONFIDENCE_MILLIONTHS
         );
-        assert!(
-            (1..=MILLION).contains(&artifact.alien_risk_envelope.conformal_p_value_millionths)
-        );
+        assert!((1..=MILLION).contains(&artifact.alien_risk_envelope.conformal_p_value_millionths));
         assert!(artifact.alien_risk_envelope.e_value_millionths >= MILLION);
         match artifact.alien_risk_envelope.alert_level {
             AlienRiskAlertLevel::Nominal => {
-                assert!(artifact.alien_risk_envelope.recommended_floor_action.is_none());
+                assert!(
+                    artifact
+                        .alien_risk_envelope
+                        .recommended_floor_action
+                        .is_none()
+                );
                 assert_eq!(artifact.alien_floor_gap_steps, 0);
             }
             AlienRiskAlertLevel::Elevated => {

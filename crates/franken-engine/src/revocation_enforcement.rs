@@ -1475,15 +1475,12 @@ mod tests {
     // Default for EnforcementStats
     // ---------------------------------------------------------------
 
-    #[test]
     // -- Enrichment: Ord --
 
     #[test]
     fn enforcement_point_ordering() {
         assert!(EnforcementPoint::TokenAcceptance < EnforcementPoint::HighRiskOperation);
-        assert!(
-            EnforcementPoint::HighRiskOperation < EnforcementPoint::ExtensionActivation
-        );
+        assert!(EnforcementPoint::HighRiskOperation < EnforcementPoint::ExtensionActivation);
     }
 
     #[test]
@@ -1491,10 +1488,7 @@ mod tests {
         assert!(HighRiskCategory::PolicyChange < HighRiskCategory::KeyOperation);
         assert!(HighRiskCategory::KeyOperation < HighRiskCategory::DataExport);
         assert!(HighRiskCategory::DataExport < HighRiskCategory::CrossZoneAction);
-        assert!(
-            HighRiskCategory::CrossZoneAction
-                < HighRiskCategory::ExtensionLifecycleChange
-        );
+        assert!(HighRiskCategory::CrossZoneAction < HighRiskCategory::ExtensionLifecycleChange);
     }
 
     #[test]

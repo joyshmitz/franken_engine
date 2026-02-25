@@ -1498,7 +1498,6 @@ mod tests {
     // Override preimage determinism
     // ---------------------------------------------------------------
 
-    #[test]
     // -- Enrichment: Ord --
 
     #[test]
@@ -1512,9 +1511,7 @@ mod tests {
     fn operation_type_ordering() {
         assert!(OperationType::SafeOperation < OperationType::TokenAcceptance);
         assert!(OperationType::TokenAcceptance < OperationType::ExtensionActivation);
-        assert!(
-            OperationType::ExtensionActivation < OperationType::HighRiskOperation
-        );
+        assert!(OperationType::ExtensionActivation < OperationType::HighRiskOperation);
         assert!(OperationType::HighRiskOperation < OperationType::HealthCheck);
     }
 

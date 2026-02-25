@@ -26,6 +26,8 @@
 //! - Mohri, "Semiring Frameworks and Algorithms for Shortest-Distance
 //!   Problems" (2002)
 
+use std::cmp::Reverse;
+use std::collections::BinaryHeap;
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
@@ -742,26 +744,20 @@ impl ScheduleOptimizer {
             }
         }
 
-        let mut queue: Vec<usize> = Vec::new();
+        let mut queue: BinaryHeap<Reverse<usize>> = BinaryHeap::new();
         for (i, deg) in in_degree.iter().enumerate() {
             if *deg == 0 {
-                queue.push(i);
+                queue.push(Reverse(i));
             }
         }
-        // Sort initial queue for determinism.
-        queue.sort_unstable();
 
         let mut order = Vec::with_capacity(n);
-        while let Some(node_idx) = queue.first().copied() {
-            queue.remove(0);
+        while let Some(Reverse(node_idx)) = queue.pop() {
             order.push(node_idx);
-            let successors = graph.nodes[node_idx].successors.clone();
-            for succ in successors {
+            for &succ in &graph.nodes[node_idx].successors {
                 in_degree[succ] -= 1;
                 if in_degree[succ] == 0 {
-                    // Insert in sorted position for determinism.
-                    let pos = queue.partition_point(|&x| x < succ);
-                    queue.insert(pos, succ);
+                    queue.push(Reverse(succ));
                 }
             }
         }
@@ -1537,6 +1533,51 @@ mod tests {
         let optimizer = ScheduleOptimizer::default();
         let result = optimizer.schedule(&graph);
         assert!(matches!(result, Err(TropicalError::CycleInDag { .. })));
+    }
+
+    #[test]
+    fn schedule_zero_cost_ties_still_respect_dependencies() {
+        let nodes = vec![
+            InstructionNode {
+                index: 0,
+                cost: TropicalWeight::finite(0),
+                predecessors: vec![],
+                successors: vec![2],
+                register_pressure: 1,
+                mnemonic: "src_a".into(),
+            },
+            InstructionNode {
+                index: 1,
+                cost: TropicalWeight::finite(0),
+                predecessors: vec![],
+                successors: vec![2],
+                register_pressure: 1,
+                mnemonic: "src_b".into(),
+            },
+            InstructionNode {
+                index: 2,
+                cost: TropicalWeight::finite(1),
+                predecessors: vec![0, 1],
+                successors: vec![],
+                register_pressure: 1,
+                mnemonic: "join".into(),
+            },
+        ];
+        let graph = InstructionCostGraph::new(nodes).unwrap();
+        let schedule = ScheduleOptimizer::default().schedule(&graph).unwrap();
+        let pos0 = schedule.order.iter().position(|&x| x == 0).unwrap();
+        let pos1 = schedule.order.iter().position(|&x| x == 1).unwrap();
+        let pos2 = schedule.order.iter().position(|&x| x == 2).unwrap();
+        assert!(pos0 < pos2);
+        assert!(pos1 < pos2);
+    }
+
+    #[test]
+    fn critical_path_apsp_hash_matches_apsp_matrix() {
+        let graph = make_chain_graph(6);
+        let cpr = graph.critical_path_length().unwrap();
+        let apsp = graph.all_pairs_shortest_paths().unwrap();
+        assert_eq!(cpr.apsp_hash, apsp.content_hash());
     }
 
     // === Display ===

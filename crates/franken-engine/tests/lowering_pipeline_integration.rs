@@ -1173,7 +1173,12 @@ fn full_pipeline_numeric_script() {
             .iter()
             .any(|event| event.event == "ir2_flow_check_completed")
     );
-    assert!(output.ir2_flow_proof_artifact.artifact_id.starts_with("sha256:"));
+    assert!(
+        output
+            .ir2_flow_proof_artifact
+            .artifact_id
+            .starts_with("sha256:")
+    );
 
     // Check witness pass_ids
     assert_eq!(output.witnesses[0].pass_id, "ir0_to_ir1");
@@ -1745,8 +1750,14 @@ fn ledger_op_counts_monotonically_track_operations() {
     let output = run_full_pipeline(&ir0);
 
     for entry in &output.isomorphism_ledger {
-        assert!(entry.input_op_count > 0, "every ledger entry should have input ops");
-        assert!(entry.output_op_count > 0, "every ledger entry should have output ops");
+        assert!(
+            entry.input_op_count > 0,
+            "every ledger entry should have input ops"
+        );
+        assert!(
+            entry.output_op_count > 0,
+            "every ledger entry should have output ops"
+        );
     }
 
     // The first entry's input_op_count should match IR0's statement count

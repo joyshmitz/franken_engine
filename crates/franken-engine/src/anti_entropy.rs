@@ -1911,8 +1911,7 @@ mod tests {
         ];
         for v in &variants {
             let json = serde_json::to_string(v).expect("serialize");
-            let restored: ReconcileObjectType =
-                serde_json::from_str(&json).expect("deserialize");
+            let restored: ReconcileObjectType = serde_json::from_str(&json).expect("deserialize");
             assert_eq!(*v, restored);
         }
     }
@@ -1998,9 +1997,7 @@ mod tests {
                 local_cells: 100,
                 remote_cells: 200,
             }),
-            Box::new(ReconcileError::PeelFailed {
-                remaining_cells: 5,
-            }),
+            Box::new(ReconcileError::PeelFailed { remaining_cells: 5 }),
             Box::new(ReconcileError::EpochMismatch {
                 local_epoch: SecurityEpoch::from_raw(1),
                 remote_epoch: SecurityEpoch::from_raw(3),
@@ -2017,7 +2014,11 @@ mod tests {
             assert!(!msg.is_empty());
             displays.insert(msg);
         }
-        assert_eq!(displays.len(), 5, "all 5 variants produce distinct messages");
+        assert_eq!(
+            displays.len(),
+            5,
+            "all 5 variants produce distinct messages"
+        );
     }
 
     #[test]

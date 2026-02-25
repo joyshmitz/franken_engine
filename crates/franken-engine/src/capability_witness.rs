@@ -4724,8 +4724,7 @@ mod tests {
         ];
         for v in &variants {
             let json = serde_json::to_string(v).expect("serialize");
-            let restored: PromotionTheoremKind =
-                serde_json::from_str(&json).expect("deserialize");
+            let restored: PromotionTheoremKind = serde_json::from_str(&json).expect("deserialize");
             assert_eq!(*v, restored);
         }
     }
@@ -4734,8 +4733,7 @@ mod tests {
     fn witness_schema_version_serde_roundtrip() {
         let v = WitnessSchemaVersion::CURRENT;
         let json = serde_json::to_string(&v).expect("serialize");
-        let restored: WitnessSchemaVersion =
-            serde_json::from_str(&json).expect("deserialize");
+        let restored: WitnessSchemaVersion = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(v, restored);
     }
 
@@ -4799,8 +4797,7 @@ mod tests {
         let variants = [PublicationEntryKind::Publish, PublicationEntryKind::Revoke];
         for v in &variants {
             let json = serde_json::to_string(v).expect("serialize");
-            let restored: PublicationEntryKind =
-                serde_json::from_str(&json).expect("deserialize");
+            let restored: PublicationEntryKind = serde_json::from_str(&json).expect("deserialize");
             assert_eq!(*v, restored);
         }
     }
@@ -4855,8 +4852,7 @@ mod tests {
         ];
         for err in &errors {
             let json = serde_json::to_string(err).expect("serialize");
-            let restored: WitnessIndexError =
-                serde_json::from_str(&json).expect("deserialize");
+            let restored: WitnessIndexError = serde_json::from_str(&json).expect("deserialize");
             assert_eq!(*err, restored);
         }
     }
@@ -4868,8 +4864,7 @@ mod tests {
             capabilities: BTreeSet::from([Capability::new("cap_a")]),
         };
         let json = serde_json::to_string(&scs).expect("serialize");
-        let restored: SourceCapabilitySet =
-            serde_json::from_str(&json).expect("deserialize");
+        let restored: SourceCapabilitySet = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(scs, restored);
     }
 
@@ -4886,8 +4881,7 @@ mod tests {
     fn witness_publication_config_serde_roundtrip() {
         let config = WitnessPublicationConfig::default();
         let json = serde_json::to_string(&config).expect("serialize");
-        let restored: WitnessPublicationConfig =
-            serde_json::from_str(&json).expect("deserialize");
+        let restored: WitnessPublicationConfig = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(config, restored);
     }
 
@@ -4904,8 +4898,7 @@ mod tests {
             timestamp_ns: 12345,
         };
         let json = serde_json::to_string(&event).expect("serialize");
-        let restored: WitnessPublicationEvent =
-            serde_json::from_str(&json).expect("deserialize");
+        let restored: WitnessPublicationEvent = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(event, restored);
     }
 

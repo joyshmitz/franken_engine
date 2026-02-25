@@ -1093,8 +1093,7 @@ mod tests {
         let sig = sign_with(&sk, &obj);
         let ss = SignerSignature::new(vk, sig);
         let json = serde_json::to_string(&ss).expect("serialize");
-        let restored: SignerSignature =
-            serde_json::from_str(&json).expect("deserialize");
+        let restored: SignerSignature = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(ss, restored);
     }
 
@@ -1124,8 +1123,7 @@ mod tests {
         ];
         for v in &variants {
             let json = serde_json::to_string(v).expect("serialize");
-            let restored: MultiSigEventType =
-                serde_json::from_str(&json).expect("deserialize");
+            let restored: MultiSigEventType = serde_json::from_str(&json).expect("deserialize");
             assert_eq!(*v, restored);
         }
     }

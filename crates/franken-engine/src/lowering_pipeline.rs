@@ -190,7 +190,9 @@ pub enum LoweringPipelineError {
     InvariantViolation { detail: &'static str },
     #[error("flow lattice evaluation failed: {detail}")]
     FlowLatticeFailure { detail: String },
-    #[error("unauthorized flow detected at op {op_index}: {source_label:?} -> {sink_clearance:?} ({detail})")]
+    #[error(
+        "unauthorized flow detected at op {op_index}: {source_label:?} -> {sink_clearance:?} ({detail})"
+    )]
     UnauthorizedFlow {
         op_index: usize,
         source_label: Label,
@@ -768,15 +770,15 @@ fn build_ir2_flow_proof_artifact(
                 });
             }
             LatticeFlowCheckResult::RequiresDeclassification { obligation_id } => {
-                artifact.required_declassifications.push(
-                    RequiredDeclassificationArtifactEntry {
+                artifact
+                    .required_declassifications
+                    .push(RequiredDeclassificationArtifactEntry {
                         op_index: op_index_u64,
                         source_label,
                         sink_clearance: sink_clearance_label,
                         capability,
                         obligation_id,
-                    },
-                );
+                    });
             }
             LatticeFlowCheckResult::Blocked { .. } => {
                 artifact.denied_flows.push(DeniedFlowArtifactEntry {
@@ -839,7 +841,10 @@ fn flow_capability_supports_declassification(capability: &CapabilityTag) -> bool
     normalized.contains("declassify") || normalized.contains("declassification")
 }
 
-fn flow_requires_runtime_checkpoint(flow: Option<&FlowAnnotation>, capability: &CapabilityTag) -> bool {
+fn flow_requires_runtime_checkpoint(
+    flow: Option<&FlowAnnotation>,
+    capability: &CapabilityTag,
+) -> bool {
     let capability_is_dynamic = capability.0 == "hostcall.invoke";
     let flow_is_ambiguous = flow.is_some_and(|annotation| {
         matches!(annotation.data_label, Label::Custom { .. })
@@ -1486,10 +1491,13 @@ mod tests {
         assert!(artifact.denied_flows.is_empty());
         assert!(artifact.required_declassifications.is_empty());
         assert!(artifact.runtime_checkpoints.is_empty());
-        assert!(artifact.proved_flows.iter().any(
-            |entry| entry.proof_method == ProofMethod::StaticAnalysis
-                && entry.capability.as_deref() == Some("fs.read")
-        ));
+        assert!(
+            artifact
+                .proved_flows
+                .iter()
+                .any(|entry| entry.proof_method == ProofMethod::StaticAnalysis
+                    && entry.capability.as_deref() == Some("fs.read"))
+        );
         assert!(artifact.artifact_id.starts_with("sha256:"));
     }
 
@@ -1608,14 +1616,20 @@ mod tests {
     #[test]
     fn pipeline_output_includes_flow_proof_artifact() {
         let ir0 = script_ir0();
-        let context = LoweringContext::new("trace-artifact", "decision-artifact", "policy-artifact");
+        let context =
+            LoweringContext::new("trace-artifact", "decision-artifact", "policy-artifact");
         let output = lower_ir0_to_ir3(&ir0, &context).expect("pipeline should succeed");
 
         assert_eq!(
             output.ir2_flow_proof_artifact.schema_version,
             IFC_FLOW_PROOF_SCHEMA_VERSION
         );
-        assert!(output.ir2_flow_proof_artifact.artifact_id.starts_with("sha256:"));
+        assert!(
+            output
+                .ir2_flow_proof_artifact
+                .artifact_id
+                .starts_with("sha256:")
+        );
     }
 
     #[test]

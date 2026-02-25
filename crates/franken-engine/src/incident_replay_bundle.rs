@@ -2449,8 +2449,14 @@ mod tests {
                 },
                 "trace not found: t",
             ),
-            (BundleError::IdDerivation("x".to_string()), "id derivation: x"),
-            (BundleError::ReplayFailed("y".to_string()), "replay failed: y"),
+            (
+                BundleError::IdDerivation("x".to_string()),
+                "id derivation: x",
+            ),
+            (
+                BundleError::ReplayFailed("y".to_string()),
+                "replay failed: y",
+            ),
             (
                 BundleError::RedactionViolation {
                     field: "f".to_string(),
@@ -2521,8 +2527,7 @@ mod tests {
             VerificationCategory::Compatibility,
         ] {
             let json = serde_json::to_string(&variant).expect("serialize");
-            let restored: VerificationCategory =
-                serde_json::from_str(&json).expect("deserialize");
+            let restored: VerificationCategory = serde_json::from_str(&json).expect("deserialize");
             assert_eq!(variant, restored);
         }
     }
@@ -2571,7 +2576,7 @@ mod tests {
 
     #[test]
     fn bundle_artifact_kind_ordering() {
-        let mut kinds = vec![
+        let mut kinds = [
             BundleArtifactKind::PolicySnapshot,
             BundleArtifactKind::Trace,
             BundleArtifactKind::CounterfactualResult,
@@ -2584,7 +2589,7 @@ mod tests {
 
     #[test]
     fn verification_category_ordering() {
-        let mut cats = vec![
+        let mut cats = [
             VerificationCategory::Compatibility,
             VerificationCategory::Integrity,
             VerificationCategory::Counterfactual,

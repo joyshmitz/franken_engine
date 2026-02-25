@@ -161,7 +161,10 @@ fn policy_head_different_types_different_hashes() {
 fn deterministic_timestamp_display() {
     assert_eq!(DeterministicTimestamp(0).to_string(), "tick:0");
     assert_eq!(DeterministicTimestamp(42).to_string(), "tick:42");
-    assert_eq!(DeterministicTimestamp(u64::MAX).to_string(), format!("tick:{}", u64::MAX));
+    assert_eq!(
+        DeterministicTimestamp(u64::MAX).to_string(),
+        format!("tick:{}", u64::MAX)
+    );
 }
 
 #[test]
@@ -281,8 +284,7 @@ fn checkpoint_error_display_epoch_regression() {
 
 #[test]
 fn checkpoint_error_is_std_error() {
-    let err: Box<dyn std::error::Error> =
-        Box::new(CheckpointError::EmptyPolicyHeads);
+    let err: Box<dyn std::error::Error> = Box::new(CheckpointError::EmptyPolicyHeads);
     assert!(!err.to_string().is_empty());
 }
 
@@ -461,10 +463,7 @@ fn duplicate_policy_type_rejected() {
     .build(&[sk])
     .unwrap_err();
 
-    assert!(matches!(
-        err,
-        CheckpointError::DuplicatePolicyType { .. }
-    ));
+    assert!(matches!(err, CheckpointError::DuplicatePolicyType { .. }));
 }
 
 #[test]
@@ -768,10 +767,7 @@ fn chain_linkage_non_monotonic_seq() {
     // cp1.prev_checkpoint = genesis, not cp2 -> ChainLinkageBroken first
     let err = verify_chain_linkage(&cp2, &cp1).unwrap_err();
     // This will be ChainLinkageBroken or MissingPredecessor depending on cp1's structure
-    assert!(matches!(
-        err,
-        CheckpointError::ChainLinkageBroken { .. }
-    ));
+    assert!(matches!(err, CheckpointError::ChainLinkageBroken { .. }));
 }
 
 #[test]
@@ -1243,14 +1239,10 @@ fn max_u64_timestamp() {
 #[test]
 fn empty_zone_string() {
     let sk = make_sk(1);
-    let cp = CheckpointBuilder::genesis(
-        SecurityEpoch::GENESIS,
-        DeterministicTimestamp(100),
-        "",
-    )
-    .add_policy_head(make_policy_head(PolicyType::RuntimeExecution, 1))
-    .build(&[sk])
-    .unwrap();
+    let cp = CheckpointBuilder::genesis(SecurityEpoch::GENESIS, DeterministicTimestamp(100), "")
+        .add_policy_head(make_policy_head(PolicyType::RuntimeExecution, 1))
+        .build(&[sk])
+        .unwrap();
     assert_eq!(cp.checkpoint_seq, 0);
 }
 
@@ -1258,14 +1250,10 @@ fn empty_zone_string() {
 fn long_zone_string() {
     let sk = make_sk(1);
     let zone = "a".repeat(1000);
-    let cp = CheckpointBuilder::genesis(
-        SecurityEpoch::GENESIS,
-        DeterministicTimestamp(100),
-        &zone,
-    )
-    .add_policy_head(make_policy_head(PolicyType::RuntimeExecution, 1))
-    .build(&[sk])
-    .unwrap();
+    let cp = CheckpointBuilder::genesis(SecurityEpoch::GENESIS, DeterministicTimestamp(100), &zone)
+        .add_policy_head(make_policy_head(PolicyType::RuntimeExecution, 1))
+        .build(&[sk])
+        .unwrap();
     assert_eq!(cp.checkpoint_seq, 0);
 }
 

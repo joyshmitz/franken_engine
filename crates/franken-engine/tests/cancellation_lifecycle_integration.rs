@@ -14,8 +14,8 @@ use frankenengine_engine::cancellation_lifecycle::{
     CancellationError, CancellationEvent, CancellationManager, CancellationMode,
     CancellationOutcome, LifecycleEvent,
 };
-use frankenengine_engine::control_plane::mocks::{trace_id_from_seed, MockBudget, MockCx};
 use frankenengine_engine::control_plane::ContextAdapter;
+use frankenengine_engine::control_plane::mocks::{MockBudget, MockCx, trace_id_from_seed};
 use frankenengine_engine::execution_cell::{CellError, CellKind, CellManager, ExecutionCell};
 use frankenengine_engine::region_lifecycle::{CancelReason, FinalizeResult, RegionState};
 
@@ -873,7 +873,12 @@ fn cancel_managed_cell_not_found_returns_error() {
     let mut cancel_mgr = CancellationManager::new();
 
     let err = cancel_mgr
-        .cancel_managed_cell(&mut cell_mgr, "nonexistent", &mut cx, LifecycleEvent::Unload)
+        .cancel_managed_cell(
+            &mut cell_mgr,
+            "nonexistent",
+            &mut cx,
+            LifecycleEvent::Unload,
+        )
         .unwrap_err();
 
     assert_eq!(err.error_code(), "cancel_cell_not_found");
@@ -912,8 +917,7 @@ fn cancel_all_cells_succeeds() {
     let mut cx = mock_cx(500);
     let mut cancel_mgr = CancellationManager::new();
 
-    let results =
-        cancel_mgr.cancel_all(&mut cell_mgr, &mut cx, LifecycleEvent::Quarantine);
+    let results = cancel_mgr.cancel_all(&mut cell_mgr, &mut cx, LifecycleEvent::Quarantine);
 
     assert_eq!(results.len(), 3);
     for r in &results {
@@ -941,8 +945,7 @@ fn cancel_all_with_single_cell() {
     let mut cx = mock_cx(200);
     let mut cancel_mgr = CancellationManager::new();
 
-    let results =
-        cancel_mgr.cancel_all(&mut cell_mgr, &mut cx, LifecycleEvent::Terminate);
+    let results = cancel_mgr.cancel_all(&mut cell_mgr, &mut cx, LifecycleEvent::Terminate);
 
     assert_eq!(results.len(), 1);
     assert!(results[0].as_ref().unwrap().success);
@@ -1298,10 +1301,7 @@ fn all_events_emit_three_phase_evidence() {
             phases.contains(&"cancel"),
             "missing cancel phase for {event}"
         );
-        assert!(
-            phases.contains(&"drain"),
-            "missing drain phase for {event}"
-        );
+        assert!(phases.contains(&"drain"), "missing drain phase for {event}");
         assert!(
             phases.contains(&"finalize"),
             "missing finalize phase for {event}"
@@ -1406,8 +1406,7 @@ fn cancel_all_with_obligations_mixed() {
     let mut cx = mock_cx(500);
     let mut cancel_mgr = CancellationManager::new();
 
-    let results =
-        cancel_mgr.cancel_all(&mut cell_mgr, &mut cx, LifecycleEvent::Quarantine);
+    let results = cancel_mgr.cancel_all(&mut cell_mgr, &mut cx, LifecycleEvent::Quarantine);
 
     assert_eq!(results.len(), 2);
     for r in &results {
@@ -1615,8 +1614,7 @@ fn cancel_all_idempotent_on_already_cancelled_cells() {
     let mut cancel_mgr = CancellationManager::new();
 
     // Cancel all once
-    let first_results =
-        cancel_mgr.cancel_all(&mut cell_mgr, &mut cx, LifecycleEvent::Unload);
+    let first_results = cancel_mgr.cancel_all(&mut cell_mgr, &mut cx, LifecycleEvent::Unload);
     assert_eq!(first_results.len(), 2);
     for r in &first_results {
         assert!(!r.as_ref().unwrap().was_idempotent);
@@ -1624,8 +1622,7 @@ fn cancel_all_idempotent_on_already_cancelled_cells() {
 
     // After cancel_all, the cells were archived so there are no active cells
     // calling cancel_all again returns empty
-    let second_results =
-        cancel_mgr.cancel_all(&mut cell_mgr, &mut cx, LifecycleEvent::Unload);
+    let second_results = cancel_mgr.cancel_all(&mut cell_mgr, &mut cx, LifecycleEvent::Unload);
     assert!(
         second_results.is_empty(),
         "no active cells remain after cancel_all + archive"

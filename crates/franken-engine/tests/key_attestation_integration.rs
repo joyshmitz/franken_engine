@@ -642,10 +642,7 @@ fn nonce_registry_rejects_lower_nonce() {
 fn nonce_registry_rejects_zero_nonce() {
     let mut registry = NonceRegistry::new();
     let result = registry.check_and_record(&test_principal(), AttestationNonce::from_counter(0));
-    assert!(matches!(
-        result,
-        Err(AttestationError::InvalidNonce { .. })
-    ));
+    assert!(matches!(result, Err(AttestationError::InvalidNonce { .. })));
 }
 
 #[test]
@@ -1514,9 +1511,12 @@ fn multi_role_registration_with_sequential_nonces() {
     assert_eq!(store.total_count(), 3);
 
     for role in KeyRole::ALL {
-        let active =
-            store.active_for_role(&test_principal(), *role, DeterministicTimestamp(150));
-        assert_eq!(active.len(), 1, "expected 1 active attestation for role {role}");
+        let active = store.active_for_role(&test_principal(), *role, DeterministicTimestamp(150));
+        assert_eq!(
+            active.len(),
+            1,
+            "expected 1 active attestation for role {role}"
+        );
     }
 }
 

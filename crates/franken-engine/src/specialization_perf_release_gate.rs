@@ -1367,7 +1367,10 @@ mod tests {
     #[test]
     fn gate_failure_code_ord() {
         assert!(GateFailureCode::NoPositiveDelta < GateFailureCode::InsufficientSignificance);
-        assert!(GateFailureCode::InsufficientSignificance < GateFailureCode::InsufficientReceiptCoverage);
+        assert!(
+            GateFailureCode::InsufficientSignificance
+                < GateFailureCode::InsufficientReceiptCoverage
+        );
         assert!(GateFailureCode::FallbackCrashed < GateFailureCode::FallbackHung);
         assert!(GateFailureCode::InsufficientSamples < GateFailureCode::EmptyInput);
     }

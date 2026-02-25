@@ -2601,8 +2601,7 @@ mod tests {
         ];
         for err in &errors {
             let json = serde_json::to_string(err).expect("serialize");
-            let restored: ShadowAblationError =
-                serde_json::from_str(&json).expect("deserialize");
+            let restored: ShadowAblationError = serde_json::from_str(&json).expect("deserialize");
             assert_eq!(*err, restored);
         }
     }
@@ -2662,7 +2661,10 @@ mod tests {
             extension_id: "ext-1".to_string(),
             static_report_id: EngineObjectId([0xAA; 32]),
             search_strategy: AblationSearchStrategy::BinaryGuided,
-            initial_capabilities: BTreeSet::from([Capability("cap-a".to_string()), Capability("cap-b".to_string())]),
+            initial_capabilities: BTreeSet::from([
+                Capability("cap-a".to_string()),
+                Capability("cap-b".to_string()),
+            ]),
             minimal_capabilities: BTreeSet::from([Capability("cap-a".to_string())]),
             evaluations: vec![],
             logs: vec![],
@@ -2680,7 +2682,10 @@ mod tests {
                 randomness_snapshot_id: "rng-1".to_string(),
                 deterministic_seed: 42,
                 search_strategy: AblationSearchStrategy::BinaryGuided,
-                initial_capabilities: BTreeSet::from([Capability("cap-a".to_string()), Capability("cap-b".to_string())]),
+                initial_capabilities: BTreeSet::from([
+                    Capability("cap-a".to_string()),
+                    Capability("cap-b".to_string()),
+                ]),
                 final_capabilities: BTreeSet::from([Capability("cap-a".to_string())]),
                 evaluations: vec![],
                 fallback: None,
@@ -2710,7 +2715,10 @@ mod tests {
             randomness_snapshot_id: "rng-2".to_string(),
             deterministic_seed: 99,
             search_strategy: AblationSearchStrategy::LatticeGreedy,
-            initial_capabilities: BTreeSet::from([Capability("read".to_string()), Capability("write".to_string())]),
+            initial_capabilities: BTreeSet::from([
+                Capability("read".to_string()),
+                Capability("write".to_string()),
+            ]),
             final_capabilities: BTreeSet::from([Capability("read".to_string())]),
             evaluations: vec![],
             fallback: None,
@@ -2749,8 +2757,12 @@ mod tests {
 
     #[test]
     fn ablation_failure_class_ord() {
-        assert!(AblationFailureClass::CorrectnessRegression < AblationFailureClass::InvariantViolation);
-        assert!(AblationFailureClass::InvariantViolation < AblationFailureClass::RiskBudgetExceeded);
+        assert!(
+            AblationFailureClass::CorrectnessRegression < AblationFailureClass::InvariantViolation
+        );
+        assert!(
+            AblationFailureClass::InvariantViolation < AblationFailureClass::RiskBudgetExceeded
+        );
         assert!(AblationFailureClass::ExecutionFailure < AblationFailureClass::OracleError);
         assert!(AblationFailureClass::InvalidOracleResult < AblationFailureClass::BudgetExhausted);
     }

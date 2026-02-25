@@ -201,7 +201,9 @@ fn standard_hierarchy_has_all_four_zones() {
 #[test]
 fn standard_hierarchy_default_zone_is_community() {
     let h = standard_hierarchy();
-    let zone = h.zone_for_entity("unassigned-entity").expect("default zone");
+    let zone = h
+        .zone_for_entity("unassigned-entity")
+        .expect("default zone");
     assert_eq!(zone.zone_name, "community");
 }
 
@@ -306,7 +308,10 @@ fn child_effective_ceiling_is_intersection_with_parent() {
 
     let team = h.zone("team").unwrap();
     // Effective = intersection of declared {VmDispatch, FsWrite} and parent_effective {VmDispatch, NetworkEgress}
-    assert_eq!(team.effective_ceiling, capset(&[RuntimeCapability::VmDispatch]));
+    assert_eq!(
+        team.effective_ceiling,
+        capset(&[RuntimeCapability::VmDispatch])
+    );
 }
 
 #[test]
@@ -331,17 +336,23 @@ fn effective_ceiling_in_standard_hierarchy_is_monotonically_shrinking() {
     let team = h.zone("team").unwrap();
     let community = h.zone("community").unwrap();
 
-    assert!(private.effective_ceiling.is_subset(&owner.effective_ceiling));
+    assert!(
+        private
+            .effective_ceiling
+            .is_subset(&owner.effective_ceiling)
+    );
     assert!(team.effective_ceiling.is_subset(&private.effective_ceiling));
-    assert!(community.effective_ceiling.is_subset(&team.effective_ceiling));
+    assert!(
+        community
+            .effective_ceiling
+            .is_subset(&team.effective_ceiling)
+    );
 }
 
 #[test]
 fn compute_effective_ceiling_returns_stored_ceiling() {
     let h = standard_hierarchy();
-    let ceiling = h
-        .compute_effective_ceiling("community")
-        .expect("ceiling");
+    let ceiling = h.compute_effective_ceiling("community").expect("ceiling");
     let zone = h.zone("community").unwrap();
     assert_eq!(ceiling, zone.effective_ceiling);
 }
@@ -399,7 +410,8 @@ fn zone_allows_exact_ceiling() {
 #[test]
 fn assign_entity_to_valid_zone() {
     let mut h = standard_hierarchy();
-    h.assign_entity("ext-1", "team", "trace-001").expect("assign");
+    h.assign_entity("ext-1", "team", "trace-001")
+        .expect("assign");
     let zone = h.zone_for_entity("ext-1").expect("zone");
     assert_eq!(zone.zone_name, "team");
 }
@@ -504,7 +516,8 @@ fn enforce_ceiling_empty_request_always_passes() {
 #[test]
 fn transition_approved_updates_assignment() {
     let mut h = standard_hierarchy();
-    h.assign_entity("ext-1", "community", "t-1").expect("assign");
+    h.assign_entity("ext-1", "community", "t-1")
+        .expect("assign");
     h.transition_entity(ZoneTransitionRequest::new(
         "ext-1",
         "team",
@@ -521,7 +534,8 @@ fn transition_approved_updates_assignment() {
 #[test]
 fn transition_approved_emits_migrated_event() {
     let mut h = standard_hierarchy();
-    h.assign_entity("ext-1", "community", "t-1").expect("assign");
+    h.assign_entity("ext-1", "community", "t-1")
+        .expect("assign");
     h.transition_entity(ZoneTransitionRequest::new(
         "ext-1",
         "team",
@@ -544,7 +558,8 @@ fn transition_approved_emits_migrated_event() {
 #[test]
 fn transition_denied_by_policy_gate() {
     let mut h = standard_hierarchy();
-    h.assign_entity("ext-1", "community", "t-1").expect("assign");
+    h.assign_entity("ext-1", "community", "t-1")
+        .expect("assign");
     let err = h
         .transition_entity(ZoneTransitionRequest::new(
             "ext-1",
@@ -576,7 +591,8 @@ fn transition_denied_by_policy_gate() {
 #[test]
 fn transition_to_missing_zone_errors() {
     let mut h = standard_hierarchy();
-    h.assign_entity("ext-1", "community", "t-1").expect("assign");
+    h.assign_entity("ext-1", "community", "t-1")
+        .expect("assign");
     let err = h
         .transition_entity(ZoneTransitionRequest::new(
             "ext-1",
@@ -595,12 +611,7 @@ fn transition_unassigned_entity_uses_default_zone_as_from() {
     let mut h = standard_hierarchy();
     // "ext-new" is not assigned, so it defaults to "community"
     h.transition_entity(ZoneTransitionRequest::new(
-        "ext-new",
-        "team",
-        "t-1",
-        "p-1",
-        "d-1",
-        true,
+        "ext-new", "team", "t-1", "p-1", "d-1", true,
     ))
     .expect("transition from default");
     let event = h.events().last().unwrap();
@@ -613,12 +624,7 @@ fn transition_same_zone_is_allowed() {
     let mut h = standard_hierarchy();
     h.assign_entity("ext-1", "team", "t-1").expect("assign");
     h.transition_entity(ZoneTransitionRequest::new(
-        "ext-1",
-        "team",
-        "t-2",
-        "p-1",
-        "d-1",
-        true,
+        "ext-1", "team", "t-2", "p-1", "d-1", true,
     ))
     .expect("same-zone transition");
     let zone = h.zone_for_entity("ext-1").expect("zone");
@@ -670,7 +676,8 @@ fn events_accumulate_across_operations() {
 #[test]
 fn drain_events_clears_and_returns() {
     let mut h = standard_hierarchy();
-    h.assign_entity("ext-1", "community", "t-1").expect("assign");
+    h.assign_entity("ext-1", "community", "t-1")
+        .expect("assign");
     h.assign_entity("ext-2", "team", "t-2").expect("assign");
     assert_eq!(h.events().len(), 2);
 
@@ -682,7 +689,8 @@ fn drain_events_clears_and_returns() {
 #[test]
 fn zone_event_serde_round_trip() {
     let mut h = standard_hierarchy();
-    h.assign_entity("ext-1", "community", "t-1").expect("assign");
+    h.assign_entity("ext-1", "community", "t-1")
+        .expect("assign");
     let event = h.events().last().unwrap().clone();
     let json = serde_json::to_string(&event).expect("serialize");
     let restored: ZoneEvent = serde_json::from_str(&json).expect("deserialize");
@@ -858,12 +866,10 @@ fn zone_scoped_object_id_deterministic() {
     let schema = SchemaId::from_definition(b"test-schema-v1");
     let canonical = b"object-data";
 
-    let id1 =
-        derive_zone_scoped_object_id(zone, ObjectDomain::PolicyObject, &schema, canonical)
-            .expect("id1");
-    let id2 =
-        derive_zone_scoped_object_id(zone, ObjectDomain::PolicyObject, &schema, canonical)
-            .expect("id2");
+    let id1 = derive_zone_scoped_object_id(zone, ObjectDomain::PolicyObject, &schema, canonical)
+        .expect("id1");
+    let id2 = derive_zone_scoped_object_id(zone, ObjectDomain::PolicyObject, &schema, canonical)
+        .expect("id2");
     assert_eq!(id1, id2);
 }
 
@@ -916,7 +922,8 @@ fn trust_zone_serde_round_trip() {
 #[test]
 fn zone_hierarchy_serde_round_trip() {
     let mut h = standard_hierarchy();
-    h.assign_entity("ext-1", "community", "t-1").expect("assign");
+    h.assign_entity("ext-1", "community", "t-1")
+        .expect("assign");
     let json = serde_json::to_string(&h).expect("serialize");
     let restored: ZoneHierarchy = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(h, restored);
@@ -991,7 +998,10 @@ fn full_lifecycle_assign_enforce_transition_drain() {
     assert_eq!(zone.zone_name, "team");
 
     // 5. Enforce ceiling passes for team-level capability
-    let team_caps = capset(&[RuntimeCapability::VmDispatch, RuntimeCapability::EvidenceEmit]);
+    let team_caps = capset(&[
+        RuntimeCapability::VmDispatch,
+        RuntimeCapability::EvidenceEmit,
+    ]);
     h.enforce_ceiling("team", &team_caps, "trace-lc-4")
         .expect("team ceiling check");
 
@@ -1012,7 +1022,8 @@ fn multiple_entities_different_zones() {
     let mut h = standard_hierarchy();
     h.assign_entity("ext-a", "owner", "t-1").expect("assign a");
     h.assign_entity("ext-b", "team", "t-2").expect("assign b");
-    h.assign_entity("ext-c", "community", "t-3").expect("assign c");
+    h.assign_entity("ext-c", "community", "t-3")
+        .expect("assign c");
 
     assert_eq!(h.zone_for_entity("ext-a").unwrap().zone_name, "owner");
     assert_eq!(h.zone_for_entity("ext-b").unwrap().zone_name, "team");
@@ -1025,11 +1036,9 @@ fn custom_hierarchy_with_restricted_ceilings() {
 
     // Root with only VmDispatch and GcInvoke
     h.add_zone(
-        ZoneCreateRequest::new("root", TrustZoneClass::Owner, 1, "admin")
-            .with_declared_ceiling(capset(&[
-                RuntimeCapability::VmDispatch,
-                RuntimeCapability::GcInvoke,
-            ])),
+        ZoneCreateRequest::new("root", TrustZoneClass::Owner, 1, "admin").with_declared_ceiling(
+            capset(&[RuntimeCapability::VmDispatch, RuntimeCapability::GcInvoke]),
+        ),
     )
     .expect("root");
 
@@ -1042,7 +1051,10 @@ fn custom_hierarchy_with_restricted_ceilings() {
     .expect("restricted");
 
     let zone = h.zone("restricted").unwrap();
-    assert_eq!(zone.effective_ceiling, capset(&[RuntimeCapability::VmDispatch]));
+    assert_eq!(
+        zone.effective_ceiling,
+        capset(&[RuntimeCapability::VmDispatch])
+    );
 }
 
 // =========================================================================
@@ -1052,7 +1064,9 @@ fn custom_hierarchy_with_restricted_ceilings() {
 #[test]
 fn zone_for_entity_errors_if_default_zone_not_registered() {
     let h = ZoneHierarchy::new("nonexistent-default");
-    let err = h.zone_for_entity("any-entity").expect_err("missing default");
+    let err = h
+        .zone_for_entity("any-entity")
+        .expect_err("missing default");
     assert!(matches!(err, TrustZoneError::ZoneMissing { .. }));
 }
 

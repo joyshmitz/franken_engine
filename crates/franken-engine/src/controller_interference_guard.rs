@@ -2040,16 +2040,14 @@ mod tests {
 
     #[test]
     fn subscription_via_write_metrics_allowed() {
-        let registrations = vec![
-            registration(
-                "writer",
-                &[],
-                &["cpu"],
-                1_000_000,
-                1_000_000,
-                "ok",
-            ),
-        ];
+        let registrations = vec![registration(
+            "writer",
+            &[],
+            &["cpu"],
+            1_000_000,
+            1_000_000,
+            "ok",
+        )];
         let writes = [MetricWriteRequest {
             controller_id: "writer".into(),
             metric: "cpu".into(),
@@ -2094,7 +2092,11 @@ mod tests {
         ));
         assert!(!evaluation.pass);
         // At least duplicate + missing timescale + invalid interval
-        assert!(evaluation.findings.len() >= 3, "got {} findings", evaluation.findings.len());
+        assert!(
+            evaluation.findings.len() >= 3,
+            "got {} findings",
+            evaluation.findings.len()
+        );
         let codes: BTreeSet<_> = evaluation.findings.iter().map(|f| f.code).collect();
         assert!(codes.contains(&InterferenceFailureCode::DuplicateController));
         assert!(codes.contains(&InterferenceFailureCode::MissingTimescaleStatement));
@@ -2146,7 +2148,14 @@ mod tests {
     fn writers_on_different_metrics_no_conflict() {
         let registrations = vec![
             registration("ctrl-a", &[], &["cpu"], 100_000, 100_000, "fast cpu"),
-            registration("ctrl-b", &[], &["latency"], 100_000, 100_000, "fast latency"),
+            registration(
+                "ctrl-b",
+                &[],
+                &["latency"],
+                100_000,
+                100_000,
+                "fast latency",
+            ),
         ];
         let writes = [
             MetricWriteRequest {

@@ -657,8 +657,7 @@ mod tests {
     fn gate_failure_code_ordering() {
         assert!(GateFailureCode::MissingProofArtifact < GateFailureCode::MissingBundleField);
         assert!(
-            GateFailureCode::ReplayMultiplierExceeded
-                < GateFailureCode::ArchiveNotContentAddressed
+            GateFailureCode::ReplayMultiplierExceeded < GateFailureCode::ArchiveNotContentAddressed
         );
     }
 
@@ -709,18 +708,12 @@ mod tests {
 
     #[test]
     fn replay_multiplier_zero_compile_time() {
-        assert_eq!(
-            compute_replay_multiplier_millionths(100, 0),
-            u64::MAX
-        );
+        assert_eq!(compute_replay_multiplier_millionths(100, 0), u64::MAX);
     }
 
     #[test]
     fn replay_multiplier_one_to_one() {
-        assert_eq!(
-            compute_replay_multiplier_millionths(100, 100),
-            1_000_000
-        );
+        assert_eq!(compute_replay_multiplier_millionths(100, 100), 1_000_000);
     }
 
     // ── is_content_addressed_archive ────────────────────────────────
@@ -865,10 +858,7 @@ mod tests {
         let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
         let log = &decision.logs[0];
         assert_eq!(log.outcome, "failed");
-        assert_eq!(
-            log.error_code.as_deref(),
-            Some("proof_verification_failed")
-        );
+        assert_eq!(log.error_code.as_deref(), Some("proof_verification_failed"));
     }
 
     // ── serde roundtrips ────────────────────────────────────────────

@@ -226,7 +226,11 @@ fn valid_contract_with_compatible_minor_version() {
 #[test]
 fn valid_contract_with_duplicate_rollout_stages_passes() {
     let mut contract = valid_contract();
-    contract.rollout_stages = vec![RolloutStage::Canary, RolloutStage::Canary, RolloutStage::Ramp];
+    contract.rollout_stages = vec![
+        RolloutStage::Canary,
+        RolloutStage::Canary,
+        RolloutStage::Ramp,
+    ];
     assert!(contract.validate().is_ok());
 }
 
@@ -332,9 +336,11 @@ fn ev_tier_mismatch_detected() {
     contract.ev_score = 3.0;
     contract.ev_tier = EvTier::HighImpact; // should be Positive
     let errors = contract.validate().unwrap_err();
-    assert!(errors
-        .iter()
-        .any(|e| matches!(e, ContractValidationError::EvTierMismatch { .. })));
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e, ContractValidationError::EvTierMismatch { .. }))
+    );
 }
 
 #[test]
@@ -343,9 +349,11 @@ fn ev_below_threshold_rejected() {
     contract.ev_score = 0.5;
     contract.ev_tier = EvTier::Reject;
     let errors = contract.validate().unwrap_err();
-    assert!(errors
-        .iter()
-        .any(|e| matches!(e, ContractValidationError::EvBelowThreshold { .. })));
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e, ContractValidationError::EvBelowThreshold { .. }))
+    );
 }
 
 #[test]
@@ -354,9 +362,11 @@ fn ev_marginal_tier_below_threshold() {
     contract.ev_score = 1.5;
     contract.ev_tier = EvTier::Marginal;
     let errors = contract.validate().unwrap_err();
-    assert!(errors
-        .iter()
-        .any(|e| matches!(e, ContractValidationError::EvBelowThreshold { .. })));
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e, ContractValidationError::EvBelowThreshold { .. }))
+    );
 }
 
 #[test]
@@ -364,9 +374,11 @@ fn ev_nan_produces_invalid_score_error() {
     let mut contract = valid_contract();
     contract.ev_score = f64::NAN;
     let errors = contract.validate().unwrap_err();
-    assert!(errors
-        .iter()
-        .any(|e| matches!(e, ContractValidationError::InvalidEvScore)));
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e, ContractValidationError::InvalidEvScore))
+    );
 }
 
 #[test]
@@ -374,9 +386,11 @@ fn ev_positive_infinity_produces_invalid_score_error() {
     let mut contract = valid_contract();
     contract.ev_score = f64::INFINITY;
     let errors = contract.validate().unwrap_err();
-    assert!(errors
-        .iter()
-        .any(|e| matches!(e, ContractValidationError::InvalidEvScore)));
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e, ContractValidationError::InvalidEvScore))
+    );
 }
 
 #[test]
@@ -384,9 +398,11 @@ fn ev_negative_infinity_produces_invalid_score_error() {
     let mut contract = valid_contract();
     contract.ev_score = f64::NEG_INFINITY;
     let errors = contract.validate().unwrap_err();
-    assert!(errors
-        .iter()
-        .any(|e| matches!(e, ContractValidationError::InvalidEvScore)));
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e, ContractValidationError::InvalidEvScore))
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -398,9 +414,11 @@ fn empty_rollout_stages_produces_error() {
     let mut contract = valid_contract();
     contract.rollout_stages.clear();
     let errors = contract.validate().unwrap_err();
-    assert!(errors
-        .iter()
-        .any(|e| matches!(e, ContractValidationError::EmptyRolloutStages)));
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e, ContractValidationError::EmptyRolloutStages))
+    );
 }
 
 #[test]
@@ -408,9 +426,11 @@ fn out_of_order_rollout_stages_detected() {
     let mut contract = valid_contract();
     contract.rollout_stages = vec![RolloutStage::Ramp, RolloutStage::Shadow];
     let errors = contract.validate().unwrap_err();
-    assert!(errors
-        .iter()
-        .any(|e| matches!(e, ContractValidationError::InvalidRolloutOrder { .. })));
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e, ContractValidationError::InvalidRolloutOrder { .. }))
+    );
 }
 
 #[test]
@@ -423,9 +443,11 @@ fn reverse_order_rollout_stages_detected() {
         RolloutStage::Shadow,
     ];
     let errors = contract.validate().unwrap_err();
-    assert!(errors
-        .iter()
-        .any(|e| matches!(e, ContractValidationError::InvalidRolloutOrder { .. })));
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e, ContractValidationError::InvalidRolloutOrder { .. }))
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -437,9 +459,11 @@ fn incompatible_major_version_produces_error() {
     let mut contract = valid_contract();
     contract.version = ContractVersion::new(2, 0);
     let errors = contract.validate().unwrap_err();
-    assert!(errors
-        .iter()
-        .any(|e| matches!(e, ContractValidationError::IncompatibleVersion { .. })));
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e, ContractValidationError::IncompatibleVersion { .. }))
+    );
 }
 
 #[test]
@@ -447,9 +471,11 @@ fn major_version_zero_incompatible() {
     let mut contract = valid_contract();
     contract.version = ContractVersion::new(0, 9);
     let errors = contract.validate().unwrap_err();
-    assert!(errors
-        .iter()
-        .any(|e| matches!(e, ContractValidationError::IncompatibleVersion { .. })));
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e, ContractValidationError::IncompatibleVersion { .. }))
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -462,29 +488,37 @@ fn multiple_simultaneous_errors_all_reported() {
         version: ContractVersion::new(2, 0), // incompatible
         change_summary: String::new(),       // missing
         hotspot_evidence: "evidence".to_string(),
-        ev_score: f64::NAN,                            // invalid
-        ev_tier: EvTier::Positive,                     // mismatch (but NaN takes priority)
+        ev_score: f64::NAN,        // invalid
+        ev_tier: EvTier::Positive, // mismatch (but NaN takes priority)
         expected_loss_model: "model".to_string(),
         fallback_trigger: "trigger".to_string(),
-        rollout_stages: vec![],                        // empty
+        rollout_stages: vec![], // empty
         rollback_command: "cmd".to_string(),
         benchmark_artifacts: "data".to_string(),
     };
     let errors = contract.validate().unwrap_err();
     // Should have at least: IncompatibleVersion, MissingField, InvalidEvScore, EmptyRolloutStages
     assert!(errors.len() >= 4);
-    assert!(errors
-        .iter()
-        .any(|e| matches!(e, ContractValidationError::IncompatibleVersion { .. })));
-    assert!(errors
-        .iter()
-        .any(|e| matches!(e, ContractValidationError::MissingField { .. })));
-    assert!(errors
-        .iter()
-        .any(|e| matches!(e, ContractValidationError::InvalidEvScore)));
-    assert!(errors
-        .iter()
-        .any(|e| matches!(e, ContractValidationError::EmptyRolloutStages)));
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e, ContractValidationError::IncompatibleVersion { .. }))
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e, ContractValidationError::MissingField { .. }))
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e, ContractValidationError::InvalidEvScore))
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e, ContractValidationError::EmptyRolloutStages))
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -609,8 +643,7 @@ fn contract_validation_error_serde_all_variants() {
     ];
     for err in &errors {
         let json = serde_json::to_string(err).expect("serialize");
-        let restored: ContractValidationError =
-            serde_json::from_str(&json).expect("deserialize");
+        let restored: ContractValidationError = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(*err, restored);
     }
 }
@@ -671,9 +704,11 @@ fn ev_score_exactly_at_boundary_1_0_is_marginal() {
     contract.ev_tier = EvTier::Marginal;
     let errors = contract.validate().unwrap_err();
     // Marginal does not meet threshold
-    assert!(errors
-        .iter()
-        .any(|e| matches!(e, ContractValidationError::EvBelowThreshold { .. })));
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e, ContractValidationError::EvBelowThreshold { .. }))
+    );
 }
 
 #[test]

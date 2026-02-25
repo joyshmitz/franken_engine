@@ -4952,9 +4952,14 @@ mod tests {
     #[test]
     fn contract_error_display_all_variants() {
         let cases: Vec<(ContractError, &str)> = vec![
-            (ContractError::EmptyFeatureSchema, "feature schema has no fields"),
             (
-                ContractError::InvalidVersion { detail: "v0".to_string() },
+                ContractError::EmptyFeatureSchema,
+                "feature schema has no fields",
+            ),
+            (
+                ContractError::InvalidVersion {
+                    detail: "v0".to_string(),
+                },
                 "invalid version: v0",
             ),
             (
@@ -4965,52 +4970,79 @@ mod tests {
                 "field name mismatch: key=k, field.name=f",
             ),
             (
-                ContractError::BackwardCompatibilityViolation { detail: "bc".to_string() },
+                ContractError::BackwardCompatibilityViolation {
+                    detail: "bc".to_string(),
+                },
                 "backward compatibility violation: bc",
             ),
             (
-                ContractError::InvalidUpdatePolicy { detail: "up".to_string() },
+                ContractError::InvalidUpdatePolicy {
+                    detail: "up".to_string(),
+                },
                 "invalid update policy: up",
             ),
             (
-                ContractError::InvalidClippingStrategy { detail: "cs".to_string() },
+                ContractError::InvalidClippingStrategy {
+                    detail: "cs".to_string(),
+                },
                 "invalid clipping strategy: cs",
             ),
             (
-                ContractError::InvalidDpBudget { detail: "dp".to_string() },
+                ContractError::InvalidDpBudget {
+                    detail: "dp".to_string(),
+                },
                 "invalid DP budget: dp",
             ),
             (
-                ContractError::InvalidAggregation { detail: "ag".to_string() },
+                ContractError::InvalidAggregation {
+                    detail: "ag".to_string(),
+                },
                 "invalid aggregation: ag",
             ),
             (
-                ContractError::InvalidRetention { detail: "rt".to_string() },
+                ContractError::InvalidRetention {
+                    detail: "rt".to_string(),
+                },
                 "invalid retention: rt",
             ),
             (
-                ContractError::InvalidRandomnessTranscript { detail: "rn".to_string() },
+                ContractError::InvalidRandomnessTranscript {
+                    detail: "rn".to_string(),
+                },
                 "invalid randomness transcript: rn",
             ),
-            (ContractError::NoAuthorizedParticipants, "no authorized participants"),
             (
-                ContractError::IdDerivationFailed { detail: "id".to_string() },
+                ContractError::NoAuthorizedParticipants,
+                "no authorized participants",
+            ),
+            (
+                ContractError::IdDerivationFailed {
+                    detail: "id".to_string(),
+                },
                 "id derivation failed: id",
             ),
             (
-                ContractError::SignatureFailed { detail: "sf".to_string() },
+                ContractError::SignatureFailed {
+                    detail: "sf".to_string(),
+                },
                 "signature failed: sf",
             ),
             (
-                ContractError::SignatureInvalid { detail: "si".to_string() },
+                ContractError::SignatureInvalid {
+                    detail: "si".to_string(),
+                },
                 "signature invalid: si",
             ),
             (
-                ContractError::InvalidShadowEvaluation { detail: "se".to_string() },
+                ContractError::InvalidShadowEvaluation {
+                    detail: "se".to_string(),
+                },
                 "invalid shadow evaluation: se",
             ),
             (
-                ContractError::InvalidShadowOverride { detail: "so".to_string() },
+                ContractError::InvalidShadowOverride {
+                    detail: "so".to_string(),
+                },
                 "invalid shadow override: so",
             ),
         ];
@@ -5025,14 +5057,26 @@ mod tests {
 
     #[test]
     fn safety_metric_display_all_variants() {
-        assert_eq!(SafetyMetric::FalsePositiveRate.to_string(), "false_positive_rate");
-        assert_eq!(SafetyMetric::FalseNegativeRate.to_string(), "false_negative_rate");
-        assert_eq!(SafetyMetric::CalibrationError.to_string(), "calibration_error");
+        assert_eq!(
+            SafetyMetric::FalsePositiveRate.to_string(),
+            "false_positive_rate"
+        );
+        assert_eq!(
+            SafetyMetric::FalseNegativeRate.to_string(),
+            "false_negative_rate"
+        );
+        assert_eq!(
+            SafetyMetric::CalibrationError.to_string(),
+            "calibration_error"
+        );
         assert_eq!(
             SafetyMetric::DriftDetectionAccuracy.to_string(),
             "drift_detection_accuracy"
         );
-        assert_eq!(SafetyMetric::ContainmentTime.to_string(), "containment_time");
+        assert_eq!(
+            SafetyMetric::ContainmentTime.to_string(),
+            "containment_time"
+        );
     }
 
     #[test]
@@ -5047,7 +5091,10 @@ mod tests {
     fn shadow_promotion_verdict_display_all_variants() {
         assert_eq!(ShadowPromotionVerdict::Pass.to_string(), "pass");
         assert_eq!(ShadowPromotionVerdict::Reject.to_string(), "reject");
-        assert_eq!(ShadowPromotionVerdict::OverrideApproved.to_string(), "override_approved");
+        assert_eq!(
+            ShadowPromotionVerdict::OverrideApproved.to_string(),
+            "override_approved"
+        );
     }
 
     #[test]
@@ -5080,7 +5127,10 @@ mod tests {
         );
         // Three extension class overrides: LowRisk, HighRisk, Critical.
         assert_eq!(d.burn_in_profiles_by_extension_class.len(), 3);
-        assert!(d.burn_in_profiles_by_extension_class.contains_key(&ShadowExtensionClass::LowRisk));
+        assert!(
+            d.burn_in_profiles_by_extension_class
+                .contains_key(&ShadowExtensionClass::LowRisk)
+        );
         assert!(
             d.burn_in_profiles_by_extension_class
                 .contains_key(&ShadowExtensionClass::HighRisk)
@@ -5093,7 +5143,10 @@ mod tests {
 
     #[test]
     fn shadow_extension_class_default_is_standard() {
-        assert_eq!(ShadowExtensionClass::default(), ShadowExtensionClass::Standard);
+        assert_eq!(
+            ShadowExtensionClass::default(),
+            ShadowExtensionClass::Standard
+        );
     }
 
     // -------------------------------------------------------------------
@@ -5102,11 +5155,7 @@ mod tests {
 
     #[test]
     fn deterministic_prng_rejects_empty_phase_id() {
-        let result = DeterministicPrng::new(
-            "  ",
-            PrngAlgorithm::ChaCha20LikeCounter,
-            b"some-seed",
-        );
+        let result = DeterministicPrng::new("  ", PrngAlgorithm::ChaCha20LikeCounter, b"some-seed");
         assert!(matches!(
             result,
             Err(ContractError::InvalidRandomnessTranscript { .. })
@@ -5115,11 +5164,7 @@ mod tests {
 
     #[test]
     fn deterministic_prng_rejects_empty_seed() {
-        let result = DeterministicPrng::new(
-            "valid-phase",
-            PrngAlgorithm::ChaCha20LikeCounter,
-            b"",
-        );
+        let result = DeterministicPrng::new("valid-phase", PrngAlgorithm::ChaCha20LikeCounter, b"");
         assert!(matches!(
             result,
             Err(ContractError::InvalidRandomnessTranscript { .. })
@@ -5147,7 +5192,7 @@ mod tests {
 
     #[test]
     fn feature_field_type_ordering() {
-        let mut types = vec![
+        let mut types = [
             FeatureFieldType::Categorical,
             FeatureFieldType::Boolean,
             FeatureFieldType::Counter,
@@ -5161,7 +5206,7 @@ mod tests {
 
     #[test]
     fn safety_metric_ordering() {
-        let mut metrics = vec![
+        let mut metrics = [
             SafetyMetric::ContainmentTime,
             SafetyMetric::DriftDetectionAccuracy,
             SafetyMetric::CalibrationError,
@@ -5175,7 +5220,7 @@ mod tests {
 
     #[test]
     fn shadow_extension_class_ordering() {
-        let mut classes = vec![
+        let mut classes = [
             ShadowExtensionClass::Critical,
             ShadowExtensionClass::LowRisk,
             ShadowExtensionClass::Standard,

@@ -2110,7 +2110,10 @@ mod tests {
     #[test]
     fn schema_version_ordering() {
         // Only one variant, but confirm Ord is implemented.
-        assert_eq!(SchemaVersion::V1.cmp(&SchemaVersion::V1), std::cmp::Ordering::Equal);
+        assert_eq!(
+            SchemaVersion::V1.cmp(&SchemaVersion::V1),
+            std::cmp::Ordering::Equal
+        );
     }
 
     #[test]
@@ -2121,9 +2124,18 @@ mod tests {
 
     #[test]
     fn validation_artifact_kind_ordering() {
-        assert!(ValidationArtifactKind::EquivalenceResult < ValidationArtifactKind::CapabilityPreservation);
-        assert!(ValidationArtifactKind::CapabilityPreservation < ValidationArtifactKind::PerformanceBenchmark);
-        assert!(ValidationArtifactKind::PerformanceBenchmark < ValidationArtifactKind::AdversarialSurvival);
+        assert!(
+            ValidationArtifactKind::EquivalenceResult
+                < ValidationArtifactKind::CapabilityPreservation
+        );
+        assert!(
+            ValidationArtifactKind::CapabilityPreservation
+                < ValidationArtifactKind::PerformanceBenchmark
+        );
+        assert!(
+            ValidationArtifactKind::PerformanceBenchmark
+                < ValidationArtifactKind::AdversarialSurvival
+        );
     }
 
     #[test]
@@ -2213,9 +2225,18 @@ mod tests {
 
     #[test]
     fn validation_artifact_kind_ord() {
-        assert!(ValidationArtifactKind::EquivalenceResult < ValidationArtifactKind::CapabilityPreservation);
-        assert!(ValidationArtifactKind::CapabilityPreservation < ValidationArtifactKind::PerformanceBenchmark);
-        assert!(ValidationArtifactKind::PerformanceBenchmark < ValidationArtifactKind::AdversarialSurvival);
+        assert!(
+            ValidationArtifactKind::EquivalenceResult
+                < ValidationArtifactKind::CapabilityPreservation
+        );
+        assert!(
+            ValidationArtifactKind::CapabilityPreservation
+                < ValidationArtifactKind::PerformanceBenchmark
+        );
+        assert!(
+            ValidationArtifactKind::PerformanceBenchmark
+                < ValidationArtifactKind::AdversarialSurvival
+        );
     }
 
     #[test]
@@ -2241,12 +2262,25 @@ mod tests {
     #[test]
     fn self_replacement_error_std_error() {
         let variants: Vec<Box<dyn std::error::Error>> = vec![
-            Box::new(SelfReplacementError::InsufficientSignatures { required: 3, present: 1 }),
-            Box::new(SelfReplacementError::SignatureInvalid { signer_index: 0, role: "admin".into() }),
-            Box::new(SelfReplacementError::SlotMismatch { expected: "a".into(), got: "b".into() }),
+            Box::new(SelfReplacementError::InsufficientSignatures {
+                required: 3,
+                present: 1,
+            }),
+            Box::new(SelfReplacementError::SignatureInvalid {
+                signer_index: 0,
+                role: "admin".into(),
+            }),
+            Box::new(SelfReplacementError::SlotMismatch {
+                expected: "a".into(),
+                got: "b".into(),
+            }),
             Box::new(SelfReplacementError::EmptyValidationArtifacts),
-            Box::new(SelfReplacementError::ValidationFailed { slot_id: "s1".into() }),
-            Box::new(SelfReplacementError::UnsupportedSchemaVersion { version: "v99".into() }),
+            Box::new(SelfReplacementError::ValidationFailed {
+                slot_id: "s1".into(),
+            }),
+            Box::new(SelfReplacementError::UnsupportedSchemaVersion {
+                version: "v99".into(),
+            }),
         ];
         let mut displays = std::collections::BTreeSet::new();
         for v in &variants {

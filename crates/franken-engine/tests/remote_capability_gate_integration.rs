@@ -14,12 +14,10 @@
 //! - Deterministic replay: same inputs produce identical audit trails
 //! - End-to-end workflows combining gate + mock transport
 
-use frankenengine_engine::capability::{
-    CapabilityProfile, ProfileKind, RuntimeCapability,
-};
+use frankenengine_engine::capability::{CapabilityProfile, ProfileKind, RuntimeCapability};
 use frankenengine_engine::remote_capability_gate::{
-    MockRemoteTransport, RemoteCapabilityDenied, RemoteGateEvent,
-    RemoteOperationGate, RemoteOperationType, RemoteTransport, RemoteTransportError,
+    MockRemoteTransport, RemoteCapabilityDenied, RemoteGateEvent, RemoteOperationGate,
+    RemoteOperationType, RemoteTransport, RemoteTransportError,
 };
 use frankenengine_engine::security_epoch::SecurityEpoch;
 
@@ -229,7 +227,11 @@ fn compute_only_denies_all_operations() {
         let err = gate
             .check(&compute_only_profile(), op, "compute", "endpoint", "t", 0)
             .unwrap_err();
-        assert_eq!(err.held_profile, ProfileKind::ComputeOnly, "for op {op_str}");
+        assert_eq!(
+            err.held_profile,
+            ProfileKind::ComputeOnly,
+            "for op {op_str}"
+        );
     }
     assert_eq!(gate.total_denied(), 6);
     assert_eq!(gate.total_permitted(), 0);
@@ -294,9 +296,10 @@ fn denied_error_contains_correct_fields() {
     assert_eq!(err.held_profile, ProfileKind::ComputeOnly);
     assert_eq!(err.trace_id, "trace-deny-1");
     assert!(!err.required_capabilities.is_empty());
-    assert!(err
-        .required_capabilities
-        .contains(&RuntimeCapability::NetworkEgress));
+    assert!(
+        err.required_capabilities
+            .contains(&RuntimeCapability::NetworkEgress)
+    );
 }
 
 // =========================================================================
@@ -836,8 +839,7 @@ fn remote_operation_type_serde_round_trip() {
     ];
     for op in &ops {
         let json = serde_json::to_string(op).expect("serialize");
-        let restored: RemoteOperationType =
-            serde_json::from_str(&json).expect("deserialize");
+        let restored: RemoteOperationType = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(*op, restored);
     }
 }
@@ -855,8 +857,7 @@ fn remote_capability_denied_serde_round_trip() {
         trace_id: "trace-serde-1".to_string(),
     };
     let json = serde_json::to_string(&denied).expect("serialize");
-    let restored: RemoteCapabilityDenied =
-        serde_json::from_str(&json).expect("deserialize");
+    let restored: RemoteCapabilityDenied = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(denied, restored);
 }
 
@@ -873,8 +874,7 @@ fn remote_gate_event_serde_round_trip() {
         held_profile: "RemoteCaps".to_string(),
     };
     let json = serde_json::to_string(&event).expect("serialize");
-    let restored: RemoteGateEvent =
-        serde_json::from_str(&json).expect("deserialize");
+    let restored: RemoteGateEvent = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(event, restored);
 }
 
@@ -905,8 +905,7 @@ fn remote_transport_error_all_variants_serde_round_trip() {
 
     for err in &errors {
         let json = serde_json::to_string(err).expect("serialize");
-        let restored: RemoteTransportError =
-            serde_json::from_str(&json).expect("deserialize");
+        let restored: RemoteTransportError = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(*err, restored);
     }
 }

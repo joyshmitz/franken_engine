@@ -2411,11 +2411,22 @@ mod tests {
     #[test]
     fn replay_error_std_error() {
         let variants: Vec<Box<dyn std::error::Error>> = vec![
-            Box::new(ReplayError::ChainIntegrity { entry_index: 0, detail: "bad".into() }),
-            Box::new(ReplayError::NondeterminismMismatch { expected_sequence: 1, actual_sequence: 2 }),
-            Box::new(ReplayError::BranchDepthExceeded { requested: 10, max: 5 }),
+            Box::new(ReplayError::ChainIntegrity {
+                entry_index: 0,
+                detail: "bad".into(),
+            }),
+            Box::new(ReplayError::NondeterminismMismatch {
+                expected_sequence: 1,
+                actual_sequence: 2,
+            }),
+            Box::new(ReplayError::BranchDepthExceeded {
+                requested: 10,
+                max: 5,
+            }),
             Box::new(ReplayError::StorageExhausted),
-            Box::new(ReplayError::TraceNotFound { trace_id: "t1".into() }),
+            Box::new(ReplayError::TraceNotFound {
+                trace_id: "t1".into(),
+            }),
             Box::new(ReplayError::SignatureInvalid),
         ];
         let mut displays = std::collections::BTreeSet::new();

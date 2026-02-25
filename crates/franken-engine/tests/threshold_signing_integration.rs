@@ -16,8 +16,8 @@ use frankenengine_engine::signature_preimage::{SigningKey, VerificationKey};
 use frankenengine_engine::threshold_signing::{
     CreateThresholdPolicyInput, ShareHolderId, ShareRefreshResult, ThresholdCeremony,
     ThresholdError, ThresholdEvent, ThresholdEventType, ThresholdResult, ThresholdScope,
-    ThresholdSigningPolicy, refresh_shares, threshold_ceremony_schema_id,
-    threshold_policy_schema, threshold_policy_schema_id,
+    ThresholdSigningPolicy, refresh_shares, threshold_ceremony_schema_id, threshold_policy_schema,
+    threshold_policy_schema_id,
 };
 
 // ---------------------------------------------------------------------------
@@ -88,10 +88,19 @@ fn create_test_policy_with_scopes(
 
 #[test]
 fn threshold_scope_display_all_variants() {
-    assert_eq!(ThresholdScope::EmergencyRevocation.to_string(), "emergency_revocation");
+    assert_eq!(
+        ThresholdScope::EmergencyRevocation.to_string(),
+        "emergency_revocation"
+    );
     assert_eq!(ThresholdScope::KeyRotation.to_string(), "key_rotation");
-    assert_eq!(ThresholdScope::AuthoritySetChange.to_string(), "authority_set_change");
-    assert_eq!(ThresholdScope::PolicyCheckpoint.to_string(), "policy_checkpoint");
+    assert_eq!(
+        ThresholdScope::AuthoritySetChange.to_string(),
+        "authority_set_change"
+    );
+    assert_eq!(
+        ThresholdScope::PolicyCheckpoint.to_string(),
+        "policy_checkpoint"
+    );
 }
 
 #[test]
@@ -99,7 +108,10 @@ fn share_holder_id_display_starts_with_share_prefix() {
     let sk = SigningKey::from_bytes([0x42; 32]);
     let holder = ShareHolderId::from_verification_key(&sk.verification_key());
     let display = holder.to_string();
-    assert!(display.starts_with("share:"), "display must start with 'share:', got: {display}");
+    assert!(
+        display.starts_with("share:"),
+        "display must start with 'share:', got: {display}"
+    );
     // The hex portion after "share:" should be 16 characters.
     let hex_part = &display["share:".len()..];
     assert_eq!(hex_part.len(), 16);
@@ -118,7 +130,10 @@ fn policy_display_contains_threshold_ratio() {
     let keys = make_share_keys(3);
     let policy = create_test_policy(2, &keys);
     let display = policy.to_string();
-    assert!(display.contains("2-of-3"), "display must contain threshold ratio, got: {display}");
+    assert!(
+        display.contains("2-of-3"),
+        "display must contain threshold ratio, got: {display}"
+    );
     assert!(
         display.contains("ThresholdPolicy"),
         "display must contain type name, got: {display}"
@@ -320,7 +335,10 @@ fn create_policy_zero_threshold_rejected() {
         epoch: SecurityEpoch::from_raw(1),
         zone: TEST_ZONE,
     });
-    assert!(matches!(result, Err(ThresholdError::InvalidThreshold { k: 0, .. })));
+    assert!(matches!(
+        result,
+        Err(ThresholdError::InvalidThreshold { k: 0, .. })
+    ));
 }
 
 #[test]
@@ -399,9 +417,7 @@ fn policy_is_authorized_for_known_holders() {
 fn policy_is_not_authorized_for_unknown_holder() {
     let keys = make_share_keys(3);
     let policy = create_test_policy(2, &keys);
-    let rogue = ShareHolderId(
-        *VerificationKey::from_bytes([0xFF; 32]).as_bytes(),
-    );
+    let rogue = ShareHolderId(*VerificationKey::from_bytes([0xFF; 32]).as_bytes());
     assert!(!policy.is_authorized(&rogue));
 }
 
@@ -792,7 +808,10 @@ fn result_verify_wrong_preimage_fails() {
 
     let result = ceremony.finalize(TEST_PREIMAGE).unwrap();
     let verify_result = result.verify(b"wrong-preimage");
-    assert!(matches!(verify_result, Err(ThresholdError::PreimageMismatch)));
+    assert!(matches!(
+        verify_result,
+        Err(ThresholdError::PreimageMismatch)
+    ));
 }
 
 #[test]
@@ -916,7 +935,10 @@ fn share_refresh_wrong_count_rejected() {
         .map(|sk| sk.verification_key())
         .collect();
     let result = refresh_shares(&policy, &new_vks, SecurityEpoch::from_raw(2));
-    assert!(matches!(result, Err(ThresholdError::InvalidThreshold { .. })));
+    assert!(matches!(
+        result,
+        Err(ThresholdError::InvalidThreshold { .. })
+    ));
 }
 
 #[test]
@@ -1166,7 +1188,10 @@ fn ceremony_serde_roundtrip_empty() {
     let json = serde_json::to_string(&ceremony).expect("serialize empty ceremony");
     let restored: ThresholdCeremony = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(ceremony.ceremony_id, restored.ceremony_id);
-    assert_eq!(ceremony.signatures_collected(), restored.signatures_collected());
+    assert_eq!(
+        ceremony.signatures_collected(),
+        restored.signatures_collected()
+    );
     assert_eq!(ceremony.threshold_k, restored.threshold_k);
 }
 
@@ -1189,7 +1214,10 @@ fn ceremony_with_partials_json_serde_fails_gracefully() {
 
     // JSON serialization should fail because the BTreeMap key is not a string.
     let result = serde_json::to_string(&ceremony);
-    assert!(result.is_err(), "BTreeMap<ShareHolderId, _> cannot serialize to JSON");
+    assert!(
+        result.is_err(),
+        "BTreeMap<ShareHolderId, _> cannot serialize to JSON"
+    );
 }
 
 #[test]

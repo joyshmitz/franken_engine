@@ -183,10 +183,7 @@ fn ordering_violation_display_witnesses_exceed_bound() {
 
 #[test]
 fn ordering_violation_display_constraints_exceed_bound() {
-    let v = OrderingViolation::ConstraintsExceedBound {
-        count: 50,
-        max: 32,
-    };
+    let v = OrderingViolation::ConstraintsExceedBound { count: 50, max: 32 };
     assert_eq!(v.to_string(), "constraints exceed bound: 50 > 32");
 }
 
@@ -209,18 +206,12 @@ fn ordering_violation_serde_all_variants() {
         OrderingViolation::DuplicateWitnessId {
             witness_id: "w-dup".to_string(),
         },
-        OrderingViolation::CandidatesExceedBound {
-            count: 70,
-            max: 64,
-        },
+        OrderingViolation::CandidatesExceedBound { count: 70, max: 64 },
         OrderingViolation::WitnessesExceedBound {
             count: 300,
             max: 256,
         },
-        OrderingViolation::ConstraintsExceedBound {
-            count: 40,
-            max: 32,
-        },
+        OrderingViolation::ConstraintsExceedBound { count: 40, max: 32 },
     ];
     for v in &violations {
         let json = serde_json::to_string(v).expect("serialize");
@@ -566,18 +557,22 @@ fn validate_catches_unsorted_candidates() {
         vec![],
     );
     let errors = validate_entry_ordering(&entry, &SizeBounds::default()).unwrap_err();
-    assert!(errors
-        .iter()
-        .any(|e| matches!(e, OrderingViolation::CandidatesNotSorted { .. })));
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e, OrderingViolation::CandidatesNotSorted { .. }))
+    );
 }
 
 #[test]
 fn validate_catches_unsorted_witnesses() {
     let entry = make_entry(vec![], vec![make_witness("z"), make_witness("a")], vec![]);
     let errors = validate_entry_ordering(&entry, &SizeBounds::default()).unwrap_err();
-    assert!(errors
-        .iter()
-        .any(|e| matches!(e, OrderingViolation::WitnessesNotSorted { .. })));
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e, OrderingViolation::WitnessesNotSorted { .. }))
+    );
 }
 
 #[test]
@@ -588,9 +583,11 @@ fn validate_catches_unsorted_constraints() {
         vec![make_constraint("z"), make_constraint("a")],
     );
     let errors = validate_entry_ordering(&entry, &SizeBounds::default()).unwrap_err();
-    assert!(errors
-        .iter()
-        .any(|e| matches!(e, OrderingViolation::ConstraintsNotSorted { .. })));
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e, OrderingViolation::ConstraintsNotSorted { .. }))
+    );
 }
 
 #[test]
@@ -601,9 +598,11 @@ fn validate_catches_duplicate_witness_ids() {
         vec![],
     );
     let errors = validate_entry_ordering(&entry, &SizeBounds::default()).unwrap_err();
-    assert!(errors
-        .iter()
-        .any(|e| matches!(e, OrderingViolation::DuplicateWitnessId { .. })));
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e, OrderingViolation::DuplicateWitnessId { .. }))
+    );
 }
 
 #[test]
@@ -636,9 +635,11 @@ fn validate_catches_witnesses_exceed_bound() {
         max_constraints: 32,
     };
     let errors = validate_entry_ordering(&entry, &bounds).unwrap_err();
-    assert!(errors
-        .iter()
-        .any(|e| matches!(e, OrderingViolation::WitnessesExceedBound { .. })));
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e, OrderingViolation::WitnessesExceedBound { .. }))
+    );
 }
 
 #[test]
@@ -653,18 +654,17 @@ fn validate_catches_constraints_exceed_bound() {
         max_constraints: 5,
     };
     let errors = validate_entry_ordering(&entry, &bounds).unwrap_err();
-    assert!(errors
-        .iter()
-        .any(|e| matches!(e, OrderingViolation::ConstraintsExceedBound { .. })));
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e, OrderingViolation::ConstraintsExceedBound { .. }))
+    );
 }
 
 #[test]
 fn validate_collects_multiple_violations() {
     let entry = make_entry(
-        vec![
-            CandidateAction::new("z", 1),
-            CandidateAction::new("a", 2),
-        ],
+        vec![CandidateAction::new("z", 1), CandidateAction::new("a", 2)],
         vec![make_witness("z"), make_witness("a")],
         vec![],
     );
@@ -764,10 +764,7 @@ fn normalization_is_deterministic() {
 #[test]
 fn validation_is_deterministic() {
     let entry = make_entry(
-        vec![
-            CandidateAction::new("z", 1),
-            CandidateAction::new("a", 2),
-        ],
+        vec![CandidateAction::new("z", 1), CandidateAction::new("a", 2)],
         vec![make_witness("z"), make_witness("a")],
         vec![],
     );

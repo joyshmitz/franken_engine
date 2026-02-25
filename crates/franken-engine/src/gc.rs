@@ -1273,7 +1273,6 @@ mod tests {
     // GcEvent serde round-trip
     // -----------------------------------------------------------------------
 
-    #[test]
     // -- Enrichment: std::error --
 
     #[test]

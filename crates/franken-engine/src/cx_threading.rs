@@ -1838,7 +1838,9 @@ mod tests {
                 emitter: "span".into(),
                 reason: "full".into(),
             }),
-            Box::new(CxThreadingError::Cancelled { operation: "gc".into() }),
+            Box::new(CxThreadingError::Cancelled {
+                operation: "gc".into(),
+            }),
         ];
         let mut displays = std::collections::BTreeSet::new();
         for v in &variants {

@@ -2098,7 +2098,8 @@ mod tests {
             assert!(
                 err.to_string().contains(substring),
                 "'{}' should contain '{}'",
-                err, substring
+                err,
+                substring
             );
         }
     }
@@ -2161,7 +2162,8 @@ mod tests {
             assert!(
                 et.to_string().contains(substring),
                 "'{}' should contain '{}'",
-                et, substring
+                et,
+                substring
             );
         }
     }
@@ -2457,7 +2459,6 @@ mod tests {
 
     // -- exit_safe_mode on non-safe zone --
 
-    #[test]
     // -- Enrichment: std::error --
 
     #[test]
@@ -2487,7 +2488,11 @@ mod tests {
             assert!(!msg.is_empty());
             displays.insert(msg);
         }
-        assert_eq!(displays.len(), 5, "all 5 variants produce distinct messages");
+        assert_eq!(
+            displays.len(),
+            5,
+            "all 5 variants produce distinct messages"
+        );
     }
 
     #[test]

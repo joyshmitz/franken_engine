@@ -449,11 +449,7 @@ impl FtrlState {
             .zip(self.arm_counts.iter())
             .map(
                 |(&total, &count)| {
-                    if count > 0 {
-                        total / count as i64
-                    } else {
-                        0
-                    }
+                    if count > 0 { total / count as i64 } else { 0 }
                 },
             )
             .collect()
@@ -700,11 +696,7 @@ impl RegretBoundedRouter {
             .zip(self.per_arm_count.iter())
             .map(
                 |(&total, &count)| {
-                    if count > 0 {
-                        total / count as i64
-                    } else {
-                        0
-                    }
+                    if count > 0 { total / count as i64 } else { 0 }
                 },
             )
             .max()
@@ -1123,6 +1115,40 @@ mod tests {
         router.observe_reward(&signal).unwrap();
 
         assert_eq!(router.realized_regret_millionths(), 700_000);
+    }
+
+    #[test]
+    fn router_exact_regret_uses_best_fixed_arm_not_dynamic_oracle() {
+        let arms = make_arms(2);
+        let mut router = RegretBoundedRouter::new(arms, 100_000).unwrap();
+
+        // Round 1: arm 0 is better.
+        router
+            .observe_reward(&RewardSignal {
+                arm_index: 0,
+                reward_millionths: 1_000_000,
+                latency_us: 1,
+                success: true,
+                epoch: SecurityEpoch::from_raw(1),
+                counterfactual_rewards_millionths: Some(vec![1_000_000, 0]),
+            })
+            .unwrap();
+
+        // Round 2: arm 1 is better, but router still pulls arm 0.
+        router
+            .observe_reward(&RewardSignal {
+                arm_index: 0,
+                reward_millionths: 0,
+                latency_us: 1,
+                success: true,
+                epoch: SecurityEpoch::from_raw(2),
+                counterfactual_rewards_millionths: Some(vec![0, 1_000_000]),
+            })
+            .unwrap();
+
+        // Best dynamic oracle would score 2_000_000, but best fixed arm scores
+        // only 1_000_000. Exact fixed-arm regret is therefore zero.
+        assert_eq!(router.realized_regret_millionths(), 0);
     }
 
     #[test]

@@ -40,7 +40,14 @@ fn make_diagnostic(
 }
 
 fn default_diagnostic() -> LeakDiagnostic {
-    make_diagnostic(100, "ch-alpha", "trace-alpha", 1000, "region-a", "scheduler")
+    make_diagnostic(
+        100,
+        "ch-alpha",
+        "trace-alpha",
+        1000,
+        "region-a",
+        "scheduler",
+    )
 }
 
 // ===========================================================================

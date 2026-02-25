@@ -60,9 +60,9 @@ fn integrity_probe(id: &str) -> ProbeConfig {
 
 fn base_config() -> SchedulerConfig {
     let mut regime_budgets = BTreeMap::new();
-    regime_budgets.insert("normal".to_string(), 3_000_000);   // 3.0
+    regime_budgets.insert("normal".to_string(), 3_000_000); // 3.0
     regime_budgets.insert("elevated".to_string(), 6_000_000); // 6.0
-    regime_budgets.insert("attack".to_string(), 10_000_000);  // 10.0
+    regime_budgets.insert("attack".to_string(), 10_000_000); // 10.0
 
     SchedulerConfig {
         scheduler_id: "sched-int".to_string(),
@@ -76,7 +76,9 @@ fn base_scheduler() -> MonitorScheduler {
     let mut sched = MonitorScheduler::new(base_config());
     sched.register_probe(health_probe("health-1")).unwrap();
     sched.register_probe(deep_probe("deep-1")).unwrap();
-    sched.register_probe(integrity_probe("integrity-1")).unwrap();
+    sched
+        .register_probe(integrity_probe("integrity-1"))
+        .unwrap();
     sched
 }
 
@@ -184,7 +186,7 @@ fn voi_score_monotonically_increases_with_staleness() {
 #[test]
 fn voi_score_scales_with_relevance_multiplier() {
     let state = ProbeState::new(integrity_probe("i"));
-    let voi_half = state.voi_score(500_000);   // 0.5x
+    let voi_half = state.voi_score(500_000); // 0.5x
     let voi_unit = state.voi_score(1_000_000); // 1.0x
     let voi_double = state.voi_score(2_000_000); // 2.0x
     assert!(voi_unit > voi_half);
@@ -487,7 +489,7 @@ fn tiny_budget_defers_expensive_probes() {
     };
     let mut sched = MonitorScheduler::new(config);
     sched.register_probe(health_probe("h1")).unwrap(); // costs 0.1
-    sched.register_probe(deep_probe("d1")).unwrap();   // costs 2.0
+    sched.register_probe(deep_probe("d1")).unwrap(); // costs 2.0
 
     let result = sched.schedule(Regime::Normal);
     assert_eq!(result.probes_scheduled, 0);
@@ -656,25 +658,33 @@ fn tie_breaking_uses_probe_id() {
         relevance_overrides: BTreeMap::new(),
     });
 
-    sched.register_probe(ProbeConfig {
-        probe_id: "b-probe".to_string(),
-        kind: ProbeKind::HealthCheck,
-        cost_millionths: 100_000,
-        information_gain_millionths: 500_000,
-        base_relevance_millionths: 1_000_000,
-    }).unwrap();
+    sched
+        .register_probe(ProbeConfig {
+            probe_id: "b-probe".to_string(),
+            kind: ProbeKind::HealthCheck,
+            cost_millionths: 100_000,
+            information_gain_millionths: 500_000,
+            base_relevance_millionths: 1_000_000,
+        })
+        .unwrap();
 
-    sched.register_probe(ProbeConfig {
-        probe_id: "a-probe".to_string(),
-        kind: ProbeKind::HealthCheck,
-        cost_millionths: 100_000,
-        information_gain_millionths: 500_000,
-        base_relevance_millionths: 1_000_000,
-    }).unwrap();
+    sched
+        .register_probe(ProbeConfig {
+            probe_id: "a-probe".to_string(),
+            kind: ProbeKind::HealthCheck,
+            cost_millionths: 100_000,
+            information_gain_millionths: 500_000,
+            base_relevance_millionths: 1_000_000,
+        })
+        .unwrap();
 
     let result = sched.schedule(Regime::Normal);
     // Same VOI, so alphabetical tie-break: "a-probe" before "b-probe".
-    let ids: Vec<&str> = result.decisions.iter().map(|d| d.probe_id.as_str()).collect();
+    let ids: Vec<&str> = result
+        .decisions
+        .iter()
+        .map(|d| d.probe_id.as_str())
+        .collect();
     assert_eq!(ids, vec!["a-probe", "b-probe"]);
 }
 
@@ -686,10 +696,9 @@ fn tie_breaking_uses_probe_id() {
 fn relevance_override_boosts_scheduling_priority() {
     let mut config = base_config();
     // Give integrity probes 5x relevance during Attack.
-    config.relevance_overrides.insert(
-        "attack:integrity_audit".to_string(),
-        5_000_000,
-    );
+    config
+        .relevance_overrides
+        .insert("attack:integrity_audit".to_string(), 5_000_000);
 
     let mut sched = MonitorScheduler::new(config);
     sched.register_probe(health_probe("h1")).unwrap();
@@ -706,19 +715,21 @@ fn relevance_override_boosts_scheduling_priority() {
 #[test]
 fn multiple_relevance_overrides() {
     let mut config = base_config();
-    config.relevance_overrides.insert(
-        "elevated:health_check".to_string(),
-        3_000_000,
-    );
+    config
+        .relevance_overrides
+        .insert("elevated:health_check".to_string(), 3_000_000);
     config.relevance_overrides.insert(
         "elevated:deep_diagnostic".to_string(),
         500_000, // suppressed
     );
 
     let scheduler_config = config.clone();
-    let mult_health = scheduler_config.relevance_multiplier(Regime::Elevated, ProbeKind::HealthCheck);
-    let mult_deep = scheduler_config.relevance_multiplier(Regime::Elevated, ProbeKind::DeepDiagnostic);
-    let mult_cal = scheduler_config.relevance_multiplier(Regime::Elevated, ProbeKind::CalibrationProbe);
+    let mult_health =
+        scheduler_config.relevance_multiplier(Regime::Elevated, ProbeKind::HealthCheck);
+    let mult_deep =
+        scheduler_config.relevance_multiplier(Regime::Elevated, ProbeKind::DeepDiagnostic);
+    let mult_cal =
+        scheduler_config.relevance_multiplier(Regime::Elevated, ProbeKind::CalibrationProbe);
 
     assert_eq!(mult_health, 3_000_000);
     assert_eq!(mult_deep, 500_000);
@@ -1014,20 +1025,25 @@ fn zero_info_gain_produces_non_positive_voi() {
         relevance_overrides: BTreeMap::new(),
     };
     let mut sched = MonitorScheduler::new(config);
-    sched.register_probe(ProbeConfig {
-        probe_id: "zero-gain".to_string(),
-        kind: ProbeKind::HealthCheck,
-        cost_millionths: 100_000,
-        information_gain_millionths: 0, // zero info gain
-        base_relevance_millionths: 1_000_000,
-    }).unwrap();
+    sched
+        .register_probe(ProbeConfig {
+            probe_id: "zero-gain".to_string(),
+            kind: ProbeKind::HealthCheck,
+            cost_millionths: 100_000,
+            information_gain_millionths: 0, // zero info gain
+            base_relevance_millionths: 1_000_000,
+        })
+        .unwrap();
 
     let result = sched.schedule(Regime::Normal);
     assert_eq!(result.probes_deferred, 1);
     let dec = &result.decisions[0];
     assert!(!dec.scheduled);
     assert!(
-        dec.skip_reason.as_ref().unwrap().contains("non-positive VOI"),
+        dec.skip_reason
+            .as_ref()
+            .unwrap()
+            .contains("non-positive VOI"),
         "Expected 'non-positive VOI' reason, got: {:?}",
         dec.skip_reason
     );
@@ -1049,13 +1065,15 @@ fn many_probes_schedules_greedily() {
 
     // Register 20 cheap probes.
     for i in 0..20 {
-        sched.register_probe(ProbeConfig {
-            probe_id: format!("probe-{i:02}"),
-            kind: ProbeKind::HealthCheck,
-            cost_millionths: 100_000, // 0.1 each
-            information_gain_millionths: 500_000,
-            base_relevance_millionths: 1_000_000,
-        }).unwrap();
+        sched
+            .register_probe(ProbeConfig {
+                probe_id: format!("probe-{i:02}"),
+                kind: ProbeKind::HealthCheck,
+                cost_millionths: 100_000, // 0.1 each
+                information_gain_millionths: 500_000,
+                base_relevance_millionths: 1_000_000,
+            })
+            .unwrap();
     }
 
     let result = sched.schedule(Regime::Normal);

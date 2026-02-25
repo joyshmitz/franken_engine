@@ -35,7 +35,10 @@ fn fault_type_all_variants_constructible() {
 
 #[test]
 fn fault_type_display_network_partition() {
-    assert_eq!(format!("{}", FaultType::NetworkPartition), "network_partition");
+    assert_eq!(
+        format!("{}", FaultType::NetworkPartition),
+        "network_partition"
+    );
 }
 
 #[test]
@@ -571,7 +574,11 @@ fn runner_run_all_produces_seven_scenarios() {
 #[test]
 fn runner_run_all_passes_all_scenarios() {
     let result = run_gate(42);
-    assert!(result.passed, "all scenarios should pass: {}", result.summary());
+    assert!(
+        result.passed,
+        "all scenarios should pass: {}",
+        result.summary()
+    );
     assert_eq!(result.passed_scenarios, result.total_scenarios);
 }
 
@@ -590,7 +597,11 @@ fn runner_scenarios_cover_all_fault_types() {
 #[test]
 fn runner_scenarios_include_specific_scenario_ids() {
     let result = run_gate(42);
-    let ids: Vec<&str> = result.scenarios.iter().map(|s| s.scenario_id.as_str()).collect();
+    let ids: Vec<&str> = result
+        .scenarios
+        .iter()
+        .map(|s| s.scenario_id.as_str())
+        .collect();
     assert!(ids.contains(&"partition-ext-a"));
     assert!(ids.contains(&"byzantine-ext-b"));
     assert!(ids.contains(&"cascade-ext-c"));
@@ -919,9 +930,7 @@ fn criteria_names_include_recovery_or_forensic() {
     let result = run_gate(42);
     for s in &result.scenarios {
         assert!(
-            s.criteria
-                .iter()
-                .any(|c| c.name == "recovery_or_forensic"),
+            s.criteria.iter().any(|c| c.name == "recovery_or_forensic"),
             "{} missing recovery_or_forensic criterion",
             s.scenario_id,
         );
@@ -991,10 +1000,7 @@ fn events_all_have_required_tracing_fields() {
     let result = run_gate(42);
     for e in &result.events {
         assert!(!e.trace_id.is_empty(), "trace_id should not be empty");
-        assert!(
-            !e.decision_id.is_empty(),
-            "decision_id should not be empty"
-        );
+        assert!(!e.decision_id.is_empty(), "decision_id should not be empty");
         assert!(!e.policy_id.is_empty(), "policy_id should not be empty");
         assert_eq!(e.component, "quarantine_mesh_gate");
     }
@@ -1060,7 +1066,10 @@ fn per_scenario_events_have_fault_type_and_target() {
         .collect();
     assert_eq!(scenario_events.len(), 7);
     for e in &scenario_events {
-        assert!(e.fault_type.is_some(), "scenario event should have fault_type");
+        assert!(
+            e.fault_type.is_some(),
+            "scenario event should have fault_type"
+        );
         assert!(
             e.target_component.is_some(),
             "scenario event should have target_component"
@@ -1100,10 +1109,12 @@ fn digest_is_16_hex_chars() {
 #[test]
 fn digest_is_lowercase_hex() {
     let result = run_gate(42);
-    assert!(result
-        .result_digest
-        .chars()
-        .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)));
+    assert!(
+        result
+            .result_digest
+            .chars()
+            .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c))
+    );
 }
 
 #[test]
@@ -1141,8 +1152,16 @@ fn deterministic_digest_across_runs() {
 fn deterministic_scenario_order_across_runs() {
     let r1 = run_gate(100);
     let r2 = run_gate(100);
-    let ids1: Vec<&str> = r1.scenarios.iter().map(|s| s.scenario_id.as_str()).collect();
-    let ids2: Vec<&str> = r2.scenarios.iter().map(|s| s.scenario_id.as_str()).collect();
+    let ids1: Vec<&str> = r1
+        .scenarios
+        .iter()
+        .map(|s| s.scenario_id.as_str())
+        .collect();
+    let ids2: Vec<&str> = r2
+        .scenarios
+        .iter()
+        .map(|s| s.scenario_id.as_str())
+        .collect();
     assert_eq!(ids1, ids2);
 }
 
@@ -1158,7 +1177,11 @@ fn deterministic_criteria_across_runs() {
     let r1 = run_gate(55);
     let r2 = run_gate(55);
     for (s1, s2) in r1.scenarios.iter().zip(r2.scenarios.iter()) {
-        assert_eq!(s1.criteria, s2.criteria, "criteria differ for {}", s1.scenario_id);
+        assert_eq!(
+            s1.criteria, s2.criteria,
+            "criteria differ for {}",
+            s1.scenario_id
+        );
     }
 }
 
@@ -1168,9 +1191,24 @@ fn deterministic_criteria_across_runs() {
 
 #[test]
 fn many_seeds_all_pass() {
-    for seed in [0, 1, 42, 100, 255, 999, 12345, 54321, u64::MAX, u64::MAX - 1] {
+    for seed in [
+        0,
+        1,
+        42,
+        100,
+        255,
+        999,
+        12345,
+        54321,
+        u64::MAX,
+        u64::MAX - 1,
+    ] {
         let result = run_gate(seed);
-        assert!(result.passed, "seed {seed} should pass: {}", result.summary());
+        assert!(
+            result.passed,
+            "seed {seed} should pass: {}",
+            result.summary()
+        );
     }
 }
 

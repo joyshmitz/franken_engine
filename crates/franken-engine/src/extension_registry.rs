@@ -2233,7 +2233,11 @@ mod tests {
 
     #[test]
     fn event_outcome_serde_roundtrip() {
-        for o in [EventOutcome::Success, EventOutcome::Denied, EventOutcome::Error] {
+        for o in [
+            EventOutcome::Success,
+            EventOutcome::Denied,
+            EventOutcome::Error,
+        ] {
             let json = serde_json::to_string(&o).unwrap();
             let restored: EventOutcome = serde_json::from_str(&json).unwrap();
             assert_eq!(restored, o);

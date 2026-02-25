@@ -64,7 +64,10 @@ fn coverage_score(status: GrammarCoverageStatus) -> u64 {
     }
 }
 
-fn aggregate_family_status(script: GrammarCoverageStatus, module: GrammarCoverageStatus) -> &'static str {
+fn aggregate_family_status(
+    script: GrammarCoverageStatus,
+    module: GrammarCoverageStatus,
+) -> &'static str {
     match (coverage_score(script) + coverage_score(module)) / 2 {
         1000 => "supported",
         0 => "unsupported",
@@ -90,10 +93,16 @@ fn grammar_closure_backlog_matches_scalar_reference_matrix() {
     let matrix = parser.scalar_reference_grammar_matrix();
     let backlog = load_grammar_closure_backlog();
 
-    assert_eq!(backlog.schema_version, "franken-engine.parser-grammar-closure-backlog.v1");
+    assert_eq!(
+        backlog.schema_version,
+        "franken-engine.parser-grammar-closure-backlog.v1"
+    );
     assert_eq!(backlog.parser_mode, ParserMode::ScalarReference.as_str());
     assert_eq!(backlog.matrix_schema_version, matrix.schema_version);
-    assert_eq!(backlog.coverage_target_family_count as usize, matrix.families.len());
+    assert_eq!(
+        backlog.coverage_target_family_count as usize,
+        matrix.families.len()
+    );
     assert_eq!(backlog.families.len(), matrix.families.len());
     assert_eq!(backlog.coverage_target_family_count, 20);
 
@@ -108,7 +117,11 @@ fn grammar_closure_backlog_matches_scalar_reference_matrix() {
                 family.module_goal,
             ),
         );
-        assert!(replaced.is_none(), "duplicate matrix family id: {}", family.family_id);
+        assert!(
+            replaced.is_none(),
+            "duplicate matrix family id: {}",
+            family.family_id
+        );
     }
 
     let matrix_ids: BTreeSet<&str> = matrix_by_family.keys().copied().collect();
@@ -123,7 +136,12 @@ fn grammar_closure_backlog_matches_scalar_reference_matrix() {
 
         let (matrix_clause, script_goal, module_goal) = matrix_by_family
             .get(family.family_id.as_str())
-            .unwrap_or_else(|| panic!("backlog family not present in parser matrix: {}", family.family_id));
+            .unwrap_or_else(|| {
+                panic!(
+                    "backlog family not present in parser matrix: {}",
+                    family.family_id
+                )
+            });
 
         assert_eq!(family.es2020_clause, *matrix_clause);
         assert_eq!(
@@ -155,7 +173,10 @@ fn grammar_closure_backlog_matches_scalar_reference_matrix() {
         }
     }
 
-    assert_eq!(backlog_ids, matrix_ids, "backlog family set must match parser matrix family set");
+    assert_eq!(
+        backlog_ids, matrix_ids,
+        "backlog family set must match parser matrix family set"
+    );
 }
 
 #[test]
@@ -167,19 +188,29 @@ fn grammar_closure_backlog_fixture_bindings_are_valid() {
         semantic_fixtures.schema_version,
         "franken-engine.parser-phase0.semantic-fixtures.v1"
     );
-    assert_eq!(semantic_fixtures.parser_mode, ParserMode::ScalarReference.as_str());
+    assert_eq!(
+        semantic_fixtures.parser_mode,
+        ParserMode::ScalarReference.as_str()
+    );
 
     let mut fixtures_by_id = BTreeMap::new();
     for fixture in &semantic_fixtures.fixtures {
         let replaced = fixtures_by_id.insert(fixture.id.as_str(), fixture);
-        assert!(replaced.is_none(), "duplicate semantic fixture id: {}", fixture.id);
+        assert!(
+            replaced.is_none(),
+            "duplicate semantic fixture id: {}",
+            fixture.id
+        );
     }
 
     for family in &backlog.families {
         for fixture_id in &family.fixture_ids {
-            let fixture = fixtures_by_id
-                .get(fixture_id.as_str())
-                .unwrap_or_else(|| panic!("missing fixture `{fixture_id}` for family `{}`", family.family_id));
+            let fixture = fixtures_by_id.get(fixture_id.as_str()).unwrap_or_else(|| {
+                panic!(
+                    "missing fixture `{fixture_id}` for family `{}`",
+                    family.family_id
+                )
+            });
             assert_eq!(fixture.family_id, family.family_id);
             assert!(
                 fixture.expected_hash.starts_with("sha256:"),
@@ -201,7 +232,10 @@ fn parser_grammar_closure_backlog_fixtures_are_replayable_by_family() {
     let selected_family = std::env::var("PARSER_GRAMMAR_FAMILY").ok();
     if let Some(ref family_id) = selected_family {
         assert!(
-            backlog.families.iter().any(|family| family.family_id == *family_id),
+            backlog
+                .families
+                .iter()
+                .any(|family| family.family_id == *family_id),
             "unknown PARSER_GRAMMAR_FAMILY `{family_id}`"
         );
     }
@@ -214,10 +248,10 @@ fn parser_grammar_closure_backlog_fixtures_are_replayable_by_family() {
 
     let mut executed_families = 0usize;
     for family in &backlog.families {
-        if let Some(ref only_family) = selected_family {
-            if &family.family_id != only_family {
-                continue;
-            }
+        if let Some(ref only_family) = selected_family
+            && &family.family_id != only_family
+        {
+            continue;
         }
 
         executed_families = executed_families.saturating_add(1);
@@ -227,7 +261,11 @@ fn parser_grammar_closure_backlog_fixtures_are_replayable_by_family() {
                 .unwrap_or_else(|| panic!("fixture not found for replay: {fixture_id}"));
 
             let tree = parser
-                .parse_with_options(fixture.source.as_str(), parse_goal(fixture.goal.as_str()), &options)
+                .parse_with_options(
+                    fixture.source.as_str(),
+                    parse_goal(fixture.goal.as_str()),
+                    &options,
+                )
                 .unwrap_or_else(|error| {
                     panic!(
                         "fixture `{}` for family `{}` failed to parse during replay: {error}",

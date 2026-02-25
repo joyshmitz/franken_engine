@@ -1274,8 +1274,16 @@ mod tests {
             scheduler_lanes: vec![],
         };
         let out = collect_runtime_diagnostics(&state, "t", "d", "p");
-        let over = out.gc_pressure.iter().find(|g| g.extension_id == "over").unwrap();
-        let under = out.gc_pressure.iter().find(|g| g.extension_id == "under").unwrap();
+        let over = out
+            .gc_pressure
+            .iter()
+            .find(|g| g.extension_id == "over")
+            .unwrap();
+        let under = out
+            .gc_pressure
+            .iter()
+            .find(|g| g.extension_id == "under")
+            .unwrap();
         assert!(over.over_budget);
         assert!(!under.over_budget);
     }

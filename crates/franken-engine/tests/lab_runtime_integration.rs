@@ -188,7 +188,11 @@ fn fault_kind_all_variants_have_distinct_display() {
     .iter()
     .map(|f| f.to_string())
     .collect();
-    assert_eq!(displays.len(), 5, "all FaultKind variants must have distinct display strings");
+    assert_eq!(
+        displays.len(),
+        5,
+        "all FaultKind variants must have distinct display strings"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -258,7 +262,11 @@ fn task_state_all_variants_have_distinct_display() {
     .iter()
     .map(|s| s.to_string())
     .collect();
-    assert_eq!(displays.len(), 5, "all TaskState variants must have distinct display strings");
+    assert_eq!(
+        displays.len(),
+        5,
+        "all TaskState variants must have distinct display strings"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -880,9 +888,10 @@ fn runtime_transcript_records_run_task() {
     rt.run_task(id);
     let result = rt.finalize();
     assert_eq!(result.transcript.len(), 1);
-    assert!(
-        matches!(result.transcript.actions[0], ScheduleAction::RunTask { task_id: 1 })
-    );
+    assert!(matches!(
+        result.transcript.actions[0],
+        ScheduleAction::RunTask { task_id: 1 }
+    ));
 }
 
 #[test]
@@ -891,9 +900,10 @@ fn runtime_transcript_records_advance_time() {
     rt.advance_time(50);
     let result = rt.finalize();
     assert_eq!(result.transcript.len(), 1);
-    assert!(
-        matches!(result.transcript.actions[0], ScheduleAction::AdvanceTime { ticks: 50 })
-    );
+    assert!(matches!(
+        result.transcript.actions[0],
+        ScheduleAction::AdvanceTime { ticks: 50 }
+    ));
 }
 
 #[test]
@@ -944,7 +954,11 @@ fn runtime_events_have_correct_virtual_time() {
 
     let result = rt.finalize();
     // The run_task event should carry virtual_time 100
-    let run_event = result.events.iter().find(|e| e.action == "run_task").unwrap();
+    let run_event = result
+        .events
+        .iter()
+        .find(|e| e.action == "run_task")
+        .unwrap();
     assert_eq!(run_event.virtual_time, 100);
 }
 
@@ -981,7 +995,11 @@ fn runtime_events_carry_task_id_for_task_actions() {
     rt.complete_task(id);
 
     let result = rt.finalize();
-    let run_event = result.events.iter().find(|e| e.action == "run_task").unwrap();
+    let run_event = result
+        .events
+        .iter()
+        .find(|e| e.action == "run_task")
+        .unwrap();
     assert_eq!(run_event.task_id, Some(id));
 
     let complete_event = result
@@ -1037,9 +1055,15 @@ fn deterministic_replay_identical_runs() {
     let r2 = run();
 
     assert_eq!(r1.events, r2.events, "events must be identical");
-    assert_eq!(r1.transcript, r2.transcript, "transcripts must be identical");
+    assert_eq!(
+        r1.transcript, r2.transcript,
+        "transcripts must be identical"
+    );
     assert_eq!(r1.verdict, r2.verdict, "verdicts must be identical");
-    assert_eq!(r1.final_time, r2.final_time, "final times must be identical");
+    assert_eq!(
+        r1.final_time, r2.final_time,
+        "final times must be identical"
+    );
     assert_eq!(r1.tasks_completed, r2.tasks_completed);
     assert_eq!(r1.tasks_faulted, r2.tasks_faulted);
     assert_eq!(r1.tasks_cancelled, r2.tasks_cancelled);
@@ -1312,7 +1336,11 @@ fn runtime_run_task_event_outcome_is_running() {
     let id = rt.spawn_task();
     rt.run_task(id);
     let result = rt.finalize();
-    let event = result.events.iter().find(|e| e.action == "run_task").unwrap();
+    let event = result
+        .events
+        .iter()
+        .find(|e| e.action == "run_task")
+        .unwrap();
     assert_eq!(event.outcome, "running");
 }
 

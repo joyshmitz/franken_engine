@@ -8,8 +8,8 @@
 use std::collections::BTreeMap;
 
 use frankenengine_engine::ambient_authority::{
-    AuditConfig, AuditFinding, AuditResult, Exemption, ExemptionRegistry,
-    ForbiddenCallCategory, ForbiddenPattern, SourceAuditor,
+    AuditConfig, AuditFinding, AuditResult, Exemption, ExemptionRegistry, ForbiddenCallCategory,
+    ForbiddenPattern, SourceAuditor,
 };
 
 // ---------------------------------------------------------------------------
@@ -21,9 +21,18 @@ fn category_display_all_variants() {
     assert_eq!(ForbiddenCallCategory::FileSystem.to_string(), "filesystem");
     assert_eq!(ForbiddenCallCategory::Network.to_string(), "network");
     assert_eq!(ForbiddenCallCategory::Process.to_string(), "process");
-    assert_eq!(ForbiddenCallCategory::GlobalMutableState.to_string(), "global_mutable_state");
-    assert_eq!(ForbiddenCallCategory::Environment.to_string(), "environment");
-    assert_eq!(ForbiddenCallCategory::RawPointerExternalState.to_string(), "raw_pointer_external_state");
+    assert_eq!(
+        ForbiddenCallCategory::GlobalMutableState.to_string(),
+        "global_mutable_state"
+    );
+    assert_eq!(
+        ForbiddenCallCategory::Environment.to_string(),
+        "environment"
+    );
+    assert_eq!(
+        ForbiddenCallCategory::RawPointerExternalState.to_string(),
+        "raw_pointer_external_state"
+    );
     assert_eq!(ForbiddenCallCategory::DirectTime.to_string(), "direct_time");
 }
 
@@ -161,7 +170,11 @@ fn detects_filesystem_access() {
     let auditor = standard_auditor();
     let source = "let data = std::fs::read(\"file.txt\");";
     let findings = auditor.audit_source("m", "f.rs", source);
-    assert!(findings.iter().any(|f| f.category == ForbiddenCallCategory::FileSystem));
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.category == ForbiddenCallCategory::FileSystem)
+    );
 }
 
 #[test]
@@ -169,7 +182,11 @@ fn detects_network_access() {
     let auditor = standard_auditor();
     let source = "let stream = TcpStream::connect(\"127.0.0.1:80\");";
     let findings = auditor.audit_source("m", "f.rs", source);
-    assert!(findings.iter().any(|f| f.category == ForbiddenCallCategory::Network));
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.category == ForbiddenCallCategory::Network)
+    );
 }
 
 #[test]
@@ -177,7 +194,11 @@ fn detects_udp_socket() {
     let auditor = standard_auditor();
     let source = "let sock = UdpSocket::bind(\"0.0.0.0:0\");";
     let findings = auditor.audit_source("m", "f.rs", source);
-    assert!(findings.iter().any(|f| f.category == ForbiddenCallCategory::Network));
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.category == ForbiddenCallCategory::Network)
+    );
 }
 
 #[test]
@@ -185,7 +206,11 @@ fn detects_process_spawn() {
     let auditor = standard_auditor();
     let source = "let output = Command::new(\"ls\").output();";
     let findings = auditor.audit_source("m", "f.rs", source);
-    assert!(findings.iter().any(|f| f.category == ForbiddenCallCategory::Process));
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.category == ForbiddenCallCategory::Process)
+    );
 }
 
 #[test]
@@ -193,7 +218,11 @@ fn detects_environment_access() {
     let auditor = standard_auditor();
     let source = "let val = std::env::var(\"HOME\");";
     let findings = auditor.audit_source("m", "f.rs", source);
-    assert!(findings.iter().any(|f| f.category == ForbiddenCallCategory::Environment));
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.category == ForbiddenCallCategory::Environment)
+    );
 }
 
 #[test]
@@ -201,7 +230,11 @@ fn detects_static_mut() {
     let auditor = standard_auditor();
     let source = "static mut COUNTER: u64 = 0;";
     let findings = auditor.audit_source("m", "f.rs", source);
-    assert!(findings.iter().any(|f| f.category == ForbiddenCallCategory::GlobalMutableState));
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.category == ForbiddenCallCategory::GlobalMutableState)
+    );
 }
 
 #[test]
@@ -209,7 +242,11 @@ fn detects_system_time() {
     let auditor = standard_auditor();
     let source = "let now = SystemTime::now();";
     let findings = auditor.audit_source("m", "f.rs", source);
-    assert!(findings.iter().any(|f| f.category == ForbiddenCallCategory::DirectTime));
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.category == ForbiddenCallCategory::DirectTime)
+    );
 }
 
 // ---------------------------------------------------------------------------

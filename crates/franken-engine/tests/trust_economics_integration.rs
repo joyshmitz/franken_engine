@@ -9,12 +9,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use frankenengine_engine::security_epoch::SecurityEpoch;
 use frankenengine_engine::trust_economics::{
-    ActionCost, AttackerCostModel, AttackerRoiAssessment, BlastRadiusEstimate,
-    ContainmentAction, ContainmentCostModel, DecomposedLossMatrix, FleetRoiSummary,
-    RoiAlertLevel, RoiTrend, StrategyCostAdjustment, SubLoss, TrueState,
-    TrustEconomicsError, TrustEconomicsModelInputs, MILLIONTHS,
-    classify_roi_alert_level, classify_roi_trend, default_conservative_loss_matrix,
-    summarize_fleet_roi,
+    ActionCost, AttackerCostModel, AttackerRoiAssessment, BlastRadiusEstimate, ContainmentAction,
+    ContainmentCostModel, DecomposedLossMatrix, FleetRoiSummary, MILLIONTHS, RoiAlertLevel,
+    RoiTrend, StrategyCostAdjustment, SubLoss, TrueState, TrustEconomicsError,
+    TrustEconomicsModelInputs, classify_roi_alert_level, classify_roi_trend,
+    default_conservative_loss_matrix, summarize_fleet_roi,
 };
 
 // =========================================================================
@@ -131,7 +130,10 @@ fn trust_economics_error_display_all_variants() {
         populated: 7,
         expected: 28,
     };
-    assert_eq!(err.to_string(), "incomplete loss matrix: 7/28 cells populated");
+    assert_eq!(
+        err.to_string(),
+        "incomplete loss matrix: 7/28 cells populated"
+    );
 
     let err = TrustEconomicsError::CascadeProbabilityOutOfRange { value: -42 };
     assert!(err.to_string().contains("-42"));
@@ -273,7 +275,10 @@ fn loss_matrix_set_and_get() {
         false_action_cost: 0,
     };
     m.set(TrueState::Benign, ContainmentAction::Allow, sl);
-    assert_eq!(m.get(TrueState::Benign, ContainmentAction::Allow), Some(&sl));
+    assert_eq!(
+        m.get(TrueState::Benign, ContainmentAction::Allow),
+        Some(&sl)
+    );
     assert_eq!(m.get(TrueState::Malicious, ContainmentAction::Allow), None);
     assert_eq!(m.cell_count(), 1);
 }
@@ -281,7 +286,10 @@ fn loss_matrix_set_and_get() {
 #[test]
 fn loss_matrix_total_loss_for_missing_cell_is_zero() {
     let m = DecomposedLossMatrix::new(1, "t", "j");
-    assert_eq!(m.total_loss(TrueState::Benign, ContainmentAction::Quarantine), 0);
+    assert_eq!(
+        m.total_loss(TrueState::Benign, ContainmentAction::Quarantine),
+        0
+    );
 }
 
 #[test]
@@ -458,7 +466,10 @@ fn default_conservative_benign_allow_cheapest_for_benign() {
     for &action in &ContainmentAction::ALL {
         if action != ContainmentAction::Allow {
             let cost = m.total_loss(TrueState::Benign, action);
-            assert!(cost >= allow, "benign+{action} ({cost}) should >= benign+allow ({allow})");
+            assert!(
+                cost >= allow,
+                "benign+{action} ({cost}) should >= benign+allow ({allow})"
+            );
         }
     }
 }
@@ -664,10 +675,7 @@ fn classify_roi_alert_level_profitable() {
 fn classify_roi_alert_level_neutral() {
     assert_eq!(classify_roi_alert_level(500_000), RoiAlertLevel::Neutral);
     assert_eq!(classify_roi_alert_level(999_999), RoiAlertLevel::Neutral);
-    assert_eq!(
-        classify_roi_alert_level(1_000_000),
-        RoiAlertLevel::Neutral
-    );
+    assert_eq!(classify_roi_alert_level(1_000_000), RoiAlertLevel::Neutral);
 }
 
 #[test]
@@ -677,7 +685,10 @@ fn classify_roi_alert_level_unprofitable() {
         RoiAlertLevel::Unprofitable
     );
     assert_eq!(classify_roi_alert_level(0), RoiAlertLevel::Unprofitable);
-    assert_eq!(classify_roi_alert_level(-1_000_000), RoiAlertLevel::Unprofitable);
+    assert_eq!(
+        classify_roi_alert_level(-1_000_000),
+        RoiAlertLevel::Unprofitable
+    );
 }
 
 #[test]
@@ -692,10 +703,7 @@ fn classify_roi_alert_level_boundary_2x() {
 #[test]
 fn classify_roi_alert_level_boundary_1x() {
     // Exactly 1.0x (1_000_000) is neutral (> 1.0x required for profitable)
-    assert_eq!(
-        classify_roi_alert_level(1_000_000),
-        RoiAlertLevel::Neutral
-    );
+    assert_eq!(classify_roi_alert_level(1_000_000), RoiAlertLevel::Neutral);
 }
 
 #[test]
@@ -721,44 +729,29 @@ fn classify_roi_trend_single_value_is_stable() {
 #[test]
 fn classify_roi_trend_rising() {
     // delta = 80_001 > 50_000 threshold
-    assert_eq!(
-        classify_roi_trend(&[900_000, 980_001]),
-        RoiTrend::Rising
-    );
+    assert_eq!(classify_roi_trend(&[900_000, 980_001]), RoiTrend::Rising);
 }
 
 #[test]
 fn classify_roi_trend_falling() {
     // delta = -80_001 < -50_000 threshold
-    assert_eq!(
-        classify_roi_trend(&[980_001, 900_000]),
-        RoiTrend::Falling
-    );
+    assert_eq!(classify_roi_trend(&[980_001, 900_000]), RoiTrend::Falling);
 }
 
 #[test]
 fn classify_roi_trend_stable_within_dead_zone() {
     // delta = 40_000 which is within [-50_000, 50_000]
-    assert_eq!(
-        classify_roi_trend(&[900_000, 940_000]),
-        RoiTrend::Stable
-    );
+    assert_eq!(classify_roi_trend(&[900_000, 940_000]), RoiTrend::Stable);
 }
 
 #[test]
 fn classify_roi_trend_boundary_exactly_50001_rising() {
-    assert_eq!(
-        classify_roi_trend(&[0, 50_001]),
-        RoiTrend::Rising
-    );
+    assert_eq!(classify_roi_trend(&[0, 50_001]), RoiTrend::Rising);
 }
 
 #[test]
 fn classify_roi_trend_boundary_exactly_50000_stable() {
-    assert_eq!(
-        classify_roi_trend(&[0, 50_000]),
-        RoiTrend::Stable
-    );
+    assert_eq!(classify_roi_trend(&[0, 50_000]), RoiTrend::Stable);
 }
 
 #[test]
@@ -1196,8 +1189,7 @@ fn model_inputs_version_regression_lower() {
 fn model_inputs_serde_round_trip() {
     let m = sample_model_inputs();
     let json = serde_json::to_string(&m).expect("serialize");
-    let restored: TrustEconomicsModelInputs =
-        serde_json::from_str(&json).expect("deserialize");
+    let restored: TrustEconomicsModelInputs = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(m, restored);
 }
 
@@ -1335,7 +1327,12 @@ fn containment_action_ordering_matches_severity() {
     // Allow < Warn < Challenge < Sandbox < Suspend < Terminate < Quarantine
     let all = ContainmentAction::ALL;
     for window in all.windows(2) {
-        assert!(window[0] < window[1], "{:?} should be < {:?}", window[0], window[1]);
+        assert!(
+            window[0] < window[1],
+            "{:?} should be < {:?}",
+            window[0],
+            window[1]
+        );
     }
 }
 
@@ -1344,7 +1341,12 @@ fn true_state_ordering_matches_risk() {
     // Benign < Suspicious < Malicious < Compromised
     let all = TrueState::ALL;
     for window in all.windows(2) {
-        assert!(window[0] < window[1], "{:?} should be < {:?}", window[0], window[1]);
+        assert!(
+            window[0] < window[1],
+            "{:?} should be < {:?}",
+            window[0],
+            window[1]
+        );
     }
 }
 

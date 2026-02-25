@@ -22,10 +22,10 @@ use frankenengine_engine::security_epoch::SecurityEpoch;
 fn test_config() -> AccountantConfig {
     AccountantConfig {
         zone: "zone-A".into(),
-        epsilon_per_epoch_millionths: 1_000_000,         // 1.0
-        delta_per_epoch_millionths: 100_000,              // 0.1
-        lifetime_epsilon_budget_millionths: 10_000_000,   // 10.0
-        lifetime_delta_budget_millionths: 1_000_000,      // 1.0
+        epsilon_per_epoch_millionths: 1_000_000,        // 1.0
+        delta_per_epoch_millionths: 100_000,            // 0.1
+        lifetime_epsilon_budget_millionths: 10_000_000, // 10.0
+        lifetime_delta_budget_millionths: 1_000_000,    // 1.0
         composition_method: CompositionMethod::Basic,
         epoch: SecurityEpoch::from_raw(1),
         now_ns: 1_000_000_000,
@@ -171,7 +171,9 @@ fn new_rejects_negative_lifetime_delta() {
 #[test]
 fn consume_basic_returns_correct_record() {
     let mut acc = test_accountant();
-    let record = acc.consume(100_000, 10_000, "noise addition", 2_000_000_000).unwrap();
+    let record = acc
+        .consume(100_000, 10_000, "noise addition", 2_000_000_000)
+        .unwrap();
     assert_eq!(record.operation_id, 1);
     assert_eq!(record.epoch, SecurityEpoch::from_raw(1));
     assert_eq!(record.epsilon_consumed_millionths, 100_000);
@@ -229,8 +231,13 @@ fn consume_zero_epsilon_and_delta() {
 fn consume_multiple_drains_budget_correctly() {
     let mut acc = test_accountant();
     for i in 0..5 {
-        acc.consume(100_000, 10_000, &format!("op-{i}"), (i as u64 + 2) * 1_000_000_000)
-            .unwrap();
+        acc.consume(
+            100_000,
+            10_000,
+            &format!("op-{i}"),
+            (i as u64 + 2) * 1_000_000_000,
+        )
+        .unwrap();
     }
     assert_eq!(acc.epoch_epsilon_remaining(), 500_000);
     assert_eq!(acc.epoch_delta_remaining(), 50_000);
@@ -274,7 +281,9 @@ fn epoch_exhaustion_trips_latch() {
     let mut acc = test_accountant();
     acc.consume(900_000, 0, "big op", 2_000_000_000).unwrap();
     // Next consumption would exceed budget.
-    let err = acc.consume(200_000, 0, "overflow", 3_000_000_000).unwrap_err();
+    let err = acc
+        .consume(200_000, 0, "overflow", 3_000_000_000)
+        .unwrap_err();
     assert!(matches!(err, AccountantError::BudgetExhausted { .. }));
     assert!(acc.is_exhausted());
 }
@@ -300,7 +309,9 @@ fn delta_exhaustion() {
     let mut acc = test_accountant();
     // Delta budget is 100_000.
     acc.consume(0, 90_000, "op1", 2_000_000_000).unwrap();
-    let err = acc.consume(0, 20_000, "overflow", 3_000_000_000).unwrap_err();
+    let err = acc
+        .consume(0, 20_000, "overflow", 3_000_000_000)
+        .unwrap_err();
     assert!(matches!(err, AccountantError::BudgetExhausted { .. }));
     assert!(acc.is_exhausted());
 }
@@ -309,7 +320,8 @@ fn delta_exhaustion() {
 fn exact_budget_consumption_succeeds() {
     let mut acc = test_accountant();
     // Consume exactly the full epsilon budget.
-    acc.consume(1_000_000, 0, "exact-eps", 2_000_000_000).unwrap();
+    acc.consume(1_000_000, 0, "exact-eps", 2_000_000_000)
+        .unwrap();
     assert_eq!(acc.epoch_epsilon_remaining(), 0);
     assert!(!acc.is_exhausted());
 }
@@ -375,11 +387,14 @@ fn lifetime_exhaustion_across_epochs() {
     .unwrap();
 
     acc.consume(400_000, 40_000, "ep1", 1_000_000_000).unwrap();
-    acc.advance_epoch(SecurityEpoch::from_raw(2), 5_000_000_000).unwrap();
+    acc.advance_epoch(SecurityEpoch::from_raw(2), 5_000_000_000)
+        .unwrap();
     acc.consume(400_000, 40_000, "ep2", 6_000_000_000).unwrap();
 
     // Lifetime is 800K eps, we've spent 800K.
-    let err = acc.consume(100_000, 0, "over-lifetime", 7_000_000_000).unwrap_err();
+    let err = acc
+        .consume(100_000, 0, "over-lifetime", 7_000_000_000)
+        .unwrap_err();
     assert!(matches!(err, AccountantError::BudgetExhausted { .. }));
 }
 
@@ -411,7 +426,8 @@ fn advance_epoch_produces_correct_summary() {
 fn advance_epoch_resets_budget() {
     let mut acc = test_accountant();
     acc.consume(500_000, 50_000, "half", 2_000_000_000).unwrap();
-    acc.advance_epoch(SecurityEpoch::from_raw(2), 10_000_000_000).unwrap();
+    acc.advance_epoch(SecurityEpoch::from_raw(2), 10_000_000_000)
+        .unwrap();
 
     assert_eq!(acc.current_epoch, SecurityEpoch::from_raw(2));
     assert_eq!(acc.epoch_epsilon_remaining(), 1_000_000);
@@ -424,7 +440,8 @@ fn advance_epoch_no_budget_rollover() {
     let mut acc = test_accountant();
     // Use only a tiny amount.
     acc.consume(10_000, 1_000, "tiny", 2_000_000_000).unwrap();
-    acc.advance_epoch(SecurityEpoch::from_raw(2), 10_000_000_000).unwrap();
+    acc.advance_epoch(SecurityEpoch::from_raw(2), 10_000_000_000)
+        .unwrap();
 
     // New epoch has exactly the per-epoch allocation, not rolled-over surplus.
     assert_eq!(acc.epoch_epsilon_remaining(), 1_000_000);
@@ -438,19 +455,24 @@ fn advance_epoch_clears_exhaustion() {
     let _ = acc.consume(200_000, 0, "overflow", 3_000_000_000);
     assert!(acc.is_exhausted());
 
-    acc.advance_epoch(SecurityEpoch::from_raw(2), 10_000_000_000).unwrap();
+    acc.advance_epoch(SecurityEpoch::from_raw(2), 10_000_000_000)
+        .unwrap();
     assert!(!acc.is_exhausted());
 
     // Can consume again in new epoch.
-    acc.consume(100_000, 10_000, "fresh op", 11_000_000_000).unwrap();
+    acc.consume(100_000, 10_000, "fresh op", 11_000_000_000)
+        .unwrap();
 }
 
 #[test]
 fn advance_epoch_retains_lifetime_spending() {
     let mut acc = test_accountant();
-    acc.consume(300_000, 30_000, "ep1-op", 2_000_000_000).unwrap();
-    acc.advance_epoch(SecurityEpoch::from_raw(2), 10_000_000_000).unwrap();
-    acc.consume(200_000, 20_000, "ep2-op", 11_000_000_000).unwrap();
+    acc.consume(300_000, 30_000, "ep1-op", 2_000_000_000)
+        .unwrap();
+    acc.advance_epoch(SecurityEpoch::from_raw(2), 10_000_000_000)
+        .unwrap();
+    acc.consume(200_000, 20_000, "ep2-op", 11_000_000_000)
+        .unwrap();
 
     assert_eq!(acc.lifetime_epsilon_spent_millionths, 500_000);
     assert_eq!(acc.lifetime_delta_spent_millionths, 50_000);
@@ -461,9 +483,12 @@ fn advance_epoch_retains_lifetime_spending() {
 #[test]
 fn advance_epoch_stores_summaries() {
     let mut acc = test_accountant();
-    acc.advance_epoch(SecurityEpoch::from_raw(2), 5_000_000_000).unwrap();
-    acc.advance_epoch(SecurityEpoch::from_raw(3), 10_000_000_000).unwrap();
-    acc.advance_epoch(SecurityEpoch::from_raw(4), 15_000_000_000).unwrap();
+    acc.advance_epoch(SecurityEpoch::from_raw(2), 5_000_000_000)
+        .unwrap();
+    acc.advance_epoch(SecurityEpoch::from_raw(3), 10_000_000_000)
+        .unwrap();
+    acc.advance_epoch(SecurityEpoch::from_raw(4), 15_000_000_000)
+        .unwrap();
 
     let summaries = acc.epoch_summaries();
     assert_eq!(summaries.len(), 3);
@@ -507,7 +532,8 @@ fn advance_epoch_rejects_same_epoch() {
 #[test]
 fn advance_epoch_rejects_lower_epoch() {
     let mut acc = test_accountant();
-    acc.advance_epoch(SecurityEpoch::from_raw(5), 2_000_000_000).unwrap();
+    acc.advance_epoch(SecurityEpoch::from_raw(5), 2_000_000_000)
+        .unwrap();
     let err = acc
         .advance_epoch(SecurityEpoch::from_raw(3), 3_000_000_000)
         .unwrap_err();
@@ -517,7 +543,8 @@ fn advance_epoch_rejects_lower_epoch() {
 #[test]
 fn advance_epoch_rejects_genesis_after_higher() {
     let mut acc = test_accountant();
-    acc.advance_epoch(SecurityEpoch::from_raw(10), 2_000_000_000).unwrap();
+    acc.advance_epoch(SecurityEpoch::from_raw(10), 2_000_000_000)
+        .unwrap();
     let err = acc
         .advance_epoch(SecurityEpoch::GENESIS, 3_000_000_000)
         .unwrap_err();
@@ -541,8 +568,10 @@ fn lifetime_exhaustion_blocks_new_epoch_consumption() {
     })
     .unwrap();
 
-    acc.consume(500_000, 50_000, "fill-lifetime", 1_000_000_000).unwrap();
-    acc.advance_epoch(SecurityEpoch::from_raw(2), 5_000_000_000).unwrap();
+    acc.consume(500_000, 50_000, "fill-lifetime", 1_000_000_000)
+        .unwrap();
+    acc.advance_epoch(SecurityEpoch::from_raw(2), 5_000_000_000)
+        .unwrap();
 
     // New epoch starts exhausted because lifetime is fully consumed.
     assert!(acc.is_exhausted());
@@ -606,7 +635,12 @@ fn advanced_composition_cost_decreases_with_more_ops() {
     let mut composed_costs = Vec::new();
     for i in 0..10 {
         let r = acc
-            .consume(100_000, 10_000, &format!("op{i}"), (i as u64 + 2) * 1_000_000_000)
+            .consume(
+                100_000,
+                10_000,
+                &format!("op{i}"),
+                (i as u64 + 2) * 1_000_000_000,
+            )
             .unwrap();
         composed_costs.push(r.composed_epsilon_millionths);
     }
@@ -720,7 +754,8 @@ fn forecast_after_exhaustion() {
 fn forecast_after_epoch_advance() {
     let mut acc = test_accountant();
     acc.consume(500_000, 50_000, "ep1", 2_000_000_000).unwrap();
-    acc.advance_epoch(SecurityEpoch::from_raw(2), 10_000_000_000).unwrap();
+    acc.advance_epoch(SecurityEpoch::from_raw(2), 10_000_000_000)
+        .unwrap();
 
     let fc = acc.forecast();
     assert_eq!(fc.epoch_epsilon_remaining_millionths, 1_000_000);
@@ -775,7 +810,7 @@ fn epoch_budget_would_exhaust_epsilon() {
         exhausted: false,
     };
     assert!(!eb.would_exhaust(100_000, 0)); // exactly at limit
-    assert!(eb.would_exhaust(200_000, 0));  // over limit
+    assert!(eb.would_exhaust(200_000, 0)); // over limit
     assert!(!eb.would_exhaust(0, 100_000)); // delta within limit
 }
 
@@ -792,8 +827,8 @@ fn epoch_budget_would_exhaust_delta() {
         created_at_ns: 0,
         exhausted: false,
     };
-    assert!(!eb.would_exhaust(0, 10_000));  // at limit
-    assert!(eb.would_exhaust(0, 20_000));   // over limit
+    assert!(!eb.would_exhaust(0, 10_000)); // at limit
+    assert!(eb.would_exhaust(0, 20_000)); // over limit
 }
 
 #[test]
@@ -908,9 +943,12 @@ fn accountant_serde_round_trip_with_consumption() {
 #[test]
 fn accountant_serde_round_trip_with_epoch_advance() {
     let mut acc = test_accountant();
-    acc.consume(300_000, 30_000, "ep1-op", 2_000_000_000).unwrap();
-    acc.advance_epoch(SecurityEpoch::from_raw(2), 10_000_000_000).unwrap();
-    acc.consume(100_000, 10_000, "ep2-op", 11_000_000_000).unwrap();
+    acc.consume(300_000, 30_000, "ep1-op", 2_000_000_000)
+        .unwrap();
+    acc.advance_epoch(SecurityEpoch::from_raw(2), 10_000_000_000)
+        .unwrap();
+    acc.consume(100_000, 10_000, "ep2-op", 11_000_000_000)
+        .unwrap();
 
     let json = serde_json::to_string(&acc).unwrap();
     let restored: BudgetAccountant = serde_json::from_str(&json).unwrap();
@@ -1108,11 +1146,20 @@ fn multi_epoch_stress_test() {
 fn operation_ids_monotonic_across_epochs() {
     let mut acc = test_accountant();
 
-    let r1 = acc.consume(50_000, 5_000, "ep1-op1", 1_000_000_000).unwrap();
-    let r2 = acc.consume(50_000, 5_000, "ep1-op2", 2_000_000_000).unwrap();
-    acc.advance_epoch(SecurityEpoch::from_raw(2), 5_000_000_000).unwrap();
-    let r3 = acc.consume(50_000, 5_000, "ep2-op1", 6_000_000_000).unwrap();
-    let r4 = acc.consume(50_000, 5_000, "ep2-op2", 7_000_000_000).unwrap();
+    let r1 = acc
+        .consume(50_000, 5_000, "ep1-op1", 1_000_000_000)
+        .unwrap();
+    let r2 = acc
+        .consume(50_000, 5_000, "ep1-op2", 2_000_000_000)
+        .unwrap();
+    acc.advance_epoch(SecurityEpoch::from_raw(2), 5_000_000_000)
+        .unwrap();
+    let r3 = acc
+        .consume(50_000, 5_000, "ep2-op1", 6_000_000_000)
+        .unwrap();
+    let r4 = acc
+        .consume(50_000, 5_000, "ep2-op2", 7_000_000_000)
+        .unwrap();
 
     assert_eq!(r1.operation_id, 1);
     assert_eq!(r2.operation_id, 2);

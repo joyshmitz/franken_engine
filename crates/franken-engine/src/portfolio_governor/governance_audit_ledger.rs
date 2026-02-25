@@ -1711,7 +1711,7 @@ mod tests {
                     i * 10,
                 ))
                 .unwrap();
-            assert_eq!(entry.sequence, i as u64);
+            assert_eq!(entry.sequence, i);
         }
     }
 }

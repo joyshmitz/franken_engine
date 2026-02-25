@@ -174,9 +174,9 @@ fn constant_hazard_is_independent_of_run_length() {
 fn normal_stats_default_prior_values() {
     let prior = NormalStats::default_prior();
     assert_eq!(prior.mu0, 0);
-    assert_eq!(prior.kappa0, 100_000);   // 0.1
+    assert_eq!(prior.kappa0, 100_000); // 0.1
     assert_eq!(prior.alpha0, 1_000_000); // 1.0
-    assert_eq!(prior.beta0, 1_000_000);  // 1.0
+    assert_eq!(prior.beta0, 1_000_000); // 1.0
 }
 
 #[test]
@@ -527,7 +527,10 @@ fn transition_emits_regime_change_event() {
     }
 
     let events = det.drain_events();
-    assert!(!events.is_empty(), "at least one regime change event expected");
+    assert!(
+        !events.is_empty(),
+        "at least one regime change event expected"
+    );
 
     for event in &events {
         assert_eq!(event.detector_id, "det-int");
@@ -1018,7 +1021,7 @@ fn tight_prior_detects_change_faster() {
             mu0: 300_000,    // centered at normal
             kappa0: 500_000, // tighter prior (0.5 vs 0.1)
             alpha0: 2_000_000,
-            beta0: 500_000,  // smaller variance
+            beta0: 500_000, // smaller variance
         },
         hazard_lambda: 50, // shorter expected run
     };
