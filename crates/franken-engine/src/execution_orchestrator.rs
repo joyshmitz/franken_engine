@@ -27,7 +27,7 @@ use crate::bayesian_posterior::{
 use crate::containment_executor::{
     ContainmentContext, ContainmentError, ContainmentExecutor, ContainmentReceipt, SandboxPolicy,
 };
-use crate::control_plane::mocks::{trace_id_from_seed, MockBudget, MockCx};
+use crate::control_plane::mocks::{MockBudget, MockCx, trace_id_from_seed};
 use crate::entropy_evidence_compressor::{
     ArithmeticCoder, CompressionCertificate, EntropyEstimator,
 };
@@ -42,11 +42,11 @@ use crate::expected_loss_selector::{
 use crate::hash_tiers::ContentHash;
 use crate::ir_contract::{Ir0Module, Ir3Module};
 use crate::lowering_pipeline::{
-    lower_ir0_to_ir3, LoweringContext, LoweringEvent, LoweringPipelineError, PassWitness,
+    LoweringContext, LoweringEvent, LoweringPipelineError, PassWitness, lower_ir0_to_ir3,
 };
 use crate::optimal_stopping::{
     EscalationPolicy, Observation as StoppingObservation, OptimalStoppingCertificate,
-    StoppingDecision, STOPPING_SCHEMA_VERSION,
+    STOPPING_SCHEMA_VERSION, StoppingDecision,
 };
 use crate::parser::{CanonicalEs2020Parser, ParseError, ParserOptions};
 use crate::region_lifecycle::{CancelReason, DrainDeadline, FinalizeResult};
@@ -55,8 +55,8 @@ use crate::regret_bounded_router::{
     RouterSummary,
 };
 use crate::saga_orchestrator::{
-    eviction_saga_steps, quarantine_saga_steps, revocation_saga_steps, SagaError, SagaOrchestrator,
-    SagaType,
+    SagaError, SagaOrchestrator, SagaType, eviction_saga_steps, quarantine_saga_steps,
+    revocation_saga_steps,
 };
 use crate::security_epoch::SecurityEpoch;
 use crate::tropical_semiring::{

@@ -34,19 +34,36 @@ run_rch() {
   rch exec -- env "RUSTUP_TOOLCHAIN=${toolchain}" "CARGO_TARGET_DIR=${target_dir}" "$@"
 }
 
+rch_reject_local_fallback() {
+  local log_path="$1"
+  if grep -Eiq 'falling back to local|fallback to local|local fallback' "$log_path"; then
+    echo "rch reported local fallback; refusing local execution for heavy command" >&2
+    return 1
+  fi
+}
+
 declare -a commands_run=()
 failed_command=""
 manifest_written=false
 
 run_step() {
   local command_text="$1"
+  local log_path
   shift
   commands_run+=("$command_text")
   echo "==> $command_text"
-  if ! run_rch "$@"; then
+  log_path="$(mktemp)"
+  if ! run_rch "$@" > >(tee "$log_path") 2>&1; then
+    rm -f "$log_path"
     failed_command="$command_text"
     return 1
   fi
+  if ! rch_reject_local_fallback "$log_path"; then
+    rm -f "$log_path"
+    failed_command="${command_text} (rch-local-fallback-detected)"
+    return 1
+  fi
+  rm -f "$log_path"
 }
 
 run_mode() {

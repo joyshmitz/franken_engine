@@ -895,7 +895,11 @@ mod tests {
             },
             RemoteTransportError::CapabilityDenied(denied),
         ];
-        assert_eq!(errors.len(), 4, "must cover all RemoteTransportError variants");
+        assert_eq!(
+            errors.len(),
+            4,
+            "must cover all RemoteTransportError variants"
+        );
         for err in &errors {
             let msg = err.to_string();
             assert!(!msg.is_empty());

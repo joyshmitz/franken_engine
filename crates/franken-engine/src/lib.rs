@@ -206,6 +206,7 @@ pub mod succinct_witness_compiler;
 pub mod supervision;
 pub mod synthesis_budget;
 pub mod tee_attestation_policy;
+pub mod test_taxonomy;
 pub mod test262_release_gate;
 pub mod third_party_verifier;
 pub mod threshold_signing;

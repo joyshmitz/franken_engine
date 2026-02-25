@@ -371,12 +371,15 @@ impl SpectralAnalyzer {
         // using inverse power iteration with deflation.
 
         // Step 1: Find λ_max via standard power iteration.
-        let (lambda_max, _) = self.power_iteration_max(&laplacian)?;
+        let (lambda_max, _, lambda_max_iterations) = self.power_iteration_max(&laplacian)?;
 
         // Step 2: Find Fiedler value (λ₂) via shifted inverse iteration.
         // We use the property that the all-ones vector is the eigenvector
         // of λ₁ = 0, so we deflate by projecting out the uniform component.
-        let (fiedler_value, fiedler_vector) = self.fiedler_computation(&laplacian)?;
+        let (fiedler_value, fiedler_vector, fiedler_iterations) =
+            self.fiedler_computation(&laplacian)?;
+        let fiedler_residual =
+            eigen_residual_inf_norm_millionths(&laplacian, &fiedler_vector, fiedler_value);
 
         // Spectral gap = λ₂ (algebraic connectivity).
         // For connected graphs, λ₂ > 0 by Fiedler's theorem.
@@ -426,6 +429,10 @@ impl SpectralAnalyzer {
             algebraic_connectivity_millionths: fiedler_value,
             spectral_gap_millionths: spectral_gap,
             mixing_time_bound: mixing_time.max(1) as u64,
+            lambda_max_millionths: lambda_max,
+            lambda_max_iterations,
+            fiedler_iterations,
+            fiedler_residual_millionths: fiedler_residual,
             cheeger_lower_bound_millionths: cheeger_lower,
             cheeger_upper_bound_millionths: cheeger_upper,
             fiedler_vector_millionths: fiedler_vector,
@@ -439,14 +446,14 @@ impl SpectralAnalyzer {
     fn power_iteration_max(
         &self,
         laplacian: &LaplacianMatrix,
-    ) -> Result<(i64, Vec<i64>), SpectralError> {
+    ) -> Result<(i64, Vec<i64>, usize), SpectralError> {
         let n = laplacian.dim;
         let mut v: Vec<i64> = (0..n).map(|i| MILLION / n as i64 + i as i64).collect();
         normalize_vector_millionths(&mut v);
 
         let mut lambda = 0i64;
         #[allow(clippy::needless_range_loop)]
-        for _ in 0..self.max_iterations {
+        for iter in 0..self.max_iterations {
             let mut new_v = vec![0i64; n];
             for i in 0..n {
                 let mut sum = 0i128;
@@ -460,7 +467,7 @@ impl SpectralAnalyzer {
             normalize_vector_millionths(&mut new_v);
 
             if (new_lambda - lambda).abs() < self.convergence_threshold_millionths {
-                return Ok((new_lambda, new_v));
+                return Ok((new_lambda, new_v, iter + 1));
             }
             lambda = new_lambda;
             v = new_v;
@@ -478,11 +485,11 @@ impl SpectralAnalyzer {
     fn fiedler_computation(
         &self,
         laplacian: &LaplacianMatrix,
-    ) -> Result<(i64, Vec<i64>), SpectralError> {
+    ) -> Result<(i64, Vec<i64>, usize), SpectralError> {
         let n = laplacian.dim;
 
         // First get λ_max.
-        let (lambda_max, _) = self.power_iteration_max(laplacian)?;
+        let (lambda_max, _, _) = self.power_iteration_max(laplacian)?;
 
         // Initialize with non-uniform vector orthogonal to all-ones.
         let mut v: Vec<i64> = (0..n)
@@ -494,7 +501,7 @@ impl SpectralAnalyzer {
 
         let mut lambda = 0i64;
         #[allow(clippy::needless_range_loop)]
-        for _ in 0..self.max_iterations {
+        for iter in 0..self.max_iterations {
             // Multiply by (λ_max · I - L).
             let mut new_v = vec![0i64; n];
             for i in 0..n {
@@ -521,7 +528,7 @@ impl SpectralAnalyzer {
                 // Recover λ₂ from the converged vector using the Rayleigh
                 // quotient on the original Laplacian for numerical robustness.
                 let fiedler_value = rayleigh_quotient_millionths(laplacian, &new_v);
-                return Ok((fiedler_value.max(0), new_v));
+                return Ok((fiedler_value.max(0), new_v, iter + 1));
             }
             lambda = new_lambda;
             v = new_v;
@@ -590,6 +597,9 @@ impl ConvergenceCertificate {
             spectral_gap_millionths: analysis.spectral_gap_millionths,
             cheeger_lower_millionths: analysis.cheeger_lower_bound_millionths,
             cheeger_upper_millionths: analysis.cheeger_upper_bound_millionths,
+            lambda_max_millionths: analysis.lambda_max_millionths,
+            fiedler_iterations: analysis.fiedler_iterations,
+            fiedler_residual_millionths: analysis.fiedler_residual_millionths,
             has_natural_partition: has_partition,
             partition_sizes,
             epoch,
@@ -665,6 +675,24 @@ fn rayleigh_quotient_millionths(laplacian: &LaplacianMatrix, v: &[i64]) -> i64 {
     let numerator = dot_product_millionths(&lv, v) as i128;
     let denominator = dot_product_millionths(v, v).max(1) as i128;
     (numerator * MILLION as i128 / denominator) as i64
+}
+
+/// Infinity norm of the eigen residual `L v - λ v` in millionths.
+fn eigen_residual_inf_norm_millionths(
+    laplacian: &LaplacianMatrix,
+    v: &[i64],
+    lambda_millionths: i64,
+) -> i64 {
+    let lv = apply_laplacian_millionths(laplacian, v);
+    let mut max_abs = 0i64;
+    for (&lvi, &vi) in lv.iter().zip(v.iter()) {
+        let rhs = (lambda_millionths as i128 * vi as i128) / MILLION as i128;
+        let resid = (lvi as i128 - rhs).abs().clamp(0, i64::MAX as i128) as i64;
+        if resid > max_abs {
+            max_abs = resid;
+        }
+    }
+    max_abs
 }
 
 /// Integer square root of i128.
@@ -901,6 +929,12 @@ mod tests {
         assert!(analysis.spectral_gap_millionths > 0);
         // Mixing time should be low for complete graph.
         assert!(analysis.mixing_time_bound < 100);
+        assert!(analysis.lambda_max_millionths >= analysis.algebraic_connectivity_millionths);
+        assert!(analysis.lambda_max_iterations >= 1);
+        assert!(analysis.lambda_max_iterations <= analyzer.max_iterations);
+        assert!(analysis.fiedler_iterations >= 1);
+        assert!(analysis.fiedler_iterations <= analyzer.max_iterations);
+        assert!(analysis.fiedler_residual_millionths >= 0);
     }
 
     #[test]
@@ -969,6 +1003,12 @@ mod tests {
 
         assert_eq!(cert.num_nodes, 5);
         assert!(cert.spectral_gap_millionths > 0);
+        assert_eq!(cert.lambda_max_millionths, analysis.lambda_max_millionths);
+        assert_eq!(cert.fiedler_iterations, analysis.fiedler_iterations);
+        assert_eq!(
+            cert.fiedler_residual_millionths,
+            analysis.fiedler_residual_millionths
+        );
     }
 
     #[test]

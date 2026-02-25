@@ -37,19 +37,36 @@ run_rch() {
   rch exec -- env "RUSTUP_TOOLCHAIN=${toolchain}" "CARGO_TARGET_DIR=${target_dir}" "$@"
 }
 
+rch_reject_local_fallback() {
+  local log_path="$1"
+  if grep -Eiq 'falling back to local|fallback to local|local fallback' "$log_path"; then
+    echo "rch reported local fallback; refusing local execution for heavy command" >&2
+    return 1
+  fi
+}
+
 declare -a commands_run=()
 failed_command=""
 manifest_written=false
 
 run_step() {
   local command_text="$1"
+  local log_path
   shift
   commands_run+=("$command_text")
   echo "==> $command_text"
-  if ! run_rch "$@"; then
+  log_path="$(mktemp)"
+  if ! run_rch "$@" > >(tee "$log_path") 2>&1; then
+    rm -f "$log_path"
     failed_command="$command_text"
     return 1
   fi
+  if ! rch_reject_local_fallback "$log_path"; then
+    rm -f "$log_path"
+    failed_command="${command_text} (rch-local-fallback-detected)"
+    return 1
+  fi
+  rm -f "$log_path"
 }
 
 run_mode() {
@@ -108,7 +125,7 @@ write_manifest() {
   printf '%s\n' "${commands_run[@]}" >"$commands_path"
 
   {
-    echo "{\"schema_version\":\"franken-engine.parser-log-event.v1\",\"trace_id\":\"${trace_id}\",\"decision_id\":\"${decision_id}\",\"policy_id\":\"${policy_id}\",\"component\":\"${component}\",\"event\":\"gate_completed\",\"outcome\":\"${outcome}\",\"error_code\":${error_code_json},\"run_id\":\"${run_id}\",\"criteria_version\":\"${criteria_version}\",\"git_sha\":\"${git_commit}\",\"artifact_bundle_id\":\"${artifact_bundle_id}\",\"verdict\":\"${outcome}\",\"replay_command\":\"${replay_command}\"}"
+    echo "{\"schema_version\":\"franken-engine.parser-supremacy-criteria.log-event.v1\",\"trace_id\":\"${trace_id}\",\"decision_id\":\"${decision_id}\",\"policy_id\":\"${policy_id}\",\"component\":\"${component}\",\"event\":\"gate_completed\",\"outcome\":\"${outcome}\",\"error_code\":${error_code_json},\"run_id\":\"${run_id}\",\"criteria_version\":\"${criteria_version}\",\"git_sha\":\"${git_commit}\",\"artifact_bundle_id\":\"${artifact_bundle_id}\",\"verdict\":\"${outcome}\",\"replay_command\":\"${replay_command}\"}"
   } >"$events_path"
 
   {

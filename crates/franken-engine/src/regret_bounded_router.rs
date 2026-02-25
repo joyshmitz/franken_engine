@@ -343,8 +343,7 @@ impl FtrlState {
             .cumulative_rewards_millionths
             .iter()
             .map(|&r| {
-                let scaled =
-                    (self.eta_millionths as i128 * (r - max_r) as i128) / MILLION as i128;
+                let scaled = (self.eta_millionths as i128 * (r - max_r) as i128) / MILLION as i128;
                 scaled.clamp(i64::MIN as i128, i64::MAX as i128) as i64
             })
             .collect();

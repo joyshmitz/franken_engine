@@ -727,6 +727,18 @@ impl ConvergenceEngine {
             cert.mixing_time_rounds.to_string(),
         );
         fields.insert(
+            "lambda_max_millionths".to_string(),
+            cert.lambda_max_millionths.to_string(),
+        );
+        fields.insert(
+            "fiedler_iterations".to_string(),
+            cert.fiedler_iterations.to_string(),
+        );
+        fields.insert(
+            "fiedler_residual_millionths".to_string(),
+            cert.fiedler_residual_millionths.to_string(),
+        );
+        fields.insert(
             "has_partition".to_string(),
             cert.has_natural_partition.to_string(),
         );
@@ -1914,6 +1926,11 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].fields.get("healthy_nodes").unwrap(), "3");
         assert!(events[0].fields.contains_key("spectral_gap_millionths"));
+        assert!(events[0].fields.contains_key("lambda_max_millionths"));
+        assert!(events[0].fields.contains_key("fiedler_iterations"));
+        assert!(events[0]
+            .fields
+            .contains_key("fiedler_residual_millionths"));
     }
 
     // -- ConvergenceEvent serde --
