@@ -19,6 +19,7 @@
 //! ## Related beads
 //!
 //! - bd-19ba (this module)
+//! - bd-2mds.1.3.2 (SoA token/span storage with cache-local layout)
 //! - bd-drjd (arena-allocated AST / token definitions — upstream dependency)
 //! - bd-1vfi (parallel parsing — downstream consumer)
 //! - bd-1b70 (parser oracle — parity gate)
@@ -101,6 +102,95 @@ impl Token {
             line,
             column_start.saturating_add(self.span_len()),
         )
+    }
+}
+
+/// Cache-local token/span storage using a Structure-of-Arrays (SoA) layout.
+///
+/// Keeps token kinds and span columns contiguous to improve scan/merge locality
+/// in parser-adjacent lanes while still materializing canonical `Token` vectors
+/// for compatibility at API boundaries.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct TokenSpanStorage {
+    kinds: Vec<TokenKind>,
+    starts: Vec<u64>,
+    ends: Vec<u64>,
+}
+
+impl TokenSpanStorage {
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            kinds: Vec::with_capacity(capacity),
+            starts: Vec::with_capacity(capacity),
+            ends: Vec::with_capacity(capacity),
+        }
+    }
+
+    pub fn from_tokens(tokens: &[Token]) -> Self {
+        let mut storage = Self::with_capacity(tokens.len());
+        for token in tokens {
+            storage.push(token.kind, token.start, token.end);
+        }
+        storage
+    }
+
+    pub fn len(&self) -> usize {
+        self.kinds.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.kinds.is_empty()
+    }
+
+    pub fn token_kinds(&self) -> &[TokenKind] {
+        &self.kinds
+    }
+
+    pub fn starts(&self) -> &[u64] {
+        &self.starts
+    }
+
+    pub fn ends(&self) -> &[u64] {
+        &self.ends
+    }
+
+    pub fn push(&mut self, kind: TokenKind, start: u64, end: u64) {
+        self.kinds.push(kind);
+        self.starts.push(start);
+        self.ends.push(end);
+        debug_assert_eq!(self.kinds.len(), self.starts.len());
+        debug_assert_eq!(self.starts.len(), self.ends.len());
+    }
+
+    pub fn to_tokens(&self) -> Vec<Token> {
+        debug_assert_eq!(self.kinds.len(), self.starts.len());
+        debug_assert_eq!(self.starts.len(), self.ends.len());
+
+        let mut tokens = Vec::with_capacity(self.kinds.len());
+        for index in 0..self.kinds.len() {
+            tokens.push(Token {
+                kind: self.kinds[index],
+                start: self.starts[index],
+                end: self.ends[index],
+            });
+        }
+        tokens
+    }
+
+    pub fn into_tokens(self) -> Vec<Token> {
+        let len = self.kinds.len();
+        debug_assert_eq!(len, self.starts.len());
+        debug_assert_eq!(len, self.ends.len());
+
+        let mut tokens = Vec::with_capacity(len);
+        for index in 0..len {
+            tokens.push(Token {
+                kind: self.kinds[index],
+                start: self.starts[index],
+                end: self.ends[index],
+            });
+        }
+        tokens
     }
 }
 
@@ -287,6 +377,50 @@ const fn broadcast(byte: u8) -> u64 {
     0x0101_0101_0101_0101_u64.wrapping_mul(byte as u64)
 }
 
+#[inline]
+fn new_token_storage(input_len: usize, emit_tokens: bool) -> Option<TokenSpanStorage> {
+    if emit_tokens {
+        // Most inputs have far fewer tokens than bytes, but keeping a bounded
+        // headroom avoids repeated growth on common short/medium snippets.
+        Some(TokenSpanStorage::with_capacity(input_len.min(256)))
+    } else {
+        None
+    }
+}
+
+#[inline]
+fn push_emitted_token(
+    storage: &mut Option<TokenSpanStorage>,
+    kind: TokenKind,
+    start: u64,
+    end: u64,
+) {
+    if let Some(storage) = storage.as_mut() {
+        storage.push(kind, start, end);
+    }
+}
+
+#[inline]
+fn finalize_tokens(storage: Option<TokenSpanStorage>) -> Vec<Token> {
+    storage
+        .map(TokenSpanStorage::into_tokens)
+        .unwrap_or_default()
+}
+
+const SWAR_HIGH_BITS: u64 = 0x8080_8080_8080_8080_u64;
+
+#[inline]
+fn match_prefix_len(mask: u64) -> usize {
+    let mut count = 0usize;
+    while count < SWAR_WIDTH {
+        if (mask & (0x80_u64 << (count * 8))) == 0 {
+            break;
+        }
+        count += 1;
+    }
+    count
+}
+
 /// Produce a mask where each byte position that equals `target` has its high bit set.
 /// Other bytes have their high bit clear.
 ///
@@ -300,8 +434,10 @@ const fn byte_eq_mask(word: u64, target: u8) -> u64 {
     let broadcast_target = broadcast(target);
     let xor = word ^ broadcast_target;
     let high_bits = 0x8080_8080_8080_8080_u64;
-    let low_mask = !high_bits; // 0x7F7F_7F7F_7F7F_7F7F
-    // Check lower 7 bits of each byte are zero (carry-free: max 0x7F + 0x7F = 0xFE < 0x100)
+    let low_mask = !high_bits;
+    // 0x7F7F_7F7F_7F7F_7F7F
+    // Check lower 7 bits of each byte are zero.
+    // Carry-free guarantee: max 0x7F + 0x7F = 0xFE < 0x100.
     let lower7 = xor & low_mask;
     let lower_nonzero = lower7.wrapping_add(low_mask) & high_bits;
     let lower_zero = !lower_nonzero & high_bits;
@@ -310,20 +446,16 @@ const fn byte_eq_mask(word: u64, target: u8) -> u64 {
     lower_zero & high_zero
 }
 
-// The following SWAR mask functions are available for testing and future use
-// when borrow-propagation-safe formulations are validated. The production SWAR
-// path currently uses explicit byte-by-byte word checks (is_all_whitespace_word,
-// is_all_ident_continue_word, is_all_digit_word) which avoid SWAR false positives.
-
-#[cfg(test)]
+// SWAR mask helpers used by lexer hot loops and parity tests.
 fn whitespace_mask(word: u64) -> u64 {
     byte_eq_mask(word, b' ')
         | byte_eq_mask(word, b'\t')
         | byte_eq_mask(word, b'\n')
         | byte_eq_mask(word, b'\r')
+        | byte_eq_mask(word, 0x0B)
+        | byte_eq_mask(word, 0x0C)
 }
 
-#[cfg(test)]
 fn digit_mask(word: u64) -> u64 {
     let high_bits = 0x8080_8080_8080_8080_u64;
     let low_bound = 0x3030_3030_3030_3030_u64;
@@ -333,12 +465,10 @@ fn digit_mask(word: u64) -> u64 {
     ge_low & le_high
 }
 
-#[cfg(test)]
 fn identifier_continue_mask(word: u64) -> u64 {
     alpha_mask(word) | digit_mask(word) | byte_eq_mask(word, b'_') | byte_eq_mask(word, b'$')
 }
 
-#[cfg(test)]
 fn alpha_mask(word: u64) -> u64 {
     let upper = word & !broadcast(0x20);
     let high_bits = 0x8080_8080_8080_8080_u64;
@@ -354,7 +484,6 @@ const fn mask_popcount(mask: u64) -> u32 {
     (mask >> 7).count_ones()
 }
 
-#[cfg(test)]
 const fn mask_first_set(mask: u64) -> u32 {
     if mask == 0 {
         8
@@ -381,9 +510,8 @@ impl ScalarLexer {
         }
 
         let mut index = 0usize;
-        let mut tokens = Vec::new();
+        let mut token_storage = new_token_storage(input.len(), config.emit_tokens);
         let mut token_count = 0u64;
-        let emit = config.emit_tokens;
 
         while index < input.len() {
             if token_count >= config.max_tokens {
@@ -391,7 +519,7 @@ impl ScalarLexer {
                     actual_mode: LexerMode::Scalar,
                     swar_disable_reason: None,
                     token_count,
-                    tokens,
+                    tokens: finalize_tokens(token_storage),
                     bytes_scanned: index as u64,
                     budget_exceeded: true,
                     schema_version: LexerSchemaVersion::V1,
@@ -414,13 +542,12 @@ impl ScalarLexer {
                     index = index.saturating_add(1);
                 }
                 token_count = token_count.saturating_add(1);
-                if emit {
-                    tokens.push(Token {
-                        kind: TokenKind::Identifier,
-                        start,
-                        end: index as u64,
-                    });
-                }
+                push_emitted_token(
+                    &mut token_storage,
+                    TokenKind::Identifier,
+                    start,
+                    index as u64,
+                );
                 continue;
             }
 
@@ -432,13 +559,12 @@ impl ScalarLexer {
                     index = index.saturating_add(1);
                 }
                 token_count = token_count.saturating_add(1);
-                if emit {
-                    tokens.push(Token {
-                        kind: TokenKind::NumericLiteral,
-                        start,
-                        end: index as u64,
-                    });
-                }
+                push_emitted_token(
+                    &mut token_storage,
+                    TokenKind::NumericLiteral,
+                    start,
+                    index as u64,
+                );
                 continue;
             }
 
@@ -467,18 +593,12 @@ impl ScalarLexer {
                 }
 
                 token_count = token_count.saturating_add(1);
-                if emit {
-                    let kind = if terminated {
-                        TokenKind::StringLiteral
-                    } else {
-                        TokenKind::UnterminatedString
-                    };
-                    tokens.push(Token {
-                        kind,
-                        start,
-                        end: index as u64,
-                    });
-                }
+                let kind = if terminated {
+                    TokenKind::StringLiteral
+                } else {
+                    TokenKind::UnterminatedString
+                };
+                push_emitted_token(&mut token_storage, kind, start, index as u64);
                 continue;
             }
 
@@ -487,13 +607,12 @@ impl ScalarLexer {
                 let start = index as u64;
                 index = index.saturating_add(2);
                 token_count = token_count.saturating_add(1);
-                if emit {
-                    tokens.push(Token {
-                        kind: TokenKind::TwoCharOperator,
-                        start,
-                        end: index as u64,
-                    });
-                }
+                push_emitted_token(
+                    &mut token_storage,
+                    TokenKind::TwoCharOperator,
+                    start,
+                    index as u64,
+                );
                 continue;
             }
 
@@ -501,20 +620,19 @@ impl ScalarLexer {
             let start = index as u64;
             index = index.saturating_add(1);
             token_count = token_count.saturating_add(1);
-            if emit {
-                tokens.push(Token {
-                    kind: TokenKind::Punctuation,
-                    start,
-                    end: index as u64,
-                });
-            }
+            push_emitted_token(
+                &mut token_storage,
+                TokenKind::Punctuation,
+                start,
+                index as u64,
+            );
         }
 
         Ok(LexerOutput {
             actual_mode: LexerMode::Scalar,
             swar_disable_reason: None,
             token_count,
-            tokens,
+            tokens: finalize_tokens(token_storage),
             bytes_scanned: input.len() as u64,
             budget_exceeded: false,
             schema_version: LexerSchemaVersion::V1,
@@ -551,9 +669,8 @@ impl SwarLexer {
         }
 
         let mut index = 0usize;
-        let mut tokens = Vec::new();
+        let mut token_storage = new_token_storage(input.len(), config.emit_tokens);
         let mut token_count = 0u64;
-        let emit = config.emit_tokens;
         let len = input.len();
 
         while index < len {
@@ -562,7 +679,7 @@ impl SwarLexer {
                     actual_mode: LexerMode::Swar,
                     swar_disable_reason: Some(SwarDisableReason::TokenBudgetExceeded),
                     token_count,
-                    tokens,
+                    tokens: finalize_tokens(token_storage),
                     bytes_scanned: index as u64,
                     budget_exceeded: true,
                     schema_version: LexerSchemaVersion::V1,
@@ -570,15 +687,15 @@ impl SwarLexer {
             }
 
             // SWAR fast-path: skip whitespace in 8-byte chunks.
-            // Only use SWAR for the all-whitespace case to avoid borrow-propagation
-            // false positives in the byte_eq_mask SWAR trick.
             while index + SWAR_WIDTH <= len {
                 let word = read_u64_le(input, index);
-                if is_all_whitespace_word(word) {
+                let mask = whitespace_mask(word);
+                if mask == SWAR_HIGH_BITS {
                     index = index.saturating_add(SWAR_WIDTH);
-                } else {
-                    break;
+                    continue;
                 }
+                index = index.saturating_add(match_prefix_len(mask));
+                break;
             }
 
             // Scalar whitespace skip for remainder
@@ -597,14 +714,16 @@ impl SwarLexer {
                 let start = index as u64;
                 index = index.saturating_add(1);
 
-                // SWAR scan for identifier continuation bytes — only all-match fast path
+                // SWAR scan for identifier continuation bytes with partial-prefix skipping.
                 while index + SWAR_WIDTH <= len {
                     let word = read_u64_le(input, index);
-                    if is_all_ident_continue_word(word) {
+                    let mask = identifier_continue_mask(word);
+                    if mask == SWAR_HIGH_BITS {
                         index = index.saturating_add(SWAR_WIDTH);
-                    } else {
-                        break;
+                        continue;
                     }
+                    index = index.saturating_add(match_prefix_len(mask));
+                    break;
                 }
 
                 // Scalar remainder
@@ -613,13 +732,12 @@ impl SwarLexer {
                 }
 
                 token_count = token_count.saturating_add(1);
-                if emit {
-                    tokens.push(Token {
-                        kind: TokenKind::Identifier,
-                        start,
-                        end: index as u64,
-                    });
-                }
+                push_emitted_token(
+                    &mut token_storage,
+                    TokenKind::Identifier,
+                    start,
+                    index as u64,
+                );
                 continue;
             }
 
@@ -628,14 +746,16 @@ impl SwarLexer {
                 let start = index as u64;
                 index = index.saturating_add(1);
 
-                // SWAR scan for digit bytes — only all-match fast path
+                // SWAR scan for digit bytes with partial-prefix skipping.
                 while index + SWAR_WIDTH <= len {
                     let word = read_u64_le(input, index);
-                    if is_all_digit_word(word) {
+                    let mask = digit_mask(word);
+                    if mask == SWAR_HIGH_BITS {
                         index = index.saturating_add(SWAR_WIDTH);
-                    } else {
-                        break;
+                        continue;
                     }
+                    index = index.saturating_add(match_prefix_len(mask));
+                    break;
                 }
 
                 while index < len && input[index].is_ascii_digit() {
@@ -643,13 +763,12 @@ impl SwarLexer {
                 }
 
                 token_count = token_count.saturating_add(1);
-                if emit {
-                    tokens.push(Token {
-                        kind: TokenKind::NumericLiteral,
-                        start,
-                        end: index as u64,
-                    });
-                }
+                push_emitted_token(
+                    &mut token_storage,
+                    TokenKind::NumericLiteral,
+                    start,
+                    index as u64,
+                );
                 continue;
             }
 
@@ -674,7 +793,9 @@ impl SwarLexer {
                         continue;
                     }
 
-                    // Found something interesting — fall back to scalar for correctness
+                    // Jump directly to the first interesting byte and continue
+                    // with scalar logic for exact semantics.
+                    index = index.saturating_add(mask_first_set(interesting) as usize);
                     break;
                 }
 
@@ -697,18 +818,12 @@ impl SwarLexer {
                 }
 
                 token_count = token_count.saturating_add(1);
-                if emit {
-                    let kind = if terminated {
-                        TokenKind::StringLiteral
-                    } else {
-                        TokenKind::UnterminatedString
-                    };
-                    tokens.push(Token {
-                        kind,
-                        start,
-                        end: index as u64,
-                    });
-                }
+                let kind = if terminated {
+                    TokenKind::StringLiteral
+                } else {
+                    TokenKind::UnterminatedString
+                };
+                push_emitted_token(&mut token_storage, kind, start, index as u64);
                 continue;
             }
 
@@ -717,13 +832,12 @@ impl SwarLexer {
                 let start = index as u64;
                 index = index.saturating_add(2);
                 token_count = token_count.saturating_add(1);
-                if emit {
-                    tokens.push(Token {
-                        kind: TokenKind::TwoCharOperator,
-                        start,
-                        end: index as u64,
-                    });
-                }
+                push_emitted_token(
+                    &mut token_storage,
+                    TokenKind::TwoCharOperator,
+                    start,
+                    index as u64,
+                );
                 continue;
             }
 
@@ -731,20 +845,19 @@ impl SwarLexer {
             let start = index as u64;
             index = index.saturating_add(1);
             token_count = token_count.saturating_add(1);
-            if emit {
-                tokens.push(Token {
-                    kind: TokenKind::Punctuation,
-                    start,
-                    end: index as u64,
-                });
-            }
+            push_emitted_token(
+                &mut token_storage,
+                TokenKind::Punctuation,
+                start,
+                index as u64,
+            );
         }
 
         Ok(LexerOutput {
             actual_mode: LexerMode::Swar,
             swar_disable_reason: None,
             token_count,
-            tokens,
+            tokens: finalize_tokens(token_storage),
             bytes_scanned: input.len() as u64,
             budget_exceeded: false,
             schema_version: LexerSchemaVersion::V1,
@@ -1104,46 +1217,27 @@ fn is_two_char_operator(a: u8, b: u8) -> bool {
 }
 
 /// Check if all 8 bytes in a word are ASCII whitespace.
-/// Uses explicit byte extraction — avoids SWAR borrow-propagation false positives.
+#[cfg(test)]
 #[inline]
+#[cfg(test)]
 fn is_all_whitespace_word(word: u64) -> bool {
-    let bytes = word.to_le_bytes();
-    bytes[0].is_ascii_whitespace()
-        && bytes[1].is_ascii_whitespace()
-        && bytes[2].is_ascii_whitespace()
-        && bytes[3].is_ascii_whitespace()
-        && bytes[4].is_ascii_whitespace()
-        && bytes[5].is_ascii_whitespace()
-        && bytes[6].is_ascii_whitespace()
-        && bytes[7].is_ascii_whitespace()
+    whitespace_mask(word) == SWAR_HIGH_BITS
 }
 
 /// Check if all 8 bytes in a word are identifier continuation characters.
+#[cfg(test)]
 #[inline]
+#[cfg(test)]
 fn is_all_ident_continue_word(word: u64) -> bool {
-    let bytes = word.to_le_bytes();
-    is_ident_continue(bytes[0])
-        && is_ident_continue(bytes[1])
-        && is_ident_continue(bytes[2])
-        && is_ident_continue(bytes[3])
-        && is_ident_continue(bytes[4])
-        && is_ident_continue(bytes[5])
-        && is_ident_continue(bytes[6])
-        && is_ident_continue(bytes[7])
+    identifier_continue_mask(word) == SWAR_HIGH_BITS
 }
 
 /// Check if all 8 bytes in a word are ASCII digits.
+#[cfg(test)]
 #[inline]
+#[cfg(test)]
 fn is_all_digit_word(word: u64) -> bool {
-    let bytes = word.to_le_bytes();
-    bytes[0].is_ascii_digit()
-        && bytes[1].is_ascii_digit()
-        && bytes[2].is_ascii_digit()
-        && bytes[3].is_ascii_digit()
-        && bytes[4].is_ascii_digit()
-        && bytes[5].is_ascii_digit()
-        && bytes[6].is_ascii_digit()
-        && bytes[7].is_ascii_digit()
+    digit_mask(word) == SWAR_HIGH_BITS
 }
 
 /// Read 8 bytes from `input[offset..]` as a little-endian u64.
@@ -1191,6 +1285,51 @@ mod tests {
         }
     }
 
+    #[test]
+    fn token_span_storage_preserves_column_alignment() {
+        let mut storage = TokenSpanStorage::with_capacity(3);
+        storage.push(TokenKind::Identifier, 0, 3);
+        storage.push(TokenKind::Punctuation, 4, 5);
+        storage.push(TokenKind::NumericLiteral, 6, 9);
+
+        assert_eq!(storage.len(), 3);
+        assert_eq!(
+            storage.token_kinds(),
+            &[
+                TokenKind::Identifier,
+                TokenKind::Punctuation,
+                TokenKind::NumericLiteral
+            ]
+        );
+        assert_eq!(storage.starts(), &[0, 4, 6]);
+        assert_eq!(storage.ends(), &[3, 5, 9]);
+    }
+
+    #[test]
+    fn token_span_storage_roundtrips_tokens() {
+        let tokens = vec![
+            Token {
+                kind: TokenKind::Identifier,
+                start: 0,
+                end: 4,
+            },
+            Token {
+                kind: TokenKind::TwoCharOperator,
+                start: 5,
+                end: 7,
+            },
+            Token {
+                kind: TokenKind::Identifier,
+                start: 8,
+                end: 9,
+            },
+        ];
+
+        let storage = TokenSpanStorage::from_tokens(&tokens);
+        assert_eq!(storage.to_tokens(), tokens);
+        assert_eq!(storage.clone().into_tokens(), tokens);
+    }
+
     // --- SWAR primitives ---
 
     #[test]
@@ -1218,7 +1357,7 @@ mod tests {
 
     #[test]
     fn whitespace_mask_detects_all_ws_types() {
-        let word = u64::from_le_bytes([b' ', b'\t', b'\n', b'\r', b' ', b'\t', b'\n', b'\r']);
+        let word = u64::from_le_bytes([b' ', b'\t', b'\n', b'\r', 0x0B, 0x0C, b' ', b'\t']);
         let mask = whitespace_mask(word);
         assert_eq!(mask_popcount(mask), 8);
     }
@@ -1267,6 +1406,42 @@ mod tests {
         // High bit set in byte 2 (0-indexed)
         let mask = 0x0000_0000_0080_0000_u64;
         assert_eq!(mask_first_set(mask), 2);
+    }
+
+    #[test]
+    fn match_prefix_len_counts_leading_matches() {
+        for expected in 0..=8 {
+            let mut mask = 0u64;
+            for byte_index in 0..expected {
+                mask |= 0x80_u64 << (byte_index * 8);
+            }
+            assert_eq!(match_prefix_len(mask), expected);
+        }
+
+        // Non-prefix match bits should not increase the prefix length.
+        let sparse = 0x80_u64 | (0x80_u64 << 16) | (0x80_u64 << 56);
+        assert_eq!(match_prefix_len(sparse), 1);
+    }
+
+    #[test]
+    fn swar_all_word_predicates_match_scalar_reference() {
+        let mut state = 0x9E37_79B9_7F4A_7C15_u64;
+        for _ in 0..20_000 {
+            // Deterministic xorshift64* stream.
+            state ^= state >> 12;
+            state ^= state << 25;
+            state ^= state >> 27;
+            let word = state.wrapping_mul(0x2545_F491_4F6C_DD1D_u64);
+            let bytes = word.to_le_bytes();
+
+            let scalar_ws = bytes.iter().all(|b| b.is_ascii_whitespace());
+            let scalar_ident = bytes.iter().all(|b| is_ident_continue(*b));
+            let scalar_digit = bytes.iter().all(|b| b.is_ascii_digit());
+
+            assert_eq!(is_all_whitespace_word(word), scalar_ws);
+            assert_eq!(is_all_ident_continue_word(word), scalar_ident);
+            assert_eq!(is_all_digit_word(word), scalar_digit);
+        }
     }
 
     // --- Scalar lexer ---
