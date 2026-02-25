@@ -2,16 +2,16 @@ use std::fs;
 use std::io::Cursor;
 
 use frankenengine_engine::ast::{
-    Expression, ParseGoal, Statement, SyntaxTree, CANONICAL_AST_CONTRACT_VERSION,
-    CANONICAL_AST_HASH_ALGORITHM, CANONICAL_AST_HASH_PREFIX, CANONICAL_AST_SCHEMA_VERSION,
+    CANONICAL_AST_CONTRACT_VERSION, CANONICAL_AST_HASH_ALGORITHM, CANONICAL_AST_HASH_PREFIX,
+    CANONICAL_AST_SCHEMA_VERSION, Expression, ParseGoal, Statement, SyntaxTree,
 };
 use frankenengine_engine::parser::{
-    CanonicalEs2020Parser, Es2020Parser, ParseBudgetKind, ParseDiagnosticEnvelope, ParseErrorCode,
-    ParseEventIr, ParseEventKind, ParserBudget, ParserMode, ParserOptions, StreamInput,
-    PARSE_EVENT_IR_CONTRACT_VERSION, PARSE_EVENT_IR_HASH_ALGORITHM, PARSE_EVENT_IR_HASH_PREFIX,
-    PARSE_EVENT_IR_SCHEMA_VERSION, PARSER_DIAGNOSTIC_HASH_ALGORITHM,
-    PARSER_DIAGNOSTIC_HASH_PREFIX, PARSER_DIAGNOSTIC_SCHEMA_VERSION,
-    PARSER_DIAGNOSTIC_TAXONOMY_VERSION,
+    CanonicalEs2020Parser, Es2020Parser, PARSE_EVENT_IR_CONTRACT_VERSION,
+    PARSE_EVENT_IR_HASH_ALGORITHM, PARSE_EVENT_IR_HASH_PREFIX, PARSE_EVENT_IR_SCHEMA_VERSION,
+    PARSER_DIAGNOSTIC_HASH_ALGORITHM, PARSER_DIAGNOSTIC_HASH_PREFIX,
+    PARSER_DIAGNOSTIC_SCHEMA_VERSION, PARSER_DIAGNOSTIC_TAXONOMY_VERSION, ParseBudgetKind,
+    ParseDiagnosticEnvelope, ParseErrorCode, ParseEventIr, ParseEventKind, ParserBudget,
+    ParserMode, ParserOptions, StreamInput,
 };
 
 #[test]
@@ -206,7 +206,8 @@ fn canonical_parse_event_ir_provenance_ids_are_stable_for_identical_inputs() {
     let right_tree = parser
         .parse(source, ParseGoal::Script)
         .expect("right parse should succeed");
-    let left_ir = ParseEventIr::from_syntax_tree(&left_tree, "<inline>", ParserMode::ScalarReference);
+    let left_ir =
+        ParseEventIr::from_syntax_tree(&left_tree, "<inline>", ParserMode::ScalarReference);
     let right_ir =
         ParseEventIr::from_syntax_tree(&right_tree, "<inline>", ParserMode::ScalarReference);
     assert_eq!(left_ir.canonical_hash(), right_ir.canonical_hash());
@@ -227,13 +228,24 @@ fn canonical_parse_event_ir_failure_vector_is_deterministic() {
     let error = result.expect_err("empty source should fail");
     assert_eq!(error.code, ParseErrorCode::EmptySource);
     assert_eq!(event_ir.events.len(), 2);
-    assert!(matches!(event_ir.events[0].kind, ParseEventKind::ParseStarted));
-    assert!(matches!(event_ir.events[1].kind, ParseEventKind::ParseFailed));
-    assert_eq!(event_ir.events[1].error_code, Some(ParseErrorCode::EmptySource));
-    assert!(event_ir
-        .events
-        .iter()
-        .all(|event| event.trace_id.starts_with("trace-parser-event-")));
+    assert!(matches!(
+        event_ir.events[0].kind,
+        ParseEventKind::ParseStarted
+    ));
+    assert!(matches!(
+        event_ir.events[1].kind,
+        ParseEventKind::ParseFailed
+    ));
+    assert_eq!(
+        event_ir.events[1].error_code,
+        Some(ParseErrorCode::EmptySource)
+    );
+    assert!(
+        event_ir
+            .events
+            .iter()
+            .all(|event| event.trace_id.starts_with("trace-parser-event-"))
+    );
 }
 
 #[test]

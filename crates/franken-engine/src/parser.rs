@@ -109,10 +109,9 @@ impl ParseErrorCode {
             Self::IoReadFailed | Self::SourceTooLarge | Self::BudgetExceeded => {
                 ParseDiagnosticSeverity::Fatal
             }
-            Self::EmptySource
-            | Self::InvalidGoal
-            | Self::UnsupportedSyntax
-            | Self::InvalidUtf8 => ParseDiagnosticSeverity::Error,
+            Self::EmptySource | Self::InvalidGoal | Self::UnsupportedSyntax | Self::InvalidUtf8 => {
+                ParseDiagnosticSeverity::Error
+            }
         }
     }
 
@@ -318,8 +317,14 @@ impl ParseFailureWitness {
                 .map(|kind| CanonicalValue::String(kind.as_str().to_string()))
                 .unwrap_or(CanonicalValue::Null),
         );
-        map.insert("source_bytes".to_string(), CanonicalValue::U64(self.source_bytes));
-        map.insert("token_count".to_string(), CanonicalValue::U64(self.token_count));
+        map.insert(
+            "source_bytes".to_string(),
+            CanonicalValue::U64(self.source_bytes),
+        );
+        map.insert(
+            "token_count".to_string(),
+            CanonicalValue::U64(self.token_count),
+        );
         map.insert(
             "max_recursion_observed".to_string(),
             CanonicalValue::U64(self.max_recursion_observed),
@@ -554,7 +559,10 @@ impl ParseDiagnosticEnvelope {
 
 /// Normalize a parse error into the deterministic diagnostics envelope contract.
 pub fn normalize_parse_error(error: &ParseError) -> ParseDiagnosticEnvelope {
-    let budget_kind = error.witness.as_ref().and_then(|witness| witness.budget_kind);
+    let budget_kind = error
+        .witness
+        .as_ref()
+        .and_then(|witness| witness.budget_kind);
     ParseDiagnosticEnvelope {
         schema_version: ParseDiagnosticEnvelope::schema_version().to_string(),
         taxonomy_version: ParseDiagnosticEnvelope::taxonomy_version().to_string(),
@@ -571,7 +579,10 @@ pub fn normalize_parse_error(error: &ParseError) -> ParseDiagnosticEnvelope {
         source_label: error.source_label.clone(),
         span: error.span.clone(),
         budget_kind,
-        witness: error.witness.as_ref().map(|witness| witness.as_ref().clone()),
+        witness: error
+            .witness
+            .as_ref()
+            .map(|witness| witness.as_ref().clone()),
     }
 }
 
@@ -753,12 +764,8 @@ impl ParseEventIr {
     ) -> Self {
         let source_label = source_label.into();
         let source_fingerprint = canonical_value_hash(&tree.canonical_value());
-        let (trace_id, decision_id) = parse_event_provenance_ids(
-            &source_label,
-            parser_mode,
-            tree.goal,
-            &source_fingerprint,
-        );
+        let (trace_id, decision_id) =
+            parse_event_provenance_ids(&source_label, parser_mode, tree.goal, &source_fingerprint);
         Self::from_syntax_tree_with_provenance(
             tree,
             source_label,
@@ -777,12 +784,8 @@ impl ParseEventIr {
     ) -> Self {
         let source_label = source_label.into();
         let source_fingerprint = canonical_string_hash(source_text);
-        let (trace_id, decision_id) = parse_event_provenance_ids(
-            &source_label,
-            parser_mode,
-            tree.goal,
-            &source_fingerprint,
-        );
+        let (trace_id, decision_id) =
+            parse_event_provenance_ids(&source_label, parser_mode, tree.goal, &source_fingerprint);
         Self::from_syntax_tree_with_provenance(
             tree,
             source_label,
@@ -797,12 +800,8 @@ impl ParseEventIr {
         let source_label = error.source_label.clone();
         let diagnostic = ParseDiagnosticEnvelope::from_parse_error(error);
         let diagnostic_hash = diagnostic.canonical_hash();
-        let (trace_id, decision_id) = parse_event_provenance_ids(
-            &source_label,
-            parser_mode,
-            goal,
-            &diagnostic_hash,
-        );
+        let (trace_id, decision_id) =
+            parse_event_provenance_ids(&source_label, parser_mode, goal, &diagnostic_hash);
         let events = vec![
             ParseEvent {
                 sequence: 0,
@@ -1021,7 +1020,9 @@ fn parse_event_provenance_ids(
         "component".to_string(),
         CanonicalValue::String(PARSE_EVENT_IR_COMPONENT.to_string()),
     );
-    let digest = Sha256::digest(deterministic_serde::encode_value(&CanonicalValue::Map(seed)));
+    let digest = Sha256::digest(deterministic_serde::encode_value(&CanonicalValue::Map(
+        seed,
+    )));
     let digest_hex = hex::encode(digest);
     let suffix = &digest_hex[..24];
     (
@@ -1379,8 +1380,12 @@ impl CanonicalEs2020Parser {
         match input.into_source() {
             Ok(source) => match parse_source(&source.text, &source.label, goal, options) {
                 Ok(tree) => {
-                    let event_ir =
-                        ParseEventIr::from_parse_source(&tree, &source.text, source.label, options.mode);
+                    let event_ir = ParseEventIr::from_parse_source(
+                        &tree,
+                        &source.text,
+                        source.label,
+                        options.mode,
+                    );
                     (Ok(tree), event_ir)
                 }
                 Err(error) => {
@@ -2050,7 +2055,8 @@ impl<'a> Utf8BoundarySafeScanner<'a> {
 
     fn scan_numeric_literal(&mut self) {
         self.index = self.index.saturating_add(1);
-        while self.index < self.bytes.len() && lex_has_class(self.bytes[self.index], LEX_CLASS_DIGIT)
+        while self.index < self.bytes.len()
+            && lex_has_class(self.bytes[self.index], LEX_CLASS_DIGIT)
         {
             self.index = self.index.saturating_add(1);
         }
@@ -3132,7 +3138,10 @@ mod tests {
         for rule in &taxonomy.rules {
             assert!(error_codes.insert(rule.parse_error_code.as_str().to_string()));
             assert!(diagnostic_codes.insert(rule.diagnostic_code.clone()));
-            assert_eq!(rule.diagnostic_code, rule.parse_error_code.stable_diagnostic_code());
+            assert_eq!(
+                rule.diagnostic_code,
+                rule.parse_error_code.stable_diagnostic_code()
+            );
             assert_eq!(rule.category, rule.parse_error_code.diagnostic_category());
             assert_eq!(rule.severity, rule.parse_error_code.diagnostic_severity());
             assert_eq!(
@@ -3229,9 +3238,10 @@ mod tests {
             serde_json::from_str(&json).expect("deserialize envelope");
         assert_eq!(restored, left);
         assert_eq!(left.canonical_hash(), right.canonical_hash());
-        assert!(left
-            .canonical_hash()
-            .starts_with(ParseDiagnosticEnvelope::canonical_hash_prefix()));
+        assert!(
+            left.canonical_hash()
+                .starts_with(ParseDiagnosticEnvelope::canonical_hash_prefix())
+        );
     }
 
     #[test]
@@ -3266,10 +3276,7 @@ mod tests {
         );
         assert_eq!(PARSE_EVENT_IR_COMPONENT, "canonical_es2020_parser");
         assert_eq!(PARSE_EVENT_IR_TRACE_PREFIX, "trace-parser-event-");
-        assert_eq!(
-            PARSE_EVENT_IR_DECISION_PREFIX,
-            "decision-parser-event-"
-        );
+        assert_eq!(PARSE_EVENT_IR_DECISION_PREFIX, "decision-parser-event-");
         assert_eq!(
             ParseEventIr::contract_version(),
             PARSE_EVENT_IR_CONTRACT_VERSION
@@ -3310,9 +3317,11 @@ mod tests {
         for (index, event) in ir.events.iter().enumerate() {
             assert_eq!(event.sequence, index as u64);
             assert!(event.trace_id.starts_with(PARSE_EVENT_IR_TRACE_PREFIX));
-            assert!(event
-                .decision_id
-                .starts_with(PARSE_EVENT_IR_DECISION_PREFIX));
+            assert!(
+                event
+                    .decision_id
+                    .starts_with(PARSE_EVENT_IR_DECISION_PREFIX)
+            );
             assert_eq!(event.policy_id, PARSE_EVENT_IR_POLICY_ID);
             assert_eq!(event.component, PARSE_EVENT_IR_COMPONENT);
             assert!(!event.outcome.is_empty());
@@ -3334,9 +3343,11 @@ mod tests {
             ParseEventIr::from_syntax_tree(&right_tree, "<inline>", ParserMode::ScalarReference);
         assert_eq!(left_ir.canonical_bytes(), right_ir.canonical_bytes());
         assert_eq!(left_ir.canonical_hash(), right_ir.canonical_hash());
-        assert!(left_ir
-            .canonical_hash()
-            .starts_with(ParseEventIr::canonical_hash_prefix()));
+        assert!(
+            left_ir
+                .canonical_hash()
+                .starts_with(ParseEventIr::canonical_hash_prefix())
+        );
     }
 
     #[test]
@@ -3355,11 +3366,8 @@ mod tests {
     fn parse_with_event_ir_success_emits_ordered_events() {
         let parser = CanonicalEs2020Parser;
         let source = "import dep from \"pkg\";\nexport default dep;\n";
-        let (result, event_ir) = parser.parse_with_event_ir(
-            source,
-            ParseGoal::Module,
-            &ParserOptions::default(),
-        );
+        let (result, event_ir) =
+            parser.parse_with_event_ir(source, ParseGoal::Module, &ParserOptions::default());
 
         let tree = result.expect("parse should succeed");
         assert_eq!(event_ir.events.len(), tree.body.len() + 2);
@@ -3382,25 +3390,33 @@ mod tests {
     #[test]
     fn parse_with_event_ir_failure_emits_parse_failed_event() {
         let parser = CanonicalEs2020Parser;
-        let (result, event_ir) = parser.parse_with_event_ir(
-            "",
-            ParseGoal::Script,
-            &ParserOptions::default(),
-        );
+        let (result, event_ir) =
+            parser.parse_with_event_ir("", ParseGoal::Script, &ParserOptions::default());
 
         let error = result.expect_err("empty source should fail");
         assert_eq!(error.code, ParseErrorCode::EmptySource);
         assert_eq!(event_ir.events.len(), 2);
-        assert!(matches!(event_ir.events[0].kind, ParseEventKind::ParseStarted));
-        assert!(matches!(event_ir.events[1].kind, ParseEventKind::ParseFailed));
-        assert_eq!(event_ir.events[1].error_code, Some(ParseErrorCode::EmptySource));
+        assert!(matches!(
+            event_ir.events[0].kind,
+            ParseEventKind::ParseStarted
+        ));
+        assert!(matches!(
+            event_ir.events[1].kind,
+            ParseEventKind::ParseFailed
+        ));
+        assert_eq!(
+            event_ir.events[1].error_code,
+            Some(ParseErrorCode::EmptySource)
+        );
         assert_eq!(
             event_ir.events[1].payload_kind.as_deref(),
             Some("parse_diagnostic")
         );
-        assert!(event_ir.events[1]
-            .payload_hash
-            .as_deref()
-            .is_some_and(|hash| hash.starts_with(ParseEventIr::canonical_hash_prefix())));
+        assert!(
+            event_ir.events[1]
+                .payload_hash
+                .as_deref()
+                .is_some_and(|hash| hash.starts_with(ParseEventIr::canonical_hash_prefix()))
+        );
     }
 }
