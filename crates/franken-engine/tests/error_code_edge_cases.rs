@@ -653,6 +653,16 @@ fn has_error_code_saga_empty_steps() {
 }
 
 #[test]
+fn has_error_code_saga_concurrency_limit_reached() {
+    use frankenengine_engine::saga_orchestrator::SagaError;
+    let err = SagaError::ConcurrencyLimitReached {
+        active_count: 4,
+        max_concurrent: 3,
+    };
+    assert_eq!(err.error_code(), FrankenErrorCode::SagaExecutionError);
+}
+
+#[test]
 fn has_error_code_alloc_domain_budget_overflow() {
     use frankenengine_engine::alloc_domain::AllocDomainError;
     let err = AllocDomainError::BudgetOverflow;

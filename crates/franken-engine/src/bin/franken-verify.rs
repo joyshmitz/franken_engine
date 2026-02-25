@@ -154,9 +154,9 @@ fn run_replay(args: &[String]) -> Result<i32, String> {
             }
             "--receipt-key" => {
                 index += 1;
-                let value = args
-                    .get(index)
-                    .ok_or_else(|| "--receipt-key requires <signer_hex>=<verification_key_hex>".to_string())?;
+                let value = args.get(index).ok_or_else(|| {
+                    "--receipt-key requires <signer_hex>=<verification_key_hex>".to_string()
+                })?;
                 receipt_key_overrides.push(value.to_string());
             }
             "--receipt-key-file" => {
@@ -282,9 +282,7 @@ fn parse_input_flags<'a>(args: &'a [String], subcommand: &str) -> Result<(&'a st
 fn parse_receipt_key_pair(raw: &str) -> Result<(String, String), String> {
     let (signer_id_hex, key_hex) = raw
         .split_once('=')
-        .ok_or_else(|| {
-            "--receipt-key expects <signer_hex>=<verification_key_hex>".to_string()
-        })?;
+        .ok_or_else(|| "--receipt-key expects <signer_hex>=<verification_key_hex>".to_string())?;
     let signer_id_hex = signer_id_hex.trim();
     let key_hex = key_hex.trim();
     if signer_id_hex.is_empty() || key_hex.is_empty() {
@@ -303,9 +301,7 @@ fn load_receipt_key_map(path: &str) -> Result<BTreeMap<String, String>, String> 
 
     if trimmed.starts_with('{') {
         return serde_json::from_str::<BTreeMap<String, String>>(trimmed).map_err(|error| {
-            format!(
-                "failed to parse receipt-key file '{path}' as JSON signer->key map: {error}"
-            )
+            format!("failed to parse receipt-key file '{path}' as JSON signer->key map: {error}")
         });
     }
 
@@ -343,9 +339,7 @@ fn load_counterfactual_configs(path: &str) -> Result<Vec<CounterfactualConfig>, 
     let content = fs::read_to_string(path)
         .map_err(|error| format!("failed to read counterfactual config file '{path}': {error}"))?;
     let parsed = serde_json::from_str::<CounterfactualConfigFile>(&content).map_err(|error| {
-        format!(
-            "failed to parse counterfactual config file '{path}' as JSON object/array: {error}"
-        )
+        format!("failed to parse counterfactual config file '{path}' as JSON object/array: {error}")
     })?;
     let configs = match parsed {
         CounterfactualConfigFile::One(config) => vec![config],
@@ -360,8 +354,8 @@ fn load_counterfactual_configs(path: &str) -> Result<Vec<CounterfactualConfig>, 
 }
 
 fn load_trimmed_file(path: &str, label: &str) -> Result<String, String> {
-    let content =
-        fs::read_to_string(path).map_err(|error| format!("failed to read {label} '{path}': {error}"))?;
+    let content = fs::read_to_string(path)
+        .map_err(|error| format!("failed to read {label} '{path}': {error}"))?;
     let trimmed = content.trim();
     if trimmed.is_empty() {
         return Err(format!("{label} '{path}' is empty"));

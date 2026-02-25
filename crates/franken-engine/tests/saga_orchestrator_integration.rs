@@ -269,7 +269,7 @@ fn saga_event_serde_roundtrip() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn saga_error_serde_all_7_variants() {
+fn saga_error_serde_all_variants() {
     let errors: Vec<SagaError> = vec![
         SagaError::SagaNotFound {
             saga_id: "s1".to_string(),
@@ -296,6 +296,10 @@ fn saga_error_serde_all_7_variants() {
             saga_id: "s5".to_string(),
             step_index: 1,
             diagnostic: "disk full".to_string(),
+        },
+        SagaError::ConcurrencyLimitReached {
+            active_count: 4,
+            max_concurrent: 3,
         },
     ];
     for err in &errors {
@@ -333,6 +337,10 @@ fn saga_error_display_all_non_empty() {
             saga_id: "s5".to_string(),
             step_index: 1,
             diagnostic: "disk full".to_string(),
+        },
+        SagaError::ConcurrencyLimitReached {
+            active_count: 4,
+            max_concurrent: 3,
         },
     ];
     for err in &errors {

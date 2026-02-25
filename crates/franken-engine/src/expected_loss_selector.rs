@@ -1155,7 +1155,9 @@ fn compute_regime_shift_score(history_millionths: &[i64], current_roi_millionths
         .map(|value| value.saturating_sub(center).saturating_abs())
         .collect();
     let mad = median_i64(&deviations).max(1);
-    let deviation = current_roi_millionths.saturating_sub(center).saturating_abs();
+    let deviation = current_roi_millionths
+        .saturating_sub(center)
+        .saturating_abs();
     ((deviation as i128 * MILLION as i128) / mad as i128).min(10_000_000) as i64
 }
 
@@ -1181,8 +1183,8 @@ fn classify_alien_risk_alert(
     regime_shift_score_millionths: i64,
 ) -> (AlienRiskAlertLevel, Option<ContainmentAction>) {
     let base_loss = selected_expected_loss_millionths.saturating_abs().max(1);
-    let cvar_ratio_millionths =
-        ((tail_cvar_millionths.saturating_abs() as i128 * MILLION as i128) / base_loss as i128) as i64;
+    let cvar_ratio_millionths = ((tail_cvar_millionths.saturating_abs() as i128 * MILLION as i128)
+        / base_loss as i128) as i64;
 
     let critical = conformal_p_value_millionths <= ALIEN_CRITICAL_PVALUE_MILLIONTHS
         || regime_shift_score_millionths >= ALIEN_CRITICAL_REGIME_SHIFT_MILLIONTHS

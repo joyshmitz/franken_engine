@@ -22,9 +22,8 @@ use frankenengine_engine::signature_preimage::SigningKey;
 use frankenengine_engine::third_party_verifier::{
     BenchmarkClaimBundle, ClaimedBenchmarkOutcome, ContainmentClaimBundle, ReplayClaimBundle,
     ThirdPartyVerificationReport, VerificationAttestation, VerificationAttestationInput,
-    VerificationVerdict,
-    generate_attestation, verify_attestation, verify_benchmark_claim, verify_containment_claim,
-    verify_replay_claim,
+    VerificationVerdict, generate_attestation, verify_attestation, verify_benchmark_claim,
+    verify_containment_claim, verify_replay_claim,
 };
 
 fn temp_json_path(prefix: &str) -> PathBuf {
@@ -417,12 +416,18 @@ fn franken_verify_replay_command_supports_signature_and_counterfactual_files() {
     let report: ThirdPartyVerificationReport =
         serde_json::from_slice(&output.stdout).expect("replay report json");
     assert_eq!(report.verdict, VerificationVerdict::Verified);
-    assert!(report.checks.iter().any(|check| {
-        check.name.starts_with("signature:") && check.passed
-    }));
-    assert!(report.checks.iter().any(|check| {
-        check.name.starts_with("counterfactual:") && check.passed
-    }));
+    assert!(
+        report
+            .checks
+            .iter()
+            .any(|check| { check.name.starts_with("signature:") && check.passed })
+    );
+    assert!(
+        report
+            .checks
+            .iter()
+            .any(|check| { check.name.starts_with("counterfactual:") && check.passed })
+    );
 
     let _ = fs::remove_file(input_path);
     let _ = fs::remove_file(signature_key_path);

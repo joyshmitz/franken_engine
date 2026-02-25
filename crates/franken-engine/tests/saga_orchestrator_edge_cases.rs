@@ -349,6 +349,10 @@ fn saga_error_serde_all_variants() {
             step_index: 2,
             diagnostic: "disk full".to_string(),
         },
+        SagaError::ConcurrencyLimitReached {
+            active_count: 5,
+            max_concurrent: 4,
+        },
     ];
     for err in &errors {
         let json = serde_json::to_string(err).unwrap();
@@ -403,6 +407,13 @@ fn saga_error_display_all_variants() {
                 diagnostic: "disk full".to_string(),
             },
             "compensation failed",
+        ),
+        (
+            SagaError::ConcurrencyLimitReached {
+                active_count: 5,
+                max_concurrent: 4,
+            },
+            "concurrency limit reached",
         ),
     ];
     for (err, expected) in &cases {

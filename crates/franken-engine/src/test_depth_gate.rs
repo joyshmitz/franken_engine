@@ -5,7 +5,7 @@
 //
 // Plan reference: bd-mjh3.20.2
 
-use crate::engine_object_id::{derive_id, EngineObjectId, ObjectDomain, SchemaId};
+use crate::engine_object_id::{EngineObjectId, ObjectDomain, SchemaId, derive_id};
 use crate::test_taxonomy::{TestClass, TestSurface};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -388,10 +388,7 @@ impl FailureModeObligation {
 
     /// Check which failure modes are missing given observed coverage.
     #[must_use]
-    pub fn missing_modes(
-        &self,
-        observed: &BTreeMap<FailureMode, u64>,
-    ) -> Vec<FailureModeMissing> {
+    pub fn missing_modes(&self, observed: &BTreeMap<FailureMode, u64>) -> Vec<FailureModeMissing> {
         let mut missing = Vec::new();
         for mode in &self.required_modes {
             let count = observed.get(mode).copied().unwrap_or(0);
@@ -699,10 +696,7 @@ impl DepthGateConfig {
                     field: format!("coverage.{}", target.kind.as_str()),
                     message: format!(
                         "{} {} coverage {}/1M below minimum {}/1M",
-                        metrics.surface,
-                        target.kind,
-                        observed,
-                        target.min_coverage_millionths,
+                        metrics.surface, target.kind, observed, target.min_coverage_millionths,
                     ),
                 });
             }
@@ -748,9 +742,7 @@ impl DepthGateConfig {
             }
         }
         if let Some(prev_mut) = previous_mutation {
-            let delta = metrics
-                .mutation_score_millionths
-                .saturating_sub(prev_mut);
+            let delta = metrics.mutation_score_millionths.saturating_sub(prev_mut);
             if let Some(v) = self.regression_policy.check_mutation_delta(delta) {
                 regression_violations.push(v);
             }
@@ -761,12 +753,7 @@ impl DepthGateConfig {
             .coverage_targets
             .iter()
             .filter(|t| t.surface == metrics.surface && t.hard_gate)
-            .any(|t| {
-                metrics
-                    .coverage
-                    .get(&t.kind)
-                    .is_none_or(|&v| !t.is_met(v))
-            });
+            .any(|t| metrics.coverage.get(&t.kind).is_none_or(|&v| !t.is_met(v)));
         let has_hard_mutation_fail = self
             .mutation_policies
             .iter()
@@ -1134,10 +1121,7 @@ mod tests {
     #[test]
     fn default_mutation_policies_all_valid() {
         for policy in default_mutation_policies() {
-            assert!(
-                policy.validate().is_empty(),
-                "invalid policy: {policy:?}"
-            );
+            assert!(policy.validate().is_empty(), "invalid policy: {policy:?}");
         }
     }
 
@@ -1387,11 +1371,8 @@ mod tests {
     #[test]
     fn default_config_has_all_surfaces() {
         let cfg = DepthGateConfig::default_config();
-        let surfaces: BTreeSet<TestSurface> = cfg
-            .coverage_targets
-            .iter()
-            .map(|t| t.surface)
-            .collect();
+        let surfaces: BTreeSet<TestSurface> =
+            cfg.coverage_targets.iter().map(|t| t.surface).collect();
         for s in TestSurface::ALL {
             assert!(surfaces.contains(s), "missing coverage target for {s}");
         }
@@ -1673,8 +1654,7 @@ mod tests {
                 (*s, cov)
             })
             .collect();
-        let summary_with_regression =
-            cfg.evaluate_all(&all_passing, &prev_cov, &BTreeMap::new());
+        let summary_with_regression = cfg.evaluate_all(&all_passing, &prev_cov, &BTreeMap::new());
         assert!(!summary_with_regression.promotion_allowed());
     }
 
