@@ -29,6 +29,7 @@ use crate::fleet_immune_protocol::{
 };
 use crate::hash_tiers::{AuthenticityHash, ContentHash};
 use crate::security_epoch::SecurityEpoch;
+use crate::spectral_fleet_convergence::{ConvergenceCertificate, GossipTopology, SpectralAnalyzer};
 
 // ---------------------------------------------------------------------------
 // ContainmentThresholds — policy-defined decision thresholds
@@ -319,6 +320,8 @@ pub enum ConvergenceEventType {
     EscalationTriggered,
     /// Evidence lag detected.
     EvidenceLag,
+    /// Spectral connectivity health snapshot computed.
+    SpectralHealthComputed,
 }
 
 impl fmt::Display for ConvergenceEventType {
@@ -333,6 +336,7 @@ impl fmt::Display for ConvergenceEventType {
             Self::ConvergenceDiverged => write!(f, "convergence_diverged"),
             Self::EscalationTriggered => write!(f, "escalation_triggered"),
             Self::EvidenceLag => write!(f, "evidence_lag"),
+            Self::SpectralHealthComputed => write!(f, "spectral_health_computed"),
         }
     }
 }
@@ -536,6 +540,11 @@ impl ConvergenceEngine {
                     .tighten(self.config.degraded_tightening_factor)
             }
         }
+
+        // Emit an independent spectral-health snapshot over the currently
+        // healthy nodes. This supplements threshold logic with topological
+        // convergence evidence for auditability.
+        self.emit_spectral_health(fleet_state, current_time_ns);
     }
 
     /// Evaluate convergence for a single extension given its posterior delta.
@@ -668,6 +677,69 @@ impl ConvergenceEngine {
             }
         }
         receipts
+    }
+
+    fn emit_spectral_health(&mut self, fleet_state: &FleetProtocolState, timestamp_ns: u64) {
+        let healthy_nodes = fleet_state
+            .health
+            .healthy_nodes(timestamp_ns, fleet_state.config.partition_timeout_ns);
+        let n = healthy_nodes.len();
+        if n < 2 {
+            return;
+        }
+
+        let mut topology = match GossipTopology::new(
+            healthy_nodes
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+        ) {
+            Ok(topology) => topology,
+            Err(_) => return,
+        };
+
+        let edge_weight = 1_000_000;
+        if n == 2 {
+            if topology.add_edge(0, 1, edge_weight).is_err() {
+                return;
+            }
+        } else {
+            for i in 0..(n - 1) {
+                if topology.add_edge(i, i + 1, edge_weight).is_err() {
+                    return;
+                }
+            }
+            if topology.add_edge(n - 1, 0, edge_weight).is_err() {
+                return;
+            }
+        }
+
+        let analyzer = SpectralAnalyzer::default();
+        let analysis = match analyzer.analyze(&topology) {
+            Ok(analysis) => analysis,
+            Err(_) => return,
+        };
+        let cert = ConvergenceCertificate::from_analysis(&analysis, self.current_epoch);
+
+        let mut fields = BTreeMap::new();
+        fields.insert("healthy_nodes".to_string(), n.to_string());
+        fields.insert(
+            "spectral_gap_millionths".to_string(),
+            cert.spectral_gap_millionths.to_string(),
+        );
+        fields.insert(
+            "mixing_time_rounds".to_string(),
+            cert.mixing_time_rounds.to_string(),
+        );
+        fields.insert(
+            "has_partition".to_string(),
+            cert.has_natural_partition.to_string(),
+        );
+        self.emit_event(
+            ConvergenceEventType::SpectralHealthComputed,
+            timestamp_ns,
+            fields,
+        );
     }
 
     /// Detect and update partition state.
@@ -1706,16 +1778,12 @@ mod tests {
         assert_eq!(receipts.len(), 2);
 
         // Verify the actions are now registered.
-        assert!(
-            engine
-                .action_registry
-                .is_executed("ext-1", ContainmentAction::Terminate)
-        );
-        assert!(
-            engine
-                .action_registry
-                .is_executed("ext-2", ContainmentAction::Sandbox)
-        );
+        assert!(engine
+            .action_registry
+            .is_executed("ext-1", ContainmentAction::Terminate));
+        assert!(engine
+            .action_registry
+            .is_executed("ext-2", ContainmentAction::Sandbox));
     }
 
     #[test]
@@ -1821,6 +1889,29 @@ mod tests {
         assert_eq!(exited.len(), 1);
     }
 
+    #[test]
+    fn engine_emits_spectral_health_events() {
+        let mut engine = test_engine("local");
+        let mut fleet = test_fleet_state("local");
+
+        fleet
+            .process_heartbeat(&test_heartbeat("remote-1", 1, 10_000_000_000))
+            .unwrap();
+        fleet
+            .process_heartbeat(&test_heartbeat("remote-2", 1, 10_000_000_000))
+            .unwrap();
+        fleet
+            .process_heartbeat(&test_heartbeat("remote-3", 1, 10_000_000_000))
+            .unwrap();
+
+        engine.update_partition_state(&fleet, 10_000_000_000);
+
+        let events = engine.events_of_type(&ConvergenceEventType::SpectralHealthComputed);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].fields.get("healthy_nodes").unwrap(), "3");
+        assert!(events[0].fields.contains_key("spectral_gap_millionths"));
+    }
+
     // -- ConvergenceEvent serde --
 
     #[test]
@@ -1851,6 +1942,10 @@ mod tests {
         assert_eq!(
             ConvergenceEventType::EscalationTriggered.to_string(),
             "escalation_triggered"
+        );
+        assert_eq!(
+            ConvergenceEventType::SpectralHealthComputed.to_string(),
+            "spectral_health_computed"
         );
     }
 
