@@ -1,0 +1,1220 @@
+//! WASM Runtime Lane (FRX-04.2)
+//!
+//! High-performance signal graph and deterministic scheduler designed for
+//! compilation to WASM. Targets large/high-churn workloads with:
+//! - Bounded queues and deterministic topological propagation.
+//! - Efficient JS↔WASM ABI for state updates and DOM op emission.
+//! - Deterministic safe mode when resource budgets are exceeded.
+
+use crate::engine_object_id::{EngineObjectId, ObjectDomain, SchemaId, derive_id};
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+
+fn wasm_schema() -> SchemaId {
+    SchemaId::from_definition(b"wasm_runtime_lane-v1")
+}
+
+// ---------------------------------------------------------------------------
+// WASM-targeted signal node (compact representation)
+// ---------------------------------------------------------------------------
+
+/// Compact signal identifier for WASM linear memory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct WasmSignalId(pub u32);
+
+/// Signal kind in the WASM lane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum WasmSignalKind {
+    Source,
+    Derived,
+    Effect,
+}
+
+/// Evaluation status.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum WasmSignalStatus {
+    Clean,
+    Dirty,
+    Evaluating,
+    Disposed,
+}
+
+/// Compact signal node for WASM linear memory layout.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WasmSignalNode {
+    pub id: WasmSignalId,
+    pub kind: WasmSignalKind,
+    pub status: WasmSignalStatus,
+    pub depth: u16,
+    pub generation: u32,
+    pub dependencies: BTreeSet<WasmSignalId>,
+    pub dependents: BTreeSet<WasmSignalId>,
+}
+
+// ---------------------------------------------------------------------------
+// Bounded queue
+// ---------------------------------------------------------------------------
+
+/// Bounded FIFO queue that enforces a capacity limit.
+/// When full, new pushes are rejected (not dropped).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BoundedQueue<T> {
+    items: VecDeque<T>,
+    capacity: u32,
+}
+
+/// Errors from bounded queue operations.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum QueueError {
+    Full { capacity: u32 },
+    Empty,
+}
+
+impl<T> BoundedQueue<T> {
+    pub fn new(capacity: u32) -> Self {
+        Self {
+            items: VecDeque::with_capacity(capacity as usize),
+            capacity,
+        }
+    }
+
+    pub fn push(&mut self, item: T) -> Result<(), QueueError> {
+        if self.items.len() >= self.capacity as usize {
+            return Err(QueueError::Full {
+                capacity: self.capacity,
+            });
+        }
+        self.items.push_back(item);
+        Ok(())
+    }
+
+    pub fn pop(&mut self) -> Result<T, QueueError> {
+        self.items.pop_front().ok_or(QueueError::Empty)
+    }
+
+    pub fn len(&self) -> usize {
+        self.items.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+
+    pub fn is_full(&self) -> bool {
+        self.items.len() >= self.capacity as usize
+    }
+
+    pub fn capacity(&self) -> u32 {
+        self.capacity
+    }
+
+    pub fn drain_all(&mut self) -> Vec<T> {
+        self.items.drain(..).collect()
+    }
+
+    pub fn clear(&mut self) {
+        self.items.clear();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// WASM signal graph
+// ---------------------------------------------------------------------------
+
+/// Errors from WASM signal graph operations.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WasmGraphError {
+    NotFound(WasmSignalId),
+    Disposed(WasmSignalId),
+    DuplicateSignal(WasmSignalId),
+    DepNotFound(WasmSignalId),
+    DepthExceeded {
+        signal: WasmSignalId,
+        depth: u16,
+        max: u16,
+    },
+    BudgetExceeded {
+        metric: String,
+        current: u64,
+        limit: u64,
+    },
+}
+
+/// WASM-optimised reactive signal graph with bounded resources.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WasmSignalGraph {
+    nodes: BTreeMap<WasmSignalId, WasmSignalNode>,
+    next_id: u32,
+    generation: u32,
+    pub max_depth: u16,
+    pub max_nodes: u32,
+}
+
+impl WasmSignalGraph {
+    pub fn new(max_depth: u16, max_nodes: u32) -> Self {
+        Self {
+            nodes: BTreeMap::new(),
+            next_id: 0,
+            generation: 0,
+            max_depth,
+            max_nodes,
+        }
+    }
+
+    pub fn next_id(&mut self) -> WasmSignalId {
+        let id = WasmSignalId(self.next_id);
+        self.next_id += 1;
+        id
+    }
+
+    pub fn active_count(&self) -> usize {
+        self.nodes
+            .values()
+            .filter(|n| n.status != WasmSignalStatus::Disposed)
+            .count()
+    }
+
+    /// Register a new signal node with bounded checks.
+    pub fn register(
+        &mut self,
+        id: WasmSignalId,
+        kind: WasmSignalKind,
+        deps: BTreeSet<WasmSignalId>,
+    ) -> Result<(), WasmGraphError> {
+        if self.nodes.contains_key(&id) {
+            return Err(WasmGraphError::DuplicateSignal(id));
+        }
+        if self.active_count() as u32 >= self.max_nodes {
+            return Err(WasmGraphError::BudgetExceeded {
+                metric: "nodes".into(),
+                current: self.active_count() as u64,
+                limit: self.max_nodes as u64,
+            });
+        }
+
+        for dep in &deps {
+            if !self.nodes.contains_key(dep) {
+                return Err(WasmGraphError::DepNotFound(*dep));
+            }
+        }
+
+        let depth = if deps.is_empty() {
+            0
+        } else {
+            let max_dep_depth = deps
+                .iter()
+                .filter_map(|d| self.nodes.get(d))
+                .map(|n| n.depth)
+                .max()
+                .unwrap_or(0);
+            max_dep_depth + 1
+        };
+
+        if depth > self.max_depth {
+            return Err(WasmGraphError::DepthExceeded {
+                signal: id,
+                depth,
+                max: self.max_depth,
+            });
+        }
+
+        for dep in &deps {
+            if let Some(dep_node) = self.nodes.get_mut(dep) {
+                dep_node.dependents.insert(id);
+            }
+        }
+
+        self.nodes.insert(
+            id,
+            WasmSignalNode {
+                id,
+                kind,
+                status: WasmSignalStatus::Dirty,
+                depth,
+                generation: self.generation,
+                dependencies: deps,
+                dependents: BTreeSet::new(),
+            },
+        );
+        Ok(())
+    }
+
+    /// Mark dirty and propagate. Returns dirty list in topological order.
+    pub fn propagate_dirty(
+        &mut self,
+        source: WasmSignalId,
+    ) -> Result<Vec<WasmSignalId>, WasmGraphError> {
+        if !self.nodes.contains_key(&source) {
+            return Err(WasmGraphError::NotFound(source));
+        }
+        if self.nodes[&source].status == WasmSignalStatus::Disposed {
+            return Err(WasmGraphError::Disposed(source));
+        }
+
+        self.generation = self.generation.wrapping_add(1);
+        let target_gen = self.generation;
+
+        let mut dirty = Vec::new();
+        let mut queue = VecDeque::new();
+        queue.push_back(source);
+
+        while let Some(current) = queue.pop_front() {
+            if let Some(node) = self.nodes.get_mut(&current) {
+                if node.generation == target_gen {
+                    continue;
+                }
+                node.status = WasmSignalStatus::Dirty;
+                node.generation = target_gen;
+                dirty.push(current);
+                let dependents: Vec<_> = node.dependents.iter().copied().collect();
+                for d in dependents {
+                    queue.push_back(d);
+                }
+            }
+        }
+
+        dirty.sort_by_key(|id| self.nodes.get(id).map_or(0, |n| n.depth));
+        Ok(dirty)
+    }
+
+    pub fn mark_clean(&mut self, id: WasmSignalId) -> Result<(), WasmGraphError> {
+        let node = self
+            .nodes
+            .get_mut(&id)
+            .ok_or(WasmGraphError::NotFound(id))?;
+        if node.status == WasmSignalStatus::Disposed {
+            return Err(WasmGraphError::Disposed(id));
+        }
+        node.status = WasmSignalStatus::Clean;
+        Ok(())
+    }
+
+    pub fn dispose(&mut self, id: WasmSignalId) -> Result<(), WasmGraphError> {
+        let node = self
+            .nodes
+            .get(&id)
+            .ok_or(WasmGraphError::NotFound(id))?
+            .clone();
+
+        for dep in &node.dependencies {
+            if let Some(dep_node) = self.nodes.get_mut(dep) {
+                dep_node.dependents.remove(&id);
+            }
+        }
+        for dependent in &node.dependents {
+            if let Some(dep_node) = self.nodes.get_mut(dependent) {
+                dep_node.dependencies.remove(&id);
+            }
+        }
+
+        if let Some(n) = self.nodes.get_mut(&id) {
+            n.status = WasmSignalStatus::Disposed;
+            n.dependencies.clear();
+            n.dependents.clear();
+        }
+        Ok(())
+    }
+
+    pub fn get(&self, id: WasmSignalId) -> Option<&WasmSignalNode> {
+        self.nodes.get(&id)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// JS↔WASM ABI types
+// ---------------------------------------------------------------------------
+
+/// Represents a state update crossing the JS→WASM boundary.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AbiStateUpdate {
+    pub signal_id: WasmSignalId,
+    /// Opaque payload (serialised value in ABI-compatible format).
+    pub payload: Vec<u8>,
+    pub sequence: u64,
+}
+
+/// A DOM operation emitted from WASM→JS.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AbiDomOp {
+    Create {
+        element_id: u32,
+        tag_index: u16,
+    },
+    Remove {
+        element_id: u32,
+    },
+    SetProp {
+        element_id: u32,
+        prop_index: u16,
+        value: Vec<u8>,
+    },
+    RemoveProp {
+        element_id: u32,
+        prop_index: u16,
+    },
+    SetText {
+        element_id: u32,
+        text: Vec<u8>,
+    },
+    Move {
+        element_id: u32,
+        new_parent: u32,
+        before: u32,
+    },
+}
+
+impl AbiDomOp {
+    pub fn target_element(&self) -> u32 {
+        match self {
+            Self::Create { element_id, .. } => *element_id,
+            Self::Remove { element_id } => *element_id,
+            Self::SetProp { element_id, .. } => *element_id,
+            Self::RemoveProp { element_id, .. } => *element_id,
+            Self::SetText { element_id, .. } => *element_id,
+            Self::Move { element_id, .. } => *element_id,
+        }
+    }
+}
+
+/// A batch of DOM operations from WASM.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AbiDomBatch {
+    pub ops: Vec<AbiDomOp>,
+    pub cycle: u64,
+}
+
+impl AbiDomBatch {
+    pub fn new(cycle: u64) -> Self {
+        Self {
+            ops: Vec::new(),
+            cycle,
+        }
+    }
+
+    pub fn push(&mut self, op: AbiDomOp) {
+        self.ops.push(op);
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.ops.is_empty()
+    }
+
+    pub fn derive_id(&self) -> EngineObjectId {
+        let canonical = format!("wasm_dom_batch:cycle{}:ops={}", self.cycle, self.ops.len());
+        derive_id(
+            ObjectDomain::EvidenceRecord,
+            "wasm-lane",
+            &wasm_schema(),
+            canonical.as_bytes(),
+        )
+        .expect("wasm dom batch id")
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Resource budget and safe mode
+// ---------------------------------------------------------------------------
+
+/// Resource budget for the WASM lane.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WasmBudget {
+    /// Maximum signal nodes.
+    pub max_signals: u32,
+    /// Maximum signal graph depth.
+    pub max_depth: u16,
+    /// Maximum pending state updates in bounded queue.
+    pub max_pending_updates: u32,
+    /// Maximum DOM ops per flush cycle.
+    pub max_dom_ops_per_cycle: u32,
+    /// Maximum total evaluations per flush.
+    pub max_evaluations_per_flush: u32,
+}
+
+impl WasmBudget {
+    pub fn default_budget() -> Self {
+        Self {
+            max_signals: 50_000,
+            max_depth: 128,
+            max_pending_updates: 10_000,
+            max_dom_ops_per_cycle: 50_000,
+            max_evaluations_per_flush: 100_000,
+        }
+    }
+
+    pub fn validate(&self) -> Vec<String> {
+        let mut errors = Vec::new();
+        if self.max_signals == 0 {
+            errors.push("max_signals must be > 0".into());
+        }
+        if self.max_depth == 0 {
+            errors.push("max_depth must be > 0".into());
+        }
+        if self.max_pending_updates == 0 {
+            errors.push("max_pending_updates must be > 0".into());
+        }
+        if self.max_dom_ops_per_cycle == 0 {
+            errors.push("max_dom_ops_per_cycle must be > 0".into());
+        }
+        errors
+    }
+}
+
+/// Lane operational mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum WasmLaneMode {
+    /// Normal execution.
+    Normal,
+    /// Safe mode: reduced throughput, extra validation, conservative scheduling.
+    Safe,
+    /// Degraded: budget exceeded, drop low-priority updates.
+    Degraded,
+    /// Halted: unrecoverable, requires restart.
+    Halted,
+}
+
+/// Reason for entering safe/degraded mode.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SafeModeReason {
+    QueueOverflow { queue_len: u32, limit: u32 },
+    DepthExceeded { depth: u16, limit: u16 },
+    EvalBudgetExhausted { evals: u32, limit: u32 },
+    DomOpBudgetExhausted { ops: u32, limit: u32 },
+    SignalBudgetExhausted { signals: u32, limit: u32 },
+}
+
+// ---------------------------------------------------------------------------
+// Flush result
+// ---------------------------------------------------------------------------
+
+/// Summary of a WASM lane flush cycle.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WasmFlushResult {
+    pub cycle: u64,
+    pub updates_consumed: u32,
+    pub signals_evaluated: u32,
+    pub dom_ops_emitted: u32,
+    pub mode_after: WasmLaneMode,
+    pub safe_mode_triggers: Vec<SafeModeReason>,
+}
+
+impl WasmFlushResult {
+    pub fn derive_id(&self) -> EngineObjectId {
+        let canonical = format!(
+            "wasm_flush:cycle{}:updates={}:evals={}:ops={}:mode={:?}",
+            self.cycle,
+            self.updates_consumed,
+            self.signals_evaluated,
+            self.dom_ops_emitted,
+            self.mode_after,
+        );
+        derive_id(
+            ObjectDomain::EvidenceRecord,
+            "wasm-lane",
+            &wasm_schema(),
+            canonical.as_bytes(),
+        )
+        .expect("wasm flush id")
+    }
+}
+
+// ---------------------------------------------------------------------------
+// WASM runtime lane
+// ---------------------------------------------------------------------------
+
+/// The complete WASM runtime lane instance.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WasmRuntimeLane {
+    pub budget: WasmBudget,
+    pub graph: WasmSignalGraph,
+    pub update_queue: BoundedQueue<AbiStateUpdate>,
+    pub mode: WasmLaneMode,
+    pub flush_count: u64,
+    pub total_evaluations: u64,
+    pub total_dom_ops: u64,
+    pub safe_mode_triggers: Vec<SafeModeReason>,
+}
+
+impl WasmRuntimeLane {
+    pub fn new(budget: WasmBudget) -> Self {
+        let graph = WasmSignalGraph::new(budget.max_depth, budget.max_signals);
+        let update_queue = BoundedQueue::new(budget.max_pending_updates);
+        Self {
+            budget,
+            graph,
+            update_queue,
+            mode: WasmLaneMode::Normal,
+            flush_count: 0,
+            total_evaluations: 0,
+            total_dom_ops: 0,
+            safe_mode_triggers: Vec::new(),
+        }
+    }
+
+    pub fn with_defaults() -> Self {
+        Self::new(WasmBudget::default_budget())
+    }
+
+    /// Enqueue a state update from JS side.
+    pub fn enqueue_update(&mut self, update: AbiStateUpdate) -> Result<(), SafeModeReason> {
+        if self.update_queue.is_full() {
+            let reason = SafeModeReason::QueueOverflow {
+                queue_len: self.update_queue.len() as u32,
+                limit: self.update_queue.capacity(),
+            };
+            self.enter_safe_mode(reason.clone());
+            return Err(reason);
+        }
+        self.update_queue
+            .push(update)
+            .map_err(|_| SafeModeReason::QueueOverflow {
+                queue_len: self.update_queue.len() as u32,
+                limit: self.update_queue.capacity(),
+            })
+    }
+
+    /// Execute a flush cycle: consume updates, propagate, evaluate, emit DOM ops.
+    pub fn flush(&mut self) -> WasmFlushResult {
+        let cycle = self.flush_count;
+        self.flush_count += 1;
+
+        let mut signals_evaluated = 0u32;
+        let mut dom_ops_emitted = 0u32;
+        let mut triggers = Vec::new();
+
+        // Consume updates up to budget
+        let updates = self.update_queue.drain_all();
+        let updates_consumed = updates.len() as u32;
+
+        // Propagate dirty for each update
+        let mut all_dirty = BTreeSet::new();
+        for update in &updates {
+            if let Ok(dirty) = self.graph.propagate_dirty(update.signal_id) {
+                for d in dirty {
+                    all_dirty.insert(d);
+                }
+            }
+        }
+
+        // Evaluate dirty signals in topological order
+        let mut eval_order: Vec<_> = all_dirty.into_iter().collect();
+        eval_order.sort_by_key(|id| self.graph.get(*id).map_or(0, |n| n.depth));
+
+        for sig in &eval_order {
+            if signals_evaluated >= self.budget.max_evaluations_per_flush {
+                triggers.push(SafeModeReason::EvalBudgetExhausted {
+                    evals: signals_evaluated,
+                    limit: self.budget.max_evaluations_per_flush,
+                });
+                break;
+            }
+            let _ = self.graph.mark_clean(*sig);
+            signals_evaluated += 1;
+
+            // Count effect signals as DOM op emitters
+            if let Some(node) = self.graph.get(*sig)
+                && node.kind == WasmSignalKind::Effect
+            {
+                dom_ops_emitted += 1;
+            }
+        }
+
+        self.total_evaluations += signals_evaluated as u64;
+        self.total_dom_ops += dom_ops_emitted as u64;
+
+        // Determine mode
+        let mode_after = if !triggers.is_empty() {
+            WasmLaneMode::Degraded
+        } else {
+            self.mode
+        };
+
+        if !triggers.is_empty() {
+            self.safe_mode_triggers.extend(triggers.clone());
+            self.mode = mode_after;
+        }
+
+        WasmFlushResult {
+            cycle,
+            updates_consumed,
+            signals_evaluated,
+            dom_ops_emitted,
+            mode_after,
+            safe_mode_triggers: triggers,
+        }
+    }
+
+    fn enter_safe_mode(&mut self, reason: SafeModeReason) {
+        if self.mode == WasmLaneMode::Normal {
+            self.mode = WasmLaneMode::Safe;
+        }
+        self.safe_mode_triggers.push(reason);
+    }
+
+    /// Reset to normal mode (e.g. after clearing queue pressure).
+    pub fn reset_mode(&mut self) {
+        self.mode = WasmLaneMode::Normal;
+        self.safe_mode_triggers.clear();
+    }
+
+    pub fn derive_id(&self) -> EngineObjectId {
+        let canonical = format!(
+            "wasm_lane:signals={}:mode={:?}:flushes={}",
+            self.graph.active_count(),
+            self.mode,
+            self.flush_count,
+        );
+        derive_id(
+            ObjectDomain::EvidenceRecord,
+            "wasm-lane",
+            &wasm_schema(),
+            canonical.as_bytes(),
+        )
+        .expect("wasm lane id")
+    }
+}
+
+// ===========================================================================
+// Tests
+// ===========================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ---- BoundedQueue tests ----
+
+    #[test]
+    fn bounded_queue_new() {
+        let q: BoundedQueue<u32> = BoundedQueue::new(5);
+        assert!(q.is_empty());
+        assert!(!q.is_full());
+        assert_eq!(q.capacity(), 5);
+    }
+
+    #[test]
+    fn bounded_queue_push_pop() {
+        let mut q = BoundedQueue::new(3);
+        q.push(1).unwrap();
+        q.push(2).unwrap();
+        assert_eq!(q.len(), 2);
+        assert_eq!(q.pop().unwrap(), 1);
+        assert_eq!(q.pop().unwrap(), 2);
+        assert!(q.is_empty());
+    }
+
+    #[test]
+    fn bounded_queue_full() {
+        let mut q = BoundedQueue::new(2);
+        q.push(1).unwrap();
+        q.push(2).unwrap();
+        assert!(q.is_full());
+        assert!(matches!(q.push(3), Err(QueueError::Full { capacity: 2 })));
+    }
+
+    #[test]
+    fn bounded_queue_empty_pop() {
+        let mut q: BoundedQueue<u32> = BoundedQueue::new(5);
+        assert!(matches!(q.pop(), Err(QueueError::Empty)));
+    }
+
+    #[test]
+    fn bounded_queue_drain_all() {
+        let mut q = BoundedQueue::new(5);
+        q.push(10).unwrap();
+        q.push(20).unwrap();
+        q.push(30).unwrap();
+        let all = q.drain_all();
+        assert_eq!(all, vec![10, 20, 30]);
+        assert!(q.is_empty());
+    }
+
+    #[test]
+    fn bounded_queue_clear() {
+        let mut q = BoundedQueue::new(5);
+        q.push(1).unwrap();
+        q.push(2).unwrap();
+        q.clear();
+        assert!(q.is_empty());
+    }
+
+    // ---- WasmSignalGraph tests ----
+
+    #[test]
+    fn graph_new() {
+        let g = WasmSignalGraph::new(64, 1000);
+        assert_eq!(g.active_count(), 0);
+    }
+
+    #[test]
+    fn graph_register_source() {
+        let mut g = WasmSignalGraph::new(64, 1000);
+        let id = g.next_id();
+        g.register(id, WasmSignalKind::Source, BTreeSet::new())
+            .unwrap();
+        assert_eq!(g.active_count(), 1);
+        assert_eq!(g.get(id).unwrap().depth, 0);
+    }
+
+    #[test]
+    fn graph_register_derived() {
+        let mut g = WasmSignalGraph::new(64, 1000);
+        let s = g.next_id();
+        g.register(s, WasmSignalKind::Source, BTreeSet::new())
+            .unwrap();
+        let d = g.next_id();
+        let mut deps = BTreeSet::new();
+        deps.insert(s);
+        g.register(d, WasmSignalKind::Derived, deps).unwrap();
+        assert_eq!(g.get(d).unwrap().depth, 1);
+    }
+
+    #[test]
+    fn graph_depth_exceeded() {
+        let mut g = WasmSignalGraph::new(2, 100);
+        let s = g.next_id();
+        g.register(s, WasmSignalKind::Source, BTreeSet::new())
+            .unwrap();
+        let d1 = g.next_id();
+        let mut deps = BTreeSet::new();
+        deps.insert(s);
+        g.register(d1, WasmSignalKind::Derived, deps).unwrap();
+        let d2 = g.next_id();
+        let mut deps2 = BTreeSet::new();
+        deps2.insert(d1);
+        g.register(d2, WasmSignalKind::Derived, deps2).unwrap();
+        // depth 3 exceeds max_depth=2
+        let d3 = g.next_id();
+        let mut deps3 = BTreeSet::new();
+        deps3.insert(d2);
+        assert!(matches!(
+            g.register(d3, WasmSignalKind::Derived, deps3),
+            Err(WasmGraphError::DepthExceeded { .. })
+        ));
+    }
+
+    #[test]
+    fn graph_node_limit() {
+        let mut g = WasmSignalGraph::new(64, 2);
+        let s1 = g.next_id();
+        let s2 = g.next_id();
+        g.register(s1, WasmSignalKind::Source, BTreeSet::new())
+            .unwrap();
+        g.register(s2, WasmSignalKind::Source, BTreeSet::new())
+            .unwrap();
+        let s3 = g.next_id();
+        assert!(matches!(
+            g.register(s3, WasmSignalKind::Source, BTreeSet::new()),
+            Err(WasmGraphError::BudgetExceeded { .. })
+        ));
+    }
+
+    #[test]
+    fn graph_duplicate_rejected() {
+        let mut g = WasmSignalGraph::new(64, 100);
+        let id = g.next_id();
+        g.register(id, WasmSignalKind::Source, BTreeSet::new())
+            .unwrap();
+        assert!(matches!(
+            g.register(id, WasmSignalKind::Source, BTreeSet::new()),
+            Err(WasmGraphError::DuplicateSignal(_))
+        ));
+    }
+
+    #[test]
+    fn graph_propagate_dirty() {
+        let mut g = WasmSignalGraph::new(64, 100);
+        let s = g.next_id();
+        g.register(s, WasmSignalKind::Source, BTreeSet::new())
+            .unwrap();
+        g.mark_clean(s).unwrap();
+        let d = g.next_id();
+        let mut deps = BTreeSet::new();
+        deps.insert(s);
+        g.register(d, WasmSignalKind::Derived, deps).unwrap();
+        g.mark_clean(d).unwrap();
+        let e = g.next_id();
+        let mut deps2 = BTreeSet::new();
+        deps2.insert(d);
+        g.register(e, WasmSignalKind::Effect, deps2).unwrap();
+        g.mark_clean(e).unwrap();
+
+        let dirty = g.propagate_dirty(s).unwrap();
+        assert_eq!(dirty.len(), 3);
+        assert_eq!(dirty[0], s);
+        assert_eq!(dirty[1], d);
+        assert_eq!(dirty[2], e);
+    }
+
+    #[test]
+    fn graph_dispose() {
+        let mut g = WasmSignalGraph::new(64, 100);
+        let s = g.next_id();
+        g.register(s, WasmSignalKind::Source, BTreeSet::new())
+            .unwrap();
+        let d = g.next_id();
+        let mut deps = BTreeSet::new();
+        deps.insert(s);
+        g.register(d, WasmSignalKind::Derived, deps).unwrap();
+        g.dispose(d).unwrap();
+        assert_eq!(g.active_count(), 1);
+    }
+
+    #[test]
+    fn graph_serde_roundtrip() {
+        let mut g = WasmSignalGraph::new(64, 100);
+        let s = g.next_id();
+        g.register(s, WasmSignalKind::Source, BTreeSet::new())
+            .unwrap();
+        let json = serde_json::to_string(&g).unwrap();
+        let g2: WasmSignalGraph = serde_json::from_str(&json).unwrap();
+        assert_eq!(g, g2);
+    }
+
+    // ---- ABI types tests ----
+
+    #[test]
+    fn abi_dom_op_target() {
+        let op = AbiDomOp::SetProp {
+            element_id: 42,
+            prop_index: 0,
+            value: vec![1, 2, 3],
+        };
+        assert_eq!(op.target_element(), 42);
+    }
+
+    #[test]
+    fn abi_dom_batch_derive_id_stable() {
+        let b = AbiDomBatch::new(1);
+        assert_eq!(b.derive_id(), b.derive_id());
+    }
+
+    #[test]
+    fn abi_dom_batch_serde_roundtrip() {
+        let mut b = AbiDomBatch::new(5);
+        b.push(AbiDomOp::Create {
+            element_id: 0,
+            tag_index: 1,
+        });
+        b.push(AbiDomOp::SetText {
+            element_id: 0,
+            text: b"hello".to_vec(),
+        });
+        let json = serde_json::to_string(&b).unwrap();
+        let b2: AbiDomBatch = serde_json::from_str(&json).unwrap();
+        assert_eq!(b, b2);
+    }
+
+    #[test]
+    fn abi_state_update_serde_roundtrip() {
+        let u = AbiStateUpdate {
+            signal_id: WasmSignalId(7),
+            payload: vec![0xDE, 0xAD],
+            sequence: 42,
+        };
+        let json = serde_json::to_string(&u).unwrap();
+        let u2: AbiStateUpdate = serde_json::from_str(&json).unwrap();
+        assert_eq!(u, u2);
+    }
+
+    // ---- WasmBudget tests ----
+
+    #[test]
+    fn budget_defaults_valid() {
+        let b = WasmBudget::default_budget();
+        assert!(b.validate().is_empty());
+    }
+
+    #[test]
+    fn budget_zero_signals_invalid() {
+        let mut b = WasmBudget::default_budget();
+        b.max_signals = 0;
+        assert!(!b.validate().is_empty());
+    }
+
+    // ---- WasmRuntimeLane tests ----
+
+    #[test]
+    fn lane_with_defaults() {
+        let lane = WasmRuntimeLane::with_defaults();
+        assert_eq!(lane.mode, WasmLaneMode::Normal);
+        assert_eq!(lane.flush_count, 0);
+    }
+
+    #[test]
+    fn lane_enqueue_update() {
+        let mut lane = WasmRuntimeLane::with_defaults();
+        let s = lane.graph.next_id();
+        lane.graph
+            .register(s, WasmSignalKind::Source, BTreeSet::new())
+            .unwrap();
+
+        lane.enqueue_update(AbiStateUpdate {
+            signal_id: s,
+            payload: vec![1],
+            sequence: 0,
+        })
+        .unwrap();
+        assert_eq!(lane.update_queue.len(), 1);
+    }
+
+    #[test]
+    fn lane_flush_basic() {
+        let mut lane = WasmRuntimeLane::with_defaults();
+        let s = lane.graph.next_id();
+        lane.graph
+            .register(s, WasmSignalKind::Source, BTreeSet::new())
+            .unwrap();
+        lane.graph.mark_clean(s).unwrap();
+
+        let d = lane.graph.next_id();
+        let mut deps = BTreeSet::new();
+        deps.insert(s);
+        lane.graph
+            .register(d, WasmSignalKind::Derived, deps)
+            .unwrap();
+        lane.graph.mark_clean(d).unwrap();
+
+        lane.enqueue_update(AbiStateUpdate {
+            signal_id: s,
+            payload: vec![42],
+            sequence: 0,
+        })
+        .unwrap();
+
+        let result = lane.flush();
+        assert_eq!(result.cycle, 0);
+        assert_eq!(result.updates_consumed, 1);
+        assert_eq!(result.signals_evaluated, 2);
+        assert_eq!(result.mode_after, WasmLaneMode::Normal);
+        assert!(result.safe_mode_triggers.is_empty());
+    }
+
+    #[test]
+    fn lane_flush_with_effect() {
+        let mut lane = WasmRuntimeLane::with_defaults();
+        let s = lane.graph.next_id();
+        lane.graph
+            .register(s, WasmSignalKind::Source, BTreeSet::new())
+            .unwrap();
+        lane.graph.mark_clean(s).unwrap();
+
+        let e = lane.graph.next_id();
+        let mut deps = BTreeSet::new();
+        deps.insert(s);
+        lane.graph
+            .register(e, WasmSignalKind::Effect, deps)
+            .unwrap();
+        lane.graph.mark_clean(e).unwrap();
+
+        lane.enqueue_update(AbiStateUpdate {
+            signal_id: s,
+            payload: vec![],
+            sequence: 0,
+        })
+        .unwrap();
+
+        let result = lane.flush();
+        assert_eq!(result.dom_ops_emitted, 1); // effect counts as dom op
+    }
+
+    #[test]
+    fn lane_eval_budget_triggers_degraded() {
+        let mut budget = WasmBudget::default_budget();
+        budget.max_evaluations_per_flush = 1;
+        let mut lane = WasmRuntimeLane::new(budget);
+
+        let s = lane.graph.next_id();
+        lane.graph
+            .register(s, WasmSignalKind::Source, BTreeSet::new())
+            .unwrap();
+        lane.graph.mark_clean(s).unwrap();
+
+        let d = lane.graph.next_id();
+        let mut deps = BTreeSet::new();
+        deps.insert(s);
+        lane.graph
+            .register(d, WasmSignalKind::Derived, deps)
+            .unwrap();
+        lane.graph.mark_clean(d).unwrap();
+
+        lane.enqueue_update(AbiStateUpdate {
+            signal_id: s,
+            payload: vec![],
+            sequence: 0,
+        })
+        .unwrap();
+
+        let result = lane.flush();
+        assert_eq!(result.mode_after, WasmLaneMode::Degraded);
+        assert!(!result.safe_mode_triggers.is_empty());
+    }
+
+    #[test]
+    fn lane_queue_overflow_safe_mode() {
+        let mut budget = WasmBudget::default_budget();
+        budget.max_pending_updates = 1;
+        let mut lane = WasmRuntimeLane::new(budget);
+
+        let s = lane.graph.next_id();
+        lane.graph
+            .register(s, WasmSignalKind::Source, BTreeSet::new())
+            .unwrap();
+
+        lane.enqueue_update(AbiStateUpdate {
+            signal_id: s,
+            payload: vec![],
+            sequence: 0,
+        })
+        .unwrap();
+
+        // Second update should trigger safe mode
+        let result = lane.enqueue_update(AbiStateUpdate {
+            signal_id: s,
+            payload: vec![],
+            sequence: 1,
+        });
+        assert!(result.is_err());
+        assert_eq!(lane.mode, WasmLaneMode::Safe);
+    }
+
+    #[test]
+    fn lane_reset_mode() {
+        let mut lane = WasmRuntimeLane::with_defaults();
+        lane.mode = WasmLaneMode::Safe;
+        lane.safe_mode_triggers.push(SafeModeReason::QueueOverflow {
+            queue_len: 100,
+            limit: 100,
+        });
+        lane.reset_mode();
+        assert_eq!(lane.mode, WasmLaneMode::Normal);
+        assert!(lane.safe_mode_triggers.is_empty());
+    }
+
+    #[test]
+    fn lane_derive_id_stable() {
+        let lane = WasmRuntimeLane::with_defaults();
+        assert_eq!(lane.derive_id(), lane.derive_id());
+    }
+
+    #[test]
+    fn lane_serde_roundtrip() {
+        let lane = WasmRuntimeLane::with_defaults();
+        let json = serde_json::to_string(&lane).unwrap();
+        let l2: WasmRuntimeLane = serde_json::from_str(&json).unwrap();
+        assert_eq!(lane, l2);
+    }
+
+    #[test]
+    fn flush_result_derive_id_stable() {
+        let r = WasmFlushResult {
+            cycle: 0,
+            updates_consumed: 5,
+            signals_evaluated: 10,
+            dom_ops_emitted: 3,
+            mode_after: WasmLaneMode::Normal,
+            safe_mode_triggers: vec![],
+        };
+        assert_eq!(r.derive_id(), r.derive_id());
+    }
+
+    // ---- End-to-end tests ----
+
+    #[test]
+    fn e2e_multi_update_flush() {
+        let mut lane = WasmRuntimeLane::with_defaults();
+
+        // Create 3 source signals
+        let s1 = lane.graph.next_id();
+        let s2 = lane.graph.next_id();
+        let s3 = lane.graph.next_id();
+        for s in [s1, s2, s3] {
+            lane.graph
+                .register(s, WasmSignalKind::Source, BTreeSet::new())
+                .unwrap();
+            lane.graph.mark_clean(s).unwrap();
+        }
+
+        // Derived that depends on s1+s2
+        let d = lane.graph.next_id();
+        let mut deps = BTreeSet::new();
+        deps.insert(s1);
+        deps.insert(s2);
+        lane.graph
+            .register(d, WasmSignalKind::Derived, deps)
+            .unwrap();
+        lane.graph.mark_clean(d).unwrap();
+
+        // Effect on derived
+        let e = lane.graph.next_id();
+        let mut edeps = BTreeSet::new();
+        edeps.insert(d);
+        lane.graph
+            .register(e, WasmSignalKind::Effect, edeps)
+            .unwrap();
+        lane.graph.mark_clean(e).unwrap();
+
+        // Enqueue updates for s1 and s3
+        lane.enqueue_update(AbiStateUpdate {
+            signal_id: s1,
+            payload: vec![1],
+            sequence: 0,
+        })
+        .unwrap();
+        lane.enqueue_update(AbiStateUpdate {
+            signal_id: s3,
+            payload: vec![3],
+            sequence: 1,
+        })
+        .unwrap();
+
+        let result = lane.flush();
+        assert_eq!(result.updates_consumed, 2);
+        // s1, s3 dirty + d (via s1) + e (via d) = 4 signals
+        assert!(result.signals_evaluated >= 4);
+        assert_eq!(result.mode_after, WasmLaneMode::Normal);
+    }
+
+    #[test]
+    fn e2e_dispose_during_operation() {
+        let mut lane = WasmRuntimeLane::with_defaults();
+        let s = lane.graph.next_id();
+        lane.graph
+            .register(s, WasmSignalKind::Source, BTreeSet::new())
+            .unwrap();
+        let d = lane.graph.next_id();
+        let mut deps = BTreeSet::new();
+        deps.insert(s);
+        lane.graph
+            .register(d, WasmSignalKind::Derived, deps)
+            .unwrap();
+
+        // Dispose derived
+        lane.graph.dispose(d).unwrap();
+        assert_eq!(lane.graph.active_count(), 1);
+
+        // Source dirty propagation should not reach disposed
+        let dirty = lane.graph.propagate_dirty(s).unwrap();
+        assert_eq!(dirty.len(), 1);
+    }
+
+    #[test]
+    fn e2e_sequential_flushes() {
+        let mut lane = WasmRuntimeLane::with_defaults();
+        let s = lane.graph.next_id();
+        lane.graph
+            .register(s, WasmSignalKind::Source, BTreeSet::new())
+            .unwrap();
+
+        for i in 0..3 {
+            lane.enqueue_update(AbiStateUpdate {
+                signal_id: s,
+                payload: vec![i as u8],
+                sequence: i,
+            })
+            .unwrap();
+            let result = lane.flush();
+            assert_eq!(result.cycle, i);
+        }
+        assert_eq!(lane.flush_count, 3);
+    }
+}
