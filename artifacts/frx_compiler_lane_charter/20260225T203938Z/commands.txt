@@ -1,0 +1,3 @@
+cargo check -p frankenengine-engine --test frx_compiler_lane_charter
+cargo test -p frankenengine-engine --test frx_compiler_lane_charter
+cargo clippy -p frankenengine-engine --test frx_compiler_lane_charter -- -D warnings
