@@ -540,11 +540,6 @@ impl ConvergenceEngine {
                     .tighten(self.config.degraded_tightening_factor)
             }
         }
-
-        // Emit an independent spectral-health snapshot over the currently
-        // healthy nodes. This supplements threshold logic with topological
-        // convergence evidence for auditability.
-        self.emit_spectral_health(fleet_state, current_time_ns);
     }
 
     /// Evaluate convergence for a single extension given its posterior delta.
@@ -816,6 +811,11 @@ impl ConvergenceEngine {
                 }
             }
         }
+
+        // Emit an independent spectral-health snapshot over the currently
+        // healthy nodes. This supplements threshold logic with topological
+        // convergence evidence for auditability.
+        self.emit_spectral_health(fleet_state, current_time_ns);
     }
 
     /// Escalate containment for an extension to the next severity level.
