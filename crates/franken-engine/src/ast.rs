@@ -10,6 +10,15 @@ use sha2::{Digest, Sha256};
 
 use crate::deterministic_serde::{self, CanonicalValue};
 
+/// Versioned canonical AST contract binding schema + hash semantics.
+pub const CANONICAL_AST_CONTRACT_VERSION: &str = "franken-engine.parser-ast.contract.v1";
+/// Versioned schema identifier for canonical AST structure and key ordering.
+pub const CANONICAL_AST_SCHEMA_VERSION: &str = "franken-engine.parser-ast.schema.v1";
+/// Hash algorithm used by `SyntaxTree::canonical_hash`.
+pub const CANONICAL_AST_HASH_ALGORITHM: &str = "sha256";
+/// Prefix used in canonical AST hash strings.
+pub const CANONICAL_AST_HASH_PREFIX: &str = "sha256:";
+
 /// Parse-goal marker for ES2020 sources.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ParseGoal {
@@ -92,6 +101,22 @@ pub struct SyntaxTree {
 }
 
 impl SyntaxTree {
+    pub const fn canonical_contract_version() -> &'static str {
+        CANONICAL_AST_CONTRACT_VERSION
+    }
+
+    pub const fn canonical_schema_version() -> &'static str {
+        CANONICAL_AST_SCHEMA_VERSION
+    }
+
+    pub const fn canonical_hash_algorithm() -> &'static str {
+        CANONICAL_AST_HASH_ALGORITHM
+    }
+
+    pub const fn canonical_hash_prefix() -> &'static str {
+        CANONICAL_AST_HASH_PREFIX
+    }
+
     pub fn canonical_value(&self) -> CanonicalValue {
         let mut map = BTreeMap::new();
         map.insert(
@@ -112,7 +137,7 @@ impl SyntaxTree {
 
     pub fn canonical_hash(&self) -> String {
         let digest = Sha256::digest(self.canonical_bytes());
-        format!("sha256:{}", hex::encode(digest))
+        format!("{}{}", Self::canonical_hash_prefix(), hex::encode(digest))
     }
 }
 
@@ -461,10 +486,44 @@ mod tests {
         };
         let hash = tree.canonical_hash();
         assert!(
-            hash.starts_with("sha256:"),
+            hash.starts_with(SyntaxTree::canonical_hash_prefix()),
             "hash must start with sha256: prefix"
         );
         assert_eq!(hash.len(), 7 + 64, "sha256 hex digest is 64 chars");
+    }
+
+    #[test]
+    fn canonical_ast_contract_constants_are_stable() {
+        assert_eq!(
+            CANONICAL_AST_CONTRACT_VERSION,
+            "franken-engine.parser-ast.contract.v1"
+        );
+        assert_eq!(
+            CANONICAL_AST_SCHEMA_VERSION,
+            "franken-engine.parser-ast.schema.v1"
+        );
+        assert_eq!(CANONICAL_AST_HASH_ALGORITHM, "sha256");
+        assert_eq!(CANONICAL_AST_HASH_PREFIX, "sha256:");
+    }
+
+    #[test]
+    fn syntax_tree_contract_metadata_accessors_match_constants() {
+        assert_eq!(
+            SyntaxTree::canonical_contract_version(),
+            CANONICAL_AST_CONTRACT_VERSION
+        );
+        assert_eq!(
+            SyntaxTree::canonical_schema_version(),
+            CANONICAL_AST_SCHEMA_VERSION
+        );
+        assert_eq!(
+            SyntaxTree::canonical_hash_algorithm(),
+            CANONICAL_AST_HASH_ALGORITHM
+        );
+        assert_eq!(
+            SyntaxTree::canonical_hash_prefix(),
+            CANONICAL_AST_HASH_PREFIX
+        );
     }
 
     #[test]

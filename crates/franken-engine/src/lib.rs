@@ -114,6 +114,7 @@ pub mod parallel_parser;
 pub mod parser;
 pub mod parser_arena;
 pub mod parser_error_recovery;
+pub mod parser_multi_engine_harness;
 pub mod parser_oracle;
 pub mod phase_gate;
 pub mod plas_benchmark_bundle;

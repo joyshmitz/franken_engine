@@ -3,19 +3,48 @@
 //! The parser trait is generic over input source and emits canonical `IR0`
 //! syntax artifacts from `crate::ast`.
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::ast::{
     ExportDeclaration, ExportKind, Expression, ExpressionStatement, ImportDeclaration, ParseGoal,
     SourceSpan, Statement, SyntaxTree,
 };
+use crate::deterministic_serde::{self, CanonicalValue};
 
 pub type ParseResult<T> = Result<T, ParseError>;
+
+/// Versioned Parse Event IR contract identifier.
+pub const PARSE_EVENT_IR_CONTRACT_VERSION: &str = "franken-engine.parser-event-ir.contract.v2";
+/// Versioned Parse Event IR schema identifier.
+pub const PARSE_EVENT_IR_SCHEMA_VERSION: &str = "franken-engine.parser-event-ir.schema.v2";
+/// Hash algorithm used for Parse Event IR canonical hashes.
+pub const PARSE_EVENT_IR_HASH_ALGORITHM: &str = "sha256";
+/// Hash prefix used for Parse Event IR canonical hashes.
+pub const PARSE_EVENT_IR_HASH_PREFIX: &str = "sha256:";
+/// Stable policy identifier used for parser event provenance.
+pub const PARSE_EVENT_IR_POLICY_ID: &str = "franken-engine.parser-event-producer.policy.v1";
+/// Stable component identifier used for parser event provenance.
+pub const PARSE_EVENT_IR_COMPONENT: &str = "canonical_es2020_parser";
+/// Stable prefix used for parse event trace IDs.
+pub const PARSE_EVENT_IR_TRACE_PREFIX: &str = "trace-parser-event-";
+/// Stable prefix used for parse event decision IDs.
+pub const PARSE_EVENT_IR_DECISION_PREFIX: &str = "decision-parser-event-";
+/// Versioned parser diagnostics taxonomy identifier.
+pub const PARSER_DIAGNOSTIC_TAXONOMY_VERSION: &str =
+    "franken-engine.parser-diagnostics.taxonomy.v1";
+/// Versioned normalized parser diagnostics schema identifier.
+pub const PARSER_DIAGNOSTIC_SCHEMA_VERSION: &str = "franken-engine.parser-diagnostics.schema.v1";
+/// Hash algorithm used for normalized parser diagnostics hashes.
+pub const PARSER_DIAGNOSTIC_HASH_ALGORITHM: &str = "sha256";
+/// Hash prefix used for normalized parser diagnostics hashes.
+pub const PARSER_DIAGNOSTIC_HASH_PREFIX: &str = "sha256:";
 
 /// Stable parse error codes for deterministic diagnostics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -27,6 +56,171 @@ pub enum ParseErrorCode {
     InvalidUtf8,
     SourceTooLarge,
     BudgetExceeded,
+}
+
+impl ParseErrorCode {
+    pub const ALL: [Self; 7] = [
+        Self::EmptySource,
+        Self::InvalidGoal,
+        Self::UnsupportedSyntax,
+        Self::IoReadFailed,
+        Self::InvalidUtf8,
+        Self::SourceTooLarge,
+        Self::BudgetExceeded,
+    ];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::EmptySource => "empty_source",
+            Self::InvalidGoal => "invalid_goal",
+            Self::UnsupportedSyntax => "unsupported_syntax",
+            Self::IoReadFailed => "io_read_failed",
+            Self::InvalidUtf8 => "invalid_utf8",
+            Self::SourceTooLarge => "source_too_large",
+            Self::BudgetExceeded => "budget_exceeded",
+        }
+    }
+
+    pub const fn stable_diagnostic_code(self) -> &'static str {
+        match self {
+            Self::EmptySource => "FE-PARSER-DIAG-EMPTY-SOURCE-0001",
+            Self::InvalidGoal => "FE-PARSER-DIAG-INVALID-GOAL-0001",
+            Self::UnsupportedSyntax => "FE-PARSER-DIAG-UNSUPPORTED-SYNTAX-0001",
+            Self::IoReadFailed => "FE-PARSER-DIAG-IO-READ-FAILED-0001",
+            Self::InvalidUtf8 => "FE-PARSER-DIAG-INVALID-UTF8-0001",
+            Self::SourceTooLarge => "FE-PARSER-DIAG-SOURCE-TOO-LARGE-0001",
+            Self::BudgetExceeded => "FE-PARSER-DIAG-BUDGET-EXCEEDED-0001",
+        }
+    }
+
+    pub const fn diagnostic_category(self) -> ParseDiagnosticCategory {
+        match self {
+            Self::EmptySource => ParseDiagnosticCategory::Input,
+            Self::InvalidGoal => ParseDiagnosticCategory::Goal,
+            Self::UnsupportedSyntax => ParseDiagnosticCategory::Syntax,
+            Self::IoReadFailed => ParseDiagnosticCategory::System,
+            Self::InvalidUtf8 => ParseDiagnosticCategory::Encoding,
+            Self::SourceTooLarge | Self::BudgetExceeded => ParseDiagnosticCategory::Resource,
+        }
+    }
+
+    pub const fn diagnostic_severity(self) -> ParseDiagnosticSeverity {
+        match self {
+            Self::IoReadFailed | Self::SourceTooLarge | Self::BudgetExceeded => {
+                ParseDiagnosticSeverity::Fatal
+            }
+            Self::EmptySource
+            | Self::InvalidGoal
+            | Self::UnsupportedSyntax
+            | Self::InvalidUtf8 => ParseDiagnosticSeverity::Error,
+        }
+    }
+
+    pub const fn diagnostic_message_template(
+        self,
+        budget_kind: Option<ParseBudgetKind>,
+    ) -> &'static str {
+        match self {
+            Self::EmptySource => "source is empty after whitespace normalization",
+            Self::InvalidGoal => "declaration is invalid for selected parse goal",
+            Self::UnsupportedSyntax => "statement or expression is unsupported by parser scaffold",
+            Self::IoReadFailed => "parser input could not be read",
+            Self::InvalidUtf8 => "parser input is not valid UTF-8",
+            Self::SourceTooLarge => "source length/offset exceeds supported limits",
+            Self::BudgetExceeded => match budget_kind {
+                Some(ParseBudgetKind::SourceBytes) => "source byte budget exceeded",
+                Some(ParseBudgetKind::TokenCount) => "token budget exceeded",
+                Some(ParseBudgetKind::RecursionDepth) => "recursion depth budget exceeded",
+                None => "parser budget exceeded",
+            },
+        }
+    }
+}
+
+/// Deterministic parser diagnostic category.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ParseDiagnosticCategory {
+    Input,
+    Goal,
+    Syntax,
+    Encoding,
+    Resource,
+    System,
+}
+
+impl ParseDiagnosticCategory {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Input => "input",
+            Self::Goal => "goal",
+            Self::Syntax => "syntax",
+            Self::Encoding => "encoding",
+            Self::Resource => "resource",
+            Self::System => "system",
+        }
+    }
+}
+
+/// Deterministic parser diagnostic severity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ParseDiagnosticSeverity {
+    Error,
+    Fatal,
+}
+
+impl ParseDiagnosticSeverity {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Error => "error",
+            Self::Fatal => "fatal",
+        }
+    }
+}
+
+/// Taxonomy row for one stable parser diagnostic code.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ParseDiagnosticRule {
+    pub parse_error_code: ParseErrorCode,
+    pub diagnostic_code: String,
+    pub category: ParseDiagnosticCategory,
+    pub severity: ParseDiagnosticSeverity,
+    pub message_template: String,
+}
+
+/// Versioned parser diagnostics taxonomy.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ParseDiagnosticTaxonomy {
+    pub taxonomy_version: String,
+    pub rules: Vec<ParseDiagnosticRule>,
+}
+
+impl ParseDiagnosticTaxonomy {
+    pub const fn taxonomy_version() -> &'static str {
+        PARSER_DIAGNOSTIC_TAXONOMY_VERSION
+    }
+
+    pub fn v1() -> Self {
+        let rules = ParseErrorCode::ALL
+            .iter()
+            .map(|code| ParseDiagnosticRule {
+                parse_error_code: *code,
+                diagnostic_code: code.stable_diagnostic_code().to_string(),
+                category: code.diagnostic_category(),
+                severity: code.diagnostic_severity(),
+                message_template: code.diagnostic_message_template(None).to_string(),
+            })
+            .collect();
+        Self {
+            taxonomy_version: Self::taxonomy_version().to_string(),
+            rules,
+        }
+    }
+
+    pub fn rule_for(&self, code: ParseErrorCode) -> Option<&ParseDiagnosticRule> {
+        self.rules.iter().find(|rule| rule.parse_error_code == code)
+    }
 }
 
 /// Parser mode selector.
@@ -88,6 +282,16 @@ pub enum ParseBudgetKind {
     RecursionDepth,
 }
 
+impl ParseBudgetKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::SourceBytes => "source_bytes",
+            Self::TokenCount => "token_count",
+            Self::RecursionDepth => "recursion_depth",
+        }
+    }
+}
+
 /// Deterministic parse failure witness emitted for budget failures.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParseFailureWitness {
@@ -99,6 +303,41 @@ pub struct ParseFailureWitness {
     pub max_source_bytes: u64,
     pub max_token_count: u64,
     pub max_recursion_depth: u64,
+}
+
+impl ParseFailureWitness {
+    pub fn canonical_value(&self) -> CanonicalValue {
+        let mut map = BTreeMap::new();
+        map.insert(
+            "mode".to_string(),
+            CanonicalValue::String(self.mode.as_str().to_string()),
+        );
+        map.insert(
+            "budget_kind".to_string(),
+            self.budget_kind
+                .map(|kind| CanonicalValue::String(kind.as_str().to_string()))
+                .unwrap_or(CanonicalValue::Null),
+        );
+        map.insert("source_bytes".to_string(), CanonicalValue::U64(self.source_bytes));
+        map.insert("token_count".to_string(), CanonicalValue::U64(self.token_count));
+        map.insert(
+            "max_recursion_observed".to_string(),
+            CanonicalValue::U64(self.max_recursion_observed),
+        );
+        map.insert(
+            "max_source_bytes".to_string(),
+            CanonicalValue::U64(self.max_source_bytes),
+        );
+        map.insert(
+            "max_token_count".to_string(),
+            CanonicalValue::U64(self.max_token_count),
+        );
+        map.insert(
+            "max_recursion_depth".to_string(),
+            CanonicalValue::U64(self.max_recursion_depth),
+        );
+        CanonicalValue::Map(map)
+    }
 }
 
 /// Coverage status for a grammar family in Script/Module goals.
@@ -190,6 +429,150 @@ impl ParseError {
             witness: Some(Box::new(witness)),
         }
     }
+
+    pub fn normalized_diagnostic(&self) -> ParseDiagnosticEnvelope {
+        normalize_parse_error(self)
+    }
+}
+
+/// Canonical parser diagnostic envelope derived from a parse error.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ParseDiagnosticEnvelope {
+    pub schema_version: String,
+    pub taxonomy_version: String,
+    pub hash_algorithm: String,
+    pub hash_prefix: String,
+    pub parse_error_code: ParseErrorCode,
+    pub diagnostic_code: String,
+    pub category: ParseDiagnosticCategory,
+    pub severity: ParseDiagnosticSeverity,
+    pub message_template: String,
+    pub source_label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub span: Option<SourceSpan>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget_kind: Option<ParseBudgetKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub witness: Option<ParseFailureWitness>,
+}
+
+impl ParseDiagnosticEnvelope {
+    pub const fn schema_version() -> &'static str {
+        PARSER_DIAGNOSTIC_SCHEMA_VERSION
+    }
+
+    pub const fn taxonomy_version() -> &'static str {
+        PARSER_DIAGNOSTIC_TAXONOMY_VERSION
+    }
+
+    pub const fn canonical_hash_algorithm() -> &'static str {
+        PARSER_DIAGNOSTIC_HASH_ALGORITHM
+    }
+
+    pub const fn canonical_hash_prefix() -> &'static str {
+        PARSER_DIAGNOSTIC_HASH_PREFIX
+    }
+
+    pub fn from_parse_error(error: &ParseError) -> Self {
+        normalize_parse_error(error)
+    }
+
+    pub fn canonical_value(&self) -> CanonicalValue {
+        let mut map = BTreeMap::new();
+        map.insert(
+            "schema_version".to_string(),
+            CanonicalValue::String(self.schema_version.clone()),
+        );
+        map.insert(
+            "taxonomy_version".to_string(),
+            CanonicalValue::String(self.taxonomy_version.clone()),
+        );
+        map.insert(
+            "hash_algorithm".to_string(),
+            CanonicalValue::String(self.hash_algorithm.clone()),
+        );
+        map.insert(
+            "hash_prefix".to_string(),
+            CanonicalValue::String(self.hash_prefix.clone()),
+        );
+        map.insert(
+            "parse_error_code".to_string(),
+            CanonicalValue::String(self.parse_error_code.as_str().to_string()),
+        );
+        map.insert(
+            "diagnostic_code".to_string(),
+            CanonicalValue::String(self.diagnostic_code.clone()),
+        );
+        map.insert(
+            "category".to_string(),
+            CanonicalValue::String(self.category.as_str().to_string()),
+        );
+        map.insert(
+            "severity".to_string(),
+            CanonicalValue::String(self.severity.as_str().to_string()),
+        );
+        map.insert(
+            "message_template".to_string(),
+            CanonicalValue::String(self.message_template.clone()),
+        );
+        map.insert(
+            "source_label".to_string(),
+            CanonicalValue::String(self.source_label.clone()),
+        );
+        map.insert(
+            "span".to_string(),
+            self.span
+                .as_ref()
+                .map(SourceSpan::canonical_value)
+                .unwrap_or(CanonicalValue::Null),
+        );
+        map.insert(
+            "budget_kind".to_string(),
+            self.budget_kind
+                .map(|kind| CanonicalValue::String(kind.as_str().to_string()))
+                .unwrap_or(CanonicalValue::Null),
+        );
+        map.insert(
+            "witness".to_string(),
+            self.witness
+                .as_ref()
+                .map(ParseFailureWitness::canonical_value)
+                .unwrap_or(CanonicalValue::Null),
+        );
+        CanonicalValue::Map(map)
+    }
+
+    pub fn canonical_bytes(&self) -> Vec<u8> {
+        deterministic_serde::encode_value(&self.canonical_value())
+    }
+
+    pub fn canonical_hash(&self) -> String {
+        let digest = Sha256::digest(self.canonical_bytes());
+        format!("{}{}", self.hash_prefix, hex::encode(digest))
+    }
+}
+
+/// Normalize a parse error into the deterministic diagnostics envelope contract.
+pub fn normalize_parse_error(error: &ParseError) -> ParseDiagnosticEnvelope {
+    let budget_kind = error.witness.as_ref().and_then(|witness| witness.budget_kind);
+    ParseDiagnosticEnvelope {
+        schema_version: ParseDiagnosticEnvelope::schema_version().to_string(),
+        taxonomy_version: ParseDiagnosticEnvelope::taxonomy_version().to_string(),
+        hash_algorithm: ParseDiagnosticEnvelope::canonical_hash_algorithm().to_string(),
+        hash_prefix: ParseDiagnosticEnvelope::canonical_hash_prefix().to_string(),
+        parse_error_code: error.code,
+        diagnostic_code: error.code.stable_diagnostic_code().to_string(),
+        category: error.code.diagnostic_category(),
+        severity: error.code.diagnostic_severity(),
+        message_template: error
+            .code
+            .diagnostic_message_template(budget_kind)
+            .to_string(),
+        source_label: error.source_label.clone(),
+        span: error.span.clone(),
+        budget_kind,
+        witness: error.witness.as_ref().map(|witness| witness.as_ref().clone()),
+    }
 }
 
 impl fmt::Display for ParseError {
@@ -210,6 +593,450 @@ impl fmt::Display for ParseError {
 }
 
 impl std::error::Error for ParseError {}
+
+/// Stable parse event kinds used by the Parse Event IR schema.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ParseEventKind {
+    ParseStarted,
+    StatementParsed,
+    ParseCompleted,
+    ParseFailed,
+}
+
+impl ParseEventKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ParseStarted => "parse_started",
+            Self::StatementParsed => "statement_parsed",
+            Self::ParseCompleted => "parse_completed",
+            Self::ParseFailed => "parse_failed",
+        }
+    }
+
+    pub fn canonical_value(self) -> CanonicalValue {
+        CanonicalValue::String(self.as_str().to_string())
+    }
+}
+
+/// Canonical parse-event record with deterministic provenance fields.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ParseEvent {
+    pub sequence: u64,
+    pub kind: ParseEventKind,
+    pub parser_mode: ParserMode,
+    pub goal: ParseGoal,
+    pub source_label: String,
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub component: String,
+    pub outcome: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_code: Option<ParseErrorCode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub statement_index: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub span: Option<SourceSpan>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload_hash: Option<String>,
+}
+
+impl ParseEvent {
+    pub fn canonical_value(&self) -> CanonicalValue {
+        let mut map = BTreeMap::new();
+        map.insert("sequence".to_string(), CanonicalValue::U64(self.sequence));
+        map.insert("kind".to_string(), self.kind.canonical_value());
+        map.insert(
+            "parser_mode".to_string(),
+            CanonicalValue::String(self.parser_mode.as_str().to_string()),
+        );
+        map.insert(
+            "goal".to_string(),
+            CanonicalValue::String(self.goal.as_str().to_string()),
+        );
+        map.insert(
+            "source_label".to_string(),
+            CanonicalValue::String(self.source_label.clone()),
+        );
+        map.insert(
+            "trace_id".to_string(),
+            CanonicalValue::String(self.trace_id.clone()),
+        );
+        map.insert(
+            "decision_id".to_string(),
+            CanonicalValue::String(self.decision_id.clone()),
+        );
+        map.insert(
+            "policy_id".to_string(),
+            CanonicalValue::String(self.policy_id.clone()),
+        );
+        map.insert(
+            "component".to_string(),
+            CanonicalValue::String(self.component.clone()),
+        );
+        map.insert(
+            "outcome".to_string(),
+            CanonicalValue::String(self.outcome.clone()),
+        );
+        map.insert(
+            "error_code".to_string(),
+            self.error_code
+                .map(|code| CanonicalValue::String(code.as_str().to_string()))
+                .unwrap_or(CanonicalValue::Null),
+        );
+        map.insert(
+            "statement_index".to_string(),
+            self.statement_index
+                .map(CanonicalValue::U64)
+                .unwrap_or(CanonicalValue::Null),
+        );
+        map.insert(
+            "span".to_string(),
+            self.span
+                .as_ref()
+                .map(SourceSpan::canonical_value)
+                .unwrap_or(CanonicalValue::Null),
+        );
+        map.insert(
+            "payload_kind".to_string(),
+            self.payload_kind
+                .as_ref()
+                .map(|value| CanonicalValue::String(value.clone()))
+                .unwrap_or(CanonicalValue::Null),
+        );
+        map.insert(
+            "payload_hash".to_string(),
+            self.payload_hash
+                .as_ref()
+                .map(|value| CanonicalValue::String(value.clone()))
+                .unwrap_or(CanonicalValue::Null),
+        );
+        CanonicalValue::Map(map)
+    }
+}
+
+/// Versioned Parse Event IR envelope with deterministic canonical serialization.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ParseEventIr {
+    pub schema_version: String,
+    pub contract_version: String,
+    pub parser_mode: ParserMode,
+    pub goal: ParseGoal,
+    pub source_label: String,
+    pub events: Vec<ParseEvent>,
+}
+
+impl ParseEventIr {
+    pub const fn contract_version() -> &'static str {
+        PARSE_EVENT_IR_CONTRACT_VERSION
+    }
+
+    pub const fn schema_version() -> &'static str {
+        PARSE_EVENT_IR_SCHEMA_VERSION
+    }
+
+    pub const fn canonical_hash_algorithm() -> &'static str {
+        PARSE_EVENT_IR_HASH_ALGORITHM
+    }
+
+    pub const fn canonical_hash_prefix() -> &'static str {
+        PARSE_EVENT_IR_HASH_PREFIX
+    }
+
+    pub fn from_syntax_tree(
+        tree: &SyntaxTree,
+        source_label: impl Into<String>,
+        parser_mode: ParserMode,
+    ) -> Self {
+        let source_label = source_label.into();
+        let source_fingerprint = canonical_value_hash(&tree.canonical_value());
+        let (trace_id, decision_id) = parse_event_provenance_ids(
+            &source_label,
+            parser_mode,
+            tree.goal,
+            &source_fingerprint,
+        );
+        Self::from_syntax_tree_with_provenance(
+            tree,
+            source_label,
+            parser_mode,
+            trace_id,
+            decision_id,
+            Some(("syntax_tree".to_string(), source_fingerprint)),
+        )
+    }
+
+    pub fn from_parse_source(
+        tree: &SyntaxTree,
+        source_text: &str,
+        source_label: impl Into<String>,
+        parser_mode: ParserMode,
+    ) -> Self {
+        let source_label = source_label.into();
+        let source_fingerprint = canonical_string_hash(source_text);
+        let (trace_id, decision_id) = parse_event_provenance_ids(
+            &source_label,
+            parser_mode,
+            tree.goal,
+            &source_fingerprint,
+        );
+        Self::from_syntax_tree_with_provenance(
+            tree,
+            source_label,
+            parser_mode,
+            trace_id,
+            decision_id,
+            Some(("source_text".to_string(), source_fingerprint)),
+        )
+    }
+
+    pub fn from_parse_error(error: &ParseError, goal: ParseGoal, parser_mode: ParserMode) -> Self {
+        let source_label = error.source_label.clone();
+        let diagnostic = ParseDiagnosticEnvelope::from_parse_error(error);
+        let diagnostic_hash = diagnostic.canonical_hash();
+        let (trace_id, decision_id) = parse_event_provenance_ids(
+            &source_label,
+            parser_mode,
+            goal,
+            &diagnostic_hash,
+        );
+        let events = vec![
+            ParseEvent {
+                sequence: 0,
+                kind: ParseEventKind::ParseStarted,
+                parser_mode,
+                goal,
+                source_label: source_label.clone(),
+                trace_id: trace_id.clone(),
+                decision_id: decision_id.clone(),
+                policy_id: PARSE_EVENT_IR_POLICY_ID.to_string(),
+                component: PARSE_EVENT_IR_COMPONENT.to_string(),
+                outcome: "started".to_string(),
+                error_code: None,
+                statement_index: None,
+                span: None,
+                payload_kind: Some("parse_diagnostic".to_string()),
+                payload_hash: Some(diagnostic_hash.clone()),
+            },
+            ParseEvent {
+                sequence: 1,
+                kind: ParseEventKind::ParseFailed,
+                parser_mode,
+                goal,
+                source_label: source_label.clone(),
+                trace_id,
+                decision_id,
+                policy_id: PARSE_EVENT_IR_POLICY_ID.to_string(),
+                component: PARSE_EVENT_IR_COMPONENT.to_string(),
+                outcome: "failure".to_string(),
+                error_code: Some(error.code),
+                statement_index: None,
+                span: error.span.clone(),
+                payload_kind: Some("parse_diagnostic".to_string()),
+                payload_hash: Some(diagnostic_hash),
+            },
+        ];
+        Self {
+            schema_version: Self::schema_version().to_string(),
+            contract_version: Self::contract_version().to_string(),
+            parser_mode,
+            goal,
+            source_label,
+            events,
+        }
+    }
+
+    fn from_syntax_tree_with_provenance(
+        tree: &SyntaxTree,
+        source_label: String,
+        parser_mode: ParserMode,
+        trace_id: String,
+        decision_id: String,
+        started_payload: Option<(String, String)>,
+    ) -> Self {
+        let mut events = Vec::new();
+        events.push(ParseEvent {
+            sequence: 0,
+            kind: ParseEventKind::ParseStarted,
+            parser_mode,
+            goal: tree.goal,
+            source_label: source_label.clone(),
+            trace_id: trace_id.clone(),
+            decision_id: decision_id.clone(),
+            policy_id: PARSE_EVENT_IR_POLICY_ID.to_string(),
+            component: PARSE_EVENT_IR_COMPONENT.to_string(),
+            outcome: "started".to_string(),
+            error_code: None,
+            statement_index: None,
+            span: None,
+            payload_kind: started_payload.as_ref().map(|(kind, _)| kind.clone()),
+            payload_hash: started_payload.as_ref().map(|(_, hash)| hash.clone()),
+        });
+
+        for (index, statement) in tree.body.iter().enumerate() {
+            let statement_index = index as u64;
+            events.push(ParseEvent {
+                sequence: statement_index.saturating_add(1),
+                kind: ParseEventKind::StatementParsed,
+                parser_mode,
+                goal: tree.goal,
+                source_label: source_label.clone(),
+                trace_id: trace_id.clone(),
+                decision_id: decision_id.clone(),
+                policy_id: PARSE_EVENT_IR_POLICY_ID.to_string(),
+                component: PARSE_EVENT_IR_COMPONENT.to_string(),
+                outcome: "parsed".to_string(),
+                error_code: None,
+                statement_index: Some(statement_index),
+                span: Some(statement.span().clone()),
+                payload_kind: Some(statement_kind_label(statement).to_string()),
+                payload_hash: Some(canonical_value_hash(&statement.canonical_value())),
+            });
+        }
+
+        events.push(ParseEvent {
+            sequence: (tree.body.len() as u64).saturating_add(1),
+            kind: ParseEventKind::ParseCompleted,
+            parser_mode,
+            goal: tree.goal,
+            source_label: source_label.clone(),
+            trace_id,
+            decision_id,
+            policy_id: PARSE_EVENT_IR_POLICY_ID.to_string(),
+            component: PARSE_EVENT_IR_COMPONENT.to_string(),
+            outcome: "success".to_string(),
+            error_code: None,
+            statement_index: None,
+            span: Some(tree.span.clone()),
+            payload_kind: Some("syntax_tree".to_string()),
+            payload_hash: Some(canonical_value_hash(&tree.canonical_value())),
+        });
+
+        Self {
+            schema_version: Self::schema_version().to_string(),
+            contract_version: Self::contract_version().to_string(),
+            parser_mode,
+            goal: tree.goal,
+            source_label,
+            events,
+        }
+    }
+
+    pub fn canonical_value(&self) -> CanonicalValue {
+        let mut map = BTreeMap::new();
+        map.insert(
+            "schema_version".to_string(),
+            CanonicalValue::String(self.schema_version.clone()),
+        );
+        map.insert(
+            "contract_version".to_string(),
+            CanonicalValue::String(self.contract_version.clone()),
+        );
+        map.insert(
+            "hash_algorithm".to_string(),
+            CanonicalValue::String(Self::canonical_hash_algorithm().to_string()),
+        );
+        map.insert(
+            "hash_prefix".to_string(),
+            CanonicalValue::String(Self::canonical_hash_prefix().to_string()),
+        );
+        map.insert(
+            "parser_mode".to_string(),
+            CanonicalValue::String(self.parser_mode.as_str().to_string()),
+        );
+        map.insert(
+            "goal".to_string(),
+            CanonicalValue::String(self.goal.as_str().to_string()),
+        );
+        map.insert(
+            "source_label".to_string(),
+            CanonicalValue::String(self.source_label.clone()),
+        );
+        map.insert(
+            "event_count".to_string(),
+            CanonicalValue::U64(self.events.len() as u64),
+        );
+        map.insert(
+            "events".to_string(),
+            CanonicalValue::Array(
+                self.events
+                    .iter()
+                    .map(ParseEvent::canonical_value)
+                    .collect(),
+            ),
+        );
+        CanonicalValue::Map(map)
+    }
+
+    pub fn canonical_bytes(&self) -> Vec<u8> {
+        deterministic_serde::encode_value(&self.canonical_value())
+    }
+
+    pub fn canonical_hash(&self) -> String {
+        let digest = Sha256::digest(self.canonical_bytes());
+        format!("{}{}", Self::canonical_hash_prefix(), hex::encode(digest))
+    }
+}
+
+fn canonical_value_hash(value: &CanonicalValue) -> String {
+    let digest = Sha256::digest(deterministic_serde::encode_value(value));
+    format!("{PARSE_EVENT_IR_HASH_PREFIX}{}", hex::encode(digest))
+}
+
+fn canonical_string_hash(value: &str) -> String {
+    canonical_value_hash(&CanonicalValue::String(value.to_string()))
+}
+
+fn parse_event_provenance_ids(
+    source_label: &str,
+    parser_mode: ParserMode,
+    goal: ParseGoal,
+    input_fingerprint: &str,
+) -> (String, String) {
+    let mut seed = BTreeMap::new();
+    seed.insert(
+        "source_label".to_string(),
+        CanonicalValue::String(source_label.to_string()),
+    );
+    seed.insert(
+        "parser_mode".to_string(),
+        CanonicalValue::String(parser_mode.as_str().to_string()),
+    );
+    seed.insert(
+        "goal".to_string(),
+        CanonicalValue::String(goal.as_str().to_string()),
+    );
+    seed.insert(
+        "input_fingerprint".to_string(),
+        CanonicalValue::String(input_fingerprint.to_string()),
+    );
+    seed.insert(
+        "policy_id".to_string(),
+        CanonicalValue::String(PARSE_EVENT_IR_POLICY_ID.to_string()),
+    );
+    seed.insert(
+        "component".to_string(),
+        CanonicalValue::String(PARSE_EVENT_IR_COMPONENT.to_string()),
+    );
+    let digest = Sha256::digest(deterministic_serde::encode_value(&CanonicalValue::Map(seed)));
+    let digest_hex = hex::encode(digest);
+    let suffix = &digest_hex[..24];
+    (
+        format!("{PARSE_EVENT_IR_TRACE_PREFIX}{suffix}"),
+        format!("{PARSE_EVENT_IR_DECISION_PREFIX}{suffix}"),
+    )
+}
+
+fn statement_kind_label(statement: &Statement) -> &'static str {
+    match statement {
+        Statement::Import(_) => "import",
+        Statement::Export(_) => "export",
+        Statement::Expression(_) => "expression",
+    }
+}
 
 impl GrammarCompletenessMatrix {
     pub const SCHEMA_VERSION: &'static str = "franken-engine.parser-grammar-completeness.v1";
@@ -532,8 +1359,40 @@ impl CanonicalEs2020Parser {
     where
         I: ParserInput,
     {
-        let source = input.into_source()?;
-        parse_source(&source.text, &source.label, goal, options)
+        let (result, _event_ir) = self.parse_with_event_ir(input, goal, options);
+        result
+    }
+
+    /// Parse input while emitting a deterministic Parse Event IR stream.
+    ///
+    /// This method always returns a Parse Event IR value, including when parsing
+    /// fails, so callers can persist replay-ready provenance for diagnostics.
+    pub fn parse_with_event_ir<I>(
+        &self,
+        input: I,
+        goal: ParseGoal,
+        options: &ParserOptions,
+    ) -> (ParseResult<SyntaxTree>, ParseEventIr)
+    where
+        I: ParserInput,
+    {
+        match input.into_source() {
+            Ok(source) => match parse_source(&source.text, &source.label, goal, options) {
+                Ok(tree) => {
+                    let event_ir =
+                        ParseEventIr::from_parse_source(&tree, &source.text, source.label, options.mode);
+                    (Ok(tree), event_ir)
+                }
+                Err(error) => {
+                    let event_ir = ParseEventIr::from_parse_error(&error, goal, options.mode);
+                    (Err(error), event_ir)
+                }
+            },
+            Err(error) => {
+                let event_ir = ParseEventIr::from_parse_error(&error, goal, options.mode);
+                (Err(error), event_ir)
+            }
+        }
     }
 
     pub fn scalar_reference_grammar_matrix(&self) -> GrammarCompletenessMatrix {
@@ -1001,7 +1860,259 @@ fn parse_quoted_string(input: &str) -> Option<String> {
     None
 }
 
+const LEX_CLASS_WHITESPACE: u8 = 1 << 0;
+const LEX_CLASS_IDENTIFIER_START: u8 = 1 << 1;
+const LEX_CLASS_IDENTIFIER_CONTINUE: u8 = 1 << 2;
+const LEX_CLASS_DIGIT: u8 = 1 << 3;
+const LEX_CLASS_QUOTE: u8 = 1 << 4;
+const LEX_CLASS_TWO_CHAR_OPERATOR_LEAD: u8 = 1 << 5;
+
+const LEX_BYTE_CLASS_TABLE: [u8; 256] = build_lex_byte_class_table();
+
+const fn build_lex_byte_class_table() -> [u8; 256] {
+    let mut table = [0u8; 256];
+
+    table[b' ' as usize] |= LEX_CLASS_WHITESPACE;
+    table[b'\t' as usize] |= LEX_CLASS_WHITESPACE;
+    table[b'\n' as usize] |= LEX_CLASS_WHITESPACE;
+    table[b'\r' as usize] |= LEX_CLASS_WHITESPACE;
+    table[0x0b] |= LEX_CLASS_WHITESPACE;
+    table[0x0c] |= LEX_CLASS_WHITESPACE;
+
+    let mut value = b'a';
+    while value <= b'z' {
+        table[value as usize] |= LEX_CLASS_IDENTIFIER_START | LEX_CLASS_IDENTIFIER_CONTINUE;
+        value = value.saturating_add(1);
+    }
+    value = b'A';
+    while value <= b'Z' {
+        table[value as usize] |= LEX_CLASS_IDENTIFIER_START | LEX_CLASS_IDENTIFIER_CONTINUE;
+        value = value.saturating_add(1);
+    }
+
+    value = b'0';
+    while value <= b'9' {
+        table[value as usize] |= LEX_CLASS_DIGIT | LEX_CLASS_IDENTIFIER_CONTINUE;
+        value = value.saturating_add(1);
+    }
+
+    table[b'_' as usize] |= LEX_CLASS_IDENTIFIER_START | LEX_CLASS_IDENTIFIER_CONTINUE;
+    table[b'$' as usize] |= LEX_CLASS_IDENTIFIER_START | LEX_CLASS_IDENTIFIER_CONTINUE;
+
+    table[b'\'' as usize] |= LEX_CLASS_QUOTE;
+    table[b'"' as usize] |= LEX_CLASS_QUOTE;
+
+    table[b'=' as usize] |= LEX_CLASS_TWO_CHAR_OPERATOR_LEAD;
+    table[b'!' as usize] |= LEX_CLASS_TWO_CHAR_OPERATOR_LEAD;
+    table[b'<' as usize] |= LEX_CLASS_TWO_CHAR_OPERATOR_LEAD;
+    table[b'>' as usize] |= LEX_CLASS_TWO_CHAR_OPERATOR_LEAD;
+    table[b'&' as usize] |= LEX_CLASS_TWO_CHAR_OPERATOR_LEAD;
+    table[b'|' as usize] |= LEX_CLASS_TWO_CHAR_OPERATOR_LEAD;
+    table[b'?' as usize] |= LEX_CLASS_TWO_CHAR_OPERATOR_LEAD;
+
+    table
+}
+
+#[inline]
+const fn lex_class(byte: u8) -> u8 {
+    LEX_BYTE_CLASS_TABLE[byte as usize]
+}
+
+#[inline]
+const fn lex_has_class(byte: u8, class_mask: u8) -> bool {
+    (lex_class(byte) & class_mask) != 0
+}
+
+#[inline]
+const fn is_two_char_operator(first: u8, second: u8) -> bool {
+    matches!(
+        (first, second),
+        (b'=', b'=')
+            | (b'!', b'=')
+            | (b'<', b'=')
+            | (b'>', b'=')
+            | (b'&', b'&')
+            | (b'|', b'|')
+            | (b'?', b'?')
+            | (b'=', b'>')
+    )
+}
+
+#[inline]
+const fn utf8_codepoint_len_from_lead(lead: u8) -> usize {
+    if lead < 0x80 {
+        1
+    } else if (lead & 0b1110_0000) == 0b1100_0000 {
+        2
+    } else if (lead & 0b1111_0000) == 0b1110_0000 {
+        3
+    } else if (lead & 0b1111_1000) == 0b1111_0000 {
+        4
+    } else {
+        1
+    }
+}
+
+#[inline]
+const fn is_utf8_continuation(byte: u8) -> bool {
+    (byte & 0b1100_0000) == 0b1000_0000
+}
+
+fn advance_utf8_boundary_safe(bytes: &[u8], index: usize) -> usize {
+    if index >= bytes.len() {
+        return bytes.len();
+    }
+
+    let width = utf8_codepoint_len_from_lead(bytes[index]);
+    let fallback = index.saturating_add(1);
+    if width == 1 || index.saturating_add(width) > bytes.len() {
+        return fallback;
+    }
+
+    let mut offset = index + 1;
+    while offset < index + width {
+        if !is_utf8_continuation(bytes[offset]) {
+            return fallback;
+        }
+        offset = offset.saturating_add(1);
+    }
+
+    index + width
+}
+
+#[derive(Debug)]
+struct Utf8BoundarySafeScanner<'a> {
+    bytes: &'a [u8],
+    index: usize,
+    token_count: u64,
+}
+
+impl<'a> Utf8BoundarySafeScanner<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        Self {
+            bytes,
+            index: 0,
+            token_count: 0,
+        }
+    }
+
+    fn count_tokens(mut self) -> u64 {
+        while self.index < self.bytes.len() {
+            let byte = self.bytes[self.index];
+
+            if lex_has_class(byte, LEX_CLASS_WHITESPACE) {
+                self.index = self.index.saturating_add(1);
+                continue;
+            }
+
+            if lex_has_class(byte, LEX_CLASS_IDENTIFIER_START) {
+                self.scan_identifier();
+                self.bump_token();
+                continue;
+            }
+
+            if lex_has_class(byte, LEX_CLASS_DIGIT) {
+                self.scan_numeric_literal();
+                self.bump_token();
+                continue;
+            }
+
+            if lex_has_class(byte, LEX_CLASS_QUOTE) {
+                self.scan_string_literal(byte);
+                self.bump_token();
+                continue;
+            }
+
+            if lex_has_class(byte, LEX_CLASS_TWO_CHAR_OPERATOR_LEAD)
+                && self.index + 1 < self.bytes.len()
+                && is_two_char_operator(byte, self.bytes[self.index + 1])
+            {
+                self.index = self.index.saturating_add(2);
+                self.bump_token();
+                continue;
+            }
+
+            self.advance_single_symbol();
+            self.bump_token();
+        }
+
+        self.token_count
+    }
+
+    fn scan_identifier(&mut self) {
+        self.index = self.index.saturating_add(1);
+        while self.index < self.bytes.len()
+            && lex_has_class(self.bytes[self.index], LEX_CLASS_IDENTIFIER_CONTINUE)
+        {
+            self.index = self.index.saturating_add(1);
+        }
+    }
+
+    fn scan_numeric_literal(&mut self) {
+        self.index = self.index.saturating_add(1);
+        while self.index < self.bytes.len() && lex_has_class(self.bytes[self.index], LEX_CLASS_DIGIT)
+        {
+            self.index = self.index.saturating_add(1);
+        }
+    }
+
+    fn scan_string_literal(&mut self, quote: u8) {
+        self.index = self.index.saturating_add(1);
+
+        while self.index < self.bytes.len() {
+            let current = self.bytes[self.index];
+
+            if current == b'\\' {
+                self.index = self.index.saturating_add(1);
+                if self.index < self.bytes.len() {
+                    if self.bytes[self.index].is_ascii() {
+                        self.index = self.index.saturating_add(1);
+                    } else {
+                        self.index = advance_utf8_boundary_safe(self.bytes, self.index);
+                    }
+                }
+                continue;
+            }
+
+            if current == quote {
+                self.index = self.index.saturating_add(1);
+                break;
+            }
+
+            if current == b'\n' || current == b'\r' {
+                break;
+            }
+
+            if current.is_ascii() {
+                self.index = self.index.saturating_add(1);
+            } else {
+                self.index = advance_utf8_boundary_safe(self.bytes, self.index);
+            }
+        }
+    }
+
+    fn advance_single_symbol(&mut self) {
+        if self.bytes[self.index].is_ascii() {
+            self.index = self.index.saturating_add(1);
+        } else {
+            self.index = advance_utf8_boundary_safe(self.bytes, self.index);
+        }
+    }
+
+    fn bump_token(&mut self) {
+        self.token_count = self.token_count.saturating_add(1);
+    }
+}
+
 fn count_lexical_tokens(input: &str) -> u64 {
+    let token_count = Utf8BoundarySafeScanner::new(input.as_bytes()).count_tokens();
+    if input.is_ascii() {
+        debug_assert_eq!(token_count, count_lexical_tokens_scalar_reference(input));
+    }
+    token_count
+}
+
+fn count_lexical_tokens_scalar_reference(input: &str) -> u64 {
     let bytes = input.as_bytes();
     let mut index = 0usize;
     let mut token_count = 0u64;
@@ -1065,23 +2176,10 @@ fn count_lexical_tokens(input: &str) -> u64 {
             continue;
         }
 
-        if index + 1 < bytes.len() {
-            let two = (bytes[index], bytes[index + 1]);
-            if matches!(
-                two,
-                (b'=', b'=')
-                    | (b'!', b'=')
-                    | (b'<', b'=')
-                    | (b'>', b'=')
-                    | (b'&', b'&')
-                    | (b'|', b'|')
-                    | (b'?', b'?')
-                    | (b'=', b'>')
-            ) {
-                index = index.saturating_add(2);
-                token_count = token_count.saturating_add(1);
-                continue;
-            }
+        if index + 1 < bytes.len() && is_two_char_operator(bytes[index], bytes[index + 1]) {
+            index = index.saturating_add(2);
+            token_count = token_count.saturating_add(1);
+            continue;
         }
 
         index = index.saturating_add(1);
@@ -1127,6 +2225,7 @@ fn to_u64(value: usize, source_label: &str, span: Option<SourceSpan>) -> ParseRe
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
     use std::io::Cursor;
 
     use super::*;
@@ -1617,6 +2716,73 @@ mod tests {
     }
 
     #[test]
+    fn byte_classification_table_covers_ascii_lexical_categories() {
+        assert!(lex_has_class(b' ', LEX_CLASS_WHITESPACE));
+        assert!(lex_has_class(b'\n', LEX_CLASS_WHITESPACE));
+        assert!(lex_has_class(b'A', LEX_CLASS_IDENTIFIER_START));
+        assert!(lex_has_class(b'A', LEX_CLASS_IDENTIFIER_CONTINUE));
+        assert!(lex_has_class(b'0', LEX_CLASS_DIGIT));
+        assert!(lex_has_class(b'0', LEX_CLASS_IDENTIFIER_CONTINUE));
+        assert!(lex_has_class(b'\"', LEX_CLASS_QUOTE));
+        assert!(lex_has_class(b'=', LEX_CLASS_TWO_CHAR_OPERATOR_LEAD));
+        assert!(!lex_has_class(b'+', LEX_CLASS_TWO_CHAR_OPERATOR_LEAD));
+    }
+
+    #[test]
+    fn utf8_boundary_safe_scanner_matches_scalar_reference_for_ascii_inputs() {
+        let cases = [
+            "alpha beta gamma",
+            "a==b && c!=d || e??f => g",
+            "'hello' \"world\"",
+            "\"unterminated\nstring\"",
+            "await foo;\nbar + baz * 5",
+            "_$token123 <= 42",
+        ];
+
+        for source in cases {
+            assert_eq!(
+                count_lexical_tokens(source),
+                count_lexical_tokens_scalar_reference(source),
+                "ASCII parity drift for source: {source:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn utf8_boundary_safe_scanner_counts_multibyte_codepoints_once() {
+        let two_byte = "é";
+        assert_eq!(count_lexical_tokens(two_byte), 1);
+        assert_eq!(count_lexical_tokens_scalar_reference(two_byte), 2);
+
+        let four_byte = "😀";
+        assert_eq!(count_lexical_tokens(four_byte), 1);
+        assert_eq!(count_lexical_tokens_scalar_reference(four_byte), 4);
+    }
+
+    #[test]
+    fn budget_witness_uses_utf8_boundary_safe_token_count() {
+        let parser = CanonicalEs2020Parser;
+        let options = ParserOptions {
+            mode: ParserMode::ScalarReference,
+            budget: ParserBudget {
+                max_source_bytes: 1024,
+                max_token_count: 1,
+                max_recursion_depth: 32,
+            },
+        };
+
+        let err = parser
+            .parse_with_options("é β", ParseGoal::Script, &options)
+            .expect_err("utf-8-aware token counting should trigger the token budget");
+        let witness = err
+            .witness
+            .expect("budget failures should preserve witness context");
+        assert_eq!(witness.budget_kind, Some(ParseBudgetKind::TokenCount));
+        assert_eq!(witness.token_count, 2);
+        assert_eq!(witness.max_token_count, 1);
+    }
+
+    #[test]
     fn recursion_budget_exhaustion_is_deterministic() {
         let parser = CanonicalEs2020Parser;
         let options = ParserOptions {
@@ -1691,5 +2857,550 @@ mod tests {
             .collect();
         assert_eq!(hashes[0], hashes[1]);
         assert_eq!(hashes[1], hashes[2]);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: leaf enum serde roundtrips
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_error_code_serde_roundtrip() {
+        for code in [
+            ParseErrorCode::EmptySource,
+            ParseErrorCode::InvalidGoal,
+            ParseErrorCode::UnsupportedSyntax,
+            ParseErrorCode::IoReadFailed,
+            ParseErrorCode::InvalidUtf8,
+            ParseErrorCode::SourceTooLarge,
+            ParseErrorCode::BudgetExceeded,
+        ] {
+            let json = serde_json::to_string(&code).unwrap();
+            let restored: ParseErrorCode = serde_json::from_str(&json).unwrap();
+            assert_eq!(code, restored);
+        }
+    }
+
+    #[test]
+    fn parser_mode_serde_roundtrip() {
+        let mode = ParserMode::ScalarReference;
+        let json = serde_json::to_string(&mode).unwrap();
+        let restored: ParserMode = serde_json::from_str(&json).unwrap();
+        assert_eq!(mode, restored);
+        // Verify snake_case rename
+        assert!(json.contains("scalar_reference"));
+    }
+
+    #[test]
+    fn parse_budget_kind_serde_roundtrip() {
+        for kind in [
+            ParseBudgetKind::SourceBytes,
+            ParseBudgetKind::TokenCount,
+            ParseBudgetKind::RecursionDepth,
+        ] {
+            let json = serde_json::to_string(&kind).unwrap();
+            let restored: ParseBudgetKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(kind, restored);
+        }
+    }
+
+    #[test]
+    fn grammar_coverage_status_serde_roundtrip() {
+        for status in [
+            GrammarCoverageStatus::Supported,
+            GrammarCoverageStatus::Partial,
+            GrammarCoverageStatus::Unsupported,
+            GrammarCoverageStatus::NotApplicable,
+        ] {
+            let json = serde_json::to_string(&status).unwrap();
+            let restored: GrammarCoverageStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(status, restored);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: struct serde roundtrips
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parser_budget_serde_roundtrip() {
+        let budget = ParserBudget::default();
+        let json = serde_json::to_string(&budget).unwrap();
+        let restored: ParserBudget = serde_json::from_str(&json).unwrap();
+        assert_eq!(budget, restored);
+    }
+
+    #[test]
+    fn parser_options_serde_roundtrip() {
+        let opts = ParserOptions::default();
+        let json = serde_json::to_string(&opts).unwrap();
+        let restored: ParserOptions = serde_json::from_str(&json).unwrap();
+        assert_eq!(opts, restored);
+    }
+
+    #[test]
+    fn parse_failure_witness_serde_roundtrip() {
+        let witness = ParseFailureWitness {
+            mode: ParserMode::ScalarReference,
+            budget_kind: Some(ParseBudgetKind::TokenCount),
+            source_bytes: 1024,
+            token_count: 500,
+            max_recursion_observed: 10,
+            max_source_bytes: 1_048_576,
+            max_token_count: 65_536,
+            max_recursion_depth: 256,
+        };
+        let json = serde_json::to_string(&witness).unwrap();
+        let restored: ParseFailureWitness = serde_json::from_str(&json).unwrap();
+        assert_eq!(witness, restored);
+    }
+
+    #[test]
+    fn grammar_family_coverage_serde_roundtrip() {
+        let gfc = GrammarFamilyCoverage {
+            family_id: "primary-expression".to_string(),
+            es2020_clause: "12.2".to_string(),
+            script_goal: GrammarCoverageStatus::Supported,
+            module_goal: GrammarCoverageStatus::Partial,
+            notes: "test".to_string(),
+        };
+        let json = serde_json::to_string(&gfc).unwrap();
+        let restored: GrammarFamilyCoverage = serde_json::from_str(&json).unwrap();
+        assert_eq!(gfc, restored);
+    }
+
+    #[test]
+    fn grammar_completeness_summary_serde_roundtrip() {
+        let summary = GrammarCompletenessSummary {
+            family_count: 10,
+            supported_families: 6,
+            partially_supported_families: 2,
+            unsupported_families: 2,
+            completeness_millionths: 700_000,
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        let restored: GrammarCompletenessSummary = serde_json::from_str(&json).unwrap();
+        assert_eq!(summary, restored);
+    }
+
+    #[test]
+    fn grammar_completeness_matrix_serde_roundtrip() {
+        let matrix = CanonicalEs2020Parser.scalar_reference_grammar_matrix();
+        let json = serde_json::to_string(&matrix).unwrap();
+        let restored: GrammarCompletenessMatrix = serde_json::from_str(&json).unwrap();
+        assert_eq!(matrix, restored);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: default value assertions
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parser_budget_default_values() {
+        let b = ParserBudget::default();
+        assert_eq!(b.max_source_bytes, 1_048_576);
+        assert_eq!(b.max_token_count, 65_536);
+        assert_eq!(b.max_recursion_depth, 256);
+    }
+
+    #[test]
+    fn parser_options_default_values() {
+        let o = ParserOptions::default();
+        assert_eq!(o.mode, ParserMode::ScalarReference);
+        assert_eq!(o.budget, ParserBudget::default());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: ParserMode as_str
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parser_mode_as_str() {
+        assert_eq!(ParserMode::ScalarReference.as_str(), "scalar_reference");
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: grammar matrix summary
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn grammar_matrix_summary_values() {
+        let matrix = CanonicalEs2020Parser.scalar_reference_grammar_matrix();
+        let summary = matrix.summary();
+        assert!(summary.family_count > 0);
+        assert!(summary.supported_families > 0);
+        assert!(summary.completeness_millionths > 0);
+        assert_eq!(
+            summary.family_count,
+            summary.supported_families
+                + summary.partially_supported_families
+                + summary.unsupported_families
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: ParseError witness roundtrip (witness skipped in serde)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_error_serde_witness_none_is_omitted() {
+        // When witness is None, the field is skipped in serialization
+        let err = ParseError {
+            code: ParseErrorCode::BudgetExceeded,
+            message: "budget exceeded".to_string(),
+            source_label: "test.js".to_string(),
+            span: None,
+            witness: None,
+        };
+        let json = serde_json::to_string(&err).unwrap();
+        assert!(!json.contains("witness"));
+        let restored: ParseError = serde_json::from_str(&json).unwrap();
+        assert!(restored.witness.is_none());
+        assert_eq!(restored.code, err.code);
+    }
+
+    #[test]
+    fn parse_error_serde_witness_some_roundtrips() {
+        let err = ParseError {
+            code: ParseErrorCode::BudgetExceeded,
+            message: "budget exceeded".to_string(),
+            source_label: "test.js".to_string(),
+            span: None,
+            witness: Some(Box::new(ParseFailureWitness {
+                mode: ParserMode::ScalarReference,
+                budget_kind: Some(ParseBudgetKind::SourceBytes),
+                source_bytes: 2_000_000,
+                token_count: 0,
+                max_recursion_observed: 0,
+                max_source_bytes: 1_048_576,
+                max_token_count: 65_536,
+                max_recursion_depth: 256,
+            })),
+        };
+        let json = serde_json::to_string(&err).unwrap();
+        assert!(json.contains("witness"));
+        let restored: ParseError = serde_json::from_str(&json).unwrap();
+        assert!(restored.witness.is_some());
+        assert_eq!(restored.witness.unwrap().source_bytes, 2_000_000);
+    }
+
+    #[test]
+    fn parse_diagnostic_contract_metadata_is_versioned_and_stable() {
+        assert_eq!(
+            PARSER_DIAGNOSTIC_TAXONOMY_VERSION,
+            "franken-engine.parser-diagnostics.taxonomy.v1"
+        );
+        assert_eq!(
+            PARSER_DIAGNOSTIC_SCHEMA_VERSION,
+            "franken-engine.parser-diagnostics.schema.v1"
+        );
+        assert_eq!(PARSER_DIAGNOSTIC_HASH_ALGORITHM, "sha256");
+        assert_eq!(PARSER_DIAGNOSTIC_HASH_PREFIX, "sha256:");
+
+        assert_eq!(
+            ParseDiagnosticTaxonomy::taxonomy_version(),
+            PARSER_DIAGNOSTIC_TAXONOMY_VERSION
+        );
+        assert_eq!(
+            ParseDiagnosticEnvelope::schema_version(),
+            PARSER_DIAGNOSTIC_SCHEMA_VERSION
+        );
+        assert_eq!(
+            ParseDiagnosticEnvelope::taxonomy_version(),
+            PARSER_DIAGNOSTIC_TAXONOMY_VERSION
+        );
+        assert_eq!(
+            ParseDiagnosticEnvelope::canonical_hash_algorithm(),
+            PARSER_DIAGNOSTIC_HASH_ALGORITHM
+        );
+        assert_eq!(
+            ParseDiagnosticEnvelope::canonical_hash_prefix(),
+            PARSER_DIAGNOSTIC_HASH_PREFIX
+        );
+    }
+
+    #[test]
+    fn parse_diagnostic_taxonomy_v1_is_complete_and_unique() {
+        let taxonomy = ParseDiagnosticTaxonomy::v1();
+        assert_eq!(
+            taxonomy.taxonomy_version,
+            PARSER_DIAGNOSTIC_TAXONOMY_VERSION.to_string()
+        );
+        assert_eq!(taxonomy.rules.len(), ParseErrorCode::ALL.len());
+
+        let mut error_codes = BTreeSet::new();
+        let mut diagnostic_codes = BTreeSet::new();
+        for rule in &taxonomy.rules {
+            assert!(error_codes.insert(rule.parse_error_code.as_str().to_string()));
+            assert!(diagnostic_codes.insert(rule.diagnostic_code.clone()));
+            assert_eq!(rule.diagnostic_code, rule.parse_error_code.stable_diagnostic_code());
+            assert_eq!(rule.category, rule.parse_error_code.diagnostic_category());
+            assert_eq!(rule.severity, rule.parse_error_code.diagnostic_severity());
+            assert_eq!(
+                rule.message_template,
+                rule.parse_error_code.diagnostic_message_template(None)
+            );
+        }
+
+        for code in ParseErrorCode::ALL {
+            assert!(taxonomy.rule_for(code).is_some());
+        }
+    }
+
+    #[test]
+    fn parse_error_normalization_ignores_raw_message_variance() {
+        let span = SourceSpan::new(0, 10, 1, 1, 1, 11);
+        let left = ParseError {
+            code: ParseErrorCode::IoReadFailed,
+            message: "failed to read source file: No such file or directory (os error 2)"
+                .to_string(),
+            source_label: "fixture.js".to_string(),
+            span: Some(span.clone()),
+            witness: None,
+        };
+        let right = ParseError {
+            code: ParseErrorCode::IoReadFailed,
+            message: "failed to read source stream: permission denied".to_string(),
+            source_label: "fixture.js".to_string(),
+            span: Some(span),
+            witness: None,
+        };
+
+        let left_norm = left.normalized_diagnostic();
+        let right_norm = ParseDiagnosticEnvelope::from_parse_error(&right);
+        assert_eq!(left_norm.message_template, "parser input could not be read");
+        assert_eq!(left_norm.canonical_bytes(), right_norm.canonical_bytes());
+        assert_eq!(left_norm.canonical_hash(), right_norm.canonical_hash());
+    }
+
+    #[test]
+    fn parse_error_normalization_preserves_budget_context() {
+        let err = ParseError {
+            code: ParseErrorCode::BudgetExceeded,
+            message: "token budget exceeded: token_count=3 max_token_count=1".to_string(),
+            source_label: "<inline>".to_string(),
+            span: Some(SourceSpan::new(0, 16, 1, 1, 1, 17)),
+            witness: Some(Box::new(ParseFailureWitness {
+                mode: ParserMode::ScalarReference,
+                budget_kind: Some(ParseBudgetKind::TokenCount),
+                source_bytes: 16,
+                token_count: 3,
+                max_recursion_observed: 0,
+                max_source_bytes: 1024,
+                max_token_count: 1,
+                max_recursion_depth: 64,
+            })),
+        };
+
+        let normalized = normalize_parse_error(&err);
+        assert_eq!(normalized.category, ParseDiagnosticCategory::Resource);
+        assert_eq!(normalized.severity, ParseDiagnosticSeverity::Fatal);
+        assert_eq!(
+            normalized.diagnostic_code,
+            ParseErrorCode::BudgetExceeded.stable_diagnostic_code()
+        );
+        assert_eq!(
+            normalized.message_template,
+            "token budget exceeded".to_string()
+        );
+        assert_eq!(normalized.budget_kind, Some(ParseBudgetKind::TokenCount));
+        assert_eq!(
+            normalized
+                .witness
+                .as_ref()
+                .expect("budget witness should be retained")
+                .token_count,
+            3
+        );
+    }
+
+    #[test]
+    fn parse_diagnostic_envelope_serde_and_hash_are_stable() {
+        let err = ParseError {
+            code: ParseErrorCode::EmptySource,
+            message: "source is empty after whitespace normalization".to_string(),
+            source_label: "<inline>".to_string(),
+            span: None,
+            witness: None,
+        };
+        let left = normalize_parse_error(&err);
+        let right = normalize_parse_error(&err);
+        let json = serde_json::to_string(&left).expect("serialize envelope");
+        let restored: ParseDiagnosticEnvelope =
+            serde_json::from_str(&json).expect("deserialize envelope");
+        assert_eq!(restored, left);
+        assert_eq!(left.canonical_hash(), right.canonical_hash());
+        assert!(left
+            .canonical_hash()
+            .starts_with(ParseDiagnosticEnvelope::canonical_hash_prefix()));
+    }
+
+    #[test]
+    fn parse_event_kind_serde_roundtrip() {
+        for kind in [
+            ParseEventKind::ParseStarted,
+            ParseEventKind::StatementParsed,
+            ParseEventKind::ParseCompleted,
+            ParseEventKind::ParseFailed,
+        ] {
+            let json = serde_json::to_string(&kind).unwrap();
+            let restored: ParseEventKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(kind, restored);
+        }
+    }
+
+    #[test]
+    fn parse_event_ir_contract_metadata_is_versioned_and_stable() {
+        assert_eq!(
+            PARSE_EVENT_IR_CONTRACT_VERSION,
+            "franken-engine.parser-event-ir.contract.v2"
+        );
+        assert_eq!(
+            PARSE_EVENT_IR_SCHEMA_VERSION,
+            "franken-engine.parser-event-ir.schema.v2"
+        );
+        assert_eq!(PARSE_EVENT_IR_HASH_ALGORITHM, "sha256");
+        assert_eq!(PARSE_EVENT_IR_HASH_PREFIX, "sha256:");
+        assert_eq!(
+            PARSE_EVENT_IR_POLICY_ID,
+            "franken-engine.parser-event-producer.policy.v1"
+        );
+        assert_eq!(PARSE_EVENT_IR_COMPONENT, "canonical_es2020_parser");
+        assert_eq!(PARSE_EVENT_IR_TRACE_PREFIX, "trace-parser-event-");
+        assert_eq!(
+            PARSE_EVENT_IR_DECISION_PREFIX,
+            "decision-parser-event-"
+        );
+        assert_eq!(
+            ParseEventIr::contract_version(),
+            PARSE_EVENT_IR_CONTRACT_VERSION
+        );
+        assert_eq!(
+            ParseEventIr::schema_version(),
+            PARSE_EVENT_IR_SCHEMA_VERSION
+        );
+        assert_eq!(
+            ParseEventIr::canonical_hash_algorithm(),
+            PARSE_EVENT_IR_HASH_ALGORITHM
+        );
+        assert_eq!(
+            ParseEventIr::canonical_hash_prefix(),
+            PARSE_EVENT_IR_HASH_PREFIX
+        );
+    }
+
+    #[test]
+    fn parse_event_ir_from_syntax_tree_emits_deterministic_sequence() {
+        let parser = CanonicalEs2020Parser;
+        let source = "import dep from \"pkg\";\nexport default dep;\n";
+        let tree = parser.parse(source, ParseGoal::Module).expect("parse");
+
+        let ir = ParseEventIr::from_syntax_tree(&tree, "<inline>", ParserMode::ScalarReference);
+        assert_eq!(ir.schema_version, PARSE_EVENT_IR_SCHEMA_VERSION);
+        assert_eq!(ir.contract_version, PARSE_EVENT_IR_CONTRACT_VERSION);
+        assert_eq!(ir.events.len(), tree.body.len() + 2);
+        assert!(matches!(
+            ir.events.first().map(|event| event.kind),
+            Some(ParseEventKind::ParseStarted)
+        ));
+        assert!(matches!(
+            ir.events.last().map(|event| event.kind),
+            Some(ParseEventKind::ParseCompleted)
+        ));
+
+        for (index, event) in ir.events.iter().enumerate() {
+            assert_eq!(event.sequence, index as u64);
+            assert!(event.trace_id.starts_with(PARSE_EVENT_IR_TRACE_PREFIX));
+            assert!(event
+                .decision_id
+                .starts_with(PARSE_EVENT_IR_DECISION_PREFIX));
+            assert_eq!(event.policy_id, PARSE_EVENT_IR_POLICY_ID);
+            assert_eq!(event.component, PARSE_EVENT_IR_COMPONENT);
+            assert!(!event.outcome.is_empty());
+        }
+    }
+
+    #[test]
+    fn parse_event_ir_hash_is_deterministic_for_identical_inputs() {
+        let parser = CanonicalEs2020Parser;
+        let source = "await work";
+        let left_tree = parser.parse(source, ParseGoal::Script).expect("left parse");
+        let right_tree = parser
+            .parse(source, ParseGoal::Script)
+            .expect("right parse");
+
+        let left_ir =
+            ParseEventIr::from_syntax_tree(&left_tree, "<inline>", ParserMode::ScalarReference);
+        let right_ir =
+            ParseEventIr::from_syntax_tree(&right_tree, "<inline>", ParserMode::ScalarReference);
+        assert_eq!(left_ir.canonical_bytes(), right_ir.canonical_bytes());
+        assert_eq!(left_ir.canonical_hash(), right_ir.canonical_hash());
+        assert!(left_ir
+            .canonical_hash()
+            .starts_with(ParseEventIr::canonical_hash_prefix()));
+    }
+
+    #[test]
+    fn parse_event_ir_serde_roundtrip() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser
+            .parse("export default true", ParseGoal::Module)
+            .expect("parse");
+        let ir = ParseEventIr::from_syntax_tree(&tree, "fixture.js", ParserMode::ScalarReference);
+        let json = serde_json::to_string(&ir).unwrap();
+        let restored: ParseEventIr = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored, ir);
+    }
+
+    #[test]
+    fn parse_with_event_ir_success_emits_ordered_events() {
+        let parser = CanonicalEs2020Parser;
+        let source = "import dep from \"pkg\";\nexport default dep;\n";
+        let (result, event_ir) = parser.parse_with_event_ir(
+            source,
+            ParseGoal::Module,
+            &ParserOptions::default(),
+        );
+
+        let tree = result.expect("parse should succeed");
+        assert_eq!(event_ir.events.len(), tree.body.len() + 2);
+        assert!(matches!(
+            event_ir.events.first().map(|event| event.kind),
+            Some(ParseEventKind::ParseStarted)
+        ));
+        assert!(matches!(
+            event_ir.events.last().map(|event| event.kind),
+            Some(ParseEventKind::ParseCompleted)
+        ));
+        for (index, event) in event_ir.events.iter().enumerate() {
+            assert_eq!(event.sequence, index as u64);
+            assert_eq!(event.policy_id, PARSE_EVENT_IR_POLICY_ID);
+            assert_eq!(event.component, PARSE_EVENT_IR_COMPONENT);
+            assert_eq!(event.error_code, None);
+        }
+    }
+
+    #[test]
+    fn parse_with_event_ir_failure_emits_parse_failed_event() {
+        let parser = CanonicalEs2020Parser;
+        let (result, event_ir) = parser.parse_with_event_ir(
+            "",
+            ParseGoal::Script,
+            &ParserOptions::default(),
+        );
+
+        let error = result.expect_err("empty source should fail");
+        assert_eq!(error.code, ParseErrorCode::EmptySource);
+        assert_eq!(event_ir.events.len(), 2);
+        assert!(matches!(event_ir.events[0].kind, ParseEventKind::ParseStarted));
+        assert!(matches!(event_ir.events[1].kind, ParseEventKind::ParseFailed));
+        assert_eq!(event_ir.events[1].error_code, Some(ParseErrorCode::EmptySource));
+        assert_eq!(
+            event_ir.events[1].payload_kind.as_deref(),
+            Some("parse_diagnostic")
+        );
+        assert!(event_ir.events[1]
+            .payload_hash
+            .as_deref()
+            .is_some_and(|hash| hash.starts_with(ParseEventIr::canonical_hash_prefix())));
     }
 }
