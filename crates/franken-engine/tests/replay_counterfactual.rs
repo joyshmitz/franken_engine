@@ -3,12 +3,13 @@ mod e2e_harness;
 
 use std::fs;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use e2e_harness::{
-    ArtifactCollector, DeterministicRunner, FixtureStore, ReplayEnvironmentFingerprint,
-    ReplayInputErrorCode, audit_collected_artifacts, compare_counterfactual,
-    diagnose_cross_machine_replay, validate_replay_input, verify_replay,
+    ArtifactCollector, DeterministicRunner, EvidenceLinkageRecord, FixtureStore,
+    ReplayEnvironmentFingerprint, ReplayInputErrorCode, audit_collected_artifacts,
+    compare_counterfactual, diagnose_cross_machine_replay, evaluate_replay_performance,
+    validate_replay_input, verify_replay,
 };
 
 fn test_temp_dir(suffix: &str) -> PathBuf {
@@ -89,6 +90,17 @@ fn replay_artifacts_include_replay_pointer_and_reports() {
     assert!(report_json.contains("\"output_digest\""));
     assert!(!events_jsonl.trim().is_empty());
     assert!(evidence_linkage_json.contains("\"evidence_hash\""));
+
+    let evidence_linkage: Vec<EvidenceLinkageRecord> =
+        serde_json::from_str(&evidence_linkage_json).expect("parse evidence linkage");
+    assert_eq!(evidence_linkage.len(), baseline.events.len());
+    for (index, (record, event)) in evidence_linkage.iter().zip(&baseline.events).enumerate() {
+        assert_eq!(record.trace_id, event.trace_id);
+        assert_eq!(record.decision_id, event.decision_id);
+        assert_eq!(record.policy_id, event.policy_id);
+        assert_eq!(record.event_sequence, index as u64);
+        assert!(!record.evidence_hash.trim().is_empty());
+    }
 
     let completeness = audit_collected_artifacts(&artifacts);
     assert!(completeness.complete);
@@ -196,6 +208,63 @@ fn replay_input_validation_detects_missing_model_snapshot() {
     let baseline = runner.run_fixture(&fixture).expect("baseline run");
     let err = validate_replay_input(&baseline, None).expect_err("missing snapshot pointer");
     assert_eq!(err.code, ReplayInputErrorCode::MissingModelSnapshot);
+}
+
+#[test]
+fn replay_input_validation_detects_partial_trace_gap() {
+    let runner = DeterministicRunner::default();
+    let fixture_store =
+        FixtureStore::new(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures"))
+            .expect("fixture store");
+    let fixture = fixture_store
+        .load_fixture(replay_fixture_path())
+        .expect("load replay fixture");
+
+    let mut baseline = runner.run_fixture(&fixture).expect("baseline run");
+    baseline.events[0].sequence = 7;
+    let err = validate_replay_input(&baseline, Some("model://snapshot/replay-fixture/seed/77"))
+        .expect_err("partial trace should fail");
+    assert_eq!(err.code, ReplayInputErrorCode::PartialTrace);
+}
+
+#[test]
+fn replay_input_validation_detects_corrupted_transcript() {
+    let runner = DeterministicRunner::default();
+    let fixture_store =
+        FixtureStore::new(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures"))
+            .expect("fixture store");
+    let fixture = fixture_store
+        .load_fixture(replay_fixture_path())
+        .expect("load replay fixture");
+
+    let mut baseline = runner.run_fixture(&fixture).expect("baseline run");
+    baseline.random_transcript.pop();
+    let err = validate_replay_input(&baseline, Some("model://snapshot/replay-fixture/seed/77"))
+        .expect_err("corrupted transcript should fail");
+    assert_eq!(err.code, ReplayInputErrorCode::CorruptedTranscript);
+}
+
+#[test]
+fn replay_is_faster_than_virtual_time_budget() {
+    let runner = DeterministicRunner::default();
+    let fixture_store =
+        FixtureStore::new(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures"))
+            .expect("fixture store");
+    let mut fixture = fixture_store
+        .load_fixture(replay_fixture_path())
+        .expect("load replay fixture");
+    for step in &mut fixture.steps {
+        step.advance_micros = 500_000;
+    }
+
+    let start = Instant::now();
+    let run = runner.run_fixture(&fixture).expect("replay run");
+    let wall_micros = u64::try_from(start.elapsed().as_micros()).unwrap_or(u64::MAX);
+    let perf = evaluate_replay_performance(&run, wall_micros);
+
+    assert!(perf.virtual_duration_micros > 0);
+    assert!(perf.faster_than_realtime);
+    assert!(perf.speedup_milli >= 1000);
 }
 
 #[test]

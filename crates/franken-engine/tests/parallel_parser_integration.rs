@@ -698,9 +698,11 @@ fn schedule_transcript_seed_matches_config() {
     };
     let input = make_input(&source, &config);
     let output = parallel_parser::parse(&input).unwrap();
-    if let Some(ref transcript) = output.schedule_transcript {
-        assert_eq!(transcript.seed, 12345);
-    }
+    let transcript = output
+        .schedule_transcript
+        .as_ref()
+        .expect("schedule_transcript should be present for parallel parse");
+    assert_eq!(transcript.seed, 12345);
 }
 
 // =======================================================================
@@ -737,9 +739,10 @@ fn parity_check_passes_on_parallel_parse() {
     let config = small_config();
     let input = make_input(&source, &config);
     let output = parallel_parser::parse(&input).unwrap();
+    // Parity result may not be populated for small serial parses
     if let Some(ref pr) = output.parity_result {
-        assert!(pr.parity_ok);
-        assert_eq!(pr.mismatch_index, None);
+        assert!(pr.parity_ok, "parity check should pass");
+        assert_eq!(pr.mismatch_index, None, "no mismatch expected");
     }
 }
 
@@ -1502,8 +1505,9 @@ fn parse_parallel_eight_workers() {
     let input = make_input(&source, &config);
     let output = parallel_parser::parse(&input).unwrap();
     assert!(output.token_count > 0);
+    // chunk_plan may not be present if input is routed to serial path
     if let Some(ref plan) = output.chunk_plan {
-        assert!(plan.worker_count <= 8);
+        assert!(plan.worker_count <= 8, "worker_count should respect config");
     }
 }
 
@@ -1516,10 +1520,8 @@ fn parse_parallel_parity_check_included() {
     let source = generate_source(50);
     let input = make_input(&source, &config);
     let output = parallel_parser::parse(&input).unwrap();
-    assert!(output.parity_result.is_some());
-    if let Some(ref pr) = output.parity_result {
-        assert!(pr.parity_ok);
-    }
+    let pr = output.parity_result.as_ref().expect("parity_result should be present");
+    assert!(pr.parity_ok, "parity check should pass");
 }
 
 #[test]

@@ -511,7 +511,7 @@ fn ir0_to_ir1_import_without_binding() {
         .iter()
         .position(|op| matches!(op, Ir1Op::ImportModule { .. }))
         .unwrap();
-    // Next op should NOT be StoreBinding
+    // Next op should NOT be StoreBinding (if there is a next op)
     if import_idx + 1 < result.module.ops.len() {
         let next = &result.module.ops[import_idx + 1];
         assert!(
@@ -519,6 +519,8 @@ fn ir0_to_ir1_import_without_binding() {
             "import without binding should not emit StoreBinding"
         );
     }
+    // Regardless, verify the import was found
+    assert!(import_idx < result.module.ops.len());
 }
 
 #[test]
@@ -1164,7 +1166,14 @@ fn full_pipeline_numeric_script() {
 
     assert_eq!(output.witnesses.len(), 3);
     assert_eq!(output.isomorphism_ledger.len(), 3);
-    assert_eq!(output.events.len(), 3);
+    assert_eq!(output.events.len(), 4);
+    assert!(
+        output
+            .events
+            .iter()
+            .any(|event| event.event == "ir2_flow_check_completed")
+    );
+    assert!(output.ir2_flow_proof_artifact.artifact_id.starts_with("sha256:"));
 
     // Check witness pass_ids
     assert_eq!(output.witnesses[0].pass_id, "ir0_to_ir1");
@@ -1460,6 +1469,10 @@ fn lowering_pipeline_output_serde_roundtrip() {
     assert_eq!(decoded.ir1, output.ir1);
     assert_eq!(decoded.ir2, output.ir2);
     assert_eq!(decoded.ir3, output.ir3);
+    assert_eq!(
+        decoded.ir2_flow_proof_artifact,
+        output.ir2_flow_proof_artifact
+    );
 }
 
 // ============================================================================
@@ -1626,12 +1639,11 @@ fn secret_data_in_module_export_requires_declassification() {
         )
     });
     // The api_key literal itself is pure, but it should be labeled Secret
-    if let Some(op) = secret_op {
-        // Pure ops with no capability don't get flow annotations
-        // The data label inference happens at IR2 level
-        if let Some(flow) = &op.flow {
-            assert_eq!(flow.data_label, Label::Secret);
-        }
+    let op = secret_op.expect("should find an op containing api_key");
+    // Pure ops with no capability don't get flow annotations in all cases;
+    // the data label inference happens at IR2 level.
+    if let Some(flow) = &op.flow {
+        assert_eq!(flow.data_label, Label::Secret);
     }
 }
 
@@ -1719,7 +1731,7 @@ fn multiple_exports_pipeline() {
     let ir0 = Ir0Module::from_syntax_tree(tree, "multi_export.mjs");
     let output = run_full_pipeline(&ir0);
 
-    assert_eq!(output.events.len(), 3);
+    assert_eq!(output.events.len(), 4);
     assert!(output.events.iter().all(|e| e.outcome == "pass"));
 }
 
@@ -1733,7 +1745,8 @@ fn ledger_op_counts_monotonically_track_operations() {
     let output = run_full_pipeline(&ir0);
 
     for entry in &output.isomorphism_ledger {
-        assert!(entry.input_op_count > 0 || entry.output_op_count > 0);
+        assert!(entry.input_op_count > 0, "every ledger entry should have input ops");
+        assert!(entry.output_op_count > 0, "every ledger entry should have output ops");
     }
 
     // The first entry's input_op_count should match IR0's statement count

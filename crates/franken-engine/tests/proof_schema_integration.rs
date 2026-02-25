@@ -956,7 +956,7 @@ fn validate_receipt_at_boundary_epoch_passes() {
 
 #[test]
 fn validate_rollback_token_at_boundary_epoch_passes() {
-    // Token expiry_epoch = 20, current = 20 -> not expired.
+    // Token expiry_epoch = 20, current = 20 -> not expired (expiry is exclusive).
     let token = signed_rollback();
-    assert!(validate_rollback_token(&token, TEST_KEY, epoch(5)).is_ok());
+    assert!(validate_rollback_token(&token, TEST_KEY, epoch(20)).is_ok());
 }

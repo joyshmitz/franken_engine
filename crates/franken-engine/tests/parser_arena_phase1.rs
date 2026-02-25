@@ -155,21 +155,15 @@ fn handle_audit_entries_are_deterministic() {
 
     assert_eq!(entries_a, entries_b);
     assert!(!entries_a.is_empty());
-    assert!(
-        entries_a
-            .iter()
-            .any(|entry| entry.handle_kind == HandleAuditKind::Node)
-    );
-    assert!(
-        entries_a
-            .iter()
-            .any(|entry| entry.handle_kind == HandleAuditKind::Expression)
-    );
-    assert!(
-        entries_a
-            .iter()
-            .any(|entry| entry.handle_kind == HandleAuditKind::Span)
-    );
+    assert!(entries_a
+        .iter()
+        .any(|entry| entry.handle_kind == HandleAuditKind::Node));
+    assert!(entries_a
+        .iter()
+        .any(|entry| entry.handle_kind == HandleAuditKind::Expression));
+    assert!(entries_a
+        .iter()
+        .any(|entry| entry.handle_kind == HandleAuditKind::Span));
 }
 
 #[test]
@@ -184,4 +178,36 @@ fn handle_audit_jsonl_is_parseable_and_stable() {
         .collect();
 
     assert_eq!(parsed, arena.handle_audit_entries());
+}
+
+#[test]
+fn corruption_injection_guards_fail_closed_deterministically() {
+    let tree = fixture_tree();
+    let arena = ParserArena::from_syntax_tree(&tree, ArenaBudget::default()).expect("arena");
+
+    let node_handle = arena.statement_handles()[0];
+    let node_err = arena
+        .node(NodeHandle::from_parts(
+            node_handle.index(),
+            node_handle.generation() + 7,
+        ))
+        .expect_err("node generation corruption should fail");
+
+    let expr_err = arena
+        .expression(ExpressionHandle::from_parts(90_001, 1))
+        .expect_err("expression OOB corruption should fail");
+
+    let span_err = arena
+        .span(SpanHandle::from_parts(70_001, 1))
+        .expect_err("span OOB corruption should fail");
+
+    assert!(matches!(
+        node_err,
+        ArenaError::InvalidGeneration {
+            handle_kind: "node",
+            ..
+        }
+    ));
+    assert!(matches!(expr_err, ArenaError::MissingExpression { .. }));
+    assert!(matches!(span_err, ArenaError::MissingSpan { .. }));
 }

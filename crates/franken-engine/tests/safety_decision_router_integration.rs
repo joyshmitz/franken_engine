@@ -99,7 +99,10 @@ fn safety_action_all_returns_exactly_six_variants() {
 #[test]
 fn safety_action_as_str_stable_across_calls() {
     for &action in SafetyAction::all() {
-        assert_eq!(action.as_str(), action.as_str());
+        let first = action.as_str();
+        let second = action.as_str();
+        assert_eq!(first, second);
+        assert!(!first.is_empty(), "as_str should not be empty for {action:?}");
     }
 }
 
@@ -653,11 +656,15 @@ fn event_sequence_numbers_are_monotonic() {
 fn evaluate_propagates_trace_id_from_context() {
     let mut r = router_with_defaults();
     let mut cx = test_cx_with_seed(99, 100);
-    let trace_str = cx.budget_state().remaining_ms(); // Just verify cx is usable
-    assert!(trace_str > 0);
     let req = test_request(SafetyAction::ExtensionQuarantine, 1);
     let result = r.evaluate(&mut cx, &req).unwrap();
-    assert!(!result.trace_id.is_empty());
+    assert!(!result.trace_id.is_empty(), "trace_id must be populated");
+    // Verify it contains the seed-derived prefix (seed 99 -> deterministic)
+    let result2 = {
+        let mut cx2 = test_cx_with_seed(99, 100);
+        r.evaluate(&mut cx2, &req).unwrap()
+    };
+    assert_eq!(result.trace_id, result2.trace_id, "same seed should produce same trace_id");
 }
 
 // ---------------------------------------------------------------------------
@@ -1194,10 +1201,10 @@ fn expected_loss_milli_is_recorded_in_result() {
     let mut cx = test_cx(100);
     let req = test_request(SafetyAction::ExtensionQuarantine, 1);
     let result = r.evaluate(&mut cx, &req).unwrap();
-    // With uniform prior: expected_loss(deny) = 0.05 -> 50 milli
-    // Just check it is > 0 for the chosen action
+    // expected_loss_milli should be a reasonable positive value (not zero, not huge)
     assert!(
-        result.expected_loss_milli < 1_000,
-        "expected_loss_milli should be reasonable"
+        result.expected_loss_milli > 0 && result.expected_loss_milli < 500,
+        "expected_loss_milli={} should be in (0, 500) range",
+        result.expected_loss_milli
     );
 }

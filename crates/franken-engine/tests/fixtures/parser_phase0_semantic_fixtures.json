@@ -85,6 +85,62 @@
       "goal": "module",
       "source": "export { a, b }",
       "expected_hash": "sha256:f940dbb1f8280ad3221c4876048cb6e2aacfbde2126e80209d6b0c1f1506f413"
+    },
+    {
+      "id": "script_statement_list_triplet",
+      "family_id": "program.statement_list",
+      "goal": "script",
+      "source": "alpha;\nbeta;\ngamma",
+      "expected_hash": "sha256:84fcbd9ea22c0519bfdf9454b0d8b79b31b430d6a8a15d382f212de8fe2a880a"
+    },
+    {
+      "id": "script_variable_declaration_raw",
+      "family_id": "statement.variable_declaration",
+      "goal": "script",
+      "source": "let value = 1",
+      "expected_hash": "sha256:c474f03f670194af790e512601d4c7d109cbec2656be1b6d8cbd6424b7981cce"
+    },
+    {
+      "id": "script_function_declaration_raw",
+      "family_id": "statement.function_declaration",
+      "goal": "script",
+      "source": "function foo() {}",
+      "expected_hash": "sha256:57158fa8743e180861e9f86d22bfaa57682a3de88eddfdc3baa59e1d3280bb89"
+    },
+    {
+      "id": "script_call_member_chain_raw",
+      "family_id": "expression.call_member_chain",
+      "goal": "script",
+      "source": "obj.method(arg)",
+      "expected_hash": "sha256:0c1d35018b44775b7e0542cfe7f1a033c03ff40113314abd8be09baf3b62d9ea"
+    },
+    {
+      "id": "script_object_literal_raw",
+      "family_id": "expression.object_array_literal",
+      "goal": "script",
+      "source": "{ key: value }",
+      "expected_hash": "sha256:df6a3db9e9e0b5cd368d3f8a2ffd4fff850caa6360febb155ef5dda0838a18e1"
+    },
+    {
+      "id": "script_template_literal_raw",
+      "family_id": "expression.template_literal",
+      "goal": "script",
+      "source": "`hello ${name}`",
+      "expected_hash": "sha256:5d2af01b02dec862633e8fa4466ea8f7593b48982581170da71c4930032776df"
+    },
+    {
+      "id": "script_arrow_function_raw",
+      "family_id": "expression.arrow_function",
+      "goal": "script",
+      "source": "(x) => x + 1",
+      "expected_hash": "sha256:2cbf49225d21019cda94793baf18858861707838b7c09f560928c7cb3504d324"
+    },
+    {
+      "id": "script_control_flow_raw",
+      "family_id": "statement.control_flow",
+      "goal": "script",
+      "source": "if (flag) run()",
+      "expected_hash": "sha256:5c1ffeea13ea2bcadffc352798762e017620d8a9cb4c56d56be2dbe83722719f"
     }
   ]
 }
