@@ -33,6 +33,9 @@ The lane has unilateral authority to:
 
 ## Inputs
 
+- Program constitution and objective contract:
+  `docs/FRX_PROGRAM_CONSTITUTION_V1.md`,
+  `docs/frx_objective_function_v1.json`.
 - Semantics lane contracts, compatibility constitution, and capability
   boundaries.
 - Optimization lane policy budgets and rewrite safety gates.
@@ -84,4 +87,3 @@ Missing or malformed witness metadata blocks activation.
 3. Verification lane consumes witness hashes, invariant outcomes, and replay
    linkages.
 4. Governance lane consumes compile/fallback decisions plus rationale events.
-

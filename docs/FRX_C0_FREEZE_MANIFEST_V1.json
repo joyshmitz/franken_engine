@@ -4,6 +4,8 @@
   "generated_by": "bd-mjh3.12.1",
   "artifacts": {
     "objective_function_version": "frx.objective.v1",
+    "program_constitution": "docs/FRX_PROGRAM_CONSTITUTION_V1.md",
+    "objective_function_contract": "docs/frx_objective_function_v1.json",
     "compatibility_constitution": "docs/FRX_COMPATIBILITY_CONSTITUTION_V1.md",
     "forbidden_regressions": "docs/frx_forbidden_regressions_v1.json",
     "compile_vs_fallback": "docs/frx_compile_vs_fallback_v1.json",

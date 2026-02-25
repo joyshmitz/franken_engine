@@ -3,6 +3,7 @@
 Status: active
 Owner lane: FRX-10.1 (Semantics/Compatibility)
 Primary bead: bd-mjh3.1.1
+Parent constitution: `docs/FRX_PROGRAM_CONSTITUTION_V1.md`
 
 ## Purpose
 
@@ -57,4 +58,3 @@ A constitution update requires:
 2. Diff against prior invariant set.
 3. Added/updated fixture references.
 4. Explicit migration note for downstream gates.
-

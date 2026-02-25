@@ -358,9 +358,18 @@ Run harness checks/tests through `rch` (CPU-intensive commands are offloaded):
 # run deterministic harness integration tests
 ./scripts/run_deterministic_e2e_harness.sh test
 
+# strict lint pass for harness test target
+./scripts/run_deterministic_e2e_harness.sh clippy
+
 # CI shortcut (check + test)
 ./scripts/run_deterministic_e2e_harness.sh ci
 ```
+
+Each invocation emits deterministic lane artifacts under
+`artifacts/deterministic_e2e_harness/<timestamp>/`:
+- `run_manifest.json` (trace/decision/policy IDs + deterministic environment + replay command)
+- `events.jsonl` (structured lane completion event)
+- `commands.txt` (exact executed command transcript)
 
 Create a signed golden-update artifact when intentionally accepting an output digest change:
 
@@ -470,6 +479,22 @@ rch exec -- env RUSTUP_TOOLCHAIN=nightly \
 Gate run manifests are written under `artifacts/parser_phase0_gate/<timestamp>/run_manifest.json`.
 Reducer promotion manifests are written under
 `artifacts/parser_reducer_promotion/<timestamp>/run_manifest.json`.
+
+## Parser Failover Controls Gate
+
+`bd-2mds.1.5.4.1` adds deterministic fallback trigger semantics and serial
+failover decision logging for parallel parser runs.
+
+```bash
+# parser failover controls gate (rch-backed check + focused failover drills + clippy)
+./scripts/run_parser_failover_controls_gate.sh ci
+```
+
+Failover artifacts are written under:
+
+- `artifacts/parser_failover_controls/<timestamp>/run_manifest.json`
+- `artifacts/parser_failover_controls/<timestamp>/events.jsonl`
+- `artifacts/parser_failover_controls/<timestamp>/commands.txt`
 
 ## Phase-A Exit Gate
 

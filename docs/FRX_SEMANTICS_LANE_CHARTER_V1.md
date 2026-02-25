@@ -2,6 +2,7 @@
 
 Status: active
 Primary bead: bd-mjh3.10.1
+Program constitution reference: `docs/FRX_PROGRAM_CONSTITUTION_V1.md`
 
 ## Charter Scope
 
@@ -18,7 +19,8 @@ The lane has unilateral authority to:
 
 ## Responsibilities
 
-1. Maintain `FRX_COMPATIBILITY_CONSTITUTION_V1` and machine-checkable supplements.
+1. Maintain `FRX_COMPATIBILITY_CONSTITUTION_V1` and ensure alignment with
+   `FRX_PROGRAM_CONSTITUTION_V1`.
 2. Maintain fixture namespaces for invariants and edge cases.
 3. Review and sign semantic policy updates before downstream adoption.
 4. Publish deterministic fallback triggers when confidence is insufficient.
@@ -47,4 +49,3 @@ The lane has unilateral authority to:
 
 - If semantic confidence drops below threshold, this lane issues a promotion halt and deterministic conservative fallback recommendation.
 - Any disputed semantic interpretation is escalated to governance with evidence trace linkage.
-
