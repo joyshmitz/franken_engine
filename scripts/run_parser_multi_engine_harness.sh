@@ -61,6 +61,7 @@ run_step() {
 }
 
 run_report_step() {
+  local report_stdout_path="${run_dir}/report.stdout"
   local -a command=(
     cargo run -p frankenengine-engine --bin franken_parser_multi_engine_harness -- \
       --fixture-catalog "$fixture_catalog" \
@@ -88,9 +89,25 @@ run_report_step() {
   echo "==> $command_text"
 
   set +e
-  run_rch "${command[@]}"
+  run_rch "${command[@]}" | tee "$report_stdout_path"
   local rc=$?
   set -e
+
+  if [[ ! -f "$report_path" && -s "$report_stdout_path" ]]; then
+    if jq -e '.' "$report_stdout_path" >/dev/null 2>&1; then
+      cp "$report_stdout_path" "$report_path"
+    else
+      local extracted_json_path="${run_dir}/report.stdout.extracted.json"
+      awk '
+        BEGIN { capture=0 }
+        /^\{/ { capture=1 }
+        capture { print }
+      ' "$report_stdout_path" >"$extracted_json_path"
+      if [[ -s "$extracted_json_path" ]] && jq -e '.' "$extracted_json_path" >/dev/null 2>&1; then
+        cp "$extracted_json_path" "$report_path"
+      fi
+    fi
+  fi
 
   if [[ -f "$report_path" ]]; then
     divergent_fixtures="$(jq -r '.summary.divergent_fixtures // 0' "$report_path")"
