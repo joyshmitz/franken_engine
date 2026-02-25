@@ -125,6 +125,8 @@ pub enum RouterError {
     RewardOutOfRange { reward: i64 },
     /// Exploration parameter is outside (0, 1].
     InvalidGamma { gamma_millionths: i64 },
+    /// Counterfactual reward vector size does not match number of arms.
+    CounterfactualSizeMismatch { got: usize, expected: usize },
     /// Cannot route with zero total weight.
     ZeroWeight,
 }
@@ -144,6 +146,12 @@ impl fmt::Display for RouterError {
             }
             Self::InvalidGamma { gamma_millionths } => {
                 write!(f, "gamma {gamma_millionths} outside (0, 1_000_000]")
+            }
+            Self::CounterfactualSizeMismatch { got, expected } => {
+                write!(
+                    f,
+                    "counterfactual reward vector has size {got}, expected {expected}"
+                )
             }
             Self::ZeroWeight => write!(f, "cannot route with zero total weight"),
         }
@@ -465,10 +473,10 @@ impl FtrlState {
 // RegretBoundedRouter — the adaptive router
 // ---------------------------------------------------------------------------
 
-/// Adaptive lane router with provable regret bounds.
+/// Adaptive lane router with explicit regret accounting.
 ///
 /// Automatically selects between EXP3 (adversarial) and FTRL (stochastic)
-/// based on detected regime, maintaining O(√T) regret in both cases.
+/// based on detected regime.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RegretBoundedRouter {
     /// Available execution lanes.
@@ -483,9 +491,9 @@ pub struct RegretBoundedRouter {
     pub cumulative_reward_millionths: i64,
     /// Best single-arm cumulative reward in hindsight (millionths).
     pub best_arm_cumulative_millionths: i64,
-    /// Exact cumulative reward of best arm per round, when counterfactual
-    /// full-information rewards are supplied.
-    best_counterfactual_cumulative_millionths: i64,
+    /// Per-arm cumulative rewards from full-information counterfactual vectors.
+    /// When present for every round, this enables exact best-fixed-arm regret.
+    counterfactual_per_arm_cumulative: Vec<i64>,
     /// Number of rounds for which full-information counterfactuals were supplied.
     counterfactual_rounds: u64,
     /// Per-arm cumulative rewards for best-arm tracking.
@@ -561,7 +569,7 @@ impl RegretBoundedRouter {
             active_regime: RegimeKind::Unknown,
             cumulative_reward_millionths: 0,
             best_arm_cumulative_millionths: 0,
-            best_counterfactual_cumulative_millionths: 0,
+            counterfactual_per_arm_cumulative: vec![0; n],
             counterfactual_rounds: 0,
             per_arm_cumulative: vec![0; n],
             per_arm_count: vec![0; n],
@@ -606,24 +614,19 @@ impl RegretBoundedRouter {
 
         if let Some(counterfactual) = &signal.counterfactual_rewards_millionths {
             if counterfactual.len() != self.arms.len() {
-                return Err(RouterError::ArmOutOfBounds {
-                    index: counterfactual.len(),
-                    count: self.arms.len(),
+                return Err(RouterError::CounterfactualSizeMismatch {
+                    got: counterfactual.len(),
+                    expected: self.arms.len(),
                 });
             }
-            let mut best_round_reward = 0i64;
-            for &r in counterfactual {
+            for (arm_idx, &r) in counterfactual.iter().enumerate() {
                 if !(0..=MILLION).contains(&r) {
                     return Err(RouterError::RewardOutOfRange { reward: r });
                 }
-                if r > best_round_reward {
-                    best_round_reward = r;
-                }
+                self.counterfactual_per_arm_cumulative[arm_idx] =
+                    self.counterfactual_per_arm_cumulative[arm_idx].saturating_add(r);
             }
             self.counterfactual_rounds = self.counterfactual_rounds.saturating_add(1);
-            self.best_counterfactual_cumulative_millionths = self
-                .best_counterfactual_cumulative_millionths
-                .saturating_add(best_round_reward);
         }
 
         // Update both algorithms (they run in parallel).
@@ -678,9 +681,13 @@ impl RegretBoundedRouter {
     ///   T × max_observed_mean_reward - cumulative_reward.
     pub fn realized_regret_millionths(&self) -> i64 {
         if self.rounds() > 0 && self.counterfactual_rounds == self.rounds() {
-            return (self.best_counterfactual_cumulative_millionths
-                - self.cumulative_reward_millionths)
-                .max(0);
+            let best_fixed_arm = self
+                .counterfactual_per_arm_cumulative
+                .iter()
+                .copied()
+                .max()
+                .unwrap_or(0);
+            return (best_fixed_arm - self.cumulative_reward_millionths).max(0);
         }
         let t = self.rounds() as i64;
         if t == 0 {
@@ -707,9 +714,9 @@ impl RegretBoundedRouter {
 
     /// Detect whether the environment is stochastic or adversarial.
     ///
-    /// Heuristic: if reward variance is below a threshold scaled by mean,
-    /// the environment is likely stochastic (i.i.d. rewards).
-    /// High variance relative to mean suggests adversarial behavior.
+    /// Heuristic: if squared coefficient of variation (CV² = var/mean²) is
+    /// low, the environment is likely stochastic (i.i.d. rewards). High CV²
+    /// suggests adversarial behavior.
     fn detect_regime_shift(&mut self) {
         let variance = self.reward_variance_estimator.variance_millionths();
         let mean = self.reward_variance_estimator.mean_millionths.max(1);
@@ -941,6 +948,18 @@ mod tests {
     }
 
     #[test]
+    fn exp3_invalid_gamma_rejected() {
+        assert!(matches!(
+            Exp3State::new(2, 0),
+            Err(RouterError::InvalidGamma { .. })
+        ));
+        assert!(matches!(
+            Exp3State::new(2, MILLION + 1),
+            Err(RouterError::InvalidGamma { .. })
+        ));
+    }
+
+    #[test]
     fn exp3_uniform_initial_probabilities() {
         let state = Exp3State::new(3, 100_000).unwrap();
         let probs = state.arm_probabilities();
@@ -1089,6 +1108,42 @@ mod tests {
     }
 
     #[test]
+    fn router_exact_regret_uses_counterfactuals_when_available() {
+        let arms = make_arms(2);
+        let mut router = RegretBoundedRouter::new(arms, 100_000).unwrap();
+
+        let signal = RewardSignal {
+            arm_index: 0,
+            reward_millionths: 200_000,
+            latency_us: 10,
+            success: true,
+            epoch: SecurityEpoch::from_raw(1),
+            counterfactual_rewards_millionths: Some(vec![200_000, 900_000]),
+        };
+        router.observe_reward(&signal).unwrap();
+
+        assert_eq!(router.realized_regret_millionths(), 700_000);
+    }
+
+    #[test]
+    fn router_rejects_counterfactual_size_mismatch() {
+        let arms = make_arms(2);
+        let mut router = RegretBoundedRouter::new(arms, 100_000).unwrap();
+        let signal = RewardSignal {
+            arm_index: 0,
+            reward_millionths: 500_000,
+            latency_us: 10,
+            success: true,
+            epoch: SecurityEpoch::from_raw(1),
+            counterfactual_rewards_millionths: Some(vec![500_000]),
+        };
+        assert!(matches!(
+            router.observe_reward(&signal),
+            Err(RouterError::CounterfactualSizeMismatch { .. })
+        ));
+    }
+
+    #[test]
     fn router_regret_stays_bounded() {
         let arms = make_arms(2);
         let mut router = RegretBoundedRouter::new(arms, 100_000).unwrap();
@@ -1188,7 +1243,8 @@ mod tests {
     #[test]
     fn integer_ln_basic() {
         assert_eq!(integer_ln_millionths(1), 0);
-        assert!(integer_ln_millionths(2) > 0);
+        let ln2 = integer_ln_millionths(2);
+        assert!((ln2 - 693_147).abs() < 20_000);
         assert!(integer_ln_millionths(10) > integer_ln_millionths(2));
     }
 

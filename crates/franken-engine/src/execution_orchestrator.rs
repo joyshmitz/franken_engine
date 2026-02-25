@@ -27,7 +27,10 @@ use crate::bayesian_posterior::{
 use crate::containment_executor::{
     ContainmentContext, ContainmentError, ContainmentExecutor, ContainmentReceipt, SandboxPolicy,
 };
-use crate::control_plane::mocks::{MockBudget, MockCx, trace_id_from_seed};
+use crate::control_plane::mocks::{trace_id_from_seed, MockBudget, MockCx};
+use crate::entropy_evidence_compressor::{
+    ArithmeticCoder, CompressionCertificate, EntropyEstimator,
+};
 use crate::evidence_ledger::{
     CandidateAction, ChosenAction, DecisionType, EvidenceEmitter, EvidenceEntry,
     EvidenceEntryBuilder, InMemoryLedger, LedgerError, Witness,
@@ -36,17 +39,34 @@ use crate::execution_cell::{CellError, CellEvent, CellKind, ExecutionCell};
 use crate::expected_loss_selector::{
     ActionDecision, ContainmentAction, ExpectedLossSelector, LossMatrix,
 };
+use crate::hash_tiers::ContentHash;
 use crate::ir_contract::{Ir0Module, Ir3Module};
 use crate::lowering_pipeline::{
-    LoweringContext, LoweringEvent, LoweringPipelineError, PassWitness, lower_ir0_to_ir3,
+    lower_ir0_to_ir3, LoweringContext, LoweringEvent, LoweringPipelineError, PassWitness,
+};
+use crate::optimal_stopping::{
+    EscalationPolicy, Observation as StoppingObservation, OptimalStoppingCertificate,
+    StoppingDecision, STOPPING_SCHEMA_VERSION,
 };
 use crate::parser::{CanonicalEs2020Parser, ParseError, ParserOptions};
 use crate::region_lifecycle::{CancelReason, DrainDeadline, FinalizeResult};
+use crate::regret_bounded_router::{
+    LaneArm as AdaptiveLaneArm, RegretBoundedRouter, RewardSignal as AdaptiveRewardSignal,
+    RouterSummary,
+};
 use crate::saga_orchestrator::{
-    SagaError, SagaOrchestrator, SagaType, eviction_saga_steps, quarantine_saga_steps,
-    revocation_saga_steps,
+    eviction_saga_steps, quarantine_saga_steps, revocation_saga_steps, SagaError, SagaOrchestrator,
+    SagaType,
 };
 use crate::security_epoch::SecurityEpoch;
+use crate::tropical_semiring::{
+    InstructionCostGraph, InstructionNode, ScheduleOptimizer, TropicalWeight,
+};
+
+const ADAPTIVE_ROUTER_GAMMA_MILLIONTHS: i64 = 100_000;
+const STOPPING_CUSUM_THRESHOLD_MILLIONTHS: i64 = 5_000_000;
+const STOPPING_CUSUM_REFERENCE_MILLIONTHS: i64 = 500_000;
+const SCALE_MILLION: i64 = 1_000_000;
 
 // ---------------------------------------------------------------------------
 // LossMatrixPreset
@@ -154,6 +174,8 @@ pub struct OrchestratorResult {
     pub lane_reason: LaneReason,
     pub execution_value: String,
     pub instructions_executed: u64,
+    pub adaptive_router_summary: Option<RouterSummary>,
+    pub ir3_schedule_cost: Option<TropicalWeight>,
 
     // Risk
     pub posterior: Posterior,
@@ -163,9 +185,11 @@ pub struct OrchestratorResult {
     pub containment_action: ContainmentAction,
     pub expected_loss_millionths: i64,
     pub action_decision: ActionDecision,
+    pub optimal_stopping_certificate: Option<OptimalStoppingCertificate>,
 
     // Evidence
     pub evidence_entries: Vec<EvidenceEntry>,
+    pub evidence_compression_certificate: Option<CompressionCertificate>,
 
     // Containment
     pub containment_receipt: Option<ContainmentReceipt>,
@@ -266,6 +290,9 @@ pub struct ExecutionOrchestrator {
     config: OrchestratorConfig,
     parser: CanonicalEs2020Parser,
     lane_router: LaneRouter,
+    adaptive_router: RegretBoundedRouter,
+    stopping_policy: EscalationPolicy,
+    last_cumulative_llr_millionths: i64,
     posterior_updater: BayesianPosteriorUpdater,
     loss_selector: ExpectedLossSelector,
     ledger: InMemoryLedger,
@@ -279,9 +306,35 @@ impl ExecutionOrchestrator {
     pub fn new(config: OrchestratorConfig) -> Self {
         let loss_matrix = config.loss_matrix_preset.to_loss_matrix();
         let prior = Posterior::default_prior();
+        let adaptive_router = RegretBoundedRouter::new(
+            vec![
+                AdaptiveLaneArm {
+                    lane_id: "quickjs".to_string(),
+                    description: "QuickJs-inspired deterministic lane".to_string(),
+                },
+                AdaptiveLaneArm {
+                    lane_id: "v8".to_string(),
+                    description: "V8-inspired throughput lane".to_string(),
+                },
+            ],
+            ADAPTIVE_ROUTER_GAMMA_MILLIONTHS,
+        )
+        .expect("adaptive router configuration must be valid");
+        let mut stopping_policy = EscalationPolicy::new(
+            STOPPING_CUSUM_THRESHOLD_MILLIONTHS,
+            STOPPING_CUSUM_REFERENCE_MILLIONTHS,
+            256,
+        )
+        .expect("stopping policy configuration must be valid");
+        // Runtime path uses change-point detection. Secretary fallback is
+        // useful for bounded pools but too eager for unbounded service loops.
+        stopping_policy.secretary_enabled = false;
         Self {
             parser: CanonicalEs2020Parser,
             lane_router: LaneRouter::new(),
+            adaptive_router,
+            stopping_policy,
+            last_cumulative_llr_millionths: 0,
             posterior_updater: BayesianPosteriorUpdater::new(prior, "orchestrator"),
             loss_selector: ExpectedLossSelector::new(loss_matrix),
             ledger: InMemoryLedger::new(),
@@ -350,6 +403,7 @@ impl ExecutionOrchestrator {
         let lowering_output = lower_ir0_to_ir3(&ir0, &lowering_ctx)?;
         let lowering_events = lowering_output.events.clone();
         let lowering_witnesses = lowering_output.witnesses.clone();
+        let ir3_schedule_cost = Self::estimate_ir3_schedule_cost(&lowering_output.ir3);
 
         // Step 6: Execute IR3.
         let routed = self.phase_execute(&lowering_output.ir3, &trace_id)?;
@@ -358,6 +412,7 @@ impl ExecutionOrchestrator {
         let exec_result = routed.result;
         let execution_value = format!("{}", exec_result.value);
         let instructions_executed = exec_result.instructions_executed;
+        let adaptive_router_summary = self.update_adaptive_router(lane, &exec_result);
 
         // Step 7: Assess risk.
         let evidence = Self::build_evidence(package, &exec_result, self.config.epoch);
@@ -367,17 +422,28 @@ impl ExecutionOrchestrator {
 
         // Step 8: Decide action.
         let action_decision = self.loss_selector.select(&posterior);
-        let containment_action = action_decision.action;
         let expected_loss_millionths = action_decision.expected_loss_millionths;
+        let (stopping_decision, optimal_stopping_certificate) =
+            self.observe_optimal_stopping(&update_result, package);
+        let mut containment_action = action_decision.action;
+        if stopping_decision == StoppingDecision::Stop
+            && containment_action == ContainmentAction::Allow
+        {
+            containment_action = ContainmentAction::Sandbox;
+        }
 
         // Step 9: Record evidence.
-        let entry = self.phase_record_evidence(
+        let (entry, evidence_compression_certificate) = self.phase_record_evidence(
             &trace_id,
             &decision_id,
             package,
             &action_decision,
+            containment_action,
             &exec_result,
             &update_result,
+            ir3_schedule_cost,
+            adaptive_router_summary.as_ref(),
+            optimal_stopping_certificate.as_ref(),
         )?;
         let evidence_entries = vec![entry];
 
@@ -414,12 +480,16 @@ impl ExecutionOrchestrator {
             lane_reason,
             execution_value,
             instructions_executed,
+            adaptive_router_summary,
+            ir3_schedule_cost,
             posterior,
             risk_state,
             containment_action,
             expected_loss_millionths,
             action_decision,
+            optimal_stopping_certificate,
             evidence_entries,
+            evidence_compression_certificate,
             containment_receipt,
             saga_id,
             cell_events,
@@ -456,9 +526,13 @@ impl ExecutionOrchestrator {
         decision_id: &str,
         package: &ExtensionPackage,
         decision: &ActionDecision,
+        effective_action: ContainmentAction,
         exec: &ExecutionResult,
         update: &UpdateResult,
-    ) -> Result<EvidenceEntry, OrchestratorError> {
+        ir3_schedule_cost: Option<TropicalWeight>,
+        adaptive_router_summary: Option<&RouterSummary>,
+        optimal_stopping_certificate: Option<&OptimalStoppingCertificate>,
+    ) -> Result<(EvidenceEntry, Option<CompressionCertificate>), OrchestratorError> {
         let mut builder = EvidenceEntryBuilder::new(
             trace_id,
             decision_id,
@@ -475,11 +549,12 @@ impl ExecutionOrchestrator {
         }
 
         // Record chosen action.
+        let stopping_override = effective_action != decision.action;
         builder = builder.chosen(ChosenAction {
-            action_name: format!("{:?}", decision.action),
+            action_name: format!("{:?}", effective_action),
             expected_loss_millionths: decision.expected_loss_millionths,
             rationale: format!(
-                "risk_state={:?}, posterior_benign={}",
+                "risk_state={:?}, posterior_benign={}, stopping_override={stopping_override}",
                 update.posterior.map_estimate(),
                 update.posterior.p_benign
             ),
@@ -517,9 +592,351 @@ impl ExecutionOrchestrator {
             package.capabilities.len().to_string(),
         );
 
+        if let Some(cost) = ir3_schedule_cost {
+            builder = builder.meta("ir3_schedule_cost".to_string(), cost.0.to_string());
+        }
+        if let Some(summary) = adaptive_router_summary {
+            builder = builder.meta(
+                "adaptive_router_regime".to_string(),
+                format!("{:?}", summary.active_regime),
+            );
+            builder = builder.meta(
+                "adaptive_router_regret".to_string(),
+                summary.realized_regret_millionths.to_string(),
+            );
+            builder = builder.meta(
+                "adaptive_router_bound".to_string(),
+                summary.theoretical_regret_bound_millionths.to_string(),
+            );
+        }
+        if let Some(cert) = optimal_stopping_certificate {
+            builder = builder.meta(
+                "optimal_stopping_algorithm".to_string(),
+                cert.algorithm.clone(),
+            );
+            builder = builder.meta(
+                "optimal_stopping_observations".to_string(),
+                cert.observations_before_stop.to_string(),
+            );
+        }
+
+        let compression_certificate = Self::build_evidence_compression_certificate(
+            package,
+            decision,
+            effective_action,
+            exec,
+            update,
+            adaptive_router_summary,
+            optimal_stopping_certificate,
+            ir3_schedule_cost,
+        );
+        if let Some(cert) = &compression_certificate {
+            builder = builder.meta(
+                "evidence_entropy_millibits".to_string(),
+                cert.entropy_millibits_per_symbol.to_string(),
+            );
+            builder = builder.meta(
+                "evidence_shannon_bound_bits".to_string(),
+                cert.shannon_lower_bound_bits.to_string(),
+            );
+            builder = builder.meta(
+                "evidence_overhead_ratio_millionths".to_string(),
+                cert.overhead_ratio_millionths.to_string(),
+            );
+        }
+
         let entry = builder.build()?;
         self.ledger.emit(entry.clone())?;
-        Ok(entry)
+        Ok((entry, compression_certificate))
+    }
+
+    fn update_adaptive_router(
+        &mut self,
+        lane: LaneChoice,
+        exec: &ExecutionResult,
+    ) -> Option<RouterSummary> {
+        let arm_index = match lane {
+            LaneChoice::QuickJs => 0,
+            LaneChoice::V8 => 1,
+        };
+        let reward = Self::execution_reward_millionths(exec);
+        let signal = AdaptiveRewardSignal {
+            arm_index,
+            reward_millionths: reward,
+            latency_us: exec.instructions_executed.saturating_mul(10),
+            success: true,
+            epoch: self.config.epoch,
+            counterfactual_rewards_millionths: None,
+        };
+        if self.adaptive_router.observe_reward(&signal).is_ok() {
+            Some(self.adaptive_router.summary())
+        } else {
+            None
+        }
+    }
+
+    fn execution_reward_millionths(exec: &ExecutionResult) -> i64 {
+        let instruction_penalty = (exec.instructions_executed as i64)
+            .saturating_mul(50)
+            .min(600_000);
+        let hostcall_penalty = (exec.hostcall_decisions.len() as i64)
+            .saturating_mul(25_000)
+            .min(300_000);
+        (SCALE_MILLION - instruction_penalty - hostcall_penalty).clamp(0, SCALE_MILLION)
+    }
+
+    fn observe_optimal_stopping(
+        &mut self,
+        update: &UpdateResult,
+        package: &ExtensionPackage,
+    ) -> (StoppingDecision, Option<OptimalStoppingCertificate>) {
+        let llr_increment = update.cumulative_llr_millionths - self.last_cumulative_llr_millionths;
+        self.last_cumulative_llr_millionths = update.cumulative_llr_millionths;
+
+        let observation = StoppingObservation {
+            llr_millionths: llr_increment,
+            risk_score_millionths: update.posterior.p_malicious,
+            timestamp_us: self.execution_counter,
+            source: package.extension_id.clone(),
+        };
+        let decision = self.stopping_policy.observe(&observation);
+        let cert = Some(self.build_optimal_stopping_certificate(decision));
+        (decision, cert)
+    }
+
+    fn build_optimal_stopping_certificate(
+        &self,
+        decision: StoppingDecision,
+    ) -> OptimalStoppingCertificate {
+        let algorithm = match (&self.stopping_policy.trigger_source, decision) {
+            (Some(source), _) => source.clone(),
+            (None, StoppingDecision::Stop) => "composite".to_string(),
+            (None, StoppingDecision::Continue) => "none".to_string(),
+        };
+        let cert_data = format!(
+            "{algorithm}:{}:{:?}:{}",
+            self.stopping_policy.total_observations,
+            decision,
+            self.config.epoch.as_u64()
+        );
+        OptimalStoppingCertificate {
+            schema: STOPPING_SCHEMA_VERSION.to_string(),
+            algorithm,
+            observations_before_stop: self.stopping_policy.total_observations,
+            cusum_statistic_millionths: Some(self.stopping_policy.cusum.statistic_millionths),
+            arl0_lower_bound: Some(self.stopping_policy.cusum.arl0_lower_bound(SCALE_MILLION)),
+            snell_optimal_value_millionths: None,
+            gittins_index_millionths: None,
+            epoch: self.config.epoch,
+            certificate_hash: ContentHash::compute(cert_data.as_bytes()),
+        }
+    }
+
+    fn estimate_ir3_schedule_cost(ir3: &Ir3Module) -> Option<TropicalWeight> {
+        let n = ir3.instructions.len();
+        if n == 0 {
+            return None;
+        }
+
+        let mut successors: Vec<Vec<usize>> = vec![Vec::new(); n];
+        for (idx, instr) in ir3.instructions.iter().enumerate() {
+            let mut succ = Self::flow_successors(idx, instr, n);
+            succ.sort_unstable();
+            succ.dedup();
+            successors[idx] = succ;
+        }
+
+        let mut predecessors: Vec<Vec<usize>> = vec![Vec::new(); n];
+        for (src, succ) in successors.iter().enumerate() {
+            for &dst in succ {
+                predecessors[dst].push(src);
+            }
+        }
+        for preds in &mut predecessors {
+            preds.sort_unstable();
+            preds.dedup();
+        }
+
+        let nodes: Vec<InstructionNode> = (0..n)
+            .map(|idx| InstructionNode {
+                index: idx,
+                cost: TropicalWeight::finite(Self::instruction_cost(&ir3.instructions[idx])),
+                predecessors: predecessors[idx].clone(),
+                successors: successors[idx].clone(),
+                register_pressure: 1,
+                mnemonic: Self::instruction_mnemonic(&ir3.instructions[idx]).to_string(),
+            })
+            .collect();
+
+        let graph = InstructionCostGraph::new(nodes).ok()?;
+        let schedule = ScheduleOptimizer::default().schedule(&graph).ok()?;
+        Some(schedule.total_cost)
+    }
+
+    fn instruction_mnemonic(instr: &crate::ir_contract::Ir3Instruction) -> &'static str {
+        match instr {
+            crate::ir_contract::Ir3Instruction::LoadInt { .. } => "load_int",
+            crate::ir_contract::Ir3Instruction::LoadStr { .. } => "load_str",
+            crate::ir_contract::Ir3Instruction::LoadBool { .. } => "load_bool",
+            crate::ir_contract::Ir3Instruction::LoadNull { .. } => "load_null",
+            crate::ir_contract::Ir3Instruction::LoadUndefined { .. } => "load_undefined",
+            crate::ir_contract::Ir3Instruction::Add { .. } => "add",
+            crate::ir_contract::Ir3Instruction::Sub { .. } => "sub",
+            crate::ir_contract::Ir3Instruction::Mul { .. } => "mul",
+            crate::ir_contract::Ir3Instruction::Div { .. } => "div",
+            crate::ir_contract::Ir3Instruction::Move { .. } => "move",
+            crate::ir_contract::Ir3Instruction::Jump { .. } => "jump",
+            crate::ir_contract::Ir3Instruction::JumpIf { .. } => "jump_if",
+            crate::ir_contract::Ir3Instruction::Call { .. } => "call",
+            crate::ir_contract::Ir3Instruction::Return { .. } => "return",
+            crate::ir_contract::Ir3Instruction::HostCall { .. } => "host_call",
+            crate::ir_contract::Ir3Instruction::GetProperty { .. } => "get_property",
+            crate::ir_contract::Ir3Instruction::SetProperty { .. } => "set_property",
+            crate::ir_contract::Ir3Instruction::Halt => "halt",
+        }
+    }
+
+    fn instruction_cost(instr: &crate::ir_contract::Ir3Instruction) -> i64 {
+        match instr {
+            crate::ir_contract::Ir3Instruction::HostCall { .. } => 4,
+            crate::ir_contract::Ir3Instruction::Call { .. } => 3,
+            crate::ir_contract::Ir3Instruction::Div { .. }
+            | crate::ir_contract::Ir3Instruction::Mul { .. } => 2,
+            _ => 1,
+        }
+    }
+
+    fn flow_successors(
+        idx: usize,
+        instr: &crate::ir_contract::Ir3Instruction,
+        instruction_count: usize,
+    ) -> Vec<usize> {
+        let mut out = Vec::new();
+        let next = idx + 1;
+
+        match instr {
+            crate::ir_contract::Ir3Instruction::Jump { target } => {
+                let target = *target as usize;
+                if target > idx && target < instruction_count {
+                    out.push(target);
+                }
+            }
+            crate::ir_contract::Ir3Instruction::JumpIf { target, .. } => {
+                let target = *target as usize;
+                if next < instruction_count {
+                    out.push(next);
+                }
+                if target > idx && target < instruction_count {
+                    out.push(target);
+                }
+            }
+            crate::ir_contract::Ir3Instruction::Return { .. }
+            | crate::ir_contract::Ir3Instruction::Halt => {}
+            _ => {
+                if next < instruction_count {
+                    out.push(next);
+                }
+            }
+        }
+
+        out
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build_evidence_compression_certificate(
+        package: &ExtensionPackage,
+        decision: &ActionDecision,
+        effective_action: ContainmentAction,
+        exec: &ExecutionResult,
+        update: &UpdateResult,
+        adaptive_router_summary: Option<&RouterSummary>,
+        optimal_stopping_certificate: Option<&OptimalStoppingCertificate>,
+        ir3_schedule_cost: Option<TropicalWeight>,
+    ) -> Option<CompressionCertificate> {
+        let symbols = Self::build_evidence_symbols(
+            package,
+            decision,
+            effective_action,
+            exec,
+            update,
+            adaptive_router_summary,
+            optimal_stopping_certificate,
+            ir3_schedule_cost,
+        );
+        if symbols.is_empty() {
+            return None;
+        }
+
+        let mut estimator = EntropyEstimator::new();
+        for &symbol in &symbols {
+            estimator.observe(symbol);
+        }
+        let coder = ArithmeticCoder::from_estimator(&estimator).ok()?;
+        let compressed = coder.encode(&symbols).ok()?;
+        let kraft_sum = coder.verify_kraft_inequality().ok()?;
+        Some(CompressionCertificate::build(
+            &estimator,
+            &compressed,
+            kraft_sum,
+        ))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build_evidence_symbols(
+        package: &ExtensionPackage,
+        decision: &ActionDecision,
+        effective_action: ContainmentAction,
+        exec: &ExecutionResult,
+        update: &UpdateResult,
+        adaptive_router_summary: Option<&RouterSummary>,
+        optimal_stopping_certificate: Option<&OptimalStoppingCertificate>,
+        ir3_schedule_cost: Option<TropicalWeight>,
+    ) -> Vec<u32> {
+        let mut symbols = Vec::new();
+        symbols.push(10 + decision.action.severity() as u32);
+        symbols.push(20 + effective_action.severity() as u32);
+        symbols.push(30 + Self::risk_state_symbol(update.posterior.map_estimate()));
+        symbols.push(40 + (exec.instructions_executed.min(u32::MAX as u64) as u32 % 1000));
+        symbols.push(50 + (exec.hostcall_decisions.len() as u32 % 1000));
+
+        for capability in &package.capabilities {
+            symbols.push(1_000 + (Self::stable_symbol(capability) % 10_000));
+        }
+        for decision in &exec.hostcall_decisions {
+            symbols.push(20_000 + (Self::stable_symbol(&decision.capability.0) % 10_000));
+        }
+
+        if let Some(summary) = adaptive_router_summary {
+            symbols.push(30_000 + summary.active_regime as u32);
+            symbols.push(31_000 + (summary.realized_regret_millionths.max(0) as u32 % 10_000));
+        }
+        if let Some(cert) = optimal_stopping_certificate {
+            symbols.push(40_000 + (Self::stable_symbol(&cert.algorithm) % 10_000));
+            symbols.push(41_000 + (cert.observations_before_stop as u32 % 10_000));
+        }
+        if let Some(cost) = ir3_schedule_cost {
+            symbols.push(50_000 + (cost.0.max(0) as u32 % 10_000));
+        }
+
+        symbols
+    }
+
+    fn risk_state_symbol(state: RiskState) -> u32 {
+        match state {
+            RiskState::Benign => 0,
+            RiskState::Anomalous => 1,
+            RiskState::Malicious => 2,
+            RiskState::Unknown => 3,
+        }
+    }
+
+    fn stable_symbol(value: &str) -> u32 {
+        let mut hash: u32 = 0x811C9DC5;
+        for b in value.bytes() {
+            hash ^= u32::from(b);
+            hash = hash.wrapping_mul(0x01000193);
+        }
+        hash
     }
 
     fn phase_execute_containment(
@@ -932,14 +1349,8 @@ mod tests {
         let permissive = LossMatrixPreset::Permissive.to_loss_matrix();
         // All three presets should produce different matrices.
         // At minimum balanced != conservative.
-        assert_ne!(
-            format!("{balanced:?}"),
-            format!("{conservative:?}")
-        );
-        assert_ne!(
-            format!("{balanced:?}"),
-            format!("{permissive:?}")
-        );
+        assert_ne!(format!("{balanced:?}"), format!("{conservative:?}"));
+        assert_ne!(format!("{balanced:?}"), format!("{permissive:?}"));
     }
 
     // -- Enrichment: error trait --

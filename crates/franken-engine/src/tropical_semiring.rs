@@ -389,8 +389,22 @@ impl InstructionCostGraph {
             });
         }
 
-        // Validate node indices.
-        for node in &nodes {
+        // Validate node indices and dependency references.
+        for (position, node) in nodes.iter().enumerate() {
+            if node.index >= n {
+                return Err(TropicalError::NodeOutOfBounds {
+                    index: node.index,
+                    size: n,
+                });
+            }
+            // The dependency graph references nodes by vector index throughout
+            // this module, so the explicit `index` field must match position.
+            if node.index != position {
+                return Err(TropicalError::NodeOutOfBounds {
+                    index: node.index,
+                    size: n,
+                });
+            }
             for &pred in &node.predecessors {
                 if pred >= n {
                     return Err(TropicalError::NodeOutOfBounds {
@@ -470,6 +484,7 @@ impl InstructionCostGraph {
         // Longest-path DP: earliest_start[j] = max over predecessors i of
         // (earliest_start[i] + cost[i]).
         let mut earliest_start = vec![0i64; n];
+        let mut best_predecessor = vec![None; n];
         let mut topo_order = Vec::with_capacity(n);
         let mut head = 0;
 
@@ -482,6 +497,7 @@ impl InstructionCostGraph {
             for &succ in &self.nodes[idx].successors {
                 if finish > earliest_start[succ] {
                     earliest_start[succ] = finish;
+                    best_predecessor[succ] = Some(idx);
                 }
                 in_degree[succ] -= 1;
                 if in_degree[succ] == 0 {
@@ -498,7 +514,6 @@ impl InstructionCostGraph {
 
         // Makespan = max over all nodes of (earliest_start[j] + cost[j]).
         let mut max_finish: i64 = 0;
-        let mut critical_src = 0;
         let mut critical_sink = 0;
         for (i, (es, node)) in earliest_start.iter().zip(self.nodes.iter()).enumerate() {
             let finish = es.saturating_add(node.cost.0);
@@ -508,18 +523,13 @@ impl InstructionCostGraph {
             }
         }
 
-        // Trace back to find the critical source.
-        for (i, (es, node)) in earliest_start.iter().zip(self.nodes.iter()).enumerate() {
-            if node.predecessors.is_empty() && *es == 0 {
-                critical_src = i;
-            }
+        // Trace back through argmax predecessors to recover the critical source.
+        let mut critical_src = critical_sink;
+        while let Some(pred) = best_predecessor[critical_src] {
+            critical_src = pred;
         }
 
-        let apsp_hash = self
-            .adjacency
-            .as_ref()
-            .map(|a| a.content_hash())
-            .unwrap_or_else(|| ContentHash::compute(b"empty"));
+        let apsp_hash = self.all_pairs_shortest_paths()?.content_hash();
 
         Ok(CriticalPathResult {
             makespan: TropicalWeight(max_finish),
@@ -655,13 +665,6 @@ impl ScheduleOptimizer {
         let mut earliest_start = vec![TropicalWeight::ZERO; n];
         for &idx in &topo {
             let node = &graph.nodes[idx];
-            let mut start = TropicalWeight::ZERO;
-            for &pred in &node.predecessors {
-                let pred_finish = earliest_start[pred].tropical_mul(graph.nodes[pred].cost);
-                start = start.tropical_add(pred_finish); // this is min, but we want max for scheduling
-            }
-            // For scheduling, we need the latest (max) of predecessor finishes.
-            // Re-compute using standard max semantics.
             let mut max_start: i64 = 0;
             for &pred in &node.predecessors {
                 let pred_node = &graph.nodes[pred];
@@ -673,14 +676,9 @@ impl ScheduleOptimizer {
             earliest_start[idx] = TropicalWeight(max_start);
         }
 
-        // Sort by earliest start time, breaking ties by index.
-        let mut schedule_order: Vec<usize> = topo;
-        schedule_order.sort_by(|&a, &b| {
-            earliest_start[a]
-                .0
-                .cmp(&earliest_start[b].0)
-                .then(a.cmp(&b))
-        });
+        // Keep topological order to preserve all dependencies, including
+        // zero-cost edges where earliest-start ties are common.
+        let schedule_order: Vec<usize> = topo;
 
         // Compute achieved makespan.
         let mut achieved_makespan: i64 = 0;
@@ -1138,6 +1136,41 @@ mod tests {
     }
 
     #[test]
+    fn critical_path_source_is_traceback_source() {
+        // 0 -> 2 is the critical path; 1 is an unrelated source.
+        let nodes = vec![
+            InstructionNode {
+                index: 0,
+                cost: TropicalWeight::finite(5),
+                predecessors: vec![],
+                successors: vec![2],
+                register_pressure: 1,
+                mnemonic: "src_critical".into(),
+            },
+            InstructionNode {
+                index: 1,
+                cost: TropicalWeight::finite(1),
+                predecessors: vec![],
+                successors: vec![],
+                register_pressure: 1,
+                mnemonic: "src_noise".into(),
+            },
+            InstructionNode {
+                index: 2,
+                cost: TropicalWeight::finite(2),
+                predecessors: vec![0],
+                successors: vec![],
+                register_pressure: 1,
+                mnemonic: "sink".into(),
+            },
+        ];
+        let graph = InstructionCostGraph::new(nodes).unwrap();
+        let cpr = graph.critical_path_length().unwrap();
+        assert_eq!(cpr.critical_source, 0);
+        assert_eq!(cpr.critical_sink, 2);
+    }
+
+    #[test]
     fn empty_graph_rejected() {
         let result = InstructionCostGraph::new(vec![]);
         assert!(matches!(result, Err(TropicalError::EmptyGraph)));
@@ -1153,6 +1186,30 @@ mod tests {
             register_pressure: 1,
             mnemonic: "bad".into(),
         }];
+        let result = InstructionCostGraph::new(nodes);
+        assert!(matches!(result, Err(TropicalError::NodeOutOfBounds { .. })));
+    }
+
+    #[test]
+    fn noncanonical_node_index_rejected() {
+        let nodes = vec![
+            InstructionNode {
+                index: 1,
+                cost: TropicalWeight::finite(1),
+                predecessors: vec![],
+                successors: vec![],
+                register_pressure: 1,
+                mnemonic: "a".into(),
+            },
+            InstructionNode {
+                index: 0,
+                cost: TropicalWeight::finite(1),
+                predecessors: vec![],
+                successors: vec![],
+                register_pressure: 1,
+                mnemonic: "b".into(),
+            },
+        ];
         let result = InstructionCostGraph::new(nodes);
         assert!(matches!(result, Err(TropicalError::NodeOutOfBounds { .. })));
     }
@@ -1261,6 +1318,44 @@ mod tests {
         // Critical path: 0(1) → 1(5) → 3(1) = 7
         assert_eq!(schedule.total_cost, TropicalWeight::finite(7));
         assert_eq!(schedule.quality, ScheduleQuality::Optimal);
+    }
+
+    #[test]
+    fn schedule_preserves_zero_cost_dependency_order() {
+        // Node 2 -> Node 1 has zero delay, so earliest_start ties at 0.
+        // Schedule must still keep 2 before 1.
+        let nodes = vec![
+            InstructionNode {
+                index: 0,
+                cost: TropicalWeight::finite(1),
+                predecessors: vec![],
+                successors: vec![],
+                register_pressure: 1,
+                mnemonic: "independent".into(),
+            },
+            InstructionNode {
+                index: 1,
+                cost: TropicalWeight::finite(1),
+                predecessors: vec![2],
+                successors: vec![],
+                register_pressure: 1,
+                mnemonic: "consumer".into(),
+            },
+            InstructionNode {
+                index: 2,
+                cost: TropicalWeight::finite(0),
+                predecessors: vec![],
+                successors: vec![1],
+                register_pressure: 1,
+                mnemonic: "producer_zero_cost".into(),
+            },
+        ];
+        let graph = InstructionCostGraph::new(nodes).unwrap();
+        let optimizer = ScheduleOptimizer::default();
+        let schedule = optimizer.schedule(&graph).unwrap();
+        let pos_prod = schedule.order.iter().position(|&i| i == 2).unwrap();
+        let pos_cons = schedule.order.iter().position(|&i| i == 1).unwrap();
+        assert!(pos_prod < pos_cons);
     }
 
     // === DeadCodeEliminator ===
