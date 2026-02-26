@@ -453,7 +453,10 @@ fn evaluate_attribution(
                 ));
             }
         } else {
-            specialization_classes.insert(specialization_id.to_string(), optimization_class.to_string());
+            specialization_classes.insert(
+                specialization_id.to_string(),
+                optimization_class.to_string(),
+            );
         }
 
         if optimization_class != validated_optimization_class {
@@ -494,39 +497,38 @@ fn evaluate_attribution(
 
         if let (Some(validity_epoch), Some(evaluation_epoch)) =
             (sample.validity_epoch, sample.evaluation_epoch)
+            && evaluation_epoch > validity_epoch
         {
-            if evaluation_epoch > validity_epoch {
-                proof_expired = true;
-                contract_blocked = true;
-                set_error_code(error_code, ERROR_PROOF_EXPIRED);
-                let rollback_token = sample.rollback_token.as_deref().unwrap_or("").trim();
-                if rollback_token.is_empty() {
-                    blockers.push(format!(
-                        "proof `{}` expired at epoch {} before evaluation epoch {} with no rollback token",
-                        proof_id, validity_epoch, evaluation_epoch
-                    ));
-                    events.push(make_event(
-                        request,
-                        "proof_expired_no_rollback_token",
-                        "fail",
-                        Some(ERROR_PROOF_EXPIRED.to_string()),
-                        None,
-                        Some(proof_id.to_string()),
-                    ));
-                } else {
-                    blockers.push(format!(
-                        "proof `{}` expired at epoch {} before evaluation epoch {}; rollback token `{}` applied",
-                        proof_id, validity_epoch, evaluation_epoch, rollback_token
-                    ));
-                    events.push(make_event(
-                        request,
-                        "proof_expired_rollback_applied",
-                        "fail",
-                        Some(ERROR_PROOF_EXPIRED.to_string()),
-                        None,
-                        Some(proof_id.to_string()),
-                    ));
-                }
+            proof_expired = true;
+            contract_blocked = true;
+            set_error_code(error_code, ERROR_PROOF_EXPIRED);
+            let rollback_token = sample.rollback_token.as_deref().unwrap_or("").trim();
+            if rollback_token.is_empty() {
+                blockers.push(format!(
+                    "proof `{}` expired at epoch {} before evaluation epoch {} with no rollback token",
+                    proof_id, validity_epoch, evaluation_epoch
+                ));
+                events.push(make_event(
+                    request,
+                    "proof_expired_no_rollback_token",
+                    "fail",
+                    Some(ERROR_PROOF_EXPIRED.to_string()),
+                    None,
+                    Some(proof_id.to_string()),
+                ));
+            } else {
+                blockers.push(format!(
+                    "proof `{}` expired at epoch {} before evaluation epoch {}; rollback token `{}` applied",
+                    proof_id, validity_epoch, evaluation_epoch, rollback_token
+                ));
+                events.push(make_event(
+                    request,
+                    "proof_expired_rollback_applied",
+                    "fail",
+                    Some(ERROR_PROOF_EXPIRED.to_string()),
+                    None,
+                    Some(proof_id.to_string()),
+                ));
             }
         }
 
@@ -1240,7 +1242,10 @@ mod tests {
         r.proof_attribution.push(conflicting);
         let decision = run_constrained_ambient_benchmark_lane(&r);
         assert!(decision.blocked);
-        assert_eq!(decision.error_code.as_deref(), Some(ERROR_CONFLICTING_PROOF_CLAIMS));
+        assert_eq!(
+            decision.error_code.as_deref(),
+            Some(ERROR_CONFLICTING_PROOF_CLAIMS)
+        );
         assert!(
             decision
                 .blockers
