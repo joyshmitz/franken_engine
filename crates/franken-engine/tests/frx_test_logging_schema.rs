@@ -8,8 +8,8 @@ use serde::Deserialize;
 mod test_logging_schema;
 
 use test_logging_schema::{
-    validate_events, FailureTaxonomy, TestLane, TestLogEvent, TestLoggingSchemaSpec,
-    TEST_LOGGING_CONTRACT_SCHEMA_VERSION, TEST_LOGGING_FAILURE_CODE, TEST_LOG_EVENT_SCHEMA_VERSION,
+    FailureTaxonomy, TEST_LOG_EVENT_SCHEMA_VERSION, TEST_LOGGING_CONTRACT_SCHEMA_VERSION,
+    TEST_LOGGING_FAILURE_CODE, TestLane, TestLogEvent, TestLoggingSchemaSpec, validate_events,
 };
 
 fn repo_root() -> PathBuf {
@@ -172,11 +172,13 @@ fn frx_20_4_contract_is_machine_readable_and_versioned() {
     let expected_ids: BTreeSet<_> = spec.required_correlation_ids.iter().collect();
     assert_eq!(required_ids, expected_ids);
 
-    assert!(contract
-        .logging_schema
-        .required_outcomes
-        .iter()
-        .any(|outcome| outcome == "fail"));
+    assert!(
+        contract
+            .logging_schema
+            .required_outcomes
+            .iter()
+            .any(|outcome| outcome == "fail")
+    );
     assert!(
         contract
             .correlation_policy
@@ -252,10 +254,12 @@ fn frx_20_4_validation_report_is_fail_closed_on_missing_required_fields() {
     assert!(!report.valid);
     assert_eq!(report.outcome, "fail");
     assert_eq!(report.error_code, TEST_LOGGING_FAILURE_CODE);
-    assert!(report
-        .failures
-        .iter()
-        .any(|failure| failure.message.contains("fixture_id")));
+    assert!(
+        report
+            .failures
+            .iter()
+            .any(|failure| failure.message.contains("fixture_id"))
+    );
 }
 
 #[test]
@@ -267,10 +271,12 @@ fn frx_20_4_validation_report_detects_cross_lane_correlation_mismatch() {
 
     let report = validate_events(&[event_a, event_b]);
     assert!(!report.valid);
-    assert!(report
-        .failures
-        .iter()
-        .any(|failure| failure.message.contains("trace_id")));
+    assert!(
+        report
+            .failures
+            .iter()
+            .any(|failure| failure.message.contains("trace_id"))
+    );
 }
 
 #[test]

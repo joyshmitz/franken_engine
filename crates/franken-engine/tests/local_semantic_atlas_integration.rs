@@ -99,10 +99,19 @@ fn frx_local_semantic_atlas_contract_is_machine_readable_and_fail_closed() {
         value["schema_version"].as_str(),
         Some("frx.local-semantic-atlas.contract.v1")
     );
-    assert_eq!(value["generated_by"].as_str(), Some(LOCAL_SEMANTIC_ATLAS_BEAD_ID));
-    assert_eq!(value["primary_bead"].as_str(), Some(LOCAL_SEMANTIC_ATLAS_BEAD_ID));
+    assert_eq!(
+        value["generated_by"].as_str(),
+        Some(LOCAL_SEMANTIC_ATLAS_BEAD_ID)
+    );
+    assert_eq!(
+        value["primary_bead"].as_str(),
+        Some(LOCAL_SEMANTIC_ATLAS_BEAD_ID)
+    );
     assert_eq!(value["track"]["id"].as_str(), Some("FRX-14.1"));
-    assert_eq!(value["failure_policy"]["mode"].as_str(), Some("fail_closed"));
+    assert_eq!(
+        value["failure_policy"]["mode"].as_str(),
+        Some("fail_closed")
+    );
     assert_eq!(
         value["activation_gate"]["block_on_missing_fixture_trace_linkage"].as_bool(),
         Some(true)

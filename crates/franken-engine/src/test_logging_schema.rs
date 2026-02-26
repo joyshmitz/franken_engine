@@ -477,12 +477,16 @@ mod tests {
         event.fixture_id.clear();
         event.timing_us = 0;
         let failures = validate_event(&event);
-        assert!(failures
-            .iter()
-            .any(|failure| failure.message.contains("fixture_id")));
-        assert!(failures
-            .iter()
-            .any(|failure| failure.message.contains("timing_us")));
+        assert!(
+            failures
+                .iter()
+                .any(|failure| failure.message.contains("fixture_id"))
+        );
+        assert!(
+            failures
+                .iter()
+                .any(|failure| failure.message.contains("timing_us"))
+        );
     }
 
     #[test]
@@ -493,9 +497,11 @@ mod tests {
         event_b.trace_id = "trace-mismatch".to_string();
 
         let failures = validate_correlation(&[event_a, event_b]);
-        assert!(failures
-            .iter()
-            .any(|failure| failure.message.contains("trace_id")));
+        assert!(
+            failures
+                .iter()
+                .any(|failure| failure.message.contains("trace_id"))
+        );
     }
 
     #[test]

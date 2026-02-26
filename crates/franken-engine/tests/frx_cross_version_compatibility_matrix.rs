@@ -5,7 +5,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 const MATRIX_SCHEMA_VERSION: &str = "franken-engine.frx-cross-version-compat-matrix.v1";
-const MATRIX_JSON: &str = include_str!("../../../docs/frx_cross_version_compatibility_matrix_v1.json");
+const MATRIX_JSON: &str =
+    include_str!("../../../docs/frx_cross_version_compatibility_matrix_v1.json");
 const REPLAY_COMMAND: &str = "./scripts/e2e/frx_cross_version_compatibility_matrix_replay.sh ci";
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -93,7 +94,11 @@ fn cross_version_matrix_covers_declared_api_families() {
     assert!(versions.contains("18.3"));
     assert!(versions.contains("19.0"));
 
-    let case_families: BTreeSet<_> = matrix.cases.iter().map(|case| case.api_family.clone()).collect();
+    let case_families: BTreeSet<_> = matrix
+        .cases
+        .iter()
+        .map(|case| case.api_family.clone())
+        .collect();
     let declared_families: BTreeSet<_> = matrix.dimensions.api_families.iter().cloned().collect();
     assert!(declared_families.is_subset(&case_families));
 

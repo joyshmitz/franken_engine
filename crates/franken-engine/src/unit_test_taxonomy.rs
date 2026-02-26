@@ -206,7 +206,11 @@ impl FixtureRegistryEntry {
             });
         }
 
-        let field_set: BTreeSet<&str> = self.structured_log_fields.iter().map(String::as_str).collect();
+        let field_set: BTreeSet<&str> = self
+            .structured_log_fields
+            .iter()
+            .map(String::as_str)
+            .collect();
         for required in REQUIRED_STRUCTURED_LOG_FIELDS {
             if !field_set.contains(required) {
                 return Err(TaxonomyValidationError::MissingStructuredLogField {
@@ -569,7 +573,9 @@ mod tests {
             .structured_log_fields
             .retain(|field| field != "trace_id");
 
-        let error = bundle.validate_for_gate().expect_err("expected missing log field");
+        let error = bundle
+            .validate_for_gate()
+            .expect_err("expected missing log field");
         assert_eq!(error.error_code(), "FE-FRX-20-1-LOGGING-0001");
     }
 

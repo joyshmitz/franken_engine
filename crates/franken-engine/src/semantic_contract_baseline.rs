@@ -658,8 +658,7 @@ pub const LOCAL_SEMANTIC_ATLAS_SCHEMA_VERSION: &str = "franken-engine.local-sema
 pub const LOCAL_SEMANTIC_ATLAS_BEAD_ID: &str = "bd-mjh3.14.1";
 pub const LOCAL_SEMANTIC_ATLAS_DEBT_MISSING_FIXTURE_LINK: &str = "FE-FRX-14-1-LOCAL-0001";
 pub const LOCAL_SEMANTIC_ATLAS_DEBT_MISSING_TRACE_LINK: &str = "FE-FRX-14-1-LOCAL-0002";
-pub const LOCAL_SEMANTIC_ATLAS_DEBT_MISSING_CONTEXT_ASSUMPTIONS: &str =
-    "FE-FRX-14-1-LOCAL-0003";
+pub const LOCAL_SEMANTIC_ATLAS_DEBT_MISSING_CONTEXT_ASSUMPTIONS: &str = "FE-FRX-14-1-LOCAL-0003";
 pub const LOCAL_SEMANTIC_ATLAS_DEBT_EMPTY_LOCAL_CONTRACT: &str = "FE-FRX-14-1-LOCAL-0004";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -847,11 +846,16 @@ impl LocalSemanticAtlas {
     }
 
     pub fn entry(&self, component_id: &str) -> Option<&LocalSemanticAtlasEntry> {
-        self.entries.iter().find(|entry| entry.component_id == component_id)
+        self.entries
+            .iter()
+            .find(|entry| entry.component_id == component_id)
     }
 
     pub fn blocking_debt_count(&self) -> usize {
-        self.quality_debt.iter().filter(|debt| debt.blocking).count()
+        self.quality_debt
+            .iter()
+            .filter(|debt| debt.blocking)
+            .count()
     }
 
     pub fn validate(&self) -> LocalSemanticAtlasValidation {
@@ -884,8 +888,8 @@ impl LocalSemanticAtlas {
             debt.push(LocalSemanticContractDebt {
                 component_id: entry.component_id.clone(),
                 debt_code: LOCAL_SEMANTIC_ATLAS_DEBT_MISSING_FIXTURE_LINK.to_string(),
-                description:
-                    "missing compatibility fixture linkage for local semantic contract".to_string(),
+                description: "missing compatibility fixture linkage for local semantic contract"
+                    .to_string(),
                 blocking: true,
             });
         }
@@ -902,8 +906,7 @@ impl LocalSemanticAtlas {
             debt.push(LocalSemanticContractDebt {
                 component_id: entry.component_id.clone(),
                 debt_code: LOCAL_SEMANTIC_ATLAS_DEBT_MISSING_CONTEXT_ASSUMPTIONS.to_string(),
-                description:
-                    "consumed contexts require explicit local assumption keys".to_string(),
+                description: "consumed contexts require explicit local assumption keys".to_string(),
                 blocking: true,
             });
         }

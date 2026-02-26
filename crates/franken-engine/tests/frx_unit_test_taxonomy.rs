@@ -88,7 +88,11 @@ fn frx_20_1_runtime_bundle_validates() {
 fn frx_20_1_lane_coverage_is_complete() {
     let bundle = default_frx20_bundle();
 
-    let seen_lanes: BTreeSet<_> = bundle.lane_coverage.iter().map(|entry| entry.lane).collect();
+    let seen_lanes: BTreeSet<_> = bundle
+        .lane_coverage
+        .iter()
+        .map(|entry| entry.lane)
+        .collect();
     for lane in LaneId::ALL {
         assert!(
             seen_lanes.contains(&lane),

@@ -174,12 +174,12 @@ impl TwinStateSnapshot {
     }
 
     pub fn upsert_value(&mut self, variable_id: impl Into<String>, value_millionths: i64) {
-        self.values_millionths.insert(variable_id.into(), value_millionths);
+        self.values_millionths
+            .insert(variable_id.into(), value_millionths);
     }
 
     pub fn deterministic_digest(&self) -> String {
-        let payload =
-            serde_json::to_vec(self).expect("twin snapshot serialization should succeed");
+        let payload = serde_json::to_vec(self).expect("twin snapshot serialization should succeed");
         let digest = Sha256::digest(payload);
         format!("sha256:{}", hex::encode(digest))
     }
@@ -732,7 +732,11 @@ impl SemanticTwinSpecification {
             .collect::<BTreeMap<_, _>>();
 
         for contract in &self.measurement_contracts {
-            if contract.required && !snapshot.values_millionths.contains_key(&contract.variable_id) {
+            if contract.required
+                && !snapshot
+                    .values_millionths
+                    .contains_key(&contract.variable_id)
+            {
                 return Err(TwinSpecError::MissingSnapshotValue {
                     variable_id: contract.variable_id.clone(),
                 });
@@ -791,7 +795,8 @@ impl SemanticTwinSpecification {
             if !transition_ids.insert(transition.id.clone()) {
                 return Err(TwinSpecError::DuplicateTransition(transition.id.clone()));
             }
-            if !known_states.contains(&transition.from_phase) || !known_states.contains(&transition.to_phase)
+            if !known_states.contains(&transition.from_phase)
+                || !known_states.contains(&transition.to_phase)
             {
                 return Err(TwinSpecError::Scm(format!(
                     "transition {} references unknown state",
@@ -1087,7 +1092,9 @@ mod tests {
             .expect("required values should satisfy contracts");
 
         snapshot.upsert_value("latency_outcome", 3_000_000);
-        let err = spec.validate_snapshot(&snapshot).expect_err("must fail out-of-range");
+        let err = spec
+            .validate_snapshot(&snapshot)
+            .expect_err("must fail out-of-range");
         assert!(matches!(err, TwinSpecError::OutOfRangeSnapshotValue { .. }));
     }
 

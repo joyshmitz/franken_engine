@@ -5,7 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use frankenengine_engine::test_taxonomy::{
-    DeterminismContract, FixtureEntry, FixtureRegistry, FIXTURE_REGISTRY_SCHEMA_VERSION,
+    DeterminismContract, FIXTURE_REGISTRY_SCHEMA_VERSION, FixtureEntry, FixtureRegistry,
     TEST_TAXONOMY_SCHEMA_VERSION, TestClass, TestSurface,
 };
 use serde::Deserialize;
@@ -156,8 +156,7 @@ fn frx_20_1_contract_schema_versions_are_pinned() {
     let contract: UnitTaxonomyContract = load_json(&path);
 
     assert_eq!(
-        contract.schema_version,
-        "frx.unit-test-taxonomy.contract.v1",
+        contract.schema_version, "frx.unit-test-taxonomy.contract.v1",
         "contract schema version drift"
     );
     assert_eq!(contract.primary_bead, "bd-mjh3.20.1");
@@ -206,7 +205,10 @@ fn frx_20_1_lane_ownership_map_covers_every_surface_and_class() {
         .map(|entry| parse_surface(entry.surface.as_str()))
         .collect();
 
-    assert_eq!(mapped_surfaces, expected_surfaces, "surface coverage mismatch");
+    assert_eq!(
+        mapped_surfaces, expected_surfaces,
+        "surface coverage mismatch"
+    );
 
     for entry in &contract.lane_ownership_map {
         let surface = parse_surface(entry.surface.as_str());
@@ -336,7 +338,10 @@ fn frx_20_1_logging_contract_and_failure_policy_are_fail_closed() {
     let path = repo_root().join("docs/frx_unit_test_taxonomy_v1.json");
     let contract: UnitTaxonomyContract = load_json(&path);
 
-    assert_eq!(contract.logging_contract.component, "frx_unit_test_taxonomy_contract");
+    assert_eq!(
+        contract.logging_contract.component,
+        "frx_unit_test_taxonomy_contract"
+    );
     assert!(contract.logging_contract.fail_closed_on_missing_fields);
 
     for field in [
@@ -461,7 +466,10 @@ fn frx_20_1_fixture_registry_contract_can_satisfy_seed_and_coverage_requirements
 
     let all_classes: BTreeSet<TestClass> = TestClass::ALL.iter().copied().collect();
     assert_eq!(
-        required_seed_classes.union(&optional_seed_classes).copied().collect::<BTreeSet<_>>(),
+        required_seed_classes
+            .union(&optional_seed_classes)
+            .copied()
+            .collect::<BTreeSet<_>>(),
         all_classes,
         "seed policy must partition all classes"
     );
