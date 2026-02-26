@@ -216,6 +216,7 @@ pub mod synthesis_budget;
 pub mod tee_attestation_policy;
 pub mod test262_release_gate;
 pub mod test_depth_gate;
+pub mod test_logging_schema;
 pub mod test_taxonomy;
 pub mod third_party_verifier;
 pub mod threshold_signing;
@@ -225,6 +226,7 @@ pub mod trust_card;
 pub mod trust_economics;
 pub mod trust_zone;
 pub mod ts_normalization;
+pub mod unit_test_taxonomy;
 pub mod version_matrix_lane;
 pub mod wasm_runtime_lane;
 
