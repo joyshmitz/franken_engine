@@ -1205,10 +1205,7 @@ mod tests {
         region
             .close(CancelReason::BudgetExhausted, DrainDeadline::default())
             .unwrap();
-        assert_eq!(
-            region.cancel_reason(),
-            Some(&CancelReason::BudgetExhausted)
-        );
+        assert_eq!(region.cancel_reason(), Some(&CancelReason::BudgetExhausted));
     }
 
     #[test]

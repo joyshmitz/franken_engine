@@ -2780,11 +2780,7 @@ mod tests {
         let checker = GlobalCoherenceChecker::new();
         // Orphaned provider → low severity (non-blocking) → CoherentWithWarnings
         let input = make_input(
-            vec![test_entry_with_contexts(
-                "Provider",
-                vec![],
-                vec!["unused"],
-            )],
+            vec![test_entry_with_contexts("Provider", vec![], vec!["unused"])],
             vec!["Provider"],
             vec![],
         );
@@ -2906,9 +2902,7 @@ mod tests {
         );
         input.suspense_components.insert("A".to_string());
         input.hydration_components.insert("B".to_string());
-        input
-            .capability_boundary_components
-            .insert("A".to_string());
+        input.capability_boundary_components.insert("A".to_string());
         let json = serde_json::to_string(&input).unwrap();
         let back: CoherenceCheckInput = serde_json::from_str(&json).unwrap();
         assert_eq!(input, back);

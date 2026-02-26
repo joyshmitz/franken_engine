@@ -2867,8 +2867,14 @@ mod tests {
     #[test]
     fn format_divergence_reason_multiple_sigs() {
         let mut sigs = BTreeMap::new();
-        sigs.insert("ast:sha256:aaa;diag:none".to_string(), vec!["engine-a".to_string()]);
-        sigs.insert("ast:sha256:bbb;diag:none".to_string(), vec!["engine-b".to_string()]);
+        sigs.insert(
+            "ast:sha256:aaa;diag:none".to_string(),
+            vec!["engine-a".to_string()],
+        );
+        sigs.insert(
+            "ast:sha256:bbb;diag:none".to_string(),
+            vec!["engine-b".to_string()],
+        );
         let reason = format_divergence_reason(&sigs, 0);
         assert!(reason.contains("engine-a"));
         assert!(reason.contains("engine-b"));
@@ -3102,24 +3108,66 @@ mod tests {
 
     #[test]
     fn parse_error_code_alias_all_snake_case_variants() {
-        assert_eq!(parse_error_code_alias("empty_source"), Some(ParseErrorCode::EmptySource));
-        assert_eq!(parse_error_code_alias("invalid_goal"), Some(ParseErrorCode::InvalidGoal));
-        assert_eq!(parse_error_code_alias("unsupported_syntax"), Some(ParseErrorCode::UnsupportedSyntax));
-        assert_eq!(parse_error_code_alias("io_read_failed"), Some(ParseErrorCode::IoReadFailed));
-        assert_eq!(parse_error_code_alias("invalid_utf8"), Some(ParseErrorCode::InvalidUtf8));
-        assert_eq!(parse_error_code_alias("source_too_large"), Some(ParseErrorCode::SourceTooLarge));
-        assert_eq!(parse_error_code_alias("budget_exceeded"), Some(ParseErrorCode::BudgetExceeded));
+        assert_eq!(
+            parse_error_code_alias("empty_source"),
+            Some(ParseErrorCode::EmptySource)
+        );
+        assert_eq!(
+            parse_error_code_alias("invalid_goal"),
+            Some(ParseErrorCode::InvalidGoal)
+        );
+        assert_eq!(
+            parse_error_code_alias("unsupported_syntax"),
+            Some(ParseErrorCode::UnsupportedSyntax)
+        );
+        assert_eq!(
+            parse_error_code_alias("io_read_failed"),
+            Some(ParseErrorCode::IoReadFailed)
+        );
+        assert_eq!(
+            parse_error_code_alias("invalid_utf8"),
+            Some(ParseErrorCode::InvalidUtf8)
+        );
+        assert_eq!(
+            parse_error_code_alias("source_too_large"),
+            Some(ParseErrorCode::SourceTooLarge)
+        );
+        assert_eq!(
+            parse_error_code_alias("budget_exceeded"),
+            Some(ParseErrorCode::BudgetExceeded)
+        );
     }
 
     #[test]
     fn parse_error_code_alias_all_camel_case_variants() {
-        assert_eq!(parse_error_code_alias("emptysource"), Some(ParseErrorCode::EmptySource));
-        assert_eq!(parse_error_code_alias("invalidgoal"), Some(ParseErrorCode::InvalidGoal));
-        assert_eq!(parse_error_code_alias("unsupportedsyntax"), Some(ParseErrorCode::UnsupportedSyntax));
-        assert_eq!(parse_error_code_alias("ioreadfailed"), Some(ParseErrorCode::IoReadFailed));
-        assert_eq!(parse_error_code_alias("invalidutf8"), Some(ParseErrorCode::InvalidUtf8));
-        assert_eq!(parse_error_code_alias("sourcetoolarge"), Some(ParseErrorCode::SourceTooLarge));
-        assert_eq!(parse_error_code_alias("budgetexceeded"), Some(ParseErrorCode::BudgetExceeded));
+        assert_eq!(
+            parse_error_code_alias("emptysource"),
+            Some(ParseErrorCode::EmptySource)
+        );
+        assert_eq!(
+            parse_error_code_alias("invalidgoal"),
+            Some(ParseErrorCode::InvalidGoal)
+        );
+        assert_eq!(
+            parse_error_code_alias("unsupportedsyntax"),
+            Some(ParseErrorCode::UnsupportedSyntax)
+        );
+        assert_eq!(
+            parse_error_code_alias("ioreadfailed"),
+            Some(ParseErrorCode::IoReadFailed)
+        );
+        assert_eq!(
+            parse_error_code_alias("invalidutf8"),
+            Some(ParseErrorCode::InvalidUtf8)
+        );
+        assert_eq!(
+            parse_error_code_alias("sourcetoolarge"),
+            Some(ParseErrorCode::SourceTooLarge)
+        );
+        assert_eq!(
+            parse_error_code_alias("budgetexceeded"),
+            Some(ParseErrorCode::BudgetExceeded)
+        );
     }
 
     #[test]
@@ -3146,12 +3194,7 @@ mod tests {
                 "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 true,
             ),
-            make_engine_result_for_test(
-                "engine-b",
-                EngineOutcomeKind::Error,
-                "empty_source",
-                true,
-            ),
+            make_engine_result_for_test("engine-b", EngineOutcomeKind::Error, "empty_source", true),
         ];
         let classification = classify_fixture_drift(&results, 0);
         assert_eq!(classification.category, DriftCategory::Semantic);
@@ -3312,7 +3355,10 @@ mod tests {
             artifact.canonical_hash,
             "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         );
-        assert_eq!(artifact.adapter, AstNormalizationAdapter::CanonicalHashPassthroughV1);
+        assert_eq!(
+            artifact.adapter,
+            AstNormalizationAdapter::CanonicalHashPassthroughV1
+        );
     }
 
     #[test]

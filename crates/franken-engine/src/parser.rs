@@ -4778,12 +4778,8 @@ mod tests {
         let parser = CanonicalEs2020Parser;
         let source = "true";
         let tree = parser.parse(source, ParseGoal::Script).expect("parse");
-        let ir = ParseEventIr::from_parse_source(
-            &tree,
-            source,
-            "<inline>",
-            ParserMode::ScalarReference,
-        );
+        let ir =
+            ParseEventIr::from_parse_source(&tree, source, "<inline>", ParserMode::ScalarReference);
         assert_eq!(ir.events[0].payload_kind.as_deref(), Some("source_text"));
         assert!(ir.events[0].payload_hash.is_some());
     }
@@ -4794,8 +4790,7 @@ mod tests {
     fn materialize_rejects_unsupported_contract_version() {
         let parser = CanonicalEs2020Parser;
         let tree = parser.parse("42", ParseGoal::Script).expect("parse");
-        let mut ir =
-            ParseEventIr::from_syntax_tree(&tree, "<inline>", ParserMode::ScalarReference);
+        let mut ir = ParseEventIr::from_syntax_tree(&tree, "<inline>", ParserMode::ScalarReference);
         ir.contract_version = "bogus".to_string();
         let err = ir
             .materialize_from_syntax_tree(&tree)
@@ -4810,8 +4805,7 @@ mod tests {
     fn materialize_rejects_unsupported_schema_version() {
         let parser = CanonicalEs2020Parser;
         let tree = parser.parse("42", ParseGoal::Script).expect("parse");
-        let mut ir =
-            ParseEventIr::from_syntax_tree(&tree, "<inline>", ParserMode::ScalarReference);
+        let mut ir = ParseEventIr::from_syntax_tree(&tree, "<inline>", ParserMode::ScalarReference);
         ir.schema_version = "bogus".to_string();
         let err = ir
             .materialize_from_syntax_tree(&tree)
@@ -4826,24 +4820,19 @@ mod tests {
     fn materialize_rejects_goal_mismatch() {
         let parser = CanonicalEs2020Parser;
         let tree = parser.parse("42", ParseGoal::Script).expect("parse");
-        let mut ir =
-            ParseEventIr::from_syntax_tree(&tree, "<inline>", ParserMode::ScalarReference);
+        let mut ir = ParseEventIr::from_syntax_tree(&tree, "<inline>", ParserMode::ScalarReference);
         ir.goal = ParseGoal::Module;
         let err = ir
             .materialize_from_syntax_tree(&tree)
             .expect_err("goal mismatch");
-        assert_eq!(
-            err.code,
-            ParseEventMaterializationErrorCode::GoalMismatch
-        );
+        assert_eq!(err.code, ParseEventMaterializationErrorCode::GoalMismatch);
     }
 
     #[test]
     fn materialize_rejects_empty_event_stream() {
         let parser = CanonicalEs2020Parser;
         let tree = parser.parse("42", ParseGoal::Script).expect("parse");
-        let mut ir =
-            ParseEventIr::from_syntax_tree(&tree, "<inline>", ParserMode::ScalarReference);
+        let mut ir = ParseEventIr::from_syntax_tree(&tree, "<inline>", ParserMode::ScalarReference);
         ir.events.clear();
         let err = ir
             .materialize_from_syntax_tree(&tree)
@@ -4858,8 +4847,7 @@ mod tests {
     fn materialize_rejects_missing_parse_started() {
         let parser = CanonicalEs2020Parser;
         let tree = parser.parse("42", ParseGoal::Script).expect("parse");
-        let mut ir =
-            ParseEventIr::from_syntax_tree(&tree, "<inline>", ParserMode::ScalarReference);
+        let mut ir = ParseEventIr::from_syntax_tree(&tree, "<inline>", ParserMode::ScalarReference);
         // Replace first event with a non-ParseStarted event
         ir.events[0].kind = ParseEventKind::ParseCompleted;
         let err = ir
@@ -4875,8 +4863,7 @@ mod tests {
     fn materialize_rejects_missing_parse_completed() {
         let parser = CanonicalEs2020Parser;
         let tree = parser.parse("42", ParseGoal::Script).expect("parse");
-        let mut ir =
-            ParseEventIr::from_syntax_tree(&tree, "<inline>", ParserMode::ScalarReference);
+        let mut ir = ParseEventIr::from_syntax_tree(&tree, "<inline>", ParserMode::ScalarReference);
         let last_idx = ir.events.len() - 1;
         ir.events[last_idx].kind = ParseEventKind::ParseStarted;
         let err = ir
@@ -4892,8 +4879,7 @@ mod tests {
     fn materialize_rejects_invalid_event_sequence() {
         let parser = CanonicalEs2020Parser;
         let tree = parser.parse("42", ParseGoal::Script).expect("parse");
-        let mut ir =
-            ParseEventIr::from_syntax_tree(&tree, "<inline>", ParserMode::ScalarReference);
+        let mut ir = ParseEventIr::from_syntax_tree(&tree, "<inline>", ParserMode::ScalarReference);
         // Create a gap in sequence numbers
         if ir.events.len() > 2 {
             ir.events[1].sequence = 99;
@@ -4911,8 +4897,7 @@ mod tests {
     fn materialize_rejects_inconsistent_event_envelope() {
         let parser = CanonicalEs2020Parser;
         let tree = parser.parse("42", ParseGoal::Script).expect("parse");
-        let mut ir =
-            ParseEventIr::from_syntax_tree(&tree, "<inline>", ParserMode::ScalarReference);
+        let mut ir = ParseEventIr::from_syntax_tree(&tree, "<inline>", ParserMode::ScalarReference);
         if ir.events.len() > 1 {
             ir.events[1].trace_id = "rogue-trace".to_string();
         }
@@ -5099,12 +5084,7 @@ mod tests {
 
     #[test]
     fn parse_diagnostic_envelope_canonical_value_has_all_keys() {
-        let err = ParseError::new(
-            ParseErrorCode::EmptySource,
-            "empty",
-            "<inline>",
-            None,
-        );
+        let err = ParseError::new(ParseErrorCode::EmptySource, "empty", "<inline>", None);
         let envelope = normalize_parse_error(&err);
         let cv = envelope.canonical_value();
         if let CanonicalValue::Map(map) = cv {
