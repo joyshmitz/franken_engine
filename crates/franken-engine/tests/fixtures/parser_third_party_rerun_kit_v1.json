@@ -1,0 +1,49 @@
+{
+  "schema_version": "franken-engine.parser-third-party-rerun-kit.fixture.v1",
+  "contract_version": "1.0.0",
+  "bead_id": "bd-2mds.1.7.3",
+  "policy_id": "policy-parser-third-party-rerun-kit-v1",
+  "required_modes": [
+    "check",
+    "test",
+    "clippy",
+    "ci",
+    "package"
+  ],
+  "required_manifest_keys": [
+    "schema_version",
+    "bead_id",
+    "deterministic_env_schema_version",
+    "trace_id",
+    "decision_id",
+    "policy_id",
+    "matrix_input_status",
+    "deterministic_environment",
+    "replay_command",
+    "commands",
+    "artifacts",
+    "operator_verification"
+  ],
+  "required_log_keys": [
+    "schema_version",
+    "trace_id",
+    "decision_id",
+    "policy_id",
+    "component",
+    "event",
+    "outcome",
+    "error_code"
+  ],
+  "matrix_input_statuses": [
+    "pending_upstream_matrix",
+    "incomplete_matrix",
+    "blocked_critical_deltas",
+    "ready_for_external_rerun"
+  ],
+  "upstream_matrix_inputs": [
+    "summary",
+    "deltas",
+    "run_manifest"
+  ],
+  "replay_command": "./scripts/e2e/parser_third_party_rerun_kit_replay.sh package"
+}
