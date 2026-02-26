@@ -7,9 +7,11 @@ cd "$root_dir"
 mode="${1:-ci}"
 target_dir="${CARGO_TARGET_DIR:-/tmp/rch_target_franken_engine_adversarial_gate}"
 artifact_root="${ADVERSARIAL_GATE_ARTIFACT_ROOT:-artifacts/adversarial_campaign_gate}"
+gate_input_fixture="${ADVERSARIAL_GATE_INPUT_FIXTURE:-crates/franken-engine/tests/fixtures/adversarial_campaign_gate_input_v1.json}"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 run_dir="$artifact_root/$timestamp"
 manifest_path="$run_dir/run_manifest.json"
+gate_result_path="$run_dir/gate_result.json"
 
 mkdir -p "$run_dir"
 
@@ -35,28 +37,48 @@ run_step() {
 run_mode() {
   case "$mode" in
     check)
-      run_step "cargo check -p frankenengine-engine --test adversarial_campaign_generator" \
-        cargo check -p frankenengine-engine --test adversarial_campaign_generator
+      run_step "cargo check -p frankenengine-engine --bin franken_adversarial_campaign_gate" \
+        cargo check -p frankenengine-engine --bin franken_adversarial_campaign_gate
+      run_step "cargo check -p frankenengine-engine --test adversarial_campaign_gate_cli --test adversarial_campaign_generator" \
+        cargo check -p frankenengine-engine --test adversarial_campaign_gate_cli --test adversarial_campaign_generator
       ;;
     test)
       run_step "cargo test -p frankenengine-engine --lib adversarial_campaign::tests::suppression_gate_" \
         cargo test -p frankenengine-engine --lib adversarial_campaign::tests::suppression_gate_
+      run_step "cargo test -p frankenengine-engine --test adversarial_campaign_gate_cli" \
+        cargo test -p frankenengine-engine --test adversarial_campaign_gate_cli
       run_step "cargo test -p frankenengine-engine --test adversarial_campaign_generator suppression_gate_surface_exposes_required_structured_fields" \
         cargo test -p frankenengine-engine --test adversarial_campaign_generator suppression_gate_surface_exposes_required_structured_fields
+      run_step "cargo run -p frankenengine-engine --bin franken_adversarial_campaign_gate -- --input ${gate_input_fixture} --out ${gate_result_path}" \
+        cargo run -p frankenengine-engine --bin franken_adversarial_campaign_gate -- \
+          --input "$gate_input_fixture" \
+          --out "$gate_result_path"
       ;;
     clippy)
-      run_step "cargo clippy -p frankenengine-engine --test adversarial_campaign_generator -- -D warnings" \
-        cargo clippy -p frankenengine-engine --test adversarial_campaign_generator -- -D warnings
+      run_step "cargo clippy -p frankenengine-engine --bin franken_adversarial_campaign_gate -- -D warnings" \
+        cargo clippy -p frankenengine-engine --bin franken_adversarial_campaign_gate -- -D warnings
+      run_step "cargo clippy -p frankenengine-engine --test adversarial_campaign_gate_cli --test adversarial_campaign_generator -- -D warnings" \
+        cargo clippy -p frankenengine-engine --test adversarial_campaign_gate_cli --test adversarial_campaign_generator -- -D warnings
       ;;
     ci)
-      run_step "cargo check -p frankenengine-engine --test adversarial_campaign_generator" \
-        cargo check -p frankenengine-engine --test adversarial_campaign_generator
+      run_step "cargo check -p frankenengine-engine --bin franken_adversarial_campaign_gate" \
+        cargo check -p frankenengine-engine --bin franken_adversarial_campaign_gate
+      run_step "cargo check -p frankenengine-engine --test adversarial_campaign_gate_cli --test adversarial_campaign_generator" \
+        cargo check -p frankenengine-engine --test adversarial_campaign_gate_cli --test adversarial_campaign_generator
       run_step "cargo test -p frankenengine-engine --lib adversarial_campaign::tests::suppression_gate_" \
         cargo test -p frankenengine-engine --lib adversarial_campaign::tests::suppression_gate_
+      run_step "cargo test -p frankenengine-engine --test adversarial_campaign_gate_cli" \
+        cargo test -p frankenengine-engine --test adversarial_campaign_gate_cli
       run_step "cargo test -p frankenengine-engine --test adversarial_campaign_generator suppression_gate_surface_exposes_required_structured_fields" \
         cargo test -p frankenengine-engine --test adversarial_campaign_generator suppression_gate_surface_exposes_required_structured_fields
-      run_step "cargo clippy -p frankenengine-engine --test adversarial_campaign_generator -- -D warnings" \
-        cargo clippy -p frankenengine-engine --test adversarial_campaign_generator -- -D warnings
+      run_step "cargo run -p frankenengine-engine --bin franken_adversarial_campaign_gate -- --input ${gate_input_fixture} --out ${gate_result_path}" \
+        cargo run -p frankenengine-engine --bin franken_adversarial_campaign_gate -- \
+          --input "$gate_input_fixture" \
+          --out "$gate_result_path"
+      run_step "cargo clippy -p frankenengine-engine --bin franken_adversarial_campaign_gate -- -D warnings" \
+        cargo clippy -p frankenengine-engine --bin franken_adversarial_campaign_gate -- -D warnings
+      run_step "cargo clippy -p frankenengine-engine --test adversarial_campaign_gate_cli --test adversarial_campaign_generator -- -D warnings" \
+        cargo clippy -p frankenengine-engine --test adversarial_campaign_gate_cli --test adversarial_campaign_generator -- -D warnings
       ;;
     *)
       echo "usage: $0 [check|test|clippy|ci]" >&2
@@ -93,6 +115,7 @@ write_manifest() {
     echo '  "component": "adversarial_campaign_suppression_gate",'
     echo "  \"mode\": \"${mode}\","
     echo "  \"cargo_target_dir\": \"${target_dir}\","
+    echo "  \"gate_input_fixture\": \"${gate_input_fixture}\","
     echo "  \"git_commit\": \"${git_commit}\","
     echo "  \"dirty_worktree\": ${dirty_worktree},"
     echo "  \"generated_at_utc\": \"${timestamp}\","
@@ -118,11 +141,13 @@ write_manifest() {
     echo '  ],'
     echo '  "artifacts": {'
     echo "    \"command_log\": \"${run_dir}/commands.txt\","
+    echo "    \"gate_result\": \"${gate_result_path}\","
     echo "    \"manifest\": \"${manifest_path}\""
     echo '  },'
     echo '  "operator_verification": ['
     echo "    \"cat ${manifest_path}\","
     echo "    \"cat ${run_dir}/commands.txt\","
+    echo "    \"cat ${gate_result_path}\","
     echo "    \"${0} ci\""
     echo '  ]'
     echo "}"
