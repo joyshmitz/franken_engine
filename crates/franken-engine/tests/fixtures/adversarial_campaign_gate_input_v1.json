@@ -1,0 +1,195 @@
+{
+  "release_candidate_id": "rc-adversarial-gate-v1",
+  "continuous_run": true,
+  "samples": [
+    {
+      "campaign_id": "fe-injection",
+      "attack_category": "Injection",
+      "target_runtime": "FrankenEngine",
+      "attempt_count": 200,
+      "success_count": 1,
+      "raw_log_ref": "artifacts/adversarial_campaign/raw/fe-injection.jsonl",
+      "repro_script_ref": "artifacts/adversarial_campaign/repro/fe-injection.sh"
+    },
+    {
+      "campaign_id": "node-injection",
+      "attack_category": "Injection",
+      "target_runtime": "NodeLts",
+      "attempt_count": 200,
+      "success_count": 42,
+      "raw_log_ref": "artifacts/adversarial_campaign/raw/node-injection.jsonl",
+      "repro_script_ref": "artifacts/adversarial_campaign/repro/node-injection.sh"
+    },
+    {
+      "campaign_id": "bun-injection",
+      "attack_category": "Injection",
+      "target_runtime": "BunStable",
+      "attempt_count": 200,
+      "success_count": 36,
+      "raw_log_ref": "artifacts/adversarial_campaign/raw/bun-injection.jsonl",
+      "repro_script_ref": "artifacts/adversarial_campaign/repro/bun-injection.sh"
+    },
+    {
+      "campaign_id": "fe-prototype-pollution",
+      "attack_category": "PrototypePollution",
+      "target_runtime": "FrankenEngine",
+      "attempt_count": 200,
+      "success_count": 1,
+      "raw_log_ref": "artifacts/adversarial_campaign/raw/fe-prototype-pollution.jsonl",
+      "repro_script_ref": "artifacts/adversarial_campaign/repro/fe-prototype-pollution.sh"
+    },
+    {
+      "campaign_id": "node-prototype-pollution",
+      "attack_category": "PrototypePollution",
+      "target_runtime": "NodeLts",
+      "attempt_count": 200,
+      "success_count": 38,
+      "raw_log_ref": "artifacts/adversarial_campaign/raw/node-prototype-pollution.jsonl",
+      "repro_script_ref": "artifacts/adversarial_campaign/repro/node-prototype-pollution.sh"
+    },
+    {
+      "campaign_id": "bun-prototype-pollution",
+      "attack_category": "PrototypePollution",
+      "target_runtime": "BunStable",
+      "attempt_count": 200,
+      "success_count": 33,
+      "raw_log_ref": "artifacts/adversarial_campaign/raw/bun-prototype-pollution.jsonl",
+      "repro_script_ref": "artifacts/adversarial_campaign/repro/bun-prototype-pollution.sh"
+    },
+    {
+      "campaign_id": "fe-supply-chain",
+      "attack_category": "SupplyChain",
+      "target_runtime": "FrankenEngine",
+      "attempt_count": 200,
+      "success_count": 1,
+      "raw_log_ref": "artifacts/adversarial_campaign/raw/fe-supply-chain.jsonl",
+      "repro_script_ref": "artifacts/adversarial_campaign/repro/fe-supply-chain.sh"
+    },
+    {
+      "campaign_id": "node-supply-chain",
+      "attack_category": "SupplyChain",
+      "target_runtime": "NodeLts",
+      "attempt_count": 200,
+      "success_count": 40,
+      "raw_log_ref": "artifacts/adversarial_campaign/raw/node-supply-chain.jsonl",
+      "repro_script_ref": "artifacts/adversarial_campaign/repro/node-supply-chain.sh"
+    },
+    {
+      "campaign_id": "bun-supply-chain",
+      "attack_category": "SupplyChain",
+      "target_runtime": "BunStable",
+      "attempt_count": 200,
+      "success_count": 34,
+      "raw_log_ref": "artifacts/adversarial_campaign/raw/bun-supply-chain.jsonl",
+      "repro_script_ref": "artifacts/adversarial_campaign/repro/bun-supply-chain.sh"
+    },
+    {
+      "campaign_id": "fe-capability-escape",
+      "attack_category": "CapabilityEscape",
+      "target_runtime": "FrankenEngine",
+      "attempt_count": 200,
+      "success_count": 1,
+      "raw_log_ref": "artifacts/adversarial_campaign/raw/fe-capability-escape.jsonl",
+      "repro_script_ref": "artifacts/adversarial_campaign/repro/fe-capability-escape.sh"
+    },
+    {
+      "campaign_id": "node-capability-escape",
+      "attack_category": "CapabilityEscape",
+      "target_runtime": "NodeLts",
+      "attempt_count": 200,
+      "success_count": 39,
+      "raw_log_ref": "artifacts/adversarial_campaign/raw/node-capability-escape.jsonl",
+      "repro_script_ref": "artifacts/adversarial_campaign/repro/node-capability-escape.sh"
+    },
+    {
+      "campaign_id": "bun-capability-escape",
+      "attack_category": "CapabilityEscape",
+      "target_runtime": "BunStable",
+      "attempt_count": 200,
+      "success_count": 32,
+      "raw_log_ref": "artifacts/adversarial_campaign/raw/bun-capability-escape.jsonl",
+      "repro_script_ref": "artifacts/adversarial_campaign/repro/bun-capability-escape.sh"
+    },
+    {
+      "campaign_id": "fe-timing-side-channel",
+      "attack_category": "TimingSideChannel",
+      "target_runtime": "FrankenEngine",
+      "attempt_count": 200,
+      "success_count": 1,
+      "raw_log_ref": "artifacts/adversarial_campaign/raw/fe-timing-side-channel.jsonl",
+      "repro_script_ref": "artifacts/adversarial_campaign/repro/fe-timing-side-channel.sh"
+    },
+    {
+      "campaign_id": "node-timing-side-channel",
+      "attack_category": "TimingSideChannel",
+      "target_runtime": "NodeLts",
+      "attempt_count": 200,
+      "success_count": 37,
+      "raw_log_ref": "artifacts/adversarial_campaign/raw/node-timing-side-channel.jsonl",
+      "repro_script_ref": "artifacts/adversarial_campaign/repro/node-timing-side-channel.sh"
+    },
+    {
+      "campaign_id": "bun-timing-side-channel",
+      "attack_category": "TimingSideChannel",
+      "target_runtime": "BunStable",
+      "attempt_count": 200,
+      "success_count": 31,
+      "raw_log_ref": "artifacts/adversarial_campaign/raw/bun-timing-side-channel.jsonl",
+      "repro_script_ref": "artifacts/adversarial_campaign/repro/bun-timing-side-channel.sh"
+    }
+  ],
+  "trend_points": [
+    {
+      "release_candidate_id": "rc-adversarial-gate-prev-1",
+      "timestamp_ns": 1700000000000000000,
+      "samples_evaluated": 1500
+    },
+    {
+      "release_candidate_id": "rc-adversarial-gate-prev-2",
+      "timestamp_ns": 1700000001000000000,
+      "samples_evaluated": 1500
+    }
+  ],
+  "escalations": [
+    {
+      "campaign_id": "fe-injection",
+      "attack_category": "Injection",
+      "target_runtime": "FrankenEngine",
+      "successful_exploit": true,
+      "escalation_triggered": true,
+      "escalation_latency_seconds": 90
+    },
+    {
+      "campaign_id": "fe-prototype-pollution",
+      "attack_category": "PrototypePollution",
+      "target_runtime": "FrankenEngine",
+      "successful_exploit": true,
+      "escalation_triggered": true,
+      "escalation_latency_seconds": 120
+    },
+    {
+      "campaign_id": "fe-supply-chain",
+      "attack_category": "SupplyChain",
+      "target_runtime": "FrankenEngine",
+      "successful_exploit": true,
+      "escalation_triggered": true,
+      "escalation_latency_seconds": 75
+    },
+    {
+      "campaign_id": "fe-capability-escape",
+      "attack_category": "CapabilityEscape",
+      "target_runtime": "FrankenEngine",
+      "successful_exploit": true,
+      "escalation_triggered": true,
+      "escalation_latency_seconds": 100
+    },
+    {
+      "campaign_id": "fe-timing-side-channel",
+      "attack_category": "TimingSideChannel",
+      "target_runtime": "FrankenEngine",
+      "successful_exploit": true,
+      "escalation_triggered": true,
+      "escalation_latency_seconds": 80
+    }
+  ]
+}
