@@ -1,53 +1,67 @@
-use frankenengine_engine::assumptions_ledger::{DemotionAction, DemotionPolicy};
-use frankenengine_engine::semantic_twin::{
-    SEMANTIC_TWIN_LOG_SCHEMA_VERSION, SemanticTwinRuntime, SemanticTwinSpecification,
+use frankenengine_engine::semantic_twin_state_space::{
+    SEMANTIC_TWIN_COMPONENT, SemanticTwinSpecification, TwinSpecError, TwinStateSnapshot,
 };
 
 #[test]
-fn semantic_twin_spec_and_runtime_cover_core_falsification_flow() {
-    let spec = SemanticTwinSpecification::frx_19_1_default().expect("default spec");
-    spec.validate().expect("spec should validate");
-
-    let mut runtime = SemanticTwinRuntime::new(
-        spec,
-        "trace-frx-19-1",
-        "decision-frx-19-1",
-        "policy-frx-19-1",
-        11,
-        DemotionPolicy::default(),
-    )
-    .expect("runtime");
-
-    // Healthy observation should produce a structured ok event.
-    let healthy = runtime.observe("risk_calibration_error_millionths", 90_000, 11);
-    assert!(healthy.actions.is_empty());
-    assert_eq!(healthy.events.len(), 1);
-    let ok_event = &healthy.events[0];
-    assert_eq!(ok_event.schema_version, SEMANTIC_TWIN_LOG_SCHEMA_VERSION);
-    assert_eq!(ok_event.trace_id, "trace-frx-19-1");
-    assert_eq!(ok_event.decision_id, "decision-frx-19-1");
-    assert_eq!(ok_event.policy_id, "policy-frx-19-1");
-    assert_eq!(ok_event.outcome, "ok");
-
-    // Violate a fatal FRIR linkage assumption and ensure fail-safe demotion action.
-    let violated = runtime.observe("frir_witness_linkage_millionths", 0, 11);
-    assert_eq!(violated.actions.len(), 1);
-    assert!(matches!(
-        violated.actions[0],
-        DemotionAction::EnterSafeMode { .. }
-    ));
-    assert_eq!(violated.events.len(), 1);
-    let fail_event = &violated.events[0];
-    assert_eq!(fail_event.schema_version, SEMANTIC_TWIN_LOG_SCHEMA_VERSION);
-    assert_eq!(fail_event.event, "assumption_falsified");
-    assert_eq!(fail_event.outcome, "falsified");
-    assert_eq!(
-        fail_event.error_code.as_deref(),
-        Some("FE-SEMANTIC-TWIN-0001")
+fn lane_decision_default_exposes_expected_contracts() {
+    let spec = SemanticTwinSpecification::lane_decision_default().expect("default spec");
+    assert_eq!(spec.component, SEMANTIC_TWIN_COMPONENT);
+    assert_eq!(spec.treatment_variable, "lane_choice");
+    assert_eq!(spec.outcome_variable, "latency_outcome");
+    assert!(
+        spec.assumptions
+            .iter()
+            .any(|assumption| assumption.id == "assumption_nondeterminism_log_complete")
     );
-    assert!(fail_event.assumption_id.is_some());
-    assert!(fail_event.monitor_id.is_some());
+    assert!(
+        spec.transitions
+            .iter()
+            .any(|transition| transition.id == "transition_fallback_to_safe_mode")
+    );
+}
 
-    // Ledger should now record at least one violated assumption.
-    assert!(runtime.ledger().violated_count() >= 1);
+#[test]
+fn causal_model_backdoor_recommendation_is_consistent() {
+    let spec = SemanticTwinSpecification::lane_decision_default().expect("default spec");
+    let backdoor = spec
+        .causal_model
+        .backdoor_criterion(&spec.treatment_variable, &spec.outcome_variable)
+        .expect("backdoor criterion");
+    assert!(backdoor.identified);
+    assert_eq!(backdoor.adjustment_set, spec.recommended_adjustment_set);
+}
+
+#[test]
+fn assumption_ledger_from_spec_is_deterministic_and_actionable() {
+    let spec = SemanticTwinSpecification::lane_decision_default().expect("default spec");
+    let mut first = spec
+        .to_assumption_ledger("decision-semantic-ledger", 11)
+        .expect("first ledger");
+    let second = spec
+        .to_assumption_ledger("decision-semantic-ledger", 11)
+        .expect("second ledger");
+
+    assert_eq!(first.assumption_count(), second.assumption_count());
+    assert_eq!(first.monitors().len(), second.monitors().len());
+    assert_eq!(first.chain_hash(), second.chain_hash());
+
+    // Violate monitor_replay_completeness (requires >= 1_000_000).
+    let before = first.chain_hash().to_string();
+    let actions = first.observe("nondeterminism_log_completeness", 800_000, 11, 3);
+    let after = first.chain_hash().to_string();
+    assert_eq!(actions.len(), 1);
+    assert_eq!(first.violated_count(), 1);
+    assert_ne!(before, after);
+}
+
+#[test]
+fn snapshot_validation_requires_mandatory_fields() {
+    let spec = SemanticTwinSpecification::lane_decision_default().expect("default spec");
+    let mut snapshot = TwinStateSnapshot::new("trace-1", "decision-1", "policy-1", 1, 1);
+    snapshot.upsert_value("workload_complexity", 500_000);
+
+    let err = spec
+        .validate_snapshot(&snapshot)
+        .expect_err("missing required contracts should fail");
+    assert!(matches!(err, TwinSpecError::MissingSnapshotValue { .. }));
 }

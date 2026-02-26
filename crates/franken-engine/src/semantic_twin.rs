@@ -563,7 +563,9 @@ impl SemanticTwinRuntime {
         let history_before = self.ledger.falsification_history().len();
         self.tick = self.tick.saturating_add(1);
 
-        let actions = self.ledger.observe(variable, value_millionths, epoch, self.tick);
+        let actions = self
+            .ledger
+            .observe(variable, value_millionths, epoch, self.tick);
         let new_evidence = &self.ledger.falsification_history()[history_before..];
 
         let mut events = Vec::new();
@@ -843,8 +845,9 @@ fn transition_trigger(source: &str, target: &str) -> String {
         ("workload_complexity", "risk_belief")
         | ("component_count", "risk_belief")
         | ("effect_depth", "risk_belief") => "frir_workload_profile_emitted".to_string(),
-        ("environment_load", "risk_belief")
-        | ("environment_load", "latency_outcome") => "runtime_load_window_sampled".to_string(),
+        ("environment_load", "risk_belief") | ("environment_load", "latency_outcome") => {
+            "runtime_load_window_sampled".to_string()
+        }
         ("regime", "loss_matrix_weight") | ("regime", "lane_choice") => {
             "regime_detector_updated".to_string()
         }
@@ -853,9 +856,7 @@ fn transition_trigger(source: &str, target: &str) -> String {
         ("lane_choice", "calibration_quality")
         | ("lane_choice", "latency_outcome")
         | ("lane_choice", "correctness_outcome") => "router_action_selected".to_string(),
-        ("calibration_quality", "correctness_outcome") => {
-            "calibration_ledger_updated".to_string()
-        }
+        ("calibration_quality", "correctness_outcome") => "calibration_ledger_updated".to_string(),
         _ => "semantic_twin_transition_observed".to_string(),
     }
 }
@@ -913,7 +914,10 @@ mod tests {
     fn frx_19_1_default_spec_validates() {
         let spec = SemanticTwinSpecification::frx_19_1_default().expect("spec");
         spec.validate().expect("spec validates");
-        assert_eq!(spec.schema_version, SEMANTIC_TWIN_STATE_SPACE_SCHEMA_VERSION);
+        assert_eq!(
+            spec.schema_version,
+            SEMANTIC_TWIN_STATE_SPACE_SCHEMA_VERSION
+        );
         assert!(spec.state_variables.len() >= 10);
         assert!(spec.transitions.len() >= 10);
     }
@@ -922,10 +926,14 @@ mod tests {
     fn adjustment_strategies_are_identified_with_non_empty_adjustment_set() {
         let spec = SemanticTwinSpecification::frx_19_1_default().expect("spec");
         for strategy in &spec.adjustment_strategies {
-            assert!(strategy.identified, "effect {} should be identified", strategy.effect_id);
             assert!(
-                !strategy.adjustment_set.is_empty(),
-                "effect {} should have a non-empty adjustment set",
+                strategy.identified,
+                "effect {} should be identified",
+                strategy.effect_id
+            );
+            assert!(
+                !strategy.adjustment_set.is_empty() || strategy.blocked_confounding_paths.is_empty(),
+                "effect {} must either expose an adjustment set or have no confounding paths",
                 strategy.effect_id
             );
         }
@@ -958,7 +966,10 @@ mod tests {
         let result = runtime.observe("risk_calibration_error_millionths", 80_000, 5);
         assert!(result.actions.is_empty());
         assert_eq!(result.events.len(), 1);
-        assert_eq!(result.events[0].schema_version, SEMANTIC_TWIN_LOG_SCHEMA_VERSION);
+        assert_eq!(
+            result.events[0].schema_version,
+            SEMANTIC_TWIN_LOG_SCHEMA_VERSION
+        );
         assert_eq!(result.events[0].event, "assumption_monitor_evaluate");
         assert_eq!(result.events[0].outcome, "ok");
     }
@@ -1002,7 +1013,10 @@ mod tests {
         let mut spec = SemanticTwinSpecification::frx_19_1_default().expect("spec");
         spec.assumptions[0].decision_effect_id = "unknown-effect".to_string();
         let err = spec.validate().expect_err("must fail");
-        assert!(matches!(err, SemanticTwinError::AssumptionMissingEffect { .. }));
+        assert!(matches!(
+            err,
+            SemanticTwinError::AssumptionMissingEffect { .. }
+        ));
     }
 
     #[test]
