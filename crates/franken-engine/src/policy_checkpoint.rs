@@ -1444,16 +1444,9 @@ mod tests {
             "test-zone",
         )
         .add_policy_head(make_policy_head(PolicyType::RuntimeExecution, 2))
-        .build(&[sk])
+        .build(std::slice::from_ref(&sk))
         .unwrap();
 
-        // Create another from genesis with epoch 3 — this builds fine because
-        // builder sees genesis epoch 5 and would reject. We test the
-        // verify_chain_linkage function instead, using the non-monotonic seq path.
-        // Actually, verify_chain_linkage checks epoch on the *current* vs *prev*.
-        // So we verify that cp1 (epoch 5) → a checkpoint with epoch < 5 is caught.
-        // We need to construct such a checkpoint. Let's build one at same epoch
-        // then manually check against a "prev" that has higher epoch.
         let cp2 = CheckpointBuilder::after(
             &cp1,
             2,
@@ -1465,7 +1458,7 @@ mod tests {
         .build(&[sk])
         .unwrap();
 
-        // Use verify_chain_linkage with genesis (epoch 5) as prev, cp2 (epoch 5) as current → ok
+        // verify_chain_linkage with cp1 (epoch 5) → cp2 (epoch 5) is ok
         assert!(verify_chain_linkage(&cp1, &cp2).is_ok());
     }
 
@@ -1486,7 +1479,7 @@ mod tests {
             "test-zone",
         )
         .add_policy_head(make_policy_head(PolicyType::RuntimeExecution, 2))
-        .build(&[sk])
+        .build(std::slice::from_ref(&sk))
         .unwrap();
 
         let cp2 = CheckpointBuilder::after(
