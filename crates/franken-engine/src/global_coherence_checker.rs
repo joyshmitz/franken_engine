@@ -22,7 +22,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::engine_object_id::{derive_id, EngineObjectId, ObjectDomain, SchemaId};
+use crate::engine_object_id::{EngineObjectId, ObjectDomain, SchemaId, derive_id};
 use crate::hash_tiers::ContentHash;
 use crate::semantic_contract_baseline::{LocalSemanticAtlas, LocalSemanticAtlasEntry};
 
@@ -155,10 +155,7 @@ impl CompositionGraph {
     }
 
     /// Return outgoing adjacency list for a given edge kind.
-    pub fn adjacency_for_kind(
-        &self,
-        kind: &CompositionEdgeKind,
-    ) -> BTreeMap<String, Vec<String>> {
+    pub fn adjacency_for_kind(&self, kind: &CompositionEdgeKind) -> BTreeMap<String, Vec<String>> {
         let mut adj: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for edge in &self.edges {
             if edge.kind == *kind {
@@ -248,9 +245,7 @@ pub enum CoherenceViolationKind {
         missing_capabilities: Vec<String>,
     },
     /// Effect ordering contains a cycle.
-    EffectOrderCycle {
-        cycle_participants: Vec<String>,
-    },
+    EffectOrderCycle { cycle_participants: Vec<String> },
     /// Layout effect appears after passive effect in composition order.
     LayoutAfterPassive {
         layout_component: String,
@@ -305,13 +300,9 @@ impl fmt::Display for CoherenceViolationKind {
                 "capability gap: {component} missing [{}]",
                 missing_capabilities.join(", ")
             ),
-            Self::EffectOrderCycle {
-                cycle_participants,
-            } => write!(
-                f,
-                "effect cycle: [{}]",
-                cycle_participants.join(" -> ")
-            ),
+            Self::EffectOrderCycle { cycle_participants } => {
+                write!(f, "effect cycle: [{}]", cycle_participants.join(" -> "))
+            }
             Self::LayoutAfterPassive {
                 layout_component,
                 passive_component,
@@ -537,7 +528,10 @@ impl GlobalCoherenceChecker {
     }
 
     /// Run a full coherence check.
-    pub fn check(&self, input: &CoherenceCheckInput) -> Result<CoherenceCheckResult, CoherenceError> {
+    pub fn check(
+        &self,
+        input: &CoherenceCheckInput,
+    ) -> Result<CoherenceCheckResult, CoherenceError> {
         if input.atlas.entries.is_empty() {
             return Err(CoherenceError::EmptyAtlas);
         }
@@ -599,7 +593,10 @@ impl GlobalCoherenceChecker {
 
         // Compute summary
         let total_severity: i64 = violations.iter().map(|v| v.severity.0).sum();
-        let blocking_count = violations.iter().filter(|v| v.severity.is_blocking()).count();
+        let blocking_count = violations
+            .iter()
+            .filter(|v| v.severity.is_blocking())
+            .count();
         let budget_exhausted = violations.len() >= self.violation_budget;
 
         let outcome = if budget_exhausted {
@@ -759,16 +756,10 @@ impl GlobalCoherenceChecker {
                 let Some(desc_entry) = atlas.get(desc_id.as_str()) else {
                     continue;
                 };
-                let desc_caps: BTreeSet<String> = desc_entry
-                    .capability_requirements
-                    .iter()
-                    .cloned()
-                    .collect();
+                let desc_caps: BTreeSet<String> =
+                    desc_entry.capability_requirements.iter().cloned().collect();
 
-                let missing: Vec<String> = desc_caps
-                    .difference(&boundary_caps)
-                    .cloned()
-                    .collect();
+                let missing: Vec<String> = desc_caps.difference(&boundary_caps).cloned().collect();
 
                 if !missing.is_empty() {
                     violations.push(make_violation(
@@ -924,11 +915,7 @@ impl GlobalCoherenceChecker {
             if !async_children.is_empty() && !sync_only_children.is_empty() {
                 let sync_with_layout: Vec<String> = sync_only_children
                     .iter()
-                    .filter(|id| {
-                        atlas
-                            .get(id.as_str())
-                            .is_some_and(|e| has_layout_effect(e))
-                    })
+                    .filter(|id| atlas.get(id.as_str()).is_some_and(|e| has_layout_effect(e)))
                     .cloned()
                     .collect();
 
@@ -1330,9 +1317,10 @@ fn has_async_effect(entry: &LocalSemanticAtlasEntry) -> bool {
 fn is_hydration_safe(entry: &LocalSemanticAtlasEntry) -> bool {
     // A component is hydration-safe if it has no non-deterministic effects
     // and all its hooks are deterministic (no side effects during render)
-    !entry.effect_signature.iter().any(|sig| {
-        sig.contains("idempotent=false") || sig.contains("commutative=false")
-    })
+    !entry
+        .effect_signature
+        .iter()
+        .any(|sig| sig.contains("idempotent=false") || sig.contains("commutative=false"))
 }
 
 // ---------------------------------------------------------------------------
@@ -1343,7 +1331,9 @@ fn is_hydration_safe(entry: &LocalSemanticAtlasEntry) -> bool {
 mod tests {
     use super::*;
     use crate::hash_tiers::ContentHash;
-    use crate::semantic_contract_baseline::{LocalSemanticAtlas, LocalSemanticAtlasEntry, SemanticContractVersion};
+    use crate::semantic_contract_baseline::{
+        LocalSemanticAtlas, LocalSemanticAtlasEntry, SemanticContractVersion,
+    };
 
     // -----------------------------------------------------------------------
     // Test helpers
@@ -1377,28 +1367,19 @@ mod tests {
         entry
     }
 
-    fn test_entry_with_capabilities(
-        id: &str,
-        caps: Vec<&str>,
-    ) -> LocalSemanticAtlasEntry {
+    fn test_entry_with_capabilities(id: &str, caps: Vec<&str>) -> LocalSemanticAtlasEntry {
         let mut entry = test_entry(id);
         entry.capability_requirements = caps.into_iter().map(String::from).collect();
         entry
     }
 
-    fn test_entry_with_effects(
-        id: &str,
-        effects: Vec<&str>,
-    ) -> LocalSemanticAtlasEntry {
+    fn test_entry_with_effects(id: &str, effects: Vec<&str>) -> LocalSemanticAtlasEntry {
         let mut entry = test_entry(id);
         entry.effect_signature = effects.into_iter().map(String::from).collect();
         entry
     }
 
-    fn test_entry_with_hooks(
-        id: &str,
-        hooks: Vec<&str>,
-    ) -> LocalSemanticAtlasEntry {
+    fn test_entry_with_hooks(id: &str, hooks: Vec<&str>) -> LocalSemanticAtlasEntry {
         let mut entry = test_entry(id);
         entry.hook_signature = hooks.into_iter().map(String::from).collect();
         entry
@@ -1538,7 +1519,10 @@ mod tests {
             kind: CompositionEdgeKind::ParentChild,
             label: "bad".to_string(),
         });
-        assert_eq!(result, Err(CoherenceError::UnknownComponent("Z".to_string())));
+        assert_eq!(
+            result,
+            Err(CoherenceError::UnknownComponent("Z".to_string()))
+        );
     }
 
     #[test]
@@ -1695,11 +1679,7 @@ mod tests {
     #[test]
     fn coherent_result_is_coherent() {
         let checker = GlobalCoherenceChecker::new();
-        let input = make_input(
-            vec![test_entry("A")],
-            vec!["A"],
-            vec![],
-        );
+        let input = make_input(vec![test_entry("A")], vec!["A"], vec![]);
         let result = checker.check(&input).unwrap();
         assert!(result.is_coherent());
     }
@@ -1721,7 +1701,11 @@ mod tests {
     fn unresolved_context_detected() {
         let checker = GlobalCoherenceChecker::new();
         let input = make_input(
-            vec![test_entry_with_contexts("Orphan", vec!["missing_ctx"], vec![])],
+            vec![test_entry_with_contexts(
+                "Orphan",
+                vec!["missing_ctx"],
+                vec![],
+            )],
             vec!["Orphan"],
             vec![],
         );
@@ -1738,7 +1722,11 @@ mod tests {
     fn orphaned_provider_detected() {
         let checker = GlobalCoherenceChecker::new();
         let input = make_input(
-            vec![test_entry_with_contexts("Provider", vec![], vec!["unused_ctx"])],
+            vec![test_entry_with_contexts(
+                "Provider",
+                vec![],
+                vec!["unused_ctx"],
+            )],
             vec!["Provider"],
             vec![],
         );
@@ -1820,7 +1808,9 @@ mod tests {
             vec!["Boundary", "Inside", "Outside"],
             vec![("Boundary", "Inside", CompositionEdgeKind::ParentChild)],
         );
-        input.capability_boundary_components.insert("Boundary".to_string());
+        input
+            .capability_boundary_components
+            .insert("Boundary".to_string());
         let result = checker.check(&input).unwrap();
         assert!(result.violations.iter().any(|v| matches!(
             &v.kind,
@@ -1843,7 +1833,9 @@ mod tests {
             vec!["Boundary", "Child"],
             vec![("Boundary", "Child", CompositionEdgeKind::ParentChild)],
         );
-        input.capability_boundary_components.insert("Boundary".to_string());
+        input
+            .capability_boundary_components
+            .insert("Boundary".to_string());
         let result = checker.check(&input).unwrap();
         assert!(result.violations.iter().any(|v| matches!(
             &v.kind,
@@ -1866,12 +1858,14 @@ mod tests {
             vec!["Boundary", "Child"],
             vec![("Boundary", "Child", CompositionEdgeKind::ParentChild)],
         );
-        input.capability_boundary_components.insert("Boundary".to_string());
+        input
+            .capability_boundary_components
+            .insert("Boundary".to_string());
         let result = checker.check(&input).unwrap();
-        assert!(result
-            .violations
-            .iter()
-            .all(|v| !matches!(&v.kind, CoherenceViolationKind::BoundaryCapabilityLeak { .. })));
+        assert!(result.violations.iter().all(|v| !matches!(
+            &v.kind,
+            CoherenceViolationKind::BoundaryCapabilityLeak { .. }
+        )));
     }
 
     #[test]
@@ -1881,13 +1875,13 @@ mod tests {
             test_entry_with_capabilities("B1", vec!["net"]),
             test_entry_with_capabilities("B2", vec!["dom"]),
         ];
-        let mut input = make_input(
-            entries,
-            vec!["B1", "B2"],
-            vec![],
-        );
-        input.capability_boundary_components.insert("B1".to_string());
-        input.capability_boundary_components.insert("B2".to_string());
+        let mut input = make_input(entries, vec!["B1", "B2"], vec![]);
+        input
+            .capability_boundary_components
+            .insert("B1".to_string());
+        input
+            .capability_boundary_components
+            .insert("B2".to_string());
         let result = checker.check(&input).unwrap();
         assert_eq!(result.capability_boundaries_checked, 2);
     }
@@ -1909,10 +1903,12 @@ mod tests {
             ],
         );
         let result = checker.check(&input).unwrap();
-        assert!(result.violations.iter().any(|v| matches!(
-            &v.kind,
-            CoherenceViolationKind::EffectOrderCycle { .. }
-        )));
+        assert!(
+            result
+                .violations
+                .iter()
+                .any(|v| matches!(&v.kind, CoherenceViolationKind::EffectOrderCycle { .. }))
+        );
     }
 
     #[test]
@@ -1927,18 +1923,26 @@ mod tests {
             ],
         );
         let result = checker.check(&input).unwrap();
-        assert!(result
-            .violations
-            .iter()
-            .all(|v| !matches!(&v.kind, CoherenceViolationKind::EffectOrderCycle { .. })));
+        assert!(
+            result
+                .violations
+                .iter()
+                .all(|v| !matches!(&v.kind, CoherenceViolationKind::EffectOrderCycle { .. }))
+        );
     }
 
     #[test]
     fn layout_after_passive_detected() {
         let checker = GlobalCoherenceChecker::new();
         let entries = vec![
-            test_entry_with_effects("Parent", vec!["boundary=Passive;caps=;idempotent=true;commutative=true;cost_millionths=0"]),
-            test_entry_with_effects("Child", vec!["boundary=Layout;caps=;idempotent=true;commutative=true;cost_millionths=0"]),
+            test_entry_with_effects(
+                "Parent",
+                vec!["boundary=Passive;caps=;idempotent=true;commutative=true;cost_millionths=0"],
+            ),
+            test_entry_with_effects(
+                "Child",
+                vec!["boundary=Layout;caps=;idempotent=true;commutative=true;cost_millionths=0"],
+            ),
         ];
         let input = make_input(
             entries,
@@ -1946,18 +1950,26 @@ mod tests {
             vec![("Parent", "Child", CompositionEdgeKind::ParentChild)],
         );
         let result = checker.check(&input).unwrap();
-        assert!(result.violations.iter().any(|v| matches!(
-            &v.kind,
-            CoherenceViolationKind::LayoutAfterPassive { .. }
-        )));
+        assert!(
+            result
+                .violations
+                .iter()
+                .any(|v| matches!(&v.kind, CoherenceViolationKind::LayoutAfterPassive { .. }))
+        );
     }
 
     #[test]
     fn layout_parent_passive_child_ok() {
         let checker = GlobalCoherenceChecker::new();
         let entries = vec![
-            test_entry_with_effects("Parent", vec!["boundary=Layout;caps=;idempotent=true;commutative=true;cost_millionths=0"]),
-            test_entry_with_effects("Child", vec!["boundary=Passive;caps=;idempotent=true;commutative=true;cost_millionths=0"]),
+            test_entry_with_effects(
+                "Parent",
+                vec!["boundary=Layout;caps=;idempotent=true;commutative=true;cost_millionths=0"],
+            ),
+            test_entry_with_effects(
+                "Child",
+                vec!["boundary=Passive;caps=;idempotent=true;commutative=true;cost_millionths=0"],
+            ),
         ];
         let input = make_input(
             entries,
@@ -1965,10 +1977,12 @@ mod tests {
             vec![("Parent", "Child", CompositionEdgeKind::ParentChild)],
         );
         let result = checker.check(&input).unwrap();
-        assert!(result
-            .violations
-            .iter()
-            .all(|v| !matches!(&v.kind, CoherenceViolationKind::LayoutAfterPassive { .. })));
+        assert!(
+            result
+                .violations
+                .iter()
+                .all(|v| !matches!(&v.kind, CoherenceViolationKind::LayoutAfterPassive { .. }))
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1980,18 +1994,34 @@ mod tests {
         let checker = GlobalCoherenceChecker::new();
         let entries = vec![
             test_entry("SuspenseBoundary"),
-            test_entry_with_effects("AsyncChild", vec!["boundary=Suspense;caps=;idempotent=true;commutative=true;cost_millionths=0"]),
-            test_entry_with_effects("SyncLayout", vec!["boundary=Layout;caps=;idempotent=true;commutative=true;cost_millionths=0"]),
+            test_entry_with_effects(
+                "AsyncChild",
+                vec!["boundary=Suspense;caps=;idempotent=true;commutative=true;cost_millionths=0"],
+            ),
+            test_entry_with_effects(
+                "SyncLayout",
+                vec!["boundary=Layout;caps=;idempotent=true;commutative=true;cost_millionths=0"],
+            ),
         ];
         let mut input = make_input(
             entries,
             vec!["SuspenseBoundary", "AsyncChild", "SyncLayout"],
             vec![
-                ("SuspenseBoundary", "AsyncChild", CompositionEdgeKind::ParentChild),
-                ("SuspenseBoundary", "SyncLayout", CompositionEdgeKind::ParentChild),
+                (
+                    "SuspenseBoundary",
+                    "AsyncChild",
+                    CompositionEdgeKind::ParentChild,
+                ),
+                (
+                    "SuspenseBoundary",
+                    "SyncLayout",
+                    CompositionEdgeKind::ParentChild,
+                ),
             ],
         );
-        input.suspense_components.insert("SuspenseBoundary".to_string());
+        input
+            .suspense_components
+            .insert("SuspenseBoundary".to_string());
         let result = checker.check(&input).unwrap();
         assert!(result.violations.iter().any(|v| matches!(
             &v.kind,
@@ -2011,19 +2041,26 @@ mod tests {
             entries,
             vec!["SuspenseBoundary", "ChildA", "ChildB"],
             vec![
-                ("SuspenseBoundary", "ChildA", CompositionEdgeKind::ParentChild),
-                ("SuspenseBoundary", "ChildB", CompositionEdgeKind::ParentChild),
+                (
+                    "SuspenseBoundary",
+                    "ChildA",
+                    CompositionEdgeKind::ParentChild,
+                ),
+                (
+                    "SuspenseBoundary",
+                    "ChildB",
+                    CompositionEdgeKind::ParentChild,
+                ),
             ],
         );
-        input.suspense_components.insert("SuspenseBoundary".to_string());
+        input
+            .suspense_components
+            .insert("SuspenseBoundary".to_string());
         let result = checker.check(&input).unwrap();
-        assert!(result
-            .violations
-            .iter()
-            .all(|v| !matches!(
-                &v.kind,
-                CoherenceViolationKind::SuspenseBoundaryConflict { .. }
-            )));
+        assert!(result.violations.iter().all(|v| !matches!(
+            &v.kind,
+            CoherenceViolationKind::SuspenseBoundaryConflict { .. }
+        )));
     }
 
     #[test]
@@ -2046,14 +2083,23 @@ mod tests {
         let checker = GlobalCoherenceChecker::new();
         let entries = vec![
             test_entry("HydrationBoundary"),
-            test_entry_with_effects("NonDet", vec!["boundary=Effect;caps=;idempotent=false;commutative=true;cost_millionths=0"]),
+            test_entry_with_effects(
+                "NonDet",
+                vec!["boundary=Effect;caps=;idempotent=false;commutative=true;cost_millionths=0"],
+            ),
         ];
         let mut input = make_input(
             entries,
             vec!["HydrationBoundary", "NonDet"],
-            vec![("HydrationBoundary", "NonDet", CompositionEdgeKind::ParentChild)],
+            vec![(
+                "HydrationBoundary",
+                "NonDet",
+                CompositionEdgeKind::ParentChild,
+            )],
         );
-        input.hydration_components.insert("HydrationBoundary".to_string());
+        input
+            .hydration_components
+            .insert("HydrationBoundary".to_string());
         let result = checker.check(&input).unwrap();
         assert!(result.violations.iter().any(|v| matches!(
             &v.kind,
@@ -2066,22 +2112,24 @@ mod tests {
         let checker = GlobalCoherenceChecker::new();
         let entries = vec![
             test_entry("HydrationBoundary"),
-            test_entry_with_effects("Det", vec!["boundary=Effect;caps=;idempotent=true;commutative=true;cost_millionths=0"]),
+            test_entry_with_effects(
+                "Det",
+                vec!["boundary=Effect;caps=;idempotent=true;commutative=true;cost_millionths=0"],
+            ),
         ];
         let mut input = make_input(
             entries,
             vec!["HydrationBoundary", "Det"],
             vec![("HydrationBoundary", "Det", CompositionEdgeKind::ParentChild)],
         );
-        input.hydration_components.insert("HydrationBoundary".to_string());
+        input
+            .hydration_components
+            .insert("HydrationBoundary".to_string());
         let result = checker.check(&input).unwrap();
-        assert!(result
-            .violations
-            .iter()
-            .all(|v| !matches!(
-                &v.kind,
-                CoherenceViolationKind::HydrationBoundaryConflict { .. }
-            )));
+        assert!(result.violations.iter().all(|v| !matches!(
+            &v.kind,
+            CoherenceViolationKind::HydrationBoundaryConflict { .. }
+        )));
     }
 
     #[test]
@@ -2103,14 +2151,16 @@ mod tests {
     fn hook_cleanup_mismatch_detected() {
         let checker = GlobalCoherenceChecker::new();
         let entries = vec![
-            test_entry_with_hooks("CompA", vec!["slot=0;kind=Effect;label=fetch;deps=1;cleanup=true"]),
-            test_entry_with_hooks("CompB", vec!["slot=0;kind=Effect;label=fetch;deps=1;cleanup=false"]),
+            test_entry_with_hooks(
+                "CompA",
+                vec!["slot=0;kind=Effect;label=fetch;deps=1;cleanup=true"],
+            ),
+            test_entry_with_hooks(
+                "CompB",
+                vec!["slot=0;kind=Effect;label=fetch;deps=1;cleanup=false"],
+            ),
         ];
-        let input = make_input(
-            entries,
-            vec!["CompA", "CompB"],
-            vec![],
-        );
+        let input = make_input(entries, vec!["CompA", "CompB"], vec![]);
         let result = checker.check(&input).unwrap();
         assert!(result.violations.iter().any(|v| matches!(
             &v.kind,
@@ -2123,19 +2173,23 @@ mod tests {
     fn hook_cleanup_agreement_ok() {
         let checker = GlobalCoherenceChecker::new();
         let entries = vec![
-            test_entry_with_hooks("CompA", vec!["slot=0;kind=Effect;label=fetch;deps=1;cleanup=true"]),
-            test_entry_with_hooks("CompB", vec!["slot=0;kind=Effect;label=fetch;deps=1;cleanup=true"]),
+            test_entry_with_hooks(
+                "CompA",
+                vec!["slot=0;kind=Effect;label=fetch;deps=1;cleanup=true"],
+            ),
+            test_entry_with_hooks(
+                "CompB",
+                vec!["slot=0;kind=Effect;label=fetch;deps=1;cleanup=true"],
+            ),
         ];
-        let input = make_input(
-            entries,
-            vec!["CompA", "CompB"],
-            vec![],
-        );
+        let input = make_input(entries, vec!["CompA", "CompB"], vec![]);
         let result = checker.check(&input).unwrap();
-        assert!(result
-            .violations
-            .iter()
-            .all(|v| !matches!(&v.kind, CoherenceViolationKind::HookCleanupMismatch { .. })));
+        assert!(
+            result
+                .violations
+                .iter()
+                .all(|v| !matches!(&v.kind, CoherenceViolationKind::HookCleanupMismatch { .. }))
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -2398,43 +2452,64 @@ mod tests {
 
     #[test]
     fn has_layout_effect_true() {
-        let entry = test_entry_with_effects("A", vec!["boundary=Layout;caps=;idempotent=true;commutative=true;cost_millionths=0"]);
+        let entry = test_entry_with_effects(
+            "A",
+            vec!["boundary=Layout;caps=;idempotent=true;commutative=true;cost_millionths=0"],
+        );
         assert!(has_layout_effect(&entry));
     }
 
     #[test]
     fn has_layout_effect_false() {
-        let entry = test_entry_with_effects("A", vec!["boundary=Passive;caps=;idempotent=true;commutative=true;cost_millionths=0"]);
+        let entry = test_entry_with_effects(
+            "A",
+            vec!["boundary=Passive;caps=;idempotent=true;commutative=true;cost_millionths=0"],
+        );
         assert!(!has_layout_effect(&entry));
     }
 
     #[test]
     fn has_passive_effect_true() {
-        let entry = test_entry_with_effects("A", vec!["boundary=Passive;caps=;idempotent=true;commutative=true;cost_millionths=0"]);
+        let entry = test_entry_with_effects(
+            "A",
+            vec!["boundary=Passive;caps=;idempotent=true;commutative=true;cost_millionths=0"],
+        );
         assert!(has_passive_effect(&entry));
     }
 
     #[test]
     fn has_async_effect_true() {
-        let entry = test_entry_with_effects("A", vec!["boundary=Suspense;caps=;idempotent=true;commutative=true;cost_millionths=0"]);
+        let entry = test_entry_with_effects(
+            "A",
+            vec!["boundary=Suspense;caps=;idempotent=true;commutative=true;cost_millionths=0"],
+        );
         assert!(has_async_effect(&entry));
     }
 
     #[test]
     fn has_async_effect_false() {
-        let entry = test_entry_with_effects("A", vec!["boundary=Layout;caps=;idempotent=true;commutative=true;cost_millionths=0"]);
+        let entry = test_entry_with_effects(
+            "A",
+            vec!["boundary=Layout;caps=;idempotent=true;commutative=true;cost_millionths=0"],
+        );
         assert!(!has_async_effect(&entry));
     }
 
     #[test]
     fn is_hydration_safe_true() {
-        let entry = test_entry_with_effects("A", vec!["boundary=Effect;caps=;idempotent=true;commutative=true;cost_millionths=0"]);
+        let entry = test_entry_with_effects(
+            "A",
+            vec!["boundary=Effect;caps=;idempotent=true;commutative=true;cost_millionths=0"],
+        );
         assert!(is_hydration_safe(&entry));
     }
 
     #[test]
     fn is_hydration_safe_false_non_idempotent() {
-        let entry = test_entry_with_effects("A", vec!["boundary=Effect;caps=;idempotent=false;commutative=true;cost_millionths=0"]);
+        let entry = test_entry_with_effects(
+            "A",
+            vec!["boundary=Effect;caps=;idempotent=false;commutative=true;cost_millionths=0"],
+        );
         assert!(!is_hydration_safe(&entry));
     }
 
