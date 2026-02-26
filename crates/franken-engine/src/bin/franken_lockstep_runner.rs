@@ -239,6 +239,9 @@ where
         config.engines = load_runtime_engine_specs(path.as_path())?;
     } else if let Some(specs) = engine_specs {
         config.engines = specs;
+    } else if Path::new(DEFAULT_LOCKSTEP_RUNTIME_SPECS_PATH).exists() {
+        config.engines =
+            load_runtime_engine_specs(Path::new(DEFAULT_LOCKSTEP_RUNTIME_SPECS_PATH))?;
     }
 
     Ok(CliArgs {
