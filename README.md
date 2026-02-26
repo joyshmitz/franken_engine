@@ -387,6 +387,34 @@ Create a signed golden-update artifact when intentionally accepting an output di
 The command writes a deterministic JSON artifact under
 `crates/franken-engine/tests/artifacts/golden-updates/`.
 
+## FRX End-to-End Scenario Matrix Gate
+
+`bd-mjh3.20.3` defines deterministic baseline, differential, and chaos lanes for
+core user-journey coverage (`render`, `update`, `hydration`, `navigation`,
+`error_recovery`) plus degraded/adversarial modes, with fail-closed linkage to
+unit anchors and invariant references.
+
+```bash
+# FRX end-to-end scenario matrix gate (rch-backed check + test + clippy)
+./scripts/run_frx_end_to_end_scenario_matrix_suite.sh ci
+
+# deterministic replay wrapper
+./scripts/e2e/frx_end_to_end_scenario_matrix_replay.sh ci
+```
+
+Contract and vectors:
+
+- [`docs/FRX_END_TO_END_SCENARIO_MATRIX_V1.md`](./docs/FRX_END_TO_END_SCENARIO_MATRIX_V1.md)
+- `docs/frx_end_to_end_scenario_matrix_v1.json`
+- `crates/franken-engine/tests/frx_end_to_end_scenario_matrix.rs`
+- `crates/franken-engine/src/e2e_harness.rs`
+
+Artifacts are written under:
+
+- `artifacts/frx_end_to_end_scenario_matrix/<timestamp>/run_manifest.json`
+- `artifacts/frx_end_to_end_scenario_matrix/<timestamp>/events.jsonl`
+- `artifacts/frx_end_to_end_scenario_matrix/<timestamp>/commands.txt`
+
 ## Parser Phase0 Gate
 
 `bd-3spt` parser phase0 gate validates scalar-reference parser determinism, semantic fixture hashes, and artifact-bundle generation.
@@ -595,6 +623,32 @@ Artifacts are written under:
 - `artifacts/parser_correctness_promotion_gate/<timestamp>/events.jsonl`
 - `artifacts/parser_correctness_promotion_gate/<timestamp>/commands.txt`
 
+## Parser Performance Promotion Gate
+
+`bd-2mds.1.8.3` enforces fail-closed promotion policy for parser performance
+wins against required peers/quantiles with confidence-bounded and reproducible
+evidence.
+
+```bash
+# parser performance promotion gate (rch-backed check + test + clippy)
+./scripts/run_parser_performance_promotion_gate.sh ci
+
+# one-command replay wrapper
+./scripts/e2e/parser_performance_promotion_gate_replay.sh
+```
+
+Contract and vectors:
+
+- [`docs/PARSER_PERFORMANCE_PROMOTION_GATE.md`](./docs/PARSER_PERFORMANCE_PROMOTION_GATE.md)
+- `crates/franken-engine/tests/fixtures/parser_performance_promotion_gate_v1.json`
+- `crates/franken-engine/tests/parser_performance_promotion_gate.rs`
+
+Artifacts are written under:
+
+- `artifacts/parser_performance_promotion_gate/<timestamp>/run_manifest.json`
+- `artifacts/parser_performance_promotion_gate/<timestamp>/events.jsonl`
+- `artifacts/parser_performance_promotion_gate/<timestamp>/commands.txt`
+
 ## Parser API Compatibility Gate
 
 `bd-2mds.1.10.3` stabilizes public parser API contracts and integration
@@ -766,6 +820,35 @@ Artifacts are written under:
 - `artifacts/frx_verification_lane_charter/<timestamp>/run_manifest.json`
 - `artifacts/frx_verification_lane_charter/<timestamp>/events.jsonl`
 - `artifacts/frx_verification_lane_charter/<timestamp>/commands.txt`
+
+## FRX React Lockstep Differential Oracle Gate
+
+`bd-mjh3.5.1` ships a deterministic React-vs-FrankenReact lockstep oracle with
+fixture-linked divergence classification and replay commands.
+
+```bash
+# FRX React lockstep oracle gate (rch-backed check + tests + clippy + oracle run)
+./scripts/run_frx_lockstep_oracle_suite.sh ci
+```
+
+Deterministic replay wrapper:
+
+```bash
+./scripts/e2e/frx_lockstep_oracle_replay.sh
+```
+
+Contract and vectors:
+
+- `crates/franken-engine/src/frx_lockstep_oracle.rs`
+- `crates/franken-engine/src/bin/frx_lockstep_oracle.rs`
+- `crates/franken-engine/tests/frx_lockstep_oracle.rs`
+
+Artifacts are written under:
+
+- `artifacts/frx_lockstep_oracle/<timestamp>/run_manifest.json`
+- `artifacts/frx_lockstep_oracle/<timestamp>/events.jsonl`
+- `artifacts/frx_lockstep_oracle/<timestamp>/commands.txt`
+- `artifacts/frx_lockstep_oracle/<timestamp>/oracle_report.json`
 
 ## FRX Optimization Lane Charter Gate
 
@@ -966,6 +1049,29 @@ Artifacts are written under:
 - `artifacts/frx_ecosystem_compatibility_matrix/<timestamp>/run_manifest.json`
 - `artifacts/frx_ecosystem_compatibility_matrix/<timestamp>/events.jsonl`
 - `artifacts/frx_ecosystem_compatibility_matrix/<timestamp>/commands.txt`
+
+## FRX SSR/Hydration/RSC Compatibility Strategy Gate
+
+`bd-mjh3.7.2` ships a deterministic gate for server-render contracts, hydration
+boundary equivalence, suspense streaming handoff behavior, and explicit RSC
+fallback routing when guarantees cannot be upheld.
+
+```bash
+# FRX SSR/hydration/RSC compatibility strategy gate (rch-backed check + test + clippy)
+./scripts/run_frx_ssr_hydration_rsc_compatibility_strategy_suite.sh ci
+```
+
+Deterministic replay wrapper:
+
+```bash
+./scripts/e2e/frx_ssr_hydration_rsc_compatibility_strategy_replay.sh ci
+```
+
+Artifacts are written under:
+
+- `artifacts/frx_ssr_hydration_rsc_compatibility_strategy/<timestamp>/run_manifest.json`
+- `artifacts/frx_ssr_hydration_rsc_compatibility_strategy/<timestamp>/events.jsonl`
+- `artifacts/frx_ssr_hydration_rsc_compatibility_strategy/<timestamp>/commands.txt`
 
 ## FRX Incremental Adoption Controls Gate
 
