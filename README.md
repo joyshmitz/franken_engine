@@ -431,6 +431,14 @@ with compatibility vectors and replay lane artifacts in:
 - `crates/franken-engine/tests/parser_trait_ast.rs` (event->AST parity/tamper/replay vectors)
 - `scripts/run_parser_event_materializer_lane.sh` + `scripts/e2e/parser_event_materializer_replay.sh` (structured lane manifests/events)
 
+Core event->AST equivalence harness + deterministic replay contract (`bd-2mds.1.4.4.1`)
+is tracked in
+[`docs/PARSER_EVENT_AST_EQUIVALENCE_REPLAY_CONTRACT.md`](./docs/PARSER_EVENT_AST_EQUIVALENCE_REPLAY_CONTRACT.md)
+with fixture-driven vectors and lane artifacts in:
+- `crates/franken-engine/tests/fixtures/parser_event_ast_equivalence_v1.json`
+- `crates/franken-engine/tests/parser_event_ast_equivalence.rs`
+- `scripts/run_parser_event_ast_equivalence.sh` + `scripts/e2e/parser_event_ast_equivalence_replay.sh`
+
 Canonical parser diagnostics taxonomy + normalization contract (`bd-2mds.1.1.3`)
 is tracked in
 [`docs/PARSER_DIAGNOSTICS_TAXONOMY.md`](./docs/PARSER_DIAGNOSTICS_TAXONOMY.md)
@@ -471,12 +479,20 @@ rch exec -- env RUSTUP_TOOLCHAIN=nightly \
 # one-command deterministic replay for materializer lane
 ./scripts/e2e/parser_event_materializer_replay.sh
 
+# run core event->AST equivalence harness + deterministic replay contract lane (rch-backed)
+./scripts/run_parser_event_ast_equivalence.sh ci
+
+# one-command deterministic replay for event->AST equivalence lane
+./scripts/e2e/parser_event_ast_equivalence_replay.sh
+
 # run deterministic reducer-promotion gate + one-command replay lane
 ./scripts/run_parser_reducer_promotion_gate.sh ci
 ./scripts/e2e/parser_reducer_promotion_replay.sh
 ```
 
 Gate run manifests are written under `artifacts/parser_phase0_gate/<timestamp>/run_manifest.json`.
+Event->AST equivalence manifests are written under
+`artifacts/parser_event_ast_equivalence/<timestamp>/run_manifest.json`.
 Reducer promotion manifests are written under
 `artifacts/parser_reducer_promotion/<timestamp>/run_manifest.json`.
 
@@ -540,6 +556,34 @@ Artifacts are written under:
 - `artifacts/parser_api_compatibility/<timestamp>/run_manifest.json`
 - `artifacts/parser_api_compatibility/<timestamp>/events.jsonl`
 - `artifacts/parser_api_compatibility/<timestamp>/commands.txt`
+
+## Parser Differential Nightly Governance Gate
+
+`bd-2mds.1.2.4.2` defines nightly differential scheduling, waiver-aware severity
+governance, and deterministic remediation bead promotion/update actions.
+
+```bash
+# parser differential nightly governance gate (rch-backed check + test + clippy)
+./scripts/run_parser_differential_nightly_governance.sh ci
+```
+
+Contract and vectors:
+
+- [`docs/PARSER_DIFFERENTIAL_NIGHTLY_GOVERNANCE.md`](./docs/PARSER_DIFFERENTIAL_NIGHTLY_GOVERNANCE.md)
+- `crates/franken-engine/tests/fixtures/parser_differential_nightly_governance_v1.json`
+- `crates/franken-engine/tests/parser_differential_nightly_governance.rs`
+
+Deterministic replay wrapper:
+
+```bash
+./scripts/e2e/parser_differential_nightly_governance_replay.sh
+```
+
+Artifacts are written under:
+
+- `artifacts/parser_differential_nightly_governance/<timestamp>/run_manifest.json`
+- `artifacts/parser_differential_nightly_governance/<timestamp>/events.jsonl`
+- `artifacts/parser_differential_nightly_governance/<timestamp>/commands.txt`
 
 ## Parser Regression Bisector Scoreboard Gate
 
@@ -722,6 +766,28 @@ Artifacts are written under:
 - `artifacts/frx_adoption_release_lane_charter/<timestamp>/run_manifest.json`
 - `artifacts/frx_adoption_release_lane_charter/<timestamp>/events.jsonl`
 - `artifacts/frx_adoption_release_lane_charter/<timestamp>/commands.txt`
+
+## FRX Track D WASM Lane + Hybrid Router Sprint Gate
+
+`bd-mjh3.11.4` ships a deterministic gate for Track D WASM lane + hybrid router
+sprint contract validation and evidence emission.
+
+```bash
+# FRX Track D WASM lane + hybrid router sprint gate (rch-backed check + test + clippy)
+./scripts/run_frx_track_d_wasm_lane_hybrid_router_sprint_suite.sh ci
+```
+
+Deterministic replay wrapper:
+
+```bash
+./scripts/e2e/frx_track_d_wasm_lane_hybrid_router_sprint_replay.sh
+```
+
+Artifacts are written under:
+
+- `artifacts/frx_track_d_wasm_lane_hybrid_router_sprint/<timestamp>/run_manifest.json`
+- `artifacts/frx_track_d_wasm_lane_hybrid_router_sprint/<timestamp>/events.jsonl`
+- `artifacts/frx_track_d_wasm_lane_hybrid_router_sprint/<timestamp>/commands.txt`
 
 ## FRX Track E Verification/Fuzz/Formal Coverage Sprint Gate
 
