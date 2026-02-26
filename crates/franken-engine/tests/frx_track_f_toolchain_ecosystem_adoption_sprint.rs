@@ -64,9 +64,9 @@ fn frx_track_f_contract_is_machine_readable_and_fail_closed() {
         value["schema_version"].as_str(),
         Some("frx.track-f.toolchain-ecosystem-adoption-sprint.contract.v1")
     );
-    assert_eq!(value["generated_by"].as_str(), Some("bd-mjh3.11.6"));
-    assert_eq!(value["primary_bead"].as_str(), Some("bd-mjh3.11.6"));
-    assert_eq!(value["track"]["id"].as_str(), Some("FRX-11.6"));
+    assert_eq!(value["generated_by"].as_str(), Some("bd-mjh3.7.1"));
+    assert_eq!(value["primary_bead"].as_str(), Some("bd-mjh3.7.1"));
+    assert_eq!(value["track"]["id"].as_str(), Some("FRX-07.1"));
 
     assert_eq!(
         value["activation_gate"]["block_on_missing_bundler_adapter_coverage"].as_bool(),
@@ -95,7 +95,7 @@ fn frx_track_f_contract_is_machine_readable_and_fail_closed() {
     );
     assert_eq!(
         value["failure_policy"]["error_code"].as_str(),
-        Some("FE-FRX-11-6-GATE-0001")
+        Some("FE-FRX-07-1-GATE-0001")
     );
     assert_eq!(
         value["failure_policy"]["promotion_block_on_repeated_class_regressions"].as_bool(),

@@ -1,8 +1,8 @@
 # FRX Track F Toolchain/Ecosystem/Adoption Sprint Charter v1
 
 Status: active
-Primary bead: bd-mjh3.11.6
-Track id: FRX-11.6
+Primary bead: bd-mjh3.7.1
+Track id: FRX-07.1
 Machine-readable contract: `docs/frx_track_f_toolchain_ecosystem_adoption_sprint_v1.json`
 
 ## Charter Scope

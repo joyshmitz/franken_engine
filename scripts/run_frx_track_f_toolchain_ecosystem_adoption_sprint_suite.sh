@@ -22,7 +22,7 @@ trace_id="trace-frx-track-f-toolchain-ecosystem-adoption-sprint-${timestamp}"
 decision_id="decision-frx-track-f-toolchain-ecosystem-adoption-sprint-${timestamp}"
 policy_id="policy-frx-track-f-toolchain-ecosystem-adoption-sprint-v1"
 component="frx_track_f_toolchain_ecosystem_adoption_sprint_gate"
-scenario_id="frx-11.6"
+scenario_id="frx-07.1"
 replay_command="${0} ${mode}"
 
 mkdir -p "$run_dir"
@@ -116,7 +116,7 @@ write_manifest() {
     error_code_json="null"
   else
     outcome="fail"
-    error_code_json='"FE-FRX-11-6-GATE-0001"'
+    error_code_json='"FE-FRX-07-1-GATE-0001"'
   fi
 
   git_commit="$(git rev-parse HEAD 2>/dev/null || echo "unknown")"
@@ -135,7 +135,7 @@ write_manifest() {
   {
     echo "{"
     echo '  "schema_version": "frx.track-f.toolchain-ecosystem-adoption-sprint-gate.run-manifest.v1",'
-    echo '  "bead_id": "bd-mjh3.11.6",'
+    echo '  "bead_id": "bd-mjh3.7.1",'
     echo "  \"component\": \"${component}\","
     echo "  \"scenario_id\": \"${scenario_id}\","
     echo "  \"mode\": \"${mode}\","

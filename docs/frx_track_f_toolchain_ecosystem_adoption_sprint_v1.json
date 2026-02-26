@@ -1,10 +1,10 @@
 {
   "schema_version": "frx.track-f.toolchain-ecosystem-adoption-sprint.contract.v1",
-  "generated_by": "bd-mjh3.11.6",
+  "generated_by": "bd-mjh3.7.1",
   "generated_at_utc": "2026-02-26T00:00:00Z",
-  "primary_bead": "bd-mjh3.11.6",
+  "primary_bead": "bd-mjh3.7.1",
   "track": {
-    "id": "FRX-11.6",
+    "id": "FRX-07.1",
     "name": "Toolchain/Ecosystem/Adoption Sprint"
   },
   "scope": {
@@ -51,7 +51,7 @@
   "failure_policy": {
     "mode": "fail_closed",
     "fallback_mode": "conservative_compatibility",
-    "error_code": "FE-FRX-11-6-GATE-0001",
+    "error_code": "FE-FRX-07-1-GATE-0001",
     "promotion_block_on_repeated_class_regressions": true
   },
   "operator_verification": [
