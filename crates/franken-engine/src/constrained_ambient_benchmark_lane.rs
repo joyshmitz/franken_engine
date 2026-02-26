@@ -23,6 +23,12 @@ const ERROR_WORKLOAD_SET_MISMATCH: &str = "FE-CABL-1003";
 const ERROR_DIGEST_MISMATCH: &str = "FE-CABL-1004";
 const ERROR_PERFORMANCE_REGRESSION: &str = "FE-CABL-1005";
 const ERROR_ATTRIBUTION_GAP: &str = "FE-CABL-1006";
+const ERROR_PROOF_OPTIMIZATION_MISMATCH: &str = "FE-CABL-1007";
+const ERROR_PROOF_EXPIRED: &str = "FE-CABL-1008";
+const ERROR_PROOF_REVOKED: &str = "FE-CABL-1009";
+const ERROR_CONFLICTING_PROOF_CLAIMS: &str = "FE-CABL-1010";
+
+const DEFAULT_OPTIMIZATION_CLASS: &str = "unspecified";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LaneWorkloadMetrics {
@@ -40,10 +46,26 @@ pub struct LaneWorkloadMetrics {
 pub struct ProofAttributionSample {
     pub proof_id: String,
     pub specialization_id: String,
+    #[serde(default = "default_optimization_class")]
+    pub optimization_class: String,
+    #[serde(default = "default_optimization_class")]
+    pub validated_optimization_class: String,
     pub constrained_throughput_ops_per_sec: u64,
     pub without_proof_throughput_ops_per_sec: u64,
     pub constrained_latency_p95_ns: u64,
     pub without_proof_latency_p95_ns: u64,
+    #[serde(default)]
+    pub validity_epoch: Option<u64>,
+    #[serde(default)]
+    pub evaluation_epoch: Option<u64>,
+    #[serde(default)]
+    pub rollback_token: Option<String>,
+    #[serde(default)]
+    pub revoked: bool,
+}
+
+fn default_optimization_class() -> String {
+    DEFAULT_OPTIMIZATION_CLASS.to_string()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -344,10 +366,13 @@ fn evaluate_attribution(
     events: &mut Vec<ConstrainedAmbientEvent>,
 ) -> Result<Vec<ProofAttributionReport>, ConstrainedAmbientError> {
     let mut seen_keys = BTreeSet::new();
+    let mut specialization_classes = BTreeMap::new();
     let mut reports = Vec::new();
     for sample in &request.proof_attribution {
         let proof_id = sample.proof_id.trim();
         let specialization_id = sample.specialization_id.trim();
+        let optimization_class = sample.optimization_class.trim();
+        let validated_optimization_class = sample.validated_optimization_class.trim();
         if proof_id.is_empty() {
             return Err(ConstrainedAmbientError::InvalidRequest {
                 field: "proof_attribution.proof_id".to_string(),
@@ -358,6 +383,18 @@ fn evaluate_attribution(
             return Err(ConstrainedAmbientError::InvalidRequest {
                 field: "proof_attribution.specialization_id".to_string(),
                 detail: "specialization_id must not be empty".to_string(),
+            });
+        }
+        if optimization_class.is_empty() {
+            return Err(ConstrainedAmbientError::InvalidRequest {
+                field: "proof_attribution.optimization_class".to_string(),
+                detail: "optimization_class must not be empty".to_string(),
+            });
+        }
+        if validated_optimization_class.is_empty() {
+            return Err(ConstrainedAmbientError::InvalidRequest {
+                field: "proof_attribution.validated_optimization_class".to_string(),
+                detail: "validated_optimization_class must not be empty".to_string(),
             });
         }
         let dedupe_key = format!("{proof_id}::{specialization_id}");
@@ -391,6 +428,108 @@ fn evaluate_attribution(
             proof_id,
         )?;
 
+        let mut contract_blocked = false;
+        let mut conflicting_claim = false;
+        let mut optimization_mismatch = false;
+        let mut proof_revoked = false;
+        let mut proof_expired = false;
+
+        if let Some(previous_class) = specialization_classes.get(specialization_id) {
+            if previous_class != optimization_class {
+                conflicting_claim = true;
+                contract_blocked = true;
+                blockers.push(format!(
+                    "specialization `{}` has conflicting proof claims: class `{}` vs `{}`",
+                    specialization_id, previous_class, optimization_class
+                ));
+                set_error_code(error_code, ERROR_CONFLICTING_PROOF_CLAIMS);
+                events.push(make_event(
+                    request,
+                    "conflicting_proof_claim_detected",
+                    "fail",
+                    Some(ERROR_CONFLICTING_PROOF_CLAIMS.to_string()),
+                    None,
+                    Some(proof_id.to_string()),
+                ));
+            }
+        } else {
+            specialization_classes.insert(specialization_id.to_string(), optimization_class.to_string());
+        }
+
+        if optimization_class != validated_optimization_class {
+            optimization_mismatch = true;
+            contract_blocked = true;
+            blockers.push(format!(
+                "proof `{}` optimization class mismatch: expected `{}` actual `{}`",
+                proof_id, validated_optimization_class, optimization_class
+            ));
+            set_error_code(error_code, ERROR_PROOF_OPTIMIZATION_MISMATCH);
+            events.push(make_event(
+                request,
+                "proof_optimization_class_mismatch",
+                "fail",
+                Some(ERROR_PROOF_OPTIMIZATION_MISMATCH.to_string()),
+                None,
+                Some(proof_id.to_string()),
+            ));
+        }
+
+        if sample.revoked {
+            proof_revoked = true;
+            contract_blocked = true;
+            blockers.push(format!(
+                "proof `{}` is revoked; specialization `{}` must be deactivated",
+                proof_id, specialization_id
+            ));
+            set_error_code(error_code, ERROR_PROOF_REVOKED);
+            events.push(make_event(
+                request,
+                "proof_revoked_specialization_deactivated",
+                "fail",
+                Some(ERROR_PROOF_REVOKED.to_string()),
+                None,
+                Some(proof_id.to_string()),
+            ));
+        }
+
+        if let (Some(validity_epoch), Some(evaluation_epoch)) =
+            (sample.validity_epoch, sample.evaluation_epoch)
+        {
+            if evaluation_epoch > validity_epoch {
+                proof_expired = true;
+                contract_blocked = true;
+                set_error_code(error_code, ERROR_PROOF_EXPIRED);
+                let rollback_token = sample.rollback_token.as_deref().unwrap_or("").trim();
+                if rollback_token.is_empty() {
+                    blockers.push(format!(
+                        "proof `{}` expired at epoch {} before evaluation epoch {} with no rollback token",
+                        proof_id, validity_epoch, evaluation_epoch
+                    ));
+                    events.push(make_event(
+                        request,
+                        "proof_expired_no_rollback_token",
+                        "fail",
+                        Some(ERROR_PROOF_EXPIRED.to_string()),
+                        None,
+                        Some(proof_id.to_string()),
+                    ));
+                } else {
+                    blockers.push(format!(
+                        "proof `{}` expired at epoch {} before evaluation epoch {}; rollback token `{}` applied",
+                        proof_id, validity_epoch, evaluation_epoch, rollback_token
+                    ));
+                    events.push(make_event(
+                        request,
+                        "proof_expired_rollback_applied",
+                        "fail",
+                        Some(ERROR_PROOF_EXPIRED.to_string()),
+                        None,
+                        Some(proof_id.to_string()),
+                    ));
+                }
+            }
+        }
+
         let throughput_gain = delta_millionths(
             sample.constrained_throughput_ops_per_sec,
             sample.without_proof_throughput_ops_per_sec,
@@ -399,8 +538,9 @@ fn evaluate_attribution(
             sample.without_proof_latency_p95_ns,
             sample.constrained_latency_p95_ns,
         )?;
-        let supports_uplift = throughput_gain > 0 || latency_p95_improvement > 0;
-        if !supports_uplift {
+        let supports_uplift =
+            !contract_blocked && (throughput_gain > 0 || latency_p95_improvement > 0);
+        if !supports_uplift && !contract_blocked {
             blockers.push(format!(
                 "proof `{}` did not demonstrate measurable uplift for specialization `{}`",
                 proof_id, specialization_id
@@ -415,15 +555,24 @@ fn evaluate_attribution(
             latency_p95_improvement_millionths: latency_p95_improvement,
             supports_uplift,
         });
+        let attribution_error_code = if conflicting_claim {
+            Some(ERROR_CONFLICTING_PROOF_CLAIMS.to_string())
+        } else if optimization_mismatch {
+            Some(ERROR_PROOF_OPTIMIZATION_MISMATCH.to_string())
+        } else if proof_revoked {
+            Some(ERROR_PROOF_REVOKED.to_string())
+        } else if proof_expired {
+            Some(ERROR_PROOF_EXPIRED.to_string())
+        } else if supports_uplift {
+            None
+        } else {
+            Some(ERROR_ATTRIBUTION_GAP.to_string())
+        };
         events.push(make_event(
             request,
             "proof_attribution_evaluated",
             if supports_uplift { "pass" } else { "fail" },
-            if supports_uplift {
-                None
-            } else {
-                Some(ERROR_ATTRIBUTION_GAP.to_string())
-            },
+            attribution_error_code,
             None,
             Some(proof_id.to_string()),
         ));
@@ -639,6 +788,8 @@ fn build_report_id(request: &ConstrainedAmbientBenchmarkRequest) -> String {
     for sample in &attribution {
         hash_update(&mut hasher, &sample.proof_id);
         hash_update(&mut hasher, &sample.specialization_id);
+        hash_update(&mut hasher, &sample.optimization_class);
+        hash_update(&mut hasher, &sample.validated_optimization_class);
         hash_update(
             &mut hasher,
             &sample.constrained_throughput_ops_per_sec.to_string(),
@@ -651,6 +802,24 @@ fn build_report_id(request: &ConstrainedAmbientBenchmarkRequest) -> String {
         hash_update(
             &mut hasher,
             &sample.without_proof_latency_p95_ns.to_string(),
+        );
+        let validity_epoch = sample
+            .validity_epoch
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "none".to_string());
+        let evaluation_epoch = sample
+            .evaluation_epoch
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "none".to_string());
+        hash_update(&mut hasher, &validity_epoch);
+        hash_update(&mut hasher, &evaluation_epoch);
+        hash_update(
+            &mut hasher,
+            sample.rollback_token.as_deref().unwrap_or("none"),
+        );
+        hash_update(
+            &mut hasher,
+            if sample.revoked { "revoked" } else { "active" },
         );
     }
 
@@ -705,10 +874,16 @@ mod tests {
         ProofAttributionSample {
             proof_id: proof_id.into(),
             specialization_id: spec_id.into(),
+            optimization_class: "ifc_check_elision".into(),
+            validated_optimization_class: "ifc_check_elision".into(),
             constrained_throughput_ops_per_sec: 2000,
             without_proof_throughput_ops_per_sec: 1000,
             constrained_latency_p95_ns: 500,
             without_proof_latency_p95_ns: 1000,
+            validity_epoch: Some(10),
+            evaluation_epoch: Some(10),
+            rollback_token: Some(format!("rollback-{proof_id}-{spec_id}")),
+            revoked: false,
         }
     }
 
@@ -1055,6 +1230,74 @@ mod tests {
         let decision = run_constrained_ambient_benchmark_lane(&r);
         assert!(decision.blocked);
         assert_eq!(decision.outcome, "fail");
+    }
+
+    #[test]
+    fn full_evaluation_conflicting_proof_claims() {
+        let mut r = valid_request();
+        let mut conflicting = test_attribution("proof-2", "spec-1");
+        conflicting.optimization_class = "plas_dispatch_specialization".into();
+        r.proof_attribution.push(conflicting);
+        let decision = run_constrained_ambient_benchmark_lane(&r);
+        assert!(decision.blocked);
+        assert_eq!(decision.error_code.as_deref(), Some(ERROR_CONFLICTING_PROOF_CLAIMS));
+        assert!(
+            decision
+                .blockers
+                .iter()
+                .any(|blocker| blocker.contains("conflicting proof claims"))
+        );
+    }
+
+    #[test]
+    fn full_evaluation_proof_optimization_mismatch() {
+        let mut r = valid_request();
+        r.proof_attribution[0].optimization_class = "ifc_check_elision".into();
+        r.proof_attribution[0].validated_optimization_class = "plas_dispatch_specialization".into();
+        let decision = run_constrained_ambient_benchmark_lane(&r);
+        assert!(decision.blocked);
+        assert_eq!(
+            decision.error_code.as_deref(),
+            Some(ERROR_PROOF_OPTIMIZATION_MISMATCH)
+        );
+        assert!(
+            decision
+                .blockers
+                .iter()
+                .any(|blocker| blocker.contains("optimization class mismatch"))
+        );
+    }
+
+    #[test]
+    fn full_evaluation_proof_expiry_with_rollback_token() {
+        let mut r = valid_request();
+        r.proof_attribution[0].validity_epoch = Some(5);
+        r.proof_attribution[0].evaluation_epoch = Some(6);
+        r.proof_attribution[0].rollback_token = Some("rollback-token-1".into());
+        let decision = run_constrained_ambient_benchmark_lane(&r);
+        assert!(decision.blocked);
+        assert_eq!(decision.error_code.as_deref(), Some(ERROR_PROOF_EXPIRED));
+        assert!(
+            decision
+                .events
+                .iter()
+                .any(|event| event.event == "proof_expired_rollback_applied")
+        );
+    }
+
+    #[test]
+    fn full_evaluation_revoked_proof() {
+        let mut r = valid_request();
+        r.proof_attribution[0].revoked = true;
+        let decision = run_constrained_ambient_benchmark_lane(&r);
+        assert!(decision.blocked);
+        assert_eq!(decision.error_code.as_deref(), Some(ERROR_PROOF_REVOKED));
+        assert!(
+            decision
+                .events
+                .iter()
+                .any(|event| event.event == "proof_revoked_specialization_deactivated")
+        );
     }
 
     #[test]

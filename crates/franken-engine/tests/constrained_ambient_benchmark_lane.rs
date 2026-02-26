@@ -37,10 +37,16 @@ fn attribution(
     ProofAttributionSample {
         proof_id: proof_id.to_string(),
         specialization_id: specialization_id.to_string(),
+        optimization_class: "ifc_check_elision".to_string(),
+        validated_optimization_class: "ifc_check_elision".to_string(),
         constrained_throughput_ops_per_sec,
         without_proof_throughput_ops_per_sec,
         constrained_latency_p95_ns,
         without_proof_latency_p95_ns,
+        validity_epoch: Some(10),
+        evaluation_epoch: Some(10),
+        rollback_token: Some(format!("rollback-{proof_id}-{specialization_id}")),
+        revoked: false,
     }
 }
 
