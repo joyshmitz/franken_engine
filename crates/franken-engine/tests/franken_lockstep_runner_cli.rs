@@ -60,29 +60,37 @@ fn write_fixture_catalog(path: &Path) -> String {
 }
 
 fn write_runtime_specs(path: &Path, expected_hash: &str) {
-    let toml = format!(
-        "schema_version = \"franken-engine.lockstep-runtimes.v1\"
+    let toml = runtime_specs_content(expected_hash, &["node", "bun"]);
+    write_runtime_specs_content(path, toml.as_str());
+}
 
-[[runtimes]]
-runtime_id = \"node\"
-display_name = \"Node.js test adapter\"
-version_pin = \"node@test\"
-command = \"sh\"
-args = ['-c', 'cat >/dev/null; echo \"{{\\\"hash\\\":\\\"{expected_hash}\\\"}}\"']
-
-[[runtimes]]
-runtime_id = \"bun\"
-display_name = \"Bun test adapter\"
-version_pin = \"bun@test\"
-command = \"sh\"
-args = ['-c', 'cat >/dev/null; echo \"{{\\\"hash\\\":\\\"{expected_hash}\\\"}}\"']
-"
-    );
+fn write_runtime_specs_with_runtime_ids(path: &Path, expected_hash: &str, runtime_ids: &[&str]) {
+    let toml = runtime_specs_content(expected_hash, runtime_ids);
     write_runtime_specs_content(path, toml.as_str());
 }
 
 fn write_runtime_specs_content(path: &Path, content: &str) {
     fs::write(path, content).expect("runtime spec file should be written");
+}
+
+fn runtime_specs_content(expected_hash: &str, runtime_ids: &[&str]) -> String {
+    let mut toml = String::from("schema_version = \"franken-engine.lockstep-runtimes.v1\"\n");
+    for runtime_id in runtime_ids {
+        toml.push_str(
+            format!(
+                "
+[[runtimes]]
+runtime_id = \"{runtime_id}\"
+display_name = \"{runtime_id} test adapter\"
+version_pin = \"{runtime_id}@test\"
+command = \"sh\"
+args = ['-c', 'cat >/dev/null; echo \"{{\\\"hash\\\":\\\"{expected_hash}\\\"}}\"']
+"
+            )
+            .as_str(),
+        );
+    }
+    toml
 }
 
 fn write_invalid_schema_runtime_specs(path: &Path) {
@@ -433,6 +441,39 @@ fn lockstep_runner_rejects_runtime_specs_with_duplicate_runtime_id() {
     assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).expect("stderr should be utf8");
     assert!(stderr.contains("appears more than once"));
+
+    let _ = fs::remove_file(catalog_path);
+    let _ = fs::remove_file(runtime_specs_path);
+}
+
+#[test]
+fn lockstep_runner_rejects_runtime_specs_missing_required_runtime_ids() {
+    let catalog_path = temp_path(
+        "franken_lockstep_runner_missing_required_ids_catalog",
+        "json",
+    );
+    let runtime_specs_path =
+        temp_path("franken_lockstep_runner_missing_required_ids_specs", "toml");
+    let expected_hash = write_fixture_catalog(&catalog_path);
+    write_runtime_specs_with_runtime_ids(&runtime_specs_path, expected_hash.as_str(), &["node"]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_franken_lockstep_runner"))
+        .args([
+            "--fixture-catalog",
+            catalog_path
+                .to_str()
+                .expect("fixture path should be valid utf8"),
+            "--runtime-specs",
+            runtime_specs_path
+                .to_str()
+                .expect("runtime specs path should be valid utf8"),
+        ])
+        .output()
+        .expect("lockstep runner should execute");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf8");
+    assert!(stderr.contains("must include enabled runtime_id entries for bun"));
 
     let _ = fs::remove_file(catalog_path);
     let _ = fs::remove_file(runtime_specs_path);

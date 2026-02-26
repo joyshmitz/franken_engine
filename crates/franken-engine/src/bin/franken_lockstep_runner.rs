@@ -240,8 +240,7 @@ where
     } else if let Some(specs) = engine_specs {
         config.engines = specs;
     } else if Path::new(DEFAULT_LOCKSTEP_RUNTIME_SPECS_PATH).exists() {
-        config.engines =
-            load_runtime_engine_specs(Path::new(DEFAULT_LOCKSTEP_RUNTIME_SPECS_PATH))?;
+        config.engines = load_runtime_engine_specs(Path::new(DEFAULT_LOCKSTEP_RUNTIME_SPECS_PATH))?;
     }
 
     Ok(CliArgs {
@@ -358,6 +357,24 @@ fn load_runtime_engine_specs(path: &Path) -> Result<Vec<HarnessEngineSpec>, Box<
             command: Some(runtime.command),
             args: runtime.args,
         });
+    }
+
+    let mut missing_required = Vec::new();
+    for required_runtime in ["node", "bun"] {
+        if !ids.contains(required_runtime) {
+            missing_required.push(required_runtime);
+        }
+    }
+    if !missing_required.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "runtime spec file `{}` must include enabled runtime_id entries for {}",
+                path.display(),
+                missing_required.join(", ")
+            ),
+        )
+        .into());
     }
 
     if engines.len() < 2 {
