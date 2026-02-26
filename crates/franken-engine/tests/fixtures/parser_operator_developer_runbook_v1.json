@@ -1,0 +1,78 @@
+{
+  "schema_version": "franken-engine.parser-operator-developer-runbook.fixture.v1",
+  "contract_version": "1.0.0",
+  "bead_id": "bd-2mds.1.10.4",
+  "policy_id": "policy-parser-operator-developer-runbook-v1",
+  "required_modes": [
+    "check",
+    "test",
+    "clippy",
+    "ci",
+    "drill"
+  ],
+  "required_manifest_keys": [
+    "schema_version",
+    "bead_id",
+    "deterministic_env_schema_version",
+    "trace_id",
+    "decision_id",
+    "policy_id",
+    "deterministic_environment",
+    "replay_command",
+    "drill_replay_commands",
+    "commands",
+    "artifacts",
+    "operator_verification"
+  ],
+  "required_log_keys": [
+    "schema_version",
+    "trace_id",
+    "decision_id",
+    "policy_id",
+    "component",
+    "event",
+    "outcome",
+    "error_code"
+  ],
+  "drill_replay_commands": [
+    "./scripts/e2e/parser_error_recovery_adversarial_replay.sh",
+    "./scripts/e2e/parser_user_impact_regression_alarms_replay.sh"
+  ],
+  "incident_matrix": [
+    {
+      "scenario_id": "diagnostics_drift",
+      "symptom": "diagnostic hash drift",
+      "severity": "medium",
+      "expected_triage": "rerun_diagnostics_rubric",
+      "replay_command": "./scripts/run_parser_diagnostics_quality_rubric.sh ci"
+    },
+    {
+      "scenario_id": "recovery_failure",
+      "symptom": "resync failure",
+      "severity": "high",
+      "expected_triage": "rerun_error_recovery_replay",
+      "replay_command": "./scripts/e2e/parser_error_recovery_adversarial_replay.sh"
+    },
+    {
+      "scenario_id": "api_regression",
+      "symptom": "api compatibility regression",
+      "severity": "high",
+      "expected_triage": "rerun_api_compatibility_gate",
+      "replay_command": "./scripts/run_parser_api_compatibility_gate.sh ci"
+    },
+    {
+      "scenario_id": "user_impact_alarm",
+      "symptom": "user impact slo alarm",
+      "severity": "critical",
+      "expected_triage": "hold_rollout_and_rerun_user_impact_replay",
+      "replay_command": "./scripts/e2e/parser_user_impact_regression_alarms_replay.sh"
+    },
+    {
+      "scenario_id": "failover_nondeterminism",
+      "symptom": "fallback nondeterminism",
+      "severity": "critical",
+      "expected_triage": "fail_closed_and_rerun_failover_controls",
+      "replay_command": "./scripts/run_parser_failover_controls_gate.sh ci"
+    }
+  ]
+}
