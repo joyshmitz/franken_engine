@@ -1450,6 +1450,9 @@ pub fn audit_collected_artifacts(artifacts: &CollectedArtifacts) -> ArtifactComp
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ScenarioClass {
+    Baseline,
+    Differential,
+    Chaos,
     Stress,
     FaultInjection,
     CrossArch,
@@ -1461,6 +1464,12 @@ pub struct ScenarioMatrixEntry {
     pub scenario_id: String,
     pub scenario_class: ScenarioClass,
     pub fixture: TestFixture,
+    #[serde(default)]
+    pub baseline_scenario_id: Option<String>,
+    #[serde(default)]
+    pub chaos_profile: Option<String>,
+    #[serde(default)]
+    pub unit_anchor_ids: Vec<String>,
     #[serde(default)]
     pub target_arch: Option<String>,
     #[serde(default)]
@@ -1482,6 +1491,9 @@ pub struct ScenarioArtifactPaths {
 pub struct ScenarioEvidencePack {
     pub scenario_id: String,
     pub scenario_class: ScenarioClass,
+    pub baseline_scenario_id: Option<String>,
+    pub chaos_profile: Option<String>,
+    pub unit_anchor_ids: Vec<String>,
     pub target_arch: Option<String>,
     pub worker_pool: Option<String>,
     pub fixture_id: String,
@@ -1535,6 +1547,51 @@ pub fn run_scenario_matrix(
                 "scenario_id is required",
             ));
         }
+        if scenario.unit_anchor_ids.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "scenario {} requires at least one unit_anchor_id",
+                    scenario.scenario_id
+                ),
+            ));
+        }
+
+        match scenario.scenario_class {
+            ScenarioClass::Differential => {
+                let missing_baseline = scenario
+                    .baseline_scenario_id
+                    .as_ref()
+                    .map(|value| value.trim().is_empty())
+                    .unwrap_or(true);
+                if missing_baseline {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!(
+                            "scenario {} (differential) requires baseline_scenario_id",
+                            scenario.scenario_id
+                        ),
+                    ));
+                }
+            }
+            ScenarioClass::Chaos => {
+                let missing_profile = scenario
+                    .chaos_profile
+                    .as_ref()
+                    .map(|value| value.trim().is_empty())
+                    .unwrap_or(true);
+                if missing_profile {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!(
+                            "scenario {} (chaos) requires chaos_profile",
+                            scenario.scenario_id
+                        ),
+                    ));
+                }
+            }
+            _ => {}
+        }
 
         let run = runner
             .run_fixture(&scenario.fixture)
@@ -1547,6 +1604,9 @@ pub fn run_scenario_matrix(
         packs.push(ScenarioEvidencePack {
             scenario_id: scenario.scenario_id.clone(),
             scenario_class: scenario.scenario_class,
+            baseline_scenario_id: scenario.baseline_scenario_id.clone(),
+            chaos_profile: scenario.chaos_profile.clone(),
+            unit_anchor_ids: scenario.unit_anchor_ids.clone(),
             target_arch: scenario.target_arch.clone(),
             worker_pool: scenario.worker_pool.clone(),
             fixture_id: run.fixture_id.clone(),
@@ -1578,7 +1638,7 @@ pub fn run_scenario_matrix(
     let fail_scenarios = total_scenarios.saturating_sub(pass_scenarios);
     let summary_id = scenario_matrix_summary_id(&packs);
     let report = ScenarioMatrixReport {
-        schema_version: "franken-engine.e2e-scenario-matrix.report.v1".to_string(),
+        schema_version: "franken-engine.e2e-scenario-matrix.report.v2".to_string(),
         summary_id,
         total_scenarios,
         pass_scenarios,
@@ -1604,9 +1664,21 @@ pub fn run_scenario_matrix(
 fn scenario_matrix_summary_id(packs: &[ScenarioEvidencePack]) -> String {
     let mut preimage = String::new();
     for pack in packs {
+        let anchors = if pack.unit_anchor_ids.is_empty() {
+            "-".to_string()
+        } else {
+            pack.unit_anchor_ids.join(",")
+        };
         let line = format!(
-            "{}:{}:{}:{}:{};",
-            pack.scenario_id, pack.run_id, pack.output_digest, pack.pass, pack.replay_pointer
+            "{}:{}:{}:{}:{}:{}:{}:{};",
+            pack.scenario_id,
+            pack.run_id,
+            pack.output_digest,
+            pack.pass,
+            pack.replay_pointer,
+            pack.baseline_scenario_id.as_deref().unwrap_or("-"),
+            pack.chaos_profile.as_deref().unwrap_or("-"),
+            anchors
         );
         preimage.push_str(&line);
     }
@@ -1615,12 +1687,24 @@ fn scenario_matrix_summary_id(packs: &[ScenarioEvidencePack]) -> String {
 
 fn scenario_matrix_summary_markdown(report: &ScenarioMatrixReport) -> String {
     let mut markdown = String::from(
-        "# E2E Scenario Matrix Summary\n\n| scenario_id | class | pass | run_id | output_digest |\n|---|---|---:|---|---|\n",
+        "# E2E Scenario Matrix Summary\n\n| scenario_id | class | pass | run_id | output_digest | baseline | chaos_profile | unit_anchors |\n|---|---|---:|---|---|---|---|---|\n",
     );
     for pack in &report.scenario_packs {
+        let anchors = if pack.unit_anchor_ids.is_empty() {
+            "-".to_string()
+        } else {
+            pack.unit_anchor_ids.join(",")
+        };
         markdown.push_str(&format!(
-            "| {} | {:?} | {} | {} | {} |\n",
-            pack.scenario_id, pack.scenario_class, pack.pass, pack.run_id, pack.output_digest
+            "| {} | {:?} | {} | {} | {} | {} | {} | {} |\n",
+            pack.scenario_id,
+            pack.scenario_class,
+            pack.pass,
+            pack.run_id,
+            pack.output_digest,
+            pack.baseline_scenario_id.as_deref().unwrap_or("-"),
+            pack.chaos_profile.as_deref().unwrap_or("-"),
+            anchors
         ));
     }
     markdown.push_str(&format!(
@@ -3030,6 +3114,9 @@ mod tests {
     #[test]
     fn scenario_class_serde_roundtrip() {
         let variants = [
+            ScenarioClass::Baseline,
+            ScenarioClass::Differential,
+            ScenarioClass::Chaos,
             ScenarioClass::Stress,
             ScenarioClass::FaultInjection,
             ScenarioClass::CrossArch,
@@ -3104,6 +3191,9 @@ mod tests {
             scenario_id: "stress-1".into(),
             scenario_class: ScenarioClass::Stress,
             fixture: valid_fixture(),
+            baseline_scenario_id: None,
+            chaos_profile: None,
+            unit_anchor_ids: vec!["unit.e2e_harness.scenario_matrix_entry_serde_roundtrip".into()],
             target_arch: Some("x86_64".into()),
             worker_pool: None,
         };

@@ -292,16 +292,56 @@ fn golden_store_reports_missing_baseline() {
 }
 
 #[test]
-fn scenario_matrix_emits_evidence_packs_for_stress_fault_and_cross_arch() {
+fn scenario_matrix_emits_evidence_packs_for_baseline_differential_chaos_and_cross_arch() {
     let runner = DeterministicRunner::default();
     let root = test_temp_dir("scenario-matrix");
     let collector = ArtifactCollector::new(root.join("artifacts")).expect("collector");
 
     let scenarios = vec![
         ScenarioMatrixEntry {
+            scenario_id: "baseline-01".to_string(),
+            scenario_class: ScenarioClass::Baseline,
+            fixture: non_error_fixture("baseline-fixture", 77, 6),
+            baseline_scenario_id: None,
+            chaos_profile: None,
+            unit_anchor_ids: vec![
+                "unit.e2e_harness.baseline_lane_replay_contract".to_string(),
+                "unit.e2e_harness.baseline_lane_log_schema".to_string(),
+            ],
+            target_arch: None,
+            worker_pool: Some("pool-baseline".to_string()),
+        },
+        ScenarioMatrixEntry {
+            scenario_id: "differential-01".to_string(),
+            scenario_class: ScenarioClass::Differential,
+            fixture: non_error_fixture("differential-fixture", 78, 7),
+            baseline_scenario_id: Some("baseline-01".to_string()),
+            chaos_profile: None,
+            unit_anchor_ids: vec![
+                "unit.e2e_harness.diff_lane_baseline_alignment".to_string(),
+            ],
+            target_arch: None,
+            worker_pool: Some("pool-diff".to_string()),
+        },
+        ScenarioMatrixEntry {
+            scenario_id: "chaos-01".to_string(),
+            scenario_class: ScenarioClass::Chaos,
+            fixture: non_error_fixture("chaos-fixture", 79, 9),
+            baseline_scenario_id: None,
+            chaos_profile: Some("latency_spike_partial_failure".to_string()),
+            unit_anchor_ids: vec![
+                "unit.e2e_harness.chaos_lane_deterministic_seed_contract".to_string(),
+            ],
+            target_arch: None,
+            worker_pool: Some("pool-chaos".to_string()),
+        },
+        ScenarioMatrixEntry {
             scenario_id: "stress-01".to_string(),
             scenario_class: ScenarioClass::Stress,
             fixture: non_error_fixture("stress-fixture", 123, 24),
+            baseline_scenario_id: None,
+            chaos_profile: None,
+            unit_anchor_ids: vec!["unit.e2e_harness.stress_lane_budget_guard".to_string()],
             target_arch: None,
             worker_pool: Some("pool-a".to_string()),
         },
@@ -309,6 +349,9 @@ fn scenario_matrix_emits_evidence_packs_for_stress_fault_and_cross_arch() {
             scenario_id: "fault-01".to_string(),
             scenario_class: ScenarioClass::FaultInjection,
             fixture: sample_fixture(),
+            baseline_scenario_id: None,
+            chaos_profile: None,
+            unit_anchor_ids: vec!["unit.e2e_harness.fault_lane_error_contract".to_string()],
             target_arch: None,
             worker_pool: Some("pool-b".to_string()),
         },
@@ -316,21 +359,33 @@ fn scenario_matrix_emits_evidence_packs_for_stress_fault_and_cross_arch() {
             scenario_id: "cross-arch-01".to_string(),
             scenario_class: ScenarioClass::CrossArch,
             fixture: non_error_fixture("cross-arch-fixture", 321, 8),
+            baseline_scenario_id: None,
+            chaos_profile: None,
+            unit_anchor_ids: vec!["unit.e2e_harness.cross_arch_repro_contract".to_string()],
             target_arch: Some("aarch64-unknown-linux-gnu".to_string()),
             worker_pool: Some("pool-cross".to_string()),
         },
     ];
 
     let execution = run_scenario_matrix(&runner, &collector, &scenarios).expect("matrix run");
-    assert_eq!(execution.report.total_scenarios, 3);
-    assert_eq!(execution.report.pass_scenarios, 2);
+    assert_eq!(execution.report.total_scenarios, 6);
+    assert_eq!(execution.report.pass_scenarios, 5);
     assert_eq!(execution.report.fail_scenarios, 1);
+    assert_eq!(
+        execution.report.schema_version,
+        "franken-engine.e2e-scenario-matrix.report.v2"
+    );
     assert!(execution.summary_json_path.exists());
     assert!(execution.summary_markdown_path.exists());
 
     for pack in &execution.report.scenario_packs {
         assert!(!pack.scenario_id.is_empty());
         assert!(pack.replay_pointer.starts_with("replay://"));
+        assert!(
+            !pack.unit_anchor_ids.is_empty(),
+            "unit anchors must be present for {}",
+            pack.scenario_id
+        );
         assert!(
             collector
                 .root()
@@ -364,12 +419,36 @@ fn scenario_matrix_emits_evidence_packs_for_stress_fault_and_cross_arch() {
         cross_arch.target_arch.as_deref(),
         Some("aarch64-unknown-linux-gnu")
     );
+    let differential = execution
+        .report
+        .scenario_packs
+        .iter()
+        .find(|pack| pack.scenario_class == ScenarioClass::Differential)
+        .expect("differential scenario");
+    assert_eq!(
+        differential.baseline_scenario_id.as_deref(),
+        Some("baseline-01")
+    );
+    let chaos = execution
+        .report
+        .scenario_packs
+        .iter()
+        .find(|pack| pack.scenario_class == ScenarioClass::Chaos)
+        .expect("chaos scenario");
+    assert_eq!(
+        chaos.chaos_profile.as_deref(),
+        Some("latency_spike_partial_failure")
+    );
 
     let summary_json =
         fs::read_to_string(&execution.summary_json_path).expect("matrix summary json");
+    assert!(summary_json.contains("baseline-01"));
+    assert!(summary_json.contains("differential-01"));
+    assert!(summary_json.contains("chaos-01"));
     assert!(summary_json.contains("stress-01"));
     assert!(summary_json.contains("fault-01"));
     assert!(summary_json.contains("cross-arch-01"));
+    assert!(summary_json.contains("franken-engine.e2e-scenario-matrix.report.v2"));
 }
 
 #[test]
@@ -379,4 +458,80 @@ fn scenario_matrix_rejects_empty_input() {
     let collector = ArtifactCollector::new(root.join("artifacts")).expect("collector");
     let err = run_scenario_matrix(&runner, &collector, &[]).expect_err("must reject empty matrix");
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+}
+
+#[test]
+fn scenario_matrix_rejects_missing_unit_anchors() {
+    let runner = DeterministicRunner::default();
+    let root = test_temp_dir("scenario-matrix-missing-unit-anchors");
+    let collector = ArtifactCollector::new(root.join("artifacts")).expect("collector");
+    let scenarios = vec![ScenarioMatrixEntry {
+        scenario_id: "baseline-missing-unit".to_string(),
+        scenario_class: ScenarioClass::Baseline,
+        fixture: non_error_fixture("baseline-missing-unit", 710, 4),
+        baseline_scenario_id: None,
+        chaos_profile: None,
+        unit_anchor_ids: Vec::new(),
+        target_arch: None,
+        worker_pool: Some("pool-baseline".to_string()),
+    }];
+
+    let err = run_scenario_matrix(&runner, &collector, &scenarios)
+        .expect_err("missing unit anchors should fail");
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+    assert!(
+        err.to_string().contains("requires at least one unit_anchor_id"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn scenario_matrix_rejects_differential_without_baseline_id() {
+    let runner = DeterministicRunner::default();
+    let root = test_temp_dir("scenario-matrix-differential-missing-baseline");
+    let collector = ArtifactCollector::new(root.join("artifacts")).expect("collector");
+    let scenarios = vec![ScenarioMatrixEntry {
+        scenario_id: "differential-no-baseline".to_string(),
+        scenario_class: ScenarioClass::Differential,
+        fixture: non_error_fixture("differential-no-baseline", 711, 5),
+        baseline_scenario_id: None,
+        chaos_profile: None,
+        unit_anchor_ids: vec!["unit.e2e_harness.diff_missing_baseline".to_string()],
+        target_arch: None,
+        worker_pool: Some("pool-diff".to_string()),
+    }];
+
+    let err = run_scenario_matrix(&runner, &collector, &scenarios)
+        .expect_err("differential scenarios require baseline_scenario_id");
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+    assert!(
+        err.to_string()
+            .contains("(differential) requires baseline_scenario_id"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn scenario_matrix_rejects_chaos_without_profile() {
+    let runner = DeterministicRunner::default();
+    let root = test_temp_dir("scenario-matrix-chaos-missing-profile");
+    let collector = ArtifactCollector::new(root.join("artifacts")).expect("collector");
+    let scenarios = vec![ScenarioMatrixEntry {
+        scenario_id: "chaos-no-profile".to_string(),
+        scenario_class: ScenarioClass::Chaos,
+        fixture: non_error_fixture("chaos-no-profile", 712, 5),
+        baseline_scenario_id: None,
+        chaos_profile: None,
+        unit_anchor_ids: vec!["unit.e2e_harness.chaos_missing_profile".to_string()],
+        target_arch: None,
+        worker_pool: Some("pool-chaos".to_string()),
+    }];
+
+    let err = run_scenario_matrix(&runner, &collector, &scenarios)
+        .expect_err("chaos scenarios require chaos_profile");
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+    assert!(
+        err.to_string().contains("(chaos) requires chaos_profile"),
+        "unexpected error: {err}"
+    );
 }
