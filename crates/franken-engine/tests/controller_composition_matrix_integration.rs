@@ -173,9 +173,11 @@ fn default_matrix_blocked_pairs() {
     let m = ControllerCompositionMatrix::default_matrix();
     let blocked = m.blocked_pairs();
     assert!(blocked.len() >= 2); // Router-Router, Fallback-Fallback
-    assert!(blocked
-        .iter()
-        .any(|e| e.role_a == ControllerRole::Router && e.role_b == ControllerRole::Router));
+    assert!(
+        blocked
+            .iter()
+            .any(|e| e.role_a == ControllerRole::Router && e.role_b == ControllerRole::Router)
+    );
 }
 
 #[test]
@@ -356,10 +358,12 @@ fn gate_rejects_empty_deployment() {
     let m = ControllerCompositionMatrix::default_matrix();
     let result = evaluate_composition_gate("trace-2", &[], &m, &no_bench_config());
     assert!(!result.is_approved());
-    assert!(result
-        .failures
-        .iter()
-        .any(|f| matches!(f, GateFailureReason::EmptyDeployment)));
+    assert!(
+        result
+            .failures
+            .iter()
+            .any(|f| matches!(f, GateFailureReason::EmptyDeployment))
+    );
 }
 
 // ===========================================================================
@@ -375,10 +379,12 @@ fn gate_rejects_duplicate_controllers() {
     let m = ControllerCompositionMatrix::default_matrix();
     let result = evaluate_composition_gate("trace-3", &controllers, &m, &no_bench_config());
     assert!(!result.is_approved());
-    assert!(result
-        .failures
-        .iter()
-        .any(|f| matches!(f, GateFailureReason::DuplicateController { .. })));
+    assert!(
+        result
+            .failures
+            .iter()
+            .any(|f| matches!(f, GateFailureReason::DuplicateController { .. }))
+    );
 }
 
 // ===========================================================================
@@ -394,10 +400,12 @@ fn gate_rejects_mutually_exclusive_roles() {
     let m = ControllerCompositionMatrix::default_matrix();
     let result = evaluate_composition_gate("trace-4", &controllers, &m, &no_bench_config());
     assert!(!result.is_approved());
-    assert!(result
-        .failures
-        .iter()
-        .any(|f| matches!(f, GateFailureReason::MutuallyExclusiveRoles { .. })));
+    assert!(
+        result
+            .failures
+            .iter()
+            .any(|f| matches!(f, GateFailureReason::MutuallyExclusiveRoles { .. }))
+    );
 }
 
 // ===========================================================================
@@ -431,10 +439,12 @@ fn gate_rejects_invalid_timescale() {
     let m = ControllerCompositionMatrix::default_matrix();
     let result = evaluate_composition_gate("trace-6", &controllers, &m, &no_bench_config());
     assert!(!result.is_approved());
-    assert!(result
-        .failures
-        .iter()
-        .any(|f| matches!(f, GateFailureReason::InvalidTimescale { .. })));
+    assert!(
+        result
+            .failures
+            .iter()
+            .any(|f| matches!(f, GateFailureReason::InvalidTimescale { .. }))
+    );
 }
 
 // ===========================================================================
@@ -724,12 +734,7 @@ fn five_controller_deployment() {
     let controllers = vec![
         ts("router", ControllerRole::Router, 1_000_000, 500_000),
         ts("optimizer", ControllerRole::Optimizer, 5_000_000, 3_000_000),
-        ts(
-            "fallback",
-            ControllerRole::Fallback,
-            10_000_000,
-            5_000_000,
-        ),
+        ts("fallback", ControllerRole::Fallback, 10_000_000, 5_000_000),
         ts("monitor", ControllerRole::Monitor, 2_000_000, 1_000_000),
         ts("custom_ext", ControllerRole::Custom, 8_000_000, 4_000_000),
     ];

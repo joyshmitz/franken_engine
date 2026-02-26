@@ -428,7 +428,10 @@ fn frx_20_3_structured_log_requirements_are_pinned() {
         "outcome",
         "error_code",
     ] {
-        assert!(required.contains(field), "missing structured log field: {field}");
+        assert!(
+            required.contains(field),
+            "missing structured log field: {field}"
+        );
     }
 
     let dimensions: BTreeSet<_> = contract

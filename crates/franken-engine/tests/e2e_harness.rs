@@ -317,9 +317,7 @@ fn scenario_matrix_emits_evidence_packs_for_baseline_differential_chaos_and_cros
             fixture: non_error_fixture("differential-fixture", 78, 7),
             baseline_scenario_id: Some("baseline-01".to_string()),
             chaos_profile: None,
-            unit_anchor_ids: vec![
-                "unit.e2e_harness.diff_lane_baseline_alignment".to_string(),
-            ],
+            unit_anchor_ids: vec!["unit.e2e_harness.diff_lane_baseline_alignment".to_string()],
             target_arch: None,
             worker_pool: Some("pool-diff".to_string()),
         },
@@ -480,7 +478,8 @@ fn scenario_matrix_rejects_missing_unit_anchors() {
         .expect_err("missing unit anchors should fail");
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
     assert!(
-        err.to_string().contains("requires at least one unit_anchor_id"),
+        err.to_string()
+            .contains("requires at least one unit_anchor_id"),
         "unexpected error: {err}"
     );
 }

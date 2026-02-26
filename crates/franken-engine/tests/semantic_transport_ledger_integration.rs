@@ -10,13 +10,13 @@ use std::collections::BTreeSet;
 use frankenengine_engine::hash_tiers::ContentHash;
 use frankenengine_engine::semantic_contract_baseline::SemanticContractVersion;
 use frankenengine_engine::semantic_transport_ledger::{
-    BehavioralDelta, CompatibilityMorphism, ContractDomain, MorphismSpec, RegressionMask,
-    SemanticTransportAnalyzer, SemanticTransportLedger, TransportAnalysisInput,
-    TransportAnalysisOutcome, TransportAnalysisResult, TransportAnalyzerConfig, TransportEntry,
-    TransportEntrySpec, TransportError, TransportVerdict, VersionPair, render_transport_report,
-    should_block_gate, DEBT_ADAPTER_REQUIRED, DEBT_BUDGET_EXHAUSTED, DEBT_MORPHISM_UNVERIFIED,
-    DEBT_REGRESSION_MASKED, DEBT_TRANSPORT_INCOMPATIBLE, TRANSPORT_LEDGER_BEAD_ID,
-    TRANSPORT_LEDGER_SCHEMA_VERSION,
+    BehavioralDelta, CompatibilityMorphism, ContractDomain, DEBT_ADAPTER_REQUIRED,
+    DEBT_BUDGET_EXHAUSTED, DEBT_MORPHISM_UNVERIFIED, DEBT_REGRESSION_MASKED,
+    DEBT_TRANSPORT_INCOMPATIBLE, MorphismSpec, RegressionMask, SemanticTransportAnalyzer,
+    SemanticTransportLedger, TRANSPORT_LEDGER_BEAD_ID, TRANSPORT_LEDGER_SCHEMA_VERSION,
+    TransportAnalysisInput, TransportAnalysisOutcome, TransportAnalysisResult,
+    TransportAnalyzerConfig, TransportEntry, TransportEntrySpec, TransportError, TransportVerdict,
+    VersionPair, render_transport_report, should_block_gate,
 };
 
 // ===========================================================================
@@ -1508,7 +1508,12 @@ fn entry_hashes_are_unique() {
         ),
     ];
     let result = analyzer().analyze(&simple_input(es)).unwrap();
-    let hashes: BTreeSet<_> = result.ledger.entries.iter().map(|e| &e.entry_hash).collect();
+    let hashes: BTreeSet<_> = result
+        .ledger
+        .entries
+        .iter()
+        .map(|e| &e.entry_hash)
+        .collect();
     assert_eq!(
         hashes.len(),
         result.ledger.entries.len(),
@@ -1758,7 +1763,13 @@ fn morphism_with_broken_invariants_not_safe() {
             ContractDomain::Context,
             ver(1, 0, 0),
             ver(2, 0, 0),
-            vec![delta("resolution", "nearest", "default-value", 400_000, true)],
+            vec![delta(
+                "resolution",
+                "nearest",
+                "default-value",
+                400_000,
+                true,
+            )],
             &["resolves-closest", "default-fallback"],
             &["resolves-closest"],
             &["default-fallback"],

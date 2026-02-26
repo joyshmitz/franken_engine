@@ -26,10 +26,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use frankenengine_engine::global_coherence_checker::{
     CoherenceCheckInput, CoherenceCheckResult, CoherenceError, CoherenceOutcome,
     CoherenceViolationKind, CompositionEdge, CompositionEdgeKind, CompositionGraph,
-    GlobalCoherenceChecker, SeverityScore, DEBT_CAPABILITY_GAP, DEBT_EFFECT_CYCLE,
-    DEBT_HOOK_CLEANUP_MISMATCH, DEBT_HYDRATION_BOUNDARY_CONFLICT,
-    DEBT_SUSPENSE_BOUNDARY_CONFLICT, DEBT_UNRESOLVED_CONTEXT,
-    GLOBAL_COHERENCE_BEAD_ID, GLOBAL_COHERENCE_SCHEMA_VERSION,
+    DEBT_CAPABILITY_GAP, DEBT_EFFECT_CYCLE, DEBT_HOOK_CLEANUP_MISMATCH,
+    DEBT_HYDRATION_BOUNDARY_CONFLICT, DEBT_SUSPENSE_BOUNDARY_CONFLICT, DEBT_UNRESOLVED_CONTEXT,
+    GLOBAL_COHERENCE_BEAD_ID, GLOBAL_COHERENCE_SCHEMA_VERSION, GlobalCoherenceChecker,
+    SeverityScore,
 };
 use frankenengine_engine::hash_tiers::ContentHash;
 use frankenengine_engine::semantic_contract_baseline::{
@@ -118,10 +118,7 @@ fn atlas(entries: Vec<LocalSemanticAtlasEntry>) -> LocalSemanticAtlas {
     }
 }
 
-fn graph(
-    components: &[&str],
-    edges: &[(&str, &str, CompositionEdgeKind)],
-) -> CompositionGraph {
+fn graph(components: &[&str], edges: &[(&str, &str, CompositionEdgeKind)]) -> CompositionGraph {
     let mut g = CompositionGraph::new();
     for c in components {
         g.add_component(c.to_string()).unwrap();
@@ -157,7 +154,10 @@ fn checker() -> GlobalCoherenceChecker {
     GlobalCoherenceChecker::new()
 }
 
-fn has_violation_kind(result: &CoherenceCheckResult, pred: impl Fn(&CoherenceViolationKind) -> bool) -> bool {
+fn has_violation_kind(
+    result: &CoherenceCheckResult,
+    pred: impl Fn(&CoherenceViolationKind) -> bool,
+) -> bool {
     result.violations.iter().any(|v| pred(&v.kind))
 }
 
@@ -202,7 +202,10 @@ fn debt_codes_follow_naming_convention() {
         DEBT_HOOK_CLEANUP_MISMATCH,
         DEBT_HYDRATION_BOUNDARY_CONFLICT,
     ] {
-        assert!(code.starts_with("FE-FRX-14-2-GLOBAL-"), "code {code} missing prefix");
+        assert!(
+            code.starts_with("FE-FRX-14-2-GLOBAL-"),
+            "code {code} missing prefix"
+        );
     }
 }
 
@@ -301,10 +304,7 @@ fn add_duplicate_component_is_idempotent() {
 
 #[test]
 fn add_edge_increments_count() {
-    let g = graph(
-        &["A", "B"],
-        &[("A", "B", CompositionEdgeKind::ParentChild)],
-    );
+    let g = graph(&["A", "B"], &[("A", "B", CompositionEdgeKind::ParentChild)]);
     assert_eq!(g.edge_count(), 1);
 }
 
@@ -409,20 +409,14 @@ fn adjacency_for_kind_filters_correctly() {
 
 #[test]
 fn adjacency_for_nonexistent_kind_returns_empty() {
-    let g = graph(
-        &["A", "B"],
-        &[("A", "B", CompositionEdgeKind::ParentChild)],
-    );
+    let g = graph(&["A", "B"], &[("A", "B", CompositionEdgeKind::ParentChild)]);
     let cap = g.adjacency_for_kind(&CompositionEdgeKind::CapabilityBoundary);
     assert!(cap.is_empty());
 }
 
 #[test]
 fn graph_serde_round_trip() {
-    let g = graph(
-        &["X", "Y"],
-        &[("X", "Y", CompositionEdgeKind::ParentChild)],
-    );
+    let g = graph(&["X", "Y"], &[("X", "Y", CompositionEdgeKind::ParentChild)]);
     let json = serde_json::to_string(&g).unwrap();
     let back: CompositionGraph = serde_json::from_str(&json).unwrap();
     assert_eq!(g, back);
@@ -509,7 +503,10 @@ fn error_display_empty_atlas() {
 
 #[test]
 fn error_display_empty_graph() {
-    assert_eq!(CoherenceError::EmptyGraph.to_string(), "composition graph is empty");
+    assert_eq!(
+        CoherenceError::EmptyGraph.to_string(),
+        "composition graph is empty"
+    );
 }
 
 #[test]
@@ -685,11 +682,7 @@ fn unresolved_context_detected() {
 
 #[test]
 fn multiple_unresolved_contexts() {
-    let inp = input(
-        vec![entry_ctx("C", &["ctx_a", "ctx_b"], &[])],
-        &["C"],
-        &[],
-    );
+    let inp = input(vec![entry_ctx("C", &["ctx_a", "ctx_b"], &[])], &["C"], &[]);
     let result = checker().check(&inp).unwrap();
     assert_eq!(result.outcome, CoherenceOutcome::Incoherent);
     let unresolved_count = result
@@ -702,11 +695,7 @@ fn multiple_unresolved_contexts() {
 
 #[test]
 fn unresolved_context_severity_is_critical() {
-    let inp = input(
-        vec![entry_ctx("C", &["missing"], &[])],
-        &["C"],
-        &[],
-    );
+    let inp = input(vec![entry_ctx("C", &["missing"], &[])], &["C"], &[]);
     let result = checker().check(&inp).unwrap();
     let violation = result
         .violations
@@ -734,11 +723,7 @@ fn orphaned_provider_detected() {
 
 #[test]
 fn orphaned_provider_severity_is_low() {
-    let inp = input(
-        vec![entry_ctx("P", &[], &["orphan"])],
-        &["P"],
-        &[],
-    );
+    let inp = input(vec![entry_ctx("P", &[], &["orphan"])], &["P"], &[]);
     let result = checker().check(&inp).unwrap();
     let violation = result
         .violations
@@ -751,11 +736,7 @@ fn orphaned_provider_severity_is_low() {
 
 #[test]
 fn orphaned_provider_gives_coherent_with_warnings() {
-    let inp = input(
-        vec![entry_ctx("P", &[], &["unused"])],
-        &["P"],
-        &[],
-    );
+    let inp = input(vec![entry_ctx("P", &[], &["unused"])], &["P"], &[]);
     let result = checker().check(&inp).unwrap();
     assert_eq!(result.outcome, CoherenceOutcome::CoherentWithWarnings);
     assert!(result.is_coherent());
@@ -894,14 +875,10 @@ fn capability_boundary_count_tracked() {
     let mut inp = input(
         vec![entry("B1"), entry("B2"), entry("C")],
         &["B1", "B2", "C"],
-        &[
-            ("B1", "C", CompositionEdgeKind::ParentChild),
-        ],
+        &[("B1", "C", CompositionEdgeKind::ParentChild)],
     );
-    inp.capability_boundary_components
-        .insert("B1".to_string());
-    inp.capability_boundary_components
-        .insert("B2".to_string());
+    inp.capability_boundary_components.insert("B1".to_string());
+    inp.capability_boundary_components.insert("B2".to_string());
 
     let result = checker().check(&inp).unwrap();
     assert_eq!(result.capability_boundaries_checked, 2);
@@ -1038,8 +1015,7 @@ fn suspense_async_sync_layout_mix_detected() {
             ),
         ],
     );
-    inp.suspense_components
-        .insert("SuspBoundary".to_string());
+    inp.suspense_components.insert("SuspBoundary".to_string());
 
     let result = checker().check(&inp).unwrap();
     assert!(has_violation_kind(&result, |k| matches!(
@@ -1134,8 +1110,7 @@ fn hydration_non_deterministic_child_detected() {
         &["HydrBoundary", "BadChild"],
         &[("HydrBoundary", "BadChild", CompositionEdgeKind::ParentChild)],
     );
-    inp.hydration_components
-        .insert("HydrBoundary".to_string());
+    inp.hydration_components.insert("HydrBoundary".to_string());
 
     let result = checker().check(&inp).unwrap();
     assert!(has_violation_kind(&result, |k| matches!(
@@ -1188,11 +1163,7 @@ fn hydration_safe_children_no_violation() {
 
 #[test]
 fn hydration_no_children_no_violation() {
-    let mut inp = input(
-        vec![entry("Hbnd")],
-        &["Hbnd"],
-        &[],
-    );
+    let mut inp = input(vec![entry("Hbnd")], &["Hbnd"], &[]);
     inp.hydration_components.insert("Hbnd".to_string());
 
     let result = checker().check(&inp).unwrap();
@@ -1204,11 +1175,7 @@ fn hydration_no_children_no_violation() {
 
 #[test]
 fn hydration_boundaries_counted() {
-    let mut inp = input(
-        vec![entry("H1"), entry("H2")],
-        &["H1", "H2"],
-        &[],
-    );
+    let mut inp = input(vec![entry("H1"), entry("H2")], &["H1", "H2"], &[]);
     inp.hydration_components.insert("H1".to_string());
     inp.hydration_components.insert("H2".to_string());
 
@@ -1320,10 +1287,7 @@ fn budget_exhaustion_limits_violations() {
 fn budget_of_one_stops_early() {
     let c = GlobalCoherenceChecker::new().with_violation_budget(1);
     let inp = input(
-        vec![
-            entry_ctx("C1", &["a"], &[]),
-            entry_ctx("C2", &["b"], &[]),
-        ],
+        vec![entry_ctx("C1", &["a"], &[]), entry_ctx("C2", &["b"], &[])],
         &["C1", "C2"],
         &[],
     );
@@ -1350,9 +1314,7 @@ fn blocking_violations_filtered() {
     let blocking = result.blocking_violations();
     // Unresolved context is blocking (critical), orphaned provider is not (low)
     assert!(blocking.len() >= 1);
-    assert!(blocking
-        .iter()
-        .all(|v| v.severity.is_blocking()));
+    assert!(blocking.iter().all(|v| v.severity.is_blocking()));
 }
 
 #[test]
@@ -1380,22 +1342,14 @@ fn is_coherent_true_for_coherent_and_warnings() {
 
     // CoherentWithWarnings (orphaned provider)
     let r2 = checker()
-        .check(&input(
-            vec![entry_ctx("P", &[], &["unused"])],
-            &["P"],
-            &[],
-        ))
+        .check(&input(vec![entry_ctx("P", &[], &["unused"])], &["P"], &[]))
         .unwrap();
     assert!(r2.is_coherent());
 }
 
 #[test]
 fn is_coherent_false_for_incoherent() {
-    let inp = input(
-        vec![entry_ctx("C", &["missing"], &[])],
-        &["C"],
-        &[],
-    );
+    let inp = input(vec![entry_ctx("C", &["missing"], &[])], &["C"], &[]);
     let result = checker().check(&inp).unwrap();
     assert!(!result.is_coherent());
 }
@@ -1422,11 +1376,7 @@ fn same_input_produces_same_result_hash() {
 #[test]
 fn different_violations_produce_different_hashes() {
     let inp1 = input(vec![entry("A")], &["A"], &[]);
-    let inp2 = input(
-        vec![entry_ctx("A", &["missing"], &[])],
-        &["A"],
-        &[],
-    );
+    let inp2 = input(vec![entry_ctx("A", &["missing"], &[])], &["A"], &[]);
     let r1 = checker().check(&inp1).unwrap();
     let r2 = checker().check(&inp2).unwrap();
     assert_ne!(r1.result_hash, r2.result_hash);
@@ -1438,11 +1388,7 @@ fn different_violations_produce_different_hashes() {
 
 #[test]
 fn violations_have_evidence_hashes() {
-    let inp = input(
-        vec![entry_ctx("C", &["missing"], &[])],
-        &["C"],
-        &[],
-    );
+    let inp = input(vec![entry_ctx("C", &["missing"], &[])], &["C"], &[]);
     let result = checker().check(&inp).unwrap();
     for v in &result.violations {
         // Evidence hash should not be zero-length
@@ -1452,11 +1398,7 @@ fn violations_have_evidence_hashes() {
 
 #[test]
 fn violations_have_valid_ids() {
-    let inp = input(
-        vec![entry_ctx("C", &["missing"], &[])],
-        &["C"],
-        &[],
-    );
+    let inp = input(vec![entry_ctx("C", &["missing"], &[])], &["C"], &[]);
     let result = checker().check(&inp).unwrap();
     for v in &result.violations {
         // ID should be non-empty
@@ -1466,11 +1408,7 @@ fn violations_have_valid_ids() {
 
 #[test]
 fn violations_carry_epoch() {
-    let mut inp = input(
-        vec![entry_ctx("C", &["missing"], &[])],
-        &["C"],
-        &[],
-    );
+    let mut inp = input(vec![entry_ctx("C", &["missing"], &[])], &["C"], &[]);
     inp.check_epoch = 999;
     let result = checker().check(&inp).unwrap();
     for v in &result.violations {
@@ -1616,11 +1554,7 @@ fn coherent_result_serde_round_trip() {
 
 #[test]
 fn incoherent_result_serde_round_trip() {
-    let inp = input(
-        vec![entry_ctx("C", &["missing"], &[])],
-        &["C"],
-        &[],
-    );
+    let inp = input(vec![entry_ctx("C", &["missing"], &[])], &["C"], &[]);
     let result = checker().check(&inp).unwrap();
     let json = serde_json::to_string(&result).unwrap();
     let back: CoherenceCheckResult = serde_json::from_str(&json).unwrap();
@@ -1644,7 +1578,10 @@ fn composition_edge_serde_round_trip() {
 #[test]
 fn coherence_check_input_serde_round_trip() {
     let inp = input(
-        vec![entry_ctx("P", &[], &["theme"]), entry_ctx("C", &["theme"], &[])],
+        vec![
+            entry_ctx("P", &[], &["theme"]),
+            entry_ctx("C", &["theme"], &[]),
+        ],
         &["P", "C"],
         &[("P", "C", CompositionEdgeKind::ParentChild)],
     );
@@ -1663,7 +1600,14 @@ fn combined_context_and_capability_violations() {
     let mut inp = input(
         vec![
             entry_full("Root", &[], &[], &["network"], &[], &[]),
-            entry_full("Child", &["missing_ctx"], &[], &["network", "eval"], &[], &[]),
+            entry_full(
+                "Child",
+                &["missing_ctx"],
+                &[],
+                &["network", "eval"],
+                &[],
+                &[],
+            ),
         ],
         &["Root", "Child"],
         &[("Root", "Child", CompositionEdgeKind::ParentChild)],
@@ -1712,7 +1656,14 @@ fn combined_effect_and_hydration_violations() {
 fn combined_hook_mismatch_and_orphaned_provider() {
     let inp = input(
         vec![
-            entry_full("A", &[], &["orphan_ctx"], &[], &[], &["label=useShared; cleanup=true"]),
+            entry_full(
+                "A",
+                &[],
+                &["orphan_ctx"],
+                &[],
+                &[],
+                &["label=useShared; cleanup=true"],
+            ),
             entry_full("B", &[], &[], &[], &[], &["label=useShared; cleanup=false"]),
         ],
         &["A", "B"],
@@ -1794,10 +1745,7 @@ fn deep_chain_ancestor_detection() {
 
 #[test]
 fn self_loop_parent_child_edge() {
-    let g = graph(
-        &["A"],
-        &[("A", "A", CompositionEdgeKind::ParentChild)],
-    );
+    let g = graph(&["A"], &[("A", "A", CompositionEdgeKind::ParentChild)]);
     assert_eq!(g.children_of("A"), vec!["A".to_string()]);
 }
 
@@ -1818,16 +1766,16 @@ fn component_with_no_atlas_entry_in_graph() {
     };
     // Should not panic
     let result = checker().check(&inp).unwrap();
-    assert!(result.outcome == CoherenceOutcome::Coherent || result.outcome == CoherenceOutcome::CoherentWithWarnings);
+    assert!(
+        result.outcome == CoherenceOutcome::Coherent
+            || result.outcome == CoherenceOutcome::CoherentWithWarnings
+    );
 }
 
 #[test]
 fn empty_effect_signature_is_benign() {
     let inp = input(
-        vec![
-            entry_effects("A", &[]),
-            entry_effects("B", &[]),
-        ],
+        vec![entry_effects("A", &[]), entry_effects("B", &[])],
         &["A", "B"],
         &[("A", "B", CompositionEdgeKind::ParentChild)],
     );
@@ -1842,8 +1790,8 @@ fn empty_effect_signature_is_benign() {
 fn hook_without_label_is_ignored() {
     let inp = input(
         vec![
-            entry_hooks("A", &["cleanup=true"]),     // no label
-            entry_hooks("B", &["cleanup=false"]),     // no label
+            entry_hooks("A", &["cleanup=true"]),  // no label
+            entry_hooks("B", &["cleanup=false"]), // no label
         ],
         &["A", "B"],
         &[],
@@ -1859,10 +1807,7 @@ fn hook_without_label_is_ignored() {
 #[test]
 fn total_severity_sums_correctly() {
     let inp = input(
-        vec![
-            entry_ctx("C1", &["a"], &[]),
-            entry_ctx("C2", &["b"], &[]),
-        ],
+        vec![entry_ctx("C1", &["a"], &[]), entry_ctx("C2", &["b"], &[])],
         &["C1", "C2"],
         &[],
     );
@@ -1981,11 +1926,7 @@ fn suspense_with_lazy_child() {
 
 #[test]
 fn unresolved_context_has_correct_debt_code() {
-    let inp = input(
-        vec![entry_ctx("C", &["missing"], &[])],
-        &["C"],
-        &[],
-    );
+    let inp = input(vec![entry_ctx("C", &["missing"], &[])], &["C"], &[]);
     let result = checker().check(&inp).unwrap();
     let v = result
         .violations
@@ -2092,8 +2033,17 @@ fn diamond_graph_context_coherence() {
 fn multiple_hooks_per_component() {
     let inp = input(
         vec![
-            entry_hooks("A", &["label=useAuth; cleanup=true", "label=useData; cleanup=false"]),
-            entry_hooks("B", &["label=useAuth; cleanup=true", "label=useData; cleanup=true"]),
+            entry_hooks(
+                "A",
+                &[
+                    "label=useAuth; cleanup=true",
+                    "label=useData; cleanup=false",
+                ],
+            ),
+            entry_hooks(
+                "B",
+                &["label=useAuth; cleanup=true", "label=useData; cleanup=true"],
+            ),
         ],
         &["A", "B"],
         &[],

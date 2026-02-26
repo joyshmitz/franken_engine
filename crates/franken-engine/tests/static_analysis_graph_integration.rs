@@ -13,7 +13,7 @@ use frankenengine_engine::static_analysis_graph::{
     AnalysisEdge, AnalysisEdgeId, AnalysisError, AnalysisEvent, AnalysisEventKind, AnalysisNode,
     AnalysisNodeId, AnalysisSummary, CapabilityBoundary, ComponentDescriptor, ComponentId,
     CycleReport, DependencyPath, EdgeKind, EffectClassification, HookKind, HookSlot, NodeKind,
-    StaticAnalysisGraph, STATIC_ANALYSIS_SCHEMA_VERSION,
+    STATIC_ANALYSIS_SCHEMA_VERSION, StaticAnalysisGraph,
 };
 
 // ===========================================================================
@@ -193,7 +193,11 @@ fn node_kind_display_all() {
         NodeKind::ScopeBoundary,
     ];
     let displays: BTreeSet<String> = kinds.iter().map(|k| k.to_string()).collect();
-    assert_eq!(displays.len(), kinds.len(), "all node kinds have unique display");
+    assert_eq!(
+        displays.len(),
+        kinds.len(),
+        "all node kinds have unique display"
+    );
 }
 
 #[test]
@@ -223,7 +227,11 @@ fn edge_kind_display_all() {
         EdgeKind::StateUpdateTrigger,
     ];
     let displays: BTreeSet<String> = kinds.iter().map(|k| k.to_string()).collect();
-    assert_eq!(displays.len(), kinds.len(), "all edge kinds have unique display");
+    assert_eq!(
+        displays.len(),
+        kinds.len(),
+        "all edge kinds have unique display"
+    );
 }
 
 #[test]
@@ -252,7 +260,11 @@ fn hook_kind_display_all() {
         HookKind::Custom,
     ];
     let displays: BTreeSet<String> = kinds.iter().map(|k| k.to_string()).collect();
-    assert_eq!(displays.len(), kinds.len(), "all hook kinds have unique display");
+    assert_eq!(
+        displays.len(),
+        kinds.len(),
+        "all hook kinds have unique display"
+    );
 }
 
 #[test]
@@ -611,7 +623,8 @@ fn duplicate_edge_is_error() {
     let mut g = StaticAnalysisGraph::new();
     g.add_node(component_node("A")).unwrap();
     g.add_node(component_node("B")).unwrap();
-    g.add_edge(edge("e1", "A", "B", EdgeKind::PropFlow)).unwrap();
+    g.add_edge(edge("e1", "A", "B", EdgeKind::PropFlow))
+        .unwrap();
     let result = g.add_edge(edge("e1", "A", "B", EdgeKind::PropFlow));
     assert!(matches!(result, Err(AnalysisError::DuplicateEdge(_))));
 }
@@ -669,8 +682,10 @@ fn incoming_edges() {
     g.add_node(component_node("A")).unwrap();
     g.add_node(component_node("B")).unwrap();
     g.add_node(component_node("C")).unwrap();
-    g.add_edge(edge("e1", "A", "C", EdgeKind::PropFlow)).unwrap();
-    g.add_edge(edge("e2", "B", "C", EdgeKind::PropFlow)).unwrap();
+    g.add_edge(edge("e1", "A", "C", EdgeKind::PropFlow))
+        .unwrap();
+    g.add_edge(edge("e2", "B", "C", EdgeKind::PropFlow))
+        .unwrap();
     let inc = g.incoming_edges(&nid("C"));
     assert_eq!(inc.len(), 2);
 }
@@ -715,7 +730,8 @@ fn edges_between_nodes() {
     g.add_node(component_node("B")).unwrap();
     g.add_edge(edge("e1", "A", "B", EdgeKind::RendersChild))
         .unwrap();
-    g.add_edge(edge("e2", "A", "B", EdgeKind::PropFlow)).unwrap();
+    g.add_edge(edge("e2", "A", "B", EdgeKind::PropFlow))
+        .unwrap();
     let between = g.edges_between(&nid("A"), &nid("B"));
     assert_eq!(between.len(), 2);
 }
@@ -817,7 +833,8 @@ fn edges_of_kind_filtering() {
     g.add_node(component_node("C")).unwrap();
     g.add_edge(edge("e1", "A", "B", EdgeKind::RendersChild))
         .unwrap();
-    g.add_edge(edge("e2", "A", "C", EdgeKind::PropFlow)).unwrap();
+    g.add_edge(edge("e2", "A", "C", EdgeKind::PropFlow))
+        .unwrap();
     g.add_edge(edge("e3", "B", "C", EdgeKind::RendersChild))
         .unwrap();
     let renders = g.edges_of_kind(EdgeKind::RendersChild);
@@ -1231,7 +1248,8 @@ fn multiple_edge_kinds_between_same_pair() {
     g.add_node(component_node("B")).unwrap();
     g.add_edge(edge("e1", "A", "B", EdgeKind::RendersChild))
         .unwrap();
-    g.add_edge(edge("e2", "A", "B", EdgeKind::PropFlow)).unwrap();
+    g.add_edge(edge("e2", "A", "B", EdgeKind::PropFlow))
+        .unwrap();
     g.add_edge(edge("e3", "A", "B", EdgeKind::ContextFlow))
         .unwrap();
     let between = g.edges_between(&nid("A"), &nid("B"));
@@ -1343,8 +1361,7 @@ fn summary_snapshot_hash_deterministic() {
             .unwrap();
         g.register_component(simple_descriptor("A", &["B"]))
             .unwrap();
-        g.register_component(simple_descriptor("B", &[]))
-            .unwrap();
+        g.register_component(simple_descriptor("B", &[])).unwrap();
         g.summary()
     };
     let s1 = build();

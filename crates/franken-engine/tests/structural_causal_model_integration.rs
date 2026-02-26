@@ -41,10 +41,7 @@ fn edge(src: &str, tgt: &str, sign: EdgeSign, strength: i64) -> CausalEdge {
 }
 
 fn observation(epoch: u64, tick: u64, values: &[(&str, i64)]) -> Observation {
-    let vals: BTreeMap<String, i64> = values
-        .iter()
-        .map(|(k, v)| (k.to_string(), *v))
-        .collect();
+    let vals: BTreeMap<String, i64> = values.iter().map(|(k, v)| (k.to_string(), *v)).collect();
     Observation {
         epoch,
         tick,
@@ -57,12 +54,8 @@ fn confounded_dag() -> StructuralCausalModel {
     let mut scm = StructuralCausalModel::new();
     scm.add_node(node("C", NodeRole::Confounder, VariableDomain::Regime))
         .unwrap();
-    scm.add_node(node(
-        "T",
-        NodeRole::Treatment,
-        VariableDomain::LaneChoice,
-    ))
-    .unwrap();
+    scm.add_node(node("T", NodeRole::Treatment, VariableDomain::LaneChoice))
+        .unwrap();
     scm.add_node(node(
         "Y",
         NodeRole::Outcome,
@@ -259,12 +252,8 @@ fn add_edge() {
     let mut scm = StructuralCausalModel::new();
     scm.add_node(node("A", NodeRole::Exogenous, VariableDomain::Regime))
         .unwrap();
-    scm.add_node(node(
-        "B",
-        NodeRole::Endogenous,
-        VariableDomain::RiskBelief,
-    ))
-    .unwrap();
+    scm.add_node(node("B", NodeRole::Endogenous, VariableDomain::RiskBelief))
+        .unwrap();
     scm.add_edge(edge("A", "B", EdgeSign::Positive, 500_000))
         .unwrap();
     assert_eq!(scm.edges().len(), 1);
@@ -419,12 +408,8 @@ fn classify_confounders_latent() {
         fixed_value_millionths: None,
     })
     .unwrap();
-    scm.add_node(node(
-        "T",
-        NodeRole::Treatment,
-        VariableDomain::LaneChoice,
-    ))
-    .unwrap();
+    scm.add_node(node("T", NodeRole::Treatment, VariableDomain::LaneChoice))
+        .unwrap();
     scm.add_node(node(
         "Y",
         NodeRole::Outcome,
@@ -472,12 +457,8 @@ fn backdoor_confounding_paths_found() {
 #[test]
 fn backdoor_no_confounders_no_adjustment() {
     let mut scm = StructuralCausalModel::new();
-    scm.add_node(node(
-        "T",
-        NodeRole::Treatment,
-        VariableDomain::LaneChoice,
-    ))
-    .unwrap();
+    scm.add_node(node("T", NodeRole::Treatment, VariableDomain::LaneChoice))
+        .unwrap();
     scm.add_node(node(
         "Y",
         NodeRole::Outcome,
@@ -590,9 +571,7 @@ fn estimate_ate_with_observations() {
             &[("C", 1_000_000), ("T", 0), ("Y", 300_000)],
         ));
     }
-    let effect = scm
-        .estimate_ate("T", "Y", 1_000_000, 0, 10)
-        .unwrap();
+    let effect = scm.estimate_ate("T", "Y", 1_000_000, 0, 10).unwrap();
     assert!(effect.ate_millionths > 0);
     assert_eq!(effect.sample_size, 100);
 }
@@ -614,26 +593,18 @@ fn estimate_ate_insufficient_observations() {
 #[test]
 fn decompose_attribution_basic() {
     let scm = confounded_dag();
-    let decomp = scm
-        .decompose_attribution("T", "Y", 500_000)
-        .unwrap();
+    let decomp = scm.decompose_attribution("T", "Y", 500_000).unwrap();
     assert_eq!(decomp.total_delta_millionths, 500_000);
     assert!(!decomp.pathways.is_empty());
     // All pathway fractions should sum close to 1_000_000 (minus residual)
-    let total_fraction: i64 = decomp
-        .pathways
-        .iter()
-        .map(|p| p.fraction_millionths)
-        .sum();
+    let total_fraction: i64 = decomp.pathways.iter().map(|p| p.fraction_millionths).sum();
     assert!(total_fraction > 0);
 }
 
 #[test]
 fn decompose_attribution_pathways_match_dag() {
     let scm = confounded_dag();
-    let decomp = scm
-        .decompose_attribution("T", "Y", 1_000_000)
-        .unwrap();
+    let decomp = scm.decompose_attribution("T", "Y", 1_000_000).unwrap();
     // T→Y is the only direct path
     assert!(decomp.pathways.iter().any(|p| p.path.len() == 2));
 }
@@ -733,7 +704,9 @@ fn canonical_dag_topological_order() {
 #[test]
 fn canonical_dag_backdoor_criterion() {
     let scm = build_lane_decision_dag().unwrap();
-    let result = scm.backdoor_criterion("lane_choice", "latency_outcome").unwrap();
+    let result = scm
+        .backdoor_criterion("lane_choice", "latency_outcome")
+        .unwrap();
     assert!(result.identified);
 }
 
@@ -771,12 +744,8 @@ fn canonical_dag_report() {
 #[test]
 fn mediator_on_causal_path() {
     let mut scm = StructuralCausalModel::new();
-    scm.add_node(node(
-        "T",
-        NodeRole::Treatment,
-        VariableDomain::LaneChoice,
-    ))
-    .unwrap();
+    scm.add_node(node("T", NodeRole::Treatment, VariableDomain::LaneChoice))
+        .unwrap();
     scm.add_node(node(
         "M",
         NodeRole::Mediator,
@@ -812,12 +781,8 @@ fn instrument_only_affects_treatment() {
         VariableDomain::EnvironmentFactor,
     ))
     .unwrap();
-    scm.add_node(node(
-        "T",
-        NodeRole::Treatment,
-        VariableDomain::LaneChoice,
-    ))
-    .unwrap();
+    scm.add_node(node("T", NodeRole::Treatment, VariableDomain::LaneChoice))
+        .unwrap();
     scm.add_node(node(
         "Y",
         NodeRole::Outcome,

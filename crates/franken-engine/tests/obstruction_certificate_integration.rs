@@ -9,17 +9,16 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use frankenengine_engine::global_coherence_checker::{
     CoherenceCheckInput, CoherenceCheckResult, CoherenceOutcome, CoherenceViolationKind,
-    CompositionEdge, CompositionEdgeKind, CompositionGraph, GlobalCoherenceChecker,
-    SeverityScore, GLOBAL_COHERENCE_BEAD_ID, GLOBAL_COHERENCE_SCHEMA_VERSION,
+    CompositionEdge, CompositionEdgeKind, CompositionGraph, GLOBAL_COHERENCE_BEAD_ID,
+    GLOBAL_COHERENCE_SCHEMA_VERSION, GlobalCoherenceChecker, SeverityScore,
 };
 use frankenengine_engine::hash_tiers::ContentHash;
 use frankenengine_engine::obstruction_certificate::{
-    CertificationOutcome, CertificationResult, FallbackAction, FallbackActionKind, FallbackPlan,
+    CertificationOutcome, CertificationResult, DEBT_BUDGET_EXHAUSTED, DEBT_FALLBACK_INFEASIBLE,
+    DEBT_OBSTRUCTION_UNRESOLVED, DEBT_PLAN_CYCLE, DEBT_WITNESS_INCOMPLETE, FallbackAction,
+    FallbackActionKind, FallbackPlan, OBSTRUCTION_CERT_BEAD_ID, OBSTRUCTION_CERT_SCHEMA_VERSION,
     ObstructionCertificate, ObstructionCertifier, ObstructionCertifierConfig, ObstructionError,
     WitnessFragment, collect_debt_codes, render_certification_report, should_block_gate,
-    DEBT_BUDGET_EXHAUSTED, DEBT_FALLBACK_INFEASIBLE, DEBT_OBSTRUCTION_UNRESOLVED,
-    DEBT_PLAN_CYCLE, DEBT_WITNESS_INCOMPLETE, OBSTRUCTION_CERT_BEAD_ID,
-    OBSTRUCTION_CERT_SCHEMA_VERSION,
 };
 use frankenengine_engine::semantic_contract_baseline::{
     LocalSemanticAtlas, LocalSemanticAtlasEntry, SemanticContractVersion,
@@ -188,9 +187,18 @@ fn debt_codes_follow_naming_convention() {
 fn fallback_action_kind_display_all() {
     assert_eq!(FallbackActionKind::Isolate.to_string(), "isolate");
     assert_eq!(FallbackActionKind::Degrade.to_string(), "degrade");
-    assert_eq!(FallbackActionKind::SplitBoundary.to_string(), "split-boundary");
-    assert_eq!(FallbackActionKind::InjectAdapter.to_string(), "inject-adapter");
-    assert_eq!(FallbackActionKind::RemoveAndStub.to_string(), "remove-and-stub");
+    assert_eq!(
+        FallbackActionKind::SplitBoundary.to_string(),
+        "split-boundary"
+    );
+    assert_eq!(
+        FallbackActionKind::InjectAdapter.to_string(),
+        "inject-adapter"
+    );
+    assert_eq!(
+        FallbackActionKind::RemoveAndStub.to_string(),
+        "remove-and-stub"
+    );
     assert_eq!(FallbackActionKind::Escalate.to_string(), "escalate");
 }
 
@@ -411,10 +419,11 @@ fn unresolved_context_fallback_includes_inject_adapter() {
         .find(|c| c.violation_kind_tag == "unresolved-context")
         .unwrap();
     let plan = cert.fallback_plan.as_ref().unwrap();
-    assert!(plan
-        .actions
-        .iter()
-        .any(|a| a.kind == FallbackActionKind::InjectAdapter));
+    assert!(
+        plan.actions
+            .iter()
+            .any(|a| a.kind == FallbackActionKind::InjectAdapter)
+    );
 }
 
 // ===========================================================================
@@ -432,10 +441,12 @@ fn orphaned_provider_produces_certificate() {
         &[],
     );
     let result = certifier().certify(&check).unwrap();
-    assert!(result
-        .certificates
-        .iter()
-        .any(|c| c.violation_kind_tag == "orphaned-provider"));
+    assert!(
+        result
+            .certificates
+            .iter()
+            .any(|c| c.violation_kind_tag == "orphaned-provider")
+    );
 }
 
 #[test]
@@ -470,10 +481,12 @@ fn effect_cycle_produces_certificate() {
         &[],
     );
     let result = certifier().certify(&check).unwrap();
-    assert!(result
-        .certificates
-        .iter()
-        .any(|c| c.violation_kind_tag == "effect-order-cycle"));
+    assert!(
+        result
+            .certificates
+            .iter()
+            .any(|c| c.violation_kind_tag == "effect-order-cycle")
+    );
 }
 
 #[test]
@@ -496,10 +509,11 @@ fn effect_cycle_fallback_includes_split_boundary() {
         .find(|c| c.violation_kind_tag == "effect-order-cycle")
         .unwrap();
     let plan = cert.fallback_plan.as_ref().unwrap();
-    assert!(plan
-        .actions
-        .iter()
-        .any(|a| a.kind == FallbackActionKind::SplitBoundary));
+    assert!(
+        plan.actions
+            .iter()
+            .any(|a| a.kind == FallbackActionKind::SplitBoundary)
+    );
 }
 
 // ===========================================================================
@@ -520,10 +534,12 @@ fn layout_after_passive_produces_certificate() {
         &[],
     );
     let result = certifier().certify(&check).unwrap();
-    assert!(result
-        .certificates
-        .iter()
-        .any(|c| c.violation_kind_tag == "layout-after-passive"));
+    assert!(
+        result
+            .certificates
+            .iter()
+            .any(|c| c.violation_kind_tag == "layout-after-passive")
+    );
 }
 
 // ===========================================================================
@@ -544,10 +560,12 @@ fn hook_cleanup_mismatch_produces_certificate() {
         &[],
     );
     let result = certifier().certify(&check).unwrap();
-    assert!(result
-        .certificates
-        .iter()
-        .any(|c| c.violation_kind_tag == "hook-cleanup-mismatch"));
+    assert!(
+        result
+            .certificates
+            .iter()
+            .any(|c| c.violation_kind_tag == "hook-cleanup-mismatch")
+    );
 }
 
 // ===========================================================================
@@ -568,10 +586,12 @@ fn hydration_conflict_produces_certificate() {
         &[],
     );
     let result = certifier().certify(&check).unwrap();
-    assert!(result
-        .certificates
-        .iter()
-        .any(|c| c.violation_kind_tag == "hydration-boundary-conflict"));
+    assert!(
+        result
+            .certificates
+            .iter()
+            .any(|c| c.violation_kind_tag == "hydration-boundary-conflict")
+    );
 }
 
 // ===========================================================================
@@ -592,10 +612,12 @@ fn capability_gap_produces_certificate() {
         &["Boundary"],
     );
     let result = certifier().certify(&check).unwrap();
-    assert!(result
-        .certificates
-        .iter()
-        .any(|c| c.violation_kind_tag == "capability-gap"));
+    assert!(
+        result
+            .certificates
+            .iter()
+            .any(|c| c.violation_kind_tag == "capability-gap")
+    );
 }
 
 // ===========================================================================
@@ -616,10 +638,12 @@ fn boundary_leak_produces_certificate() {
         &["Boundary"],
     );
     let result = certifier().certify(&check).unwrap();
-    assert!(result
-        .certificates
-        .iter()
-        .any(|c| c.violation_kind_tag == "boundary-capability-leak"));
+    assert!(
+        result
+            .certificates
+            .iter()
+            .any(|c| c.violation_kind_tag == "boundary-capability-leak")
+    );
 }
 
 // ===========================================================================
@@ -653,8 +677,8 @@ fn can_proceed_true_for_obstructed_with_fallbacks() {
 fn blocking_certificates_filter() {
     let check = run_check(
         vec![
-            entry_ctx("C", &["missing"], &[]),    // critical → blocking
-            entry_ctx("P", &[], &["unused"]),      // low → not blocking
+            entry_ctx("C", &["missing"], &[]), // critical → blocking
+            entry_ctx("P", &[], &["unused"]),  // low → not blocking
         ],
         &["C", "P"],
         &[],
@@ -686,10 +710,7 @@ fn infeasible_certificates_empty_when_all_feasible() {
 #[test]
 fn by_debt_code_groups_correctly() {
     let check = run_check(
-        vec![
-            entry_ctx("C1", &["m1"], &[]),
-            entry_ctx("C2", &["m2"], &[]),
-        ],
+        vec![entry_ctx("C1", &["m1"], &[]), entry_ctx("C2", &["m2"], &[])],
         &["C1", "C2"],
         &[],
         &[],
@@ -831,10 +852,7 @@ fn disruption_cost_scales_with_target_count() {
         &[],
     );
     let check_2 = run_check(
-        vec![
-            entry_ctx("C1", &["m1"], &[]),
-            entry_ctx("C2", &["m2"], &[]),
-        ],
+        vec![entry_ctx("C1", &["m1"], &[]), entry_ctx("C2", &["m2"], &[])],
         &["C1", "C2"],
         &[],
         &[],
@@ -1211,9 +1229,11 @@ fn unresolved_context_witness_has_consumes_fragment() {
         .iter()
         .find(|c| c.violation_kind_tag == "unresolved-context")
         .unwrap();
-    assert!(cert.witness_fragments.iter().any(|f| {
-        f.contract_aspect == "context.consumes" && f.contract_value == "ThemeCtx"
-    }));
+    assert!(
+        cert.witness_fragments
+            .iter()
+            .any(|f| { f.contract_aspect == "context.consumes" && f.contract_value == "ThemeCtx" })
+    );
 }
 
 #[test]
@@ -1284,10 +1304,11 @@ fn suspense_conflict_produces_certificate_with_boundary_fragments() {
     assert!(!susp_certs.is_empty());
     // Should have boundary.suspense fragment
     for cert in &susp_certs {
-        assert!(cert
-            .witness_fragments
-            .iter()
-            .any(|f| f.contract_aspect.starts_with("boundary.suspense")));
+        assert!(
+            cert.witness_fragments
+                .iter()
+                .any(|f| f.contract_aspect.starts_with("boundary.suspense"))
+        );
     }
 }
 
