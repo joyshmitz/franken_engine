@@ -190,6 +190,8 @@ pub mod scheduler_lane;
 pub mod security_e2e;
 pub mod security_epoch;
 pub mod self_replacement;
+pub mod semantic_twin;
+pub mod semantic_twin_state_space;
 pub mod semantic_contract_baseline;
 pub mod session_hostcall_channel;
 pub mod shadow_ablation_engine;
