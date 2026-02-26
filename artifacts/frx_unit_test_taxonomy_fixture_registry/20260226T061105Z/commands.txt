@@ -1,0 +1,3 @@
+cargo check -p frankenengine-engine --test frx_unit_test_taxonomy
+cargo test -p frankenengine-engine --test frx_unit_test_taxonomy
+cargo clippy -p frankenengine-engine --test frx_unit_test_taxonomy -- -D warnings
