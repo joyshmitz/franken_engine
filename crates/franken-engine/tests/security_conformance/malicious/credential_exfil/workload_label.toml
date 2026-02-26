@@ -1,0 +1,7 @@
+workload_id = "security-malicious-credential-exfil-001"
+corpus = "malicious"
+attack_taxonomy = "exfil"
+expected_outcome = "contain"
+expected_detection_latency_bound_ms = 120
+hostcall_sequence_hash = "d67ce7c7f46f3ec0c8d0afc8d2d08775639b0f94fb8bf619f60522f20f6a6678"
+semantic_domain = "security_conformance/malicious/credential_exfil"

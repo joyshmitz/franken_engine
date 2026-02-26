@@ -1,0 +1,6 @@
+workload_id = "security-benign-echo-read-001"
+corpus = "benign"
+expected_outcome = "allow"
+expected_detection_latency_bound_ms = 25
+hostcall_sequence_hash = "4f464842532f4d2ae4b7dcb2ad1f262d5ecca030c8ca6f23b63b22847a6f9f44"
+semantic_domain = "security_conformance/benign/echo_read"

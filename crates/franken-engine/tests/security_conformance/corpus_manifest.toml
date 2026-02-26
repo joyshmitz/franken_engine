@@ -1,0 +1,15 @@
+schema_version = "franken-engine.security-conformance-corpus-manifest.v1"
+corpus_version = "0.1.0-dev"
+generated_at_utc = "2026-02-26T17:47:00Z"
+
+[[entries]]
+workload_id = "security-benign-echo-read-001"
+corpus = "benign"
+label_path = "benign/echo_read/workload_label.toml"
+label_sha256 = "28811c4cacbd69abf5964d57ab4fdfcb9fa9ce139667e1eecdb83121c5cc4b56"
+
+[[entries]]
+workload_id = "security-malicious-credential-exfil-001"
+corpus = "malicious"
+label_path = "malicious/credential_exfil/workload_label.toml"
+label_sha256 = "cc5c46c57ce73f9660c82d7614e48bee8a5baa5d505c8b46475a9707a068b850"
