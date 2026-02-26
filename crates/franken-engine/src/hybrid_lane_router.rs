@@ -291,8 +291,13 @@ impl ChangePointMonitor {
         if self.observation_count < self.config.min_observations {
             return false;
         }
-        self.cusum_upper_millionths > self.config.threshold_millionths
-            || self.cusum_lower_millionths > self.config.threshold_millionths
+        // Fail-closed contract: non-positive thresholds intentionally force
+        // deterministic demotion once minimum observation count is satisfied.
+        if self.config.threshold_millionths <= 0 {
+            return true;
+        }
+        self.cusum_upper_millionths >= self.config.threshold_millionths
+            || self.cusum_lower_millionths >= self.config.threshold_millionths
     }
 
     /// Check and return demotion reason if triggered.

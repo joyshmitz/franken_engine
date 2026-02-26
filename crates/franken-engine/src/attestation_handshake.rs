@@ -64,10 +64,11 @@ pub struct AttestationChallenge {
 impl AttestationChallenge {
     /// Whether the challenge is still valid at the given time.
     pub fn is_valid_at(&self, current_ns: u64) -> bool {
-        current_ns
-            <= self
-                .challenge_timestamp_ns
-                .saturating_add(self.response_deadline_ns)
+        current_ns >= self.challenge_timestamp_ns
+            && current_ns
+                <= self
+                    .challenge_timestamp_ns
+                    .saturating_add(self.response_deadline_ns)
     }
 
     /// Canonical bytes for signing/verification.
@@ -157,7 +158,8 @@ pub struct CellAuthorization {
 impl CellAuthorization {
     /// Whether this authorization is still valid at the given time.
     pub fn is_valid_at(&self, current_ns: u64) -> bool {
-        current_ns <= self.issued_at_ns.saturating_add(self.validity_window_ns)
+        current_ns >= self.issued_at_ns
+            && current_ns <= self.issued_at_ns.saturating_add(self.validity_window_ns)
     }
 
     /// Whether this authorization covers a specific operation.

@@ -243,7 +243,12 @@ fn compute_replay_multiplier_millionths(replay_ns: u64, compile_ns: u64) -> u64 
     if compile_ns == 0 {
         return u64::MAX;
     }
-    replay_ns.saturating_mul(1_000_000) / compile_ns
+    let m = (replay_ns as u128 * 1_000_000) / (compile_ns as u128);
+    if m > u64::MAX as u128 {
+        u64::MAX
+    } else {
+        m as u64
+    }
 }
 
 fn canonical_decision_value(

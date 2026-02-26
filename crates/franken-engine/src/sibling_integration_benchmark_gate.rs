@@ -424,7 +424,12 @@ fn ratio_millionths(numerator: u64, denominator: u64) -> u64 {
     if denominator == 0 {
         return u64::MAX;
     }
-    numerator.saturating_mul(1_000_000) / denominator
+    let m = (numerator as u128 * 1_000_000) / (denominator as u128);
+    if m > u64::MAX as u128 {
+        u64::MAX
+    } else {
+        m as u64
+    }
 }
 
 fn overhead_millionths(with_integrations_ns: u64, without_integrations_ns: u64) -> u64 {
@@ -434,10 +439,13 @@ fn overhead_millionths(with_integrations_ns: u64, without_integrations_ns: u64) 
     if with_integrations_ns <= without_integrations_ns {
         return 0;
     }
-    with_integrations_ns
-        .saturating_sub(without_integrations_ns)
-        .saturating_mul(1_000_000)
-        / without_integrations_ns
+    let diff = with_integrations_ns.saturating_sub(without_integrations_ns);
+    let m = (diff as u128 * 1_000_000) / (without_integrations_ns as u128);
+    if m > u64::MAX as u128 {
+        u64::MAX
+    } else {
+        m as u64
+    }
 }
 
 fn decision_canonical_value(
