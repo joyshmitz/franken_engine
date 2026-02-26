@@ -1598,7 +1598,7 @@ mod tests {
         let catalog = RaceSurfaceCatalog::default_catalog();
         assert!(!catalog.surfaces.is_empty());
         // All race surfaces have non-empty invariants
-        for (_id, surface) in &catalog.surfaces {
+        for surface in catalog.surfaces.values() {
             assert!(!surface.invariant.is_empty());
             assert!(!surface.race_id.is_empty());
         }

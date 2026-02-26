@@ -1592,7 +1592,7 @@ mod tests {
 
     #[test]
     fn compilation_error_display_all_distinct() {
-        let errors = vec![
+        let errors = [
             CompilationError::NoEvidence,
             CompilationError::MissingProvenance,
             CompilationError::ChunkTooLarge {

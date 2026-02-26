@@ -837,7 +837,7 @@ mod tests {
         let s1 = LeakSeverity::Critical;
         let s2 = s1; // Copy
         assert_eq!(s1, s2);
-        assert!(!(LeakSeverity::Warning == LeakSeverity::Fatal));
+        assert!(LeakSeverity::Warning != LeakSeverity::Fatal);
     }
 
     #[test]

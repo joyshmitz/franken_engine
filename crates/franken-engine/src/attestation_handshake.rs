@@ -1835,7 +1835,7 @@ mod tests {
                 timestamp_ns: 1000,
                 epoch: test_epoch(),
                 cell_id: "cell-test".to_string(),
-                outcome: outcome.clone(),
+                outcome: *outcome,
                 measurement_hash: None,
                 policy_version: 1,
                 trust_level: None,

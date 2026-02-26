@@ -1368,7 +1368,7 @@ mod tests {
 
     #[test]
     fn escalation_action_display_uniqueness_btreeset() {
-        let actions = vec![
+        let actions = [
             EscalationAction::MarkEndpointUnreachable {
                 holder: "a".to_string(),
             },

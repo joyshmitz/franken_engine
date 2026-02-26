@@ -1199,7 +1199,7 @@ mod tests {
     #[test]
     fn bag_peaks_single_returns_identity() {
         let h = ContentHash::compute(b"single-peak");
-        let result = bag_peaks(&[h.clone()]);
+        let result = bag_peaks(std::slice::from_ref(&h));
         assert_eq!(result, h);
     }
 }

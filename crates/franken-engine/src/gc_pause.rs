@@ -922,7 +922,7 @@ mod tests {
         let run = || {
             let mut tracker = PauseTracker::default();
             for i in 1..=50 {
-                tracker.record(&make_event(i, "ext-a", i * 100, i as u64, i * 10));
+                tracker.record(&make_event(i, "ext-a", i * 100, i, i * 10));
             }
             tracker.global_percentiles()
         };

@@ -137,7 +137,7 @@ fn local_semantic_atlas_public_api_surfaces_blocking_debt() {
 
     assert_eq!(atlas.schema_version, LOCAL_SEMANTIC_ATLAS_SCHEMA_VERSION);
     assert_eq!(atlas.blocking_debt_count(), 3);
-    assert_eq!(atlas.validate().is_valid, false);
+    assert!(!atlas.validate().is_valid);
 }
 
 #[test]

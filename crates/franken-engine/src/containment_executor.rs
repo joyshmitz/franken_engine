@@ -1146,7 +1146,7 @@ mod tests {
     #[test]
     fn containment_error_display_uniqueness() {
         use std::collections::BTreeSet;
-        let errors = vec![
+        let errors = [
             ContainmentError::ExtensionNotFound {
                 extension_id: "e".to_string(),
             },

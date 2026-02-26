@@ -2582,7 +2582,7 @@ mod tests {
 
     #[test]
     fn enrichment_demotion_reason_display_all_variants() {
-        let reasons = vec![
+        let reasons = [
             DemotionReason::SemanticDivergence {
                 divergence_count: 3,
                 first_divergence_artifact: ContentHash::compute(b"x"),

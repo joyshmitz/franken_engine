@@ -1620,7 +1620,7 @@ mod tests {
 
     #[test]
     fn degraded_scenario_display_uniqueness() {
-        let scenarios = vec![
+        let scenarios = [
             DegradedScenario::StaleRevocationHead { epochs_behind: 1 },
             DegradedScenario::PartialAvailability {
                 available_fraction_millionths: 500_000,
@@ -1642,7 +1642,7 @@ mod tests {
 
     #[test]
     fn fault_scenario_display_uniqueness() {
-        let scenarios = vec![
+        let scenarios = [
             FaultScenario::CorruptedPayload {
                 corruption_offset: 0,
             },

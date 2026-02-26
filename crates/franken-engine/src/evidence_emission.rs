@@ -1205,7 +1205,7 @@ mod tests {
     #[test]
     fn error_display_uniqueness_btreeset() {
         use std::collections::BTreeSet;
-        let errors = vec![
+        let errors = [
             EvidenceEmissionError::BufferFull { capacity: 1 },
             EvidenceEmissionError::BudgetExhausted { requested_ms: 1 },
             EvidenceEmissionError::BuildError {

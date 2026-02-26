@@ -1513,7 +1513,7 @@ mod tests {
 
     #[test]
     fn telemetry_error_display_all_distinct() {
-        let errors = vec![
+        let errors = [
             TelemetryError::ChannelFull,
             TelemetryError::MonotonicityViolation {
                 field: "timestamp".into(),

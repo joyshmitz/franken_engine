@@ -1361,7 +1361,7 @@ mod tests {
     #[test]
     fn policy_eval_result_serde_all_variants_unique_display() {
         use std::collections::BTreeSet;
-        let variants = vec![
+        let variants = [
             PolicyEvalResult::RouteApproved {
                 route_id: "r1".to_string(),
                 conditions_met: vec!["c1".to_string()],

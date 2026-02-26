@@ -1681,7 +1681,7 @@ mod tests {
 
     #[test]
     fn error_display_uniqueness_btreeset() {
-        let errors = vec![
+        let errors = [
             ObligationIntegrationError::CellNotRunning {
                 cell_id: "c1".to_string(),
                 current_state: RegionState::Closed,
@@ -1707,7 +1707,7 @@ mod tests {
 
     #[test]
     fn error_codes_uniqueness_btreeset() {
-        let errors = vec![
+        let errors = [
             ObligationIntegrationError::CellNotRunning {
                 cell_id: "c1".to_string(),
                 current_state: RegionState::Closed,

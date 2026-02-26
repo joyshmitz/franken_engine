@@ -1484,7 +1484,7 @@ mod tests {
     #[test]
     fn calibration_error_display_uniqueness_btreeset() {
         use std::collections::BTreeSet;
-        let errors = vec![
+        let errors = [
             CalibrationError::EmptyCampaignBatch,
             CalibrationError::CampaignValidationFailed {
                 detail: "a".to_string(),

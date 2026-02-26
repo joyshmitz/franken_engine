@@ -1017,7 +1017,7 @@ mod tests {
 
     #[test]
     fn contract_validation_error_display_all_unique() {
-        let variants = vec![
+        let variants = [
             ContractValidationError::MissingField {
                 field: "x".to_string(),
             },

@@ -1089,7 +1089,7 @@ mod tests {
 
     #[test]
     fn error_display_all_variants() {
-        let variants = vec![
+        let variants = [
             HostLifecycleError::ExtensionAlreadyLoaded {
                 extension_id: "x".to_string(),
             },
@@ -1257,7 +1257,7 @@ mod tests {
 
     #[test]
     fn error_code_unique_per_variant() {
-        let variants = vec![
+        let variants = [
             HostLifecycleError::ExtensionAlreadyLoaded {
                 extension_id: "x".to_string(),
             },
@@ -1305,7 +1305,7 @@ mod tests {
 
     #[test]
     fn error_serde_all_variants() {
-        let variants = vec![
+        let variants = [
             HostLifecycleError::ExtensionAlreadyLoaded {
                 extension_id: "x".to_string(),
             },

@@ -2453,7 +2453,7 @@ mod tests {
             &metrics,
         ));
         assert!(eval.pass);
-        assert!(eval.resolutions.len() >= 1);
+        assert!(!eval.resolutions.is_empty());
         // writes are sorted by controller_id, so ctrl-b writes last
         let final_cpu = eval.final_metrics.get("cpu").copied().unwrap();
         assert_eq!(final_cpu, 20);
@@ -2580,7 +2580,7 @@ mod tests {
         ));
         let json = serde_json::to_string(&evaluation).unwrap();
         let back: InterferenceEvaluation = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.pass, true);
+        assert!(back.pass);
         assert!(back.findings.is_empty());
     }
 
