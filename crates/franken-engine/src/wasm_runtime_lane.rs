@@ -554,6 +554,41 @@ impl WasmRuntimeLane {
         Self::new(WasmBudget::default_budget())
     }
 
+    /// Register a signal via lane-level API so budget/depth failures deterministically
+    /// trigger safe mode reasons.
+    pub fn register_signal(
+        &mut self,
+        kind: WasmSignalKind,
+        deps: BTreeSet<WasmSignalId>,
+    ) -> Result<WasmSignalId, WasmGraphError> {
+        let id = self.graph.next_id();
+        match self.graph.register(id, kind, deps) {
+            Ok(()) => Ok(id),
+            Err(err) => {
+                match &err {
+                    WasmGraphError::DepthExceeded { depth, max, .. } => {
+                        self.enter_safe_mode(SafeModeReason::DepthExceeded {
+                            depth: *depth,
+                            limit: *max,
+                        });
+                    }
+                    WasmGraphError::BudgetExceeded {
+                        metric,
+                        current,
+                        limit,
+                    } if metric == "nodes" => {
+                        self.enter_safe_mode(SafeModeReason::SignalBudgetExhausted {
+                            signals: (*current).min(u32::MAX as u64) as u32,
+                            limit: (*limit).min(u32::MAX as u64) as u32,
+                        });
+                    }
+                    _ => {}
+                }
+                Err(err)
+            }
+        }
+    }
+
     /// Enqueue a state update from JS side.
     pub fn enqueue_update(&mut self, update: AbiStateUpdate) -> Result<(), SafeModeReason> {
         if self.update_queue.is_full() {
@@ -614,7 +649,15 @@ impl WasmRuntimeLane {
             if let Some(node) = self.graph.get(*sig)
                 && node.kind == WasmSignalKind::Effect
             {
-                dom_ops_emitted += 1;
+                let attempted = dom_ops_emitted.saturating_add(1);
+                if attempted > self.budget.max_dom_ops_per_cycle {
+                    triggers.push(SafeModeReason::DomOpBudgetExhausted {
+                        ops: attempted,
+                        limit: self.budget.max_dom_ops_per_cycle,
+                    });
+                    break;
+                }
+                dom_ops_emitted = attempted;
             }
         }
 
@@ -680,6 +723,9 @@ impl WasmRuntimeLane {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::js_runtime_lane::{
+        SignalGraph as JsSignalGraph, SignalId as JsSignalId, SignalKind as JsSignalKind,
+    };
 
     // ---- BoundedQueue tests ----
 
@@ -1050,6 +1096,96 @@ mod tests {
     }
 
     #[test]
+    fn lane_dom_op_budget_triggers_degraded() {
+        let mut budget = WasmBudget::default_budget();
+        budget.max_dom_ops_per_cycle = 1;
+        let mut lane = WasmRuntimeLane::new(budget);
+
+        let s = lane.graph.next_id();
+        lane.graph
+            .register(s, WasmSignalKind::Source, BTreeSet::new())
+            .unwrap();
+        lane.graph.mark_clean(s).unwrap();
+
+        let e1 = lane.graph.next_id();
+        let mut deps1 = BTreeSet::new();
+        deps1.insert(s);
+        lane.graph
+            .register(e1, WasmSignalKind::Effect, deps1)
+            .unwrap();
+        lane.graph.mark_clean(e1).unwrap();
+
+        let e2 = lane.graph.next_id();
+        let mut deps2 = BTreeSet::new();
+        deps2.insert(s);
+        lane.graph
+            .register(e2, WasmSignalKind::Effect, deps2)
+            .unwrap();
+        lane.graph.mark_clean(e2).unwrap();
+
+        lane.enqueue_update(AbiStateUpdate {
+            signal_id: s,
+            payload: vec![1],
+            sequence: 0,
+        })
+        .unwrap();
+
+        let result = lane.flush();
+        assert_eq!(result.mode_after, WasmLaneMode::Degraded);
+        assert_eq!(result.dom_ops_emitted, 1);
+        assert!(result.safe_mode_triggers.iter().any(|reason| matches!(
+            reason,
+            SafeModeReason::DomOpBudgetExhausted { limit: 1, .. }
+        )));
+    }
+
+    #[test]
+    fn lane_register_signal_depth_exceeded_enters_safe_mode() {
+        let mut budget = WasmBudget::default_budget();
+        budget.max_depth = 1;
+        let mut lane = WasmRuntimeLane::new(budget);
+
+        let s = lane
+            .register_signal(WasmSignalKind::Source, BTreeSet::new())
+            .unwrap();
+        let mut deps = BTreeSet::new();
+        deps.insert(s);
+        let d = lane.register_signal(WasmSignalKind::Derived, deps).unwrap();
+        let mut deps2 = BTreeSet::new();
+        deps2.insert(d);
+
+        let err = lane
+            .register_signal(WasmSignalKind::Derived, deps2)
+            .unwrap_err();
+        assert!(matches!(err, WasmGraphError::DepthExceeded { .. }));
+        assert_eq!(lane.mode, WasmLaneMode::Safe);
+        assert!(
+            lane.safe_mode_triggers
+                .iter()
+                .any(|reason| matches!(reason, SafeModeReason::DepthExceeded { .. }))
+        );
+    }
+
+    #[test]
+    fn lane_register_signal_budget_exceeded_enters_safe_mode() {
+        let mut budget = WasmBudget::default_budget();
+        budget.max_signals = 1;
+        let mut lane = WasmRuntimeLane::new(budget);
+
+        lane.register_signal(WasmSignalKind::Source, BTreeSet::new())
+            .unwrap();
+        let err = lane
+            .register_signal(WasmSignalKind::Source, BTreeSet::new())
+            .unwrap_err();
+        assert!(matches!(err, WasmGraphError::BudgetExceeded { .. }));
+        assert_eq!(lane.mode, WasmLaneMode::Safe);
+        assert!(lane.safe_mode_triggers.iter().any(|reason| matches!(
+            reason,
+            SafeModeReason::SignalBudgetExhausted { limit: 1, .. }
+        )));
+    }
+
+    #[test]
     fn lane_queue_overflow_safe_mode() {
         let mut budget = WasmBudget::default_budget();
         budget.max_pending_updates = 1;
@@ -1218,6 +1354,77 @@ mod tests {
         assert_eq!(lane.flush_count, 3);
     }
 
+    #[test]
+    fn wasm_graph_matches_js_graph_dirty_propagation() {
+        let mut js = JsSignalGraph::new();
+        let js_s = js.next_signal_id();
+        js.register(js_s, JsSignalKind::Source, BTreeSet::new())
+            .unwrap();
+        js.mark_clean(js_s).unwrap();
+        let js_d = js.next_signal_id();
+        let mut js_deps = BTreeSet::new();
+        js_deps.insert(js_s);
+        js.register(js_d, JsSignalKind::Derived, js_deps).unwrap();
+        js.mark_clean(js_d).unwrap();
+        let js_e = js.next_signal_id();
+        let mut js_deps2 = BTreeSet::new();
+        js_deps2.insert(js_d);
+        js.register(js_e, JsSignalKind::Effect, js_deps2).unwrap();
+        js.mark_clean(js_e).unwrap();
+
+        let mut wasm = WasmSignalGraph::new(64, 100);
+        let ws = wasm.next_id();
+        wasm.register(ws, WasmSignalKind::Source, BTreeSet::new())
+            .unwrap();
+        wasm.mark_clean(ws).unwrap();
+        let wd = wasm.next_id();
+        let mut wdeps = BTreeSet::new();
+        wdeps.insert(ws);
+        wasm.register(wd, WasmSignalKind::Derived, wdeps).unwrap();
+        wasm.mark_clean(wd).unwrap();
+        let we = wasm.next_id();
+        let mut wdeps2 = BTreeSet::new();
+        wdeps2.insert(wd);
+        wasm.register(we, WasmSignalKind::Effect, wdeps2).unwrap();
+        wasm.mark_clean(we).unwrap();
+
+        let js_dirty = js.mark_dirty(js_s).unwrap();
+        let wasm_dirty = wasm.propagate_dirty(ws).unwrap();
+        let js_ids: Vec<u32> = js_dirty.into_iter().map(|id| id.0 as u32).collect();
+        let wasm_ids: Vec<u32> = wasm_dirty.into_iter().map(|id| id.0).collect();
+        assert_eq!(js_ids, wasm_ids);
+    }
+
+    #[test]
+    fn wasm_graph_matches_js_graph_dispose_behavior() {
+        let mut js = JsSignalGraph::new();
+        let js_s = js.next_signal_id();
+        js.register(js_s, JsSignalKind::Source, BTreeSet::new())
+            .unwrap();
+        let js_d = js.next_signal_id();
+        let mut js_deps = BTreeSet::new();
+        js_deps.insert(js_s);
+        js.register(js_d, JsSignalKind::Derived, js_deps).unwrap();
+        js.dispose(js_d).unwrap();
+        let js_dirty = js.mark_dirty(js_s).unwrap();
+        let js_ids: Vec<JsSignalId> = js_dirty;
+
+        let mut wasm = WasmSignalGraph::new(64, 100);
+        let ws = wasm.next_id();
+        wasm.register(ws, WasmSignalKind::Source, BTreeSet::new())
+            .unwrap();
+        let wd = wasm.next_id();
+        let mut wdeps = BTreeSet::new();
+        wdeps.insert(ws);
+        wasm.register(wd, WasmSignalKind::Derived, wdeps).unwrap();
+        wasm.dispose(wd).unwrap();
+        let wasm_dirty = wasm.propagate_dirty(ws).unwrap();
+        let wasm_ids: Vec<WasmSignalId> = wasm_dirty;
+
+        assert_eq!(js_ids.len(), wasm_ids.len());
+        assert_eq!(js_ids[0].0 as u32, wasm_ids[0].0);
+    }
+
     // -- Enrichment: WasmSignalKind serde roundtrip --
 
     #[test]
@@ -1351,7 +1558,7 @@ mod tests {
 
     #[test]
     fn abi_dom_op_target_all_variants() {
-        let ops = vec![
+        let ops = [
             AbiDomOp::Create {
                 element_id: 1,
                 tag_index: 0,
