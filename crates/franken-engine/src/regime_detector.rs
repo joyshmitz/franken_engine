@@ -130,9 +130,14 @@ impl RunLengthStats {
 
     fn add_observation(&mut self, x_millionths: i64) {
         self.n += 1;
-        self.sum += x_millionths;
-        // Store sum_sq scaled down to prevent overflow: x^2 / 1M
-        self.sum_sq += (x_millionths as i128 * x_millionths as i128 / 1_000_000) as i64;
+        self.sum = self.sum.saturating_add(x_millionths);
+        // Store sum_sq scaled down to prevent overflow: x^2 / 1M.
+        // Clamp the intermediate to i64 bounds before saturating add.
+        let scaled_sq = (x_millionths as i128)
+            .saturating_mul(x_millionths as i128)
+            .saturating_div(1_000_000);
+        let bounded_sq = scaled_sq.clamp(i64::MIN as i128, i64::MAX as i128) as i64;
+        self.sum_sq = self.sum_sq.saturating_add(bounded_sq);
     }
 
     /// Predictive log-likelihood (proportional) for a new observation
@@ -454,7 +459,9 @@ impl RegimeDetector {
         // Step 7: Classify regime based on recent window mean.
         let old_regime = self.current_regime;
         if !self.recent_window.is_empty() {
-            let mean = self.recent_window.iter().sum::<i64>() / self.recent_window.len() as i64;
+            let window_sum: i128 = self.recent_window.iter().map(|&v| v as i128).sum();
+            let mean = (window_sum / self.recent_window.len() as i128)
+                .clamp(i64::MIN as i128, i64::MAX as i128) as i64;
             self.current_regime = self.config.classifier.classify(mean);
         }
 
@@ -1100,5 +1107,458 @@ mod tests {
         let h999 = h.hazard(999);
         assert_eq!(h0, h100);
         assert_eq!(h100, h999);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment session 2026-02-26T17 — PearlTower
+    // -----------------------------------------------------------------------
+
+    // -- Classifier boundary precision --
+
+    #[test]
+    fn classifier_boundary_elevated_exact() {
+        let c = RegimeClassifier::default();
+        // Exactly at elevated threshold -> Elevated
+        assert_eq!(c.classify(700_000), Regime::Elevated);
+        // One below -> Normal
+        assert_eq!(c.classify(699_999), Regime::Normal);
+    }
+
+    #[test]
+    fn classifier_boundary_attack_exact() {
+        let c = RegimeClassifier::default();
+        // Exactly at attack threshold -> Attack
+        assert_eq!(c.classify(900_000), Regime::Attack);
+        // One below -> Elevated
+        assert_eq!(c.classify(899_999), Regime::Elevated);
+    }
+
+    #[test]
+    fn classifier_boundary_degraded_exact() {
+        let c = RegimeClassifier::default();
+        // Exactly at degraded threshold -> Degraded
+        assert_eq!(c.classify(-500_000), Regime::Degraded);
+        // One above -> Normal
+        assert_eq!(c.classify(-499_999), Regime::Normal);
+    }
+
+    #[test]
+    fn classifier_custom_thresholds() {
+        let c = RegimeClassifier {
+            elevated_threshold: 500_000,
+            attack_threshold: 800_000,
+            degraded_threshold: -200_000,
+        };
+        assert_eq!(c.classify(400_000), Regime::Normal);
+        assert_eq!(c.classify(500_000), Regime::Elevated);
+        assert_eq!(c.classify(800_000), Regime::Attack);
+        assert_eq!(c.classify(-200_000), Regime::Degraded);
+        assert_eq!(c.classify(-199_999), Regime::Normal);
+    }
+
+    // -- Constant hazard edge cases --
+
+    #[test]
+    fn constant_hazard_lambda_one() {
+        let h = ConstantHazard { lambda: 1 };
+        // 1/1 = 1.0 = 1_000_000 millionths
+        assert_eq!(h.hazard(0), 1_000_000);
+    }
+
+    #[test]
+    fn constant_hazard_large_lambda() {
+        let h = ConstantHazard { lambda: 1_000_000 };
+        // 1/1_000_000 = 0.000001 = 1 millionth
+        assert_eq!(h.hazard(0), 1);
+    }
+
+    // -- Run-length distribution behavior --
+
+    #[test]
+    fn change_point_probability_decreases_with_stable_obs() {
+        let mut det = test_detector("m");
+        let initial_cp = det.change_point_probability();
+        for _ in 0..20 {
+            det.observe(500_000).unwrap();
+        }
+        // After stable observations, change-point probability should decrease
+        // (run-length mass moves away from 0)
+        assert!(det.change_point_probability() < initial_cp);
+    }
+
+    #[test]
+    fn sudden_shift_redistributes_run_length() {
+        let mut det = test_detector("m");
+        // Stable period
+        for _ in 0..20 {
+            det.observe(500_000).unwrap();
+        }
+        let mprl_before = det.most_probable_run_length();
+        // Sudden shift: large deviation
+        for _ in 0..5 {
+            det.observe(-500_000).unwrap();
+        }
+        let mprl_after = det.most_probable_run_length();
+        // Most probable run length should decrease after a regime shift
+        // (mass moves toward shorter runs)
+        assert!(mprl_after < mprl_before);
+    }
+
+    // -- Regime transition sequences --
+
+    #[test]
+    fn normal_to_elevated_to_attack_sequence() {
+        let mut det = test_detector("m");
+        // Normal phase
+        for _ in 0..10 {
+            det.observe(300_000).unwrap();
+        }
+        assert_eq!(det.regime(), Regime::Normal);
+
+        // Transition to elevated
+        for _ in 0..15 {
+            det.observe(750_000).unwrap();
+        }
+        // Mean should now be in elevated range
+        assert_eq!(det.regime(), Regime::Elevated);
+
+        // Transition to attack
+        for _ in 0..15 {
+            det.observe(950_000).unwrap();
+        }
+        assert_eq!(det.regime(), Regime::Attack);
+
+        let events = det.drain_events();
+        // Should have at least 2 transitions
+        assert!(events.len() >= 2);
+    }
+
+    #[test]
+    fn attack_recovery_cycle() {
+        let mut det = test_detector("m");
+        // Attack phase
+        for _ in 0..15 {
+            det.observe(950_000).unwrap();
+        }
+        assert!(det.regime() >= Regime::Elevated);
+
+        // Recovery: observations drop back to normal
+        for _ in 0..15 {
+            det.observe(200_000).unwrap();
+        }
+        assert_eq!(det.regime(), Regime::Normal);
+    }
+
+    // -- MultiStreamDetector advanced --
+
+    #[test]
+    fn multi_stream_register_replaces_existing() {
+        let mut multi = MultiStreamDetector::new();
+        multi.register(test_detector("a"));
+        assert_eq!(multi.stream_count(), 1);
+
+        // Observe to change state
+        for _ in 0..15 {
+            multi.observe("a", 950_000).unwrap();
+        }
+        let regime_before = multi.regime("a");
+
+        // Re-register replaces with fresh detector
+        multi.register(test_detector("a"));
+        assert_eq!(multi.stream_count(), 1);
+        assert_eq!(multi.regime("a"), Some(Regime::Normal));
+        assert_ne!(regime_before, Some(Regime::Normal));
+    }
+
+    #[test]
+    fn multi_stream_overall_regime_single_degraded() {
+        let mut multi = MultiStreamDetector::new();
+        multi.register(test_detector("a"));
+        multi.register(test_detector("b"));
+
+        // Keep "a" normal
+        for _ in 0..15 {
+            multi.observe("a", 300_000).unwrap();
+        }
+        // Push "b" to degraded
+        for _ in 0..15 {
+            multi.observe("b", -600_000).unwrap();
+        }
+        // Overall should reflect worst case
+        assert!(multi.overall_regime() >= Regime::Degraded);
+    }
+
+    #[test]
+    fn multi_stream_empty_overall_regime() {
+        let multi = MultiStreamDetector::new();
+        assert_eq!(multi.overall_regime(), Regime::Normal);
+    }
+
+    // -- Deterministic replay with multiple detectors --
+
+    #[test]
+    fn deterministic_replay_multi_stream() {
+        let observations = [
+            ("a", 300_000i64),
+            ("b", 500_000),
+            ("a", 700_000),
+            ("b", 300_000),
+            ("a", 950_000),
+            ("a", 960_000),
+            ("b", -600_000),
+        ];
+
+        let run = || -> (Vec<(String, Regime)>, Vec<RegimeChangeEvent>) {
+            let mut multi = MultiStreamDetector::new();
+            multi.register(test_detector("a"));
+            multi.register(test_detector("b"));
+            let regimes: Vec<(String, Regime)> = observations
+                .iter()
+                .map(|(stream, val)| {
+                    let r = multi.observe(stream, *val).unwrap();
+                    (stream.to_string(), r)
+                })
+                .collect();
+            let events = multi.drain_all_events();
+            (regimes, events)
+        };
+
+        let (r1, e1) = run();
+        let (r2, e2) = run();
+        assert_eq!(r1, r2);
+        assert_eq!(e1, e2);
+    }
+
+    // -- RegimeChangeEvent field completeness --
+
+    #[test]
+    fn regime_change_event_field_correctness() {
+        let mut det = RegimeDetector::new(
+            DetectorConfig {
+                detector_id: "det-test".to_string(),
+                metric_stream: "cpu_load".to_string(),
+                max_run_length: 50,
+                classifier: RegimeClassifier::default(),
+                prior: NormalStats::default_prior(),
+                hazard_lambda: 100,
+            },
+            SecurityEpoch::from_raw(7),
+        );
+
+        // Fill window with normal, then push to attack
+        for _ in 0..10 {
+            det.observe(300_000).unwrap();
+        }
+        for _ in 0..15 {
+            det.observe(950_000).unwrap();
+        }
+
+        let events = det.drain_events();
+        assert!(!events.is_empty());
+        let event = &events[0];
+        assert_eq!(event.detector_id, "det-test");
+        assert_eq!(event.metric_stream, "cpu_load");
+        assert_eq!(event.old_regime, Regime::Normal);
+        assert!(event.confidence_millionths >= 0);
+        assert!(event.confidence_millionths <= 1_000_000);
+        assert!(event.change_point_index > 0);
+        assert_eq!(event.epoch, SecurityEpoch::from_raw(7));
+    }
+
+    // -- Predictive score edge cases --
+
+    #[test]
+    fn predictive_score_never_negative_or_zero() {
+        let prior = NormalStats::default_prior();
+        let mut stats = RunLengthStats::new();
+        // Score for fresh stats
+        let score = stats.predictive_score(0, &prior);
+        assert!(score >= 1);
+
+        // Add extreme observations
+        for _ in 0..100 {
+            stats.add_observation(5_000_000);
+        }
+        let score = stats.predictive_score(-5_000_000, &prior);
+        assert!(score >= 1);
+    }
+
+    // -- Max run length truncation --
+
+    #[test]
+    fn max_run_length_truncation() {
+        let config = DetectorConfig {
+            detector_id: "det".to_string(),
+            metric_stream: "m".to_string(),
+            max_run_length: 5,
+            classifier: RegimeClassifier::default(),
+            prior: NormalStats::default_prior(),
+            hazard_lambda: 100,
+        };
+        let mut det = RegimeDetector::new(config, SecurityEpoch::GENESIS);
+
+        // Feed more observations than max_run_length
+        for _ in 0..20 {
+            det.observe(500_000).unwrap();
+        }
+        // Most probable run length should be bounded
+        assert!(det.most_probable_run_length() <= 5);
+        assert_eq!(det.observation_count(), 20);
+    }
+
+    // -- Regime Hash and Eq --
+
+    #[test]
+    fn regime_hash_consistency() {
+        use std::collections::BTreeSet;
+        let mut set = BTreeSet::new();
+        set.insert(Regime::Normal);
+        set.insert(Regime::Attack);
+        set.insert(Regime::Normal); // duplicate
+        assert_eq!(set.len(), 2);
+    }
+
+    // -- Serde stability --
+
+    #[test]
+    fn regime_change_event_json_fields_stable() {
+        let event = RegimeChangeEvent {
+            detector_id: "d".to_string(),
+            metric_stream: "m".to_string(),
+            old_regime: Regime::Normal,
+            new_regime: Regime::Elevated,
+            confidence_millionths: 500_000,
+            change_point_index: 10,
+            epoch: SecurityEpoch::GENESIS,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        // Verify all fields are present in serialization
+        assert!(json.contains("detector_id"));
+        assert!(json.contains("metric_stream"));
+        assert!(json.contains("old_regime"));
+        assert!(json.contains("new_regime"));
+        assert!(json.contains("confidence_millionths"));
+        assert!(json.contains("change_point_index"));
+        assert!(json.contains("epoch"));
+    }
+
+    // -- Window size behavior --
+
+    #[test]
+    fn recent_window_bounded_by_window_size() {
+        let mut det = test_detector("m");
+        // Feed 100 observations
+        for i in 0..100 {
+            det.observe(300_000 + i * 100).unwrap();
+        }
+        // Verify observation count is correct
+        assert_eq!(det.observation_count(), 100);
+        // Regime should still be Normal since values are small
+        assert_eq!(det.regime(), Regime::Normal);
+    }
+
+    // -- Zero observations --
+
+    #[test]
+    fn zero_value_observations_stay_normal() {
+        let mut det = test_detector("m");
+        for _ in 0..15 {
+            det.observe(0).unwrap();
+        }
+        assert_eq!(det.regime(), Regime::Normal);
+    }
+
+    // -- Config accessor --
+
+    #[test]
+    fn config_accessor_returns_correct_values() {
+        let det = test_detector("cpu");
+        let cfg = det.config();
+        assert_eq!(cfg.detector_id, "det-1");
+        assert_eq!(cfg.metric_stream, "cpu");
+        assert_eq!(cfg.max_run_length, 50);
+        assert_eq!(cfg.hazard_lambda, 100);
+    }
+
+    // -- Drain events idempotent --
+
+    #[test]
+    fn drain_events_idempotent() {
+        let mut det = test_detector("m");
+        for _ in 0..15 {
+            det.observe(950_000).unwrap();
+        }
+        let events1 = det.drain_events();
+        assert!(!events1.is_empty());
+        let events2 = det.drain_events();
+        assert!(events2.is_empty());
+    }
+
+    // -- NormalStats custom prior --
+
+    #[test]
+    fn normal_stats_custom_prior_serde() {
+        let stats = NormalStats {
+            mu0: 500_000,
+            kappa0: 200_000,
+            alpha0: 2_000_000,
+            beta0: 500_000,
+        };
+        let json = serde_json::to_string(&stats).unwrap();
+        let restored: NormalStats = serde_json::from_str(&json).unwrap();
+        assert_eq!(stats, restored);
+    }
+
+    // -- Classifier serde with custom values --
+
+    #[test]
+    fn classifier_serde_custom_values() {
+        let c = RegimeClassifier {
+            elevated_threshold: 100_000,
+            attack_threshold: 500_000,
+            degraded_threshold: -100_000,
+        };
+        let json = serde_json::to_string(&c).unwrap();
+        let restored: RegimeClassifier = serde_json::from_str(&json).unwrap();
+        assert_eq!(c, restored);
+    }
+
+    // -- Large value observations --
+
+    #[test]
+    fn large_value_observations_do_not_panic() {
+        let mut det = test_detector("m");
+        // Large values should not panic (overflow protection via i128 casts)
+        for _ in 0..15 {
+            det.observe(10_000_000).unwrap();
+        }
+        assert_eq!(det.observation_count(), 15);
+        // Regime should be Attack due to very high mean
+        assert_eq!(det.regime(), Regime::Attack);
+    }
+
+    // -- Multiple regime transitions produce ordered events --
+
+    #[test]
+    fn regime_transitions_produce_chronological_events() {
+        let mut det = test_detector("m");
+        // Normal -> Elevated
+        for _ in 0..15 {
+            det.observe(750_000).unwrap();
+        }
+        // Elevated -> Attack
+        for _ in 0..15 {
+            det.observe(950_000).unwrap();
+        }
+        // Attack -> Normal
+        for _ in 0..15 {
+            det.observe(200_000).unwrap();
+        }
+
+        let events = det.drain_events();
+        // Events should have increasing change_point_index
+        for w in events.windows(2) {
+            assert!(w[1].change_point_index > w[0].change_point_index);
+        }
     }
 }
