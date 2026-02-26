@@ -1155,4 +1155,235 @@ mod tests {
             RemoteOperationType::DnsResolution
         );
     }
+
+    // -- Enrichment batch 3: counters, serde, clone, display, edge cases --
+
+    #[test]
+    fn gate_new_has_zero_counters() {
+        let gate = RemoteOperationGate::new(test_epoch());
+        assert_eq!(gate.total_permitted(), 0);
+        assert_eq!(gate.total_denied(), 0);
+        assert!(gate.permitted_counts().is_empty());
+        assert!(gate.denied_counts().is_empty());
+    }
+
+    #[test]
+    fn gate_epoch_accessor_value_preserved() {
+        let gate = RemoteOperationGate::new(SecurityEpoch::from_raw(99));
+        assert_eq!(gate.epoch(), SecurityEpoch::from_raw(99));
+    }
+
+    #[test]
+    fn gate_permitted_count_increments() {
+        let mut gate = RemoteOperationGate::new(test_epoch());
+        for _ in 0..5 {
+            gate.check(
+                &remote_profile(),
+                RemoteOperationType::HttpRequest,
+                "c",
+                "e",
+                "t",
+                0,
+            )
+            .unwrap();
+        }
+        assert_eq!(gate.total_permitted(), 5);
+        assert_eq!(gate.permitted_counts().get("http_request"), Some(&5));
+    }
+
+    #[test]
+    fn gate_denied_count_increments() {
+        let mut gate = RemoteOperationGate::new(test_epoch());
+        let compute_only = CapabilityProfile::compute_only();
+        for _ in 0..3 {
+            let _ = gate.check(
+                &compute_only,
+                RemoteOperationType::GrpcCall,
+                "c",
+                "e",
+                "t",
+                0,
+            );
+        }
+        assert_eq!(gate.total_denied(), 3);
+        assert_eq!(gate.denied_counts().get("grpc_call"), Some(&3));
+    }
+
+    #[test]
+    fn gate_mixed_operations_counts_per_type() {
+        let mut gate = RemoteOperationGate::new(test_epoch());
+        let profile = remote_profile();
+        gate.check(&profile, RemoteOperationType::HttpRequest, "c", "e", "t", 0)
+            .unwrap();
+        gate.check(&profile, RemoteOperationType::GrpcCall, "c", "e", "t", 0)
+            .unwrap();
+        gate.check(&profile, RemoteOperationType::HttpRequest, "c", "e", "t", 0)
+            .unwrap();
+        assert_eq!(gate.permitted_counts().get("http_request"), Some(&2));
+        assert_eq!(gate.permitted_counts().get("grpc_call"), Some(&1));
+        assert_eq!(gate.total_permitted(), 3);
+    }
+
+    #[test]
+    fn drain_events_clears_buffer() {
+        let mut gate = RemoteOperationGate::new(test_epoch());
+        gate.check(
+            &remote_profile(),
+            RemoteOperationType::DnsResolution,
+            "c",
+            "e",
+            "t",
+            0,
+        )
+        .unwrap();
+        let events = gate.drain_events();
+        assert_eq!(events.len(), 1);
+        let events2 = gate.drain_events();
+        assert!(events2.is_empty());
+    }
+
+    #[test]
+    fn remote_operation_type_display_all_unique() {
+        use std::collections::BTreeSet;
+        let ops = [
+            RemoteOperationType::HttpRequest,
+            RemoteOperationType::GrpcCall,
+            RemoteOperationType::DnsResolution,
+            RemoteOperationType::DistributedStateMutation,
+            RemoteOperationType::LeaseRenewal,
+            RemoteOperationType::RemoteIpc,
+        ];
+        let set: BTreeSet<String> = ops.iter().map(|o| o.to_string()).collect();
+        assert_eq!(
+            set.len(),
+            6,
+            "all RemoteOperationType displays must be unique"
+        );
+    }
+
+    #[test]
+    fn remote_operation_type_serde_all_six_variants() {
+        let ops = [
+            RemoteOperationType::HttpRequest,
+            RemoteOperationType::GrpcCall,
+            RemoteOperationType::DnsResolution,
+            RemoteOperationType::DistributedStateMutation,
+            RemoteOperationType::LeaseRenewal,
+            RemoteOperationType::RemoteIpc,
+        ];
+        for op in &ops {
+            let json = serde_json::to_string(op).unwrap();
+            let back: RemoteOperationType = serde_json::from_str(&json).unwrap();
+            assert_eq!(*op, back);
+        }
+    }
+
+    #[test]
+    fn remote_capability_denied_clone_eq() {
+        let denied = RemoteCapabilityDenied {
+            operation: RemoteOperationType::LeaseRenewal,
+            component: "comp".to_string(),
+            held_profile: ProfileKind::ComputeOnly,
+            required_capabilities: vec![RuntimeCapability::NetworkEgress],
+            trace_id: "t".to_string(),
+        };
+        let cloned = denied.clone();
+        assert_eq!(denied, cloned);
+    }
+
+    #[test]
+    fn remote_capability_denied_display_contains_fields() {
+        let denied = RemoteCapabilityDenied {
+            operation: RemoteOperationType::HttpRequest,
+            component: "my_comp".to_string(),
+            held_profile: ProfileKind::ComputeOnly,
+            required_capabilities: vec![RuntimeCapability::NetworkEgress],
+            trace_id: "trace-42".to_string(),
+        };
+        let s = denied.to_string();
+        assert!(s.contains("http_request"));
+        assert!(s.contains("my_comp"));
+        assert!(s.contains("trace-42"));
+    }
+
+    #[test]
+    fn remote_capability_denied_implements_std_error() {
+        let denied = RemoteCapabilityDenied {
+            operation: RemoteOperationType::HttpRequest,
+            component: "c".to_string(),
+            held_profile: ProfileKind::ComputeOnly,
+            required_capabilities: vec![],
+            trace_id: "t".to_string(),
+        };
+        let _: &dyn std::error::Error = &denied;
+    }
+
+    #[test]
+    fn remote_gate_event_serde_roundtrip() {
+        let event = RemoteGateEvent {
+            trace_id: "t".to_string(),
+            component: "c".to_string(),
+            operation_type: "http_request".to_string(),
+            remote_endpoint: "https://host/api".to_string(),
+            epoch_id: 5,
+            timestamp_ticks: 100,
+            outcome: "permitted".to_string(),
+            held_profile: "Remote".to_string(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: RemoteGateEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, back);
+    }
+
+    #[test]
+    fn remote_gate_event_json_field_presence() {
+        let event = RemoteGateEvent {
+            trace_id: "t".to_string(),
+            component: "c".to_string(),
+            operation_type: "http_request".to_string(),
+            remote_endpoint: "ep".to_string(),
+            epoch_id: 1,
+            timestamp_ticks: 0,
+            outcome: "denied".to_string(),
+            held_profile: "ComputeOnly".to_string(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"trace_id\""));
+        assert!(json.contains("\"component\""));
+        assert!(json.contains("\"operation_type\""));
+        assert!(json.contains("\"remote_endpoint\""));
+        assert!(json.contains("\"epoch_id\""));
+        assert!(json.contains("\"outcome\""));
+    }
+
+    #[test]
+    fn gate_denied_event_outcome_is_denied() {
+        let mut gate = RemoteOperationGate::new(test_epoch());
+        let _ = gate.check(
+            &CapabilityProfile::compute_only(),
+            RemoteOperationType::HttpRequest,
+            "c",
+            "e",
+            "t",
+            0,
+        );
+        let events = gate.drain_events();
+        assert_eq!(events[0].outcome, "denied");
+    }
+
+    #[test]
+    fn gate_permitted_event_outcome_is_permitted() {
+        let mut gate = RemoteOperationGate::new(test_epoch());
+        gate.check(
+            &remote_profile(),
+            RemoteOperationType::HttpRequest,
+            "c",
+            "e",
+            "t",
+            0,
+        )
+        .unwrap();
+        let events = gate.drain_events();
+        assert_eq!(events[0].outcome, "permitted");
+    }
 }

@@ -1352,4 +1352,167 @@ mod tests {
         let back: ThresholdResult = serde_json::from_str(&json).unwrap();
         assert_eq!(result, back);
     }
+
+    // ── Enrichment batch 2: edge cases & boundary conditions ────
+
+    #[test]
+    fn milestone_ordering_strict() {
+        assert!(Milestone::Alpha < Milestone::Beta);
+        assert!(Milestone::Beta < Milestone::Ga);
+    }
+
+    #[test]
+    fn milestone_serde_roundtrip_all_variants() {
+        for ms in [Milestone::Alpha, Milestone::Beta, Milestone::Ga] {
+            let json = serde_json::to_string(&ms).unwrap();
+            let back: Milestone = serde_json::from_str(&json).unwrap();
+            assert_eq!(ms, back);
+        }
+    }
+
+    #[test]
+    fn two_observation_summary_correct() {
+        let mut sc = Scorecard::new(epoch(1));
+        sc.record(sample(MetricKind::BundleSizeBytes, 100, 1));
+        sc.record(sample(MetricKind::BundleSizeBytes, 200, 1));
+        let summary = sc.summary(MetricKind::BundleSizeBytes).unwrap();
+        assert_eq!(summary.count, 2);
+        assert_eq!(summary.min, 100);
+        assert_eq!(summary.max, 200);
+        assert_eq!(summary.mean, 150);
+    }
+
+    #[test]
+    fn current_value_evidence_completeness_uses_mean() {
+        let mut sc = Scorecard::new(epoch(1));
+        sc.record(sample(MetricKind::EvidenceCompleteness, 800_000, 1));
+        sc.record(sample(MetricKind::EvidenceCompleteness, 600_000, 1));
+        // EvidenceCompleteness → mean
+        assert_eq!(
+            sc.current_value(MetricKind::EvidenceCompleteness),
+            Some(700_000)
+        );
+    }
+
+    #[test]
+    fn current_value_responsiveness_p99_uses_p99() {
+        let mut sc = Scorecard::new(epoch(1));
+        for i in 0..100 {
+            sc.record(sample(MetricKind::ResponsivenessP99Us, i * 100, 1));
+        }
+        let val = sc.current_value(MetricKind::ResponsivenessP99Us).unwrap();
+        assert_eq!(val, 9900); // p99 of [0, 100, 200, ..., 9900]
+    }
+
+    #[test]
+    fn current_value_runtime_memory_uses_max() {
+        let mut sc = Scorecard::new(epoch(1));
+        sc.record(sample(MetricKind::RuntimeMemoryBytes, 10_000, 1));
+        sc.record(sample(MetricKind::RuntimeMemoryBytes, 50_000, 1));
+        sc.record(sample(MetricKind::RuntimeMemoryBytes, 30_000, 1));
+        assert_eq!(
+            sc.current_value(MetricKind::RuntimeMemoryBytes),
+            Some(50_000)
+        );
+    }
+
+    #[test]
+    fn scorecard_many_observations_correct_count() {
+        let mut sc = Scorecard::new(epoch(1));
+        for i in 0..1000 {
+            sc.record(sample(MetricKind::RenderLatencyP50Us, i, 1));
+        }
+        assert_eq!(sc.observation_count(MetricKind::RenderLatencyP50Us), 1000);
+        assert_eq!(sc.total_observations(), 1000);
+    }
+
+    #[test]
+    fn evaluate_beta_requires_stricter_thresholds() {
+        let mut sc = Scorecard::new(epoch(1));
+        // Alpha-level data
+        for _ in 0..10 {
+            sc.record(sample(MetricKind::CompatibilityPassRate, 900_000, 1));
+            sc.record(sample(MetricKind::ResponsivenessP99Us, 50_000, 1));
+            sc.record(sample(MetricKind::RenderLatencyP50Us, 5_000, 1));
+            sc.record(sample(MetricKind::RenderLatencyP95Us, 20_000, 1));
+            sc.record(sample(MetricKind::RenderLatencyP99Us, 50_000, 1));
+            sc.record(sample(MetricKind::BundleSizeBytes, 5_000_000, 1));
+            sc.record(sample(MetricKind::RuntimeMemoryBytes, 100_000_000, 1));
+            sc.record(sample(MetricKind::FallbackFrequency, 100_000, 1));
+            sc.record(sample(MetricKind::RollbackLatencyP99Us, 200_000, 1));
+            sc.record(sample(MetricKind::EvidenceCompleteness, 600_000, 1));
+        }
+        let alpha = sc.evaluate(Milestone::Alpha);
+        let beta = sc.evaluate(Milestone::Beta);
+        // Alpha should pass, but beta may fail on some stricter thresholds
+        assert!(alpha.overall_pass);
+        assert!(beta.fail_count >= alpha.fail_count);
+    }
+
+    #[test]
+    fn report_pass_contains_pass_word() {
+        let mut sc = Scorecard::new(epoch(1));
+        for _ in 0..10 {
+            sc.record(sample(MetricKind::CompatibilityPassRate, 999_000, 1));
+            sc.record(sample(MetricKind::ResponsivenessP99Us, 1_000, 1));
+            sc.record(sample(MetricKind::RenderLatencyP50Us, 500, 1));
+            sc.record(sample(MetricKind::RenderLatencyP95Us, 2_000, 1));
+            sc.record(sample(MetricKind::RenderLatencyP99Us, 5_000, 1));
+            sc.record(sample(MetricKind::BundleSizeBytes, 500_000, 1));
+            sc.record(sample(MetricKind::RuntimeMemoryBytes, 10_000_000, 1));
+            sc.record(sample(MetricKind::FallbackFrequency, 1_000, 1));
+            sc.record(sample(MetricKind::RollbackLatencyP99Us, 10_000, 1));
+            sc.record(sample(MetricKind::EvidenceCompleteness, 999_000, 1));
+        }
+        let report = sc.report(Milestone::Alpha);
+        assert!(report.contains("PASS"));
+    }
+
+    #[test]
+    fn evaluation_pass_rate_all_pass() {
+        let thresholds = vec![
+            Threshold {
+                metric: MetricKind::BundleSizeBytes,
+                milestone: Milestone::Alpha,
+                boundary: 10_000,
+            },
+            Threshold {
+                metric: MetricKind::RuntimeMemoryBytes,
+                milestone: Milestone::Alpha,
+                boundary: 10_000,
+            },
+        ];
+        let mut sc = Scorecard::with_thresholds(thresholds, epoch(1));
+        sc.record(sample(MetricKind::BundleSizeBytes, 5_000, 1));
+        sc.record(sample(MetricKind::RuntimeMemoryBytes, 5_000, 1));
+        let eval = sc.evaluate(Milestone::Alpha);
+        assert_eq!(eval.pass_rate_millionths, 1_000_000); // 100%
+    }
+
+    #[test]
+    fn current_value_rollback_latency_uses_p99() {
+        let mut sc = Scorecard::new(epoch(1));
+        for i in 0..100 {
+            sc.record(sample(MetricKind::RollbackLatencyP99Us, i * 1000, 1));
+        }
+        let val = sc.current_value(MetricKind::RollbackLatencyP99Us).unwrap();
+        assert_eq!(val, 99_000); // p99
+    }
+
+    #[test]
+    fn scorecard_deterministic_evaluation() {
+        let build_sc = || {
+            let mut sc = Scorecard::new(epoch(5));
+            for i in 0..50 {
+                sc.record(sample(MetricKind::CompatibilityPassRate, 950_000 + i, 1));
+                sc.record(sample(MetricKind::BundleSizeBytes, 1_000_000 + i * 100, 1));
+            }
+            sc
+        };
+        let eval1 = build_sc().evaluate(Milestone::Alpha);
+        let eval2 = build_sc().evaluate(Milestone::Alpha);
+        assert_eq!(eval1.pass_count, eval2.pass_count);
+        assert_eq!(eval1.fail_count, eval2.fail_count);
+        assert_eq!(eval1.overall_pass, eval2.overall_pass);
+    }
 }

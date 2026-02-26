@@ -1119,4 +1119,339 @@ mod tests {
         // Ties go to first in action_set order (deterministic)
         assert_eq!(sel.expected_loss, 0);
     }
+
+    // ── Enrichment batch 2: edge cases & boundary conditions ────
+
+    #[test]
+    fn empty_posterior_gives_zero_expected_loss() {
+        let mut ctrl = monitoring_controller();
+        let posterior = Posterior::new(BTreeMap::new());
+        let sel = ctrl
+            .select_action(&posterior, SecurityEpoch::from_raw(1), "t")
+            .unwrap();
+        assert_eq!(sel.expected_loss, 0);
+        // With zero expected loss for all, picks first in action_set order
+        assert_eq!(sel.action, "low");
+    }
+
+    #[test]
+    fn uniform_posterior_selects_minimum_combined_loss() {
+        let mut ctrl = monitoring_controller();
+        let mut probs = BTreeMap::new();
+        probs.insert("normal".to_string(), 500_000); // 0.5
+        probs.insert("anomalous".to_string(), 500_000); // 0.5
+        let posterior = Posterior::new(probs);
+        let sel = ctrl
+            .select_action(&posterior, SecurityEpoch::from_raw(1), "t")
+            .unwrap();
+        // low:  0.5*100k + 0.5*5M = 50k + 2500k = 2550k
+        // med:  0.5*300k + 0.5*1M = 150k + 500k = 650k
+        // high: 0.5*800k + 0.5*200k = 400k + 100k = 500k
+        assert_eq!(sel.action, "high");
+        assert_eq!(sel.expected_loss, 500_000);
+    }
+
+    #[test]
+    fn single_action_set_always_selected() {
+        let matrix = LossMatrix::new();
+        let config = ControllerConfig {
+            controller_id: "c".to_string(),
+            domain: "d".to_string(),
+            action_set: vec!["only".to_string()],
+            safe_default: "only".to_string(),
+            policy_id: "p".to_string(),
+        };
+        let mut ctrl = PolicyController::new(config, matrix).unwrap();
+        let posterior = normal_posterior();
+        let sel = ctrl
+            .select_action(&posterior, SecurityEpoch::from_raw(1), "t")
+            .unwrap();
+        assert_eq!(sel.action, "only");
+        assert!(!sel.is_safe_default);
+    }
+
+    #[test]
+    fn decision_id_wraps_correctly_after_many_decisions() {
+        let mut ctrl = monitoring_controller();
+        let posterior = normal_posterior();
+        let epoch = SecurityEpoch::from_raw(1);
+        for _ in 0..999_999 {
+            ctrl.select_action(&posterior, epoch, "t").unwrap();
+        }
+        let sel = ctrl.select_action(&posterior, epoch, "t").unwrap();
+        assert_eq!(sel.decision_id, "mon-ctrl-1000000");
+        assert_eq!(ctrl.decision_count(), 1_000_000);
+    }
+
+    #[test]
+    fn guardrail_blocking_safe_default_still_falls_through() {
+        let mut ctrl = monitoring_controller();
+        // Block only the safe default ("high")
+        ctrl.add_guardrail(Guardrail {
+            id: "block-default".to_string(),
+            description: "blocks the safe default".to_string(),
+            blocked_actions: vec!["high".to_string()],
+        });
+        let posterior = anomalous_posterior();
+        let sel = ctrl
+            .select_action(&posterior, SecurityEpoch::from_raw(1), "t")
+            .unwrap();
+        // "high" blocked, so picks next best among "low" and "medium"
+        // medium: 0.2*300k + 0.8*1M = 60k + 800k = 860k
+        // low:    0.2*100k + 0.8*5M = 20k + 4000k = 4020k
+        assert_eq!(sel.action, "medium");
+        assert!(!sel.is_safe_default);
+    }
+
+    #[test]
+    fn evidence_entry_candidate_count_matches_action_set() {
+        let mut ctrl = monitoring_controller();
+        let posterior = normal_posterior();
+        let epoch = SecurityEpoch::from_raw(1);
+        let sel = ctrl.select_action(&posterior, epoch, "t").unwrap();
+        let entry = ctrl.build_evidence(&sel, &posterior, epoch, "t").unwrap();
+        assert_eq!(entry.candidates.len(), ctrl.config().action_set.len());
+    }
+
+    #[test]
+    fn negative_loss_values_produce_correct_selection() {
+        let mut matrix = LossMatrix::new();
+        matrix.set("s", "good", -500_000); // reward
+        matrix.set("s", "bad", 500_000); // cost
+        let config = ControllerConfig {
+            controller_id: "c".to_string(),
+            domain: "d".to_string(),
+            action_set: vec!["bad".to_string(), "good".to_string()],
+            safe_default: "bad".to_string(),
+            policy_id: "p".to_string(),
+        };
+        let mut ctrl = PolicyController::new(config, matrix).unwrap();
+        let mut probs = BTreeMap::new();
+        probs.insert("s".to_string(), 1_000_000);
+        let posterior = Posterior::new(probs);
+        let sel = ctrl
+            .select_action(&posterior, SecurityEpoch::from_raw(1), "t")
+            .unwrap();
+        assert_eq!(sel.action, "good");
+        assert_eq!(sel.expected_loss, -500_000);
+    }
+
+    #[test]
+    fn evidence_guardrail_inactive_when_no_overlap() {
+        let mut ctrl = monitoring_controller();
+        ctrl.add_guardrail(Guardrail {
+            id: "irrelevant".to_string(),
+            description: "blocks nothing in action set".to_string(),
+            blocked_actions: vec!["nonexistent".to_string()],
+        });
+        let posterior = normal_posterior();
+        let epoch = SecurityEpoch::from_raw(1);
+        let sel = ctrl.select_action(&posterior, epoch, "t").unwrap();
+        let entry = ctrl.build_evidence(&sel, &posterior, epoch, "t").unwrap();
+        // Guardrail should be present but inactive
+        assert_eq!(entry.constraints.len(), 1);
+        assert!(!entry.constraints[0].active);
+    }
+
+    #[test]
+    fn tied_expected_loss_deterministic_winner() {
+        let mut matrix = LossMatrix::new();
+        matrix.set("s", "alpha", 100_000);
+        matrix.set("s", "beta", 100_000);
+        let config = ControllerConfig {
+            controller_id: "c".to_string(),
+            domain: "d".to_string(),
+            action_set: vec!["alpha".to_string(), "beta".to_string()],
+            safe_default: "alpha".to_string(),
+            policy_id: "p".to_string(),
+        };
+        let mut ctrl = PolicyController::new(config, matrix).unwrap();
+        let mut probs = BTreeMap::new();
+        probs.insert("s".to_string(), 1_000_000);
+        let posterior = Posterior::new(probs);
+        let sel1 = ctrl
+            .select_action(&posterior, SecurityEpoch::from_raw(1), "t1")
+            .unwrap();
+        // min_by_key picks first minimum — deterministic
+        let mut ctrl2 = {
+            let mut m = LossMatrix::new();
+            m.set("s", "alpha", 100_000);
+            m.set("s", "beta", 100_000);
+            let c = ControllerConfig {
+                controller_id: "c".to_string(),
+                domain: "d".to_string(),
+                action_set: vec!["alpha".to_string(), "beta".to_string()],
+                safe_default: "alpha".to_string(),
+                policy_id: "p".to_string(),
+            };
+            PolicyController::new(c, m).unwrap()
+        };
+        let sel2 = ctrl2
+            .select_action(&posterior, SecurityEpoch::from_raw(1), "t1")
+            .unwrap();
+        assert_eq!(sel1.action, sel2.action);
+    }
+
+    #[test]
+    fn loss_matrix_zero_values() {
+        let mut m = LossMatrix::new();
+        m.set("s", "a", 0);
+        assert_eq!(m.get("s", "a"), Some(0));
+    }
+
+    #[test]
+    fn posterior_single_state_full_probability() {
+        let mut probs = BTreeMap::new();
+        probs.insert("only".to_string(), 1_000_000);
+        let p = Posterior::new(probs);
+        assert_eq!(p.probability("only"), 1_000_000);
+        assert_eq!(p.states().count(), 1);
+    }
+
+    // -- Enrichment batch 3: serde, clone, display, error paths, determinism --
+
+    #[test]
+    fn posterior_normal_serde_roundtrip() {
+        let p = normal_posterior();
+        let json = serde_json::to_string(&p).unwrap();
+        let back: Posterior = serde_json::from_str(&json).unwrap();
+        assert_eq!(p, back);
+    }
+
+    #[test]
+    fn loss_matrix_multi_entry_serde_roundtrip() {
+        let mut m = LossMatrix::new();
+        m.set("normal", "low", 100_000);
+        m.set("anomalous", "high", 200_000);
+        let json = serde_json::to_string(&m).unwrap();
+        let back: LossMatrix = serde_json::from_str(&json).unwrap();
+        assert_eq!(m, back);
+    }
+
+    #[test]
+    fn controller_config_serde_roundtrip() {
+        let ctrl = monitoring_controller();
+        let config = ctrl.config().clone();
+        let json = serde_json::to_string(&config).unwrap();
+        let back: ControllerConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config, back);
+    }
+
+    #[test]
+    fn selection_serde_roundtrip() {
+        let mut ctrl = monitoring_controller();
+        let posterior = normal_posterior();
+        let sel = ctrl
+            .select_action(&posterior, SecurityEpoch::from_raw(1), "t")
+            .unwrap();
+        let json = serde_json::to_string(&sel).unwrap();
+        let back: ActionSelection = serde_json::from_str(&json).unwrap();
+        assert_eq!(sel, back);
+    }
+
+    #[test]
+    fn guardrail_with_blocked_actions_serde_roundtrip() {
+        let g = Guardrail {
+            id: "g1".to_string(),
+            description: "desc".to_string(),
+            blocked_actions: vec!["a".to_string(), "b".to_string()],
+        };
+        let json = serde_json::to_string(&g).unwrap();
+        let back: Guardrail = serde_json::from_str(&json).unwrap();
+        assert_eq!(g, back);
+    }
+
+    #[test]
+    fn posterior_unknown_state_returns_zero() {
+        let p = normal_posterior();
+        assert_eq!(p.probability("nonexistent"), 0);
+    }
+
+    #[test]
+    fn loss_matrix_get_missing_returns_none() {
+        let m = LossMatrix::new();
+        assert_eq!(m.get("missing_state", "missing_action"), None);
+    }
+
+    #[test]
+    fn loss_matrix_empty_len_zero() {
+        let m = LossMatrix::new();
+        assert_eq!(m.len(), 0);
+    }
+
+    #[test]
+    fn controller_safe_default_when_all_blocked() {
+        let mut ctrl = monitoring_controller();
+        ctrl.add_guardrail(Guardrail {
+            id: "block-all".to_string(),
+            description: "blocks all actions".to_string(),
+            blocked_actions: vec!["low".to_string(), "medium".to_string(), "high".to_string()],
+        });
+        let posterior = normal_posterior();
+        let sel = ctrl
+            .select_action(&posterior, SecurityEpoch::from_raw(1), "t")
+            .unwrap();
+        assert!(sel.is_safe_default);
+        assert_eq!(sel.action, "high"); // safe_default
+    }
+
+    #[test]
+    fn selection_clone_equality() {
+        let mut ctrl = monitoring_controller();
+        let posterior = normal_posterior();
+        let sel = ctrl
+            .select_action(&posterior, SecurityEpoch::from_raw(1), "t")
+            .unwrap();
+        let cloned = sel.clone();
+        assert_eq!(sel, cloned);
+    }
+
+    #[test]
+    fn controller_decisions_deterministic_across_runs() {
+        let run = || {
+            let mut ctrl = monitoring_controller();
+            let posterior = normal_posterior();
+            let epoch = SecurityEpoch::from_raw(1);
+            for i in 0..5 {
+                ctrl.select_action(&posterior, epoch, &format!("t{i}"))
+                    .unwrap();
+            }
+            ctrl.decisions().to_vec()
+        };
+        assert_eq!(run(), run());
+    }
+
+    #[test]
+    fn anomalous_posterior_selects_high() {
+        let mut ctrl = monitoring_controller();
+        let posterior = anomalous_posterior();
+        let sel = ctrl
+            .select_action(&posterior, SecurityEpoch::from_raw(1), "t")
+            .unwrap();
+        // high: 0.2*800k + 0.8*200k = 160k + 160k = 320k  (lowest)
+        // medium: 0.2*300k + 0.8*1M = 60k + 800k = 860k
+        // low: 0.2*100k + 0.8*5M = 20k + 4M = 4020k
+        assert_eq!(sel.action, "high");
+        assert_eq!(sel.expected_loss, 320_000);
+    }
+
+    #[test]
+    fn guardrail_rejection_tuple_serde() {
+        // Guardrail rejections are stored as Vec<(action, guardrail_id)>
+        let rejections: Vec<(String, String)> = vec![("low".to_string(), "cost-cap".to_string())];
+        let json = serde_json::to_string(&rejections).unwrap();
+        let back: Vec<(String, String)> = serde_json::from_str(&json).unwrap();
+        assert_eq!(rejections, back);
+    }
+
+    #[test]
+    fn evidence_entry_has_chosen_action() {
+        let mut ctrl = monitoring_controller();
+        let posterior = normal_posterior();
+        let epoch = SecurityEpoch::from_raw(1);
+        let sel = ctrl.select_action(&posterior, epoch, "t").unwrap();
+        let entry = ctrl.build_evidence(&sel, &posterior, epoch, "t").unwrap();
+        assert!(!entry.chosen_action.action_name.is_empty());
+        assert!(entry.chosen_action.expected_loss_millionths >= 0);
+    }
 }

@@ -1279,4 +1279,160 @@ mod tests {
         assert_eq!(receipt.metadata.get("resume"), Some(&"true".to_string()));
         assert!(receipt.verify_integrity());
     }
+
+    // -- Enrichment batch 3: receipt fields, serde, clone, state transitions --
+
+    #[test]
+    fn receipt_sandbox_serde_roundtrip() {
+        let mut executor = setup_executor();
+        let ctx = test_context();
+        let receipt = executor
+            .execute(ContainmentAction::Sandbox, "ext-001", &ctx)
+            .unwrap();
+        let json = serde_json::to_string(&receipt).unwrap();
+        let back: ContainmentReceipt = serde_json::from_str(&json).unwrap();
+        assert_eq!(receipt, back);
+    }
+
+    #[test]
+    fn receipt_clone_equality() {
+        let mut executor = setup_executor();
+        let ctx = test_context();
+        let receipt = executor
+            .execute(ContainmentAction::Challenge, "ext-001", &ctx)
+            .unwrap();
+        let cloned = receipt.clone();
+        assert_eq!(receipt, cloned);
+        assert_eq!(receipt.receipt_id, cloned.receipt_id);
+        assert_eq!(receipt.content_hash, cloned.content_hash);
+    }
+
+    #[test]
+    fn receipt_target_extension_id_matches_input() {
+        let mut executor = setup_executor();
+        let ctx = test_context();
+        let receipt = executor
+            .execute(ContainmentAction::Sandbox, "ext-001", &ctx)
+            .unwrap();
+        assert_eq!(receipt.target_extension_id, "ext-001");
+    }
+
+    #[test]
+    fn allow_action_leaves_running() {
+        let mut executor = setup_executor();
+        let ctx = test_context();
+        executor
+            .execute(ContainmentAction::Allow, "ext-001", &ctx)
+            .unwrap();
+        let state = executor.state("ext-001");
+        assert_eq!(state, Some(ContainmentState::Running));
+    }
+
+    #[test]
+    fn challenge_then_allow_returns_to_running() {
+        let mut executor = setup_executor();
+        let ctx = test_context();
+        executor
+            .execute(ContainmentAction::Challenge, "ext-001", &ctx)
+            .unwrap();
+        assert_eq!(
+            executor.state("ext-001"),
+            Some(ContainmentState::Challenged)
+        );
+        executor
+            .execute(ContainmentAction::Allow, "ext-001", &ctx)
+            .unwrap();
+        assert_eq!(executor.state("ext-001"), Some(ContainmentState::Running));
+    }
+
+    #[test]
+    fn containment_state_serde_six_variants() {
+        let states = [
+            ContainmentState::Running,
+            ContainmentState::Challenged,
+            ContainmentState::Sandboxed,
+            ContainmentState::Suspended,
+            ContainmentState::Terminated,
+            ContainmentState::Quarantined,
+        ];
+        for s in &states {
+            let json = serde_json::to_string(s).unwrap();
+            let back: ContainmentState = serde_json::from_str(&json).unwrap();
+            assert_eq!(*s, back);
+        }
+    }
+
+    #[test]
+    fn executor_new_is_empty() {
+        let executor = ContainmentExecutor::new();
+        assert!(executor.receipts("nonexistent").is_empty());
+        assert_eq!(executor.state("nonexistent"), None);
+    }
+
+    #[test]
+    fn containment_context_serde_fields() {
+        let ctx = test_context();
+        let json = serde_json::to_string(&ctx).unwrap();
+        assert!(json.contains("\"decision_id\""));
+        assert!(json.contains("\"timestamp_ns\""));
+        assert!(json.contains("\"epoch\""));
+    }
+
+    #[test]
+    fn sandbox_policy_custom_serde_roundtrip() {
+        let policy = SandboxPolicy {
+            allowed_capabilities: vec!["fs-read".to_string()],
+            allow_network: false,
+            allow_fs_write: false,
+            allow_process_spawn: false,
+            max_memory_bytes: 4096,
+        };
+        let json = serde_json::to_string(&policy).unwrap();
+        let back: SandboxPolicy = serde_json::from_str(&json).unwrap();
+        assert_eq!(policy, back);
+    }
+
+    #[test]
+    fn sandbox_policy_default_has_fs_read() {
+        let policy = SandboxPolicy::default();
+        assert!(!policy.allow_network);
+        assert!(!policy.allow_fs_write);
+        assert!(!policy.allow_process_spawn);
+        assert!(policy.is_allowed("fs-read"), "default allows fs-read");
+    }
+
+    #[test]
+    fn receipt_json_field_presence() {
+        let mut executor = setup_executor();
+        let ctx = test_context();
+        let receipt = executor
+            .execute(ContainmentAction::Sandbox, "ext-001", &ctx)
+            .unwrap();
+        let json = serde_json::to_string(&receipt).unwrap();
+        assert!(json.contains("\"receipt_id\""));
+        assert!(json.contains("\"target_extension_id\""));
+        assert!(json.contains("\"action\""));
+        assert!(json.contains("\"content_hash\""));
+    }
+
+    #[test]
+    fn multiple_extensions_isolated_state() {
+        let mut executor = ContainmentExecutor::new();
+        let ctx = test_context();
+        executor.register("ext-a");
+        executor.register("ext-b");
+        executor
+            .execute(ContainmentAction::Sandbox, "ext-a", &ctx)
+            .unwrap();
+        assert_eq!(executor.state("ext-a"), Some(ContainmentState::Sandboxed));
+        assert_eq!(executor.state("ext-b"), Some(ContainmentState::Running));
+    }
+
+    #[test]
+    fn containment_error_display_is_nonempty() {
+        let err = ContainmentError::Internal {
+            detail: "test".to_string(),
+        };
+        assert!(!err.to_string().is_empty());
+    }
 }

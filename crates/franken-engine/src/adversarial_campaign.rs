@@ -2450,6 +2450,7 @@ impl Default for CampaignGeneratorConfig {
     }
 }
 
+#[derive(Debug)]
 pub struct CampaignGenerator {
     grammar: AttackGrammar,
     config: CampaignGeneratorConfig,
@@ -4682,5 +4683,704 @@ mod tests {
             names.insert(v.to_string());
         }
         assert_eq!(names.len(), variants.len());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: PearlTower 2026-02-26 session 2
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn exploit_scoring_moderate_difficulty() {
+        // composite in [400_000, 650_000) → Moderate
+        // evasion=750k, escape=0, damage=700k, detection=500k, novel=150k
+        // composite = (750k*35 + 0 + 700k*20 + 500k*15 + 150k*5)/100 = 485_000
+        let result = CampaignExecutionResult {
+            undetected_steps: 3,
+            total_steps: 4,
+            objective_achieved_before_containment: false,
+            damage_potential_millionths: 700_000,
+            evidence_atoms_before_detection: 25,
+            novel_technique: true,
+        };
+        let score = ExploitObjectiveScore::from_result(&result).unwrap();
+        assert_eq!(score.difficulty, ContainmentDifficulty::Moderate);
+        assert!(score.composite_score_millionths >= 400_000);
+        assert!(score.composite_score_millionths < 650_000);
+    }
+
+    #[test]
+    fn exploit_scoring_hard_difficulty() {
+        // composite in [650_000, 850_000) → Hard
+        let result = CampaignExecutionResult {
+            undetected_steps: 4,
+            total_steps: 5,
+            objective_achieved_before_containment: true,
+            damage_potential_millionths: 600_000,
+            evidence_atoms_before_detection: 30,
+            novel_technique: false,
+        };
+        let score = ExploitObjectiveScore::from_result(&result).unwrap();
+        assert_eq!(score.difficulty, ContainmentDifficulty::Hard);
+        assert!(score.composite_score_millionths >= 650_000);
+        assert!(score.composite_score_millionths < 850_000);
+    }
+
+    #[test]
+    fn exploit_scoring_field_values_correct() {
+        let result = CampaignExecutionResult {
+            undetected_steps: 3,
+            total_steps: 5,
+            objective_achieved_before_containment: false,
+            damage_potential_millionths: 420_000,
+            evidence_atoms_before_detection: 14,
+            novel_technique: true,
+        };
+        let score = ExploitObjectiveScore::from_result(&result).unwrap();
+        // evasion = (3/5) * 1_000_000 = 600_000
+        assert_eq!(score.evasion_score_millionths, 600_000);
+        // no containment escape
+        assert_eq!(score.containment_escape_score_millionths, 0);
+        // damage passes through
+        assert_eq!(score.damage_potential_millionths, 420_000);
+        // detection = min(14 * 20_000, 1_000_000) = 280_000
+        assert_eq!(score.detection_difficulty_millionths, 280_000);
+        // novel = 150_000
+        assert_eq!(score.novel_technique_bonus_millionths, 150_000);
+    }
+
+    #[test]
+    fn exploit_scoring_containment_escape_flag_sets_million() {
+        let result = CampaignExecutionResult {
+            undetected_steps: 1,
+            total_steps: 2,
+            objective_achieved_before_containment: true,
+            damage_potential_millionths: 100_000,
+            evidence_atoms_before_detection: 5,
+            novel_technique: false,
+        };
+        let score = ExploitObjectiveScore::from_result(&result).unwrap();
+        assert_eq!(score.containment_escape_score_millionths, 1_000_000);
+        assert_eq!(score.novel_technique_bonus_millionths, 0);
+    }
+
+    #[test]
+    fn one_sided_p_value_zero_franken_returns_zero() {
+        // franken has 0 successes, baseline has many → p-value should be very small
+        let p = one_sided_p_value_millionths(0, 250, 45, 250);
+        assert!(p < 50_000, "p={p} should be small when franken dominates");
+    }
+
+    #[test]
+    fn one_sided_p_value_equal_rates_returns_high() {
+        let p = one_sided_p_value_millionths(25, 250, 25, 250);
+        assert!(p >= 400_000, "p={p} should be high when rates are equal");
+    }
+
+    #[test]
+    fn one_sided_p_value_zero_attempts_returns_million() {
+        assert_eq!(one_sided_p_value_millionths(0, 0, 10, 100), 1_000_000);
+        assert_eq!(one_sided_p_value_millionths(10, 100, 0, 0), 1_000_000);
+    }
+
+    #[test]
+    fn compromise_rate_partial_success() {
+        // 10 out of 250 → 40_000 millionths
+        assert_eq!(compromise_rate_millionths(10, 250), 40_000);
+    }
+
+    #[test]
+    fn wilson_interval_nonzero_values_are_ordered() {
+        let (lo, hi) = wilson_interval_millionths(10, 250);
+        assert!(lo > 0);
+        assert!(hi > lo);
+        assert!(hi < 1_000_000);
+    }
+
+    #[test]
+    fn campaign_generator_new_rejects_zero_seed() {
+        let grammar = AttackGrammar::default();
+        let config = CampaignGeneratorConfig::default();
+        let result = CampaignGenerator::new(grammar, config, 0);
+        assert!(result.is_err());
+        assert!(result.err().unwrap().to_string().contains("seed"));
+    }
+
+    #[test]
+    fn campaign_generator_successive_campaigns_differ() {
+        let grammar = AttackGrammar::default();
+        let mut generator =
+            CampaignGenerator::new(grammar, CampaignGeneratorConfig::default(), 0xBEEF).unwrap();
+        let first = generator
+            .generate_campaign(CampaignComplexity::Probe)
+            .unwrap();
+        let second = generator
+            .generate_campaign(CampaignComplexity::Probe)
+            .unwrap();
+        assert_ne!(first.campaign_id, second.campaign_id);
+        assert_ne!(first.seed, second.seed);
+    }
+
+    #[test]
+    fn campaign_generator_score_accessor_tracks_outcome() {
+        let grammar = AttackGrammar::default();
+        let mut generator =
+            CampaignGenerator::new(grammar, CampaignGeneratorConfig::default(), 0xCAFE).unwrap();
+        let campaign = generator
+            .generate_campaign(CampaignComplexity::Probe)
+            .unwrap();
+        let result = sample_result();
+        let score = generator.score_campaign(&campaign, &result).unwrap();
+        generator
+            .record_campaign_outcome(&campaign, &score)
+            .unwrap();
+        let stored = generator.score(&campaign.campaign_id).unwrap();
+        assert_eq!(*stored, score);
+        assert!(generator.score("nonexistent-camp").is_none());
+    }
+
+    #[test]
+    fn campaign_generator_drain_events_after_scoring() {
+        let grammar = AttackGrammar::default();
+        let mut generator =
+            CampaignGenerator::new(grammar, CampaignGeneratorConfig::default(), 0xDAD).unwrap();
+        let campaign = generator
+            .generate_campaign(CampaignComplexity::Probe)
+            .unwrap();
+        let result = sample_result();
+        let score = generator.score_campaign(&campaign, &result).unwrap();
+        generator
+            .record_campaign_outcome(&campaign, &score)
+            .unwrap();
+        let events = generator.drain_events();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event, "campaign_scored");
+        // Drain again should be empty
+        assert!(generator.drain_events().is_empty());
+    }
+
+    #[test]
+    fn mutation_point_mutation_preserves_step_count() {
+        let grammar = AttackGrammar::default();
+        let mut generator =
+            CampaignGenerator::new(grammar.clone(), CampaignGeneratorConfig::default(), 0xA1)
+                .unwrap();
+        let base = generator
+            .generate_campaign(CampaignComplexity::MultiStage)
+            .unwrap();
+        let original_len = base.steps.len();
+        let mutated = MutationEngine::mutate(
+            &base,
+            &grammar,
+            MutationRequest {
+                operator: MutationOperator::PointMutation,
+                seed: 42,
+                donor_campaign: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(mutated.steps.len(), original_len);
+        mutated.validate().unwrap();
+    }
+
+    #[test]
+    fn mutation_crossover_produces_valid_campaign() {
+        let grammar = AttackGrammar::default();
+        let mut generator =
+            CampaignGenerator::new(grammar.clone(), CampaignGeneratorConfig::default(), 0xA2)
+                .unwrap();
+        let base = generator
+            .generate_campaign(CampaignComplexity::Apt)
+            .unwrap();
+        let donor = generator
+            .generate_campaign(CampaignComplexity::MultiStage)
+            .unwrap();
+        let mutated = MutationEngine::mutate(
+            &base,
+            &grammar,
+            MutationRequest {
+                operator: MutationOperator::Crossover,
+                seed: 99,
+                donor_campaign: Some(donor),
+            },
+        )
+        .unwrap();
+        mutated.validate().unwrap();
+        assert!(!mutated.steps.is_empty());
+    }
+
+    #[test]
+    fn mutation_crossover_requires_donor() {
+        let grammar = AttackGrammar::default();
+        let mut generator =
+            CampaignGenerator::new(grammar.clone(), CampaignGeneratorConfig::default(), 0xA3)
+                .unwrap();
+        let base = generator
+            .generate_campaign(CampaignComplexity::Probe)
+            .unwrap();
+        let err = MutationEngine::mutate(
+            &base,
+            &grammar,
+            MutationRequest {
+                operator: MutationOperator::Crossover,
+                seed: 1,
+                donor_campaign: None,
+            },
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("donor"));
+    }
+
+    #[test]
+    fn mutation_temporal_shift_requires_temporal_step() {
+        let grammar = AttackGrammar::default();
+        let base = AdversarialCampaign {
+            campaign_id: "camp-ts-test".to_string(),
+            trace_id: "trace-ts".to_string(),
+            decision_id: "decision-ts".to_string(),
+            policy_id: "pol".to_string(),
+            grammar_version: 1,
+            seed: 42,
+            complexity: CampaignComplexity::Probe,
+            steps: vec![AttackStep {
+                step_id: 0,
+                dimension: AttackDimension::HostcallSequence,
+                production_label: "motif".to_string(),
+                kind: AttackStepKind::HostcallSequence {
+                    motif: "motif".to_string(),
+                    hostcall_count: 5,
+                },
+            }],
+        };
+        let err = MutationEngine::mutate(
+            &base,
+            &grammar,
+            MutationRequest {
+                operator: MutationOperator::TemporalShift,
+                seed: 7,
+                donor_campaign: None,
+            },
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("temporal"));
+    }
+
+    #[test]
+    fn red_blue_technique_effectiveness_populates_per_dimension() {
+        let campaign = sample_campaign(CampaignComplexity::MultiStage, 0x5555);
+        let result = CampaignExecutionResult {
+            undetected_steps: 0,
+            total_steps: campaign.steps.len(),
+            objective_achieved_before_containment: false,
+            damage_potential_millionths: 100_000,
+            evidence_atoms_before_detection: 5,
+            novel_technique: false,
+        };
+        let mut integrator =
+            RedBlueLoopIntegrator::new(RedBlueCalibrationConfig::default(), Default::default());
+        integrator
+            .ingest_outcome(outcome_record(campaign.clone(), result, false, false, 1000))
+            .unwrap();
+
+        let effectiveness = integrator.technique_effectiveness();
+        assert!(!effectiveness.is_empty());
+        // All detected (undetected_steps=0)
+        for entry in effectiveness.values() {
+            assert!(entry.attempts >= 1);
+            assert_eq!(entry.detected, entry.attempts);
+            assert_eq!(entry.detection_rate_millionths, 1_000_000);
+            assert_eq!(entry.escaped, 0);
+        }
+    }
+
+    #[test]
+    fn red_blue_calibrate_returns_none_with_no_outcomes() {
+        let mut integrator =
+            RedBlueLoopIntegrator::new(RedBlueCalibrationConfig::default(), Default::default());
+        let signing_key = [0u8; 32];
+        let result = integrator.calibrate(&signing_key, 1000).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn classify_advisory_on_low_score_all_detected() {
+        let campaign = sample_campaign(CampaignComplexity::Probe, 0x6666);
+        let result = CampaignExecutionResult {
+            undetected_steps: 0,
+            total_steps: campaign.steps.len(),
+            objective_achieved_before_containment: false,
+            damage_potential_millionths: 50_000,
+            evidence_atoms_before_detection: 3,
+            novel_technique: false,
+        };
+        let integrator =
+            RedBlueLoopIntegrator::new(RedBlueCalibrationConfig::default(), Default::default());
+        let record = outcome_record(campaign, result, false, false, 1000);
+        let classification = integrator.classify(&record);
+        assert_eq!(classification.severity, CampaignSeverity::Advisory);
+        // No undetected steps → FleetConvergence (evidence_atoms ≤ 24 and undetected=0)
+        assert_eq!(classification.subsystem, DefenseSubsystem::FleetConvergence);
+        assert!(!classification.evasion_report);
+        assert!(!classification.containment_escape_report);
+    }
+
+    #[test]
+    fn classify_evidence_accumulation_subsystem() {
+        let campaign = sample_campaign(CampaignComplexity::Probe, 0x7777);
+        let result = CampaignExecutionResult {
+            undetected_steps: 0,
+            total_steps: campaign.steps.len(),
+            objective_achieved_before_containment: false,
+            damage_potential_millionths: 100_000,
+            evidence_atoms_before_detection: 30, // > 24
+            novel_technique: false,
+        };
+        let integrator =
+            RedBlueLoopIntegrator::new(RedBlueCalibrationConfig::default(), Default::default());
+        let record = outcome_record(campaign, result, false, false, 1000);
+        let classification = integrator.classify(&record);
+        assert_eq!(
+            classification.subsystem,
+            DefenseSubsystem::EvidenceAccumulation
+        );
+    }
+
+    #[test]
+    fn classify_near_miss_triggers_moderate() {
+        let campaign = sample_campaign(CampaignComplexity::Probe, 0x8888);
+        // near miss: !objective_achieved && undetected+1 >= total
+        let result = CampaignExecutionResult {
+            undetected_steps: campaign.steps.len() - 1,
+            total_steps: campaign.steps.len(),
+            objective_achieved_before_containment: false,
+            damage_potential_millionths: 100_000,
+            evidence_atoms_before_detection: 5,
+            novel_technique: false,
+        };
+        let integrator =
+            RedBlueLoopIntegrator::new(RedBlueCalibrationConfig::default(), Default::default());
+        let record = outcome_record(campaign, result, false, false, 1000);
+        let classification = integrator.classify(&record);
+        assert!(classification.near_miss_report);
+        assert!(classification.severity >= CampaignSeverity::Moderate);
+    }
+
+    #[test]
+    fn campaign_outcome_record_rejects_score_result_mismatch() {
+        let campaign = sample_campaign(CampaignComplexity::Probe, 0x9999);
+        let result = sample_result();
+        let mut score = ExploitObjectiveScore::from_result(&result).unwrap();
+        // Tamper with the score
+        score.composite_score_millionths += 1;
+        let record = CampaignOutcomeRecord {
+            campaign,
+            result,
+            score,
+            benign_control: false,
+            false_positive: false,
+            timestamp_ns: 1000,
+        };
+        let err = record.validate().unwrap_err();
+        assert!(err.to_string().contains("mismatch"));
+    }
+
+    #[test]
+    fn auto_minimizer_rejects_non_failing_campaign() {
+        let campaign = sample_campaign(CampaignComplexity::Probe, 0xAAAA);
+        let err = AutoMinimizer::minimize_with(&campaign, |_| false).unwrap_err();
+        assert!(err.to_string().contains("initially failing"));
+    }
+
+    #[test]
+    fn suppression_sample_validate_rejects_empty_campaign_id() {
+        let sample = CampaignSuppressionSample {
+            campaign_id: "  ".to_string(),
+            attack_category: CampaignAttackCategory::Injection,
+            target_runtime: CampaignRuntime::FrankenEngine,
+            attempt_count: 100,
+            success_count: 1,
+            raw_log_ref: "ref".to_string(),
+            repro_script_ref: "ref".to_string(),
+        };
+        assert!(sample.validate().is_err());
+    }
+
+    #[test]
+    fn suppression_sample_validate_rejects_zero_attempts() {
+        let sample = CampaignSuppressionSample {
+            campaign_id: "camp-1".to_string(),
+            attack_category: CampaignAttackCategory::Injection,
+            target_runtime: CampaignRuntime::FrankenEngine,
+            attempt_count: 0,
+            success_count: 0,
+            raw_log_ref: "ref".to_string(),
+            repro_script_ref: "ref".to_string(),
+        };
+        assert!(sample.validate().is_err());
+    }
+
+    #[test]
+    fn suppression_sample_validate_rejects_success_exceeds_attempts() {
+        let sample = CampaignSuppressionSample {
+            campaign_id: "camp-1".to_string(),
+            attack_category: CampaignAttackCategory::Injection,
+            target_runtime: CampaignRuntime::FrankenEngine,
+            attempt_count: 10,
+            success_count: 11,
+            raw_log_ref: "ref".to_string(),
+            repro_script_ref: "ref".to_string(),
+        };
+        assert!(sample.validate().is_err());
+    }
+
+    #[test]
+    fn suppression_sample_compromise_rate_method() {
+        let sample = CampaignSuppressionSample {
+            campaign_id: "camp-1".to_string(),
+            attack_category: CampaignAttackCategory::Injection,
+            target_runtime: CampaignRuntime::FrankenEngine,
+            attempt_count: 250,
+            success_count: 10,
+            raw_log_ref: "ref".to_string(),
+            repro_script_ref: "ref".to_string(),
+        };
+        assert_eq!(sample.compromise_rate_millionths(), 40_000);
+    }
+
+    #[test]
+    fn suppression_gate_input_validate_rejects_empty_samples() {
+        let input = SuppressionGateInput {
+            release_candidate_id: "rc-1".to_string(),
+            continuous_run: true,
+            samples: vec![],
+            trend_points: vec![],
+            escalations: vec![],
+        };
+        assert!(input.validate().is_err());
+    }
+
+    #[test]
+    fn suppression_gate_input_validate_rejects_empty_rc_id() {
+        let input = SuppressionGateInput {
+            release_candidate_id: "  ".to_string(),
+            continuous_run: true,
+            samples: vec![CampaignSuppressionSample {
+                campaign_id: "c-1".to_string(),
+                attack_category: CampaignAttackCategory::Injection,
+                target_runtime: CampaignRuntime::FrankenEngine,
+                attempt_count: 100,
+                success_count: 0,
+                raw_log_ref: "ref".to_string(),
+                repro_script_ref: "ref".to_string(),
+            }],
+            trend_points: vec![],
+            escalations: vec![],
+        };
+        assert!(input.validate().is_err());
+    }
+
+    #[test]
+    fn escalation_record_validate_passes_untriggered() {
+        let record = ExploitEscalationRecord {
+            campaign_id: "camp-1".to_string(),
+            attack_category: CampaignAttackCategory::Injection,
+            target_runtime: CampaignRuntime::FrankenEngine,
+            successful_exploit: true,
+            escalation_triggered: false,
+            escalation_latency_seconds: None,
+        };
+        assert!(record.validate().is_ok());
+    }
+
+    #[test]
+    fn escalation_record_validate_rejects_empty_campaign_id() {
+        let record = ExploitEscalationRecord {
+            campaign_id: "  ".to_string(),
+            attack_category: CampaignAttackCategory::Injection,
+            target_runtime: CampaignRuntime::FrankenEngine,
+            successful_exploit: false,
+            escalation_triggered: false,
+            escalation_latency_seconds: None,
+        };
+        assert!(record.validate().is_err());
+    }
+
+    #[test]
+    fn suppression_gate_config_serde_roundtrip() {
+        let config = SuppressionGateConfig::default();
+        let json = serde_json::to_string(&config).unwrap();
+        let back: SuppressionGateConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config, back);
+    }
+
+    #[test]
+    fn calibration_receipt_serde_roundtrip() {
+        let receipt = CalibrationReceipt {
+            calibration_id: "cal-1".to_string(),
+            campaign_ids: vec!["camp-a".to_string(), "camp-b".to_string()],
+            old_parameters: CalibrationSnapshot {
+                detection_threshold_millionths: 700_000,
+                evidence_weights_millionths: BTreeMap::new(),
+                loss_matrix_millionths: BTreeMap::new(),
+            },
+            new_parameters: CalibrationSnapshot {
+                detection_threshold_millionths: 680_000,
+                evidence_weights_millionths: BTreeMap::new(),
+                loss_matrix_millionths: BTreeMap::new(),
+            },
+            justification_metrics: CalibrationJustificationMetrics {
+                false_negative_millionths: 50_000,
+                false_positive_millionths: 5_000,
+                attack_escape_count: 3,
+                benign_false_positive_count: 1,
+                near_miss_count: 2,
+            },
+            timestamp_ns: 99_000,
+            signature: vec![0xAB; 64],
+        };
+        let json = serde_json::to_string(&receipt).unwrap();
+        let back: CalibrationReceipt = serde_json::from_str(&json).unwrap();
+        assert_eq!(receipt, back);
+    }
+
+    #[test]
+    fn red_blue_calibration_config_serde_roundtrip() {
+        let config = RedBlueCalibrationConfig::default();
+        let json = serde_json::to_string(&config).unwrap();
+        let back: RedBlueCalibrationConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config, back);
+    }
+
+    #[test]
+    fn policy_regression_suite_upsert_overwrites() {
+        let mut suite = PolicyRegressionSuite::default();
+        let campaign = sample_campaign(CampaignComplexity::Probe, 42);
+        let fixture = AutoMinimizer::build_fixture(
+            &campaign,
+            "expected",
+            "actual_v1",
+            MinimizationProof {
+                rounds: 1,
+                removed_steps: 0,
+                is_fixed_point: true,
+            },
+        );
+        suite.upsert(PolicyRegressionEntry {
+            campaign_id: campaign.campaign_id.clone(),
+            fixture: fixture.clone(),
+            subsystem: DefenseSubsystem::Sentinel,
+            threat_category: ThreatCategory::PolicyEvasion,
+            severity: CampaignSeverity::Moderate,
+            discovered_at_ns: 1000,
+            calibration_id: None,
+        });
+        assert_eq!(suite.len(), 1);
+
+        // Upsert with same campaign_id overwrites
+        let fixture2 = AutoMinimizer::build_fixture(
+            &campaign,
+            "expected",
+            "actual_v2",
+            MinimizationProof {
+                rounds: 2,
+                removed_steps: 1,
+                is_fixed_point: true,
+            },
+        );
+        suite.upsert(PolicyRegressionEntry {
+            campaign_id: campaign.campaign_id.clone(),
+            fixture: fixture2,
+            subsystem: DefenseSubsystem::Sentinel,
+            threat_category: ThreatCategory::PolicyEvasion,
+            severity: CampaignSeverity::Critical,
+            discovered_at_ns: 2000,
+            calibration_id: None,
+        });
+        assert_eq!(suite.len(), 1);
+        let entry = suite.get(&campaign.campaign_id).unwrap();
+        assert_eq!(entry.severity, CampaignSeverity::Critical);
+        assert_eq!(entry.fixture.actual_defense_response, "actual_v2");
+    }
+
+    #[test]
+    fn policy_regression_suite_entries_accessor() {
+        let suite = PolicyRegressionSuite::default();
+        assert!(suite.entries().is_empty());
+    }
+
+    #[test]
+    fn red_blue_ingest_outcomes_batch() {
+        let campaign1 = sample_campaign(CampaignComplexity::Probe, 0xBB01);
+        let campaign2 = sample_campaign(CampaignComplexity::Probe, 0xBB02);
+        let result = CampaignExecutionResult {
+            undetected_steps: 0,
+            total_steps: 4,
+            objective_achieved_before_containment: false,
+            damage_potential_millionths: 50_000,
+            evidence_atoms_before_detection: 3,
+            novel_technique: false,
+        };
+        let record1 = outcome_record(campaign1, result.clone(), false, false, 1000);
+        let record2 = outcome_record(campaign2, result, false, false, 2000);
+        let mut integrator =
+            RedBlueLoopIntegrator::new(RedBlueCalibrationConfig::default(), Default::default());
+        let classifications = integrator.ingest_outcomes(&[record1, record2]).unwrap();
+        assert_eq!(classifications.len(), 2);
+        let events = integrator.drain_events();
+        assert_eq!(events.len(), 2);
+    }
+
+    #[test]
+    fn suppression_gate_fails_on_missing_runtime_coverage() {
+        // Only FrankenEngine samples, no baselines
+        let samples: Vec<CampaignSuppressionSample> = CampaignAttackCategory::ALL
+            .iter()
+            .map(|category| {
+                suppression_sample(
+                    &format!("camp-fe-{category}"),
+                    *category,
+                    CampaignRuntime::FrankenEngine,
+                    250,
+                    0,
+                )
+            })
+            .collect();
+        let input = SuppressionGateInput {
+            release_candidate_id: "rc-no-baseline".to_string(),
+            continuous_run: true,
+            samples,
+            trend_points: vec![
+                CampaignTrendPoint {
+                    release_candidate_id: "rc-prev-1".to_string(),
+                    timestamp_ns: 1000,
+                    samples_evaluated: 100,
+                },
+                CampaignTrendPoint {
+                    release_candidate_id: "rc-prev-2".to_string(),
+                    timestamp_ns: 2000,
+                    samples_evaluated: 200,
+                },
+            ],
+            escalations: vec![],
+        };
+        let result =
+            evaluate_compromise_suppression_gate(&input, &SuppressionGateConfig::default())
+                .unwrap();
+        assert!(!result.passed);
+        assert!(
+            result
+                .failures
+                .iter()
+                .any(|f| f.error_code == ERR_GATE_MISSING_RUNTIME_COVERAGE)
+        );
+    }
+
+    #[test]
+    fn clamp_millionths_at_zero() {
+        assert_eq!(clamp_millionths(0), 0);
+    }
+
+    #[test]
+    fn clamp_millionths_at_exact_million() {
+        assert_eq!(clamp_millionths(1_000_000), 1_000_000);
     }
 }

@@ -1374,4 +1374,170 @@ mod tests {
         assert!(!legal.has_high_risk);
         assert_eq!(legal.max_risk, LicenseRisk::Low);
     }
+
+    // -- Enrichment batch 3: clone, individual serde, JSON fields --
+
+    #[test]
+    fn toolchain_fingerprint_clone_equality() {
+        let fp = test_env().toolchain;
+        assert_eq!(fp, fp.clone());
+    }
+
+    #[test]
+    fn build_environment_clone_equality() {
+        let env = test_env();
+        assert_eq!(env, env.clone());
+    }
+
+    #[test]
+    fn license_finding_serde_roundtrip() {
+        let finding = LicenseFinding {
+            dependency: "serde".to_string(),
+            license_spdx: "MIT OR Apache-2.0".to_string(),
+            risk: LicenseRisk::None,
+            notes: "dual".to_string(),
+        };
+        let json = serde_json::to_string(&finding).unwrap();
+        let back: LicenseFinding = serde_json::from_str(&json).unwrap();
+        assert_eq!(finding, back);
+    }
+
+    #[test]
+    fn artifact_entry_serde_roundtrip() {
+        let entry = test_artifact("main.rs", ArtifactKind::Source);
+        let json = serde_json::to_string(&entry).unwrap();
+        let back: ArtifactEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry, back);
+    }
+
+    #[test]
+    fn dependency_entry_serde_roundtrip() {
+        let dep = test_dep("serde", "1.0.200");
+        let json = serde_json::to_string(&dep).unwrap();
+        let back: DependencyEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(dep, back);
+    }
+
+    #[test]
+    fn artifact_kind_serde_all_variants() {
+        let kinds = [
+            ArtifactKind::Source,
+            ArtifactKind::Binary,
+            ArtifactKind::Config,
+            ArtifactKind::TestFixture,
+            ArtifactKind::Evidence,
+            ArtifactKind::LockFile,
+            ArtifactKind::Documentation,
+            ArtifactKind::Legal,
+        ];
+        for k in &kinds {
+            let json = serde_json::to_string(k).unwrap();
+            let back: ArtifactKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(*k, back);
+        }
+    }
+
+    #[test]
+    fn artifact_kind_ordering() {
+        assert!(ArtifactKind::Source < ArtifactKind::Legal);
+    }
+
+    #[test]
+    fn git_fingerprint_serde_roundtrip() {
+        let git = test_env().git;
+        let json = serde_json::to_string(&git).unwrap();
+        let back: GitFingerprint = serde_json::from_str(&json).unwrap();
+        assert_eq!(git, back);
+    }
+
+    #[test]
+    fn pack_json_field_presence() {
+        let pack = PackBuilder::new("FRX-json".to_string(), test_epoch())
+            .environment(test_env())
+            .build()
+            .unwrap();
+        let json = serde_json::to_string(&pack).unwrap();
+        for field in &[
+            "pack_id",
+            "claim_id",
+            "schema_version",
+            "epoch",
+            "environment",
+            "manifest",
+            "dependencies",
+        ] {
+            assert!(json.contains(field), "JSON missing field: {field}");
+        }
+    }
+
+    #[test]
+    fn report_json_field_presence() {
+        let pack = PackBuilder::new("FRX-rpt".to_string(), test_epoch())
+            .environment(test_env())
+            .build()
+            .unwrap();
+        let report = generate_report(&pack);
+        let json = serde_json::to_string(&report).unwrap();
+        for field in &[
+            "schema_version",
+            "claim_id",
+            "artifact_count",
+            "integrity",
+            "git_dirty",
+            "report_hash",
+        ] {
+            assert!(json.contains(field), "JSON missing field: {field}");
+        }
+    }
+
+    #[test]
+    fn legal_multiple_risks_selects_max() {
+        let findings = vec![
+            LicenseFinding {
+                dependency: "a".to_string(),
+                license_spdx: "MIT".to_string(),
+                risk: LicenseRisk::Low,
+                notes: String::new(),
+            },
+            LicenseFinding {
+                dependency: "b".to_string(),
+                license_spdx: "GPL-3.0".to_string(),
+                risk: LicenseRisk::High,
+                notes: String::new(),
+            },
+            LicenseFinding {
+                dependency: "c".to_string(),
+                license_spdx: "LGPL-2.1".to_string(),
+                risk: LicenseRisk::Medium,
+                notes: String::new(),
+            },
+        ];
+        let assessment = LegalAssessment::from_findings(findings);
+        assert_eq!(assessment.max_risk, LicenseRisk::High);
+        assert!(assessment.has_high_risk);
+        assert!(assessment.review_required);
+    }
+
+    #[test]
+    fn pack_integrity_result_clone_equality() {
+        let result = PackIntegrityResult {
+            pack_hash_valid: true,
+            manifest_count_valid: true,
+            manifest_size_valid: true,
+            artifacts_sorted: true,
+            dependencies_sorted: true,
+            all_valid: true,
+        };
+        assert_eq!(result, result.clone());
+    }
+
+    #[test]
+    fn reproducibility_report_clone_equality() {
+        let pack = PackBuilder::new("FRX-clone".to_string(), test_epoch())
+            .environment(test_env())
+            .build()
+            .unwrap();
+        let report = generate_report(&pack);
+        assert_eq!(report, report.clone());
+    }
 }

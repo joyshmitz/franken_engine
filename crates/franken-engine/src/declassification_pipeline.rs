@@ -1457,4 +1457,165 @@ mod tests {
         }
         assert_eq!(pipeline.receipts().len(), 5);
     }
+
+    // -- Enrichment batch 3: clone, serde, determinism, stats, error paths --
+
+    #[test]
+    fn receipt_clone_equality() {
+        let mut pipeline = DeclassificationPipeline::default();
+        let policy = make_policy();
+        let request = make_request("declass-secret-internal", Label::Secret, Label::Internal);
+        let receipt = pipeline
+            .process(&request, &policy, &low_loss(), &test_key())
+            .unwrap();
+        let cloned = receipt.clone();
+        assert_eq!(receipt, cloned);
+    }
+
+    #[test]
+    fn receipt_serde_roundtrip() {
+        let mut pipeline = DeclassificationPipeline::default();
+        let policy = make_policy();
+        let request = make_request("declass-secret-internal", Label::Secret, Label::Internal);
+        let receipt = pipeline
+            .process(&request, &policy, &low_loss(), &test_key())
+            .unwrap();
+        let json = serde_json::to_string(&receipt).unwrap();
+        let back: DeclassificationReceipt = serde_json::from_str(&json).unwrap();
+        assert_eq!(receipt, back);
+    }
+
+    #[test]
+    fn request_serde_roundtrip_enrichment() {
+        let request = make_request("route-1", Label::Secret, Label::Internal);
+        let json = serde_json::to_string(&request).unwrap();
+        let back: DeclassificationRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(request, back);
+    }
+
+    #[test]
+    fn pipeline_default_stats_are_zero() {
+        let pipeline = DeclassificationPipeline::default();
+        let stats = pipeline.stats();
+        assert_eq!(stats.decision_count, 0);
+        assert_eq!(stats.allow_count, 0);
+        assert_eq!(stats.deny_count, 0);
+        assert_eq!(stats.emergency_grants_active, 0);
+    }
+
+    #[test]
+    fn pipeline_default_receipts_empty() {
+        let pipeline = DeclassificationPipeline::default();
+        assert!(pipeline.receipts().is_empty());
+    }
+
+    #[test]
+    fn stats_increments_on_successful_process() {
+        let mut pipeline = DeclassificationPipeline::default();
+        let policy = make_policy();
+        let key = test_key();
+        let request = make_request("declass-secret-internal", Label::Secret, Label::Internal);
+        pipeline
+            .process(&request, &policy, &low_loss(), &key)
+            .unwrap();
+        let stats = pipeline.stats();
+        assert_eq!(stats.decision_count, 1);
+        assert_eq!(stats.allow_count, 1);
+    }
+
+    #[test]
+    fn pipeline_error_serde_all_variants() {
+        let variants: Vec<PipelineError> = vec![
+            PipelineError::FlowAlreadyLegal {
+                source: Label::Public,
+                sink: Label::Internal,
+            },
+            PipelineError::PolicyUnavailable {
+                reason: "offline".to_string(),
+            },
+            PipelineError::NoMatchingRoute {
+                source: Label::Secret,
+                sink: Label::Public,
+            },
+            PipelineError::LossExceedsThreshold {
+                expected_loss_milli: 999,
+                threshold_milli: 100,
+            },
+            PipelineError::EmergencyExpired {
+                request_id: "r1".to_string(),
+                expiry_ms: 500,
+            },
+            PipelineError::SigningError {
+                detail: "fail".to_string(),
+            },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: PipelineError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn label_serde_all_variants() {
+        let labels = [
+            Label::Public,
+            Label::Internal,
+            Label::Secret,
+            Label::TopSecret,
+        ];
+        for l in &labels {
+            let json = serde_json::to_string(l).unwrap();
+            let back: Label = serde_json::from_str(&json).unwrap();
+            assert_eq!(*l, back);
+        }
+    }
+
+    #[test]
+    fn deterministic_receipts_across_runs() {
+        let run = || {
+            let mut pipeline = DeclassificationPipeline::default();
+            let policy = make_policy();
+            let key = test_key();
+            let request = make_request("declass-secret-internal", Label::Secret, Label::Internal);
+            pipeline
+                .process(&request, &policy, &low_loss(), &key)
+                .unwrap()
+        };
+        let r1 = run();
+        let r2 = run();
+        assert_eq!(r1.receipt_id, r2.receipt_id);
+        assert_eq!(r1.source_label, r2.source_label);
+        assert_eq!(r1.sink_clearance, r2.sink_clearance);
+    }
+
+    #[test]
+    fn receipt_json_field_presence() {
+        let mut pipeline = DeclassificationPipeline::default();
+        let policy = make_policy();
+        let request = make_request("declass-secret-internal", Label::Secret, Label::Internal);
+        let receipt = pipeline
+            .process(&request, &policy, &low_loss(), &test_key())
+            .unwrap();
+        let json = serde_json::to_string(&receipt).unwrap();
+        assert!(json.contains("\"receipt_id\""));
+        assert!(json.contains("\"source_label\""));
+        assert!(json.contains("\"sink_clearance\""));
+        assert!(json.contains("\"decision\""));
+    }
+
+    #[test]
+    fn stats_serde_roundtrip() {
+        let mut pipeline = DeclassificationPipeline::default();
+        let policy = make_policy();
+        let key = test_key();
+        let request = make_request("declass-secret-internal", Label::Secret, Label::Internal);
+        pipeline
+            .process(&request, &policy, &low_loss(), &key)
+            .unwrap();
+        let stats = pipeline.stats();
+        let json = serde_json::to_string(&stats).unwrap();
+        let back: PipelineStats = serde_json::from_str(&json).unwrap();
+        assert_eq!(stats, back);
+    }
 }

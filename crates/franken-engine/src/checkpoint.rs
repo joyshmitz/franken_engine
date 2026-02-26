@@ -1090,4 +1090,171 @@ mod tests {
         assert_eq!(events[0].reason, CheckpointReason::Explicit);
         assert_eq!(events[0].action, CheckpointAction::Drain);
     }
+
+    // ── Enrichment batch 2: additional edge cases ────────────────
+
+    #[test]
+    fn check_without_tick_does_nothing() {
+        let (mut guard, _) = test_guard();
+        // check without tick — iterations_since_checkpoint is 0, under density bound
+        let action = guard.check();
+        assert_eq!(action, CheckpointAction::Continue);
+        assert_eq!(guard.event_count(), 0);
+    }
+
+    #[test]
+    fn cancel_then_reset_then_continue() {
+        let (mut guard, token) = test_guard();
+        guard.tick();
+        token.cancel();
+        let action = guard.check();
+        assert_eq!(action, CheckpointAction::Drain);
+        // Reset token
+        token.reset();
+        guard.tick();
+        let action = guard.check();
+        assert_eq!(action, CheckpointAction::Continue);
+    }
+
+    #[test]
+    fn multiple_explicit_checkpoints_emit_multiple_events() {
+        let (mut guard, _) = test_guard();
+        guard.tick();
+        guard.explicit_checkpoint();
+        guard.tick();
+        guard.tick();
+        guard.explicit_checkpoint();
+        let events = guard.drain_events();
+        assert_eq!(events.len(), 2);
+        assert!(
+            events
+                .iter()
+                .all(|e| e.reason == CheckpointReason::Explicit)
+        );
+    }
+
+    #[test]
+    fn event_iteration_count_reflects_since_last_checkpoint() {
+        let (mut guard, _) = test_guard(); // max_iterations=10
+        for _ in 0..7 {
+            guard.tick();
+        }
+        guard.explicit_checkpoint();
+        let events = guard.drain_events();
+        assert_eq!(events[0].iteration_count, 7);
+
+        // After reset, count should restart
+        for _ in 0..3 {
+            guard.tick();
+        }
+        guard.explicit_checkpoint();
+        let events = guard.drain_events();
+        assert_eq!(events[0].iteration_count, 3);
+    }
+
+    #[test]
+    fn budget_exactly_at_boundary_triggers_abort() {
+        let token = CancellationToken::new();
+        let mut guard = CheckpointGuard::new(
+            LoopSite::IrCompilation,
+            "compiler",
+            "t",
+            DensityConfig {
+                max_iterations: 1000,
+                max_total_iterations: 5,
+            },
+            token,
+        );
+        for _ in 0..5 {
+            guard.tick();
+        }
+        let action = guard.check();
+        assert_eq!(action, CheckpointAction::Abort);
+    }
+
+    #[test]
+    fn coverage_partial_registration() {
+        let mut cov = CheckpointCoverage::new();
+        cov.register("bytecode_dispatch");
+        cov.register("gc_scanning");
+        cov.register("gc_sweep");
+        assert!(!cov.all_covered());
+        assert_eq!(cov.covered_count(), 3);
+        assert_eq!(cov.uncovered().len(), 7);
+    }
+
+    #[test]
+    fn coverage_uncovered_deterministic_order() {
+        let cov = CheckpointCoverage::new();
+        let uncov = cov.uncovered();
+        // BTreeMap guarantees alphabetical order
+        for i in 1..uncov.len() {
+            assert!(uncov[i - 1] < uncov[i], "uncovered list should be sorted");
+        }
+    }
+
+    #[test]
+    fn loop_site_ordering() {
+        assert!(LoopSite::BytecodeDispatch < LoopSite::GcScanning);
+        assert!(LoopSite::GcScanning < LoopSite::GcSweep);
+    }
+
+    #[test]
+    fn density_config_custom_serde_roundtrip() {
+        let config = DensityConfig {
+            max_iterations: 42,
+            max_total_iterations: 9999,
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let restored: DensityConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config, restored);
+    }
+
+    #[test]
+    fn guard_event_count_matches_drain_len() {
+        let (mut guard, _) = test_guard();
+        for _ in 0..20 {
+            guard.tick();
+            guard.check();
+        }
+        let count = guard.event_count();
+        let events = guard.drain_events();
+        assert_eq!(count, events.len());
+    }
+
+    #[test]
+    fn checkpoint_reason_serde_all_variants() {
+        let reasons = [
+            CheckpointReason::Periodic,
+            CheckpointReason::CancelPending,
+            CheckpointReason::BudgetExhausted,
+            CheckpointReason::Explicit,
+        ];
+        for r in &reasons {
+            let json = serde_json::to_string(r).unwrap();
+            let restored: CheckpointReason = serde_json::from_str(&json).unwrap();
+            assert_eq!(*r, restored);
+        }
+    }
+
+    #[test]
+    fn guard_component_and_trace_in_events() {
+        let token = CancellationToken::new();
+        let mut guard = CheckpointGuard::new(
+            LoopSite::IrLowering,
+            "my_component",
+            "my_trace",
+            DensityConfig {
+                max_iterations: 1,
+                max_total_iterations: 100,
+            },
+            token,
+        );
+        guard.tick();
+        guard.check();
+        let events = guard.drain_events();
+        assert_eq!(events[0].component, "my_component");
+        assert_eq!(events[0].trace_id, "my_trace");
+        assert_eq!(events[0].loop_site, LoopSite::IrLowering);
+    }
 }

@@ -1625,4 +1625,212 @@ mod tests {
         let restored: ExplorationStrategy = serde_json::from_str(&json).unwrap();
         assert_eq!(strategy, restored);
     }
+
+    // -- Enrichment batch 3: clone, edge cases, JSON presence, Verdict --
+
+    #[test]
+    fn race_surface_clone_equality() {
+        let rs = RaceSurface {
+            race_id: "rc-clone".to_string(),
+            operations: [OperationType::PolicyUpdate, OperationType::RegionClose],
+            invariant: "no_leak".to_string(),
+            severity: RaceSeverity::Critical,
+        };
+        assert_eq!(rs, rs.clone());
+    }
+
+    #[test]
+    fn scenario_clone_equality() {
+        let sc = Scenario {
+            task_count: 2,
+            actions: vec![
+                ScenarioAction::RunTask { task_index: 0 },
+                ScenarioAction::AdvanceTime { ticks: 5 },
+            ],
+            seed: 77,
+        };
+        assert_eq!(sc, sc.clone());
+    }
+
+    #[test]
+    fn exploration_failure_clone_equality() {
+        let f = ExplorationFailure {
+            transcript: ScheduleTranscript::new(99),
+            violations: vec!["v1".to_string(), "v2".to_string()],
+            minimized_transcript: None,
+            related_race_ids: vec!["r1".to_string()],
+        };
+        assert_eq!(f, f.clone());
+    }
+
+    #[test]
+    fn exploration_report_clone_equality() {
+        let r = ExplorationReport {
+            exploration_id: "clone-test".to_string(),
+            strategy: ExplorationStrategy::Exhaustive {
+                max_permutations: 5,
+            },
+            total_explored: 5,
+            failures: vec![],
+            race_surfaces_covered: 2,
+            race_surfaces_total: 3,
+            regression_transcripts: vec![],
+        };
+        assert_eq!(r, r.clone());
+    }
+
+    #[test]
+    fn lab_event_serde_roundtrip() {
+        let ev = LabEvent {
+            virtual_time: 100,
+            step_index: 3,
+            action: "run_task".to_string(),
+            task_id: Some(7),
+            region_id: Some("r-42".to_string()),
+            outcome: "completed".to_string(),
+        };
+        let json = serde_json::to_string(&ev).unwrap();
+        let back: LabEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(ev, back);
+    }
+
+    #[test]
+    fn verdict_serde_roundtrip_all_variants() {
+        let variants = vec![
+            Verdict::Pass,
+            Verdict::Fail {
+                reason: "broken".to_string(),
+            },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: Verdict = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn deterministic_shuffle_n_zero() {
+        let perm = deterministic_shuffle(0, 42);
+        assert!(perm.is_empty());
+    }
+
+    #[test]
+    fn deterministic_shuffle_n_one() {
+        let perm = deterministic_shuffle(1, 42);
+        assert_eq!(perm, vec![0]);
+    }
+
+    #[test]
+    fn bounded_permutations_respects_limit() {
+        let mut arr = vec![0, 1, 2, 3];
+        let mut results = Vec::new();
+        generate_permutations_bounded(&mut arr, 0, 3, &mut results);
+        assert_eq!(results.len(), 3);
+    }
+
+    #[test]
+    fn exploration_report_json_field_presence() {
+        let report = ExplorationReport {
+            exploration_id: "json-fields".to_string(),
+            strategy: ExplorationStrategy::Exhaustive {
+                max_permutations: 1,
+            },
+            total_explored: 1,
+            failures: vec![],
+            race_surfaces_covered: 0,
+            race_surfaces_total: 2,
+            regression_transcripts: vec![],
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        for field in &[
+            "exploration_id",
+            "strategy",
+            "total_explored",
+            "failures",
+            "race_surfaces_covered",
+            "race_surfaces_total",
+            "regression_transcripts",
+        ] {
+            assert!(json.contains(field), "JSON missing field: {field}");
+        }
+    }
+
+    #[test]
+    fn exploration_failure_multiple_violations() {
+        let f = ExplorationFailure {
+            transcript: ScheduleTranscript::new(1),
+            violations: vec![
+                "invariant_a broken".to_string(),
+                "invariant_b broken".to_string(),
+                "invariant_c broken".to_string(),
+            ],
+            minimized_transcript: None,
+            related_race_ids: vec!["r-1".to_string(), "r-2".to_string()],
+        };
+        assert_eq!(f.violations.len(), 3);
+        assert_eq!(f.related_race_ids.len(), 2);
+        let json = serde_json::to_string(&f).unwrap();
+        let back: ExplorationFailure = serde_json::from_str(&json).unwrap();
+        assert_eq!(f, back);
+    }
+
+    #[test]
+    fn report_failure_count_matches_failures_vec() {
+        let report = ExplorationReport {
+            exploration_id: "count-test".to_string(),
+            strategy: ExplorationStrategy::Exhaustive {
+                max_permutations: 10,
+            },
+            total_explored: 5,
+            failures: vec![
+                ExplorationFailure {
+                    transcript: ScheduleTranscript::new(1),
+                    violations: vec!["v".to_string()],
+                    minimized_transcript: None,
+                    related_race_ids: vec![],
+                },
+                ExplorationFailure {
+                    transcript: ScheduleTranscript::new(2),
+                    violations: vec!["v".to_string()],
+                    minimized_transcript: None,
+                    related_race_ids: vec![],
+                },
+            ],
+            race_surfaces_covered: 1,
+            race_surfaces_total: 3,
+            regression_transcripts: vec![],
+        };
+        assert_eq!(report.failure_count(), 2);
+        assert!(!report.all_passed());
+    }
+
+    #[test]
+    fn coverage_full_when_all_surfaces_covered() {
+        let report = ExplorationReport {
+            exploration_id: "full-cov".to_string(),
+            strategy: ExplorationStrategy::Exhaustive {
+                max_permutations: 10,
+            },
+            total_explored: 10,
+            failures: vec![],
+            race_surfaces_covered: 5,
+            race_surfaces_total: 5,
+            regression_transcripts: vec![],
+        };
+        assert_eq!(report.coverage_millionths(), 1_000_000);
+    }
+
+    #[test]
+    fn lab_event_clone_equality() {
+        let ev = LabEvent {
+            virtual_time: 42,
+            step_index: 1,
+            action: "run_task".to_string(),
+            task_id: None,
+            region_id: None,
+            outcome: "ok".to_string(),
+        };
+        assert_eq!(ev, ev.clone());
+    }
 }

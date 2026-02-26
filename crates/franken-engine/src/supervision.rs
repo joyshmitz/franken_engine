@@ -1132,4 +1132,344 @@ mod tests {
         assert_eq!(d.max_restarts, 5);
         assert_eq!(d.window_ticks, 60_000);
     }
+
+    // -- Enrichment batch 3: escalation chains, edge cases, boundary conditions --
+
+    #[test]
+    fn full_escalation_chain_through_root() {
+        let mut sup = Supervisor::new("sup", "t");
+        sup.add_service(ServiceConfig {
+            service_id: "svc".to_string(),
+            restart_policy: RestartPolicy::Permanent,
+            restart_budget: RestartBudget {
+                max_restarts: 0,
+                window_ticks: 100,
+            },
+            shutdown_order: 0,
+        });
+        sup.start_service("svc");
+
+        // Budget is 0, so first failure immediately escalates severity
+        // escalate_severity(Restart) = Isolate, and Isolate >= Isolate triggers Escalate action
+        let a1 = sup.report_failure("svc", "crash-1", 10).unwrap();
+        assert_eq!(a1, SupervisorAction::Escalate);
+        assert_eq!(sup.service_severity("svc"), Some(Severity::Isolate));
+    }
+
+    #[test]
+    fn zero_budget_escalates_immediately_on_first_failure() {
+        let mut sup = Supervisor::new("sup", "t");
+        sup.add_service(ServiceConfig {
+            service_id: "svc".to_string(),
+            restart_policy: RestartPolicy::Permanent,
+            restart_budget: RestartBudget {
+                max_restarts: 0,
+                window_ticks: 1000,
+            },
+            shutdown_order: 0,
+        });
+        sup.start_service("svc");
+
+        let action = sup.report_failure("svc", "crash", 5).unwrap();
+        assert!(action == SupervisorAction::Isolate || action == SupervisorAction::Escalate);
+        assert_eq!(sup.service_state("svc"), Some(ServiceState::Isolated));
+        assert_eq!(sup.restart_count("svc"), Some(0));
+    }
+
+    #[test]
+    fn duplicate_service_id_replaces_existing() {
+        let mut sup = Supervisor::new("sup", "t");
+        sup.add_service(ServiceConfig {
+            service_id: "svc".to_string(),
+            restart_policy: RestartPolicy::Permanent,
+            restart_budget: RestartBudget {
+                max_restarts: 10,
+                window_ticks: 100,
+            },
+            shutdown_order: 0,
+        });
+        sup.start_service("svc");
+        sup.report_failure("svc", "crash", 10);
+        assert_eq!(sup.restart_count("svc"), Some(1));
+
+        // Re-add replaces: fresh state
+        sup.add_service(ServiceConfig {
+            service_id: "svc".to_string(),
+            restart_policy: RestartPolicy::Temporary,
+            restart_budget: RestartBudget::default(),
+            shutdown_order: 5,
+        });
+        assert_eq!(sup.restart_count("svc"), Some(0));
+        assert_eq!(sup.service_state("svc"), Some(ServiceState::Starting));
+        assert_eq!(sup.service_count(), 1);
+    }
+
+    #[test]
+    fn health_critical_when_service_terminated() {
+        let mut sup = Supervisor::new("sup", "t");
+        sup.add_service(ServiceConfig {
+            service_id: "svc".to_string(),
+            restart_policy: RestartPolicy::Temporary,
+            restart_budget: RestartBudget::default(),
+            shutdown_order: 0,
+        });
+        sup.start_service("svc");
+        sup.report_failure("svc", "crash", 10);
+        assert_eq!(sup.service_state("svc"), Some(ServiceState::Terminated));
+        assert_eq!(sup.health(), HealthStatus::Critical);
+    }
+
+    #[test]
+    fn failure_on_non_started_service() {
+        let mut sup = Supervisor::new("sup", "t");
+        sup.add_service(test_config("svc"));
+        // Don't call start_service — service is in Starting state
+        assert_eq!(sup.service_state("svc"), Some(ServiceState::Starting));
+        let action = sup.report_failure("svc", "crash", 10).unwrap();
+        assert_eq!(action, SupervisorAction::Restart);
+    }
+
+    #[test]
+    fn large_tick_values_near_u64_max() {
+        let mut sup = Supervisor::new("sup", "t");
+        sup.add_service(ServiceConfig {
+            service_id: "svc".to_string(),
+            restart_policy: RestartPolicy::Permanent,
+            restart_budget: RestartBudget {
+                max_restarts: 3,
+                window_ticks: 100,
+            },
+            shutdown_order: 0,
+        });
+        sup.start_service("svc");
+
+        let base = u64::MAX - 200;
+        sup.report_failure("svc", "crash", base);
+        sup.report_failure("svc", "crash", base + 50);
+        // Within window: budget 3, used 2
+        let action = sup.report_failure("svc", "crash", base + 99).unwrap();
+        assert_eq!(action, SupervisorAction::Restart);
+        assert_eq!(sup.restart_count("svc"), Some(3));
+    }
+
+    #[test]
+    fn budget_window_boundary_exactly_at_window_start() {
+        let mut sup = Supervisor::new("sup", "t");
+        sup.add_service(ServiceConfig {
+            service_id: "svc".to_string(),
+            restart_policy: RestartPolicy::Permanent,
+            restart_budget: RestartBudget {
+                max_restarts: 1,
+                window_ticks: 100,
+            },
+            shutdown_order: 0,
+        });
+        sup.start_service("svc");
+
+        // Failure at t=10 uses the one budget slot
+        sup.report_failure("svc", "crash", 10);
+        // Failure at t=110: exactly at window boundary (window_start = 110 - 100 = 10)
+        // t=10 >= 10, so it counts — budget exhausted
+        let action = sup.report_failure("svc", "crash", 110).unwrap();
+        assert!(action == SupervisorAction::Escalate || action == SupervisorAction::Isolate);
+    }
+
+    #[test]
+    fn budget_window_boundary_just_past_window() {
+        let mut sup = Supervisor::new("sup", "t");
+        sup.add_service(ServiceConfig {
+            service_id: "svc".to_string(),
+            restart_policy: RestartPolicy::Permanent,
+            restart_budget: RestartBudget {
+                max_restarts: 1,
+                window_ticks: 100,
+            },
+            shutdown_order: 0,
+        });
+        sup.start_service("svc");
+
+        // Failure at t=10
+        sup.report_failure("svc", "crash", 10);
+        // Failure at t=111: window_start = 111 - 100 = 11, so t=10 < 11 (outside window)
+        // Budget refreshed
+        let action = sup.report_failure("svc", "crash", 111).unwrap();
+        assert_eq!(action, SupervisorAction::Restart);
+    }
+
+    #[test]
+    fn drain_events_idempotent_second_call_empty() {
+        let mut sup = test_supervisor();
+        sup.report_failure("svc-a", "crash", 10);
+        let first = sup.drain_events();
+        assert!(!first.is_empty());
+        let second = sup.drain_events();
+        assert!(second.is_empty());
+    }
+
+    #[test]
+    fn health_healthy_with_zero_services() {
+        let sup = Supervisor::new("sup", "t");
+        assert_eq!(sup.health(), HealthStatus::Healthy);
+        assert_eq!(sup.service_count(), 0);
+    }
+
+    #[test]
+    fn shutdown_order_empty_supervisor() {
+        let sup = Supervisor::new("sup", "t");
+        assert!(sup.shutdown_order().is_empty());
+    }
+
+    #[test]
+    fn transient_policy_exhausts_budget_escalates() {
+        let mut sup = Supervisor::new("sup", "t");
+        sup.add_service(ServiceConfig {
+            service_id: "svc".to_string(),
+            restart_policy: RestartPolicy::Transient,
+            restart_budget: RestartBudget {
+                max_restarts: 1,
+                window_ticks: 100,
+            },
+            shutdown_order: 0,
+        });
+        sup.start_service("svc");
+
+        // First failure: restart (within budget)
+        let a1 = sup.report_failure("svc", "crash-1", 10).unwrap();
+        assert_eq!(a1, SupervisorAction::Restart);
+
+        // Second failure: budget exhausted -> escalate
+        let a2 = sup.report_failure("svc", "crash-2", 20).unwrap();
+        assert!(a2 == SupervisorAction::Escalate || a2 == SupervisorAction::Isolate);
+        assert_eq!(sup.service_state("svc"), Some(ServiceState::Isolated));
+    }
+
+    #[test]
+    fn event_budget_remaining_decreases() {
+        let mut sup = Supervisor::new("sup", "t");
+        sup.add_service(ServiceConfig {
+            service_id: "svc".to_string(),
+            restart_policy: RestartPolicy::Permanent,
+            restart_budget: RestartBudget {
+                max_restarts: 3,
+                window_ticks: 1000,
+            },
+            shutdown_order: 0,
+        });
+        sup.start_service("svc");
+
+        sup.report_failure("svc", "crash-1", 10);
+        sup.report_failure("svc", "crash-2", 20);
+
+        let events = sup.drain_events();
+        let restart_events: Vec<_> = events
+            .iter()
+            .filter(|e| e.action == SupervisorAction::Restart)
+            .collect();
+        assert_eq!(restart_events.len(), 2);
+        assert_eq!(restart_events[0].budget_remaining, 2); // 3 - 1
+        assert_eq!(restart_events[1].budget_remaining, 1); // 3 - 2
+    }
+
+    #[test]
+    fn multiple_services_shutdown_order_interleaved() {
+        let mut sup = Supervisor::new("sup", "t");
+        for (id, order) in [("db", 1), ("cache", 5), ("api", 10), ("web", 3)] {
+            sup.add_service(ServiceConfig {
+                service_id: id.to_string(),
+                restart_policy: RestartPolicy::Permanent,
+                restart_budget: RestartBudget::default(),
+                shutdown_order: order,
+            });
+        }
+        let order = sup.shutdown_order();
+        assert_eq!(order, vec!["api", "cache", "web", "db"]);
+    }
+
+    #[test]
+    fn deterministic_supervisor_events_across_runs() {
+        let run = || -> Vec<SupervisorEvent> {
+            let mut sup = Supervisor::new("sup", "trace-det");
+            sup.add_service(ServiceConfig {
+                service_id: "svc-a".to_string(),
+                restart_policy: RestartPolicy::Permanent,
+                restart_budget: RestartBudget {
+                    max_restarts: 2,
+                    window_ticks: 100,
+                },
+                shutdown_order: 0,
+            });
+            sup.add_service(ServiceConfig {
+                service_id: "svc-b".to_string(),
+                restart_policy: RestartPolicy::Temporary,
+                restart_budget: RestartBudget::default(),
+                shutdown_order: 1,
+            });
+            sup.start_service("svc-a");
+            sup.start_service("svc-b");
+            sup.report_failure("svc-a", "c1", 10);
+            sup.report_failure("svc-b", "c2", 15);
+            sup.report_failure("svc-a", "c3", 20);
+            sup.report_failure("svc-a", "c4", 30);
+            sup.drain_events()
+        };
+
+        assert_eq!(run(), run());
+    }
+
+    #[test]
+    fn severity_clone_and_eq() {
+        let s = Severity::SubtreeRestart;
+        let cloned = s;
+        assert_eq!(s, cloned);
+        assert!(!(Severity::Restart == Severity::RootEscalation));
+    }
+
+    #[test]
+    fn service_state_starting_before_start_service() {
+        let mut sup = Supervisor::new("sup", "t");
+        sup.add_service(test_config("svc"));
+        assert_eq!(sup.service_state("svc"), Some(ServiceState::Starting));
+    }
+
+    #[test]
+    fn event_trace_id_matches_supervisor() {
+        let mut sup = Supervisor::new("sup", "my-trace-42");
+        sup.add_service(test_config("svc"));
+        sup.start_service("svc");
+        sup.report_failure("svc", "crash", 10);
+        let events = sup.drain_events();
+        for event in &events {
+            assert_eq!(event.trace_id, "my-trace-42");
+        }
+    }
+
+    #[test]
+    fn health_with_one_failed_one_running() {
+        let mut sup = Supervisor::new("sup", "t");
+        sup.add_service(ServiceConfig {
+            service_id: "healthy".to_string(),
+            restart_policy: RestartPolicy::Permanent,
+            restart_budget: RestartBudget {
+                max_restarts: 10,
+                window_ticks: 1000,
+            },
+            shutdown_order: 0,
+        });
+        sup.add_service(ServiceConfig {
+            service_id: "failing".to_string(),
+            restart_policy: RestartPolicy::Permanent,
+            restart_budget: RestartBudget {
+                max_restarts: 10,
+                window_ticks: 1000,
+            },
+            shutdown_order: 0,
+        });
+        sup.start_service("healthy");
+        sup.start_service("failing");
+
+        // After failure+restart, service is Running again
+        sup.report_failure("failing", "crash", 10);
+        // Both Running -> Healthy
+        assert_eq!(sup.health(), HealthStatus::Healthy);
+    }
 }

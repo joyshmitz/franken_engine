@@ -6476,4 +6476,1098 @@ mod tests {
         }
         assert_eq!(names.len(), variants.len());
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: PearlTower 2026-02-26 — helper function coverage
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn compute_over_privilege_ratio_zero_total_returns_zero() {
+        assert_eq!(compute_over_privilege_ratio_millionths(0, 0), 0);
+        assert_eq!(compute_over_privilege_ratio_millionths(0, 5), 0);
+    }
+
+    #[test]
+    fn compute_over_privilege_ratio_all_over_privileged() {
+        assert_eq!(compute_over_privilege_ratio_millionths(4, 4), 1_000_000);
+    }
+
+    #[test]
+    fn compute_over_privilege_ratio_half() {
+        assert_eq!(compute_over_privilege_ratio_millionths(10, 5), 500_000);
+    }
+
+    #[test]
+    fn derive_batch_review_queue_empty_rows() {
+        let queue = derive_capability_batch_review_queue(&[], 1000);
+        assert!(queue.is_empty());
+    }
+
+    #[test]
+    fn derive_batch_review_queue_counts_over_privileged() {
+        let rows = vec![
+            CurrentCapabilityDeltaRowView {
+                extension_id: "ext-a".into(),
+                witness_id: "w-1".into(),
+                policy_id: "p-1".into(),
+                witness_epoch: 1,
+                lifecycle_state: "active".into(),
+                active_witness_capabilities: vec!["cap-a".into()],
+                manifest_declared_capabilities: vec!["cap-a".into()],
+                over_privileged_capabilities: vec!["cap-x".into()],
+                over_privilege_ratio_millionths: 500_000,
+                over_privilege_replay_ref: "ref-1".into(),
+                latest_receipt_timestamp_ns: None,
+            },
+            CurrentCapabilityDeltaRowView {
+                extension_id: "ext-b".into(),
+                witness_id: "w-2".into(),
+                policy_id: "p-2".into(),
+                witness_epoch: 1,
+                lifecycle_state: "active".into(),
+                active_witness_capabilities: vec![],
+                manifest_declared_capabilities: vec![],
+                over_privileged_capabilities: vec![],
+                over_privilege_ratio_millionths: 0,
+                over_privilege_replay_ref: "ref-2".into(),
+                latest_receipt_timestamp_ns: None,
+            },
+        ];
+        let queue = derive_capability_batch_review_queue(&rows, 5000);
+        assert_eq!(queue.len(), 1);
+        assert_eq!(queue[0].pending_review_count, 1); // only ext-a has ratio > 0
+        assert_eq!(queue[0].extension_ids.len(), 2);
+    }
+
+    #[test]
+    fn is_override_decision_kind_matches_override() {
+        assert!(is_override_decision_kind("operator_override"));
+        assert!(is_override_decision_kind("OVERRIDE"));
+        assert!(is_override_decision_kind("emergency_grant_override"));
+    }
+
+    #[test]
+    fn is_override_decision_kind_matches_emergency_grant() {
+        assert!(is_override_decision_kind("emergency_grant"));
+        assert!(is_override_decision_kind("EMERGENCY_GRANT"));
+    }
+
+    #[test]
+    fn is_override_decision_kind_rejects_normal() {
+        assert!(!is_override_decision_kind("allow"));
+        assert!(!is_override_decision_kind("deny"));
+        assert!(!is_override_decision_kind("standard_review"));
+    }
+
+    #[test]
+    fn derive_override_review_status_reject() {
+        assert_eq!(
+            derive_override_review_status("rejected"),
+            OverrideReviewStatus::Rejected
+        );
+        assert_eq!(
+            derive_override_review_status("DENY"),
+            OverrideReviewStatus::Rejected
+        );
+    }
+
+    #[test]
+    fn derive_override_review_status_waive() {
+        assert_eq!(
+            derive_override_review_status("waived"),
+            OverrideReviewStatus::Waived
+        );
+    }
+
+    #[test]
+    fn derive_override_review_status_approve() {
+        assert_eq!(
+            derive_override_review_status("approved"),
+            OverrideReviewStatus::Approved
+        );
+        assert_eq!(
+            derive_override_review_status("granted"),
+            OverrideReviewStatus::Approved
+        );
+    }
+
+    #[test]
+    fn derive_override_review_status_pending_fallback() {
+        assert_eq!(
+            derive_override_review_status("unknown_outcome"),
+            OverrideReviewStatus::Pending
+        );
+    }
+
+    #[test]
+    fn build_override_rationale_active_grant() {
+        let event = CapabilityDeltaEscrowEventView {
+            receipt_id: "r-1".into(),
+            extension_id: "ext-1".into(),
+            capability: Some("fs.read".into()),
+            decision_kind: "override".into(),
+            outcome: "approved".into(),
+            trace_id: "trace-1".into(),
+            decision_id: "d-1".into(),
+            policy_id: "p-1".into(),
+            error_code: None,
+            timestamp_ns: 100_000_000_000, // 100_000 ms
+            receipt_ref: "ref-r".into(),
+            replay_ref: "ref-replay".into(),
+        };
+        // generated_at is close to requested, so grant is Active
+        let rationale = build_override_rationale_from_escrow_event(&event, Some(100_500));
+        assert_eq!(rationale.review_status, OverrideReviewStatus::Approved);
+        assert_eq!(rationale.grant_expiry_status, GrantExpiryStatus::Active);
+        assert!(rationale.expires_at_unix_ms.is_some());
+        assert_eq!(rationale.requested_at_unix_ms, 100_000);
+    }
+
+    #[test]
+    fn build_override_rationale_expired_grant() {
+        let event = CapabilityDeltaEscrowEventView {
+            receipt_id: "r-2".into(),
+            extension_id: "ext-2".into(),
+            capability: None,
+            decision_kind: "emergency_grant".into(),
+            outcome: "approved".into(),
+            trace_id: "trace-2".into(),
+            decision_id: "d-2".into(),
+            policy_id: "p-2".into(),
+            error_code: None,
+            timestamp_ns: 100_000_000_000, // 100_000 ms
+            receipt_ref: "ref-r2".into(),
+            replay_ref: "ref-replay2".into(),
+        };
+        // generated_at is way past the 86400s TTL
+        let rationale =
+            build_override_rationale_from_escrow_event(&event, Some(100_000 + 86_400_001));
+        assert_eq!(rationale.grant_expiry_status, GrantExpiryStatus::Expired);
+    }
+
+    #[test]
+    fn build_override_rationale_expiring_soon() {
+        let event = CapabilityDeltaEscrowEventView {
+            receipt_id: "r-3".into(),
+            extension_id: "ext-3".into(),
+            capability: Some("net.connect".into()),
+            decision_kind: "override".into(),
+            outcome: "approved".into(),
+            trace_id: "trace-3".into(),
+            decision_id: "d-3".into(),
+            policy_id: "p-3".into(),
+            error_code: None,
+            timestamp_ns: 100_000_000_000,
+            receipt_ref: "ref-r3".into(),
+            replay_ref: "ref-replay3".into(),
+        };
+        // 30 minutes before expiry (within 1 hour window)
+        let expires_at = 100_000 + 86_400_000;
+        let now = expires_at - 1_800_000; // 30 minutes before
+        let rationale = build_override_rationale_from_escrow_event(&event, Some(now));
+        assert_eq!(
+            rationale.grant_expiry_status,
+            GrantExpiryStatus::ExpiringSoon
+        );
+    }
+
+    #[test]
+    fn build_override_rationale_outcome_expired_string() {
+        let event = CapabilityDeltaEscrowEventView {
+            receipt_id: "r-4".into(),
+            extension_id: "ext-4".into(),
+            capability: None,
+            decision_kind: "override".into(),
+            outcome: "expired_auto".into(),
+            trace_id: "trace-4".into(),
+            decision_id: "d-4".into(),
+            policy_id: "p-4".into(),
+            error_code: None,
+            timestamp_ns: 100_000_000_000,
+            receipt_ref: "ref-r4".into(),
+            replay_ref: "ref-replay4".into(),
+        };
+        let rationale = build_override_rationale_from_escrow_event(&event, Some(100_500));
+        assert_eq!(rationale.grant_expiry_status, GrantExpiryStatus::Expired);
+    }
+
+    #[test]
+    fn compute_capability_delta_alerts_high_escrow() {
+        let escrow = vec![
+            CapabilityDeltaEscrowEventView {
+                receipt_id: "r1".into(),
+                extension_id: "ext-a".into(),
+                capability: None,
+                decision_kind: "allow".into(),
+                outcome: "ok".into(),
+                trace_id: "t1".into(),
+                decision_id: "d1".into(),
+                policy_id: "p1".into(),
+                error_code: None,
+                timestamp_ns: 1000,
+                receipt_ref: "rr1".into(),
+                replay_ref: "rp1".into(),
+            },
+            CapabilityDeltaEscrowEventView {
+                receipt_id: "r2".into(),
+                extension_id: "ext-a".into(),
+                capability: None,
+                decision_kind: "allow".into(),
+                outcome: "ok".into(),
+                trace_id: "t2".into(),
+                decision_id: "d2".into(),
+                policy_id: "p2".into(),
+                error_code: None,
+                timestamp_ns: 2000,
+                receipt_ref: "rr2".into(),
+                replay_ref: "rp2".into(),
+            },
+        ];
+        let alerts = compute_capability_delta_alerts(&[], &escrow, &[], 5000, 2, 10);
+        assert!(alerts.iter().any(|a| a.alert_id.contains("high-escrow")));
+    }
+
+    #[test]
+    fn compute_capability_delta_alerts_over_privilege() {
+        let current = vec![CurrentCapabilityDeltaRowView {
+            extension_id: "ext-a".into(),
+            witness_id: "w-1".into(),
+            policy_id: "p-1".into(),
+            witness_epoch: 1,
+            lifecycle_state: "active".into(),
+            active_witness_capabilities: vec![],
+            manifest_declared_capabilities: vec![],
+            over_privileged_capabilities: vec!["cap-x".into()],
+            over_privilege_ratio_millionths: 300_000, // above 250k = Critical
+            over_privilege_replay_ref: "ref-1".into(),
+            latest_receipt_timestamp_ns: None,
+        }];
+        let alerts = compute_capability_delta_alerts(&current, &[], &[], 5000, 100, 100);
+        let alert = alerts
+            .iter()
+            .find(|a| a.alert_id.contains("over-privilege"))
+            .unwrap();
+        assert_eq!(alert.severity, DashboardSeverity::Critical);
+    }
+
+    #[test]
+    fn compute_capability_delta_alerts_pending_overrides() {
+        let overrides = vec![
+            OverrideRationaleView {
+                override_id: "o-1".into(),
+                extension_id: "ext-1".into(),
+                capability: None,
+                rationale: "test".into(),
+                signed_justification_ref: "ref-1".into(),
+                review_status: OverrideReviewStatus::Pending,
+                grant_expiry_status: GrantExpiryStatus::Active,
+                requested_at_unix_ms: 1000,
+                reviewed_at_unix_ms: None,
+                expires_at_unix_ms: Some(90000),
+                receipt_ref: "rr-1".into(),
+                replay_ref: "rp-1".into(),
+            },
+            OverrideRationaleView {
+                override_id: "o-2".into(),
+                extension_id: "ext-2".into(),
+                capability: None,
+                rationale: "test".into(),
+                signed_justification_ref: "ref-2".into(),
+                review_status: OverrideReviewStatus::Pending,
+                grant_expiry_status: GrantExpiryStatus::Active,
+                requested_at_unix_ms: 2000,
+                reviewed_at_unix_ms: None,
+                expires_at_unix_ms: Some(90000),
+                receipt_ref: "rr-2".into(),
+                replay_ref: "rp-2".into(),
+            },
+        ];
+        let alerts = compute_capability_delta_alerts(&[], &[], &overrides, 5000, 100, 2);
+        assert!(
+            alerts
+                .iter()
+                .any(|a| a.alert_id == "pending-override-reviews")
+        );
+    }
+
+    #[test]
+    fn compute_capability_delta_alerts_expired_overrides() {
+        let overrides = vec![OverrideRationaleView {
+            override_id: "o-3".into(),
+            extension_id: "ext-3".into(),
+            capability: None,
+            rationale: "test".into(),
+            signed_justification_ref: "ref-3".into(),
+            review_status: OverrideReviewStatus::Approved,
+            grant_expiry_status: GrantExpiryStatus::Expired,
+            requested_at_unix_ms: 1000,
+            reviewed_at_unix_ms: Some(1100),
+            expires_at_unix_ms: Some(2000),
+            receipt_ref: "rr-3".into(),
+            replay_ref: "rp-3".into(),
+        }];
+        let alerts = compute_capability_delta_alerts(&[], &[], &overrides, 5000, 100, 100);
+        assert!(
+            alerts
+                .iter()
+                .any(|a| a.alert_id == "expired-emergency-grants")
+        );
+        let alert = alerts
+            .iter()
+            .find(|a| a.alert_id == "expired-emergency-grants")
+            .unwrap();
+        assert_eq!(alert.severity, DashboardSeverity::Critical);
+    }
+
+    #[test]
+    fn compute_capability_delta_alerts_expiring_soon() {
+        let overrides = vec![OverrideRationaleView {
+            override_id: "o-4".into(),
+            extension_id: "ext-4".into(),
+            capability: None,
+            rationale: "test".into(),
+            signed_justification_ref: "ref-4".into(),
+            review_status: OverrideReviewStatus::Approved,
+            grant_expiry_status: GrantExpiryStatus::ExpiringSoon,
+            requested_at_unix_ms: 1000,
+            reviewed_at_unix_ms: Some(1100),
+            expires_at_unix_ms: Some(90000),
+            receipt_ref: "rr-4".into(),
+            replay_ref: "rp-4".into(),
+        }];
+        let alerts = compute_capability_delta_alerts(&[], &[], &overrides, 5000, 100, 100);
+        assert!(
+            alerts
+                .iter()
+                .any(|a| a.alert_id == "expiring-emergency-grants")
+        );
+    }
+
+    #[test]
+    fn compute_proof_specialization_alerts_bulk_invalidation() {
+        let invalidations = vec![
+            SpecializationInvalidationRowView {
+                invalidation_id: "inv-1".into(),
+                specialization_id: "s-1".into(),
+                target_id: "t-1".into(),
+                reason: ProofSpecializationInvalidationReason::EpochChange,
+                reason_detail: "epoch changed".into(),
+                proof_id: Some("p-1".into()),
+                old_epoch_id: Some(1),
+                new_epoch_id: Some(2),
+                fallback_confirmed: true,
+                fallback_confirmation_ref: "ref-fb".into(),
+                occurred_at_unix_ms: 1000,
+            },
+            SpecializationInvalidationRowView {
+                invalidation_id: "inv-2".into(),
+                specialization_id: "s-2".into(),
+                target_id: "t-2".into(),
+                reason: ProofSpecializationInvalidationReason::ProofRevoked,
+                reason_detail: "revoked".into(),
+                proof_id: None,
+                old_epoch_id: None,
+                new_epoch_id: None,
+                fallback_confirmed: false,
+                fallback_confirmation_ref: "ref-fb2".into(),
+                occurred_at_unix_ms: 2000,
+            },
+        ];
+        let alerts = compute_proof_specialization_alerts(&invalidations, 800_000, 5000, 2, 500_000);
+        assert!(alerts.iter().any(|a| a.alert_id == "bulk-invalidation"));
+    }
+
+    #[test]
+    fn compute_proof_specialization_alerts_degraded_coverage() {
+        let alerts = compute_proof_specialization_alerts(&[], 200_000, 5000, 100, 500_000);
+        assert!(
+            alerts
+                .iter()
+                .any(|a| a.alert_id == "specialization-coverage-degraded")
+        );
+        let alert = alerts
+            .iter()
+            .find(|a| a.alert_id == "specialization-coverage-degraded")
+            .unwrap();
+        // 200k < 500k/2 = 250k, so Critical
+        assert_eq!(alert.severity, DashboardSeverity::Critical);
+    }
+
+    #[test]
+    fn compute_flow_alert_indicators_blocked_threshold() {
+        let blocked = vec![
+            BlockedFlowView {
+                flow_id: "f-1".into(),
+                extension_id: "ext-a".into(),
+                source_label: "secret".into(),
+                sink_clearance: "public".into(),
+                sensitivity: FlowSensitivityLevel::High,
+                blocked_reason: "no clearance".into(),
+                attempted_exfiltration: false,
+                code_path_ref: "cp-1".into(),
+                extension_context_ref: "ec-1".into(),
+                trace_id: "t-1".into(),
+                decision_id: "d-1".into(),
+                policy_id: "p-1".into(),
+                error_code: None,
+                occurred_at_unix_ms: 1000,
+            },
+            BlockedFlowView {
+                flow_id: "f-2".into(),
+                extension_id: "ext-a".into(),
+                source_label: "secret".into(),
+                sink_clearance: "public".into(),
+                sensitivity: FlowSensitivityLevel::High,
+                blocked_reason: "no clearance".into(),
+                attempted_exfiltration: false,
+                code_path_ref: "cp-2".into(),
+                extension_context_ref: "ec-2".into(),
+                trace_id: "t-2".into(),
+                decision_id: "d-2".into(),
+                policy_id: "p-2".into(),
+                error_code: None,
+                occurred_at_unix_ms: 2000,
+            },
+        ];
+        let alerts = compute_flow_alert_indicators(&blocked, &[], 5000, 2);
+        assert!(alerts.iter().any(|a| a.alert_id.contains("blocked-rate")));
+    }
+
+    #[test]
+    fn compute_flow_alert_indicators_confinement_degraded() {
+        let proofs = vec![ConfinementProofView {
+            extension_id: "ext-b".into(),
+            status: ConfinementStatus::Degraded,
+            covered_flow_count: 3,
+            uncovered_flow_count: 5,
+            proof_rows: vec![],
+            uncovered_flow_refs: vec![],
+        }];
+        let alerts = compute_flow_alert_indicators(&[], &proofs, 5000, 100);
+        let alert = alerts
+            .iter()
+            .find(|a| a.alert_id.contains("confinement"))
+            .unwrap();
+        assert_eq!(alert.severity, DashboardSeverity::Critical);
+    }
+
+    #[test]
+    fn compute_flow_alert_indicators_confinement_partial() {
+        let proofs = vec![ConfinementProofView {
+            extension_id: "ext-c".into(),
+            status: ConfinementStatus::Partial,
+            covered_flow_count: 8,
+            uncovered_flow_count: 2,
+            proof_rows: vec![],
+            uncovered_flow_refs: vec![],
+        }];
+        let alerts = compute_flow_alert_indicators(&[], &proofs, 5000, 100);
+        let alert = alerts
+            .iter()
+            .find(|a| a.alert_id.contains("confinement"))
+            .unwrap();
+        assert_eq!(alert.severity, DashboardSeverity::Warning);
+    }
+
+    #[test]
+    fn summarize_decision_outcomes_empty() {
+        let panel = summarize_decision_outcomes(&[]);
+        assert_eq!(panel.allow_count, 0);
+        assert_eq!(panel.deny_count, 0);
+        assert_eq!(panel.fallback_count, 0);
+        assert_eq!(panel.average_expected_loss_millionths, 0);
+    }
+
+    #[test]
+    fn summarize_decision_outcomes_mixed() {
+        let entries = vec![
+            EvidenceStreamEntryView {
+                trace_id: "t-1".into(),
+                decision_id: "d-1".into(),
+                policy_id: "p-1".into(),
+                action_type: "invoke".into(),
+                decision_outcome: DecisionOutcomeKind::Allow,
+                expected_loss_millionths: 100_000,
+                extension_id: "ext-1".into(),
+                region_id: "r-1".into(),
+                severity: DashboardSeverity::Info,
+                component: "comp".into(),
+                event: "ev".into(),
+                outcome: "ok".into(),
+                error_code: None,
+                timestamp_unix_ms: 1000,
+            },
+            EvidenceStreamEntryView {
+                trace_id: "t-2".into(),
+                decision_id: "d-2".into(),
+                policy_id: "p-2".into(),
+                action_type: "invoke".into(),
+                decision_outcome: DecisionOutcomeKind::Deny,
+                expected_loss_millionths: 300_000,
+                extension_id: "ext-2".into(),
+                region_id: "r-2".into(),
+                severity: DashboardSeverity::Warning,
+                component: "comp".into(),
+                event: "ev".into(),
+                outcome: "denied".into(),
+                error_code: None,
+                timestamp_unix_ms: 2000,
+            },
+            EvidenceStreamEntryView {
+                trace_id: "t-3".into(),
+                decision_id: "d-3".into(),
+                policy_id: "p-3".into(),
+                action_type: "invoke".into(),
+                decision_outcome: DecisionOutcomeKind::Fallback,
+                expected_loss_millionths: 200_000,
+                extension_id: "ext-3".into(),
+                region_id: "r-3".into(),
+                severity: DashboardSeverity::Critical,
+                component: "comp".into(),
+                event: "ev".into(),
+                outcome: "fallback".into(),
+                error_code: None,
+                timestamp_unix_ms: 3000,
+            },
+        ];
+        let panel = summarize_decision_outcomes(&entries);
+        assert_eq!(panel.allow_count, 1);
+        assert_eq!(panel.deny_count, 1);
+        assert_eq!(panel.fallback_count, 1);
+        assert_eq!(panel.average_expected_loss_millionths, 200_000);
+    }
+
+    #[test]
+    fn summarize_obligation_status_mixed() {
+        let rows = vec![
+            ObligationStatusRowView {
+                obligation_id: "ob-1".into(),
+                extension_id: "ext-1".into(),
+                region_id: "r-1".into(),
+                state: ObligationState::Open,
+                severity: DashboardSeverity::Info,
+                due_at_unix_ms: 5000,
+                updated_at_unix_ms: 1000,
+                detail: "pending".into(),
+            },
+            ObligationStatusRowView {
+                obligation_id: "ob-2".into(),
+                extension_id: "ext-2".into(),
+                region_id: "r-2".into(),
+                state: ObligationState::Fulfilled,
+                severity: DashboardSeverity::Info,
+                due_at_unix_ms: 5000,
+                updated_at_unix_ms: 2000,
+                detail: "done".into(),
+            },
+            ObligationStatusRowView {
+                obligation_id: "ob-3".into(),
+                extension_id: "ext-3".into(),
+                region_id: "r-3".into(),
+                state: ObligationState::Failed,
+                severity: DashboardSeverity::Critical,
+                due_at_unix_ms: 5000,
+                updated_at_unix_ms: 3000,
+                detail: "timed out".into(),
+            },
+        ];
+        let panel = summarize_obligation_status(&rows);
+        assert_eq!(panel.open_count, 1);
+        assert_eq!(panel.fulfilled_count, 1);
+        assert_eq!(panel.failed_count, 1);
+    }
+
+    #[test]
+    fn summarize_region_lifecycle_empty() {
+        let panel = summarize_region_lifecycle(&[]);
+        assert_eq!(panel.active_region_count, 0);
+        assert_eq!(panel.region_creations_in_window, 0);
+        assert_eq!(panel.region_destructions_in_window, 0);
+        assert_eq!(panel.average_quiescent_close_time_ms, 0);
+    }
+
+    #[test]
+    fn summarize_region_lifecycle_mixed() {
+        let rows = vec![
+            RegionLifecycleRowView {
+                region_id: "r-1".into(),
+                is_active: true,
+                active_extensions: 3,
+                created_at_unix_ms: 1000,
+                closed_at_unix_ms: None,
+                quiescent_close_time_ms: None,
+            },
+            RegionLifecycleRowView {
+                region_id: "r-2".into(),
+                is_active: false,
+                active_extensions: 0,
+                created_at_unix_ms: 500,
+                closed_at_unix_ms: Some(800),
+                quiescent_close_time_ms: Some(100),
+            },
+            RegionLifecycleRowView {
+                region_id: "r-3".into(),
+                is_active: false,
+                active_extensions: 0,
+                created_at_unix_ms: 200,
+                closed_at_unix_ms: Some(600),
+                quiescent_close_time_ms: Some(300),
+            },
+        ];
+        let panel = summarize_region_lifecycle(&rows);
+        assert_eq!(panel.active_region_count, 1);
+        assert_eq!(panel.region_creations_in_window, 3);
+        assert_eq!(panel.region_destructions_in_window, 2);
+        assert_eq!(panel.average_quiescent_close_time_ms, 200); // (100+300)/2
+    }
+
+    #[test]
+    fn dashboard_metric_value_obligation_failure_rate() {
+        let mut view =
+            ControlPlaneInvariantsDashboardView::from_partial(ControlPlaneInvariantsPartial {
+                cluster: "c".into(),
+                zone: "z".into(),
+                runtime_mode: "m".into(),
+                obligation_status: Some(ObligationStatusPanelView {
+                    open_count: 0,
+                    fulfilled_count: 7,
+                    failed_count: 3,
+                }),
+                ..Default::default()
+            });
+        // Shouldn't need to use `view` mutably, just read it
+        let _ = &mut view; // suppress unused warning
+        let rate =
+            dashboard_metric_value(&view, DashboardAlertMetric::ObligationFailureRateMillionths);
+        // 3 / 10 = 300_000 millionths
+        assert_eq!(rate, 300_000);
+    }
+
+    #[test]
+    fn dashboard_metric_value_obligation_failure_rate_zero_total() {
+        let view = ControlPlaneInvariantsDashboardView::from_partial(
+            ControlPlaneInvariantsPartial::default(),
+        );
+        let rate =
+            dashboard_metric_value(&view, DashboardAlertMetric::ObligationFailureRateMillionths);
+        assert_eq!(rate, 0);
+    }
+
+    #[test]
+    fn dashboard_metric_value_replay_divergence_count() {
+        let view =
+            ControlPlaneInvariantsDashboardView::from_partial(ControlPlaneInvariantsPartial {
+                cluster: "c".into(),
+                zone: "z".into(),
+                runtime_mode: "m".into(),
+                replay_health: Some(ReplayHealthPanelView {
+                    last_run_status: ReplayHealthStatus::Fail,
+                    divergence_count: 42,
+                    last_replay_timestamp_unix_ms: None,
+                }),
+                ..Default::default()
+            });
+        assert_eq!(
+            dashboard_metric_value(&view, DashboardAlertMetric::ReplayDivergenceCount),
+            42
+        );
+    }
+
+    #[test]
+    fn dashboard_metric_value_safe_mode_activation_count() {
+        let view =
+            ControlPlaneInvariantsDashboardView::from_partial(ControlPlaneInvariantsPartial {
+                cluster: "c".into(),
+                zone: "z".into(),
+                runtime_mode: "m".into(),
+                safe_mode_activations: vec![SafeModeActivationView {
+                    activation_id: "act-1".into(),
+                    activation_type: "emergency".into(),
+                    extension_id: "ext-1".into(),
+                    region_id: "r-1".into(),
+                    severity: DashboardSeverity::Critical,
+                    recovery_status: RecoveryStatus::Recovered,
+                    activated_at_unix_ms: 1000,
+                    recovered_at_unix_ms: Some(2000),
+                }],
+                ..Default::default()
+            });
+        assert_eq!(
+            dashboard_metric_value(&view, DashboardAlertMetric::SafeModeActivationCount),
+            1
+        );
+    }
+
+    #[test]
+    fn dashboard_metric_value_cancellation_event_count() {
+        let view =
+            ControlPlaneInvariantsDashboardView::from_partial(ControlPlaneInvariantsPartial {
+                cluster: "c".into(),
+                zone: "z".into(),
+                runtime_mode: "m".into(),
+                cancellation_events: vec![
+                    CancellationEventView {
+                        extension_id: "ext-1".into(),
+                        region_id: "r-1".into(),
+                        cancellation_kind: CancellationKind::Quarantine,
+                        severity: DashboardSeverity::Warning,
+                        detail: "quarantined".into(),
+                        timestamp_unix_ms: 1000,
+                    },
+                    CancellationEventView {
+                        extension_id: "ext-2".into(),
+                        region_id: "r-2".into(),
+                        cancellation_kind: CancellationKind::Terminate,
+                        severity: DashboardSeverity::Critical,
+                        detail: "terminated".into(),
+                        timestamp_unix_ms: 2000,
+                    },
+                ],
+                ..Default::default()
+            });
+        assert_eq!(
+            dashboard_metric_value(&view, DashboardAlertMetric::CancellationEventCount),
+            2
+        );
+    }
+
+    #[test]
+    fn dashboard_metric_value_fallback_activation_count() {
+        let view =
+            ControlPlaneInvariantsDashboardView::from_partial(ControlPlaneInvariantsPartial {
+                cluster: "c".into(),
+                zone: "z".into(),
+                runtime_mode: "m".into(),
+                decision_outcomes: Some(DecisionOutcomesPanelView {
+                    allow_count: 10,
+                    deny_count: 2,
+                    fallback_count: 5,
+                    average_expected_loss_millionths: 100_000,
+                }),
+                ..Default::default()
+            });
+        assert_eq!(
+            dashboard_metric_value(&view, DashboardAlertMetric::FallbackActivationCount),
+            5
+        );
+    }
+
+    #[test]
+    fn capability_delta_timestamp_in_range() {
+        let filter = CapabilityDeltaDashboardFilter {
+            start_timestamp_ns: Some(100),
+            end_timestamp_ns: Some(500),
+            ..Default::default()
+        };
+        assert!(capability_delta_timestamp_matches_range(200, &filter));
+        assert!(!capability_delta_timestamp_matches_range(50, &filter));
+        assert!(!capability_delta_timestamp_matches_range(600, &filter));
+    }
+
+    #[test]
+    fn capability_delta_timestamp_open_ended() {
+        let filter = CapabilityDeltaDashboardFilter::default();
+        assert!(capability_delta_timestamp_matches_range(0, &filter));
+        assert!(capability_delta_timestamp_matches_range(u64::MAX, &filter));
+    }
+
+    #[test]
+    fn region_row_matches_filter_alive_in_range() {
+        let row = RegionLifecycleRowView {
+            region_id: "r-1".into(),
+            is_active: true,
+            active_extensions: 3,
+            created_at_unix_ms: 100,
+            closed_at_unix_ms: None,
+            quiescent_close_time_ms: None,
+        };
+        let filter = ControlPlaneDashboardFilter {
+            start_unix_ms: Some(50),
+            end_unix_ms: Some(200),
+            ..Default::default()
+        };
+        assert!(region_row_matches_filter(&row, &filter));
+    }
+
+    #[test]
+    fn region_row_matches_filter_closed_before_range() {
+        let row = RegionLifecycleRowView {
+            region_id: "r-2".into(),
+            is_active: false,
+            active_extensions: 0,
+            created_at_unix_ms: 100,
+            closed_at_unix_ms: Some(150),
+            quiescent_close_time_ms: Some(50),
+        };
+        let filter = ControlPlaneDashboardFilter {
+            start_unix_ms: Some(200),
+            end_unix_ms: Some(500),
+            ..Default::default()
+        };
+        assert!(!region_row_matches_filter(&row, &filter));
+    }
+
+    #[test]
+    fn region_row_matches_filter_created_after_range() {
+        let row = RegionLifecycleRowView {
+            region_id: "r-3".into(),
+            is_active: true,
+            active_extensions: 1,
+            created_at_unix_ms: 600,
+            closed_at_unix_ms: None,
+            quiescent_close_time_ms: None,
+        };
+        let filter = ControlPlaneDashboardFilter {
+            start_unix_ms: Some(100),
+            end_unix_ms: Some(500),
+            ..Default::default()
+        };
+        assert!(!region_row_matches_filter(&row, &filter));
+    }
+
+    #[test]
+    fn confinement_proof_filter_critical_sensitivity_full_excluded() {
+        let proof = ConfinementProofView {
+            extension_id: "ext-a".into(),
+            status: ConfinementStatus::Full,
+            covered_flow_count: 10,
+            uncovered_flow_count: 0,
+            proof_rows: vec![],
+            uncovered_flow_refs: vec![],
+        };
+        let filter = FlowDecisionDashboardFilter {
+            sensitivity: Some(FlowSensitivityLevel::Critical),
+            ..Default::default()
+        };
+        assert!(!confinement_proof_matches_filter(&proof, &filter));
+    }
+
+    #[test]
+    fn confinement_proof_filter_critical_sensitivity_degraded_included() {
+        let proof = ConfinementProofView {
+            extension_id: "ext-b".into(),
+            status: ConfinementStatus::Degraded,
+            covered_flow_count: 5,
+            uncovered_flow_count: 5,
+            proof_rows: vec![],
+            uncovered_flow_refs: vec![],
+        };
+        let filter = FlowDecisionDashboardFilter {
+            sensitivity: Some(FlowSensitivityLevel::Critical),
+            ..Default::default()
+        };
+        assert!(confinement_proof_matches_filter(&proof, &filter));
+    }
+
+    #[test]
+    fn expected_value_score_perf_and_risk_combined() {
+        let input = ReplacementOpportunityInput {
+            slot_id: "s".into(),
+            slot_kind: "k".into(),
+            performance_uplift_millionths: 500_000,
+            invocation_frequency_per_minute: 99,
+            risk_reduction_millionths: 200_000,
+        };
+        let score = compute_expected_value_score_millionths(&input);
+        // perf = 500_000 * (99+1) / 100 = 500_000
+        // risk = 200_000 * 3 = 600_000
+        // total = 1_100_000
+        assert_eq!(score, 1_100_000);
+    }
+
+    #[test]
+    fn proof_specialization_alerts_no_alerts_when_healthy() {
+        let alerts = compute_proof_specialization_alerts(&[], 900_000, 5000, 10, 500_000);
+        assert!(alerts.is_empty());
+    }
+
+    #[test]
+    fn flow_alert_indicators_confinement_full_no_alert() {
+        let proofs = vec![ConfinementProofView {
+            extension_id: "ext-ok".into(),
+            status: ConfinementStatus::Full,
+            covered_flow_count: 10,
+            uncovered_flow_count: 0,
+            proof_rows: vec![],
+            uncovered_flow_refs: vec![],
+        }];
+        let alerts = compute_flow_alert_indicators(&[], &proofs, 5000, 100);
+        assert!(alerts.is_empty());
+    }
+
+    #[test]
+    fn capability_delta_escrow_filter_by_outcome() {
+        let event = CapabilityDeltaEscrowEventView {
+            receipt_id: "r-1".into(),
+            extension_id: "ext-1".into(),
+            capability: Some("fs.read".into()),
+            decision_kind: "allow".into(),
+            outcome: "granted".into(),
+            trace_id: "t-1".into(),
+            decision_id: "d-1".into(),
+            policy_id: "p-1".into(),
+            error_code: None,
+            timestamp_ns: 5000,
+            receipt_ref: "rr-1".into(),
+            replay_ref: "rp-1".into(),
+        };
+        let matching_filter = CapabilityDeltaDashboardFilter {
+            outcome: Some("granted".into()),
+            ..Default::default()
+        };
+        assert!(capability_delta_escrow_row_matches_filter(
+            &event,
+            &matching_filter
+        ));
+
+        let non_matching_filter = CapabilityDeltaDashboardFilter {
+            outcome: Some("denied".into()),
+            ..Default::default()
+        };
+        assert!(!capability_delta_escrow_row_matches_filter(
+            &event,
+            &non_matching_filter
+        ));
+    }
+
+    #[test]
+    fn capability_delta_override_filter_by_grant_expiry() {
+        let row = OverrideRationaleView {
+            override_id: "o-1".into(),
+            extension_id: "ext-1".into(),
+            capability: Some("net.listen".into()),
+            rationale: "emergency".into(),
+            signed_justification_ref: "ref".into(),
+            review_status: OverrideReviewStatus::Approved,
+            grant_expiry_status: GrantExpiryStatus::ExpiringSoon,
+            requested_at_unix_ms: 1000,
+            reviewed_at_unix_ms: Some(1100),
+            expires_at_unix_ms: Some(90000),
+            receipt_ref: "rr".into(),
+            replay_ref: "rp".into(),
+        };
+        let filter = CapabilityDeltaDashboardFilter {
+            grant_expiry_status: Some(GrantExpiryStatus::ExpiringSoon),
+            ..Default::default()
+        };
+        assert!(capability_delta_override_row_matches_filter(&row, &filter));
+
+        let filter2 = CapabilityDeltaDashboardFilter {
+            grant_expiry_status: Some(GrantExpiryStatus::Active),
+            ..Default::default()
+        };
+        assert!(!capability_delta_override_row_matches_filter(
+            &row, &filter2
+        ));
+    }
+
+    #[test]
+    fn proof_specialization_row_filter_by_optimization_class() {
+        let row = ActiveSpecializationRowView {
+            specialization_id: "s-1".into(),
+            target_id: "t-1".into(),
+            target_kind: "function".into(),
+            optimization_class: "inlining".into(),
+            latency_reduction_millionths: 100_000,
+            throughput_increase_millionths: 50_000,
+            proof_input_ids: vec!["proof-a".into()],
+            transformation_ref: "tr-1".into(),
+            receipt_ref: "rr-1".into(),
+            activated_at_unix_ms: 1000,
+        };
+        let filter = ProofSpecializationDashboardFilter {
+            optimization_class: Some("inlining".into()),
+            ..Default::default()
+        };
+        assert!(proof_specialization_row_matches_filter(&row, &filter));
+
+        let filter2 = ProofSpecializationDashboardFilter {
+            optimization_class: Some("devirtualization".into()),
+            ..Default::default()
+        };
+        assert!(!proof_specialization_row_matches_filter(&row, &filter2));
+    }
+
+    #[test]
+    fn proof_specialization_row_filter_by_proof_id() {
+        let row = ActiveSpecializationRowView {
+            specialization_id: "s-1".into(),
+            target_id: "t-1".into(),
+            target_kind: "function".into(),
+            optimization_class: "inlining".into(),
+            latency_reduction_millionths: 0,
+            throughput_increase_millionths: 0,
+            proof_input_ids: vec!["proof-a".into(), "proof-b".into()],
+            transformation_ref: "tr-1".into(),
+            receipt_ref: "rr-1".into(),
+            activated_at_unix_ms: 1000,
+        };
+        let filter = ProofSpecializationDashboardFilter {
+            proof_id: Some("proof-b".into()),
+            ..Default::default()
+        };
+        assert!(proof_specialization_row_matches_filter(&row, &filter));
+
+        let filter2 = ProofSpecializationDashboardFilter {
+            proof_id: Some("proof-z".into()),
+            ..Default::default()
+        };
+        assert!(!proof_specialization_row_matches_filter(&row, &filter2));
+    }
+
+    #[test]
+    fn blocked_flow_filter_by_sensitivity() {
+        let flow = BlockedFlowView {
+            flow_id: "f-1".into(),
+            extension_id: "ext-1".into(),
+            source_label: "secret".into(),
+            sink_clearance: "public".into(),
+            sensitivity: FlowSensitivityLevel::High,
+            blocked_reason: "no clearance".into(),
+            attempted_exfiltration: false,
+            code_path_ref: "cp".into(),
+            extension_context_ref: "ec".into(),
+            trace_id: "t-1".into(),
+            decision_id: "d-1".into(),
+            policy_id: "p-1".into(),
+            error_code: None,
+            occurred_at_unix_ms: 1000,
+        };
+        let filter = FlowDecisionDashboardFilter {
+            sensitivity: Some(FlowSensitivityLevel::High),
+            ..Default::default()
+        };
+        assert!(blocked_flow_matches_filter(&flow, &filter));
+
+        let filter2 = FlowDecisionDashboardFilter {
+            sensitivity: Some(FlowSensitivityLevel::Low),
+            ..Default::default()
+        };
+        assert!(!blocked_flow_matches_filter(&flow, &filter2));
+    }
+
+    #[test]
+    fn slot_row_filter_by_risk_level() {
+        let row = SlotStatusOverviewRow {
+            slot_id: "s-1".into(),
+            slot_kind: "parser".into(),
+            implementation_kind: "native".into(),
+            promotion_status: "promoted".into(),
+            risk_level: ReplacementRiskLevel::High,
+            last_transition_unix_ms: 1000,
+            health: "healthy".into(),
+            lineage_ref: "lin-1".into(),
+        };
+        let filter = ReplacementDashboardFilter {
+            risk_level: Some(ReplacementRiskLevel::High),
+            ..Default::default()
+        };
+        assert!(slot_row_matches_filter(&row, &filter));
+
+        let filter2 = ReplacementDashboardFilter {
+            risk_level: Some(ReplacementRiskLevel::Low),
+            ..Default::default()
+        };
+        assert!(!slot_row_matches_filter(&row, &filter2));
+    }
 }

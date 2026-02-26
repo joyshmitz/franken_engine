@@ -1094,4 +1094,170 @@ mod tests {
         // No new event should be emitted (escalation already recorded)
         assert_eq!(region.event_count(), pre_count);
     }
+
+    // -- Enrichment batch 3: clone, JSON fields, edge cases --
+
+    #[test]
+    fn finalize_result_clone_equality() {
+        let result = FinalizeResult {
+            region_id: "r-1".to_string(),
+            success: true,
+            obligations_committed: 2,
+            obligations_aborted: 0,
+            drain_timeout_escalated: false,
+        };
+        assert_eq!(result, result.clone());
+    }
+
+    #[test]
+    fn region_event_clone_equality() {
+        let event = RegionEvent {
+            trace_id: "t".to_string(),
+            region_id: "r".to_string(),
+            region_type: "ext".to_string(),
+            phase: RegionState::Draining,
+            outcome: "drain_started".to_string(),
+            obligations_pending: 1,
+            drain_elapsed_ticks: 0,
+        };
+        assert_eq!(event, event.clone());
+    }
+
+    #[test]
+    fn obligation_clone_equality() {
+        let ob = Obligation {
+            id: "ob-1".to_string(),
+            description: "flush".to_string(),
+            status: ObligationStatus::Committed,
+        };
+        assert_eq!(ob, ob.clone());
+    }
+
+    #[test]
+    fn phase_order_violation_clone_equality() {
+        let v = PhaseOrderViolation {
+            current_state: RegionState::Running,
+            attempted_transition: "drain".to_string(),
+            region_id: "r-1".to_string(),
+        };
+        assert_eq!(v, v.clone());
+    }
+
+    #[test]
+    fn finalize_result_json_field_presence() {
+        let result = FinalizeResult {
+            region_id: "r-json".to_string(),
+            success: true,
+            obligations_committed: 1,
+            obligations_aborted: 0,
+            drain_timeout_escalated: false,
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        for field in &[
+            "region_id",
+            "success",
+            "obligations_committed",
+            "obligations_aborted",
+            "drain_timeout_escalated",
+        ] {
+            assert!(json.contains(field), "JSON missing field: {field}");
+        }
+    }
+
+    #[test]
+    fn region_new_starts_in_running() {
+        let region = Region::new("r-new", "ext", "t-new");
+        assert_eq!(region.state(), RegionState::Running);
+        assert_eq!(region.id, "r-new");
+        assert_eq!(region.region_type, "ext");
+        assert_eq!(region.trace_id, "t-new");
+        assert!(region.cancel_reason().is_none());
+        assert_eq!(region.pending_obligations(), 0);
+        assert_eq!(region.child_count(), 0);
+        assert_eq!(region.event_count(), 0);
+    }
+
+    #[test]
+    fn finalize_no_obligations_reports_zero_counts() {
+        let mut region = test_region();
+        region.cancel(CancelReason::OperatorShutdown).unwrap();
+        region.drain(DrainDeadline::default()).unwrap();
+        let result = region.finalize().unwrap();
+        assert!(result.success);
+        assert_eq!(result.obligations_committed, 0);
+        assert_eq!(result.obligations_aborted, 0);
+        assert!(!result.drain_timeout_escalated);
+    }
+
+    #[test]
+    fn drain_events_clears_after_drain() {
+        let mut region = test_region();
+        region.cancel(CancelReason::OperatorShutdown).unwrap();
+        let events1 = region.drain_events();
+        assert!(!events1.is_empty());
+        let events2 = region.drain_events();
+        assert!(events2.is_empty());
+    }
+
+    #[test]
+    fn close_shortcut_preserves_cancel_reason() {
+        let mut region = test_region();
+        region
+            .close(CancelReason::BudgetExhausted, DrainDeadline::default())
+            .unwrap();
+        assert_eq!(
+            region.cancel_reason(),
+            Some(&CancelReason::BudgetExhausted)
+        );
+    }
+
+    #[test]
+    fn region_event_json_field_presence() {
+        let event = RegionEvent {
+            trace_id: "t".to_string(),
+            region_id: "r".to_string(),
+            region_type: "ext".to_string(),
+            phase: RegionState::Running,
+            outcome: "ok".to_string(),
+            obligations_pending: 0,
+            drain_elapsed_ticks: 0,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        for field in &[
+            "trace_id",
+            "region_id",
+            "region_type",
+            "phase",
+            "outcome",
+            "obligations_pending",
+            "drain_elapsed_ticks",
+        ] {
+            assert!(json.contains(field), "JSON missing field: {field}");
+        }
+    }
+
+    #[test]
+    fn multiple_children_independent_close() {
+        let mut parent = Region::new("parent", "svc", "t");
+        let mut c1 = Region::new("c1", "ext", "t");
+        c1.register_obligation("ob-c1", "flush");
+        c1.commit_obligation("ob-c1");
+        let c2 = Region::new("c2", "ext", "t");
+        parent.add_child(c1);
+        parent.add_child(c2);
+
+        let result = parent
+            .close(CancelReason::OperatorShutdown, DrainDeadline::default())
+            .unwrap();
+        assert!(result.success);
+        assert_eq!(parent.state(), RegionState::Closed);
+    }
+
+    #[test]
+    fn register_obligation_replaces_existing() {
+        let mut region = test_region();
+        region.register_obligation("ob-1", "first");
+        region.register_obligation("ob-1", "replaced");
+        assert_eq!(region.pending_obligations(), 1);
+    }
 }

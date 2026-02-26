@@ -1209,4 +1209,145 @@ mod tests {
         let restored: AuditResult = serde_json::from_str(&json).unwrap();
         assert_eq!(result, restored);
     }
+
+    // ── Enrichment batch 2: line-specific exemptions & edge cases ──
+
+    #[test]
+    fn line_specific_exemption_only_matches_exact_line() {
+        let mut reg = ExemptionRegistry::new();
+        reg.add(Exemption {
+            exemption_id: "e1".to_string(),
+            module_path: "m".to_string(),
+            pattern_id: "p".to_string(),
+            reason: "ok".to_string(),
+            witness: "w".to_string(),
+            line: 10,
+        });
+        assert!(reg.is_exempted("m", "p", 10));
+        assert!(!reg.is_exempted("m", "p", 11));
+        assert!(!reg.is_exempted("m", "p", 9));
+    }
+
+    #[test]
+    fn detects_global_mutable_state() {
+        let auditor = standard_auditor();
+        let source = "static mut GLOBAL: u32 = 0;";
+        let findings = auditor.audit_source("m", "f.rs", source);
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.category == ForbiddenCallCategory::GlobalMutableState)
+        );
+    }
+
+    #[test]
+    fn detects_environment_access() {
+        let auditor = standard_auditor();
+        let source = "let val = std::env::var(\"HOME\");";
+        let findings = auditor.audit_source("m", "f.rs", source);
+        assert!(findings.iter().any(|f| f.pattern_id == "std_env"));
+    }
+
+    #[test]
+    fn detects_direct_time_access() {
+        let auditor = standard_auditor();
+        let source = "let now = SystemTime::now();";
+        let findings = auditor.audit_source("m", "f.rs", source);
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.category == ForbiddenCallCategory::DirectTime)
+        );
+    }
+
+    #[test]
+    fn multiline_source_detects_on_correct_line() {
+        let auditor = standard_auditor();
+        let source = "fn safe() {}\nlet x = std::fs::read(\"y\");\nfn also_safe() {}";
+        let findings = auditor.audit_source("m", "f.rs", source);
+        assert!(!findings.is_empty());
+        // Line 2 should have the finding (1-indexed)
+        assert!(findings.iter().any(|f| f.line == 2));
+    }
+
+    #[test]
+    fn audit_all_multiple_modules_sorted() {
+        let auditor = standard_auditor();
+        let mut sources = BTreeMap::new();
+        sources.insert(
+            ("z_mod".to_string(), "z.rs".to_string()),
+            "let _ = std::fs::read(\"x\");".to_string(),
+        );
+        sources.insert(
+            ("a_mod".to_string(), "a.rs".to_string()),
+            "let s = TcpStream::connect(\"x\");".to_string(),
+        );
+        let result = auditor.audit_all(&sources);
+        assert!(!result.passed);
+        // Modules should be in sorted order (BTreeMap guarantees this)
+        assert_eq!(result.modules_audited[0], "a_mod");
+        assert_eq!(result.modules_audited[1], "z_mod");
+    }
+
+    #[test]
+    fn exemption_for_wrong_module_does_not_match() {
+        let mut reg = ExemptionRegistry::new();
+        reg.add(Exemption {
+            exemption_id: "e1".to_string(),
+            module_path: "correct_module".to_string(),
+            pattern_id: "std_fs".to_string(),
+            reason: "ok".to_string(),
+            witness: "w".to_string(),
+            line: 0,
+        });
+        assert!(!reg.is_exempted("wrong_module", "std_fs", 1));
+    }
+
+    #[test]
+    fn comments_are_skipped_by_auditor() {
+        let auditor = standard_auditor();
+        // Auditor skips lines starting with //
+        let source = "// TODO: replace std::fs::read with cap";
+        let findings = auditor.audit_source("m", "f.rs", source);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn clean_source_has_no_findings() {
+        let auditor = standard_auditor();
+        let source = "fn pure_computation(x: i64) -> i64 { x * 2 + 1 }";
+        let findings = auditor.audit_source("m", "f.rs", source);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn audit_finding_display_fields_preserved() {
+        let finding = AuditFinding {
+            module_path: "engine::core".to_string(),
+            forbidden_api: "std::fs::read".to_string(),
+            pattern_id: "std_fs".to_string(),
+            category: ForbiddenCallCategory::FileSystem,
+            file_path: "core.rs".to_string(),
+            line: 42,
+            source_line: "std::fs::read(path)".to_string(),
+            suggested_alternative: "Use FileSystemCap".to_string(),
+            exempted: false,
+        };
+        assert_eq!(finding.line, 42);
+        assert_eq!(finding.file_path, "core.rs");
+        assert!(!finding.exempted);
+    }
+
+    #[test]
+    fn category_display_environment() {
+        assert_eq!(
+            ForbiddenCallCategory::Environment.to_string(),
+            "environment"
+        );
+    }
+
+    #[test]
+    fn category_display_direct_time() {
+        assert_eq!(ForbiddenCallCategory::DirectTime.to_string(), "direct_time");
+    }
 }

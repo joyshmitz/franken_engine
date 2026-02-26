@@ -1159,4 +1159,190 @@ mod tests {
             other => panic!("expected BudgetExceeded, got {other:?}"),
         }
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 3: clone, ordering, JSON fields, edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn domain_budget_clone_equality() {
+        let mut b = DomainBudget::new(500);
+        b.try_reserve(123).unwrap();
+        let cloned = b.clone();
+        assert_eq!(b, cloned);
+    }
+
+    #[test]
+    fn domain_config_clone_equality() {
+        let cfg = DomainConfig {
+            domain: AllocationDomain::IrArena,
+            lifetime: LifetimeClass::Arena,
+            budget: DomainBudget::new(4096),
+        };
+        let cloned = cfg.clone();
+        assert_eq!(cfg, cloned);
+    }
+
+    #[test]
+    fn alloc_domain_error_clone_equality() {
+        let variants = vec![
+            AllocDomainError::BudgetExceeded {
+                requested: 42,
+                remaining: 7,
+                domain: Some(AllocationDomain::ScratchBuffer),
+            },
+            AllocDomainError::BudgetOverflow,
+            AllocDomainError::DomainNotFound {
+                domain: AllocationDomain::RuntimeHeap,
+            },
+            AllocDomainError::DuplicateDomain {
+                domain: AllocationDomain::EvidenceArena,
+            },
+        ];
+        for v in &variants {
+            let cloned = v.clone();
+            assert_eq!(*v, cloned);
+        }
+    }
+
+    #[test]
+    fn allocation_domain_ord_deterministic() {
+        let mut domains = vec![
+            AllocationDomain::ScratchBuffer,
+            AllocationDomain::ExtensionHeap,
+            AllocationDomain::EvidenceArena,
+            AllocationDomain::RuntimeHeap,
+            AllocationDomain::IrArena,
+        ];
+        domains.sort();
+        // Ord follows discriminant order
+        assert_eq!(domains[0], AllocationDomain::ExtensionHeap);
+        assert_eq!(domains[4], AllocationDomain::ScratchBuffer);
+        // Sorting twice gives same result
+        let first_sort = domains.clone();
+        domains.sort();
+        assert_eq!(domains, first_sort);
+    }
+
+    #[test]
+    fn lifetime_class_ord_deterministic() {
+        let mut classes = vec![
+            LifetimeClass::Arena,
+            LifetimeClass::Global,
+            LifetimeClass::RequestScoped,
+            LifetimeClass::SessionScoped,
+        ];
+        classes.sort();
+        assert_eq!(classes[0], LifetimeClass::RequestScoped);
+        assert_eq!(classes[3], LifetimeClass::Arena);
+        let first_sort = classes.clone();
+        classes.sort();
+        assert_eq!(classes, first_sort);
+    }
+
+    #[test]
+    fn domain_budget_json_field_presence() {
+        let mut b = DomainBudget::new(1024);
+        b.try_reserve(256).unwrap();
+        let json = serde_json::to_string(&b).unwrap();
+        assert!(json.contains("\"max_bytes\""));
+        assert!(json.contains("\"used_bytes\""));
+        assert!(json.contains("1024"));
+        assert!(json.contains("256"));
+    }
+
+    #[test]
+    fn domain_config_json_field_presence() {
+        let cfg = DomainConfig {
+            domain: AllocationDomain::EvidenceArena,
+            lifetime: LifetimeClass::SessionScoped,
+            budget: DomainBudget::new(512),
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(json.contains("\"domain\""));
+        assert!(json.contains("\"lifetime\""));
+        assert!(json.contains("\"budget\""));
+        assert!(json.contains("EvidenceArena"));
+        assert!(json.contains("SessionScoped"));
+    }
+
+    #[test]
+    fn budget_zero_max_reserve_one_fails() {
+        let mut b = DomainBudget::new(0);
+        let err = b.try_reserve(1).unwrap_err();
+        assert!(matches!(err, AllocDomainError::BudgetExceeded { .. }));
+        assert_eq!(b.used_bytes, 0);
+    }
+
+    #[test]
+    fn registry_allocate_zero_bytes_increments_sequence() {
+        let mut reg = DomainRegistry::new();
+        reg.register(AllocationDomain::IrArena, LifetimeClass::Arena, 100)
+            .unwrap();
+        let seq = reg.allocate(AllocationDomain::IrArena, 0).unwrap();
+        assert_eq!(seq, 1);
+        assert_eq!(
+            reg.get(&AllocationDomain::IrArena)
+                .unwrap()
+                .budget
+                .used_bytes,
+            0
+        );
+    }
+
+    #[test]
+    fn registry_total_used_after_partial_release() {
+        let mut reg = DomainRegistry::new();
+        reg.register(
+            AllocationDomain::ExtensionHeap,
+            LifetimeClass::SessionScoped,
+            1000,
+        )
+        .unwrap();
+        reg.register(AllocationDomain::IrArena, LifetimeClass::Arena, 1000)
+            .unwrap();
+        reg.allocate(AllocationDomain::ExtensionHeap, 400).unwrap();
+        reg.allocate(AllocationDomain::IrArena, 300).unwrap();
+        assert_eq!(reg.total_used(), 700);
+        reg.release(AllocationDomain::ExtensionHeap, 150).unwrap();
+        assert_eq!(reg.total_used(), 550);
+    }
+
+    #[test]
+    fn registry_iter_count_matches_len() {
+        let reg = DomainRegistry::with_standard_domains(1024);
+        assert_eq!(reg.iter().count(), reg.len());
+        assert_eq!(reg.iter().count(), 5);
+    }
+
+    #[test]
+    fn budget_multiple_sequential_releases_saturate() {
+        let mut b = DomainBudget::new(100);
+        b.try_reserve(50).unwrap();
+        b.release(20);
+        assert_eq!(b.used_bytes, 30);
+        b.release(20);
+        assert_eq!(b.used_bytes, 10);
+        b.release(20); // saturates at 0 since 10 - 20 < 0
+        assert_eq!(b.used_bytes, 0);
+    }
+
+    #[test]
+    fn registry_clone_preserves_state() {
+        let mut reg = DomainRegistry::with_standard_domains(2048);
+        reg.allocate(AllocationDomain::ExtensionHeap, 100).unwrap();
+        reg.allocate(AllocationDomain::IrArena, 200).unwrap();
+        let cloned = reg.clone();
+        assert_eq!(cloned.len(), reg.len());
+        assert_eq!(cloned.total_used(), reg.total_used());
+        assert_eq!(cloned.allocation_sequence(), reg.allocation_sequence());
+        assert_eq!(
+            cloned
+                .get(&AllocationDomain::ExtensionHeap)
+                .unwrap()
+                .budget
+                .used_bytes,
+            100
+        );
+    }
 }

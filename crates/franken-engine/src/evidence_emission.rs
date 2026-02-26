@@ -1291,4 +1291,214 @@ mod tests {
         assert_eq!(em.len(), back.len());
         assert_eq!(em.rolling_hash(), back.rolling_hash());
     }
+
+    // -- Enrichment batch 3: clone, serde, boundary, mid-stream epoch --
+
+    #[test]
+    fn request_serde_roundtrip() {
+        let req = make_request(ActionCategory::DecisionContract, "allow");
+        let json = serde_json::to_string(&req).unwrap();
+        let back: EvidenceEmissionRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(req, back);
+    }
+
+    #[test]
+    fn request_clone_equality() {
+        let req = make_request(ActionCategory::Cancellation, "cancel_op");
+        let cloned = req.clone();
+        assert_eq!(req, cloned);
+    }
+
+    #[test]
+    fn canonical_entry_clone_equality() {
+        let mut em = emitter();
+        let mut cx = mock_cx();
+        em.emit(
+            &mut cx,
+            &make_request(ActionCategory::DecisionContract, "a"),
+        )
+        .unwrap();
+        let entry = em.entries()[0].clone();
+        let cloned = entry.clone();
+        assert_eq!(entry, cloned);
+    }
+
+    #[test]
+    fn error_clone_equality() {
+        let errors = [
+            EvidenceEmissionError::BufferFull { capacity: 42 },
+            EvidenceEmissionError::BudgetExhausted { requested_ms: 99 },
+            EvidenceEmissionError::BuildError {
+                detail: "fail".to_string(),
+            },
+            EvidenceEmissionError::ValidationFailed {
+                errors: vec!["bad".to_string()],
+            },
+        ];
+        for e in &errors {
+            assert_eq!(*e, e.clone());
+        }
+    }
+
+    #[test]
+    fn event_clone_equality() {
+        let event = EvidenceEmissionEvent {
+            trace_id: "t1".to_string(),
+            decision_id: "d1".to_string(),
+            policy_id: "p1".to_string(),
+            component: "c".to_string(),
+            event: "emit".to_string(),
+            outcome: "ok".to_string(),
+            error_code: Some("e1".to_string()),
+        };
+        assert_eq!(event, event.clone());
+    }
+
+    #[test]
+    fn error_serde_all_four_variants() {
+        let variants = [
+            EvidenceEmissionError::BufferFull { capacity: 1 },
+            EvidenceEmissionError::BudgetExhausted { requested_ms: 2 },
+            EvidenceEmissionError::BuildError {
+                detail: "d".to_string(),
+            },
+            EvidenceEmissionError::ValidationFailed {
+                errors: vec!["v".to_string()],
+            },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: EvidenceEmissionError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn by_trace_id_multiple_matches() {
+        let mut em = emitter();
+        let mut cx = mock_cx();
+        for i in 0..3 {
+            let req = make_request(ActionCategory::DecisionContract, &format!("a{i}"));
+            em.emit(&mut cx, &req).unwrap();
+        }
+        let trace_str = trace_id_from_seed(1).to_string();
+        assert_eq!(em.by_trace_id(&trace_str).len(), 3);
+    }
+
+    #[test]
+    fn by_decision_id_multiple_matches() {
+        let mut em = emitter();
+        let mut cx = mock_cx();
+        for i in 0..4 {
+            let req = make_request(ActionCategory::RegionLifecycle, &format!("r{i}"));
+            em.emit(&mut cx, &req).unwrap();
+        }
+        let dec_str = decision_id_from_seed(1).to_string();
+        assert_eq!(em.by_decision_id(&dec_str).len(), 4);
+    }
+
+    #[test]
+    fn entry_json_field_presence() {
+        let mut em = emitter();
+        let mut cx = mock_cx();
+        em.emit(
+            &mut cx,
+            &make_request(ActionCategory::DecisionContract, "a"),
+        )
+        .unwrap();
+        let json = serde_json::to_string(&em.entries()[0]).unwrap();
+        for field in &[
+            "entry_id",
+            "sequence",
+            "category",
+            "action_name",
+            "trace_id",
+            "decision_id",
+            "policy_id",
+            "schema_version",
+            "ts_unix_ms",
+            "epoch",
+            "artifact_hash",
+            "chain_hash",
+        ] {
+            assert!(json.contains(field), "JSON missing field: {field}");
+        }
+    }
+
+    #[test]
+    fn fallback_active_preserved_in_ledger() {
+        let mut em = emitter();
+        let mut cx = mock_cx();
+        let mut req = make_request(ActionCategory::DecisionContract, "allow");
+        req.fallback_active = true;
+        em.emit(&mut cx, &req).unwrap();
+        assert!(em.entries()[0].ledger_entry.fallback_active);
+    }
+
+    #[test]
+    fn top_features_preserved_in_ledger() {
+        let mut em = emitter();
+        let mut cx = mock_cx();
+        let req = make_request(ActionCategory::DecisionContract, "allow");
+        em.emit(&mut cx, &req).unwrap();
+        let features = &em.entries()[0].ledger_entry.top_features;
+        assert!(!features.is_empty());
+    }
+
+    #[test]
+    fn epoch_midstream_change_affects_subsequent() {
+        let mut em = emitter();
+        em.set_epoch(SecurityEpoch::from_raw(1));
+        let mut cx = mock_cx();
+        em.emit(
+            &mut cx,
+            &make_request(ActionCategory::DecisionContract, "a"),
+        )
+        .unwrap();
+        em.set_epoch(SecurityEpoch::from_raw(2));
+        em.emit(
+            &mut cx,
+            &make_request(ActionCategory::DecisionContract, "b"),
+        )
+        .unwrap();
+        assert_eq!(em.entries()[0].epoch, SecurityEpoch::from_raw(1));
+        assert_eq!(em.entries()[1].epoch, SecurityEpoch::from_raw(2));
+    }
+
+    #[test]
+    fn budget_exact_boundary_succeeds() {
+        let mut em = CanonicalEvidenceEmitter::new(EmitterConfig {
+            budget_cost_ms: 10,
+            ..EmitterConfig::default()
+        });
+        let mut cx = MockCx::new(trace_id_from_seed(1), MockBudget::new(10));
+        let req = make_request(ActionCategory::DecisionContract, "allow");
+        em.emit(&mut cx, &req).unwrap();
+        assert_eq!(em.len(), 1);
+        assert_eq!(cx.budget().remaining_ms(), 0);
+    }
+
+    #[test]
+    fn empty_expected_losses_uses_action_name() {
+        let mut em = emitter();
+        let mut cx = mock_cx();
+        let mut req = make_request(ActionCategory::ExtensionLifecycle, "load");
+        req.expected_losses.clear();
+        em.emit(&mut cx, &req).unwrap();
+        let losses = &em.entries()[0].ledger_entry.expected_loss_by_action;
+        assert!(
+            losses.iter().any(|(k, _)| k == "load"),
+            "expected_loss_by_action should contain the action_name key"
+        );
+    }
+
+    #[test]
+    fn request_metadata_btreemap_ordering() {
+        let mut req = make_request(ActionCategory::DecisionContract, "allow");
+        req.metadata.insert("z_key".to_string(), "z".to_string());
+        req.metadata.insert("a_key".to_string(), "a".to_string());
+        req.metadata.insert("m_key".to_string(), "m".to_string());
+        let keys: Vec<&String> = req.metadata.keys().collect();
+        assert_eq!(keys, vec!["a_key", "m_key", "z_key"]);
+    }
 }

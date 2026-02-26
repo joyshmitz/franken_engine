@@ -5838,4 +5838,711 @@ mod tests {
         let back: PublicationLogEntry = serde_json::from_str(&json).unwrap();
         assert_eq!(entry, back);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: publication pipeline error paths
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn publish_draft_witness_rejected() {
+        let head_key = SigningKey::from_bytes([60u8; 32]);
+        let mut pipeline = WitnessPublicationPipeline::new(
+            SecurityEpoch::from_raw(1),
+            head_key,
+            WitnessPublicationConfig::default(),
+        )
+        .unwrap();
+        let cap = Capability::new("read");
+        let witness = WitnessBuilder::new(
+            test_extension_id(),
+            test_policy_id(),
+            SecurityEpoch::from_raw(1),
+            1000,
+            test_signing_key(),
+        )
+        .require(cap.clone())
+        .proof(make_proof(&cap))
+        .build()
+        .unwrap();
+        let err = pipeline.publish_witness(witness, 1000).unwrap_err();
+        assert!(matches!(
+            err,
+            WitnessPublicationError::WitnessNotPromoted { .. }
+        ));
+    }
+
+    #[test]
+    fn publish_duplicate_witness_rejected() {
+        let head_key = SigningKey::from_bytes([61u8; 32]);
+        let mut pipeline = WitnessPublicationPipeline::new(
+            SecurityEpoch::from_raw(1),
+            head_key,
+            WitnessPublicationConfig::default(),
+        )
+        .unwrap();
+        let witness = build_promoted_witness(50);
+        pipeline.publish_witness(witness.clone(), 100).unwrap();
+        let err = pipeline.publish_witness(witness, 200).unwrap_err();
+        assert!(matches!(
+            err,
+            WitnessPublicationError::DuplicatePublication { .. }
+        ));
+    }
+
+    #[test]
+    fn revoke_empty_reason_rejected() {
+        let head_key = SigningKey::from_bytes([62u8; 32]);
+        let mut pipeline = WitnessPublicationPipeline::new(
+            SecurityEpoch::from_raw(1),
+            head_key,
+            WitnessPublicationConfig::default(),
+        )
+        .unwrap();
+        let witness = build_promoted_witness(51);
+        let wid = witness.witness_id.clone();
+        pipeline.publish_witness(witness, 100).unwrap();
+        let err = pipeline.revoke_witness(&wid, "  ", 200).unwrap_err();
+        assert!(matches!(
+            err,
+            WitnessPublicationError::EmptyRevocationReason
+        ));
+    }
+
+    #[test]
+    fn revoke_unpublished_witness_rejected() {
+        let head_key = SigningKey::from_bytes([63u8; 32]);
+        let mut pipeline = WitnessPublicationPipeline::new(
+            SecurityEpoch::from_raw(1),
+            head_key,
+            WitnessPublicationConfig::default(),
+        )
+        .unwrap();
+        let err = pipeline
+            .revoke_witness(&test_extension_id(), "reason", 100)
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            WitnessPublicationError::WitnessNotPublished { .. }
+        ));
+    }
+
+    #[test]
+    fn revoke_already_revoked_rejected() {
+        let head_key = SigningKey::from_bytes([64u8; 32]);
+        let mut pipeline = WitnessPublicationPipeline::new(
+            SecurityEpoch::from_raw(1),
+            head_key,
+            WitnessPublicationConfig::default(),
+        )
+        .unwrap();
+        let witness = build_promoted_witness(52);
+        let wid = witness.witness_id.clone();
+        pipeline.publish_witness(witness, 100).unwrap();
+        pipeline.revoke_witness(&wid, "compromise", 200).unwrap();
+        let err = pipeline.revoke_witness(&wid, "again", 300).unwrap_err();
+        assert!(matches!(
+            err,
+            WitnessPublicationError::AlreadyRevoked { .. }
+        ));
+    }
+
+    #[test]
+    fn pipeline_zero_checkpoint_interval_rejected() {
+        let head_key = SigningKey::from_bytes([65u8; 32]);
+        let err = WitnessPublicationPipeline::new(
+            SecurityEpoch::from_raw(1),
+            head_key,
+            WitnessPublicationConfig {
+                checkpoint_interval: 0,
+                policy_id: "ok".to_string(),
+                governance_ledger_config: None,
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(err, WitnessPublicationError::InvalidConfig { .. }));
+    }
+
+    #[test]
+    fn pipeline_empty_policy_id_rejected() {
+        let head_key = SigningKey::from_bytes([66u8; 32]);
+        let err = WitnessPublicationPipeline::new(
+            SecurityEpoch::from_raw(1),
+            head_key,
+            WitnessPublicationConfig {
+                checkpoint_interval: 1,
+                policy_id: "  ".to_string(),
+                governance_ledger_config: None,
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(err, WitnessPublicationError::InvalidConfig { .. }));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: promotion theorem edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn apply_promotion_report_when_not_all_passed_skips_proofs() {
+        let cap_r = Capability::new("read");
+        let cap_w = Capability::new("write");
+        let mut witness = WitnessBuilder::new(
+            test_extension_id(),
+            test_policy_id(),
+            SecurityEpoch::from_raw(1),
+            1000,
+            test_signing_key(),
+        )
+        .require(cap_r.clone())
+        .require(cap_w.clone())
+        .proof(make_proof(&cap_r))
+        .proof(make_proof(&cap_w))
+        .build()
+        .unwrap();
+
+        // Only one source covers cap_r, so merge fails for cap_w
+        let input = PromotionTheoremInput {
+            source_capability_sets: vec![SourceCapabilitySet {
+                source_id: "partial".to_string(),
+                capabilities: BTreeSet::from([cap_r.clone()]),
+            }],
+            manifest_capabilities: BTreeSet::from([cap_r, cap_w]),
+            capability_lattice: BTreeMap::new(),
+            non_interference_dependencies: BTreeMap::new(),
+            custom_extensions: Vec::new(),
+        };
+        let report = witness.evaluate_promotion_theorems(&input).unwrap();
+        assert!(!report.all_passed);
+
+        let proofs_before = witness
+            .proof_obligations
+            .iter()
+            .filter(|p| p.kind == ProofKind::PolicyTheoremCheck)
+            .count();
+        witness.apply_promotion_theorem_report(&report);
+        let proofs_after = witness
+            .proof_obligations
+            .iter()
+            .filter(|p| p.kind == ProofKind::PolicyTheoremCheck)
+            .count();
+        assert_eq!(
+            proofs_before, proofs_after,
+            "no theorem proofs added when report fails"
+        );
+        // Metadata still written for failed report
+        assert_eq!(
+            witness.metadata.get("promotion_theorem.all_passed"),
+            Some(&"false".to_string())
+        );
+    }
+
+    #[test]
+    fn promotion_theorem_attenuation_failure_when_required_exceeds_manifest() {
+        let cap_r = Capability::new("read");
+        let cap_w = Capability::new("write");
+        let witness = WitnessBuilder::new(
+            test_extension_id(),
+            test_policy_id(),
+            SecurityEpoch::from_raw(1),
+            1000,
+            test_signing_key(),
+        )
+        .require(cap_r.clone())
+        .require(cap_w.clone())
+        .proof(make_proof(&cap_r))
+        .proof(make_proof(&cap_w))
+        .build()
+        .unwrap();
+
+        let input = PromotionTheoremInput {
+            source_capability_sets: vec![SourceCapabilitySet {
+                source_id: "sources".to_string(),
+                capabilities: BTreeSet::from([cap_r.clone(), cap_w.clone()]),
+            }],
+            manifest_capabilities: BTreeSet::from([cap_r]),
+            capability_lattice: BTreeMap::new(),
+            non_interference_dependencies: BTreeMap::new(),
+            custom_extensions: Vec::new(),
+        };
+        let report = witness.evaluate_promotion_theorems(&input).unwrap();
+        let attenuation = report
+            .results
+            .iter()
+            .find(|r| r.theorem == PromotionTheoremKind::AttenuationLegality)
+            .unwrap();
+        assert!(!attenuation.passed);
+        assert!(
+            attenuation
+                .counterexample
+                .as_deref()
+                .unwrap()
+                .contains("write")
+        );
+    }
+
+    #[test]
+    fn custom_theorem_extension_failure_missing_and_forbidden() {
+        let cap_r = Capability::new("read");
+        let cap_w = Capability::new("write");
+        let witness = WitnessBuilder::new(
+            test_extension_id(),
+            test_policy_id(),
+            SecurityEpoch::from_raw(1),
+            1000,
+            test_signing_key(),
+        )
+        .require(cap_r.clone())
+        .proof(make_proof(&cap_r))
+        .build()
+        .unwrap();
+
+        let input = PromotionTheoremInput {
+            source_capability_sets: vec![SourceCapabilitySet {
+                source_id: "src".to_string(),
+                capabilities: BTreeSet::from([cap_r.clone()]),
+            }],
+            manifest_capabilities: BTreeSet::from([cap_r.clone()]),
+            capability_lattice: BTreeMap::new(),
+            non_interference_dependencies: BTreeMap::new(),
+            custom_extensions: vec![CustomTheoremExtension {
+                name: "strict-check".to_string(),
+                required_capabilities: BTreeSet::from([cap_w]),
+                forbidden_capabilities: BTreeSet::from([cap_r]),
+            }],
+        };
+        let report = witness.evaluate_promotion_theorems(&input).unwrap();
+        let custom = report
+            .results
+            .iter()
+            .find(|r| r.theorem == PromotionTheoremKind::Custom("strict-check".to_string()))
+            .unwrap();
+        assert!(!custom.passed);
+        let cx = custom.counterexample.as_deref().unwrap();
+        assert!(
+            cx.contains("write"),
+            "counterexample should mention missing write"
+        );
+        assert!(
+            cx.contains("read"),
+            "counterexample should mention forbidden read"
+        );
+    }
+
+    #[test]
+    fn multiple_custom_extensions_sorted_by_name() {
+        let cap = Capability::new("read");
+        let witness = WitnessBuilder::new(
+            test_extension_id(),
+            test_policy_id(),
+            SecurityEpoch::from_raw(1),
+            1000,
+            test_signing_key(),
+        )
+        .require(cap.clone())
+        .proof(make_proof(&cap))
+        .build()
+        .unwrap();
+
+        let input = PromotionTheoremInput {
+            source_capability_sets: vec![SourceCapabilitySet {
+                source_id: "src".to_string(),
+                capabilities: BTreeSet::from([cap.clone()]),
+            }],
+            manifest_capabilities: BTreeSet::from([cap]),
+            capability_lattice: BTreeMap::new(),
+            non_interference_dependencies: BTreeMap::new(),
+            custom_extensions: vec![
+                CustomTheoremExtension {
+                    name: "z-check".to_string(),
+                    required_capabilities: BTreeSet::new(),
+                    forbidden_capabilities: BTreeSet::new(),
+                },
+                CustomTheoremExtension {
+                    name: "a-check".to_string(),
+                    required_capabilities: BTreeSet::new(),
+                    forbidden_capabilities: BTreeSet::new(),
+                },
+            ],
+        };
+        let report = witness.evaluate_promotion_theorems(&input).unwrap();
+        let custom_results: Vec<_> = report
+            .results
+            .iter()
+            .filter(|r| matches!(r.theorem, PromotionTheoremKind::Custom(_)))
+            .collect();
+        assert_eq!(custom_results.len(), 2);
+        // Custom extensions should be sorted alphabetically
+        assert!(matches!(
+            &custom_results[0].theorem,
+            PromotionTheoremKind::Custom(n) if n == "a-check"
+        ));
+        assert!(matches!(
+            &custom_results[1].theorem,
+            PromotionTheoremKind::Custom(n) if n == "z-check"
+        ));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: WitnessBuilder helpers
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn builder_require_all_batch() {
+        let caps = vec![
+            Capability::new("cap-a"),
+            Capability::new("cap-b"),
+            Capability::new("cap-c"),
+        ];
+        let proofs: Vec<_> = caps.iter().map(|c| make_proof(c)).collect();
+        let mut builder = WitnessBuilder::new(
+            test_extension_id(),
+            test_policy_id(),
+            SecurityEpoch::from_raw(1),
+            1000,
+            test_signing_key(),
+        )
+        .require_all(caps.clone());
+        for p in proofs {
+            builder = builder.proof(p);
+        }
+        let witness = builder.build().unwrap();
+        assert_eq!(witness.required_capabilities.len(), 3);
+        for cap in &caps {
+            assert!(witness.required_capabilities.contains(cap));
+        }
+    }
+
+    #[test]
+    fn builder_meta_preserved_in_witness() {
+        let cap = Capability::new("read");
+        let witness = WitnessBuilder::new(
+            test_extension_id(),
+            test_policy_id(),
+            SecurityEpoch::from_raw(1),
+            1000,
+            test_signing_key(),
+        )
+        .require(cap.clone())
+        .proof(make_proof(&cap))
+        .meta("key1", "value1")
+        .meta("key2", "value2")
+        .build()
+        .unwrap();
+        assert_eq!(witness.metadata.get("key1"), Some(&"value1".to_string()));
+        assert_eq!(witness.metadata.get("key2"), Some(&"value2".to_string()));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: WitnessStore edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn store_insert_replaces_existing_by_id() {
+        let mut store = WitnessStore::new();
+        let mut witness = build_test_witness();
+        let wid = witness.witness_id.clone();
+        store.insert(witness.clone());
+        assert_eq!(store.len(), 1);
+
+        // Mutate metadata and re-insert with same ID
+        witness
+            .metadata
+            .insert("replaced".to_string(), "true".to_string());
+        store.insert(witness);
+        assert_eq!(store.len(), 1); // Still only 1
+        assert_eq!(
+            store.get(&wid).unwrap().metadata.get("replaced"),
+            Some(&"true".to_string())
+        );
+    }
+
+    #[test]
+    fn store_active_for_unknown_extension_is_none() {
+        let store = WitnessStore::new();
+        assert!(store.active_for_extension(&test_extension_id()).is_none());
+    }
+
+    #[test]
+    fn store_transition_unknown_witness_errors() {
+        let mut store = WitnessStore::new();
+        let err = store
+            .transition(&test_extension_id(), LifecycleState::Validated)
+            .unwrap_err();
+        assert!(matches!(err, WitnessError::IdDerivation(_)));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: publication query with revoked filter
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn publication_query_exclude_revoked() {
+        let head_key = SigningKey::from_bytes([67u8; 32]);
+        let mut pipeline = WitnessPublicationPipeline::new(
+            SecurityEpoch::from_raw(1),
+            head_key,
+            WitnessPublicationConfig::default(),
+        )
+        .unwrap();
+        let w1 = build_promoted_witness(60);
+        let w2 = build_promoted_witness(61);
+        let w1_id = w1.witness_id.clone();
+        pipeline.publish_witness(w1, 100).unwrap();
+        pipeline.publish_witness(w2, 200).unwrap();
+        pipeline.revoke_witness(&w1_id, "reason", 300).unwrap();
+
+        let all = pipeline.query(&WitnessPublicationQuery::all());
+        assert_eq!(all.len(), 2);
+
+        let non_revoked = pipeline.query(&WitnessPublicationQuery {
+            extension_id: None,
+            policy_id: None,
+            epoch: None,
+            content_hash: None,
+            include_revoked: false,
+        });
+        assert_eq!(non_revoked.len(), 1);
+        assert!(!non_revoked[0].is_revoked());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: verify_publication method on pipeline
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn verify_publication_from_pipeline() {
+        let head_key = SigningKey::from_bytes([68u8; 32]);
+        let mut pipeline = WitnessPublicationPipeline::new(
+            SecurityEpoch::from_raw(1),
+            head_key.clone(),
+            WitnessPublicationConfig::default(),
+        )
+        .unwrap();
+        let witness = build_promoted_witness(70);
+        let pub_id = pipeline.publish_witness(witness, 100).unwrap();
+        pipeline
+            .verify_publication(
+                &pub_id,
+                &test_signing_key().verification_key(),
+                &head_key.verification_key(),
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn verify_publication_not_found() {
+        let head_key = SigningKey::from_bytes([69u8; 32]);
+        let pipeline = WitnessPublicationPipeline::new(
+            SecurityEpoch::from_raw(1),
+            head_key.clone(),
+            WitnessPublicationConfig::default(),
+        )
+        .unwrap();
+        let err = pipeline
+            .verify_publication(
+                &test_extension_id(),
+                &test_signing_key().verification_key(),
+                &head_key.verification_key(),
+            )
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            WitnessPublicationError::PublicationNotFound { .. }
+        ));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: pipeline events and checkpoints
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn pipeline_events_emitted_on_publish_and_revoke() {
+        let head_key = SigningKey::from_bytes([70u8; 32]);
+        let mut pipeline = WitnessPublicationPipeline::new(
+            SecurityEpoch::from_raw(1),
+            head_key,
+            WitnessPublicationConfig::default(),
+        )
+        .unwrap();
+        let w = build_promoted_witness(80);
+        let wid = w.witness_id.clone();
+        pipeline.publish_witness(w, 100).unwrap();
+        assert_eq!(pipeline.events().len(), 1);
+        assert_eq!(pipeline.events()[0].event, "publish_witness");
+
+        pipeline.revoke_witness(&wid, "compromised", 200).unwrap();
+        assert_eq!(pipeline.events().len(), 2);
+        assert_eq!(pipeline.events()[1].event, "revoke_witness");
+    }
+
+    #[test]
+    fn pipeline_checkpoints_at_interval() {
+        let head_key = SigningKey::from_bytes([71u8; 32]);
+        let mut pipeline = WitnessPublicationPipeline::new(
+            SecurityEpoch::from_raw(1),
+            head_key,
+            WitnessPublicationConfig {
+                checkpoint_interval: 2,
+                policy_id: "test".to_string(),
+                governance_ledger_config: None,
+            },
+        )
+        .unwrap();
+
+        let w1 = build_promoted_witness(90);
+        pipeline.publish_witness(w1, 100).unwrap();
+        assert_eq!(
+            pipeline.checkpoints().len(),
+            0,
+            "1 entry, interval=2 => no checkpoint"
+        );
+
+        let w2 = build_promoted_witness(91);
+        pipeline.publish_witness(w2, 200).unwrap();
+        assert_eq!(
+            pipeline.checkpoints().len(),
+            1,
+            "2 entries, interval=2 => 1 checkpoint"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: PublishedWitnessArtifact::is_revoked
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn published_witness_artifact_is_revoked_reflects_state() {
+        let head_key = SigningKey::from_bytes([72u8; 32]);
+        let mut pipeline = WitnessPublicationPipeline::new(
+            SecurityEpoch::from_raw(1),
+            head_key,
+            WitnessPublicationConfig::default(),
+        )
+        .unwrap();
+        let w = build_promoted_witness(100);
+        let wid = w.witness_id.clone();
+        pipeline.publish_witness(w, 100).unwrap();
+        assert!(!pipeline.publications()[0].is_revoked());
+
+        pipeline.revoke_witness(&wid, "reason", 200).unwrap();
+        assert!(pipeline.publications()[0].is_revoked());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: PromotionTheoremReport/Result serde
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn promotion_theorem_result_serde_roundtrip() {
+        let cap = Capability::new("read");
+        let witness = WitnessBuilder::new(
+            test_extension_id(),
+            test_policy_id(),
+            SecurityEpoch::from_raw(1),
+            1000,
+            test_signing_key(),
+        )
+        .require(cap.clone())
+        .proof(make_proof(&cap))
+        .build()
+        .unwrap();
+        let report = witness
+            .evaluate_promotion_theorems(&promotion_theorem_input_for(&witness))
+            .unwrap();
+        for result in &report.results {
+            let json = serde_json::to_string(result).unwrap();
+            let back: PromotionTheoremResult = serde_json::from_str(&json).unwrap();
+            assert_eq!(*result, back);
+        }
+    }
+
+    #[test]
+    fn promotion_theorem_report_serde_roundtrip() {
+        let cap = Capability::new("read");
+        let witness = WitnessBuilder::new(
+            test_extension_id(),
+            test_policy_id(),
+            SecurityEpoch::from_raw(1),
+            1000,
+            test_signing_key(),
+        )
+        .require(cap.clone())
+        .proof(make_proof(&cap))
+        .build()
+        .unwrap();
+        let report = witness
+            .evaluate_promotion_theorems(&promotion_theorem_input_for(&witness))
+            .unwrap();
+        let json = serde_json::to_string(&report).unwrap();
+        let back: PromotionTheoremReport = serde_json::from_str(&json).unwrap();
+        assert_eq!(report, back);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: verify_promotion_theorem_gate with failed checks
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn transition_to_promoted_with_failed_theorem_check_errors() {
+        let cap = Capability::new("read");
+        let mut witness = WitnessBuilder::new(
+            test_extension_id(),
+            test_policy_id(),
+            SecurityEpoch::from_raw(1),
+            1000,
+            test_signing_key(),
+        )
+        .require(cap.clone())
+        .proof(make_proof(&cap))
+        .build()
+        .unwrap();
+        witness.transition_to(LifecycleState::Validated).unwrap();
+        // Insert a "fail" metadata entry to trigger PromotionTheoremFailed
+        witness.metadata.insert(
+            "promotion_theorem.merge_legality".to_string(),
+            "fail".to_string(),
+        );
+        witness.metadata.insert(
+            "promotion_theorem.attenuation_legality".to_string(),
+            "pass".to_string(),
+        );
+        witness.metadata.insert(
+            "promotion_theorem.non_interference".to_string(),
+            "pass".to_string(),
+        );
+        let err = witness.transition_to(LifecycleState::Promoted).unwrap_err();
+        assert!(matches!(err, WitnessError::PromotionTheoremFailed { .. }));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: synthesis_unsigned_bytes strips PolicyTheoremCheck proofs
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn synthesis_unsigned_bytes_strips_theorem_proof_obligations() {
+        let cap = Capability::new("read");
+        let mut witness = WitnessBuilder::new(
+            test_extension_id(),
+            test_policy_id(),
+            SecurityEpoch::from_raw(1),
+            1000,
+            test_signing_key(),
+        )
+        .require(cap.clone())
+        .proof(make_proof(&cap))
+        .build()
+        .unwrap();
+        let base = witness.synthesis_unsigned_bytes();
+
+        // Add a PolicyTheoremCheck proof
+        witness.proof_obligations.push(ProofObligation {
+            capability: cap,
+            kind: ProofKind::PolicyTheoremCheck,
+            proof_artifact_id: test_proof_artifact_id(),
+            justification: "theorem proof".to_string(),
+            artifact_hash: ContentHash::compute(b"theorem"),
+        });
+        let after = witness.synthesis_unsigned_bytes();
+        assert_eq!(base, after, "theorem proof obligations should be stripped");
+    }
 }

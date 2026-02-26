@@ -1261,4 +1261,171 @@ mod tests {
             );
         }
     }
+
+    // -- Enrichment batch 3: edge cases, operation IDs, epoch summaries --
+
+    #[test]
+    fn consume_negative_epsilon_rejected() {
+        let mut acc = test_accountant();
+        let err = acc.consume(-100, 0, "neg-eps", 2_000_000_000).unwrap_err();
+        assert!(matches!(err, AccountantError::InvalidConsumption { .. }));
+    }
+
+    #[test]
+    fn consume_negative_delta_rejected() {
+        let mut acc = test_accountant();
+        let err = acc.consume(0, -50, "neg-delta", 2_000_000_000).unwrap_err();
+        assert!(matches!(err, AccountantError::InvalidConsumption { .. }));
+    }
+
+    #[test]
+    fn operation_ids_monotonically_increase() {
+        let mut acc = test_accountant();
+        let mut prev_id = 0;
+        for i in 0..5 {
+            let record = acc
+                .consume(
+                    10_000,
+                    1_000,
+                    &format!("op-{i}"),
+                    (i + 2) as u64 * 1_000_000_000,
+                )
+                .unwrap();
+            assert!(record.operation_id > prev_id);
+            prev_id = record.operation_id;
+        }
+    }
+
+    #[test]
+    fn epoch_summary_captures_exhaustion() {
+        let mut acc = test_accountant();
+        // Exhaust the budget
+        acc.consume(1_000_000, 0, "exhaust-eps", 2_000_000_000)
+            .unwrap();
+        // Now advance epoch - summary should capture exhaustion state
+        acc.advance_epoch(SecurityEpoch::from_raw(2), 10_000_000_000)
+            .unwrap();
+        let summaries = acc.epoch_summaries();
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].total_epsilon_spent_millionths, 1_000_000);
+    }
+
+    #[test]
+    fn consumption_after_exhaustion_rejected() {
+        let mut acc = test_accountant();
+        acc.consume(1_000_000, 0, "exhaust", 2_000_000_000).unwrap();
+        let err = acc.consume(1, 0, "over-budget", 3_000_000_000).unwrap_err();
+        assert!(matches!(err, AccountantError::BudgetExhausted { .. }));
+    }
+
+    #[test]
+    fn zone_preserved_in_accountant() {
+        let acc = test_accountant();
+        let json = serde_json::to_string(&acc).unwrap();
+        assert!(json.contains("zone-A"));
+    }
+
+    #[test]
+    fn epoch_budget_would_exhaust_exact_boundary() {
+        let eb = EpochBudget {
+            epoch: SecurityEpoch::from_raw(1),
+            epsilon_budget_millionths: 1_000_000,
+            delta_budget_millionths: 100_000,
+            epsilon_spent_millionths: 500_000,
+            delta_spent_millionths: 50_000,
+            composition_method: CompositionMethod::Basic,
+            operations_count: 1,
+            created_at_ns: 0,
+            exhausted: false,
+        };
+        // Exactly at remaining: 500K eps, 50K delta
+        assert!(!eb.would_exhaust(500_000, 50_000));
+        // One over for epsilon
+        assert!(eb.would_exhaust(500_001, 0));
+        // One over for delta
+        assert!(eb.would_exhaust(0, 50_001));
+    }
+
+    #[test]
+    fn forecast_estimated_operations_after_single_consume() {
+        let mut acc = test_accountant();
+        acc.consume(200_000, 20_000, "op1", 2_000_000_000).unwrap();
+        let fc = acc.forecast();
+        // Remaining: 800K eps. Avg per op = 200K. 800K/200K = 4
+        assert_eq!(fc.estimated_remaining_operations, 4);
+    }
+
+    #[test]
+    fn epoch_summary_composition_method_preserved() {
+        let mut acc = test_accountant_advanced();
+        acc.consume(100_000, 10_000, "op", 2_000_000_000).unwrap();
+        acc.advance_epoch(SecurityEpoch::from_raw(2), 10_000_000_000)
+            .unwrap();
+        let summaries = acc.epoch_summaries();
+        assert_eq!(summaries[0].composition_method, CompositionMethod::Advanced);
+    }
+
+    #[test]
+    fn isqrt_non_perfect_square() {
+        // sqrt(5) = 2.236..., floor = 2
+        assert_eq!(isqrt_millionths(5), 2);
+        // sqrt(8) = 2.828..., floor = 2
+        assert_eq!(isqrt_millionths(8), 2);
+        // sqrt(99) = 9.949..., floor = 9
+        assert_eq!(isqrt_millionths(99), 9);
+    }
+
+    #[test]
+    fn accountant_error_invalid_configuration_display() {
+        let err = AccountantError::InvalidConfiguration {
+            reason: "zero budget".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("zero budget"));
+    }
+
+    #[test]
+    fn consume_description_preserved_in_record() {
+        let mut acc = test_accountant();
+        let record = acc
+            .consume(10_000, 1_000, "my-unique-op-desc", 2_000_000_000)
+            .unwrap();
+        assert_eq!(record.description, "my-unique-op-desc");
+    }
+
+    #[test]
+    fn consume_timestamp_preserved_in_record() {
+        let mut acc = test_accountant();
+        let ts = 42_000_000_000u64;
+        let record = acc.consume(10_000, 1_000, "ts-test", ts).unwrap();
+        assert_eq!(record.timestamp_ns, ts);
+    }
+
+    #[test]
+    fn multiple_epoch_advances_maintain_summaries() {
+        let mut acc = test_accountant();
+        for epoch in 2..=5 {
+            acc.consume(
+                50_000,
+                5_000,
+                &format!("ep{epoch}-op"),
+                epoch as u64 * 1_000_000_000,
+            )
+            .unwrap();
+            acc.advance_epoch(SecurityEpoch::from_raw(epoch), epoch as u64 * 5_000_000_000)
+                .unwrap();
+        }
+        assert_eq!(acc.epoch_summaries().len(), 4); // epochs 1-4 closed
+    }
+
+    #[test]
+    fn deterministic_accountant_state_across_runs() {
+        let run = || {
+            let mut acc = test_accountant();
+            acc.consume(100_000, 10_000, "op1", 2_000_000_000).unwrap();
+            acc.consume(200_000, 20_000, "op2", 3_000_000_000).unwrap();
+            serde_json::to_string(&acc).unwrap()
+        };
+        assert_eq!(run(), run());
+    }
 }

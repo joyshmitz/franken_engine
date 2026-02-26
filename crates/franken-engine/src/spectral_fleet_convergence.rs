@@ -1382,4 +1382,205 @@ mod tests {
         assert!(!SPECTRAL_SCHEMA_VERSION.is_empty());
         assert!(SPECTRAL_SCHEMA_VERSION.contains("spectral"));
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: weighted graph with non-uniform weights
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn non_uniform_weights_analysis() {
+        let node_ids: Vec<String> = (0..4).map(|i| format!("node_{i}")).collect();
+        let mut topo = GossipTopology::new(node_ids).unwrap();
+        // Strong connections in one group, weak bridge
+        topo.add_edge(0, 1, 10 * MILLION).unwrap();
+        topo.add_edge(2, 3, 10 * MILLION).unwrap();
+        topo.add_edge(1, 2, MILLION / 10).unwrap(); // weak bridge
+        let analyzer = SpectralAnalyzer::default();
+        let analysis = analyzer.analyze(&topo).unwrap();
+        assert!(analysis.algebraic_connectivity_millionths > 0);
+        // Weak bridge should produce low connectivity
+        assert!(analysis.algebraic_connectivity_millionths < 5 * MILLION);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: star graph topology
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn star_graph_connected_analysis() {
+        let n = 5;
+        let node_ids: Vec<String> = (0..n).map(|i| format!("node_{i}")).collect();
+        let mut topo = GossipTopology::new(node_ids).unwrap();
+        // Node 0 is the center, connected to all others
+        for i in 1..n {
+            topo.add_edge(0, i, MILLION).unwrap();
+        }
+        assert!(topo.is_connected());
+        let analyzer = SpectralAnalyzer::default();
+        let analysis = analyzer.analyze(&topo).unwrap();
+        assert!(analysis.algebraic_connectivity_millionths > 0);
+        assert_eq!(analysis.num_nodes, n);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: Fiedler vector length matches num_nodes
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn fiedler_vector_length_matches_nodes() {
+        let topo = make_complete_graph(6);
+        let analyzer = SpectralAnalyzer::default();
+        let analysis = analyzer.analyze(&topo).unwrap();
+        assert_eq!(analysis.fiedler_vector_millionths.len(), 6);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: partitions cover all nodes
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn partitions_cover_all_nodes() {
+        let topo = make_path_graph(8);
+        let analyzer = SpectralAnalyzer::default();
+        let analysis = analyzer.analyze(&topo).unwrap();
+        assert_eq!(
+            analysis.partition_a.len() + analysis.partition_b.len(),
+            8,
+            "partitions should cover all nodes"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: certificate epoch stored correctly
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn certificate_epoch_stored() {
+        let topo = make_complete_graph(4);
+        let analyzer = SpectralAnalyzer::default();
+        let analysis = analyzer.analyze(&topo).unwrap();
+        let cert = ConvergenceCertificate::from_analysis(&analysis, SecurityEpoch::from_raw(99));
+        assert_eq!(cert.epoch, SecurityEpoch::from_raw(99));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: certificate hash deterministic
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn certificate_hash_deterministic() {
+        let topo = make_complete_graph(4);
+        let analyzer = SpectralAnalyzer::default();
+        let analysis = analyzer.analyze(&topo).unwrap();
+        let cert1 = ConvergenceCertificate::from_analysis(&analysis, SecurityEpoch::from_raw(1));
+        let cert2 = ConvergenceCertificate::from_analysis(&analysis, SecurityEpoch::from_raw(1));
+        assert_eq!(cert1.certificate_hash, cert2.certificate_hash);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: certificate has_natural_partition
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn certificate_partition_field() {
+        let topo = make_path_graph(6);
+        let analyzer = SpectralAnalyzer::default();
+        let analysis = analyzer.analyze(&topo).unwrap();
+        let cert = ConvergenceCertificate::from_analysis(&analysis, SecurityEpoch::from_raw(1));
+        // Path graph always produces a natural partition
+        assert!(cert.has_natural_partition);
+        assert!(cert.partition_sizes.0 > 0);
+        assert!(cert.partition_sizes.1 > 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: degree of isolated node
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn degree_of_isolated_node_is_zero() {
+        let topo = GossipTopology::new(vec!["a".into(), "b".into(), "c".into()]).unwrap();
+        // No edges added — all nodes isolated
+        assert_eq!(topo.degree(0), 0);
+        assert_eq!(topo.degree(1), 0);
+        assert_eq!(topo.degree(2), 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: connected_components all isolated
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn all_isolated_nodes_components() {
+        let topo = GossipTopology::new(vec!["a".into(), "b".into(), "c".into()]).unwrap();
+        assert!(!topo.is_connected());
+        assert_eq!(topo.connected_components(), 3);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: integer_sqrt_millionths edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn integer_sqrt_millionths_edge_cases() {
+        assert_eq!(integer_sqrt_millionths(0), 0);
+        assert_eq!(integer_sqrt_millionths(-5), 0);
+        // sqrt(1M) in millionths = sqrt(1.0) = 1.0 = 1M
+        let result = integer_sqrt_millionths(MILLION);
+        assert!((result - MILLION).abs() < 1000);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: integer_log2_millionths edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn integer_log2_edge_cases() {
+        assert_eq!(integer_log2_millionths(0), 0);
+        assert_eq!(integer_log2_millionths(1), 0);
+        // log2(2) = 1.0 = 1M
+        assert_eq!(integer_log2_millionths(2), MILLION);
+        // log2(4) = 2.0 = 2M
+        assert_eq!(integer_log2_millionths(4), 2 * MILLION);
+        // log2(8) = 3.0 = 3M
+        assert_eq!(integer_log2_millionths(8), 3 * MILLION);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: isqrt_i128 large value
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn isqrt_i128_large_value() {
+        let n: i128 = 1_000_000_000_000;
+        let s = isqrt_i128(n);
+        assert_eq!(s, 1_000_000); // sqrt(10^12) = 10^6
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: SpectralAnalyzer clone
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn spectral_analyzer_clone() {
+        let a = SpectralAnalyzer::default();
+        let b = a.clone();
+        assert_eq!(a.max_iterations, b.max_iterations);
+        assert_eq!(
+            a.convergence_threshold_millionths,
+            b.convergence_threshold_millionths
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: analysis schema field
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn analysis_schema_field_set() {
+        let topo = make_complete_graph(3);
+        let analyzer = SpectralAnalyzer::default();
+        let analysis = analyzer.analyze(&topo).unwrap();
+        assert_eq!(analysis.schema, SPECTRAL_SCHEMA_VERSION);
+    }
 }

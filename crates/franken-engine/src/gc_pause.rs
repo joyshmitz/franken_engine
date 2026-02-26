@@ -1002,4 +1002,195 @@ mod tests {
         assert_eq!(record.objects_collected, 50);
         assert_eq!(record.bytes_reclaimed, 8192);
     }
+
+    // -- Enrichment batch 3: ring buffer edge cases, percentile boundaries, budget edge cases --
+
+    #[test]
+    fn ring_buffer_capacity_of_one() {
+        let mut tracker = PauseTracker::with_capacity(PauseBudget::default(), 1);
+        tracker.record(&make_event(1, "ext-a", 100, 0, 64));
+        assert_eq!(tracker.count(), 1);
+        assert_eq!(tracker.total_bytes_reclaimed(), 64);
+
+        tracker.record(&make_event(2, "ext-a", 200, 0, 128));
+        assert_eq!(tracker.count(), 1);
+        assert_eq!(tracker.records()[0].sequence, 2);
+        assert_eq!(tracker.total_bytes_reclaimed(), 128);
+
+        tracker.record(&make_event(3, "ext-b", 300, 0, 256));
+        assert_eq!(tracker.count(), 1);
+        assert_eq!(tracker.records()[0].extension_id, "ext-b");
+        assert_eq!(tracker.extension_count("ext-a"), 0);
+        assert_eq!(tracker.extension_count("ext-b"), 1);
+    }
+
+    #[test]
+    fn all_same_value_percentiles() {
+        let data = [500u64; 100];
+        let snap = PercentileSnapshot::from_sorted(&data);
+        assert_eq!(snap.count, 100);
+        assert_eq!(snap.min_ns, 500);
+        assert_eq!(snap.max_ns, 500);
+        assert_eq!(snap.p50_ns, 500);
+        assert_eq!(snap.p95_ns, 500);
+        assert_eq!(snap.p99_ns, 500);
+    }
+
+    #[test]
+    fn zero_budget_flags_any_pause() {
+        let budget = PauseBudget::new(0, 0, 0);
+        let mut tracker = PauseTracker::new(budget);
+        tracker.record(&make_event(1, "ext-a", 1, 0, 0));
+        assert!(!tracker.within_budget());
+        let violations = tracker.check_budget();
+        assert!(violations.len() >= 3); // p50, p95, p99 violated for global
+    }
+
+    #[test]
+    fn violation_display_p50() {
+        let v = BudgetViolation {
+            percentile: Percentile::P50,
+            observed_ns: 1000,
+            budget_ns: 500,
+            scope: "global".to_string(),
+        };
+        let display = v.to_string();
+        assert!(display.contains("p50"));
+        assert!(display.contains("global"));
+        assert!(display.contains("1000"));
+        assert!(display.contains("500"));
+    }
+
+    #[test]
+    fn violation_display_p99() {
+        let v = BudgetViolation {
+            percentile: Percentile::P99,
+            observed_ns: 99999,
+            budget_ns: 10000,
+            scope: "ext-z".to_string(),
+        };
+        let display = v.to_string();
+        assert!(display.contains("p99"));
+        assert!(display.contains("ext-z"));
+    }
+
+    #[test]
+    fn tracker_serde_preserves_percentile_computation() {
+        let mut tracker = PauseTracker::new(PauseBudget::new(10000, 20000, 50000));
+        for i in 1..=20 {
+            tracker.record(&make_event(i, "ext-a", i * 100, i as u64, i * 10));
+        }
+
+        let json = serde_json::to_string(&tracker).unwrap();
+        let restored: PauseTracker = serde_json::from_str(&json).unwrap();
+        assert_eq!(tracker.global_percentiles(), restored.global_percentiles());
+        assert_eq!(
+            tracker.extension_percentiles("ext-a"),
+            restored.extension_percentiles("ext-a")
+        );
+    }
+
+    #[test]
+    fn multiple_extensions_mixed_violation_profiles() {
+        let budget = PauseBudget::new(500, 1000, 5000);
+        let mut tracker = PauseTracker::new(budget);
+
+        // ext-a: within budget
+        tracker.record(&make_event(1, "ext-a", 100, 0, 0));
+        tracker.record(&make_event(2, "ext-a", 200, 0, 0));
+
+        // ext-b: violating p50
+        tracker.record(&make_event(3, "ext-b", 1000, 0, 0));
+        tracker.record(&make_event(4, "ext-b", 2000, 0, 0));
+
+        let violations = tracker.check_budget();
+        let ext_b_violations: Vec<_> = violations.iter().filter(|v| v.scope == "ext-b").collect();
+        assert!(!ext_b_violations.is_empty());
+        let ext_a_violations: Vec<_> = violations.iter().filter(|v| v.scope == "ext-a").collect();
+        assert!(ext_a_violations.is_empty());
+    }
+
+    #[test]
+    fn empty_tracker_within_budget() {
+        let tracker = PauseTracker::default();
+        assert!(tracker.within_budget());
+        assert!(tracker.check_budget().is_empty());
+    }
+
+    #[test]
+    fn tracker_default_budget_is_pause_budget_default() {
+        let tracker = PauseTracker::default();
+        let expected = PauseBudget::default();
+        assert_eq!(tracker.budget().p50_ns, expected.p50_ns);
+        assert_eq!(tracker.budget().p95_ns, expected.p95_ns);
+        assert_eq!(tracker.budget().p99_ns, expected.p99_ns);
+    }
+
+    #[test]
+    fn ring_buffer_at_exact_capacity_no_eviction() {
+        let mut tracker = PauseTracker::with_capacity(PauseBudget::default(), 3);
+        tracker.record(&make_event(1, "ext-a", 100, 0, 0));
+        tracker.record(&make_event(2, "ext-a", 200, 0, 0));
+        tracker.record(&make_event(3, "ext-a", 300, 0, 0));
+        assert_eq!(tracker.count(), 3);
+        assert_eq!(tracker.records()[0].sequence, 1);
+    }
+
+    #[test]
+    fn percentile_value_pct_zero() {
+        let data = [10u64, 20, 30, 40, 50];
+        let val = percentile_value(&data, 0);
+        // ceil(0.0 * 5) = 0, saturating_sub(1) = 0 -> index 0
+        assert_eq!(val, 10);
+    }
+
+    #[test]
+    fn total_bytes_with_ring_buffer_eviction() {
+        let mut tracker = PauseTracker::with_capacity(PauseBudget::default(), 2);
+        tracker.record(&make_event(1, "ext-a", 100, 0, 1000));
+        tracker.record(&make_event(2, "ext-a", 200, 0, 2000));
+        assert_eq!(tracker.total_bytes_reclaimed(), 3000);
+
+        // Evicts record with 1000 bytes
+        tracker.record(&make_event(3, "ext-a", 300, 0, 3000));
+        assert_eq!(tracker.total_bytes_reclaimed(), 5000); // 2000 + 3000
+    }
+
+    #[test]
+    fn extension_removed_after_all_records_evicted() {
+        let mut tracker = PauseTracker::with_capacity(PauseBudget::default(), 2);
+        tracker.record(&make_event(1, "ext-lonely", 100, 0, 0));
+        tracker.record(&make_event(2, "ext-other", 200, 0, 0));
+        assert!(tracker.extensions().contains(&"ext-lonely"));
+
+        // Evict ext-lonely record
+        tracker.record(&make_event(3, "ext-other", 300, 0, 0));
+        assert!(!tracker.extensions().contains(&"ext-lonely"));
+
+        // Evict first ext-other record
+        tracker.record(&make_event(4, "ext-other", 400, 0, 0));
+        assert_eq!(tracker.extension_count("ext-other"), 2);
+    }
+
+    #[test]
+    fn percentile_three_values() {
+        let data = [100u64, 200, 300];
+        let snap = PercentileSnapshot::from_sorted(&data);
+        assert_eq!(snap.count, 3);
+        assert_eq!(snap.min_ns, 100);
+        assert_eq!(snap.max_ns, 300);
+        // p50 of 3: ceil(0.5*3)=2 -> index 1 -> 200
+        assert_eq!(snap.p50_ns, 200);
+    }
+
+    #[test]
+    fn set_budget_affects_subsequent_checks() {
+        let mut tracker = PauseTracker::new(PauseBudget::new(1_000_000, 2_000_000, 5_000_000));
+        tracker.record(&make_event(1, "ext", 500_000, 0, 0));
+        assert!(tracker.within_budget());
+
+        // Tighten budget
+        tracker.set_budget(PauseBudget::new(100, 200, 300));
+        assert!(!tracker.within_budget());
+    }
 }

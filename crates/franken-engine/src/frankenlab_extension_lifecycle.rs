@@ -1125,4 +1125,180 @@ mod tests {
             assert!(s["passed"].as_bool().unwrap());
         }
     }
+
+    // -- Enrichment batch 3: clone, failure accumulation, ordering, field checks --
+
+    #[test]
+    fn scenario_result_clone_preserves_all_fields() {
+        let mut cx = mock_cx(50000);
+        let result = run_scenario(ScenarioKind::MultiExtension, 7, &mut cx);
+        let cloned = result.clone();
+        assert_eq!(result, cloned);
+        assert_eq!(result.kind, cloned.kind);
+        assert_eq!(result.seed, cloned.seed);
+        assert_eq!(result.assertions.len(), cloned.assertions.len());
+        assert_eq!(result.lifecycle_events.len(), cloned.lifecycle_events.len());
+        assert_eq!(result.extensions_loaded, cloned.extensions_loaded);
+        assert_eq!(result.final_states, cloned.final_states);
+    }
+
+    #[test]
+    fn scenario_result_multiple_failures_accumulate() {
+        let mut result = ScenarioResult::new(ScenarioKind::Startup, 0);
+        result.assert_true("pass-1", true);
+        result.assert_true("fail-1", false);
+        result.assert_true("pass-2", true);
+        result.assert_eq("fail-2", 1_u32, 2_u32);
+        assert!(!result.passed);
+        assert_eq!(result.assertions.len(), 4);
+        let passed_count = result.assertions.iter().filter(|a| a.passed).count();
+        assert_eq!(passed_count, 2);
+        let failed_count = result.assertions.iter().filter(|a| !a.passed).count();
+        assert_eq!(failed_count, 2);
+    }
+
+    #[test]
+    fn scenario_result_assert_true_success_has_empty_detail() {
+        let mut result = ScenarioResult::new(ScenarioKind::Startup, 0);
+        result.assert_true("should pass", true);
+        assert!(result.passed);
+        assert!(result.assertions[0].passed);
+        assert!(result.assertions[0].detail.is_empty());
+    }
+
+    #[test]
+    fn scenario_result_assert_eq_success_has_empty_detail() {
+        let mut result = ScenarioResult::new(ScenarioKind::Startup, 0);
+        result.assert_eq("values match", 42_u64, 42_u64);
+        assert!(result.passed);
+        assert!(result.assertions[0].passed);
+        assert!(result.assertions[0].detail.is_empty());
+    }
+
+    #[test]
+    fn final_states_btreemap_ordering_deterministic() {
+        let mut cx = mock_cx(50000);
+        let result = run_scenario(ScenarioKind::MultiExtension, 7, &mut cx);
+        let keys: Vec<&String> = result.final_states.keys().collect();
+        // BTreeMap keys are sorted lexicographically
+        let mut sorted = keys.clone();
+        sorted.sort();
+        assert_eq!(keys, sorted, "final_states keys must be sorted (BTreeMap)");
+    }
+
+    #[test]
+    fn lifecycle_events_order_preserved_across_runs() {
+        let mut cx1 = mock_cx(20000);
+        let r1 = run_scenario(ScenarioKind::NormalShutdown, 2, &mut cx1);
+        let mut cx2 = mock_cx(20000);
+        let r2 = run_scenario(ScenarioKind::NormalShutdown, 2, &mut cx2);
+        let events1: Vec<&str> = r1
+            .lifecycle_events
+            .iter()
+            .map(|e| e.event.as_str())
+            .collect();
+        let events2: Vec<&str> = r2
+            .lifecycle_events
+            .iter()
+            .map(|e| e.event.as_str())
+            .collect();
+        assert_eq!(events1, events2);
+    }
+
+    #[test]
+    fn suite_passed_equals_total_when_all_pass() {
+        let mut cx = mock_cx(100_000);
+        let suite = run_all_scenarios(42, &mut cx);
+        assert_eq!(suite.passed_assertions, suite.total_assertions);
+        assert!(suite.total_assertions > 0);
+    }
+
+    #[test]
+    fn scenario_kind_hash_all_unique() {
+        use std::collections::BTreeSet;
+        use std::hash::{Hash, Hasher};
+        let kinds = [
+            ScenarioKind::Startup,
+            ScenarioKind::NormalShutdown,
+            ScenarioKind::ForcedCancel,
+            ScenarioKind::Quarantine,
+            ScenarioKind::Revocation,
+            ScenarioKind::DegradedMode,
+            ScenarioKind::MultiExtension,
+        ];
+        let hashes: BTreeSet<u64> = kinds
+            .iter()
+            .map(|k| {
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                k.hash(&mut hasher);
+                hasher.finish()
+            })
+            .collect();
+        assert_eq!(hashes.len(), 7, "all ScenarioKind hashes must be unique");
+    }
+
+    #[test]
+    fn suite_result_json_field_presence() {
+        let mut cx = mock_cx(100_000);
+        let suite = run_all_scenarios(42, &mut cx);
+        let json = serde_json::to_string(&suite).unwrap();
+        assert!(json.contains("\"seed\""));
+        assert!(json.contains("\"scenarios\""));
+        assert!(json.contains("\"verdict\""));
+        assert!(json.contains("\"total_assertions\""));
+        assert!(json.contains("\"passed_assertions\""));
+    }
+
+    #[test]
+    fn multi_extension_has_most_assertions() {
+        let mut cx = mock_cx(100_000);
+        let suite = run_all_scenarios(42, &mut cx);
+        let multi = suite
+            .scenarios
+            .iter()
+            .find(|s| s.kind == ScenarioKind::MultiExtension)
+            .unwrap();
+        let startup = suite
+            .scenarios
+            .iter()
+            .find(|s| s.kind == ScenarioKind::Startup)
+            .unwrap();
+        assert!(
+            multi.assertions.len() >= startup.assertions.len(),
+            "multi_extension should have at least as many assertions as startup"
+        );
+    }
+
+    #[test]
+    fn scenario_kind_copy_semantics() {
+        let k1 = ScenarioKind::Quarantine;
+        let k2 = k1; // Copy
+        assert_eq!(k1, k2);
+    }
+
+    #[test]
+    fn scenario_result_serde_with_failed_assertion() {
+        let mut result = ScenarioResult::new(ScenarioKind::Startup, 0);
+        result.assert_true("deliberate failure", false);
+        assert!(!result.passed);
+        let json = serde_json::to_string(&result).unwrap();
+        let restored: ScenarioResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(result, restored);
+        assert!(!restored.passed);
+        assert!(!restored.assertions[0].passed);
+    }
+
+    #[test]
+    fn startup_extensions_loaded_list() {
+        let mut cx = mock_cx(5000);
+        let result = run_scenario(ScenarioKind::Startup, 1, &mut cx);
+        assert_eq!(result.extensions_loaded, vec!["ext-startup-1"]);
+    }
+
+    #[test]
+    fn degraded_mode_extensions_loaded_list() {
+        let mut cx = mock_cx(20000);
+        let result = run_scenario(ScenarioKind::DegradedMode, 6, &mut cx);
+        assert_eq!(result.extensions_loaded, vec!["ext-d-1", "ext-d-2"]);
+    }
 }

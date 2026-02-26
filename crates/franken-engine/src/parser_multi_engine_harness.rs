@@ -2741,4 +2741,622 @@ mod tests {
         assert_eq!(telemetry.latency_ns_p50, 0);
         assert_eq!(telemetry.peak_rss_bytes, 0);
     }
+
+    // -- Enrichment: quantile edge cases --
+
+    #[test]
+    fn quantile_single_element_returns_that_element() {
+        assert_eq!(quantile(&[42], 50), 42);
+        assert_eq!(quantile(&[42], 95), 42);
+        assert_eq!(quantile(&[42], 99), 42);
+    }
+
+    #[test]
+    fn quantile_zero_percent_returns_first() {
+        assert_eq!(quantile(&[10, 20, 30, 40, 50], 0), 10);
+    }
+
+    #[test]
+    fn quantile_over_hundred_capped() {
+        let sorted = vec![10, 20, 30, 40, 50];
+        let result = quantile(&sorted, 200);
+        assert_eq!(result, quantile(&sorted, 100));
+    }
+
+    #[test]
+    fn quantile_empty_returns_zero() {
+        assert_eq!(quantile(&[], 50), 0);
+    }
+
+    // -- Enrichment: ratio_millionths --
+
+    #[test]
+    fn ratio_millionths_zero_denominator_returns_zero() {
+        assert_eq!(ratio_millionths(1_000_000, 0), 0);
+    }
+
+    #[test]
+    fn ratio_millionths_basic_computation() {
+        // 1/2 = 500_000 millionths
+        assert_eq!(ratio_millionths(1, 2), 500_000);
+        // 1/1 = 1_000_000 millionths
+        assert_eq!(ratio_millionths(1, 1), 1_000_000);
+    }
+
+    // -- Enrichment: saturating_u64 --
+
+    #[test]
+    fn saturating_u64_caps_at_max() {
+        assert_eq!(saturating_u64(u128::from(u64::MAX) + 1), u64::MAX);
+        assert_eq!(saturating_u64(42), 42);
+    }
+
+    // -- Enrichment: split_source_fragments --
+
+    #[test]
+    fn split_source_fragments_empty_string() {
+        let fragments = split_source_fragments("");
+        assert_eq!(fragments.len(), 1);
+        assert_eq!(fragments[0], "");
+    }
+
+    #[test]
+    fn split_source_fragments_single_line_no_newline() {
+        let fragments = split_source_fragments("hello");
+        assert_eq!(fragments.len(), 1);
+        assert_eq!(fragments[0], "hello");
+    }
+
+    #[test]
+    fn split_source_fragments_multi_line() {
+        let fragments = split_source_fragments("a\nb\nc");
+        assert_eq!(fragments.len(), 3);
+        assert_eq!(fragments[0], "a\n");
+        assert_eq!(fragments[1], "b\n");
+        assert_eq!(fragments[2], "c");
+    }
+
+    // -- Enrichment: join_fragments_without_range --
+
+    #[test]
+    fn join_fragments_without_range_removes_middle() {
+        let fragments = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        assert_eq!(join_fragments_without_range(&fragments, 1, 2), "ac");
+    }
+
+    #[test]
+    fn join_fragments_without_range_removes_first() {
+        let fragments = vec!["x".to_string(), "y".to_string(), "z".to_string()];
+        assert_eq!(join_fragments_without_range(&fragments, 0, 1), "yz");
+    }
+
+    // -- Enrichment: minimize_source_with --
+
+    #[test]
+    fn minimize_source_with_empty_returns_unattempted() {
+        let result = minimize_source_with("", |_| true);
+        assert!(!result.stats.attempted);
+        assert_eq!(result.minimized_source, "");
+    }
+
+    #[test]
+    fn minimize_source_with_whitespace_only_returns_unattempted() {
+        let result = minimize_source_with("   \n  ", |_| true);
+        assert!(!result.stats.attempted);
+    }
+
+    #[test]
+    fn minimize_source_with_non_failing_returns_unattempted() {
+        let result = minimize_source_with("var x = 1;\nvar y = 2;\n", |_| false);
+        assert!(!result.stats.attempted);
+        assert_eq!(result.minimized_source, "var x = 1;\nvar y = 2;\n");
+    }
+
+    #[test]
+    fn minimize_source_with_reduces_when_predicate_holds() {
+        // Predicate: fails as long as "var x" is in the source
+        let source = "var x = 1;\nvar y = 2;\nvar z = 3;\n";
+        let result = minimize_source_with(source, |candidate| candidate.contains("var x"));
+        assert!(result.stats.attempted);
+        assert!(result.minimized_source.contains("var x"));
+        assert!(result.stats.minimized_bytes <= result.stats.original_bytes);
+    }
+
+    // -- Enrichment: format_divergence_reason --
+
+    #[test]
+    fn format_divergence_reason_multiple_sigs() {
+        let mut sigs = BTreeMap::new();
+        sigs.insert("ast:sha256:aaa;diag:none".to_string(), vec!["engine-a".to_string()]);
+        sigs.insert("ast:sha256:bbb;diag:none".to_string(), vec!["engine-b".to_string()]);
+        let reason = format_divergence_reason(&sigs, 0);
+        assert!(reason.contains("engine-a"));
+        assert!(reason.contains("engine-b"));
+        assert!(!reason.contains("nondeterministic"));
+    }
+
+    #[test]
+    fn format_divergence_reason_with_nondeterminism() {
+        let sigs = BTreeMap::new();
+        let reason = format_divergence_reason(&sigs, 2);
+        assert!(reason.contains("nondeterministic_engines=2"));
+    }
+
+    // -- Enrichment: validate_config remaining branches --
+
+    #[test]
+    fn validate_config_rejects_empty_decision_id() {
+        let mut config = MultiEngineHarnessConfig::with_defaults(42);
+        config.decision_id = String::new();
+        let err = validate_config(&config).expect_err("empty decision_id");
+        assert!(err.to_string().contains("decision_id"));
+    }
+
+    #[test]
+    fn validate_config_rejects_empty_policy_id() {
+        let mut config = MultiEngineHarnessConfig::with_defaults(42);
+        config.policy_id = String::new();
+        let err = validate_config(&config).expect_err("empty policy_id");
+        assert!(err.to_string().contains("policy_id"));
+    }
+
+    #[test]
+    fn validate_config_rejects_fewer_than_two_engines() {
+        let mut config = MultiEngineHarnessConfig::with_defaults(42);
+        config.engines = vec![HarnessEngineSpec::franken_canonical("v1")];
+        let err = validate_config(&config).expect_err("< 2 engines");
+        assert!(err.to_string().contains("at least two"));
+    }
+
+    #[test]
+    fn validate_config_rejects_duplicate_engine_ids() {
+        let mut config = MultiEngineHarnessConfig::with_defaults(42);
+        config.engines = vec![
+            HarnessEngineSpec::franken_canonical("v1"),
+            HarnessEngineSpec::franken_canonical("v2"),
+        ];
+        let err = validate_config(&config).expect_err("duplicate engine_id");
+        assert!(err.to_string().contains("more than once"));
+    }
+
+    #[test]
+    fn validate_config_rejects_empty_engine_id() {
+        let mut config = MultiEngineHarnessConfig::with_defaults(42);
+        config.engines[0].engine_id = String::new();
+        let err = validate_config(&config).expect_err("empty engine_id");
+        assert!(err.to_string().contains("engine_id"));
+    }
+
+    #[test]
+    fn validate_config_rejects_empty_version_pin() {
+        let mut config = MultiEngineHarnessConfig::with_defaults(42);
+        config.engines[0].version_pin = String::new();
+        let err = validate_config(&config).expect_err("empty version_pin");
+        assert!(err.to_string().contains("version_pin"));
+    }
+
+    #[test]
+    fn validate_config_rejects_external_engine_without_command() {
+        let mut config = MultiEngineHarnessConfig::with_defaults(42);
+        config.engines.push(HarnessEngineSpec {
+            engine_id: "ext".to_string(),
+            display_name: "External".to_string(),
+            kind: HarnessEngineKind::ExternalCommand,
+            version_pin: "v1".to_string(),
+            command: None,
+            args: vec![],
+        });
+        let err = validate_config(&config).expect_err("external without command");
+        assert!(err.to_string().contains("requires command"));
+    }
+
+    #[test]
+    fn validate_config_accepts_valid_config() {
+        let config = MultiEngineHarnessConfig::with_defaults(42);
+        validate_config(&config).expect("valid config should pass");
+    }
+
+    // -- Enrichment: parse_goal --
+
+    #[test]
+    fn parse_goal_script_and_module() {
+        assert_eq!(parse_goal("f1", "script").unwrap(), ParseGoal::Script);
+        assert_eq!(parse_goal("f1", "module").unwrap(), ParseGoal::Module);
+    }
+
+    #[test]
+    fn parse_goal_unknown_returns_error() {
+        let err = parse_goal("f1", "banana").expect_err("unknown goal");
+        assert!(err.to_string().contains("banana"));
+    }
+
+    // -- Enrichment: SourceTelemetryStats --
+
+    #[test]
+    fn source_telemetry_stats_from_source_basic() {
+        let stats = SourceTelemetryStats::from_source("var x = 1;");
+        assert_eq!(stats.source_bytes, 10);
+        assert!(stats.token_count > 0);
+    }
+
+    // -- Enrichment: DriftSignature --
+
+    #[test]
+    fn drift_signature_from_fixture_result_none_without_classification() {
+        let outcome = EngineRunOutcome {
+            kind: EngineOutcomeKind::Hash,
+            value: "sha256:abc".to_string(),
+            deterministic: true,
+            duration_us: 1,
+            normalized_ast: None,
+            normalized_diagnostic: None,
+        };
+        let result = FixtureComparisonResult {
+            fixture_id: "f1".to_string(),
+            family_id: "fam".to_string(),
+            goal: "script".to_string(),
+            source_hash: "sha256:src".to_string(),
+            equivalent_across_engines: true,
+            nondeterministic_engine_count: 0,
+            divergence_reason: None,
+            drift_classification: None,
+            repro_pack: None,
+            replay_command: "replay".to_string(),
+            engine_results: vec![EngineFixtureResult {
+                engine_id: "e1".to_string(),
+                display_name: "E1".to_string(),
+                version_pin: "v1".to_string(),
+                derived_seed: 7,
+                first_run: outcome.clone(),
+                second_run: outcome,
+            }],
+        };
+        assert!(DriftSignature::from_fixture_result(&result).is_none());
+    }
+
+    #[test]
+    fn drift_signature_from_fixture_result_some_with_classification() {
+        let outcome = EngineRunOutcome {
+            kind: EngineOutcomeKind::Hash,
+            value: "sha256:abc".to_string(),
+            deterministic: true,
+            duration_us: 1,
+            normalized_ast: None,
+            normalized_diagnostic: None,
+        };
+        let result = FixtureComparisonResult {
+            fixture_id: "f1".to_string(),
+            family_id: "fam".to_string(),
+            goal: "script".to_string(),
+            source_hash: "sha256:src".to_string(),
+            equivalent_across_engines: false,
+            nondeterministic_engine_count: 0,
+            divergence_reason: Some("diverged".to_string()),
+            drift_classification: Some(DriftClassification {
+                taxonomy_version: DRIFT_CLASSIFICATION_TAXONOMY_VERSION.to_string(),
+                category: DriftCategory::Semantic,
+                severity: DriftSeverity::Critical,
+                comparator_decision: "drift_critical".to_string(),
+                owner_hint: "parser-core".to_string(),
+                remediation_hint: "replay".to_string(),
+            }),
+            repro_pack: None,
+            replay_command: "replay".to_string(),
+            engine_results: vec![EngineFixtureResult {
+                engine_id: "e1".to_string(),
+                display_name: "E1".to_string(),
+                version_pin: "v1".to_string(),
+                derived_seed: 7,
+                first_run: outcome.clone(),
+                second_run: outcome,
+            }],
+        };
+        let sig = DriftSignature::from_fixture_result(&result).expect("should be Some");
+        assert_eq!(sig.classification.category, DriftCategory::Semantic);
+        assert_eq!(sig.engine_kinds, vec![EngineOutcomeKind::Hash]);
+    }
+
+    // -- Enrichment: EngineNormalizedArtifacts signature with diagnostic --
+
+    #[test]
+    fn engine_normalized_artifacts_signature_with_diagnostic() {
+        let artifacts = EngineNormalizedArtifacts {
+            normalized_ast: None,
+            normalized_diagnostic: Some(NormalizedDiagnosticArtifact {
+                schema_version: "v1".to_string(),
+                taxonomy_version: "tv1".to_string(),
+                adapter: DiagnosticNormalizationAdapter::ParserDiagnosticsTaxonomyV1,
+                diagnostic_code: "E001".to_string(),
+                category: "syntax".to_string(),
+                severity: "error".to_string(),
+                parse_error_code: None,
+                canonical_hash: "sha256:diag123".to_string(),
+            }),
+        };
+        assert_eq!(artifacts.signature(), "ast:none;diag:sha256:diag123");
+    }
+
+    #[test]
+    fn engine_normalized_artifacts_signature_both_present() {
+        let artifacts = EngineNormalizedArtifacts {
+            normalized_ast: Some(NormalizedAstArtifact {
+                schema_version: "v1".to_string(),
+                adapter: AstNormalizationAdapter::CanonicalHashPassthroughV1,
+                canonical_hash: "sha256:ast1".to_string(),
+            }),
+            normalized_diagnostic: Some(NormalizedDiagnosticArtifact {
+                schema_version: "v1".to_string(),
+                taxonomy_version: "tv1".to_string(),
+                adapter: DiagnosticNormalizationAdapter::ParserDiagnosticsTaxonomyV1,
+                diagnostic_code: "E001".to_string(),
+                category: "syntax".to_string(),
+                severity: "error".to_string(),
+                parse_error_code: None,
+                canonical_hash: "sha256:diag1".to_string(),
+            }),
+        };
+        assert_eq!(artifacts.signature(), "ast:sha256:ast1;diag:sha256:diag1");
+    }
+
+    // -- Enrichment: parse_error_code_alias --
+
+    #[test]
+    fn parse_error_code_alias_all_snake_case_variants() {
+        assert_eq!(parse_error_code_alias("empty_source"), Some(ParseErrorCode::EmptySource));
+        assert_eq!(parse_error_code_alias("invalid_goal"), Some(ParseErrorCode::InvalidGoal));
+        assert_eq!(parse_error_code_alias("unsupported_syntax"), Some(ParseErrorCode::UnsupportedSyntax));
+        assert_eq!(parse_error_code_alias("io_read_failed"), Some(ParseErrorCode::IoReadFailed));
+        assert_eq!(parse_error_code_alias("invalid_utf8"), Some(ParseErrorCode::InvalidUtf8));
+        assert_eq!(parse_error_code_alias("source_too_large"), Some(ParseErrorCode::SourceTooLarge));
+        assert_eq!(parse_error_code_alias("budget_exceeded"), Some(ParseErrorCode::BudgetExceeded));
+    }
+
+    #[test]
+    fn parse_error_code_alias_all_camel_case_variants() {
+        assert_eq!(parse_error_code_alias("emptysource"), Some(ParseErrorCode::EmptySource));
+        assert_eq!(parse_error_code_alias("invalidgoal"), Some(ParseErrorCode::InvalidGoal));
+        assert_eq!(parse_error_code_alias("unsupportedsyntax"), Some(ParseErrorCode::UnsupportedSyntax));
+        assert_eq!(parse_error_code_alias("ioreadfailed"), Some(ParseErrorCode::IoReadFailed));
+        assert_eq!(parse_error_code_alias("invalidutf8"), Some(ParseErrorCode::InvalidUtf8));
+        assert_eq!(parse_error_code_alias("sourcetoolarge"), Some(ParseErrorCode::SourceTooLarge));
+        assert_eq!(parse_error_code_alias("budgetexceeded"), Some(ParseErrorCode::BudgetExceeded));
+    }
+
+    #[test]
+    fn parse_error_code_alias_unknown_returns_none() {
+        assert!(parse_error_code_alias("totally_unknown").is_none());
+        assert!(parse_error_code_alias("").is_none());
+    }
+
+    // -- Enrichment: classify_fixture_drift edge cases --
+
+    #[test]
+    fn classify_fixture_drift_empty_results_uses_artifact_critical() {
+        let classification = classify_fixture_drift(&[], 0);
+        assert_eq!(classification.category, DriftCategory::Artifact);
+        assert_eq!(classification.severity, DriftSeverity::Critical);
+    }
+
+    #[test]
+    fn classify_fixture_drift_mixed_hash_and_error_is_semantic_critical() {
+        let results = vec![
+            make_engine_result_for_test(
+                "engine-a",
+                EngineOutcomeKind::Hash,
+                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                true,
+            ),
+            make_engine_result_for_test(
+                "engine-b",
+                EngineOutcomeKind::Error,
+                "empty_source",
+                true,
+            ),
+        ];
+        let classification = classify_fixture_drift(&results, 0);
+        assert_eq!(classification.category, DriftCategory::Semantic);
+        assert_eq!(classification.severity, DriftSeverity::Critical);
+    }
+
+    // -- Enrichment: run_outcome_shape_matches_kind --
+
+    #[test]
+    fn run_outcome_shape_matches_kind_hash_with_ast_is_valid() {
+        let run = EngineRunOutcome {
+            kind: EngineOutcomeKind::Hash,
+            value: "sha256:abc".to_string(),
+            deterministic: true,
+            duration_us: 1,
+            normalized_ast: Some(NormalizedAstArtifact {
+                schema_version: "v1".to_string(),
+                adapter: AstNormalizationAdapter::CanonicalHashPassthroughV1,
+                canonical_hash: "sha256:abc".to_string(),
+            }),
+            normalized_diagnostic: None,
+        };
+        assert!(run_outcome_shape_matches_kind(&run));
+    }
+
+    #[test]
+    fn run_outcome_shape_matches_kind_hash_without_ast_is_invalid() {
+        let run = EngineRunOutcome {
+            kind: EngineOutcomeKind::Hash,
+            value: "sha256:abc".to_string(),
+            deterministic: true,
+            duration_us: 1,
+            normalized_ast: None,
+            normalized_diagnostic: None,
+        };
+        assert!(!run_outcome_shape_matches_kind(&run));
+    }
+
+    #[test]
+    fn run_outcome_shape_matches_kind_error_with_diagnostic_is_valid() {
+        let run = EngineRunOutcome {
+            kind: EngineOutcomeKind::Error,
+            value: "empty_source".to_string(),
+            deterministic: true,
+            duration_us: 1,
+            normalized_ast: None,
+            normalized_diagnostic: Some(NormalizedDiagnosticArtifact {
+                schema_version: "v1".to_string(),
+                taxonomy_version: "tv1".to_string(),
+                adapter: DiagnosticNormalizationAdapter::ParserDiagnosticsTaxonomyV1,
+                diagnostic_code: "E001".to_string(),
+                category: "syntax".to_string(),
+                severity: "error".to_string(),
+                parse_error_code: None,
+                canonical_hash: "sha256:diag".to_string(),
+            }),
+        };
+        assert!(run_outcome_shape_matches_kind(&run));
+    }
+
+    #[test]
+    fn run_outcome_shape_matches_kind_error_without_diagnostic_is_invalid() {
+        let run = EngineRunOutcome {
+            kind: EngineOutcomeKind::Error,
+            value: "empty_source".to_string(),
+            deterministic: true,
+            duration_us: 1,
+            normalized_ast: None,
+            normalized_diagnostic: None,
+        };
+        assert!(!run_outcome_shape_matches_kind(&run));
+    }
+
+    // -- Enrichment: hash_bytes determinism --
+
+    #[test]
+    fn hash_bytes_deterministic() {
+        let a = hash_bytes(b"hello world");
+        let b = hash_bytes(b"hello world");
+        assert_eq!(a, b);
+        assert!(a.starts_with("sha256:"));
+        assert_eq!(a.len(), 7 + 64); // "sha256:" + 64 hex chars
+    }
+
+    #[test]
+    fn hash_bytes_different_inputs_differ() {
+        assert_ne!(hash_bytes(b"a"), hash_bytes(b"b"));
+    }
+
+    // -- Enrichment: estimate_lexical_token_count --
+
+    #[test]
+    fn estimate_lexical_token_count_basic() {
+        let count = estimate_lexical_token_count("var x = 1;");
+        assert!(count > 0);
+    }
+
+    #[test]
+    fn estimate_lexical_token_count_empty() {
+        let count = estimate_lexical_token_count("");
+        // Empty source may produce 0 tokens
+        assert!(count <= 1);
+    }
+
+    // -- Enrichment: ParserTelemetrySummary serde --
+
+    #[test]
+    fn parser_telemetry_summary_serializes() {
+        let summary = ParserTelemetrySummary {
+            schema_version: PARSER_TELEMETRY_SCHEMA_VERSION.to_string(),
+            sample_count: 5,
+            throughput_sources_per_second_millionths: 1_000_000,
+            throughput_mib_per_second_millionths: 500_000,
+            latency_ns_p50: 100,
+            latency_ns_p95: 200,
+            latency_ns_p99: 300,
+            ns_per_token_millionths: 50_000,
+            allocs_per_token_millionths: 10_000,
+            bytes_per_source_avg: 100,
+            tokens_per_source_avg: 20,
+            peak_rss_bytes: 4096,
+        };
+        let json = serde_json::to_string(&summary).expect("serialize");
+        assert!(json.contains("\"sample_count\":5"));
+        assert!(json.contains("\"peak_rss_bytes\":4096"));
+    }
+
+    // -- Enrichment: ExternalCommandRequest serde roundtrip --
+
+    #[test]
+    fn external_command_request_serde_roundtrip() {
+        let request = ExternalCommandRequest {
+            goal: "script".to_string(),
+            source: "var x = 1;".to_string(),
+            seed: 42,
+            trace_id: "trace-1".to_string(),
+            decision_id: "decision-1".to_string(),
+            policy_id: "policy-1".to_string(),
+            engine_id: "ext-1".to_string(),
+        };
+        let json = serde_json::to_string(&request).expect("serialize");
+        let restored: ExternalCommandRequest = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(restored.goal, "script");
+        assert_eq!(restored.seed, 42);
+        assert_eq!(restored.engine_id, "ext-1");
+    }
+
+    // -- Enrichment: normalize_ast_hash --
+
+    #[test]
+    fn normalize_ast_hash_valid_produces_artifact() {
+        let artifact = normalize_ast_hash(
+            "engine-a",
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )
+        .expect("valid hash");
+        assert_eq!(
+            artifact.canonical_hash,
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        );
+        assert_eq!(artifact.adapter, AstNormalizationAdapter::CanonicalHashPassthroughV1);
+    }
+
+    #[test]
+    fn normalize_ast_hash_invalid_returns_error() {
+        let err = normalize_ast_hash("engine-a", "md5:abc").expect_err("invalid hash");
+        assert!(err.to_string().contains("engine-a"));
+        assert!(err.to_string().contains("invalid AST hash"));
+    }
+
+    // -- Enrichment: has_artifact_shape_mismatch --
+
+    #[test]
+    fn has_artifact_shape_mismatch_all_valid_returns_false() {
+        let results = vec![make_engine_result_for_test(
+            "engine-a",
+            EngineOutcomeKind::Hash,
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            true,
+        )];
+        assert!(!has_artifact_shape_mismatch(&results));
+    }
+
+    #[test]
+    fn has_artifact_shape_mismatch_missing_ast_returns_true() {
+        let mut result = make_engine_result_for_test(
+            "engine-a",
+            EngineOutcomeKind::Hash,
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            true,
+        );
+        result.first_run.normalized_ast = None;
+        assert!(has_artifact_shape_mismatch(&[result]));
+    }
+
+    // -- Enrichment: build_drift_classification --
+
+    #[test]
+    fn build_drift_classification_populates_all_fields() {
+        let dc = build_drift_classification(DriftCategory::Diagnostics, DriftSeverity::Minor);
+        assert_eq!(dc.taxonomy_version, DRIFT_CLASSIFICATION_TAXONOMY_VERSION);
+        assert_eq!(dc.category, DriftCategory::Diagnostics);
+        assert_eq!(dc.severity, DriftSeverity::Minor);
+        assert_eq!(dc.comparator_decision, "drift_minor");
+        assert!(!dc.owner_hint.is_empty());
+        assert!(!dc.remediation_hint.is_empty());
+    }
 }

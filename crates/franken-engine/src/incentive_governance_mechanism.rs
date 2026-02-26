@@ -1545,4 +1545,347 @@ mod tests {
         assert_eq!(test.honest_dominance_rate_millionths(), MILLION);
         assert!(test.exploitable_scenarios().is_empty());
     }
+
+    // -- Enrichment batch 3: serde edges, Display, boundary, stress-test edges --
+
+    #[test]
+    fn strategic_behavior_serde_roundtrip_all() {
+        let behaviors = [
+            StrategicBehavior::TruthfulReport,
+            StrategicBehavior::FalseReport,
+            StrategicBehavior::DelayedRemediation,
+            StrategicBehavior::ImmediateRemediation,
+            StrategicBehavior::FrivolousChallenge,
+            StrategicBehavior::LegitimateChallenge,
+            StrategicBehavior::CollaborativeAttack,
+            StrategicBehavior::SybilAttack,
+        ];
+        for b in &behaviors {
+            let json = serde_json::to_string(b).unwrap();
+            let back: StrategicBehavior = serde_json::from_str(&json).unwrap();
+            assert_eq!(*b, back);
+        }
+    }
+
+    #[test]
+    fn verification_status_display_all() {
+        assert_eq!(VerificationStatus::Verified.to_string(), "verified");
+        assert_eq!(VerificationStatus::Falsified.to_string(), "falsified");
+        assert_eq!(VerificationStatus::Inconclusive.to_string(), "inconclusive");
+    }
+
+    #[test]
+    fn stress_test_empty_scenarios_returns_million() {
+        let test = StrategicStressTest {
+            test_id: "empty".into(),
+            scenarios: vec![],
+            epoch: test_epoch(),
+        };
+        assert_eq!(test.honest_dominance_rate_millionths(), MILLION);
+    }
+
+    #[test]
+    fn stress_test_compute_id_deterministic() {
+        let mk = || StrategicStressTest {
+            test_id: String::new(),
+            scenarios: vec![StrategicScenario {
+                scenario_id: "s1".into(),
+                name: "a".into(),
+                behavior: StrategicBehavior::FalseReport,
+                role: GovernanceRole::Publisher,
+                description: "d".into(),
+                expected_payoff_millionths: -100_000,
+                honest_alternative_payoff_millionths: 50_000,
+            }],
+            epoch: test_epoch(),
+        };
+        assert_eq!(mk().compute_id(), mk().compute_id());
+        assert!(mk().compute_id().starts_with("sst-"));
+    }
+
+    #[test]
+    fn payoff_table_mixed_roles_total() {
+        let table = PayoffTable {
+            table_id: "mix".into(),
+            entries: vec![
+                PayoffEntry {
+                    role: GovernanceRole::Publisher,
+                    action: GovernanceAction::Report,
+                    condition: "a".into(),
+                    payoff_millionths: 50_000,
+                    rationale: "r".into(),
+                },
+                PayoffEntry {
+                    role: GovernanceRole::Publisher,
+                    action: GovernanceAction::Slash,
+                    condition: "b".into(),
+                    payoff_millionths: -200_000,
+                    rationale: "r".into(),
+                },
+                PayoffEntry {
+                    role: GovernanceRole::Challenger,
+                    action: GovernanceAction::Challenge,
+                    condition: "c".into(),
+                    payoff_millionths: 100_000,
+                    rationale: "r".into(),
+                },
+            ],
+            epoch: test_epoch(),
+        };
+        assert_eq!(
+            table.total_payoff_for_role(GovernanceRole::Publisher),
+            -150_000
+        );
+        assert_eq!(
+            table.total_payoff_for_role(GovernanceRole::Challenger),
+            100_000
+        );
+        assert_eq!(table.total_payoff_for_role(GovernanceRole::Operator), 0);
+    }
+
+    #[test]
+    fn payoff_table_not_budget_balanced_enrichment() {
+        let table = PayoffTable {
+            table_id: "unbal".into(),
+            entries: vec![
+                PayoffEntry {
+                    role: GovernanceRole::Publisher,
+                    action: GovernanceAction::Reward,
+                    condition: "a".into(),
+                    payoff_millionths: 500_000,
+                    rationale: "r".into(),
+                },
+                PayoffEntry {
+                    role: GovernanceRole::Publisher,
+                    action: GovernanceAction::Slash,
+                    condition: "b".into(),
+                    payoff_millionths: -100_000,
+                    rationale: "r".into(),
+                },
+            ],
+            epoch: test_epoch(),
+        };
+        assert!(!table.is_budget_balanced());
+    }
+
+    #[test]
+    fn mechanism_not_sound_when_not_budget_balanced() {
+        let spec = MechanismBuilder::new("unbalanced")
+            .payoff(
+                GovernanceRole::Publisher,
+                GovernanceAction::Reward,
+                "too_much",
+                500_000,
+                "r",
+            )
+            .payoff(
+                GovernanceRole::Publisher,
+                GovernanceAction::Slash,
+                "too_little",
+                -100_000,
+                "r",
+            )
+            .verify_property(PropertyVerification {
+                property: IncentiveProperty::TruthfulReporting,
+                status: VerificationStatus::Verified,
+                assumptions: vec![],
+                evidence: "ok".into(),
+                counterexample: None,
+            })
+            .scenario(StrategicScenario {
+                scenario_id: "s1".into(),
+                name: "a".into(),
+                behavior: StrategicBehavior::FalseReport,
+                role: GovernanceRole::Publisher,
+                description: "d".into(),
+                expected_payoff_millionths: -100_000,
+                honest_alternative_payoff_millionths: 50_000,
+            })
+            .build(test_epoch());
+        assert!(!spec.is_sound());
+    }
+
+    #[test]
+    fn mechanism_verified_property_count_zero() {
+        let spec = MechanismBuilder::new("no-props").build(test_epoch());
+        assert_eq!(spec.verified_property_count(), 0);
+    }
+
+    #[test]
+    fn report_not_sound_with_exploitable() {
+        let spec = MechanismBuilder::new("exploit")
+            .payoff(
+                GovernanceRole::Publisher,
+                GovernanceAction::Slash,
+                "bad",
+                -100_000,
+                "r",
+            )
+            .verify_property(PropertyVerification {
+                property: IncentiveProperty::TruthfulReporting,
+                status: VerificationStatus::Verified,
+                assumptions: vec![],
+                evidence: "ok".into(),
+                counterexample: None,
+            })
+            .scenario(StrategicScenario {
+                scenario_id: "exploit-1".into(),
+                name: "exploit".into(),
+                behavior: StrategicBehavior::SybilAttack,
+                role: GovernanceRole::Publisher,
+                description: "d".into(),
+                expected_payoff_millionths: 300_000,
+                honest_alternative_payoff_millionths: 50_000,
+            })
+            .build(test_epoch());
+        let report = generate_report(&spec);
+        assert!(!report.is_sound);
+        assert_eq!(report.exploitable_scenarios.len(), 1);
+        assert_eq!(report.exploitable_scenarios[0], "exploit-1");
+    }
+
+    #[test]
+    fn enforcement_rule_serde_roundtrip() {
+        let rule = EnforcementRule {
+            rule_id: "r1".into(),
+            trigger_action: GovernanceAction::Report,
+            trigger_role: GovernanceRole::Publisher,
+            condition: "c".into(),
+            enforcement_action: GovernanceAction::Quarantine,
+            penalty_millionths: 100_000,
+            reward_millionths: 50_000,
+            cooldown_epochs: 5,
+        };
+        let json = serde_json::to_string(&rule).unwrap();
+        let back: EnforcementRule = serde_json::from_str(&json).unwrap();
+        assert_eq!(rule, back);
+    }
+
+    #[test]
+    fn property_verification_serde_roundtrip() {
+        let pv = PropertyVerification {
+            property: IncentiveProperty::BudgetBalance,
+            status: VerificationStatus::Inconclusive,
+            assumptions: vec!["a1".into(), "a2".into()],
+            evidence: "partial".into(),
+            counterexample: Some("cx".into()),
+        };
+        let json = serde_json::to_string(&pv).unwrap();
+        let back: PropertyVerification = serde_json::from_str(&json).unwrap();
+        assert_eq!(pv, back);
+    }
+
+    #[test]
+    fn strategic_scenario_serde_roundtrip() {
+        let s = StrategicScenario {
+            scenario_id: "s1".into(),
+            name: "test".into(),
+            behavior: StrategicBehavior::SybilAttack,
+            role: GovernanceRole::Operator,
+            description: "d".into(),
+            expected_payoff_millionths: -50_000,
+            honest_alternative_payoff_millionths: 30_000,
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        let back: StrategicScenario = serde_json::from_str(&json).unwrap();
+        assert_eq!(s, back);
+    }
+
+    #[test]
+    fn payoff_entry_serde_roundtrip() {
+        let entry = PayoffEntry {
+            role: GovernanceRole::Arbitrator,
+            action: GovernanceAction::Appeal,
+            condition: "contested".into(),
+            payoff_millionths: -25_000,
+            rationale: "cost of appeal".into(),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let back: PayoffEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry, back);
+    }
+
+    #[test]
+    fn report_schema_version_matches_constant() {
+        let spec = canonical_governance_mechanism(test_epoch());
+        let report = generate_report(&spec);
+        assert_eq!(report.schema_version, SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn enforcement_policy_compute_id_changes_with_epoch() {
+        let mk = |epoch_val| {
+            EnforcementPolicy {
+                policy_id: String::new(),
+                rules: vec![],
+                challenge_window_epochs: 10,
+                publisher_bond_millionths: 100_000,
+                epoch: SecurityEpoch::from_raw(epoch_val),
+            }
+            .compute_id()
+        };
+        assert_ne!(mk(1), mk(2));
+    }
+
+    #[test]
+    fn strategic_scenario_dishonest_does_not_dominate() {
+        let s = StrategicScenario {
+            scenario_id: "s".into(),
+            name: "bad".into(),
+            behavior: StrategicBehavior::CollaborativeAttack,
+            role: GovernanceRole::Publisher,
+            description: "d".into(),
+            expected_payoff_millionths: 200_000,
+            honest_alternative_payoff_millionths: 50_000,
+        };
+        assert!(!s.honest_dominates());
+    }
+
+    #[test]
+    fn stress_test_half_honest_rate() {
+        let test = StrategicStressTest {
+            test_id: "half".into(),
+            scenarios: vec![
+                StrategicScenario {
+                    scenario_id: "s1".into(),
+                    name: "honest".into(),
+                    behavior: StrategicBehavior::FalseReport,
+                    role: GovernanceRole::Publisher,
+                    description: "d".into(),
+                    expected_payoff_millionths: -100_000,
+                    honest_alternative_payoff_millionths: 50_000,
+                },
+                StrategicScenario {
+                    scenario_id: "s2".into(),
+                    name: "exploit".into(),
+                    behavior: StrategicBehavior::SybilAttack,
+                    role: GovernanceRole::Publisher,
+                    description: "d".into(),
+                    expected_payoff_millionths: 200_000,
+                    honest_alternative_payoff_millionths: 50_000,
+                },
+            ],
+            epoch: test_epoch(),
+        };
+        assert_eq!(test.honest_dominance_rate_millionths(), 500_000);
+        assert_eq!(test.exploitable_scenarios().len(), 1);
+    }
+
+    #[test]
+    fn governance_action_ordering() {
+        assert!(GovernanceAction::Report < GovernanceAction::Challenge);
+        assert!(GovernanceAction::Appeal > GovernanceAction::Escalate);
+    }
+
+    #[test]
+    fn governance_role_ordering() {
+        assert!(GovernanceRole::Publisher < GovernanceRole::Operator);
+        assert!(GovernanceRole::ControlPlane > GovernanceRole::Arbitrator);
+    }
+
+    #[test]
+    fn incentive_property_ordering() {
+        assert!(IncentiveProperty::TruthfulReporting < IncentiveProperty::TimelyRemediation);
+        assert!(IncentiveProperty::BudgetBalance > IncentiveProperty::HonestOperatorDominance);
+    }
 }

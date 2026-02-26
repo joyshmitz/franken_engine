@@ -1243,4 +1243,243 @@ mod tests {
         let err = BarrierError::NoTransitionInProgress;
         assert!(std::error::Error::source(&err).is_none());
     }
+
+    // -- Enrichment batch 3: force cancel edge cases, guard lifecycle, high epochs --
+
+    #[test]
+    fn force_cancel_with_zero_in_flight_returns_zero() {
+        let mut barrier = det_barrier(1);
+        barrier
+            .begin_transition(
+                SecurityEpoch::from_raw(2),
+                TransitionReason::PolicyKeyRotation,
+                "t",
+            )
+            .unwrap();
+        let cancelled = barrier.force_cancel_remaining().unwrap();
+        assert_eq!(cancelled, 0);
+        assert_eq!(barrier.in_flight(), 0);
+    }
+
+    #[test]
+    fn guard_ids_monotonically_increase() {
+        let mut barrier = det_barrier(1);
+        let mut prev_id = 0;
+        for i in 0..10 {
+            let guard = barrier
+                .enter_critical(CriticalOpKind::DecisionEval, &format!("t-{i}"))
+                .unwrap();
+            assert!(guard.guard_id > prev_id);
+            prev_id = guard.guard_id;
+        }
+    }
+
+    #[test]
+    fn all_critical_op_kinds_acquire_guards() {
+        let mut barrier = det_barrier(1);
+        let kinds = [
+            CriticalOpKind::DecisionEval,
+            CriticalOpKind::EvidenceEmission,
+            CriticalOpKind::KeyDerivation,
+            CriticalOpKind::CapabilityCheck,
+            CriticalOpKind::RevocationCheck,
+            CriticalOpKind::RemoteOperation,
+        ];
+        for kind in &kinds {
+            let guard = barrier.enter_critical(*kind, "t").unwrap();
+            assert_eq!(guard.op_kind, *kind);
+        }
+        assert_eq!(barrier.in_flight(), 6);
+    }
+
+    #[test]
+    fn release_guard_twice_second_fails() {
+        let mut barrier = det_barrier(1);
+        let guard = barrier
+            .enter_critical(CriticalOpKind::DecisionEval, "t")
+            .unwrap();
+        assert!(barrier.release_guard(&guard));
+        // Second release: in_flight is 0, returns false
+        assert!(!barrier.release_guard(&guard));
+    }
+
+    #[test]
+    fn guard_from_different_epoch_release_fails() {
+        let mut barrier = det_barrier(1);
+        let fake = EpochGuard {
+            guard_id: 1,
+            epoch: SecurityEpoch::from_raw(999),
+            op_kind: CriticalOpKind::DecisionEval,
+            trace_id: "t".to_string(),
+        };
+        assert!(!barrier.release_guard(&fake));
+    }
+
+    #[test]
+    fn barrier_error_display_drain_timeout() {
+        let err = BarrierError::DrainTimeout {
+            epoch: SecurityEpoch::from_raw(7),
+            remaining_guards: 3,
+            timeout_ms: 5000,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("epoch:7"));
+        assert!(msg.contains("3 guards remaining"));
+        assert!(msg.contains("5000ms"));
+    }
+
+    #[test]
+    fn barrier_error_display_non_monotonic() {
+        let err = BarrierError::NonMonotonicTransition {
+            current: SecurityEpoch::from_raw(10),
+            attempted: SecurityEpoch::from_raw(5),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("epoch:10"));
+        assert!(msg.contains("epoch:5"));
+    }
+
+    #[test]
+    fn deterministic_evidence_sequence() {
+        let run = || -> Vec<TransitionEvidence> {
+            let mut barrier = det_barrier(1);
+            let _g = barrier
+                .enter_critical(CriticalOpKind::EvidenceEmission, "t1")
+                .unwrap();
+            barrier
+                .transition_now(
+                    SecurityEpoch::from_raw(2),
+                    TransitionReason::PolicyKeyRotation,
+                    "trace-det",
+                )
+                .unwrap();
+            barrier
+                .transition_now(
+                    SecurityEpoch::from_raw(3),
+                    TransitionReason::LossMatrixUpdate,
+                    "trace-det-2",
+                )
+                .unwrap();
+            barrier.evidence().to_vec()
+        };
+        assert_eq!(run(), run());
+    }
+
+    #[test]
+    fn barrier_config_deterministic_serde_roundtrip() {
+        let cfg = BarrierConfig::deterministic();
+        let json = serde_json::to_string(&cfg).unwrap();
+        let restored: BarrierConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(cfg, restored);
+        assert!(restored.deterministic);
+        assert_eq!(restored.drain_timeout_ms, 0);
+    }
+
+    #[test]
+    fn mixed_guard_kinds_all_drained_before_complete() {
+        let mut barrier = det_barrier(1);
+        let g1 = barrier
+            .enter_critical(CriticalOpKind::DecisionEval, "t1")
+            .unwrap();
+        let g2 = barrier
+            .enter_critical(CriticalOpKind::KeyDerivation, "t2")
+            .unwrap();
+        let g3 = barrier
+            .enter_critical(CriticalOpKind::RevocationCheck, "t3")
+            .unwrap();
+
+        barrier
+            .begin_transition(
+                SecurityEpoch::from_raw(2),
+                TransitionReason::PolicyKeyRotation,
+                "t",
+            )
+            .unwrap();
+        assert_eq!(barrier.in_flight(), 3);
+        assert!(!barrier.can_complete());
+
+        barrier.release_guard(&g1);
+        barrier.release_guard(&g2);
+        assert!(!barrier.can_complete());
+
+        barrier.release_guard(&g3);
+        assert!(barrier.can_complete());
+
+        let evidence = barrier.complete_transition().unwrap();
+        assert_eq!(evidence.in_flight_at_start, 3);
+        assert_eq!(evidence.forced_cancellations, 0);
+    }
+
+    #[test]
+    fn transition_evidence_correct_trace_id() {
+        let mut barrier = det_barrier(1);
+        barrier
+            .transition_now(
+                SecurityEpoch::from_raw(2),
+                TransitionReason::PolicyKeyRotation,
+                "unique-trace-abc",
+            )
+            .unwrap();
+        assert_eq!(barrier.evidence()[0].trace_id, "unique-trace-abc");
+    }
+
+    #[test]
+    fn barrier_error_transition_already_in_progress_display() {
+        let err = BarrierError::TransitionAlreadyInProgress {
+            current_epoch: SecurityEpoch::from_raw(42),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("transition already in progress"));
+        assert!(msg.contains("epoch:42"));
+    }
+
+    #[test]
+    fn barrier_error_no_transition_display() {
+        let err = BarrierError::NoTransitionInProgress;
+        assert_eq!(err.to_string(), "no transition in progress to complete");
+    }
+
+    #[test]
+    fn guard_ids_persist_across_transitions() {
+        let mut barrier = det_barrier(1);
+        let g1 = barrier
+            .enter_critical(CriticalOpKind::DecisionEval, "t")
+            .unwrap();
+        barrier.release_guard(&g1);
+
+        barrier
+            .transition_now(
+                SecurityEpoch::from_raw(2),
+                TransitionReason::PolicyKeyRotation,
+                "t",
+            )
+            .unwrap();
+
+        let g2 = barrier
+            .enter_critical(CriticalOpKind::DecisionEval, "t")
+            .unwrap();
+        // Guard IDs should continue increasing
+        assert!(g2.guard_id > g1.guard_id);
+    }
+
+    #[test]
+    fn complete_transition_resets_state_to_open() {
+        let mut barrier = det_barrier(1);
+        barrier
+            .begin_transition(
+                SecurityEpoch::from_raw(2),
+                TransitionReason::PolicyKeyRotation,
+                "t",
+            )
+            .unwrap();
+        assert_eq!(barrier.state(), BarrierState::Draining);
+
+        barrier.complete_transition().unwrap();
+        assert_eq!(barrier.state(), BarrierState::Open);
+        // Should be able to acquire guards again
+        let guard = barrier
+            .enter_critical(CriticalOpKind::CapabilityCheck, "t")
+            .unwrap();
+        assert_eq!(guard.epoch, SecurityEpoch::from_raw(2));
+    }
 }

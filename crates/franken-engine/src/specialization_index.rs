@@ -1482,4 +1482,252 @@ mod tests {
         assert_eq!(summary.total_benchmarks, 1);
         assert_eq!(summary.avg_latency_reduction_millionths, 200_000);
     }
+
+    // -- Enrichment batch 3: clone, stress, boundary, reverse audit, invalidation queries --
+
+    #[test]
+    fn specialization_record_clone_equality() {
+        let rec = make_record("r1", 1);
+        let cloned = rec.clone();
+        assert_eq!(rec, cloned);
+        assert_eq!(rec.receipt_id, cloned.receipt_id);
+        assert_eq!(rec.proof_input_ids, cloned.proof_input_ids);
+    }
+
+    #[test]
+    fn benchmark_outcome_clone_equality() {
+        let bm = make_benchmark("bm-1", "r1");
+        let cloned = bm.clone();
+        assert_eq!(bm, cloned);
+    }
+
+    #[test]
+    fn audit_chain_entry_without_benchmark() {
+        let mut index = make_index();
+        let rec = make_record("r1", 1);
+        index.insert_receipt(&rec, "t1").unwrap();
+        // No benchmark inserted — chain entry should have benchmark_id=None
+        let chain = index.build_audit_chain("t2").unwrap();
+        assert_eq!(chain.len(), 1);
+        assert!(chain[0].benchmark_id.is_none());
+        assert!(chain[0].latency_reduction_millionths.is_none());
+    }
+
+    #[test]
+    fn reverse_audit_from_benchmark_finds_correct_entry() {
+        let mut index = make_index();
+        let r1 = make_record("r1", 1);
+        let r2 = make_record("r2", 1);
+        index.insert_receipt(&r1, "t1").unwrap();
+        index.insert_receipt(&r2, "t2").unwrap();
+        index
+            .insert_benchmark(&make_benchmark("bm-1", "r1"), "t3")
+            .unwrap();
+        index
+            .insert_benchmark(&make_benchmark("bm-2", "r2"), "t4")
+            .unwrap();
+
+        let result = index.reverse_audit_from_benchmark("bm-1", "t5").unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].receipt_id, r1.receipt_id);
+    }
+
+    #[test]
+    fn reverse_audit_nonexistent_benchmark_returns_empty() {
+        let mut index = make_index();
+        let rec = make_record("r1", 1);
+        index.insert_receipt(&rec, "t1").unwrap();
+        index
+            .insert_benchmark(&make_benchmark("bm-1", "r1"), "t2")
+            .unwrap();
+
+        let result = index
+            .reverse_audit_from_benchmark("bm-nonexistent", "t3")
+            .unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn query_invalidations_no_filter() {
+        let mut index = make_index();
+        let rec = make_record("r1", 1);
+        index.insert_receipt(&rec, "t1").unwrap();
+
+        let inv = InvalidationEntry {
+            receipt_id: make_id("r1"),
+            reason: InvalidationReason::EpochChange {
+                old_epoch: 1,
+                new_epoch: 2,
+            },
+            timestamp_ns: 5000,
+            fallback_confirmed: true,
+        };
+        index.record_invalidation(&inv, "t2").unwrap();
+
+        let results = index.query_invalidations(None, None, "t3").unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].receipt_id, make_id("r1"));
+    }
+
+    #[test]
+    fn query_invalidations_with_time_window() {
+        let mut index = make_index();
+        for i in 1..=3u64 {
+            let rec = make_record(&format!("r{i}"), 1);
+            index.insert_receipt(&rec, &format!("t-ins-{i}")).unwrap();
+            let inv = InvalidationEntry {
+                receipt_id: make_id(&format!("r{i}")),
+                reason: InvalidationReason::ManualRevocation {
+                    operator: "admin".to_string(),
+                },
+                timestamp_ns: i * 1000,
+                fallback_confirmed: true,
+            };
+            index
+                .record_invalidation(&inv, &format!("t-inv-{i}"))
+                .unwrap();
+        }
+
+        // Only entries in [2000, 3000]
+        let results = index
+            .query_invalidations(Some(2000), Some(3000), "t-q")
+            .unwrap();
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn duplicate_receipt_insert_returns_error() {
+        let mut index = make_index();
+        let rec = make_record("r1", 1);
+        index.insert_receipt(&rec, "t1").unwrap();
+        let err = index.insert_receipt(&rec, "t2").unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("r1") || msg.contains("duplicate"),
+            "error should mention the duplicate: {msg}"
+        );
+    }
+
+    #[test]
+    fn duplicate_benchmark_insert_returns_error() {
+        let mut index = make_index();
+        let bm = make_benchmark("bm-1", "r1");
+        index.insert_benchmark(&bm, "t1").unwrap();
+        let err = index.insert_benchmark(&bm, "t2").unwrap_err();
+        let msg = err.to_string();
+        assert!(!msg.is_empty());
+    }
+
+    #[test]
+    fn stress_insert_20_receipts() {
+        let mut index = make_index();
+        for i in 0..20u64 {
+            let rec = make_record(&format!("r-{i}"), 1);
+            index.insert_receipt(&rec, &format!("t-{i}")).unwrap();
+        }
+        let active = index.query_active_receipts("t-q").unwrap();
+        assert_eq!(active.len(), 20);
+    }
+
+    #[test]
+    fn error_is_std_error() {
+        let err = SpecializationIndexError::Storage("fail".to_string());
+        let _: &dyn std::error::Error = &err;
+    }
+
+    #[test]
+    fn specialization_record_json_field_presence() {
+        let rec = make_record("r1", 1);
+        let json = serde_json::to_string(&rec).unwrap();
+        assert!(json.contains("\"receipt_id\""));
+        assert!(json.contains("\"proof_input_ids\""));
+        assert!(json.contains("\"proof_types\""));
+        assert!(json.contains("\"optimization_class\""));
+        assert!(json.contains("\"extension_id\""));
+        assert!(json.contains("\"epoch\""));
+        assert!(json.contains("\"timestamp_ns\""));
+    }
+
+    #[test]
+    fn benchmark_outcome_json_field_presence() {
+        let bm = make_benchmark("bm-1", "r1");
+        let json = serde_json::to_string(&bm).unwrap();
+        assert!(json.contains("\"benchmark_id\""));
+        assert!(json.contains("\"receipt_id\""));
+        assert!(json.contains("\"latency_reduction_millionths\""));
+        assert!(json.contains("\"sample_count\""));
+        assert!(json.contains("\"timestamp_ns\""));
+    }
+
+    #[test]
+    fn events_accumulate_across_operations() {
+        let mut index = make_index();
+        let rec = make_record("r1", 1);
+        index.insert_receipt(&rec, "t1").unwrap();
+        index
+            .insert_benchmark(&make_benchmark("bm-1", "r1"), "t2")
+            .unwrap();
+        let _ = index.build_audit_chain("t3").unwrap();
+        // insert_receipt + insert_benchmark + build_audit_chain = at least 3 events
+        assert!(
+            index.events().len() >= 3,
+            "expected at least 3 events, got {}",
+            index.events().len()
+        );
+    }
+
+    #[test]
+    fn extension_summary_avg_latency_multiple_benchmarks() {
+        let mut index = make_index();
+        let r1 = make_record("r1", 1);
+        let r2 = make_record("r2", 1);
+        index.insert_receipt(&r1, "t1").unwrap();
+        index.insert_receipt(&r2, "t2").unwrap();
+
+        let mut bm1 = make_benchmark("bm-1", "r1");
+        bm1.latency_reduction_millionths = 100_000;
+        let mut bm2 = make_benchmark("bm-2", "r2");
+        bm2.latency_reduction_millionths = 300_000;
+        index.insert_benchmark(&bm1, "t3").unwrap();
+        index.insert_benchmark(&bm2, "t4").unwrap();
+
+        let summary = index.extension_summary("ext-1", "t5").unwrap();
+        assert_eq!(summary.total_benchmarks, 2);
+        assert_eq!(summary.avg_latency_reduction_millionths, 200_000);
+    }
+
+    #[test]
+    fn invalidation_entry_clone_equality() {
+        let inv = InvalidationEntry {
+            receipt_id: make_id("r1"),
+            reason: InvalidationReason::ProofRevoked {
+                proof_id: make_id("p1"),
+            },
+            timestamp_ns: 42,
+            fallback_confirmed: false,
+        };
+        let cloned = inv.clone();
+        assert_eq!(inv, cloned);
+    }
+
+    #[test]
+    fn error_code_all_unique() {
+        use std::collections::BTreeSet;
+        let errors = [
+            SpecializationIndexError::Storage("x".to_string()),
+            SpecializationIndexError::NotFound {
+                receipt_id: "x".to_string(),
+            },
+            SpecializationIndexError::DuplicateReceipt {
+                receipt_id: "x".to_string(),
+            },
+            SpecializationIndexError::DuplicateBenchmark {
+                benchmark_id: "x".to_string(),
+            },
+            SpecializationIndexError::SerializationFailed("x".to_string()),
+            SpecializationIndexError::InvalidContext("x".to_string()),
+        ];
+        let codes: BTreeSet<&str> = errors.iter().map(|e| error_code(e)).collect();
+        assert_eq!(codes.len(), errors.len(), "all error codes must be unique");
+    }
 }

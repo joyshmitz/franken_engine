@@ -1701,4 +1701,173 @@ mod tests {
         let err: Box<dyn std::error::Error> = Box::new(ChainIntegrityError::EmptyStream);
         assert!(!err.to_string().is_empty());
     }
+
+    // -- Enrichment batch 3: clone, determinism, field presence, edge cases --
+
+    #[test]
+    fn decision_marker_clone_equality() {
+        let mut stream = make_stream();
+        append_security_marker(&mut stream, "1");
+        let marker = stream.markers()[0].clone();
+        let cloned = marker.clone();
+        assert_eq!(marker, cloned);
+    }
+
+    #[test]
+    fn integrity_checkpoint_clone_equality() {
+        let cp = IntegrityCheckpoint {
+            at_marker_id: 5,
+            marker_hash: ContentHash::compute(b"test"),
+            chain_length: 5,
+            signed_hash: AuthenticityHash::compute_keyed(b"k", b"d"),
+        };
+        assert_eq!(cp, cp.clone());
+    }
+
+    #[test]
+    fn chain_head_on_empty_stream_is_none() {
+        let stream = make_stream();
+        assert!(stream.chain_head().is_none());
+    }
+
+    #[test]
+    fn marker_ids_monotonically_increase() {
+        let mut stream = make_stream();
+        for i in 0..5 {
+            append_security_marker(&mut stream, &i.to_string());
+        }
+        let ids: Vec<u64> = stream.markers().iter().map(|m| m.marker_id).collect();
+        for pair in ids.windows(2) {
+            assert!(pair[0] < pair[1], "IDs must be strictly increasing");
+        }
+    }
+
+    #[test]
+    fn marker_json_field_presence() {
+        let mut stream = make_stream();
+        append_security_marker(&mut stream, "1");
+        let json = serde_json::to_string(&stream.markers()[0]).unwrap();
+        for field in &[
+            "marker_id",
+            "timestamp_ticks",
+            "epoch_id",
+            "decision_type",
+            "decision_id",
+            "correlation_id",
+            "evidence_entry_hash",
+        ] {
+            assert!(json.contains(field), "JSON missing field: {field}");
+        }
+    }
+
+    #[test]
+    fn stream_deterministic_across_two_runs() {
+        let run = || {
+            let mut stream = DecisionMarkerStream::new(5, b"det-key".to_vec());
+            for i in 0..3 {
+                append_security_marker(&mut stream, &i.to_string());
+            }
+            stream
+                .markers()
+                .iter()
+                .map(|m| m.marker_hash.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(run(), run());
+    }
+
+    #[test]
+    fn marker_event_clone_equality() {
+        let mut stream = make_stream();
+        append_security_marker(&mut stream, "1");
+        let events = stream.drain_events();
+        assert!(!events.is_empty());
+        let ev = &events[0];
+        assert_eq!(*ev, ev.clone());
+    }
+
+    #[test]
+    fn chain_integrity_error_display_uniqueness() {
+        let errors = [
+            ChainIntegrityError::EmptyStream,
+            ChainIntegrityError::NonMonotonicId {
+                marker_id: 2,
+                prev_marker_id: 3,
+            },
+            ChainIntegrityError::MarkerHashMismatch {
+                marker_id: 1,
+                expected: ContentHash([0; 32]),
+                computed: ContentHash([1; 32]),
+            },
+            ChainIntegrityError::ChainLinkBroken {
+                marker_id: 1,
+                expected_prev: ContentHash([0; 32]),
+                actual_prev: ContentHash([1; 32]),
+            },
+        ];
+        let displays: std::collections::BTreeSet<String> =
+            errors.iter().map(|e| e.to_string()).collect();
+        assert_eq!(
+            displays.len(),
+            errors.len(),
+            "all ChainIntegrityError variants must have unique Display"
+        );
+    }
+
+    #[test]
+    fn decision_type_serde_all_variants() {
+        let variants = vec![
+            DecisionType::SecurityAction {
+                action: SecurityActionKind::Quarantine,
+            },
+            DecisionType::PolicyTransition {
+                transition: PolicyTransitionKind::Activation,
+            },
+            DecisionType::RevocationEvent {
+                revocation: RevocationKind::Issuance,
+            },
+            DecisionType::EpochTransition {
+                from_epoch: 1,
+                to_epoch: 2,
+            },
+            DecisionType::EmergencyOverride {
+                override_reason: "test".to_string(),
+            },
+            DecisionType::GuardrailTriggered {
+                guardrail_id: "g1".to_string(),
+            },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: DecisionType = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn decision_type_clone_equality() {
+        let dt = DecisionType::EpochTransition {
+            from_epoch: 10,
+            to_epoch: 11,
+        };
+        assert_eq!(dt, dt.clone());
+    }
+
+    #[test]
+    fn verify_chain_single_marker() {
+        let mut stream = make_stream();
+        append_security_marker(&mut stream, "single");
+        assert!(stream.verify_chain().is_ok());
+    }
+
+    #[test]
+    fn verify_empty_stream_returns_error() {
+        let stream = make_stream();
+        assert!(stream.verify_chain().is_err());
+    }
+
+    #[test]
+    fn correlation_id_empty_rejected() {
+        assert!(CorrelationId::new("").is_err());
+    }
 }

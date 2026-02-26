@@ -1207,4 +1207,192 @@ mod tests {
         assert_eq!(candidates[1].expected_loss_millionths, 0);
         assert_eq!(candidates[2].expected_loss_millionths, 100);
     }
+
+    // ── Enrichment batch 2: edge cases & boundary conditions ────
+
+    #[test]
+    fn normalize_single_duplicate_witness_removed() {
+        let mut entry = make_entry_with(
+            vec![],
+            vec![
+                Witness {
+                    witness_id: "w".to_string(),
+                    witness_type: "t".to_string(),
+                    value: "first".to_string(),
+                },
+                Witness {
+                    witness_id: "w".to_string(),
+                    witness_type: "t".to_string(),
+                    value: "second".to_string(),
+                },
+            ],
+            vec![],
+        );
+        let result = normalize_entry(&mut entry, &SizeBounds::default());
+        assert_eq!(result.duplicates_removed, 1);
+        assert_eq!(entry.witnesses.len(), 1);
+        assert_eq!(entry.witnesses[0].value, "first");
+    }
+
+    #[test]
+    fn validate_single_witness_passes() {
+        let entry = make_entry_with(
+            vec![],
+            vec![Witness {
+                witness_id: "only".to_string(),
+                witness_type: "t".to_string(),
+                value: "v".to_string(),
+            }],
+            vec![],
+        );
+        assert!(validate_entry_ordering(&entry, &SizeBounds::default()).is_ok());
+    }
+
+    #[test]
+    fn validate_single_constraint_passes() {
+        let entry = make_entry_with(
+            vec![],
+            vec![],
+            vec![Constraint {
+                constraint_id: "only".to_string(),
+                description: "d".to_string(),
+                active: true,
+            }],
+        );
+        assert!(validate_entry_ordering(&entry, &SizeBounds::default()).is_ok());
+    }
+
+    #[test]
+    fn truncation_at_exact_bound_no_marker() {
+        let witnesses: Vec<Witness> = (0..3)
+            .map(|i| Witness {
+                witness_id: format!("w-{i:03}"),
+                witness_type: "t".to_string(),
+                value: format!("{i}"),
+            })
+            .collect();
+        let mut entry = make_entry_with(vec![], witnesses, vec![]);
+        let bounds = SizeBounds {
+            max_candidates: 64,
+            max_witnesses: 3,
+            max_constraints: 32,
+        };
+        let result = normalize_entry(&mut entry, &bounds);
+        assert!(result.truncations.is_empty());
+        assert_eq!(entry.witnesses.len(), 3);
+    }
+
+    #[test]
+    fn filtered_candidate_preserves_sort_order() {
+        let mut candidates = vec![
+            CandidateAction::filtered("z-action", 100, "blocked"),
+            CandidateAction::new("a-action", 200),
+            CandidateAction::filtered("m-action", 50, "cost cap"),
+        ];
+        sort_candidates(&mut candidates);
+        assert_eq!(candidates[0].action_name, "a-action");
+        assert_eq!(candidates[1].action_name, "m-action");
+        assert_eq!(candidates[2].action_name, "z-action");
+        // Filtered status preserved after sort
+        assert!(candidates[1].filtered);
+        assert!(!candidates[0].filtered);
+    }
+
+    #[test]
+    fn normalize_mixed_duplicates_and_truncation() {
+        let witnesses: Vec<Witness> = (0..10)
+            .flat_map(|i| {
+                vec![
+                    Witness {
+                        witness_id: format!("w-{i:03}"),
+                        witness_type: "t".to_string(),
+                        value: "a".to_string(),
+                    },
+                    Witness {
+                        witness_id: format!("w-{i:03}"),
+                        witness_type: "t".to_string(),
+                        value: "b".to_string(),
+                    },
+                ]
+            })
+            .collect();
+        let mut entry = make_entry_with(vec![], witnesses, vec![]);
+        let bounds = SizeBounds {
+            max_candidates: 64,
+            max_witnesses: 5,
+            max_constraints: 32,
+        };
+        let result = normalize_entry(&mut entry, &bounds);
+        assert_eq!(result.duplicates_removed, 10);
+        assert_eq!(result.truncations.len(), 1);
+        assert_eq!(entry.witnesses.len(), 5);
+    }
+
+    #[test]
+    fn validate_two_witnesses_sorted_passes() {
+        let entry = make_entry_with(
+            vec![],
+            vec![
+                Witness {
+                    witness_id: "alpha".to_string(),
+                    witness_type: "t".to_string(),
+                    value: "v".to_string(),
+                },
+                Witness {
+                    witness_id: "beta".to_string(),
+                    witness_type: "t".to_string(),
+                    value: "v".to_string(),
+                },
+            ],
+            vec![],
+        );
+        assert!(validate_entry_ordering(&entry, &SizeBounds::default()).is_ok());
+    }
+
+    #[test]
+    fn sort_single_candidate_unchanged() {
+        let mut candidates = vec![CandidateAction::new("only", 42)];
+        sort_candidates(&mut candidates);
+        assert_eq!(candidates[0].action_name, "only");
+        assert_eq!(candidates[0].expected_loss_millionths, 42);
+    }
+
+    #[test]
+    fn size_bounds_zero_truncates_everything() {
+        let candidates: Vec<CandidateAction> = (0..5)
+            .map(|i| CandidateAction::new(format!("a-{i}"), i))
+            .collect();
+        let mut entry = make_entry_with(candidates, vec![], vec![]);
+        let bounds = SizeBounds {
+            max_candidates: 0,
+            max_witnesses: 0,
+            max_constraints: 0,
+        };
+        let result = normalize_entry(&mut entry, &bounds);
+        assert_eq!(result.truncations.len(), 1);
+        assert!(entry.candidates.is_empty());
+    }
+
+    #[test]
+    fn normalization_result_debug_impl() {
+        let result = NormalizationResult {
+            truncations: vec![],
+            duplicates_removed: 0,
+        };
+        let debug = format!("{result:?}");
+        assert!(debug.contains("NormalizationResult"));
+    }
+
+    #[test]
+    fn truncation_marker_serde_roundtrip() {
+        let marker = TruncationMarker {
+            list_name: "candidates".to_string(),
+            original_count: 100,
+            retained_count: 64,
+            policy: "top-K".to_string(),
+        };
+        let json = serde_json::to_string(&marker).unwrap();
+        let restored: TruncationMarker = serde_json::from_str(&json).unwrap();
+        assert_eq!(marker, restored);
+    }
 }

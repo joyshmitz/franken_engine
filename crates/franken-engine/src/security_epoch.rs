@@ -1088,4 +1088,145 @@ mod tests {
         assert_eq!(meta.valid_from_epoch, SecurityEpoch::from_raw(3));
         assert_eq!(meta.valid_until_epoch, Some(SecurityEpoch::from_raw(10)));
     }
+
+    // -- Enrichment batch 3: clone, JSON fields, std::error, hash, edge cases --
+
+    #[test]
+    fn epoch_metadata_clone_equality() {
+        let meta = EpochMetadata::windowed(
+            SecurityEpoch::from_raw(5),
+            SecurityEpoch::from_raw(3),
+            SecurityEpoch::from_raw(10),
+        );
+        assert_eq!(meta, meta.clone());
+    }
+
+    #[test]
+    fn transition_record_clone_equality() {
+        let record = TransitionRecord {
+            previous_epoch: SecurityEpoch::from_raw(0),
+            new_epoch: SecurityEpoch::from_raw(1),
+            reason: TransitionReason::PolicyKeyRotation,
+            trace_id: "t".to_string(),
+        };
+        assert_eq!(record, record.clone());
+    }
+
+    #[test]
+    fn monotonicity_violation_clone_equality() {
+        let v = MonotonicityViolation {
+            current: SecurityEpoch::from_raw(10),
+            attempted: SecurityEpoch::from_raw(5),
+        };
+        assert_eq!(v, v.clone());
+    }
+
+    #[test]
+    fn epoch_validation_error_clone_equality() {
+        let e = EpochValidationError::Expired {
+            current_epoch: SecurityEpoch::from_raw(10),
+            valid_until: SecurityEpoch::from_raw(5),
+        };
+        assert_eq!(e, e.clone());
+    }
+
+    #[test]
+    fn epoch_metadata_json_field_presence() {
+        let meta = EpochMetadata::windowed(
+            SecurityEpoch::from_raw(5),
+            SecurityEpoch::from_raw(3),
+            SecurityEpoch::from_raw(10),
+        );
+        let json = serde_json::to_string(&meta).unwrap();
+        for field in &["epoch_id", "valid_from_epoch", "valid_until_epoch"] {
+            assert!(json.contains(field), "JSON missing field: {field}");
+        }
+    }
+
+    #[test]
+    fn epoch_validation_error_implements_std_error() {
+        let e = EpochValidationError::NotYetValid {
+            current_epoch: SecurityEpoch::from_raw(1),
+            valid_from: SecurityEpoch::from_raw(5),
+        };
+        let err: &dyn std::error::Error = &e;
+        assert!(err.to_string().contains("not yet valid"));
+    }
+
+    #[test]
+    fn security_epoch_hash_consistency() {
+        use std::collections::BTreeSet;
+        let a = SecurityEpoch::from_raw(42);
+        let b = SecurityEpoch::from_raw(42);
+        let c = SecurityEpoch::from_raw(43);
+        let mut set = BTreeSet::new();
+        set.insert(a);
+        set.insert(b);
+        set.insert(c);
+        assert_eq!(set.len(), 2, "equal epochs should hash to same bucket");
+    }
+
+    #[test]
+    fn verify_persisted_then_advance() {
+        let mut tracker = EpochTracker::from_persisted(SecurityEpoch::from_raw(5));
+        tracker
+            .verify_persisted(SecurityEpoch::from_raw(10))
+            .unwrap();
+        let new = tracker
+            .advance(TransitionReason::PolicyKeyRotation, "t")
+            .unwrap();
+        assert_eq!(new.as_u64(), 11);
+    }
+
+    #[test]
+    fn transition_counts_accumulate_same_reason() {
+        let mut tracker = EpochTracker::new();
+        for _ in 0..5 {
+            tracker
+                .advance(TransitionReason::RevocationFrontierAdvance, "t")
+                .unwrap();
+        }
+        assert_eq!(
+            tracker.transition_counts()["revocation_frontier_advance"],
+            5
+        );
+    }
+
+    #[test]
+    fn security_epoch_from_raw_as_u64_roundtrip() {
+        for val in [0, 1, 100, u64::MAX / 2, u64::MAX] {
+            assert_eq!(SecurityEpoch::from_raw(val).as_u64(), val);
+        }
+    }
+
+    #[test]
+    fn transition_reason_clone_equality() {
+        let r = TransitionReason::GuardrailConfigChange;
+        assert_eq!(r, r.clone());
+    }
+
+    #[test]
+    fn tracker_transitions_returns_all_records() {
+        let mut tracker = EpochTracker::new();
+        tracker
+            .advance(TransitionReason::PolicyKeyRotation, "t1")
+            .unwrap();
+        tracker
+            .advance(TransitionReason::LossMatrixUpdate, "t2")
+            .unwrap();
+        tracker
+            .advance(TransitionReason::OperatorManualBump, "t3")
+            .unwrap();
+        let records = tracker.transitions();
+        assert_eq!(records.len(), 3);
+        assert_eq!(records[0].reason, TransitionReason::PolicyKeyRotation);
+        assert_eq!(records[1].reason, TransitionReason::LossMatrixUpdate);
+        assert_eq!(records[2].reason, TransitionReason::OperatorManualBump);
+    }
+
+    #[test]
+    fn security_epoch_genesis_is_minimum() {
+        assert!(SecurityEpoch::GENESIS <= SecurityEpoch::from_raw(0));
+        assert!(SecurityEpoch::GENESIS < SecurityEpoch::from_raw(1));
+    }
 }

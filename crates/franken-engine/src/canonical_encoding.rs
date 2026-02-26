@@ -1440,4 +1440,144 @@ mod tests {
         assert_eq!(g1.acceptance_count(), g2.acceptance_count());
         assert_eq!(g1.rejection_count(), g2.rejection_count());
     }
+
+    // -- Enrichment batch 3: multiple domains, drain events, schema edge cases --
+
+    #[test]
+    fn register_multiple_domains() {
+        let mut guard = CanonicalGuard::new();
+        guard.register_class(ObjectDomain::PolicyObject, "Policy", 1, b"policy-s");
+        guard.register_class(ObjectDomain::Revocation, "Revocation", 1, b"revoc-s");
+        guard.register_class(ObjectDomain::EvidenceRecord, "Evidence", 1, b"evid-s");
+        assert_eq!(guard.registered_class_count(), 3);
+    }
+
+    #[test]
+    fn guard_drain_events_returns_and_clears() {
+        let (mut guard, schema) = setup_guard();
+        let bytes = make_canonical_payload(&schema, &CanonicalValue::U64(42));
+        guard
+            .validate(ObjectDomain::PolicyObject, &bytes, "t-drain")
+            .unwrap();
+        let events = guard.drain_events();
+        assert!(!events.is_empty());
+        let events2 = guard.drain_events();
+        assert!(events2.is_empty());
+    }
+
+    #[test]
+    fn validate_empty_bytes_rejected() {
+        let (mut guard, _schema) = setup_guard();
+        let result = guard.validate(ObjectDomain::PolicyObject, &[], "t-empty");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn canonical_value_empty_string_round_trip() {
+        let (mut guard, schema) = setup_guard();
+        let value = CanonicalValue::String(String::new());
+        let bytes = make_canonical_payload(&schema, &value);
+        let result = guard
+            .validate(ObjectDomain::PolicyObject, &bytes, "t-empty-str")
+            .unwrap();
+        assert_eq!(result, value);
+    }
+
+    #[test]
+    fn canonical_value_empty_bytes_round_trip() {
+        let (mut guard, schema) = setup_guard();
+        let value = CanonicalValue::Bytes(vec![]);
+        let bytes = make_canonical_payload(&schema, &value);
+        let result = guard
+            .validate(ObjectDomain::PolicyObject, &bytes, "t-empty-bytes")
+            .unwrap();
+        assert_eq!(result, value);
+    }
+
+    #[test]
+    fn canonical_value_empty_array_round_trip() {
+        let (mut guard, schema) = setup_guard();
+        let value = CanonicalValue::Array(vec![]);
+        let bytes = make_canonical_payload(&schema, &value);
+        let result = guard
+            .validate(ObjectDomain::PolicyObject, &bytes, "t-empty-arr")
+            .unwrap();
+        assert_eq!(result, value);
+    }
+
+    #[test]
+    fn canonical_value_empty_map_round_trip() {
+        let (mut guard, schema) = setup_guard();
+        let value = CanonicalValue::Map(BTreeMap::new());
+        let bytes = make_canonical_payload(&schema, &value);
+        let result = guard
+            .validate(ObjectDomain::PolicyObject, &bytes, "t-empty-map")
+            .unwrap();
+        assert_eq!(result, value);
+    }
+
+    #[test]
+    fn canonical_value_large_u64_round_trip() {
+        let (mut guard, schema) = setup_guard();
+        let value = CanonicalValue::U64(u64::MAX);
+        let bytes = make_canonical_payload(&schema, &value);
+        let result = guard
+            .validate(ObjectDomain::PolicyObject, &bytes, "t-large-u64")
+            .unwrap();
+        assert_eq!(result, value);
+    }
+
+    #[test]
+    fn canonical_value_negative_i64_round_trip() {
+        let (mut guard, schema) = setup_guard();
+        let value = CanonicalValue::I64(i64::MIN);
+        let bytes = make_canonical_payload(&schema, &value);
+        let result = guard
+            .validate(ObjectDomain::PolicyObject, &bytes, "t-neg-i64")
+            .unwrap();
+        assert_eq!(result, value);
+    }
+
+    #[test]
+    fn rejection_increments_count_correctly() {
+        let (mut guard, schema) = setup_guard();
+        assert_eq!(guard.rejection_count(), 0);
+        for i in 0..3 {
+            let mut bad = make_canonical_payload(&schema, &CanonicalValue::U64(i));
+            bad.push(0xFF);
+            let _ = guard.validate(ObjectDomain::PolicyObject, &bad, &format!("t-rej-{i}"));
+        }
+        assert_eq!(guard.rejection_count(), 3);
+    }
+
+    #[test]
+    fn non_canonical_error_object_class_preserved() {
+        let (mut guard, schema) = setup_guard();
+        let mut bad = make_canonical_payload(&schema, &CanonicalValue::Null);
+        bad.push(0x00);
+        let err = guard
+            .validate(ObjectDomain::PolicyObject, &bad, "t-class")
+            .unwrap_err();
+        assert_eq!(err.object_class, ObjectDomain::PolicyObject);
+    }
+
+    #[test]
+    fn deterministic_validation_across_runs() {
+        let run = || {
+            let (mut guard, schema) = setup_guard();
+            let bytes = make_canonical_payload(&schema, &CanonicalValue::U64(42));
+            guard
+                .validate(ObjectDomain::PolicyObject, &bytes, "t-det")
+                .unwrap()
+        };
+        assert_eq!(run(), run());
+    }
+
+    #[test]
+    fn is_canonical_raw_rejects_trailing_bytes() {
+        let value = CanonicalValue::U64(1);
+        let mut bytes = encode_value(&value);
+        bytes.push(0xFF); // trailing garbage
+        assert!(CanonicalGuard::is_canonical_raw(&bytes).is_err());
+    }
 }

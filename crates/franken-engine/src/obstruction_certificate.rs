@@ -3452,4 +3452,484 @@ mod tests {
         assert!(kinds.contains(&&FallbackActionKind::Degrade));
         assert!(kinds.contains(&&FallbackActionKind::Escalate));
     }
+
+    // =========================================================================
+    // Enrichment: PearlTower 2026-02-26
+    // =========================================================================
+
+    #[test]
+    fn should_block_gate_obstructed_with_fallbacks_is_false() {
+        let c = ObstructionCertifier::new();
+        let v = make_violation(
+            CoherenceViolationKind::UnresolvedContext {
+                consumer: "C".into(),
+                context_key: "K".into(),
+            },
+            SeverityScore::critical(),
+            DEBT_UNRESOLVED_CONTEXT,
+        );
+        let input = make_check_result(vec![v], CoherenceOutcome::Incoherent);
+        let result = c.certify(&input).unwrap();
+        assert_eq!(
+            result.outcome,
+            CertificationOutcome::ObstructedWithFallbacks
+        );
+        assert!(!should_block_gate(&result));
+    }
+
+    #[test]
+    fn effect_cycle_split_feasible_at_boundary_ten() {
+        let c = ObstructionCertifier::new();
+        let participants: Vec<String> = (0..10).map(|i| format!("C{i}")).collect();
+        let v = make_violation(
+            CoherenceViolationKind::EffectOrderCycle {
+                cycle_participants: participants,
+            },
+            SeverityScore::critical(),
+            DEBT_EFFECT_CYCLE,
+        );
+        let input = make_check_result(vec![v], CoherenceOutcome::Incoherent);
+        let result = c.certify(&input).unwrap();
+        let plan = result.certificates[0].fallback_plan.as_ref().unwrap();
+        let split = plan
+            .actions
+            .iter()
+            .find(|a| a.kind == FallbackActionKind::SplitBoundary)
+            .unwrap();
+        // targets.len() <= 10, so feasible
+        assert!(split.feasible);
+    }
+
+    #[test]
+    fn effect_cycle_split_infeasible_at_eleven() {
+        let c = ObstructionCertifier::new();
+        let participants: Vec<String> = (0..11).map(|i| format!("C{i}")).collect();
+        let v = make_violation(
+            CoherenceViolationKind::EffectOrderCycle {
+                cycle_participants: participants,
+            },
+            SeverityScore::critical(),
+            DEBT_EFFECT_CYCLE,
+        );
+        let input = make_check_result(vec![v], CoherenceOutcome::Incoherent);
+        let result = c.certify(&input).unwrap();
+        let plan = result.certificates[0].fallback_plan.as_ref().unwrap();
+        let split = plan
+            .actions
+            .iter()
+            .find(|a| a.kind == FallbackActionKind::SplitBoundary)
+            .unwrap();
+        assert!(!split.feasible);
+    }
+
+    #[test]
+    fn unknown_disruption_cost_key_defaults_to_million() {
+        let config = ObstructionCertifierConfig {
+            disruption_costs: BTreeMap::new(), // empty — no known costs
+            ..ObstructionCertifierConfig::default()
+        };
+        let c = ObstructionCertifier::with_config(config);
+        let v = make_violation(
+            CoherenceViolationKind::UnresolvedContext {
+                consumer: "C".into(),
+                context_key: "K".into(),
+            },
+            SeverityScore::critical(),
+            DEBT_UNRESOLVED_CONTEXT,
+        );
+        let input = make_check_result(vec![v], CoherenceOutcome::Incoherent);
+        let result = c.certify(&input).unwrap();
+        let plan = result.certificates[0].fallback_plan.as_ref().unwrap();
+        // All action costs should be MILLION * 1 target = 1_000_000
+        for action in &plan.actions {
+            assert_eq!(action.disruption_cost_millionths, MILLION);
+        }
+    }
+
+    #[test]
+    fn render_report_shows_infeasible_label() {
+        let c = ObstructionCertifier::new();
+        let participants: Vec<String> = (0..20).map(|i| format!("C{i}")).collect();
+        let v = make_violation(
+            CoherenceViolationKind::EffectOrderCycle {
+                cycle_participants: participants,
+            },
+            SeverityScore::critical(),
+            DEBT_EFFECT_CYCLE,
+        );
+        let input = make_check_result(vec![v], CoherenceOutcome::Incoherent);
+        let result = c.certify(&input).unwrap();
+        let report = render_certification_report(&result);
+        assert!(report.contains("INFEASIBLE"));
+    }
+
+    #[test]
+    fn result_hash_differs_for_different_outcomes() {
+        let c = ObstructionCertifier::new();
+        let r_clear = c
+            .certify(&make_check_result(vec![], CoherenceOutcome::Coherent))
+            .unwrap();
+
+        let v = make_violation(
+            CoherenceViolationKind::UnresolvedContext {
+                consumer: "X".into(),
+                context_key: "Y".into(),
+            },
+            SeverityScore::critical(),
+            DEBT_UNRESOLVED_CONTEXT,
+        );
+        let r_obstructed = c
+            .certify(&make_check_result(vec![v], CoherenceOutcome::Incoherent))
+            .unwrap();
+
+        assert_ne!(r_clear.result_hash, r_obstructed.result_hash);
+    }
+
+    #[test]
+    fn certification_result_full_serde_equality() {
+        let c = ObstructionCertifier::new();
+        let v = make_violation(
+            CoherenceViolationKind::CapabilityGap {
+                component: "W".into(),
+                missing_capabilities: vec!["net".into(), "fs".into()],
+            },
+            SeverityScore::high(),
+            DEBT_CAPABILITY_GAP,
+        );
+        let input = make_check_result(vec![v], CoherenceOutcome::Incoherent);
+        let result = c.certify(&input).unwrap();
+        let json = serde_json::to_string(&result).unwrap();
+        let back: CertificationResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(result, back);
+    }
+
+    #[test]
+    fn obstruction_certificate_full_serde_equality() {
+        let c = ObstructionCertifier::new();
+        let v = make_violation(
+            CoherenceViolationKind::HookCleanupMismatch {
+                component_a: "A".into(),
+                component_b: "B".into(),
+                hook_label: "useHook".into(),
+            },
+            SeverityScore::medium(),
+            DEBT_HOOK_CLEANUP_MISMATCH,
+        );
+        let input = make_check_result(vec![v], CoherenceOutcome::Incoherent);
+        let result = c.certify(&input).unwrap();
+        let cert = &result.certificates[0];
+        let json = serde_json::to_string(cert).unwrap();
+        let back: ObstructionCertificate = serde_json::from_str(&json).unwrap();
+        assert_eq!(*cert, back);
+    }
+
+    #[test]
+    fn compute_rationale_hash_empty_targets() {
+        let h = FallbackAction::compute_rationale_hash(
+            &FallbackActionKind::Escalate,
+            &[],
+            "escalate reason",
+        );
+        // Should produce a valid hash without panicking
+        assert_ne!(h, ContentHash::compute(b""));
+    }
+
+    #[test]
+    fn duplicate_provider_two_providers_remove_feasible() {
+        let c = ObstructionCertifier::new();
+        let v = make_violation(
+            CoherenceViolationKind::DuplicateProvider {
+                providers: vec!["ProvA".into(), "ProvB".into()],
+                context_key: "Ctx".into(),
+            },
+            SeverityScore::medium(),
+            DEBT_UNRESOLVED_CONTEXT,
+        );
+        let input = make_check_result(vec![v], CoherenceOutcome::Incoherent);
+        let result = c.certify(&input).unwrap();
+        let plan = result.certificates[0].fallback_plan.as_ref().unwrap();
+        let remove = plan
+            .actions
+            .iter()
+            .find(|a| a.kind == FallbackActionKind::RemoveAndStub)
+            .unwrap();
+        assert!(remove.feasible); // >= 2 providers
+    }
+
+    #[test]
+    fn unresolved_context_produces_four_fallback_actions() {
+        let c = ObstructionCertifier::new();
+        let v = make_violation(
+            CoherenceViolationKind::UnresolvedContext {
+                consumer: "C".into(),
+                context_key: "K".into(),
+            },
+            SeverityScore::critical(),
+            DEBT_UNRESOLVED_CONTEXT,
+        );
+        let input = make_check_result(vec![v], CoherenceOutcome::Incoherent);
+        let result = c.certify(&input).unwrap();
+        let plan = result.certificates[0].fallback_plan.as_ref().unwrap();
+        assert_eq!(plan.actions.len(), 4);
+    }
+
+    #[test]
+    fn orphaned_provider_produces_three_fallback_actions() {
+        let c = ObstructionCertifier::new();
+        let v = make_violation(
+            CoherenceViolationKind::OrphanedProvider {
+                provider: "P".into(),
+                context_key: "K".into(),
+            },
+            SeverityScore::low(),
+            DEBT_UNRESOLVED_CONTEXT,
+        );
+        let input = make_check_result(vec![v], CoherenceOutcome::CoherentWithWarnings);
+        let result = c.certify(&input).unwrap();
+        let plan = result.certificates[0].fallback_plan.as_ref().unwrap();
+        assert_eq!(plan.actions.len(), 3);
+    }
+
+    #[test]
+    fn boundary_conflict_suspense_produces_four_actions() {
+        let c = ObstructionCertifier::new();
+        let v = make_violation(
+            CoherenceViolationKind::SuspenseBoundaryConflict {
+                boundary_component: "S".into(),
+                conflicting_children: vec!["C1".into()],
+                reason: "test".into(),
+            },
+            SeverityScore::high(),
+            DEBT_SUSPENSE_BOUNDARY_CONFLICT,
+        );
+        let input = make_check_result(vec![v], CoherenceOutcome::Incoherent);
+        let result = c.certify(&input).unwrap();
+        let plan = result.certificates[0].fallback_plan.as_ref().unwrap();
+        assert_eq!(plan.actions.len(), 4);
+    }
+
+    #[test]
+    fn boundary_conflict_hydration_produces_four_actions() {
+        let c = ObstructionCertifier::new();
+        let v = make_violation(
+            CoherenceViolationKind::HydrationBoundaryConflict {
+                boundary_component: "H".into(),
+                conflicting_children: vec!["C1".into()],
+                reason: "test".into(),
+            },
+            SeverityScore::critical(),
+            DEBT_HYDRATION_BOUNDARY_CONFLICT,
+        );
+        let input = make_check_result(vec![v], CoherenceOutcome::Incoherent);
+        let result = c.certify(&input).unwrap();
+        let plan = result.certificates[0].fallback_plan.as_ref().unwrap();
+        assert_eq!(plan.actions.len(), 4);
+    }
+
+    #[test]
+    fn boundary_leak_produces_four_actions() {
+        let c = ObstructionCertifier::new();
+        let v = make_violation(
+            CoherenceViolationKind::BoundaryCapabilityLeak {
+                boundary: "B".into(),
+                leaked_capabilities: vec!["cap".into()],
+            },
+            SeverityScore::critical(),
+            DEBT_CAPABILITY_GAP,
+        );
+        let input = make_check_result(vec![v], CoherenceOutcome::Incoherent);
+        let result = c.certify(&input).unwrap();
+        let plan = result.certificates[0].fallback_plan.as_ref().unwrap();
+        assert_eq!(plan.actions.len(), 4);
+    }
+
+    #[test]
+    fn hook_mismatch_produces_four_actions() {
+        let c = ObstructionCertifier::new();
+        let v = make_violation(
+            CoherenceViolationKind::HookCleanupMismatch {
+                component_a: "A".into(),
+                component_b: "B".into(),
+                hook_label: "useFoo".into(),
+            },
+            SeverityScore::medium(),
+            DEBT_HOOK_CLEANUP_MISMATCH,
+        );
+        let input = make_check_result(vec![v], CoherenceOutcome::Incoherent);
+        let result = c.certify(&input).unwrap();
+        let plan = result.certificates[0].fallback_plan.as_ref().unwrap();
+        assert_eq!(plan.actions.len(), 4);
+    }
+
+    #[test]
+    fn capability_gap_produces_four_actions() {
+        let c = ObstructionCertifier::new();
+        let v = make_violation(
+            CoherenceViolationKind::CapabilityGap {
+                component: "W".into(),
+                missing_capabilities: vec!["x".into()],
+            },
+            SeverityScore::high(),
+            DEBT_CAPABILITY_GAP,
+        );
+        let input = make_check_result(vec![v], CoherenceOutcome::Incoherent);
+        let result = c.certify(&input).unwrap();
+        let plan = result.certificates[0].fallback_plan.as_ref().unwrap();
+        assert_eq!(plan.actions.len(), 4);
+    }
+
+    #[test]
+    fn clear_result_epoch_matches_input() {
+        let c = ObstructionCertifier::new();
+        let mut input = make_check_result(vec![], CoherenceOutcome::Coherent);
+        input.check_epoch = 99;
+        let result = c.certify(&input).unwrap();
+        assert_eq!(result.certification_epoch, 99);
+    }
+
+    #[test]
+    fn fallback_plan_actions_sorted_by_disruption_cost() {
+        let c = ObstructionCertifier::new();
+        let v = make_violation(
+            CoherenceViolationKind::CapabilityGap {
+                component: "W".into(),
+                missing_capabilities: vec!["a".into(), "b".into()],
+            },
+            SeverityScore::critical(),
+            DEBT_CAPABILITY_GAP,
+        );
+        let input = make_check_result(vec![v], CoherenceOutcome::Incoherent);
+        let result = c.certify(&input).unwrap();
+        let plan = result.certificates[0].fallback_plan.as_ref().unwrap();
+        for window in plan.actions.windows(2) {
+            assert!(window[0].disruption_cost_millionths <= window[1].disruption_cost_millionths);
+        }
+    }
+
+    #[test]
+    fn certificate_source_violation_id_matches() {
+        let c = ObstructionCertifier::new();
+        let v = make_violation(
+            CoherenceViolationKind::UnresolvedContext {
+                consumer: "C".into(),
+                context_key: "K".into(),
+            },
+            SeverityScore::critical(),
+            DEBT_UNRESOLVED_CONTEXT,
+        );
+        let violation_id = v.id.clone();
+        let input = make_check_result(vec![v], CoherenceOutcome::Incoherent);
+        let result = c.certify(&input).unwrap();
+        assert_eq!(result.certificates[0].source_violation_id, violation_id);
+    }
+
+    #[test]
+    fn certificate_debt_code_inherited_from_violation() {
+        let c = ObstructionCertifier::new();
+        let v = make_violation(
+            CoherenceViolationKind::EffectOrderCycle {
+                cycle_participants: vec!["A".into(), "B".into()],
+            },
+            SeverityScore::critical(),
+            DEBT_EFFECT_CYCLE,
+        );
+        let input = make_check_result(vec![v], CoherenceOutcome::Incoherent);
+        let result = c.certify(&input).unwrap();
+        assert_eq!(result.certificates[0].debt_code, DEBT_EFFECT_CYCLE);
+    }
+
+    #[test]
+    fn fallback_plan_no_debt_code_when_feasible() {
+        let c = ObstructionCertifier::new();
+        let v = make_violation(
+            CoherenceViolationKind::UnresolvedContext {
+                consumer: "C".into(),
+                context_key: "K".into(),
+            },
+            SeverityScore::critical(),
+            DEBT_UNRESOLVED_CONTEXT,
+        );
+        let input = make_check_result(vec![v], CoherenceOutcome::Incoherent);
+        let result = c.certify(&input).unwrap();
+        let plan = result.certificates[0].fallback_plan.as_ref().unwrap();
+        assert!(plan.has_feasible_resolution);
+        assert!(plan.debt_code.is_none());
+    }
+
+    #[test]
+    fn fallback_action_target_components_match_witness() {
+        let c = ObstructionCertifier::new();
+        let v = make_violation(
+            CoherenceViolationKind::HookCleanupMismatch {
+                component_a: "Alpha".into(),
+                component_b: "Beta".into(),
+                hook_label: "useHook".into(),
+            },
+            SeverityScore::medium(),
+            DEBT_HOOK_CLEANUP_MISMATCH,
+        );
+        let input = make_check_result(vec![v], CoherenceOutcome::Incoherent);
+        let result = c.certify(&input).unwrap();
+        let cert = &result.certificates[0];
+        let plan = cert.fallback_plan.as_ref().unwrap();
+        let witness: BTreeSet<String> = cert.witness_components.clone();
+        for action in &plan.actions {
+            let action_targets: BTreeSet<String> =
+                action.target_components.iter().cloned().collect();
+            assert_eq!(action_targets, witness);
+        }
+    }
+
+    #[test]
+    fn explanation_contains_violation_specific_details() {
+        let c = ObstructionCertifier::new();
+        let v = make_violation(
+            CoherenceViolationKind::LayoutAfterPassive {
+                layout_component: "LayoutComp".into(),
+                passive_component: "PassiveComp".into(),
+            },
+            SeverityScore::medium(),
+            DEBT_EFFECT_CYCLE,
+        );
+        let input = make_check_result(vec![v], CoherenceOutcome::Incoherent);
+        let result = c.certify(&input).unwrap();
+        let cert = &result.certificates[0];
+        assert!(cert.explanation.contains("LayoutComp"));
+        assert!(cert.explanation.contains("PassiveComp"));
+        assert!(cert.explanation.contains("Layout"));
+    }
+
+    #[test]
+    fn config_serde_with_custom_values() {
+        let config = ObstructionCertifierConfig {
+            max_certificates: 42,
+            max_actions_per_plan: 7,
+            max_witness_components: 3,
+            include_non_blocking: false,
+            disruption_costs: {
+                let mut m = BTreeMap::new();
+                m.insert("custom-action".into(), 999_999);
+                m
+            },
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let back: ObstructionCertifierConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config, back);
+    }
+
+    #[test]
+    fn obstruction_error_variants_are_distinct() {
+        let e1 = ObstructionError::BudgetExhausted {
+            resource: "r".into(),
+            limit: 1,
+        };
+        let e2 = ObstructionError::InvalidInput("x".into());
+        let e3 = ObstructionError::InternalInconsistency("y".into());
+        let s1 = format!("{e1}");
+        let s2 = format!("{e2}");
+        let s3 = format!("{e3}");
+        assert_ne!(s1, s2);
+        assert_ne!(s2, s3);
+        assert_ne!(s1, s3);
+    }
 }
