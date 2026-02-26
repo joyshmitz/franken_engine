@@ -535,6 +535,41 @@ Artifacts are written under:
 - `artifacts/parser_parallel_interference/<timestamp>/events.jsonl`
 - `artifacts/parser_parallel_interference/<timestamp>/commands.txt`
 
+## Parser Cross-Architecture Reproducibility Matrix Gate
+
+`bd-2mds.1.7.2` compares `x86_64` and `aarch64` parser-lane evidence for
+deterministic reproducibility, classifies drift with explicit severity, and
+fails closed on unresolved critical deltas in strict matrix mode.
+
+```bash
+# cross-arch matrix contract/test gate (rch-backed check + test + clippy)
+./scripts/run_parser_cross_arch_repro_matrix.sh ci
+
+# strict matrix evaluation (requires explicit x86_64 + arm64 lane manifests)
+PARSER_CROSS_ARCH_X86_EVENT_AST_MANIFEST=artifacts/.../x86_event_ast/run_manifest.json \
+PARSER_CROSS_ARCH_ARM64_EVENT_AST_MANIFEST=artifacts/.../arm64_event_ast/run_manifest.json \
+PARSER_CROSS_ARCH_X86_PARALLEL_INTERFERENCE_MANIFEST=artifacts/.../x86_parallel/run_manifest.json \
+PARSER_CROSS_ARCH_ARM64_PARALLEL_INTERFERENCE_MANIFEST=artifacts/.../arm64_parallel/run_manifest.json \
+./scripts/run_parser_cross_arch_repro_matrix.sh matrix
+
+# one-command replay wrapper
+./scripts/e2e/parser_cross_arch_repro_matrix_replay.sh
+```
+
+Contract and vectors:
+
+- [`docs/PARSER_CROSS_ARCH_REPRO_MATRIX.md`](./docs/PARSER_CROSS_ARCH_REPRO_MATRIX.md)
+- `crates/franken-engine/tests/fixtures/parser_cross_arch_repro_matrix_v1.json`
+- `crates/franken-engine/tests/parser_cross_arch_repro_matrix.rs`
+
+Artifacts are written under:
+
+- `artifacts/parser_cross_arch_repro_matrix/<timestamp>/run_manifest.json`
+- `artifacts/parser_cross_arch_repro_matrix/<timestamp>/events.jsonl`
+- `artifacts/parser_cross_arch_repro_matrix/<timestamp>/commands.txt`
+- `artifacts/parser_cross_arch_repro_matrix/<timestamp>/matrix_lane_deltas.jsonl`
+- `artifacts/parser_cross_arch_repro_matrix/<timestamp>/matrix_summary.json`
+
 ## Parser API Compatibility Gate
 
 `bd-2mds.1.10.3` stabilizes public parser API contracts and integration
@@ -878,6 +913,30 @@ Artifacts are written under:
 - `artifacts/frx_incremental_adoption_controls/<timestamp>/run_manifest.json`
 - `artifacts/frx_incremental_adoption_controls/<timestamp>/events.jsonl`
 - `artifacts/frx_incremental_adoption_controls/<timestamp>/commands.txt`
+
+## FRX Pilot App Program and A/B Rollout Harness Gate
+
+`bd-mjh3.9.1` ships a deterministic gate for pilot portfolio stratification,
+A/B plus shadow-run telemetry capture, off-policy estimator requirements
+(IPS/DR), sequential-valid stop/promote/rollback decision policy, and
+incident-to-replay/evidence linkage.
+
+```bash
+# FRX pilot rollout harness gate (rch-backed check + test + clippy)
+./scripts/run_frx_pilot_rollout_harness_suite.sh ci
+```
+
+Deterministic replay wrapper:
+
+```bash
+./scripts/e2e/frx_pilot_rollout_harness_replay.sh ci
+```
+
+Artifacts are written under:
+
+- `artifacts/frx_pilot_rollout_harness/<timestamp>/run_manifest.json`
+- `artifacts/frx_pilot_rollout_harness/<timestamp>/events.jsonl`
+- `artifacts/frx_pilot_rollout_harness/<timestamp>/commands.txt`
 
 ## Phase-A Exit Gate
 

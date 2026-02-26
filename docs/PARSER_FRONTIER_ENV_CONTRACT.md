@@ -15,6 +15,17 @@ parser-frontier gate and e2e scripts.
   - `scripts/run_parser_benchmark_protocol.sh`
   - `crates/franken-engine/tests/parser_hermetic_wrapper_contract.rs`
   - `crates/franken-engine/tests/fixtures/parser_hermetic_env_manifest_v1.json`
+- Cross-architecture reproducibility matrix contract for `PSRP-07.2`:
+  - `scripts/run_parser_cross_arch_repro_matrix.sh`
+  - `scripts/e2e/parser_cross_arch_repro_matrix_replay.sh`
+  - `crates/franken-engine/tests/parser_cross_arch_repro_matrix.rs`
+  - `crates/franken-engine/tests/fixtures/parser_cross_arch_repro_matrix_v1.json`
+- Third-party rerun kit contract for `PSRP-07.3`:
+  - `docs/PARSER_THIRD_PARTY_RERUN_KIT.md`
+  - `scripts/run_parser_third_party_rerun_kit.sh`
+  - `scripts/e2e/parser_third_party_rerun_kit_replay.sh`
+  - `crates/franken-engine/tests/parser_third_party_rerun_kit.rs`
+  - `crates/franken-engine/tests/fixtures/parser_third_party_rerun_kit_v1.json`
 - Bootstrap helper source of truth:
   - `scripts/e2e/parser_deterministic_env.sh`
 - Verification architecture reference:

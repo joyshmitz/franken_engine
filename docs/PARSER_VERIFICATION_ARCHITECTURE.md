@@ -43,6 +43,8 @@ Each subsystem must have at least one active lane in each applicable layer.
 | Diagnostics + recovery | `src/parser_error_recovery.rs` tests | diagnostics drift checks in oracle | `tests/parser_error_recovery_integration.rs`, `tests/runtime_diagnostics_cli.rs` | parser oracle full/nightly e2e | oracle `proof_note.md` + replay command envelope |
 | Arena allocator / memory determinism | `src/parser_arena.rs` tests | deterministic scenario replay (smoke/parity/budget/corruption) | `tests/parser_arena_integration.rs`, `tests/parser_arena_phase1.rs` | `scripts/run_parser_phase1_arena_suite.sh` and `scripts/e2e/parser_phase1_arena_*.sh` | phase1 `run_manifest.json`, `events.jsonl`, `commands.txt` |
 | Parallel scheduler / merge / failover | `src/parallel_parser.rs` tests | deterministic depth-aware split-point, scheduler-transcript replay, source-order merge, merge-witness-hash assertions, deterministic failover trigger/transition controls | `tests/parallel_parser_integration.rs`, `tests/parallel_interference_gate_integration.rs` | `scripts/run_parser_depth_partitioner_gate.sh`, `scripts/run_parser_scheduler_transcript_gate.sh`, `scripts/run_parser_merge_witness_gate.sh`, `scripts/run_parser_failover_controls_gate.sh` + phase0/oracle backstops | parser-depth-partitioner + parser-scheduler-transcript + parser-merge-witness + parser-failover-controls `run_manifest.json`, `events.jsonl`, `commands.txt` |
+| Cross-architecture reproducibility matrix | fixture/test contract in `tests/parser_cross_arch_repro_matrix.rs` | deterministic delta classification (`none`, `toolchain_fingerprint_delta`, `digest_delta_unexplained`, `upstream_lane_regression`, `missing_input`) | `tests/parser_cross_arch_repro_matrix.rs` | `scripts/run_parser_cross_arch_repro_matrix.sh` and `scripts/e2e/parser_cross_arch_repro_matrix_replay.sh` | parser-cross-arch-repro-matrix `run_manifest.json`, `events.jsonl`, `commands.txt`, `matrix_lane_deltas.jsonl`, `matrix_summary.json` |
+| Third-party rerun kit packaging | fixture/test contract in `tests/parser_third_party_rerun_kit.rs` | deterministic matrix-input readiness classification (`pending_upstream_matrix`, `incomplete_matrix`, `blocked_critical_deltas`, `ready_for_external_rerun`) | `tests/parser_third_party_rerun_kit.rs` | `scripts/run_parser_third_party_rerun_kit.sh` and `scripts/e2e/parser_third_party_rerun_kit_replay.sh` | parser-third-party-rerun-kit `run_manifest.json`, `events.jsonl`, `commands.txt`, `rerun_kit_index.json`, `verifier_notes.md` |
 | Oracle + differential harness | `src/parser_oracle.rs` tests | semantic/drift/metamorphic relation coverage | `tests/parser_oracle_integration.rs`, `tests/parser_oracle_gate.rs` | `scripts/run_parser_oracle_gate.sh`, `scripts/e2e/parser_oracle_*.sh` | `manifest.json`, `env.json`, `repro.lock`, `metamorphic_evidence.jsonl` |
 
 ## Boundary Definitions
@@ -125,6 +127,8 @@ Primary parser verification entrypoints:
 ./scripts/run_parser_scheduler_transcript_gate.sh ci
 ./scripts/run_parser_merge_witness_gate.sh ci
 ./scripts/run_parser_failover_controls_gate.sh ci
+./scripts/run_parser_cross_arch_repro_matrix.sh ci
+./scripts/run_parser_third_party_rerun_kit.sh ci
 ```
 
 E2E wrappers:
@@ -134,6 +138,7 @@ E2E wrappers:
 ./scripts/e2e/parser_oracle_full.sh
 ./scripts/e2e/parser_phase1_arena_smoke.sh
 ./scripts/e2e/parser_phase1_arena_rollback_rehearsal.sh
+./scripts/e2e/parser_third_party_rerun_kit_replay.sh
 ```
 
 All heavy Cargo operations in parser gate scripts must run via `rch`.
