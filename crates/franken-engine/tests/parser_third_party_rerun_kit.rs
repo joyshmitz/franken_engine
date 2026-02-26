@@ -188,6 +188,7 @@ fn parser_third_party_rerun_kit_script_contains_required_markers() {
         "source \"${root_dir}/scripts/e2e/parser_deterministic_env.sh\"",
         "parser_frontier_bootstrap_env",
         "policy-parser-third-party-rerun-kit-v1",
+        "RCH-E326",
         "PARSER_RERUN_KIT_MATRIX_SUMMARY",
         "parser_frontier_emit_manifest_environment_fields",
         "./scripts/e2e/parser_third_party_rerun_kit_replay.sh",

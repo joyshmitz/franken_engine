@@ -8,10 +8,10 @@ source "${root_dir}/scripts/e2e/parser_deterministic_env.sh"
 parser_frontier_bootstrap_env
 
 mode="${1:-ci}"
-toolchain="${RUSTUP_TOOLCHAIN:-nightly}"
-target_dir="${CARGO_TARGET_DIR:-/tmp/rch_target_franken_engine_parser_third_party_rerun_kit}"
-artifact_root="${PARSER_RERUN_KIT_ARTIFACT_ROOT:-artifacts/parser_third_party_rerun_kit}"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+toolchain="${RUSTUP_TOOLCHAIN:-nightly}"
+target_dir="${CARGO_TARGET_DIR:-/tmp/rch_target_franken_engine_parser_third_party_rerun_kit/${timestamp}}"
+artifact_root="${PARSER_RERUN_KIT_ARTIFACT_ROOT:-artifacts/parser_third_party_rerun_kit}"
 run_dir="${artifact_root}/${timestamp}"
 manifest_path="${run_dir}/run_manifest.json"
 events_path="${run_dir}/events.jsonl"
@@ -47,7 +47,7 @@ run_rch() {
 
 rch_reject_local_fallback() {
   local log_path="$1"
-  if grep -Eiq 'Remote toolchain failure, falling back to local|falling back to local|fallback to local|local fallback|\[RCH\] local \(' "$log_path"; then
+  if grep -Eiq 'Remote toolchain failure, falling back to local|falling back to local|fallback to local|local fallback|\[RCH\] local \(|Dependency preflight blocked remote execution|RCH-E326' "$log_path"; then
     echo "rch reported local fallback; refusing local execution for heavy command" >&2
     return 1
   fi

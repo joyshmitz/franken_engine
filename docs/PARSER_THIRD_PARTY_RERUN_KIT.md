@@ -93,6 +93,17 @@ One-command replay wrapper:
 
 All heavy Rust build/test/lint commands must execute through `rch`.
 
+By default the gate script uses a run-scoped target directory under:
+
+- `/tmp/rch_target_franken_engine_parser_third_party_rerun_kit/<timestamp>`
+
+This avoids cross-run cargo lock contention when prior remote jobs are still
+draining. Set `CARGO_TARGET_DIR` explicitly if you need a fixed path.
+
+If `rch` reports remote-preflight/local-fallback conditions (including
+`RCH-E326`), the gate must fail closed rather than continuing on local
+execution.
+
 ## Required Artifacts
 
 Each run emits:

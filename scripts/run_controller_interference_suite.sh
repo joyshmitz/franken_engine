@@ -23,11 +23,14 @@ component="controller_interference_suite"
 mkdir -p "$run_dir"
 
 run_rch() {
-  if command -v rch >/dev/null 2>&1; then
-    rch exec -- env "RUSTUP_TOOLCHAIN=$toolchain" "CARGO_TARGET_DIR=$target_dir" "$@"
-  else
-    echo "warning: rch not found; running locally for this environment" >&2
-    env "RUSTUP_TOOLCHAIN=$toolchain" "CARGO_TARGET_DIR=$target_dir" "$@"
+  rch exec -- env "RUSTUP_TOOLCHAIN=$toolchain" "CARGO_TARGET_DIR=$target_dir" "$@"
+}
+
+reject_local_fallback() {
+  local log_path="$1"
+  if grep -Eiq 'falling back to local|fallback to local|local fallback|running locally' "$log_path"; then
+    echo "rch reported local fallback; refusing local execution" >&2
+    return 1
   fi
 }
 
@@ -37,13 +40,22 @@ manifest_written=false
 
 run_step() {
   local command_text="$1"
+  local log_path
   shift
   commands_run+=("$command_text")
   echo "==> $command_text"
-  if ! run_rch "$@"; then
+  log_path="$(mktemp)"
+  if ! run_rch "$@" > >(tee "$log_path") 2>&1; then
+    rm -f "$log_path"
     failed_command="$command_text"
     return 1
   fi
+  if ! reject_local_fallback "$log_path"; then
+    rm -f "$log_path"
+    failed_command="$command_text"
+    return 1
+  fi
+  rm -f "$log_path"
 }
 
 run_mode() {
@@ -145,4 +157,8 @@ write_manifest() {
 }
 
 trap 'write_manifest $?' EXIT
+if ! command -v rch >/dev/null 2>&1; then
+  echo "rch is required for controller interference suite runs" >&2
+  exit 2
+fi
 run_mode

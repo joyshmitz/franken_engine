@@ -19,7 +19,7 @@ run_rch() {
 
 reject_local_fallback() {
   local log_path="$1"
-  if grep -Eiq 'falling back to local|fallback to local|local fallback' "$log_path"; then
+  if grep -Eiq 'falling back to local|fallback to local|local fallback|running locally' "$log_path"; then
     echo "rch reported local fallback; refusing local execution" >&2
     return 1
   fi

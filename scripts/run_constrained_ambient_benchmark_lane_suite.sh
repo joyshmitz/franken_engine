@@ -24,6 +24,7 @@ run_rch() {
 declare -a commands_run=()
 failed_command=""
 manifest_written=false
+expected_steps=0
 
 run_step() {
   local command_text="$1"
@@ -52,17 +53,22 @@ run_clippy() {
 }
 
 run_mode() {
+  expected_steps=0
   case "$mode" in
     check)
+      expected_steps=1
       run_check
       ;;
     test)
+      expected_steps=1
       run_test
       ;;
     clippy)
+      expected_steps=1
       run_clippy
       ;;
     ci)
+      expected_steps=3
       run_check
       run_test
       run_clippy
@@ -77,19 +83,28 @@ run_mode() {
 write_manifest() {
   local exit_code="${1:-0}"
   local outcome git_commit dirty_worktree idx comma error_code_json
+  local suite_incomplete=false
 
   if [[ "$manifest_written" == true ]]; then
     return
   fi
   manifest_written=true
 
-  if [[ "$exit_code" -eq 0 ]]; then
+  if [[ "${#commands_run[@]}" -lt "$expected_steps" ]]; then
+    suite_incomplete=true
+  fi
+
+  if [[ "$exit_code" -eq 0 && "$suite_incomplete" == false ]]; then
     outcome="pass"
   else
     outcome="fail"
   fi
 
-  if [[ -n "$failed_command" ]]; then
+  if [[ "$suite_incomplete" == true && -z "$failed_command" ]]; then
+    failed_command="incomplete_suite:executed_${#commands_run[@]}_of_${expected_steps}"
+  fi
+
+  if [[ -n "$failed_command" || "$suite_incomplete" == true ]]; then
     error_code_json='"FE-CABL-1005"'
   else
     error_code_json='null'

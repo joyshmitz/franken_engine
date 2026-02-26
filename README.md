@@ -570,6 +570,31 @@ Artifacts are written under:
 - `artifacts/parser_cross_arch_repro_matrix/<timestamp>/matrix_lane_deltas.jsonl`
 - `artifacts/parser_cross_arch_repro_matrix/<timestamp>/matrix_summary.json`
 
+## Parser Correctness Promotion Gate
+
+`bd-2mds.1.8.2` enforces fail-closed promotion policy for unresolved
+high-severity drift and non-green correctness evidence lanes.
+
+```bash
+# parser correctness promotion gate (rch-backed check + test + clippy)
+./scripts/run_parser_correctness_promotion_gate.sh ci
+
+# one-command replay wrapper
+./scripts/e2e/parser_correctness_promotion_gate_replay.sh
+```
+
+Contract and vectors:
+
+- [`docs/PARSER_CORRECTNESS_PROMOTION_GATE.md`](./docs/PARSER_CORRECTNESS_PROMOTION_GATE.md)
+- `crates/franken-engine/tests/fixtures/parser_correctness_promotion_gate_v1.json`
+- `crates/franken-engine/tests/parser_correctness_promotion_gate.rs`
+
+Artifacts are written under:
+
+- `artifacts/parser_correctness_promotion_gate/<timestamp>/run_manifest.json`
+- `artifacts/parser_correctness_promotion_gate/<timestamp>/events.jsonl`
+- `artifacts/parser_correctness_promotion_gate/<timestamp>/commands.txt`
+
 ## Parser API Compatibility Gate
 
 `bd-2mds.1.10.3` stabilizes public parser API contracts and integration
@@ -988,6 +1013,29 @@ Artifacts are written under:
 - `artifacts/frx_pilot_rollout_harness/<timestamp>/run_manifest.json`
 - `artifacts/frx_pilot_rollout_harness/<timestamp>/events.jsonl`
 - `artifacts/frx_pilot_rollout_harness/<timestamp>/commands.txt`
+
+## FRX Online Regret + Change-Point Demotion Controller Gate
+
+`bd-mjh3.15.3` ships a deterministic gate for online regret/change-point
+monitoring, fail-closed demotion policy enforcement, and replay-stable
+structured evidence linkage.
+
+```bash
+# FRX online regret + change-point demotion controller gate (rch-backed check + test + clippy)
+./scripts/run_frx_online_regret_change_point_demotion_controller_suite.sh ci
+```
+
+Deterministic replay wrapper:
+
+```bash
+./scripts/e2e/frx_online_regret_change_point_demotion_controller_replay.sh ci
+```
+
+Artifacts are written under:
+
+- `artifacts/frx_online_regret_change_point_demotion_controller/<timestamp>/run_manifest.json`
+- `artifacts/frx_online_regret_change_point_demotion_controller/<timestamp>/events.jsonl`
+- `artifacts/frx_online_regret_change_point_demotion_controller/<timestamp>/commands.txt`
 
 ## Phase-A Exit Gate
 
