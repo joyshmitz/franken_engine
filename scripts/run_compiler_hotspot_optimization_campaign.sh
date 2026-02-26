@@ -50,12 +50,35 @@ manifest_written=false
 run_step() {
   local command_text="$1"
   local log_path
+  local run_status
+  local last_remote_exit
   shift
   commands_run+=("$command_text")
   echo "==> $command_text"
   log_path="$(mktemp)"
-  if ! run_rch "$@" > >(tee "$log_path") 2>&1; then
-    if rg -q "Remote command finished: exit=0" "$log_path"; then
+  if run_rch "$@" > >(tee "$log_path") 2>&1; then
+    run_status=0
+  else
+    run_status=$?
+  fi
+
+  last_remote_exit=""
+  if rg -q "Remote command finished: exit=[0-9]+" "$log_path"; then
+    last_remote_exit="$(
+      rg -o "Remote command finished: exit=[0-9]+" "$log_path" \
+        | tail -n1 \
+        | sed 's/.*=//'
+    )"
+  fi
+
+  if [[ -n "$last_remote_exit" && "$last_remote_exit" != "0" ]]; then
+    rm -f "$log_path"
+    failed_command="$command_text"
+    return 1
+  fi
+
+  if [[ "$run_status" -ne 0 ]]; then
+    if [[ "$last_remote_exit" == "0" ]]; then
       echo "==> recovered: remote execution succeeded; artifact retrieval timed out" \
         | tee -a "$log_path"
     else
