@@ -1,0 +1,18 @@
+{
+  "schema_version": "frx.react.observable.trace.v1",
+  "trace_id": "trace-frx-react-012",
+  "decision_id": "decision-frx-react-012",
+  "policy_id": "policy-frx-react-corpus-v1",
+  "component": "frx_react_corpus",
+  "scenario_id": "frx-react-012",
+  "fixture_ref": "compat.rsc.server_component_hook_violation",
+  "seed": 1012,
+  "events": [
+    {"seq": 1, "phase": "server", "actor": "RSCPlanner", "event": "server_component_plan_started", "decision_path": "rsc_boundary_fallback", "timing_us": 800, "outcome": "ok"},
+    {"seq": 2, "phase": "policy", "actor": "RSCPlanner", "event": "disallowed_client_hook_detected", "decision_path": "rsc_boundary_fallback", "timing_us": 1200, "outcome": "warn"},
+    {"seq": 3, "phase": "policy", "actor": "FallbackRouter", "event": "route_deterministic_safe_mode_fallback", "decision_path": "rsc_boundary_fallback", "timing_us": 1700, "outcome": "fallback"},
+    {"seq": 4, "phase": "ops", "actor": "FallbackRouter", "event": "emit_fallback_diagnostic", "decision_path": "rsc_boundary_fallback", "timing_us": 2100, "outcome": "fallback"}
+  ],
+  "outcome": "fallback",
+  "error_code": "FE-FRX-07-2-RSC-0001"
+}

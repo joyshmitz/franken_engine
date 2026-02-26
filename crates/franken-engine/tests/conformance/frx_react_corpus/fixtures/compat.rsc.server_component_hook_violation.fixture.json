@@ -1,0 +1,27 @@
+{
+  "schema_version": "frx.react.fixture.v1",
+  "scenario_id": "frx-react-012",
+  "fixture_ref": "compat.rsc.server_component_hook_violation",
+  "runtime_mode": "server",
+  "semantic_focus": [
+    "rsc",
+    "server_components",
+    "fallback",
+    "safety"
+  ],
+  "stimulus": [
+    {
+      "step": "server.render_rsc",
+      "payload": "component=Page;contains_client_hook=useState"
+    },
+    {
+      "step": "policy.evaluate",
+      "payload": "rsc_mode=strict"
+    }
+  ],
+  "expected_observable": [
+    "rsc_capability_gap_detected",
+    "deterministic_safe_mode_fallback"
+  ],
+  "component_source": "export default async function Page(){const [x,setX]=useState(0);return <div>{x}</div>; }"
+}

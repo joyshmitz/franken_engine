@@ -1,0 +1,27 @@
+{
+  "schema_version": "frx.react.fixture.v1",
+  "scenario_id": "frx-react-011",
+  "fixture_ref": "compat.ssr.streaming.suspense_handoff",
+  "runtime_mode": "server",
+  "semantic_focus": [
+    "ssr",
+    "streaming",
+    "suspense",
+    "hydration_handoff"
+  ],
+  "stimulus": [
+    {
+      "step": "server.render_stream",
+      "payload": "route=/dashboard;suspense=defer(widget)"
+    },
+    {
+      "step": "client.hydrate",
+      "payload": "route=/dashboard;resume_stream=true"
+    }
+  ],
+  "expected_observable": [
+    "stream_shell_before_deferred_chunk",
+    "suspense_handoff_deterministic"
+  ],
+  "component_source": "renderToPipeableStream(<App/>,{onShellReady(){pipe(res)}});"
+}

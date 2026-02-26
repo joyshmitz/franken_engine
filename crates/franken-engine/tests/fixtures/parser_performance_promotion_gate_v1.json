@@ -1,0 +1,206 @@
+{
+  "schema_version": "franken-engine.parser-performance-promotion-gate.v1",
+  "gate_version": "1.0.0",
+  "protocol_version": "franken-engine.parser-performance-benchmark-protocol.v1",
+  "protocol_hash": "sha256:parser-performance-protocol-v1",
+  "required_peers": [
+    "boa_0_18",
+    "node_22_5_1",
+    "bun_1_1_31"
+  ],
+  "required_quantiles": [
+    "p50",
+    "p95",
+    "throughput"
+  ],
+  "minimum_delta_millionths_by_quantile": {
+    "p50": 20000,
+    "p95": 30000,
+    "throughput": 50000
+  },
+  "required_evidence_lanes": [
+    "cross_arch_matrix",
+    "correctness_promotion",
+    "regression_scoreboard"
+  ],
+  "required_structured_log_keys": [
+    "trace_id",
+    "decision_id",
+    "policy_id",
+    "component",
+    "event",
+    "outcome",
+    "error_code",
+    "blocked_pairs",
+    "failing_workload_ids",
+    "corpus_inventory",
+    "quantile_inventory",
+    "replay_pointers"
+  ],
+  "evidence_vectors": [
+    {
+      "lane_id": "cross_arch_matrix",
+      "status": "pass",
+      "artifact_manifest": "artifacts/parser_cross_arch_repro_matrix/20260226T084851Z/run_manifest.json",
+      "replay_command": "./scripts/e2e/parser_cross_arch_repro_matrix_replay.sh"
+    },
+    {
+      "lane_id": "correctness_promotion",
+      "status": "pass",
+      "artifact_manifest": "artifacts/parser_correctness_promotion_gate/20260226T120000Z/run_manifest.json",
+      "replay_command": "./scripts/e2e/parser_correctness_promotion_gate_replay.sh"
+    },
+    {
+      "lane_id": "regression_scoreboard",
+      "status": "pass",
+      "artifact_manifest": "artifacts/parser_regression_bisector_scoreboard/20260226T121000Z/run_manifest.json",
+      "replay_command": "./scripts/e2e/parser_regression_bisector_scoreboard_replay.sh"
+    }
+  ],
+  "telemetry_artifacts": [
+    {
+      "artifact_id": "perf-bundle-boa-node",
+      "manifest_path": "artifacts/parser_performance_bundle/20260226T120500Z/run_manifest.json",
+      "protocol_hash": "sha256:parser-performance-protocol-v1",
+      "reproducible": true,
+      "replay_command": "./scripts/e2e/parser_performance_bundle_replay.sh"
+    },
+    {
+      "artifact_id": "perf-bundle-bun",
+      "manifest_path": "artifacts/parser_performance_bundle/20260226T120700Z/run_manifest.json",
+      "protocol_hash": "sha256:parser-performance-protocol-v1",
+      "reproducible": false,
+      "replay_command": "./scripts/e2e/parser_performance_bundle_replay.sh"
+    }
+  ],
+  "benchmark_rows": [
+    {
+      "workload_id": "core_expression_mix",
+      "corpus_id": "core_semantics",
+      "peer_id": "boa_0_18",
+      "quantile": "p50",
+      "franken_score_millionths": 1140000,
+      "peer_score_millionths": 1000000,
+      "sample_count": 200,
+      "confidence_low_delta_millionths": 120000,
+      "confidence_high_delta_millionths": 170000,
+      "protocol_hash": "sha256:parser-performance-protocol-v1"
+    },
+    {
+      "workload_id": "core_expression_mix",
+      "corpus_id": "core_semantics",
+      "peer_id": "boa_0_18",
+      "quantile": "p95",
+      "franken_score_millionths": 1110000,
+      "peer_score_millionths": 1000000,
+      "sample_count": 200,
+      "confidence_low_delta_millionths": 95000,
+      "confidence_high_delta_millionths": 150000,
+      "protocol_hash": "sha256:parser-performance-protocol-v1"
+    },
+    {
+      "workload_id": "realworld_dashboard_bundle",
+      "corpus_id": "realworld",
+      "peer_id": "boa_0_18",
+      "quantile": "throughput",
+      "franken_score_millionths": 1290000,
+      "peer_score_millionths": 1000000,
+      "sample_count": 120,
+      "confidence_low_delta_millionths": 180000,
+      "confidence_high_delta_millionths": 320000,
+      "protocol_hash": "sha256:parser-performance-protocol-v1"
+    },
+    {
+      "workload_id": "core_expression_mix",
+      "corpus_id": "core_semantics",
+      "peer_id": "node_22_5_1",
+      "quantile": "p50",
+      "franken_score_millionths": 1090000,
+      "peer_score_millionths": 1000000,
+      "sample_count": 220,
+      "confidence_low_delta_millionths": 60000,
+      "confidence_high_delta_millionths": 120000,
+      "protocol_hash": "sha256:parser-performance-protocol-v1"
+    },
+    {
+      "workload_id": "core_expression_mix",
+      "corpus_id": "core_semantics",
+      "peer_id": "node_22_5_1",
+      "quantile": "p95",
+      "franken_score_millionths": 1085000,
+      "peer_score_millionths": 1000000,
+      "sample_count": 220,
+      "confidence_low_delta_millionths": 55000,
+      "confidence_high_delta_millionths": 115000,
+      "protocol_hash": "sha256:parser-performance-protocol-v1"
+    },
+    {
+      "workload_id": "realworld_dashboard_bundle",
+      "corpus_id": "realworld",
+      "peer_id": "node_22_5_1",
+      "quantile": "throughput",
+      "franken_score_millionths": 1170000,
+      "peer_score_millionths": 1000000,
+      "sample_count": 130,
+      "confidence_low_delta_millionths": 90000,
+      "confidence_high_delta_millionths": 230000,
+      "protocol_hash": "sha256:parser-performance-protocol-v1"
+    },
+    {
+      "workload_id": "core_expression_mix",
+      "corpus_id": "core_semantics",
+      "peer_id": "bun_1_1_31",
+      "quantile": "p50",
+      "franken_score_millionths": 1050000,
+      "peer_score_millionths": 1000000,
+      "sample_count": 210,
+      "confidence_low_delta_millionths": 31000,
+      "confidence_high_delta_millionths": 90000,
+      "protocol_hash": "sha256:parser-performance-protocol-v1"
+    },
+    {
+      "workload_id": "core_expression_mix",
+      "corpus_id": "core_semantics",
+      "peer_id": "bun_1_1_31",
+      "quantile": "p95",
+      "franken_score_millionths": 1060000,
+      "peer_score_millionths": 1000000,
+      "sample_count": 210,
+      "confidence_low_delta_millionths": 38000,
+      "confidence_high_delta_millionths": 100000,
+      "protocol_hash": "sha256:parser-performance-protocol-v1"
+    },
+    {
+      "workload_id": "realworld_dashboard_bundle",
+      "corpus_id": "realworld",
+      "peer_id": "bun_1_1_31",
+      "quantile": "throughput",
+      "franken_score_millionths": 1030000,
+      "peer_score_millionths": 1000000,
+      "sample_count": 115,
+      "confidence_low_delta_millionths": 0,
+      "confidence_high_delta_millionths": 52000,
+      "protocol_hash": "sha256:parser-performance-protocol-v1"
+    }
+  ],
+  "expected_gate": {
+    "expected_outcome": "hold",
+    "expected_blocked_pairs": [
+      "bun_1_1_31:throughput:delta_below_threshold",
+      "bun_1_1_31:throughput:non_reproducible_win",
+      "telemetry_not_reproducible:perf-bundle-bun"
+    ],
+    "expected_failing_workload_ids": [
+      "realworld_dashboard_bundle"
+    ],
+    "expected_verified_pairs": 8
+  },
+  "replay_scenarios": [
+    {
+      "scenario_id": "parser-performance-promotion-replay",
+      "replay_command": "./scripts/e2e/parser_performance_promotion_gate_replay.sh",
+      "expected_pass": true,
+      "expected_outcome": "hold"
+    }
+  ]
+}
