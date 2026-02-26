@@ -85,6 +85,7 @@ pub mod frontier_demo_gate;
 pub mod galaxy_brain_explainability;
 pub mod gc;
 pub mod gc_pause;
+pub mod global_coherence_checker;
 pub mod golden_vectors;
 pub mod governance_hooks;
 pub mod governance_mechanism;
