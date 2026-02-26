@@ -1,0 +1,162 @@
+{
+  "schema_version": "franken-engine.parser-differential-nightly-governance.v1",
+  "governance_version": "1.0.0",
+  "bead_id": "bd-2mds.1.2.4.2",
+  "evaluation_time_utc": "2026-02-26T00:00:00Z",
+  "scheduler_manifest": {
+    "nightly_cron_utc": "17 03 * * *",
+    "timezone": "UTC",
+    "locale": "C",
+    "deterministic_seed": 424242,
+    "partitions": [
+      {
+        "partition_id": "full",
+        "fixture_limit": 256,
+        "seed_offset": 1000
+      },
+      {
+        "partition_id": "promotion-candidates",
+        "fixture_limit": 64,
+        "seed_offset": 2000
+      },
+      {
+        "partition_id": "smoke",
+        "fixture_limit": 16,
+        "seed_offset": 0
+      }
+    ],
+    "expected_manifest_fingerprint": "fnv1a64:006f68200fa94af4"
+  },
+  "waivers": [
+    {
+      "waiver_id": "waiver-minor-known",
+      "fingerprint": "sha256:minor-known",
+      "severity": "minor",
+      "expires_utc": "2026-12-31T00:00:00Z",
+      "approved_by": "verification-lane"
+    },
+    {
+      "waiver_id": "waiver-critical-expired",
+      "fingerprint": "sha256:critical-new",
+      "severity": "critical",
+      "expires_utc": "2026-02-20T00:00:00Z",
+      "approved_by": "governance-lane"
+    }
+  ],
+  "existing_remediations": [
+    {
+      "fingerprint": "sha256:critical-existing",
+      "bead_id": "bd-remed-existing-critical",
+      "status": "open",
+      "owner_hint": "parser-core"
+    }
+  ],
+  "drift_findings": [
+    {
+      "finding_id": "finding-critical-existing",
+      "fixture_id": "fixture-divergent-existing",
+      "fingerprint": "sha256:critical-existing",
+      "severity": "critical",
+      "classification": "semantic_drift",
+      "owner_hint": "parser-core",
+      "replay_command": "./scripts/run_parser_multi_engine_harness.sh report --fixture-id fixture-divergent-existing",
+      "artifact_path": "artifacts/parser_multi_engine_harness/20260226T000324Z/report.json",
+      "minimized_source_hash": "sha256:min-existing",
+      "provenance_hash": "sha256:prov-existing"
+    },
+    {
+      "finding_id": "finding-critical-new",
+      "fixture_id": "fixture-divergent-new",
+      "fingerprint": "sha256:critical-new",
+      "severity": "critical",
+      "classification": "semantic_drift",
+      "owner_hint": "parser-oracle",
+      "replay_command": "./scripts/run_parser_multi_engine_harness.sh report --fixture-id fixture-divergent-new",
+      "artifact_path": "artifacts/parser_multi_engine_harness/20260226T000324Z/report.json",
+      "minimized_source_hash": "sha256:min-new",
+      "provenance_hash": "sha256:prov-new"
+    },
+    {
+      "finding_id": "finding-minor-known",
+      "fixture_id": "fixture-minor-known",
+      "fingerprint": "sha256:minor-known",
+      "severity": "minor",
+      "classification": "diagnostics_drift",
+      "owner_hint": "parser-ux",
+      "replay_command": "./scripts/run_parser_multi_engine_harness.sh report --fixture-id fixture-minor-known",
+      "artifact_path": "artifacts/parser_multi_engine_harness/20260226T000324Z/report.json",
+      "minimized_source_hash": "sha256:min-minor-known",
+      "provenance_hash": "sha256:prov-minor-known"
+    },
+    {
+      "finding_id": "finding-minor-new",
+      "fixture_id": "fixture-minor-new",
+      "fingerprint": "sha256:minor-new",
+      "severity": "minor",
+      "classification": "diagnostics_drift",
+      "owner_hint": "parser-ux",
+      "replay_command": "./scripts/run_parser_multi_engine_harness.sh report --fixture-id fixture-minor-new",
+      "artifact_path": "artifacts/parser_multi_engine_harness/20260226T000324Z/report.json",
+      "minimized_source_hash": "sha256:min-minor-new",
+      "provenance_hash": "sha256:prov-minor-new"
+    }
+  ],
+  "required_log_keys": [
+    "trace_id",
+    "decision_id",
+    "policy_id",
+    "component",
+    "event",
+    "outcome",
+    "error_code"
+  ],
+  "expected_gate": {
+    "expected_outcome": "hold",
+    "expected_blockers": [
+      "critical_unwaived:finding-critical-existing",
+      "critical_unwaived:finding-critical-new",
+      "waiver_expired:waiver-critical-expired"
+    ],
+    "expected_escalations": [
+      "page_owner:parser-core",
+      "page_owner:parser-oracle"
+    ]
+  },
+  "expected_remediation_actions": [
+    {
+      "fingerprint": "sha256:critical-existing",
+      "action": "update",
+      "bead_id": "bd-remed-existing-critical",
+      "owner_hint": "parser-core"
+    },
+    {
+      "fingerprint": "sha256:critical-new",
+      "action": "create",
+      "bead_id": "bd-auto-critical",
+      "owner_hint": "parser-oracle"
+    },
+    {
+      "fingerprint": "sha256:minor-new",
+      "action": "create",
+      "bead_id": "bd-auto-minor-ne",
+      "owner_hint": "parser-ux"
+    }
+  ],
+  "replay_scenarios": [
+    {
+      "scenario_id": "nightly-replay-critical-existing",
+      "replay_command": "./scripts/run_parser_multi_engine_harness.sh report --fixture-id fixture-divergent-existing",
+      "expected_outcome": "update_existing"
+    },
+    {
+      "scenario_id": "nightly-replay-critical-new",
+      "replay_command": "./scripts/run_parser_multi_engine_harness.sh report --fixture-id fixture-divergent-new",
+      "expected_outcome": "create_new"
+    },
+    {
+      "scenario_id": "nightly-replay-minor-known",
+      "replay_command": "./scripts/run_parser_multi_engine_harness.sh report --fixture-id fixture-minor-known",
+      "expected_outcome": "waived_observe"
+    }
+  ]
+}

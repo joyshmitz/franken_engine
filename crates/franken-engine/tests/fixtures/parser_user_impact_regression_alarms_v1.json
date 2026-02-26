@@ -1,0 +1,218 @@
+{
+  "schema_version": "franken-engine.parser-user-impact-regression-alarms.v1",
+  "pipeline_version": "1.0.0",
+  "log_schema_version": "franken-engine.parser-log-event.v1",
+  "required_log_keys": [
+    "schema_version",
+    "trace_id",
+    "decision_id",
+    "policy_id",
+    "component",
+    "event",
+    "outcome",
+    "error_code",
+    "replay_command",
+    "alarm_id",
+    "slo_id"
+  ],
+  "alarm_policies": [
+    {
+      "alarm_id": "alarm.composite.floor",
+      "slo_id": "slo.composite.min",
+      "metric_key": "composite",
+      "comparator": "min",
+      "threshold_millionths": 820000,
+      "severity": "critical",
+      "escalation_action": "page-primary",
+      "error_code": "FE-PARSER-USER-IMPACT-COMPOSITE-0001",
+      "replay_command": "./scripts/e2e/parser_user_impact_regression_alarms_replay.sh"
+    },
+    {
+      "alarm_id": "alarm.recovery.floor",
+      "slo_id": "slo.recovery.min",
+      "metric_key": "recovery_usefulness",
+      "comparator": "min",
+      "threshold_millionths": 760000,
+      "severity": "high",
+      "escalation_action": "open-incident",
+      "error_code": "FE-PARSER-USER-IMPACT-RECOVERY-0001",
+      "replay_command": "./scripts/e2e/parser_user_impact_regression_alarms_replay.sh"
+    },
+    {
+      "alarm_id": "alarm.diagnostic.floor",
+      "slo_id": "slo.diagnostic.min",
+      "metric_key": "diagnostic_quality",
+      "comparator": "min",
+      "threshold_millionths": 800000,
+      "severity": "warning",
+      "escalation_action": "open-followup",
+      "error_code": "FE-PARSER-USER-IMPACT-DIAGNOSTIC-0001",
+      "replay_command": "./scripts/e2e/parser_user_impact_regression_alarms_replay.sh"
+    },
+    {
+      "alarm_id": "alarm.incident_rate.ceiling",
+      "slo_id": "slo.incident_rate.max",
+      "metric_key": "incident_rate",
+      "comparator": "max",
+      "threshold_millionths": 200000,
+      "severity": "high",
+      "escalation_action": "open-incident",
+      "error_code": "FE-PARSER-USER-IMPACT-INCIDENT-RATE-0001",
+      "replay_command": "./scripts/e2e/parser_user_impact_regression_alarms_replay.sh"
+    }
+  ],
+  "metric_windows": [
+    {
+      "window_id": "window-baseline-stable",
+      "created_at_utc": "2026-02-25T09:00:00Z",
+      "metrics_millionths": {
+        "composite": 850000,
+        "diagnostic_quality": 860000,
+        "recovery_usefulness": 810000,
+        "integration_friction": 900000,
+        "incident_rate": 50000
+      },
+      "expected_alarm_ids": []
+    },
+    {
+      "window_id": "window-warning-only",
+      "created_at_utc": "2026-02-25T10:00:00Z",
+      "metrics_millionths": {
+        "composite": 835000,
+        "diagnostic_quality": 790000,
+        "recovery_usefulness": 790000,
+        "integration_friction": 880000,
+        "incident_rate": 120000
+      },
+      "expected_alarm_ids": [
+        "alarm.diagnostic.floor"
+      ]
+    },
+    {
+      "window_id": "window-critical-regression",
+      "created_at_utc": "2026-02-25T11:00:00Z",
+      "metrics_millionths": {
+        "composite": 780000,
+        "diagnostic_quality": 770000,
+        "recovery_usefulness": 730000,
+        "integration_friction": 760000,
+        "incident_rate": 260000
+      },
+      "expected_alarm_ids": [
+        "alarm.composite.floor",
+        "alarm.diagnostic.floor",
+        "alarm.incident_rate.ceiling",
+        "alarm.recovery.floor"
+      ]
+    }
+  ],
+  "incident_simulations": [
+    {
+      "scenario_id": "incident-sim-stable",
+      "expected_pass": true,
+      "replay_command": "./scripts/e2e/parser_user_impact_regression_alarms_replay.sh",
+      "fixture": {
+        "fixture_id": "parser-user-impact-incident-stable",
+        "fixture_version": 1,
+        "seed": 41,
+        "virtual_time_start_micros": 1000,
+        "policy_id": "policy-parser-user-impact-regression-alarms-v1",
+        "steps": [
+          {
+            "component": "parser.user-impact.alarm",
+            "event": "window_evaluated",
+            "advance_micros": 15,
+            "metadata": {
+              "outcome": "ok"
+            }
+          },
+          {
+            "component": "parser.user-impact.alarm",
+            "event": "gate_pass",
+            "advance_micros": 20,
+            "metadata": {
+              "outcome": "ok"
+            }
+          }
+        ],
+        "expected_events": [
+          {
+            "component": "parser.user-impact.alarm",
+            "event": "window_evaluated",
+            "outcome": "ok",
+            "error_code": null
+          },
+          {
+            "component": "parser.user-impact.alarm",
+            "event": "gate_pass",
+            "outcome": "ok",
+            "error_code": null
+          }
+        ],
+        "determinism_check": true
+      }
+    },
+    {
+      "scenario_id": "incident-sim-critical-regression",
+      "expected_pass": false,
+      "replay_command": "./scripts/e2e/parser_user_impact_regression_alarms_replay.sh",
+      "fixture": {
+        "fixture_id": "parser-user-impact-incident-critical",
+        "fixture_version": 1,
+        "seed": 53,
+        "virtual_time_start_micros": 2000,
+        "policy_id": "policy-parser-user-impact-regression-alarms-v1",
+        "steps": [
+          {
+            "component": "parser.user-impact.alarm",
+            "event": "window_evaluated",
+            "advance_micros": 16,
+            "metadata": {
+              "outcome": "ok"
+            }
+          },
+          {
+            "component": "parser.user-impact.alarm",
+            "event": "gate_hold",
+            "advance_micros": 30,
+            "metadata": {
+              "error_code": "FE-PARSER-USER-IMPACT-COMPOSITE-0001"
+            }
+          }
+        ],
+        "expected_events": [
+          {
+            "component": "parser.user-impact.alarm",
+            "event": "window_evaluated",
+            "outcome": "ok",
+            "error_code": null
+          },
+          {
+            "component": "parser.user-impact.alarm",
+            "event": "gate_hold",
+            "outcome": "error",
+            "error_code": "FE-PARSER-USER-IMPACT-COMPOSITE-0001"
+          }
+        ],
+        "determinism_check": true
+      }
+    }
+  ],
+  "expected_gate": {
+    "expected_outcome": "hold",
+    "expected_blockers": [
+      "critical_alarm:alarm.composite.floor",
+      "high_alarm:alarm.incident_rate.ceiling",
+      "high_alarm:alarm.recovery.floor"
+    ],
+    "expected_psrp_10_4_status": "blocked",
+    "expected_psrp_8_4_status": "blocked"
+  },
+  "replay_scenarios": [
+    {
+      "scenario_id": "parser-user-impact-regression-alarms-replay",
+      "replay_command": "./scripts/e2e/parser_user_impact_regression_alarms_replay.sh",
+      "expected_outcome": "pass"
+    }
+  ]
+}

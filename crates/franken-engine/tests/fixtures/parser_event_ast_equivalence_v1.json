@@ -1,0 +1,78 @@
+{
+  "schema_version": "franken-engine.parser-event-ast-equivalence.v1",
+  "contract_version": "1.0.0",
+  "required_log_keys": [
+    "trace_id",
+    "decision_id",
+    "policy_id",
+    "component",
+    "event",
+    "outcome",
+    "error_code"
+  ],
+  "replay_command": "./scripts/e2e/parser_event_ast_equivalence_replay.sh",
+  "cases": [
+    {
+      "case_id": "module_import_export_parity",
+      "goal": "module",
+      "source": "import dep from \"pkg\";\nexport default dep;\n",
+      "tamper_kind": "none",
+      "expected_parse_error_code": null,
+      "expected_materialization_error_code": null,
+      "expect_statement_count": 2,
+      "expect_hash_parity": true
+    },
+    {
+      "case_id": "script_await_parity",
+      "goal": "script",
+      "source": "await work",
+      "tamper_kind": "none",
+      "expected_parse_error_code": null,
+      "expected_materialization_error_code": null,
+      "expect_statement_count": 1,
+      "expect_hash_parity": true
+    },
+    {
+      "case_id": "empty_source_failure_contract",
+      "goal": "script",
+      "source": "",
+      "tamper_kind": "none",
+      "expected_parse_error_code": "empty_source",
+      "expected_materialization_error_code": "parse_failed_event_stream",
+      "expect_statement_count": 0,
+      "expect_hash_parity": false
+    },
+    {
+      "case_id": "tampered_statement_payload_hash",
+      "goal": "script",
+      "source": "alpha;",
+      "tamper_kind": "statement_hash",
+      "expected_parse_error_code": null,
+      "expected_materialization_error_code": "statement_hash_mismatch",
+      "expect_statement_count": 1,
+      "expect_hash_parity": false
+    }
+  ],
+  "replay_scenarios": [
+    {
+      "scenario_id": "parity",
+      "command": "PARSER_EVENT_AST_EQUIVALENCE_SCENARIO=parity ./scripts/run_parser_event_ast_equivalence.sh test",
+      "expected_outcome": "pass"
+    },
+    {
+      "scenario_id": "malformed",
+      "command": "PARSER_EVENT_AST_EQUIVALENCE_SCENARIO=malformed ./scripts/run_parser_event_ast_equivalence.sh test",
+      "expected_outcome": "pass"
+    },
+    {
+      "scenario_id": "tamper",
+      "command": "PARSER_EVENT_AST_EQUIVALENCE_SCENARIO=tamper ./scripts/run_parser_event_ast_equivalence.sh test",
+      "expected_outcome": "pass"
+    },
+    {
+      "scenario_id": "replay",
+      "command": "PARSER_EVENT_AST_EQUIVALENCE_SCENARIO=replay ./scripts/run_parser_event_ast_equivalence.sh test",
+      "expected_outcome": "pass"
+    }
+  ]
+}

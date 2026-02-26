@@ -1,0 +1,206 @@
+{
+  "schema_version": "franken-engine.parser-ci-quality-gates.v1",
+  "gate_version": "1.0.0",
+  "high_flake_threshold_millionths": 300000,
+  "min_retention_days": 30,
+  "structured_log_required_keys": [
+    "trace_id",
+    "decision_id",
+    "policy_id",
+    "component",
+    "event",
+    "outcome",
+    "error_code"
+  ],
+  "runs": [
+    {
+      "run_id": "epoch1-unit-seed17",
+      "epoch": 1,
+      "suite_kind": "unit",
+      "case_id": "unit.parser.seed17",
+      "outcome": "fail",
+      "duration_ms": 5020,
+      "error_signature": "FE-TIMEOUT-SEED-17",
+      "replay_command": "./scripts/e2e/parser_ci_quality_gates_replay.sh",
+      "artifact_bundle_id": "bundle-epoch1-unit-seed17",
+      "created_at_utc": "2026-02-25T10:00:00Z"
+    },
+    {
+      "run_id": "epoch1-unit-basic",
+      "epoch": 1,
+      "suite_kind": "unit",
+      "case_id": "unit.parser.basic",
+      "outcome": "pass",
+      "duration_ms": 810,
+      "error_signature": null,
+      "replay_command": "./scripts/e2e/parser_ci_quality_gates_replay.sh",
+      "artifact_bundle_id": "bundle-epoch1-unit-basic",
+      "created_at_utc": "2026-02-25T10:00:10Z"
+    },
+    {
+      "run_id": "epoch1-e2e-editor-flow",
+      "epoch": 1,
+      "suite_kind": "e2e",
+      "case_id": "e2e.editor.flow",
+      "outcome": "pass",
+      "duration_ms": 3310,
+      "error_signature": null,
+      "replay_command": "./scripts/e2e/parser_ci_quality_gates_replay.sh",
+      "artifact_bundle_id": "bundle-epoch1-e2e-editor-flow",
+      "created_at_utc": "2026-02-25T10:00:20Z"
+    },
+    {
+      "run_id": "epoch2-unit-seed17",
+      "epoch": 2,
+      "suite_kind": "unit",
+      "case_id": "unit.parser.seed17",
+      "outcome": "pass",
+      "duration_ms": 930,
+      "error_signature": null,
+      "replay_command": "./scripts/e2e/parser_ci_quality_gates_replay.sh",
+      "artifact_bundle_id": "bundle-epoch2-unit-seed17",
+      "created_at_utc": "2026-02-25T11:00:00Z"
+    },
+    {
+      "run_id": "epoch2-unit-basic",
+      "epoch": 2,
+      "suite_kind": "unit",
+      "case_id": "unit.parser.basic",
+      "outcome": "pass",
+      "duration_ms": 790,
+      "error_signature": null,
+      "replay_command": "./scripts/e2e/parser_ci_quality_gates_replay.sh",
+      "artifact_bundle_id": "bundle-epoch2-unit-basic",
+      "created_at_utc": "2026-02-25T11:00:10Z"
+    },
+    {
+      "run_id": "epoch2-e2e-editor-flow",
+      "epoch": 2,
+      "suite_kind": "e2e",
+      "case_id": "e2e.editor.flow",
+      "outcome": "pass",
+      "duration_ms": 3190,
+      "error_signature": null,
+      "replay_command": "./scripts/e2e/parser_ci_quality_gates_replay.sh",
+      "artifact_bundle_id": "bundle-epoch2-e2e-editor-flow",
+      "created_at_utc": "2026-02-25T11:00:20Z"
+    }
+  ],
+  "retention_bundles": [
+    {
+      "bundle_id": "bundle-epoch1-unit-seed17",
+      "run_id": "epoch1-unit-seed17",
+      "created_at_utc": "2026-02-25T10:00:00Z",
+      "ttl_days": 90,
+      "searchable_tokens": [
+        "epoch1-unit-seed17",
+        "unit.parser.seed17",
+        "unit",
+        "fail",
+        "FE-TIMEOUT-SEED-17"
+      ]
+    },
+    {
+      "bundle_id": "bundle-epoch1-unit-basic",
+      "run_id": "epoch1-unit-basic",
+      "created_at_utc": "2026-02-25T10:00:10Z",
+      "ttl_days": 90,
+      "searchable_tokens": [
+        "epoch1-unit-basic",
+        "unit.parser.basic",
+        "unit",
+        "pass"
+      ]
+    },
+    {
+      "bundle_id": "bundle-epoch1-e2e-editor-flow",
+      "run_id": "epoch1-e2e-editor-flow",
+      "created_at_utc": "2026-02-25T10:00:20Z",
+      "ttl_days": 90,
+      "searchable_tokens": [
+        "epoch1-e2e-editor-flow",
+        "e2e.editor.flow",
+        "e2e",
+        "pass"
+      ]
+    },
+    {
+      "bundle_id": "bundle-epoch2-unit-seed17",
+      "run_id": "epoch2-unit-seed17",
+      "created_at_utc": "2026-02-25T11:00:00Z",
+      "ttl_days": 90,
+      "searchable_tokens": [
+        "epoch2-unit-seed17",
+        "unit.parser.seed17",
+        "unit",
+        "pass"
+      ]
+    },
+    {
+      "bundle_id": "bundle-epoch2-unit-basic",
+      "run_id": "epoch2-unit-basic",
+      "created_at_utc": "2026-02-25T11:00:10Z",
+      "ttl_days": 90,
+      "searchable_tokens": [
+        "epoch2-unit-basic",
+        "unit.parser.basic",
+        "unit",
+        "pass"
+      ]
+    },
+    {
+      "bundle_id": "bundle-epoch2-e2e-editor-flow",
+      "run_id": "epoch2-e2e-editor-flow",
+      "created_at_utc": "2026-02-25T11:00:20Z",
+      "ttl_days": 90,
+      "searchable_tokens": [
+        "epoch2-e2e-editor-flow",
+        "e2e.editor.flow",
+        "e2e",
+        "pass"
+      ]
+    }
+  ],
+  "expected_flakes": [
+    {
+      "case_id": "unit.parser.seed17",
+      "suite_kind": "unit",
+      "flake_rate_millionths": 500000,
+      "severity": "high",
+      "quarantine_action": "quarantine-immediate",
+      "dominant_error_signature": "FE-TIMEOUT-SEED-17",
+      "replay_command": "./scripts/e2e/parser_ci_quality_gates_replay.sh"
+    }
+  ],
+  "expected_gate": {
+    "expected_outcome": "hold",
+    "expected_latest_suites_green": true,
+    "expected_blockers": [
+      "high_flake_rate:unit.parser.seed17"
+    ],
+    "expected_flake_count": 1
+  },
+  "expected_search_index_hits": [
+    {
+      "query": "FE-TIMEOUT-SEED-17",
+      "expected_bundle_ids": [
+        "bundle-epoch1-unit-seed17"
+      ]
+    },
+    {
+      "query": "unit.parser.seed17",
+      "expected_bundle_ids": [
+        "bundle-epoch1-unit-seed17",
+        "bundle-epoch2-unit-seed17"
+      ]
+    }
+  ],
+  "replay_scenarios": [
+    {
+      "scenario_id": "ci-quality-gates-replay",
+      "replay_command": "./scripts/e2e/parser_ci_quality_gates_replay.sh",
+      "expected_pass": true,
+      "expected_outcome": "pass"
+    }
+  ]
+}

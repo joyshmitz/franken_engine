@@ -1,0 +1,151 @@
+{
+  "schema_version": "franken-engine.parser-error-recovery-adversarial-e2e.v1",
+  "contract_version": "1.0.0",
+  "min_success_rate_millionths": 900000,
+  "required_families": [
+    "delimiter.missing_semicolon",
+    "block.truncated_close_brace",
+    "garbled.tail_noise",
+    "execution.high_confidence_recover",
+    "execution.low_confidence_fail_closed"
+  ],
+  "required_log_keys": [
+    "trace_id",
+    "decision_id",
+    "policy_id",
+    "component",
+    "event",
+    "outcome",
+    "error_code"
+  ],
+  "replay_command": "./scripts/e2e/parser_error_recovery_adversarial_replay.sh",
+  "cases": [
+    {
+      "case_id": "missing_semicolon_statement_boundary",
+      "family_id": "delimiter.missing_semicolon",
+      "scenario_id": "adversarial",
+      "mode": "diagnostic",
+      "input_bytes": 128,
+      "max_attempts": 4,
+      "confidence_threshold_millionths": null,
+      "expected_outcome": "recovered",
+      "expected_action": "recover-continue",
+      "expected_success": true,
+      "count_in_success_rate": true,
+      "expect_forced_fail_closed": false,
+      "error": {
+        "offset": 14,
+        "message": "expected ';'",
+        "tokens_before": 9,
+        "tokens_after": 18,
+        "at_statement_boundary": true,
+        "candidates": [";"]
+      }
+    },
+    {
+      "case_id": "truncated_block_resync_skip",
+      "family_id": "block.truncated_close_brace",
+      "scenario_id": "resync",
+      "mode": "diagnostic",
+      "input_bytes": 256,
+      "max_attempts": 4,
+      "confidence_threshold_millionths": null,
+      "expected_outcome": "recovered",
+      "expected_action": "partial-recover",
+      "expected_success": true,
+      "count_in_success_rate": true,
+      "expect_forced_fail_closed": false,
+      "error": {
+        "offset": 41,
+        "message": "unexpected end of input",
+        "tokens_before": 26,
+        "tokens_after": 7,
+        "at_statement_boundary": false,
+        "candidates": ["}", ";"]
+      }
+    },
+    {
+      "case_id": "garbled_tail_unrecoverable",
+      "family_id": "garbled.tail_noise",
+      "scenario_id": "adversarial",
+      "mode": "diagnostic",
+      "input_bytes": 64,
+      "max_attempts": 4,
+      "confidence_threshold_millionths": null,
+      "expected_outcome": "recovery-failed",
+      "expected_action": "fail-strict",
+      "expected_success": false,
+      "count_in_success_rate": false,
+      "expect_forced_fail_closed": false,
+      "error": {
+        "offset": 52,
+        "message": "garbled token stream",
+        "tokens_before": 3,
+        "tokens_after": 0,
+        "at_statement_boundary": false,
+        "candidates": []
+      }
+    },
+    {
+      "case_id": "execution_high_confidence_recover",
+      "family_id": "execution.high_confidence_recover",
+      "scenario_id": "adversarial",
+      "mode": "execution",
+      "input_bytes": 192,
+      "max_attempts": 4,
+      "confidence_threshold_millionths": 700000,
+      "expected_outcome": "recovered",
+      "expected_action": "recover-continue",
+      "expected_success": true,
+      "count_in_success_rate": true,
+      "expect_forced_fail_closed": false,
+      "error": {
+        "offset": 20,
+        "message": "expected ';'",
+        "tokens_before": 10,
+        "tokens_after": 19,
+        "at_statement_boundary": true,
+        "candidates": [";"]
+      }
+    },
+    {
+      "case_id": "execution_low_confidence_fail_closed",
+      "family_id": "execution.low_confidence_fail_closed",
+      "scenario_id": "resync",
+      "mode": "execution",
+      "input_bytes": 384,
+      "max_attempts": 4,
+      "confidence_threshold_millionths": 990000,
+      "expected_outcome": "recovery-failed",
+      "expected_action": "fail-strict",
+      "expected_success": false,
+      "count_in_success_rate": false,
+      "expect_forced_fail_closed": true,
+      "error": {
+        "offset": 73,
+        "message": "ambiguous delimiter",
+        "tokens_before": 14,
+        "tokens_after": 9,
+        "at_statement_boundary": false,
+        "candidates": ["}", "]", ";", ",", ")"]
+      }
+    }
+  ],
+  "replay_scenarios": [
+    {
+      "scenario_id": "adversarial",
+      "command": "PARSER_ERROR_RECOVERY_ADVERSARIAL_SCENARIO=adversarial ./scripts/run_parser_error_recovery_adversarial_e2e.sh test",
+      "expected_outcome": "pass"
+    },
+    {
+      "scenario_id": "resync",
+      "command": "PARSER_ERROR_RECOVERY_ADVERSARIAL_SCENARIO=resync ./scripts/run_parser_error_recovery_adversarial_e2e.sh test",
+      "expected_outcome": "pass"
+    },
+    {
+      "scenario_id": "replay",
+      "command": "PARSER_ERROR_RECOVERY_ADVERSARIAL_SCENARIO=replay ./scripts/run_parser_error_recovery_adversarial_e2e.sh test",
+      "expected_outcome": "pass"
+    }
+  ]
+}
