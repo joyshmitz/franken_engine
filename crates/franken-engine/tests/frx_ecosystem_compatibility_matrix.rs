@@ -83,8 +83,8 @@ fn entry_index(matrix: &EcosystemMatrix) -> BTreeMap<&str, &CompatibilityEntry> 
 #[test]
 fn frx_07_3_doc_contains_required_sections() {
     let path = repo_root().join("docs/FRX_ECOSYSTEM_COMPATIBILITY_MATRIX_V1.md");
-    let doc =
-        fs::read_to_string(&path).unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
+    let doc = fs::read_to_string(&path)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
 
     let required_sections = [
         "# FRX Ecosystem Compatibility Matrix V1",
@@ -137,7 +137,10 @@ fn frx_07_3_covers_required_high_impact_stacks_and_legacy_apis() {
         "portals-refs",
         "context-error-boundaries",
     ] {
-        assert!(entries.contains_key(stack), "missing required stack: {stack}");
+        assert!(
+            entries.contains_key(stack),
+            "missing required stack: {stack}"
+        );
     }
 
     let categories: BTreeSet<_> = matrix
@@ -146,7 +149,10 @@ fn frx_07_3_covers_required_high_impact_stacks_and_legacy_apis() {
         .map(|entry| entry.category.as_str())
         .collect();
     for required in ["state_lib", "routing", "forms", "data_lib", "legacy_api"] {
-        assert!(categories.contains(required), "missing category: {required}");
+        assert!(
+            categories.contains(required),
+            "missing category: {required}"
+        );
     }
 }
 
@@ -204,16 +210,18 @@ fn frx_07_3_known_gaps_are_fail_closed_and_traceable() {
     let matrix = parse_matrix();
     let entries = entry_index(&matrix);
 
-    let allowed_fallbacks: BTreeSet<&str> =
-        ["compatibility_fallback", "deterministic_safe_mode"]
-            .into_iter()
-            .collect();
+    let allowed_fallbacks: BTreeSet<&str> = ["compatibility_fallback", "deterministic_safe_mode"]
+        .into_iter()
+        .collect();
     let allowed_roadmap: BTreeSet<&str> =
         ["investigating", "targeted_patch", "planned", "released"]
             .into_iter()
             .collect();
 
-    assert!(!matrix.known_gaps.is_empty(), "expected at least one known gap");
+    assert!(
+        !matrix.known_gaps.is_empty(),
+        "expected at least one known gap"
+    );
 
     for gap in &matrix.known_gaps {
         let entry = entries
@@ -273,9 +281,10 @@ fn frx_07_3_structured_log_fields_and_operator_commands_are_present() {
     assert_eq!(actual_fields, required_fields);
 
     assert!(
-        matrix.operator_verification.iter().any(|line| {
-            line.contains("run_frx_ecosystem_compatibility_matrix_suite.sh ci")
-        }),
+        matrix
+            .operator_verification
+            .iter()
+            .any(|line| { line.contains("run_frx_ecosystem_compatibility_matrix_suite.sh ci") }),
         "operator verification must include CI gate command"
     );
     assert!(

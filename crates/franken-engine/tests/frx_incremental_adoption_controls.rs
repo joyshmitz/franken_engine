@@ -75,8 +75,8 @@ fn parse_contract() -> AdoptionControlsContract {
 #[test]
 fn frx_07_4_doc_contains_required_sections() {
     let path = repo_root().join("docs/FRX_INCREMENTAL_ADOPTION_CONTROLS_V1.md");
-    let doc =
-        fs::read_to_string(&path).unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
+    let doc = fs::read_to_string(&path)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
 
     let required_sections = [
         "# FRX Incremental Adoption Controls v1",
@@ -106,7 +106,12 @@ fn frx_07_4_contract_is_versioned_and_track_bound() {
     assert_eq!(contract.bead_id, "bd-mjh3.7.4");
     assert_eq!(contract.generated_by, "bd-mjh3.7.4");
     assert_eq!(contract.track.id, "FRX-07.4");
-    assert!(contract.track.name.contains("Incremental Adoption Controls"));
+    assert!(
+        contract
+            .track
+            .name
+            .contains("Incremental Adoption Controls")
+    );
     assert!(contract.generated_at_utc.ends_with('Z'));
 }
 
@@ -115,7 +120,9 @@ fn frx_07_4_rollout_axes_and_policy_toggles_are_complete() {
     let contract = parse_contract();
 
     let axes: BTreeSet<&str> = contract.rollout_axes.iter().map(String::as_str).collect();
-    let expected_axes: BTreeSet<&str> = ["file", "component", "route", "policy"].into_iter().collect();
+    let expected_axes: BTreeSet<&str> = ["file", "component", "route", "policy"]
+        .into_iter()
+        .collect();
     assert_eq!(axes, expected_axes);
 
     for toggle_name in [
@@ -146,7 +153,12 @@ fn frx_07_4_rollout_axes_and_policy_toggles_are_complete() {
 fn frx_07_4_canary_flow_contains_required_promote_and_rollback_paths() {
     let contract = parse_contract();
 
-    let stages: BTreeSet<&str> = contract.canary_flow.stages.iter().map(String::as_str).collect();
+    let stages: BTreeSet<&str> = contract
+        .canary_flow
+        .stages
+        .iter()
+        .map(String::as_str)
+        .collect();
     let expected: BTreeSet<&str> = ["shadow", "canary", "ramp", "active"].into_iter().collect();
     assert_eq!(stages, expected);
 
@@ -166,7 +178,11 @@ fn frx_07_4_canary_flow_contains_required_promote_and_rollback_paths() {
         ("active", "canary", "rollback"),
     ] {
         assert!(
-            transitions.contains(&(expected.0.to_string(), expected.1.to_string(), expected.2.to_string())),
+            transitions.contains(&(
+                expected.0.to_string(),
+                expected.1.to_string(),
+                expected.2.to_string()
+            )),
             "missing canary transition: {} -> {} ({})",
             expected.0,
             expected.1,
@@ -229,9 +245,10 @@ fn frx_07_4_contract_matches_runtime_surfaces_and_logging_requirements() {
     assert_eq!(actual_fields, required_fields);
 
     assert!(
-        contract.operator_verification.iter().any(|line| {
-            line.contains("run_frx_incremental_adoption_controls_suite.sh ci")
-        }),
+        contract
+            .operator_verification
+            .iter()
+            .any(|line| { line.contains("run_frx_incremental_adoption_controls_suite.sh ci") }),
         "operator verification must include CI gate command"
     );
     assert!(
@@ -242,21 +259,38 @@ fn frx_07_4_contract_matches_runtime_surfaces_and_logging_requirements() {
         "operator verification must include replay command"
     );
 
-    let activation = fs::read_to_string(repo_root().join("crates/franken-engine/src/activation_lifecycle.rs"))
-        .expect("activation_lifecycle source must exist");
-    for snippet in ["RolloutPhase", "Canary", "advance_rollout", "pub fn rollback"] {
-        assert!(activation.contains(snippet), "activation_lifecycle missing: {snippet}");
+    let activation =
+        fs::read_to_string(repo_root().join("crates/franken-engine/src/activation_lifecycle.rs"))
+            .expect("activation_lifecycle source must exist");
+    for snippet in [
+        "RolloutPhase",
+        "Canary",
+        "advance_rollout",
+        "pub fn rollback",
+    ] {
+        assert!(
+            activation.contains(snippet),
+            "activation_lifecycle missing: {snippet}"
+        );
     }
 
-    let migration_kit = fs::read_to_string(repo_root().join("crates/franken-engine/src/migration_kit.rs"))
-        .expect("migration_kit source must exist");
+    let migration_kit =
+        fs::read_to_string(repo_root().join("crates/franken-engine/src/migration_kit.rs"))
+            .expect("migration_kit source must exist");
     for snippet in ["MigrationManifest", "CompatibilityReport", "MigrationEvent"] {
-        assert!(migration_kit.contains(snippet), "migration_kit missing: {snippet}");
+        assert!(
+            migration_kit.contains(snippet),
+            "migration_kit missing: {snippet}"
+        );
     }
 
-    let safe_mode = fs::read_to_string(repo_root().join("crates/franken-engine/src/safe_mode_fallback.rs"))
-        .expect("safe_mode_fallback source must exist");
+    let safe_mode =
+        fs::read_to_string(repo_root().join("crates/franken-engine/src/safe_mode_fallback.rs"))
+            .expect("safe_mode_fallback source must exist");
     for snippet in ["SafeModeManager", "FailureType", "SafeModeEvent"] {
-        assert!(safe_mode.contains(snippet), "safe_mode_fallback missing: {snippet}");
+        assert!(
+            safe_mode.contains(snippet),
+            "safe_mode_fallback missing: {snippet}"
+        );
     }
 }
