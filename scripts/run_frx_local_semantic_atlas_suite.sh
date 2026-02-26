@@ -8,6 +8,7 @@ mode="${1:-ci}"
 toolchain="${RUSTUP_TOOLCHAIN:-nightly}"
 target_dir="${CARGO_TARGET_DIR:-${root_dir}/target/rch/frx_local_semantic_atlas}"
 artifact_root="${FRX_LOCAL_SEMANTIC_ATLAS_ARTIFACT_ROOT:-artifacts/frx_local_semantic_atlas}"
+rch_timeout_seconds="${RCH_TIMEOUT_SECONDS:-1800}"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 run_dir="${artifact_root}/${timestamp}"
 manifest_path="${run_dir}/run_manifest.json"
@@ -29,7 +30,8 @@ if ! command -v rch >/dev/null 2>&1; then
 fi
 
 run_rch() {
-  rch exec -- env "RUSTUP_TOOLCHAIN=${toolchain}" "CARGO_TARGET_DIR=${target_dir}" "$@"
+  timeout "${rch_timeout_seconds}" \
+    rch exec -q -- env "RUSTUP_TOOLCHAIN=${toolchain}" "CARGO_TARGET_DIR=${target_dir}" "$@"
 }
 
 declare -a commands_run=()
