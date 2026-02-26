@@ -833,6 +833,52 @@ Artifacts are written under:
 - `artifacts/frx_track_e_verification_fuzz_formal_coverage_sprint/<timestamp>/events.jsonl`
 - `artifacts/frx_track_e_verification_fuzz_formal_coverage_sprint/<timestamp>/commands.txt`
 
+## FRX Ecosystem Compatibility Matrix Gate
+
+`bd-mjh3.7.3` ships a deterministic gate for ecosystem compatibility matrix
+validation across high-impact React stacks (state/routing/forms/data) and
+legacy API surfaces.
+
+```bash
+# FRX ecosystem compatibility matrix gate (rch-backed check + test + clippy)
+./scripts/run_frx_ecosystem_compatibility_matrix_suite.sh ci
+```
+
+Deterministic replay wrapper:
+
+```bash
+./scripts/e2e/frx_ecosystem_compatibility_matrix_replay.sh ci
+```
+
+Artifacts are written under:
+
+- `artifacts/frx_ecosystem_compatibility_matrix/<timestamp>/run_manifest.json`
+- `artifacts/frx_ecosystem_compatibility_matrix/<timestamp>/events.jsonl`
+- `artifacts/frx_ecosystem_compatibility_matrix/<timestamp>/commands.txt`
+
+## FRX Incremental Adoption Controls Gate
+
+`bd-mjh3.7.4` ships a deterministic gate for incremental opt-in controls,
+policy-based opt-out/force-fallback toggles, canary/rollback flow validation,
+and actionable migration diagnostics.
+
+```bash
+# FRX incremental adoption controls gate (rch-backed check + test + clippy)
+./scripts/run_frx_incremental_adoption_controls_suite.sh ci
+```
+
+Deterministic replay wrapper:
+
+```bash
+./scripts/e2e/frx_incremental_adoption_controls_replay.sh ci
+```
+
+Artifacts are written under:
+
+- `artifacts/frx_incremental_adoption_controls/<timestamp>/run_manifest.json`
+- `artifacts/frx_incremental_adoption_controls/<timestamp>/events.jsonl`
+- `artifacts/frx_incremental_adoption_controls/<timestamp>/commands.txt`
+
 ## Phase-A Exit Gate
 
 `bd-1csl.1` adds a deterministic Phase-A gate runner that checks critical
