@@ -767,6 +767,28 @@ Artifacts are written under:
 - `artifacts/frx_adoption_release_lane_charter/<timestamp>/events.jsonl`
 - `artifacts/frx_adoption_release_lane_charter/<timestamp>/commands.txt`
 
+## FRX Local Semantic Atlas Gate
+
+`bd-mjh3.14.1` ships a deterministic gate for local semantic atlas contracts,
+fixture/trace linkage, and blocking quality-debt enforcement.
+
+```bash
+# FRX local semantic atlas gate (rch-backed check + test + clippy)
+./scripts/run_frx_local_semantic_atlas_suite.sh ci
+```
+
+Deterministic replay wrapper:
+
+```bash
+./scripts/e2e/frx_local_semantic_atlas_replay.sh
+```
+
+Artifacts are written under:
+
+- `artifacts/frx_local_semantic_atlas/<timestamp>/run_manifest.json`
+- `artifacts/frx_local_semantic_atlas/<timestamp>/events.jsonl`
+- `artifacts/frx_local_semantic_atlas/<timestamp>/commands.txt`
+
 ## FRX Track D WASM Lane + Hybrid Router Sprint Gate
 
 `bd-mjh3.11.4` ships a deterministic gate for Track D WASM lane + hybrid router
