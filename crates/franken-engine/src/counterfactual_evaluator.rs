@@ -260,10 +260,7 @@ impl fmt::Display for CounterfactualError {
             Self::ZeroEffectiveSamples => {
                 write!(f, "zero effective samples after propensity clipping")
             }
-            Self::ModelPredictionLengthMismatch {
-                batch,
-                predictions,
-            } => {
+            Self::ModelPredictionLengthMismatch { batch, predictions } => {
                 write!(
                     f,
                     "model prediction length {predictions} != batch length {batch}"
@@ -326,7 +323,10 @@ pub struct CounterfactualEvaluator {
 
 impl CounterfactualEvaluator {
     /// Create an evaluator with the given configuration and baseline.
-    pub fn new(config: EvaluatorConfig, baseline: BaselinePolicy) -> Result<Self, CounterfactualError> {
+    pub fn new(
+        config: EvaluatorConfig,
+        baseline: BaselinePolicy,
+    ) -> Result<Self, CounterfactualError> {
         if config.confidence_millionths <= 0 || config.confidence_millionths >= MILLION {
             return Err(CounterfactualError::InvalidConfidence {
                 value: config.confidence_millionths,
@@ -507,10 +507,7 @@ impl CounterfactualEvaluator {
         }
         for (i, &p) in target.target_propensities_millionths.iter().enumerate() {
             if p < 0 || p > MILLION {
-                return Err(CounterfactualError::PropensityOutOfRange {
-                    index: i,
-                    value: p,
-                });
+                return Err(CounterfactualError::PropensityOutOfRange { index: i, value: p });
             }
         }
         // Validate model predictions length if present
@@ -604,9 +601,7 @@ impl CounterfactualEvaluator {
             return 0;
         }
 
-        let model_preds = target
-            .target_model_predictions_millionths
-            .as_ref();
+        let model_preds = target.target_model_predictions_millionths.as_ref();
 
         let sum: i128 = batch
             .transitions
@@ -778,7 +773,11 @@ impl CounterfactualEvaluator {
             let ess = {
                 let wsum: i128 = items.iter().map(|&(w, _)| w as i128).sum();
                 let wsq: i128 = items.iter().map(|&(w, _)| (w as i128) * (w as i128)).sum();
-                if wsq == 0 { 0u64 } else { ((wsum * wsum) / wsq).max(0) as u64 }
+                if wsq == 0 {
+                    0u64
+                } else {
+                    ((wsum * wsum) / wsq).max(0) as u64
+                }
             };
 
             let hw = hw.min(i64::MAX as i128) as i64;
@@ -912,8 +911,8 @@ fn z_multiplier(confidence_millionths: i64) -> i64 {
         let (c0, z0) = pair[0];
         let (c1, z1) = pair[1];
         if confidence_millionths >= c0 && confidence_millionths <= c1 {
-            let frac = ((confidence_millionths - c0) as i128 * (z1 - z0) as i128)
-                / (c1 - c0) as i128;
+            let frac =
+                ((confidence_millionths - c0) as i128 * (z1 - z0) as i128) / (c1 - c0) as i128;
             return z0 + frac as i64;
         }
     }
@@ -1045,7 +1044,10 @@ mod tests {
         let batch = make_batch(5, 500_000, 500_000);
         let target = make_target(3, 500_000);
         let err = e.evaluate(&batch, &target).unwrap_err();
-        assert!(matches!(err, CounterfactualError::PropensityLengthMismatch { .. }));
+        assert!(matches!(
+            err,
+            CounterfactualError::PropensityLengthMismatch { .. }
+        ));
     }
 
     #[test]
@@ -1057,7 +1059,10 @@ mod tests {
         let err = e.evaluate(&batch, &target).unwrap_err();
         assert!(matches!(
             err,
-            CounterfactualError::PropensityOutOfRange { index: 1, value: -1 }
+            CounterfactualError::PropensityOutOfRange {
+                index: 1,
+                value: -1
+            }
         ));
     }
 
@@ -1352,10 +1357,7 @@ mod tests {
     fn compare_policies_returns_all() {
         let mut e = CounterfactualEvaluator::default_safe_mode();
         let batch = make_batch(20, 500_000, 500_000);
-        let candidates = vec![
-            make_target(20, 300_000),
-            make_target(20, 700_000),
-        ];
+        let candidates = vec![make_target(20, 300_000), make_target(20, 700_000)];
         let results = compare_policies(&mut e, &batch, &candidates).unwrap();
         assert_eq!(results.len(), 2);
     }
@@ -1755,7 +1757,9 @@ mod tests {
                 epoch: SecurityEpoch::from_raw(1),
                 tick: i,
                 regime,
-                action_taken: LaneAction::RouteTo(LaneId("fast".to_string())),
+                action_taken: LaneAction::RouteTo(crate::runtime_decision_theory::LaneId(
+                    "fast".to_string(),
+                )),
                 propensity_millionths: 500_000,
                 reward_millionths: if i < 10 { 800_000 } else { 200_000 },
                 model_prediction_millionths: None,

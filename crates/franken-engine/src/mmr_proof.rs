@@ -1356,9 +1356,7 @@ mod tests {
                 stream_length: 0,
             },
             ProofError::EmptyStream,
-            ProofError::InvalidProof {
-                reason: "x".into(),
-            },
+            ProofError::InvalidProof { reason: "x".into() },
             ProofError::RootMismatch {
                 expected: ContentHash::compute(b"a"),
                 computed: ContentHash::compute(b"b"),

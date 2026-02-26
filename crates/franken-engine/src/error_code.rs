@@ -1936,10 +1936,7 @@ mod tests {
         let err = IdempotencyError::EntryNotFound {
             key_hex: "aabb".to_string(),
         };
-        assert_eq!(
-            err.error_code(),
-            FrankenErrorCode::IdempotencyWorkflowError
-        );
+        assert_eq!(err.error_code(), FrankenErrorCode::IdempotencyWorkflowError);
     }
 
     #[test]

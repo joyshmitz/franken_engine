@@ -1782,12 +1782,7 @@ fn bad_fn(data: &[u8]) {
             reason: "test".to_string(),
             line: 0,
         });
-        assert!(!reg.is_exempted(
-            "ext_host::b",
-            ViolationKind::ForbiddenPattern,
-            "std::fs",
-            1,
-        ));
+        assert!(!reg.is_exempted("ext_host::b", ViolationKind::ForbiddenPattern, "std::fs", 1,));
     }
 
     // ── enrichment: GuardConfig serde with custom fields ────────────────
@@ -1834,7 +1829,10 @@ fn bad_fn(data: &[u8]) {
 
     #[test]
     fn extract_fn_name_async_fn() {
-        assert_eq!(extract_fn_name("async fn process(cx: &Cx)"), Some("process"));
+        assert_eq!(
+            extract_fn_name("async fn process(cx: &Cx)"),
+            Some("process")
+        );
     }
 
     #[test]

@@ -3314,10 +3314,12 @@ mod tests {
         }];
         let config = MigrationConfig::default();
         let result = infer_capabilities(&files, &config).unwrap();
-        assert!(result
-            .inferred_capabilities
-            .iter()
-            .any(|c| c.kind == InferredCapabilityKind::TimerAccess));
+        assert!(
+            result
+                .inferred_capabilities
+                .iter()
+                .any(|c| c.kind == InferredCapabilityKind::TimerAccess)
+        );
         assert!(result.minimum_capability_set.contains("cap:timer"));
     }
 
@@ -3329,10 +3331,12 @@ mod tests {
         }];
         let config = MigrationConfig::default();
         let result = infer_capabilities(&files, &config).unwrap();
-        assert!(result
-            .inferred_capabilities
-            .iter()
-            .any(|c| c.kind == InferredCapabilityKind::TimerAccess));
+        assert!(
+            result
+                .inferred_capabilities
+                .iter()
+                .any(|c| c.kind == InferredCapabilityKind::TimerAccess)
+        );
     }
 
     #[test]
@@ -3343,10 +3347,12 @@ mod tests {
         }];
         let config = MigrationConfig::default();
         let result = infer_capabilities(&files, &config).unwrap();
-        assert!(result
-            .inferred_capabilities
-            .iter()
-            .any(|c| c.kind == InferredCapabilityKind::DynamicImport));
+        assert!(
+            result
+                .inferred_capabilities
+                .iter()
+                .any(|c| c.kind == InferredCapabilityKind::DynamicImport)
+        );
         assert!(result.minimum_capability_set.contains("cap:import:dynamic"));
     }
 
@@ -3358,10 +3364,12 @@ mod tests {
         }];
         let config = MigrationConfig::default();
         let result = infer_capabilities(&files, &config).unwrap();
-        assert!(result
-            .inferred_capabilities
-            .iter()
-            .any(|c| c.kind == InferredCapabilityKind::NativeAddon));
+        assert!(
+            result
+                .inferred_capabilities
+                .iter()
+                .any(|c| c.kind == InferredCapabilityKind::NativeAddon)
+        );
     }
 
     #[test]
@@ -3372,10 +3380,12 @@ mod tests {
         }];
         let config = MigrationConfig::default();
         let result = infer_capabilities(&files, &config).unwrap();
-        assert!(result
-            .inferred_capabilities
-            .iter()
-            .any(|c| c.kind == InferredCapabilityKind::NativeAddon));
+        assert!(
+            result
+                .inferred_capabilities
+                .iter()
+                .any(|c| c.kind == InferredCapabilityKind::NativeAddon)
+        );
     }
 
     #[test]
@@ -3386,10 +3396,12 @@ mod tests {
         }];
         let config = MigrationConfig::default();
         let result = infer_capabilities(&files, &config).unwrap();
-        assert!(result
-            .inferred_capabilities
-            .iter()
-            .any(|c| c.kind == InferredCapabilityKind::WorkerThreads));
+        assert!(
+            result
+                .inferred_capabilities
+                .iter()
+                .any(|c| c.kind == InferredCapabilityKind::WorkerThreads)
+        );
         assert!(result.minimum_capability_set.contains("cap:worker"));
     }
 
@@ -3421,10 +3433,12 @@ mod tests {
         }];
         let config = MigrationConfig::default();
         let result = infer_capabilities(&files, &config).unwrap();
-        assert!(result
-            .inferred_capabilities
-            .iter()
-            .any(|c| c.kind == InferredCapabilityKind::WasmExecution));
+        assert!(
+            result
+                .inferred_capabilities
+                .iter()
+                .any(|c| c.kind == InferredCapabilityKind::WasmExecution)
+        );
         assert!(result.minimum_capability_set.contains("cap:wasm"));
     }
 
@@ -3436,10 +3450,12 @@ mod tests {
         }];
         let config = MigrationConfig::default();
         let result = infer_capabilities(&files, &config).unwrap();
-        assert!(result
-            .inferred_capabilities
-            .iter()
-            .any(|c| c.kind == InferredCapabilityKind::SharedMemory));
+        assert!(
+            result
+                .inferred_capabilities
+                .iter()
+                .any(|c| c.kind == InferredCapabilityKind::SharedMemory)
+        );
         assert!(result.minimum_capability_set.contains("cap:shared-memory"));
     }
 
@@ -3451,10 +3467,12 @@ mod tests {
         }];
         let config = MigrationConfig::default();
         let result = infer_capabilities(&files, &config).unwrap();
-        assert!(result
-            .inferred_capabilities
-            .iter()
-            .any(|c| c.kind == InferredCapabilityKind::FileSystem));
+        assert!(
+            result
+                .inferred_capabilities
+                .iter()
+                .any(|c| c.kind == InferredCapabilityKind::FileSystem)
+        );
     }
 
     #[test]
@@ -3465,10 +3483,12 @@ mod tests {
         }];
         let config = MigrationConfig::default();
         let result = infer_capabilities(&files, &config).unwrap();
-        assert!(result
-            .inferred_capabilities
-            .iter()
-            .any(|c| c.kind == InferredCapabilityKind::CryptoAccess));
+        assert!(
+            result
+                .inferred_capabilities
+                .iter()
+                .any(|c| c.kind == InferredCapabilityKind::CryptoAccess)
+        );
     }
 
     #[test]
@@ -3543,10 +3563,7 @@ mod tests {
             report.divergences[0].kind,
             DivergenceKind::ErrorBehaviorDifference
         );
-        assert_eq!(
-            report.divergences[0].severity,
-            DivergenceSeverity::High
-        );
+        assert_eq!(report.divergences[0].severity, DivergenceSeverity::High);
     }
 
     #[test]
@@ -3567,10 +3584,7 @@ mod tests {
             report.divergences[0].kind,
             DivergenceKind::SemanticDifference
         );
-        assert_eq!(
-            report.divergences[0].severity,
-            DivergenceSeverity::Critical
-        );
+        assert_eq!(report.divergences[0].severity, DivergenceSeverity::Critical);
     }
 
     #[test]
@@ -3701,7 +3715,9 @@ mod tests {
         assert_eq!(steps[0].effort, RemediationEffort::Significant);
         assert_eq!(
             steps[0].priority_score_millionths,
-            DivergenceSeverity::Critical.penalty_millionths().saturating_mul(5)
+            DivergenceSeverity::Critical
+                .penalty_millionths()
+                .saturating_mul(5)
         );
     }
 
@@ -4213,19 +4229,63 @@ mod tests {
     #[test]
     fn error_code_all_13_variants_unique() {
         let codes: Vec<&str> = vec![
-            MigrationKitError::AnalysisFailed { detail: String::new() }.code(),
-            MigrationKitError::ManifestGenerationFailed { detail: String::new() }.code(),
-            MigrationKitError::CapabilityInferenceFailed { detail: String::new() }.code(),
-            MigrationKitError::BehaviorValidationFailed { detail: String::new() }.code(),
-            MigrationKitError::RemediationUnavailable { detail: String::new() }.code(),
-            MigrationKitError::InvalidPackageJson { detail: String::new() }.code(),
-            MigrationKitError::UnsupportedApiDetected { api: String::new(), detail: String::new() }.code(),
-            MigrationKitError::IncompatibleDependency { name: String::new(), reason: String::new() }.code(),
-            MigrationKitError::LockstepMismatch { runtime: String::new(), detail: String::new() }.code(),
-            MigrationKitError::ReportGenerationFailed { detail: String::new() }.code(),
-            MigrationKitError::DeterminismViolation { detail: String::new() }.code(),
-            MigrationKitError::TooManyEntries { kind: String::new(), count: 0, max: 0 }.code(),
-            MigrationKitError::InternalError { detail: String::new() }.code(),
+            MigrationKitError::AnalysisFailed {
+                detail: String::new(),
+            }
+            .code(),
+            MigrationKitError::ManifestGenerationFailed {
+                detail: String::new(),
+            }
+            .code(),
+            MigrationKitError::CapabilityInferenceFailed {
+                detail: String::new(),
+            }
+            .code(),
+            MigrationKitError::BehaviorValidationFailed {
+                detail: String::new(),
+            }
+            .code(),
+            MigrationKitError::RemediationUnavailable {
+                detail: String::new(),
+            }
+            .code(),
+            MigrationKitError::InvalidPackageJson {
+                detail: String::new(),
+            }
+            .code(),
+            MigrationKitError::UnsupportedApiDetected {
+                api: String::new(),
+                detail: String::new(),
+            }
+            .code(),
+            MigrationKitError::IncompatibleDependency {
+                name: String::new(),
+                reason: String::new(),
+            }
+            .code(),
+            MigrationKitError::LockstepMismatch {
+                runtime: String::new(),
+                detail: String::new(),
+            }
+            .code(),
+            MigrationKitError::ReportGenerationFailed {
+                detail: String::new(),
+            }
+            .code(),
+            MigrationKitError::DeterminismViolation {
+                detail: String::new(),
+            }
+            .code(),
+            MigrationKitError::TooManyEntries {
+                kind: String::new(),
+                count: 0,
+                max: 0,
+            }
+            .code(),
+            MigrationKitError::InternalError {
+                detail: String::new(),
+            }
+            .code(),
         ];
         let unique: BTreeSet<&str> = codes.iter().copied().collect();
         assert_eq!(unique.len(), 13, "all 13 error variants have unique codes");
@@ -4240,12 +4300,25 @@ mod tests {
             MigrationKitError::BehaviorValidationFailed { detail: "d".into() },
             MigrationKitError::RemediationUnavailable { detail: "e".into() },
             MigrationKitError::InvalidPackageJson { detail: "f".into() },
-            MigrationKitError::UnsupportedApiDetected { api: "g".into(), detail: "h".into() },
-            MigrationKitError::IncompatibleDependency { name: "i".into(), reason: "j".into() },
-            MigrationKitError::LockstepMismatch { runtime: "k".into(), detail: "l".into() },
+            MigrationKitError::UnsupportedApiDetected {
+                api: "g".into(),
+                detail: "h".into(),
+            },
+            MigrationKitError::IncompatibleDependency {
+                name: "i".into(),
+                reason: "j".into(),
+            },
+            MigrationKitError::LockstepMismatch {
+                runtime: "k".into(),
+                detail: "l".into(),
+            },
             MigrationKitError::ReportGenerationFailed { detail: "m".into() },
             MigrationKitError::DeterminismViolation { detail: "n".into() },
-            MigrationKitError::TooManyEntries { kind: "o".into(), count: 1, max: 2 },
+            MigrationKitError::TooManyEntries {
+                kind: "o".into(),
+                count: 1,
+                max: 2,
+            },
             MigrationKitError::InternalError { detail: "p".into() },
         ];
         for v in &variants {
@@ -4261,27 +4334,43 @@ mod tests {
 
     #[test]
     fn divergence_severity_penalty_ordering() {
-        assert!(DivergenceSeverity::Critical.penalty_millionths()
-            > DivergenceSeverity::High.penalty_millionths());
-        assert!(DivergenceSeverity::High.penalty_millionths()
-            > DivergenceSeverity::Medium.penalty_millionths());
-        assert!(DivergenceSeverity::Medium.penalty_millionths()
-            > DivergenceSeverity::Low.penalty_millionths());
-        assert!(DivergenceSeverity::Low.penalty_millionths()
-            > DivergenceSeverity::Informational.penalty_millionths());
+        assert!(
+            DivergenceSeverity::Critical.penalty_millionths()
+                > DivergenceSeverity::High.penalty_millionths()
+        );
+        assert!(
+            DivergenceSeverity::High.penalty_millionths()
+                > DivergenceSeverity::Medium.penalty_millionths()
+        );
+        assert!(
+            DivergenceSeverity::Medium.penalty_millionths()
+                > DivergenceSeverity::Low.penalty_millionths()
+        );
+        assert!(
+            DivergenceSeverity::Low.penalty_millionths()
+                > DivergenceSeverity::Informational.penalty_millionths()
+        );
         assert_eq!(DivergenceSeverity::Informational.penalty_millionths(), 0);
     }
 
     #[test]
     fn remediation_effort_weight_ordering() {
-        assert!(RemediationEffort::Significant.weight_millionths()
-            > RemediationEffort::High.weight_millionths());
-        assert!(RemediationEffort::High.weight_millionths()
-            > RemediationEffort::Medium.weight_millionths());
-        assert!(RemediationEffort::Medium.weight_millionths()
-            > RemediationEffort::Low.weight_millionths());
-        assert!(RemediationEffort::Low.weight_millionths()
-            > RemediationEffort::Trivial.weight_millionths());
+        assert!(
+            RemediationEffort::Significant.weight_millionths()
+                > RemediationEffort::High.weight_millionths()
+        );
+        assert!(
+            RemediationEffort::High.weight_millionths()
+                > RemediationEffort::Medium.weight_millionths()
+        );
+        assert!(
+            RemediationEffort::Medium.weight_millionths()
+                > RemediationEffort::Low.weight_millionths()
+        );
+        assert!(
+            RemediationEffort::Low.weight_millionths()
+                > RemediationEffort::Trivial.weight_millionths()
+        );
     }
 
     #[test]
@@ -4306,7 +4395,11 @@ mod tests {
             assert!(name.starts_with("cap:"));
             names.insert(name);
         }
-        assert_eq!(names.len(), 12, "all 12 capability kinds map to unique names");
+        assert_eq!(
+            names.len(),
+            12,
+            "all 12 capability kinds map to unique names"
+        );
     }
 
     #[test]
@@ -4317,13 +4410,22 @@ mod tests {
 
     #[test]
     fn api_support_level_compatibility_weight_ordering() {
-        assert!(ApiSupportLevel::FullySupported.compatibility_weight_millionths()
-            > ApiSupportLevel::PartiallySupported.compatibility_weight_millionths());
-        assert!(ApiSupportLevel::PartiallySupported.compatibility_weight_millionths()
-            > ApiSupportLevel::Deprecated.compatibility_weight_millionths());
-        assert!(ApiSupportLevel::Deprecated.compatibility_weight_millionths()
-            > ApiSupportLevel::RequiresPolyfill.compatibility_weight_millionths());
-        assert_eq!(ApiSupportLevel::Unsupported.compatibility_weight_millionths(), 0);
+        assert!(
+            ApiSupportLevel::FullySupported.compatibility_weight_millionths()
+                > ApiSupportLevel::PartiallySupported.compatibility_weight_millionths()
+        );
+        assert!(
+            ApiSupportLevel::PartiallySupported.compatibility_weight_millionths()
+                > ApiSupportLevel::Deprecated.compatibility_weight_millionths()
+        );
+        assert!(
+            ApiSupportLevel::Deprecated.compatibility_weight_millionths()
+                > ApiSupportLevel::RequiresPolyfill.compatibility_weight_millionths()
+        );
+        assert_eq!(
+            ApiSupportLevel::Unsupported.compatibility_weight_millionths(),
+            0
+        );
     }
 
     #[test]
