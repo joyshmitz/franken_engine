@@ -3,8 +3,8 @@
 use std::{collections::BTreeMap, fs, path::PathBuf};
 
 use frankenengine_engine::hybrid_lane_router::{
-    ChangePointConfig, ConformalConfig, DemotionReason, HybridLaneRouter, LaneChoice,
-    LaneObservation, RiskBudget, RouterConfig, RoutingPolicy,
+    ChangePointConfig, ChangePointMonitor, ConformalConfig, ConformalState, DemotionReason,
+    HybridLaneRouter, LaneChoice, LaneObservation, RiskBudget, RouterConfig, RoutingPolicy,
 };
 use frankenengine_engine::runtime_decision_core::{
     FallbackReason, LaneId, RegimeEstimate, RoutingDecisionInput, RuntimeDecisionCore,
@@ -244,9 +244,16 @@ fn frx_15_3_hybrid_router_regret_budget_breach_demotes_deterministically() {
     };
 
     let mut router = HybridLaneRouter::new(config);
+    router.conformal = ConformalState::new(router.config.conformal.clone());
+    router.change_point = ChangePointMonitor::new(router.config.change_point.clone());
     router
         .promote_to_adaptive()
         .expect("router should promote to adaptive");
+    assert_eq!(
+        router.policy,
+        RoutingPolicy::Adaptive,
+        "router must be adaptive before evaluating change-point trigger"
+    );
 
     let trace = router.observe(
         LaneChoice::Js,
@@ -282,6 +289,8 @@ fn frx_15_3_hybrid_router_change_point_breach_demotes_deterministically() {
     };
 
     let mut router = HybridLaneRouter::new(config);
+    router.conformal = ConformalState::new(router.config.conformal.clone());
+    router.change_point = ChangePointMonitor::new(router.config.change_point.clone());
     router
         .promote_to_adaptive()
         .expect("router should promote to adaptive");
@@ -297,8 +306,14 @@ fn frx_15_3_hybrid_router_change_point_breach_demotes_deterministically() {
             trace.demotion_reason,
             Some(DemotionReason::ChangePointDetected { .. })
         ),
-        "expected change-point demotion, got {:?}",
-        trace.demotion_reason
+        "expected change-point demotion, got {:?}; policy={:?}; observation_count={}; cusum_upper={}; cusum_lower={}; threshold={}; min_observations={}",
+        trace.demotion_reason,
+        router.policy,
+        router.change_point.observation_count,
+        router.change_point.cusum_upper_millionths,
+        router.change_point.cusum_lower_millionths,
+        router.change_point.config.threshold_millionths,
+        router.change_point.config.min_observations
     );
     assert_eq!(router.policy, RoutingPolicy::Conservative);
 }
@@ -324,6 +339,8 @@ fn frx_15_3_deterministic_sequence_replays_identically() {
         };
 
         let mut router = HybridLaneRouter::new(config);
+        router.conformal = ConformalState::new(router.config.conformal.clone());
+        router.change_point = ChangePointMonitor::new(router.config.change_point.clone());
         router
             .promote_to_adaptive()
             .expect("router should promote to adaptive");
