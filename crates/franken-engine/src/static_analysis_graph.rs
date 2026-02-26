@@ -2377,4 +2377,341 @@ mod tests {
         assert!(trans.contains("fs_read"));
         assert_eq!(trans.len(), 2);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: AnalysisError display — remaining variants
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn analysis_error_display_edge_limit() {
+        let e = AnalysisError::EdgeLimitExceeded {
+            count: 500_001,
+            max: 500_000,
+        };
+        let s = format!("{e}");
+        assert!(s.contains("edge limit"));
+        assert!(s.contains("500001"));
+        assert!(s.contains("500000"));
+    }
+
+    #[test]
+    fn analysis_error_display_hook_slot_limit() {
+        let e = AnalysisError::HookSlotLimitExceeded {
+            component: ComponentId::new("BigComp"),
+            count: 300,
+            max: 256,
+        };
+        let s = format!("{e}");
+        assert!(s.contains("BigComp"));
+        assert!(s.contains("300"));
+        assert!(s.contains("256"));
+    }
+
+    #[test]
+    fn analysis_error_display_duplicate_edge() {
+        let e = AnalysisError::DuplicateEdge(AnalysisEdgeId::new("e1"));
+        assert_eq!(format!("{e}"), "duplicate edge: e1");
+    }
+
+    #[test]
+    fn analysis_error_display_unknown_component() {
+        let e = AnalysisError::UnknownComponent(ComponentId::new("Missing"));
+        assert_eq!(format!("{e}"), "unknown component: Missing");
+    }
+
+    #[test]
+    fn analysis_error_display_cycle_detected() {
+        let report = CycleReport {
+            cycle: vec![ComponentId::new("A"), ComponentId::new("B")],
+            edge_kinds: vec![EdgeKind::RendersChild],
+            is_data_cycle: false,
+        };
+        let e = AnalysisError::CycleDetected(report);
+        let s = format!("{e}");
+        assert!(s.contains("cycle detected"));
+        assert!(s.contains("2 components"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: AnalysisEventKind serde roundtrip
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn analysis_event_kind_serde_roundtrip() {
+        let variants = [
+            AnalysisEventKind::NodeAdded,
+            AnalysisEventKind::EdgeAdded,
+            AnalysisEventKind::ComponentRegistered,
+            AnalysisEventKind::CycleDetected,
+            AnalysisEventKind::CapabilityBoundaryComputed,
+            AnalysisEventKind::AnalysisFinalized,
+        ];
+        for kind in &variants {
+            let json = serde_json::to_string(kind).unwrap();
+            let back: AnalysisEventKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(*kind, back);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: AnalysisError serde — more variants
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn analysis_error_serde_all_variants() {
+        let report = CycleReport {
+            cycle: vec![ComponentId::new("X"), ComponentId::new("Y")],
+            edge_kinds: vec![EdgeKind::RendersChild],
+            is_data_cycle: true,
+        };
+        let variants: Vec<AnalysisError> = vec![
+            AnalysisError::NodeLimitExceeded {
+                count: 100_001,
+                max: 100_000,
+            },
+            AnalysisError::EdgeLimitExceeded {
+                count: 500_001,
+                max: 500_000,
+            },
+            AnalysisError::DuplicateNode(AnalysisNodeId::new("dup_n")),
+            AnalysisError::DuplicateEdge(AnalysisEdgeId::new("dup_e")),
+            AnalysisError::UnknownNode(AnalysisNodeId::new("unk_n")),
+            AnalysisError::DuplicateComponent(ComponentId::new("DupComp")),
+            AnalysisError::UnknownComponent(ComponentId::new("UnkComp")),
+            AnalysisError::CycleDetected(report),
+        ];
+        for err in &variants {
+            let json = serde_json::to_string(err).unwrap();
+            let back: AnalysisError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*err, back);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: DependencyPath serde roundtrip
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn dependency_path_serde_roundtrip() {
+        let path = DependencyPath {
+            components: vec![ComponentId::new("A"), ComponentId::new("B")],
+            total_weight_millionths: 2 * MILLION,
+            edge_kinds: vec![EdgeKind::RendersChild],
+        };
+        let json = serde_json::to_string(&path).unwrap();
+        let back: DependencyPath = serde_json::from_str(&json).unwrap();
+        assert_eq!(path, back);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: Display uniqueness for all enum variants
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn node_kind_display_all_unique() {
+        let variants = [
+            NodeKind::Component,
+            NodeKind::HookSlot,
+            NodeKind::EffectSite,
+            NodeKind::DataSource,
+            NodeKind::DataSink,
+            NodeKind::ModuleBoundary,
+            NodeKind::CapabilityGate,
+            NodeKind::ScopeBoundary,
+        ];
+        let set: BTreeSet<String> = variants.iter().map(|v| v.to_string()).collect();
+        assert_eq!(set.len(), variants.len());
+    }
+
+    #[test]
+    fn edge_kind_display_all_unique() {
+        let variants = [
+            EdgeKind::RendersChild,
+            EdgeKind::PropFlow,
+            EdgeKind::HookDataFlow,
+            EdgeKind::EffectDependency,
+            EdgeKind::ImportDependency,
+            EdgeKind::ContextFlow,
+            EdgeKind::CallbackFlow,
+            EdgeKind::CapabilityRequirement,
+            EdgeKind::ScopeContainment,
+            EdgeKind::StateUpdateTrigger,
+        ];
+        let set: BTreeSet<String> = variants.iter().map(|v| v.to_string()).collect();
+        assert_eq!(set.len(), variants.len());
+    }
+
+    #[test]
+    fn hook_kind_display_all_unique() {
+        let variants = [
+            HookKind::State,
+            HookKind::Effect,
+            HookKind::LayoutEffect,
+            HookKind::Memo,
+            HookKind::Callback,
+            HookKind::Ref,
+            HookKind::Context,
+            HookKind::ImperativeHandle,
+            HookKind::Custom,
+        ];
+        let set: BTreeSet<String> = variants.iter().map(|v| v.to_string()).collect();
+        assert_eq!(set.len(), variants.len());
+    }
+
+    #[test]
+    fn analysis_event_kind_display_all_unique() {
+        let variants = [
+            AnalysisEventKind::NodeAdded,
+            AnalysisEventKind::EdgeAdded,
+            AnalysisEventKind::ComponentRegistered,
+            AnalysisEventKind::CycleDetected,
+            AnalysisEventKind::CapabilityBoundaryComputed,
+            AnalysisEventKind::AnalysisFinalized,
+        ];
+        let set: BTreeSet<String> = variants.iter().map(|v| v.to_string()).collect();
+        assert_eq!(set.len(), variants.len());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: HookSlot Context and Custom kind classification
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn hook_slot_context_is_neutral() {
+        let slot = make_hook_slot(7, HookKind::Context);
+        assert!(!slot.is_stateful());
+        assert!(!slot.has_side_effects());
+        assert!(!slot.is_memoized());
+    }
+
+    #[test]
+    fn hook_slot_custom_is_neutral() {
+        let slot = make_hook_slot(8, HookKind::Custom);
+        assert!(!slot.is_stateful());
+        assert!(!slot.has_side_effects());
+        assert!(!slot.is_memoized());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: cycles() accessor after detect_cycles
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn graph_cycles_accessor_after_detection() {
+        let mut g = StaticAnalysisGraph::new();
+        g.register_component(make_component("A", &["B"])).unwrap();
+        g.register_component(make_component("B", &["A"])).unwrap();
+        assert!(g.cycles().is_empty()); // before detection
+        let detected = g.detect_cycles();
+        assert!(!detected.is_empty());
+        assert_eq!(g.cycles().len(), detected.len());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: outgoing/incoming edges for isolated node
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn graph_outgoing_edges_isolated_node() {
+        let mut g = StaticAnalysisGraph::new();
+        g.add_node(make_node("isolated", NodeKind::Component))
+            .unwrap();
+        let out = g.outgoing_edges(&AnalysisNodeId::new("isolated"));
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn graph_incoming_edges_isolated_node() {
+        let mut g = StaticAnalysisGraph::new();
+        g.add_node(make_node("isolated", NodeKind::Component))
+            .unwrap();
+        let inc = g.incoming_edges(&AnalysisNodeId::new("isolated"));
+        assert!(inc.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: get_node/get_edge/get_component for nonexistent keys
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn graph_get_nonexistent_returns_none() {
+        let g = StaticAnalysisGraph::new();
+        assert!(g.get_node(&AnalysisNodeId::new("nope")).is_none());
+        assert!(g.get_edge(&AnalysisEdgeId::new("nope")).is_none());
+        assert!(g.get_component(&ComponentId::new("nope")).is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: EffectClassification serde with capabilities
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn effect_classification_with_caps_serde_roundtrip() {
+        let mut caps = BTreeSet::new();
+        caps.insert("network".to_string());
+        caps.insert("dom".to_string());
+        let eff = EffectClassification {
+            boundary: EffectBoundary::NetworkEffect,
+            required_capabilities: caps,
+            idempotent: false,
+            commutative: false,
+            estimated_cost_millionths: 750_000,
+        };
+        let json = serde_json::to_string(&eff).unwrap();
+        let back: EffectClassification = serde_json::from_str(&json).unwrap();
+        assert_eq!(eff, back);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: DependencyPath with single component has depth 0
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn dependency_path_single_component() {
+        let path = DependencyPath {
+            components: vec![ComponentId::new("Solo")],
+            total_weight_millionths: 0,
+            edge_kinds: Vec::new(),
+        };
+        assert_eq!(path.depth(), 0);
+        assert!(path.contains(&ComponentId::new("Solo")));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: graph summary distinct_capability_count
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn graph_summary_distinct_capabilities() {
+        let mut g = StaticAnalysisGraph::new();
+        let mut c1 = make_component("Net", &[]);
+        c1.capability_boundary
+            .direct_capabilities
+            .insert("network".to_string());
+        let mut c2 = make_component("Fs", &[]);
+        c2.capability_boundary
+            .direct_capabilities
+            .insert("fs_read".to_string());
+        c2.capability_boundary
+            .direct_capabilities
+            .insert("network".to_string()); // duplicate
+        g.register_component(c1).unwrap();
+        g.register_component(c2).unwrap();
+        let s = g.summary();
+        assert_eq!(s.distinct_capability_count, 2); // network + fs_read
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: CapabilityBoundary overlapping direct/transitive
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn capability_boundary_all_deduplicates() {
+        let mut cb = CapabilityBoundary::pure_component();
+        cb.direct_capabilities.insert("network".to_string());
+        cb.transitive_capabilities.insert("network".to_string()); // same
+        cb.transitive_capabilities.insert("fs".to_string());
+        let all = cb.all_capabilities();
+        assert_eq!(all.len(), 2); // network + fs, no duplicates
+    }
 }

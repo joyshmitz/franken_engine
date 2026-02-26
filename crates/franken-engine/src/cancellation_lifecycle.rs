@@ -1458,4 +1458,222 @@ mod tests {
             "all events map to distinct cancel reasons"
         );
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 3: clone, JSON fields, edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn cancellation_mode_clone_equality() {
+        let mode = CancellationMode::for_event(LifecycleEvent::Quarantine);
+        let cloned = mode.clone();
+        assert_eq!(mode, cloned);
+    }
+
+    #[test]
+    fn cancellation_outcome_clone_equality() {
+        let outcome = CancellationOutcome {
+            cell_id: "ext-1".into(),
+            event: LifecycleEvent::Unload,
+            success: true,
+            finalize_result: FinalizeResult {
+                region_id: "ext-1".into(),
+                success: true,
+                obligations_committed: 2,
+                obligations_aborted: 0,
+                drain_timeout_escalated: false,
+            },
+            timeout_escalated: false,
+            children_cancelled: 1,
+            was_idempotent: false,
+        };
+        let cloned = outcome.clone();
+        assert_eq!(outcome, cloned);
+    }
+
+    #[test]
+    fn cancellation_error_clone_equality() {
+        let variants = vec![
+            CancellationError::CellNotFound {
+                cell_id: "c1".into(),
+            },
+            CancellationError::BudgetExhausted {
+                cell_id: "c2".into(),
+                event: LifecycleEvent::Revocation,
+            },
+            CancellationError::CellError {
+                cell_id: "c3".into(),
+                error_code: "ec".into(),
+                message: "msg".into(),
+            },
+        ];
+        for v in &variants {
+            let cloned = v.clone();
+            assert_eq!(*v, cloned);
+        }
+    }
+
+    #[test]
+    fn cancellation_event_clone_equality() {
+        let ev = CancellationEvent {
+            trace_id: "t1".into(),
+            cell_id: "c1".into(),
+            cell_kind: CellKind::Extension,
+            lifecycle_event: LifecycleEvent::Suspend,
+            phase: "drain".into(),
+            outcome: "completed".into(),
+            component: "cancellation_lifecycle".into(),
+            obligations_pending: 0,
+            budget_consumed_ms: 42,
+        };
+        let cloned = ev.clone();
+        assert_eq!(ev, cloned);
+    }
+
+    #[test]
+    fn cancellation_outcome_json_field_presence() {
+        let outcome = CancellationOutcome {
+            cell_id: "ext-1".into(),
+            event: LifecycleEvent::Quarantine,
+            success: true,
+            finalize_result: FinalizeResult {
+                region_id: "ext-1".into(),
+                success: true,
+                obligations_committed: 1,
+                obligations_aborted: 0,
+                drain_timeout_escalated: false,
+            },
+            timeout_escalated: false,
+            children_cancelled: 0,
+            was_idempotent: false,
+        };
+        let json = serde_json::to_string(&outcome).unwrap();
+        for field in [
+            "cell_id",
+            "event",
+            "success",
+            "finalize_result",
+            "timeout_escalated",
+            "children_cancelled",
+            "was_idempotent",
+        ] {
+            assert!(json.contains(field), "missing field: {field}");
+        }
+    }
+
+    #[test]
+    fn cancellation_event_json_field_presence() {
+        let ev = CancellationEvent {
+            trace_id: "t-99".into(),
+            cell_id: "c-7".into(),
+            cell_kind: CellKind::Delegate,
+            lifecycle_event: LifecycleEvent::Terminate,
+            phase: "finalize".into(),
+            outcome: "success".into(),
+            component: "cancellation_lifecycle".into(),
+            obligations_pending: 3,
+            budget_consumed_ms: 100,
+        };
+        let json = serde_json::to_string(&ev).unwrap();
+        for field in [
+            "trace_id",
+            "cell_id",
+            "cell_kind",
+            "lifecycle_event",
+            "phase",
+            "outcome",
+            "component",
+            "obligations_pending",
+            "budget_consumed_ms",
+        ] {
+            assert!(json.contains(field), "missing field: {field}");
+        }
+    }
+
+    #[test]
+    fn manager_default_is_empty() {
+        let mgr = CancellationManager::default();
+        assert_eq!(mgr.outcome_count(), 0);
+        assert!(mgr.events().is_empty());
+        assert!(!mgr.is_cancelled("any"));
+    }
+
+    #[test]
+    fn cancel_reason_suspend_is_custom() {
+        let reason = LifecycleEvent::Suspend.cancel_reason();
+        assert_eq!(reason, CancelReason::Custom("suspend".to_string()));
+    }
+
+    #[test]
+    fn cancel_reason_terminate_is_custom() {
+        let reason = LifecycleEvent::Terminate.cancel_reason();
+        assert_eq!(reason, CancelReason::Custom("terminate".to_string()));
+    }
+
+    #[test]
+    fn evidence_event_names_unique_across_events() {
+        let names: std::collections::BTreeSet<String> = [
+            LifecycleEvent::Unload,
+            LifecycleEvent::Quarantine,
+            LifecycleEvent::Suspend,
+            LifecycleEvent::Terminate,
+            LifecycleEvent::Revocation,
+        ]
+        .iter()
+        .map(|e| CancellationMode::for_event(*e).evidence_event_name)
+        .collect();
+        assert_eq!(
+            names.len(),
+            5,
+            "all 5 events have unique evidence event names"
+        );
+    }
+
+    #[test]
+    fn cell_error_conversion_preserves_cell_id() {
+        let cell_err = CellError::BudgetExhausted {
+            cell_id: "cell-42".to_string(),
+            requested_ms: 100,
+            remaining_ms: 0,
+        };
+        let cancel_err: CancellationError = cell_err.into();
+        match cancel_err {
+            CancellationError::CellError { cell_id, .. } => {
+                assert_eq!(cell_id, "cell-42");
+            }
+            other => panic!("expected CellError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cancellation_mode_json_field_presence() {
+        let mode = CancellationMode::for_event(LifecycleEvent::Unload);
+        let json = serde_json::to_string(&mode).unwrap();
+        for field in [
+            "drain_budget_ticks",
+            "force_abort_on_timeout",
+            "propagate_to_children",
+            "evidence_event_name",
+        ] {
+            assert!(json.contains(field), "missing field: {field}");
+        }
+    }
+
+    #[test]
+    fn outcomes_accessor_returns_all() {
+        let mut cell1 = ExecutionCell::new("ext-1", CellKind::Extension, "t");
+        let mut cell2 = ExecutionCell::new("ext-2", CellKind::Extension, "t");
+        let mut cx = mock_cx(300);
+        let mut mgr = CancellationManager::new();
+
+        mgr.cancel_cell(&mut cell1, &mut cx, LifecycleEvent::Unload)
+            .unwrap();
+        mgr.cancel_cell(&mut cell2, &mut cx, LifecycleEvent::Quarantine)
+            .unwrap();
+
+        let outcomes = mgr.outcomes();
+        assert_eq!(outcomes.len(), 2);
+        assert_eq!(outcomes[0].cell_id, "ext-1");
+        assert_eq!(outcomes[1].cell_id, "ext-2");
+    }
 }

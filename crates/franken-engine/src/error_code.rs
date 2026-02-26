@@ -1867,4 +1867,153 @@ mod tests {
             ERROR_CODE_COMPATIBILITY_POLICY
         );
     }
+
+    // ── enrichment: concrete HasErrorCode invocations for untested types ─
+
+    #[test]
+    fn has_error_code_remote_capability_denied() {
+        use crate::capability::ProfileKind;
+        use crate::remote_capability_gate::RemoteOperationType;
+        let err = RemoteCapabilityDenied {
+            operation: RemoteOperationType::HttpRequest,
+            component: "test".to_string(),
+            held_profile: ProfileKind::Policy,
+            required_capabilities: vec![],
+            trace_id: "t-1".to_string(),
+        };
+        assert_eq!(
+            err.error_code(),
+            FrankenErrorCode::RemoteCapabilityDeniedError
+        );
+    }
+
+    #[test]
+    fn has_error_code_remote_transport_error() {
+        let err = RemoteTransportError::Timeout {
+            endpoint: "http://host".to_string(),
+            duration_ms: 5000,
+        };
+        assert_eq!(
+            err.error_code(),
+            FrankenErrorCode::RemoteTransportExecutionError
+        );
+    }
+
+    #[test]
+    fn has_error_code_registry_error() {
+        let err = RegistryError::InvalidComputationName {
+            name: "".to_string(),
+            reason: "empty".to_string(),
+        };
+        assert_eq!(err.error_code(), FrankenErrorCode::ComputationRegistryError);
+    }
+
+    #[test]
+    fn has_error_code_frontier_error() {
+        let err = FrontierError::UnknownZone {
+            zone: "z-1".to_string(),
+        };
+        assert_eq!(
+            err.error_code(),
+            FrankenErrorCode::CheckpointFrontierEnforcementError
+        );
+    }
+
+    #[test]
+    fn has_error_code_epoch_validation_error() {
+        let err = EpochValidationError::InvertedWindow {
+            valid_from: crate::security_epoch::SecurityEpoch::from_raw(5),
+            valid_until: crate::security_epoch::SecurityEpoch::from_raw(3),
+        };
+        assert_eq!(
+            err.error_code(),
+            FrankenErrorCode::EpochWindowValidationError
+        );
+    }
+
+    #[test]
+    fn has_error_code_idempotency_error() {
+        let err = IdempotencyError::EntryNotFound {
+            key_hex: "aabb".to_string(),
+        };
+        assert_eq!(
+            err.error_code(),
+            FrankenErrorCode::IdempotencyWorkflowError
+        );
+    }
+
+    #[test]
+    fn has_error_code_bulkhead_error() {
+        let err = BulkheadError::BulkheadNotFound {
+            bulkhead_id: "b-1".to_string(),
+        };
+        assert_eq!(err.error_code(), FrankenErrorCode::BulkheadIsolationError);
+    }
+
+    #[test]
+    fn has_error_code_scheduler_error() {
+        let err = SchedulerError::ProbeNotFound {
+            probe_id: "p-1".to_string(),
+        };
+        assert_eq!(err.error_code(), FrankenErrorCode::MonitorSchedulerError);
+    }
+
+    #[test]
+    fn has_error_code_slot_registry_error() {
+        let err = SlotRegistryError::SlotNotFound {
+            id: "s-1".to_string(),
+        };
+        assert_eq!(
+            err.error_code(),
+            FrankenErrorCode::SlotRegistryAuthorityError
+        );
+    }
+
+    #[test]
+    fn has_error_code_contract_validation_error() {
+        let err = ContractValidationError::EmptyRolloutStages;
+        assert_eq!(err.error_code(), FrankenErrorCode::EvidenceContractError);
+    }
+
+    #[test]
+    fn has_error_code_ledger_error() {
+        let err = LedgerError::MissingChosenAction;
+        assert_eq!(err.error_code(), FrankenErrorCode::EvidenceLedgerError);
+    }
+
+    #[test]
+    fn has_error_code_verification_error() {
+        let err = VerificationError::EmptyProofBundle;
+        assert_eq!(
+            err.error_code(),
+            FrankenErrorCode::RecoveryArtifactVerificationError
+        );
+    }
+
+    #[test]
+    fn has_error_code_proof_schema_error() {
+        let err = ProofSchemaError::MissingField {
+            field: "sig".to_string(),
+        };
+        assert_eq!(
+            err.error_code(),
+            FrankenErrorCode::ProofSchemaValidationError
+        );
+    }
+
+    #[test]
+    fn has_error_code_guardrail_error() {
+        let err = GuardrailError::NotTriggered {
+            guardrail_id: "g-1".to_string(),
+        };
+        assert_eq!(err.error_code(), FrankenErrorCode::EprocessGuardrailError);
+    }
+
+    #[test]
+    fn has_error_code_ordering_violation() {
+        let err = OrderingViolation::CandidatesNotSorted {
+            first_unsorted_index: 1,
+        };
+        assert_eq!(err.error_code(), FrankenErrorCode::EvidenceOrderingError);
+    }
 }

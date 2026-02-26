@@ -1202,4 +1202,177 @@ mod tests {
         let result = bag_peaks(std::slice::from_ref(&h));
         assert_eq!(result, h);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 3: clone, JSON fields, ordering, edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn mmr_proof_clone_equality() {
+        let mmr = build_mmr(8);
+        let proof = mmr.inclusion_proof(3).unwrap();
+        let cloned = proof.clone();
+        assert_eq!(proof, cloned);
+    }
+
+    #[test]
+    fn proof_error_clone_equality() {
+        let errors = vec![
+            ProofError::IndexOutOfRange {
+                index: 10,
+                stream_length: 5,
+            },
+            ProofError::EmptyStream,
+            ProofError::InvalidProof {
+                reason: "bad".into(),
+            },
+            ProofError::RootMismatch {
+                expected: ContentHash::compute(b"a"),
+                computed: ContentHash::compute(b"b"),
+            },
+            ProofError::ConsistencyFailure {
+                old_length: 3,
+                new_length: 7,
+                reason: "fail".into(),
+            },
+        ];
+        for e in &errors {
+            let cloned = e.clone();
+            assert_eq!(*e, cloned);
+        }
+    }
+
+    #[test]
+    fn proof_type_clone_equality() {
+        let t1 = ProofType::Inclusion;
+        let t2 = ProofType::Consistency;
+        assert_eq!(t1, t1.clone());
+        assert_eq!(t2, t2.clone());
+    }
+
+    #[test]
+    fn mmr_proof_json_field_presence() {
+        let mmr = build_mmr(4);
+        let proof = mmr.inclusion_proof(1).unwrap();
+        let json = serde_json::to_string(&proof).unwrap();
+        for field in [
+            "proof_type",
+            "marker_index",
+            "proof_hashes",
+            "root_hash",
+            "stream_length",
+            "epoch_id",
+        ] {
+            assert!(json.contains(field), "missing field: {field}");
+        }
+    }
+
+    #[test]
+    fn proof_error_std_error_all_variants() {
+        let errors: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(ProofError::IndexOutOfRange {
+                index: 5,
+                stream_length: 3,
+            }),
+            Box::new(ProofError::EmptyStream),
+            Box::new(ProofError::InvalidProof {
+                reason: "test".into(),
+            }),
+            Box::new(ProofError::RootMismatch {
+                expected: ContentHash::compute(b"a"),
+                computed: ContentHash::compute(b"b"),
+            }),
+            Box::new(ProofError::ConsistencyFailure {
+                old_length: 1,
+                new_length: 2,
+                reason: "mismatch".into(),
+            }),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for e in &errors {
+            displays.insert(format!("{e}"));
+        }
+        assert_eq!(displays.len(), 5);
+    }
+
+    #[test]
+    fn consistency_proof_deterministic_for_same_inputs() {
+        let mmr = build_mmr(16);
+        let proof1 = mmr.consistency_proof(8).unwrap();
+        let proof2 = mmr.consistency_proof(8).unwrap();
+        assert_eq!(proof1, proof2);
+    }
+
+    #[test]
+    fn mmr_root_hash_different_from_any_leaf() {
+        let mmr = build_mmr(4);
+        let root = mmr.root_hash().unwrap();
+        for i in 0..4 {
+            assert_ne!(root, leaf_hash(i), "root should differ from leaf {i}");
+        }
+    }
+
+    #[test]
+    fn inclusion_proof_size_is_logarithmic_bound() {
+        let mmr = build_mmr(128);
+        let proof = mmr.inclusion_proof(63).unwrap();
+        // log2(128) = 7, proof should be at most ~7 hashes
+        assert!(
+            proof.proof_hashes.len() <= 10,
+            "proof size {} exceeds expected log bound",
+            proof.proof_hashes.len()
+        );
+    }
+
+    #[test]
+    fn mmr_append_increases_num_leaves() {
+        let mut mmr = MerkleMountainRange::new(1);
+        assert_eq!(mmr.num_leaves(), 0);
+        mmr.append(ContentHash::compute(b"leaf-0"));
+        assert_eq!(mmr.num_leaves(), 1);
+        mmr.append(ContentHash::compute(b"leaf-1"));
+        assert_eq!(mmr.num_leaves(), 2);
+    }
+
+    #[test]
+    fn bag_peaks_two_gives_merged_hash() {
+        let h1 = ContentHash::compute(b"peak1");
+        let h2 = ContentHash::compute(b"peak2");
+        let h1c = h1.clone();
+        let h2c = h2.clone();
+        let merged = bag_peaks(&[h1.clone(), h2.clone()]);
+        // Should not equal either individual hash
+        assert_ne!(merged, h1c);
+        assert_ne!(merged, h2c);
+        // Deterministic
+        assert_eq!(merged, bag_peaks(&[h1, h2]));
+    }
+
+    #[test]
+    fn proof_error_serde_all_variants() {
+        let errors = vec![
+            ProofError::IndexOutOfRange {
+                index: 1,
+                stream_length: 0,
+            },
+            ProofError::EmptyStream,
+            ProofError::InvalidProof {
+                reason: "x".into(),
+            },
+            ProofError::RootMismatch {
+                expected: ContentHash::compute(b"a"),
+                computed: ContentHash::compute(b"b"),
+            },
+            ProofError::ConsistencyFailure {
+                old_length: 2,
+                new_length: 4,
+                reason: "y".into(),
+            },
+        ];
+        for e in &errors {
+            let json = serde_json::to_string(e).unwrap();
+            let back: ProofError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*e, back);
+        }
+    }
 }

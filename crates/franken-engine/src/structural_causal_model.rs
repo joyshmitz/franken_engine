@@ -2896,4 +2896,283 @@ mod tests {
         assert!(!surfaces.is_empty());
         assert_eq!(dag.intervention_surfaces().len(), surfaces.len());
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: ScmError Display — remaining 5 variants
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_scm_error_display_edge_already_exists() {
+        let err = ScmError::EdgeAlreadyExists {
+            source: "A".into(),
+            target: "B".into(),
+        };
+        let s = err.to_string();
+        assert!(s.contains("A"));
+        assert!(s.contains("B"));
+        assert!(s.contains("edge already exists"));
+    }
+
+    #[test]
+    fn test_scm_error_display_duplicate_node() {
+        let err = ScmError::DuplicateNode("dup".into());
+        assert_eq!(err.to_string(), "duplicate node: dup");
+    }
+
+    #[test]
+    fn test_scm_error_display_no_treatment_node() {
+        let err = ScmError::NoTreatmentNode;
+        assert_eq!(err.to_string(), "no treatment node in DAG");
+    }
+
+    #[test]
+    fn test_scm_error_display_no_outcome_node() {
+        let err = ScmError::NoOutcomeNode;
+        assert_eq!(err.to_string(), "no outcome node in DAG");
+    }
+
+    #[test]
+    fn test_scm_error_display_not_identified() {
+        let err = ScmError::NotIdentified {
+            reason: "latent confounders".into(),
+        };
+        let s = err.to_string();
+        assert!(s.contains("not identified"));
+        assert!(s.contains("latent confounders"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: ScmError Display — all 8 variants unique
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_scm_error_display_all_unique() {
+        let errors = [
+            ScmError::NodeNotFound("x".into()),
+            ScmError::EdgeAlreadyExists {
+                source: "a".into(),
+                target: "b".into(),
+            },
+            ScmError::CycleDetected {
+                path: vec!["a".into(), "b".into()],
+            },
+            ScmError::DuplicateNode("d".into()),
+            ScmError::NoTreatmentNode,
+            ScmError::NoOutcomeNode,
+            ScmError::InsufficientObservations {
+                required: 10,
+                available: 5,
+            },
+            ScmError::NotIdentified {
+                reason: "test".into(),
+            },
+        ];
+        let displays: BTreeSet<String> = errors.iter().map(|e| e.to_string()).collect();
+        assert_eq!(displays.len(), errors.len());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: observations() accessor returns recorded observations
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_observations_accessor() {
+        let mut scm = StructuralCausalModel::new();
+        scm.add_node(CausalNode {
+            id: "X".into(),
+            label: "X".into(),
+            role: NodeRole::Treatment,
+            domain: VariableDomain::LaneChoice,
+            observable: true,
+            fixed_value_millionths: None,
+        })
+        .unwrap();
+        let mut values = BTreeMap::new();
+        values.insert("X".to_string(), 500_000_i64);
+        let obs = Observation {
+            epoch: 1,
+            tick: 10,
+            values,
+        };
+        scm.record_observation(obs.clone());
+        let recorded = scm.observations();
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded[0].epoch, 1);
+        assert_eq!(recorded[0].tick, 10);
+        assert_eq!(*recorded[0].values.get("X").unwrap(), 500_000);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: empty SCM operations
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_empty_scm_has_path_returns_false() {
+        let scm = StructuralCausalModel::new();
+        // has_path with nonexistent nodes should not panic
+        assert!(!scm.has_path(&"A".to_string(), &"B".to_string()));
+    }
+
+    #[test]
+    fn test_empty_scm_accessors() {
+        let scm = StructuralCausalModel::new();
+        assert!(scm.nodes().is_empty());
+        assert!(scm.edges().is_empty());
+        assert!(scm.observations().is_empty());
+        assert_eq!(scm.observation_count(), 0);
+        assert!(scm.confounders().is_empty());
+        assert!(scm.intervention_surfaces().is_empty());
+    }
+
+    #[test]
+    fn test_children_of_nonexistent_node() {
+        let scm = StructuralCausalModel::new();
+        let children = scm.children_of("missing");
+        assert!(children.is_empty());
+    }
+
+    #[test]
+    fn test_parents_of_nonexistent_node() {
+        let scm = StructuralCausalModel::new();
+        let parents = scm.parents_of("missing");
+        assert!(parents.is_empty());
+    }
+
+    #[test]
+    fn test_ancestors_of_isolated_node() {
+        let mut scm = StructuralCausalModel::new();
+        scm.add_node(CausalNode {
+            id: "solo".into(),
+            label: "solo".into(),
+            role: NodeRole::Exogenous,
+            domain: VariableDomain::EnvironmentFactor,
+            observable: true,
+            fixed_value_millionths: None,
+        })
+        .unwrap();
+        assert!(scm.ancestors_of("solo").is_empty());
+    }
+
+    #[test]
+    fn test_descendants_of_isolated_node() {
+        let mut scm = StructuralCausalModel::new();
+        scm.add_node(CausalNode {
+            id: "solo".into(),
+            label: "solo".into(),
+            role: NodeRole::Exogenous,
+            domain: VariableDomain::EnvironmentFactor,
+            observable: true,
+            fixed_value_millionths: None,
+        })
+        .unwrap();
+        assert!(scm.descendants_of("solo").is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: NodeRole ordering covers all 7 variants
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_node_role_serde_all_variants() {
+        let roles = [
+            NodeRole::Exogenous,
+            NodeRole::Endogenous,
+            NodeRole::Treatment,
+            NodeRole::Outcome,
+            NodeRole::Confounder,
+            NodeRole::Mediator,
+            NodeRole::Instrument,
+        ];
+        for role in &roles {
+            let json = serde_json::to_string(role).unwrap();
+            let back: NodeRole = serde_json::from_str(&json).unwrap();
+            assert_eq!(*role, back);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: VariableDomain serde all 8 variants
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_variable_domain_serde_all_variants() {
+        let domains = [
+            VariableDomain::LaneChoice,
+            VariableDomain::WorkloadCharacteristic,
+            VariableDomain::PolicySetting,
+            VariableDomain::ObservedOutcome,
+            VariableDomain::RiskBelief,
+            VariableDomain::Regime,
+            VariableDomain::CalibrationMetric,
+            VariableDomain::EnvironmentFactor,
+        ];
+        for domain in &domains {
+            let json = serde_json::to_string(domain).unwrap();
+            let back: VariableDomain = serde_json::from_str(&json).unwrap();
+            assert_eq!(*domain, back);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: ConfounderClass serde all 4 variants
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_confounder_class_serde_all_variants() {
+        let classes = [
+            ConfounderClass::Observable,
+            ConfounderClass::Latent,
+            ConfounderClass::TimeVarying,
+            ConfounderClass::Collider,
+        ];
+        for class in &classes {
+            let json = serde_json::to_string(class).unwrap();
+            let back: ConfounderClass = serde_json::from_str(&json).unwrap();
+            assert_eq!(*class, back);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: EdgeSign serde all 3 variants
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_edge_sign_serde_all_variants() {
+        for sign in [EdgeSign::Positive, EdgeSign::Negative, EdgeSign::Ambiguous] {
+            let json = serde_json::to_string(&sign).unwrap();
+            let back: EdgeSign = serde_json::from_str(&json).unwrap();
+            assert_eq!(sign, back);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: ScmError is std::error::Error
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_scm_error_is_std_error() {
+        let err: Box<dyn std::error::Error> = Box::new(ScmError::NodeNotFound("x".into()));
+        assert!(err.to_string().contains("x"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: node accessor returns None for nonexistent
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_node_accessor_none_for_missing() {
+        let scm = StructuralCausalModel::new();
+        assert!(scm.node("nonexistent").is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: Default impl for StructuralCausalModel
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_default_equals_new() {
+        let d = StructuralCausalModel::default();
+        let n = StructuralCausalModel::new();
+        assert_eq!(d, n);
+    }
 }

@@ -1499,4 +1499,155 @@ mod tests {
         let id2 = token_schema_id();
         assert_eq!(id1, id2);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 3: clone, JSON fields, ordering, edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn principal_id_clone_equality() {
+        let pid = make_principal(42);
+        let cloned = pid.clone();
+        assert_eq!(pid, cloned);
+    }
+
+    #[test]
+    fn checkpoint_ref_clone_equality() {
+        let cref = make_checkpoint_ref(10);
+        let cloned = cref.clone();
+        assert_eq!(cref, cloned);
+    }
+
+    #[test]
+    fn revocation_freshness_ref_clone_equality() {
+        let rref = make_revocation_ref(7);
+        let cloned = rref.clone();
+        assert_eq!(rref, cloned);
+    }
+
+    #[test]
+    fn token_error_clone_equality() {
+        let errors = vec![
+            TokenError::SignatureInvalid {
+                detail: "bad sig".into(),
+            },
+            TokenError::EmptyCapabilities,
+            TokenError::Expired {
+                current_tick: 200,
+                expiry: 100,
+            },
+        ];
+        for e in &errors {
+            let cloned = e.clone();
+            assert_eq!(*e, cloned);
+        }
+    }
+
+    #[test]
+    fn capability_token_clone_equality() {
+        let sk = make_sk(1);
+        let token = build_basic_token(&sk);
+        let cloned = token.clone();
+        assert_eq!(token, cloned);
+    }
+
+    #[test]
+    fn token_event_clone_equality() {
+        let event = TokenEvent {
+            event_type: TokenEventType::TokenIssued {
+                jti: EngineObjectId([5; 32]),
+            },
+            trace_id: "t-99".into(),
+        };
+        let cloned = event.clone();
+        assert_eq!(event, cloned);
+    }
+
+    #[test]
+    fn capability_token_json_field_presence() {
+        let sk = make_sk(1);
+        let token = build_basic_token(&sk);
+        let json = serde_json::to_string(&token).unwrap();
+        for field in [
+            "version",
+            "jti",
+            "issuer",
+            "audience",
+            "capabilities",
+            "nbf",
+            "expiry",
+            "epoch",
+            "signature",
+            "zone",
+        ] {
+            assert!(json.contains(field), "missing field: {field}");
+        }
+    }
+
+    #[test]
+    fn checkpoint_ref_json_field_presence() {
+        let cref = make_checkpoint_ref(15);
+        let json = serde_json::to_string(&cref).unwrap();
+        assert!(json.contains("min_checkpoint_seq"));
+        assert!(json.contains("checkpoint_id"));
+    }
+
+    #[test]
+    fn revocation_freshness_ref_json_field_presence() {
+        let rref = make_revocation_ref(8);
+        let json = serde_json::to_string(&rref).unwrap();
+        assert!(json.contains("min_revocation_seq"));
+        assert!(json.contains("revocation_head_hash"));
+    }
+
+    #[test]
+    fn principal_id_ordering_deterministic() {
+        let p1 = PrincipalId::from_bytes([0; 32]);
+        let p2 = PrincipalId::from_bytes([1; 32]);
+        let p3 = PrincipalId::from_bytes([255; 32]);
+        assert!(p1 < p2);
+        assert!(p2 < p3);
+    }
+
+    #[test]
+    fn principal_id_from_bytes_roundtrip() {
+        let bytes = [42u8; 32];
+        let pid = PrincipalId::from_bytes(bytes);
+        assert_eq!(*pid.as_bytes(), bytes);
+    }
+
+    #[test]
+    fn token_with_multiple_audience_serializes() {
+        let sk = make_sk(1);
+        let token = TokenBuilder::new(
+            sk,
+            DeterministicTimestamp(100),
+            DeterministicTimestamp(1000),
+            SecurityEpoch::GENESIS,
+            "zone-a",
+        )
+        .add_audience(make_principal(10))
+        .add_audience(make_principal(20))
+        .add_audience(make_principal(30))
+        .add_capability(RuntimeCapability::VmDispatch)
+        .build()
+        .unwrap();
+
+        assert_eq!(token.audience.len(), 3);
+        let json = serde_json::to_string(&token).unwrap();
+        let back: CapabilityToken = serde_json::from_str(&json).unwrap();
+        assert_eq!(token, back);
+    }
+
+    #[test]
+    fn verification_context_boundary_tick_equals_nbf() {
+        let sk = make_sk(1);
+        let token = build_basic_token(&sk); // nbf=100, expiry=1000
+        let ctx = VerificationContext {
+            current_tick: 100, // exactly at nbf
+            verifier_checkpoint_seq: 10,
+            verifier_revocation_seq: 5,
+        };
+        verify_token(&token, &make_principal(10), &ctx).unwrap();
+    }
 }

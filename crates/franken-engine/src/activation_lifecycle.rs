@@ -2346,4 +2346,293 @@ mod tests {
         ctrl.advance_rollout("comp-a", "trace-1").unwrap(); // default -> active
         assert_eq!(ctrl.known_good("comp-a").unwrap().version, "3.0.0");
     }
+
+    // ── enrichment: missing Display variants ────────────────────────────
+
+    #[test]
+    fn lifecycle_state_display_pending_activation() {
+        assert_eq!(
+            LifecycleState::PendingActivation.to_string(),
+            "pending_activation"
+        );
+    }
+
+    #[test]
+    fn rollout_phase_display_canary() {
+        assert_eq!(RolloutPhase::Canary.to_string(), "canary");
+    }
+
+    #[test]
+    fn rollout_phase_display_ramp() {
+        assert_eq!(RolloutPhase::Ramp.to_string(), "ramp");
+    }
+
+    #[test]
+    fn transition_trigger_display_manual() {
+        assert_eq!(TransitionTrigger::Manual.to_string(), "manual");
+    }
+
+    #[test]
+    fn transition_trigger_display_auto() {
+        assert_eq!(TransitionTrigger::Auto.to_string(), "auto");
+    }
+
+    // ── enrichment: Display uniqueness ──────────────────────────────────
+
+    #[test]
+    fn lifecycle_state_display_all_unique() {
+        let variants = [
+            LifecycleState::Inactive,
+            LifecycleState::PendingActivation,
+            LifecycleState::Active,
+            LifecycleState::Updating(RolloutPhase::Shadow),
+            LifecycleState::Updating(RolloutPhase::Canary),
+            LifecycleState::Updating(RolloutPhase::Ramp),
+            LifecycleState::Updating(RolloutPhase::Default),
+            LifecycleState::RollingBack,
+        ];
+        let strings: BTreeSet<_> = variants.iter().map(|v| v.to_string()).collect();
+        assert_eq!(strings.len(), variants.len());
+    }
+
+    #[test]
+    fn rollout_phase_display_all_unique() {
+        let strings: BTreeSet<_> = RolloutPhase::ALL.iter().map(|p| p.to_string()).collect();
+        assert_eq!(strings.len(), RolloutPhase::ALL.len());
+    }
+
+    #[test]
+    fn transition_trigger_display_all_unique() {
+        let variants = [
+            TransitionTrigger::Manual,
+            TransitionTrigger::Auto,
+            TransitionTrigger::CrashLoop,
+        ];
+        let strings: BTreeSet<_> = variants.iter().map(|v| v.to_string()).collect();
+        assert_eq!(strings.len(), variants.len());
+    }
+
+    // ── enrichment: serde roundtrips ────────────────────────────────────
+
+    #[test]
+    fn lifecycle_state_serde_all_variants() {
+        let variants = [
+            LifecycleState::Inactive,
+            LifecycleState::PendingActivation,
+            LifecycleState::Active,
+            LifecycleState::Updating(RolloutPhase::Shadow),
+            LifecycleState::Updating(RolloutPhase::Canary),
+            LifecycleState::Updating(RolloutPhase::Ramp),
+            LifecycleState::Updating(RolloutPhase::Default),
+            LifecycleState::RollingBack,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let deser: LifecycleState = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, deser);
+        }
+    }
+
+    #[test]
+    fn rollout_phase_serde_all_variants() {
+        for p in &RolloutPhase::ALL {
+            let json = serde_json::to_string(p).unwrap();
+            let deser: RolloutPhase = serde_json::from_str(&json).unwrap();
+            assert_eq!(*p, deser);
+        }
+    }
+
+    #[test]
+    fn transition_trigger_serde_all_variants() {
+        let variants = [
+            TransitionTrigger::Manual,
+            TransitionTrigger::Auto,
+            TransitionTrigger::CrashLoop,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let deser: TransitionTrigger = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, deser);
+        }
+    }
+
+    #[test]
+    fn lifecycle_error_serde_rollout_phase_mismatch() {
+        let err = LifecycleError::RolloutPhaseMismatch {
+            expected: RolloutPhase::Canary,
+            actual: RolloutPhase::Shadow,
+        };
+        let json = serde_json::to_string(&err).unwrap();
+        let deser: LifecycleError = serde_json::from_str(&json).unwrap();
+        assert_eq!(err, deser);
+    }
+
+    #[test]
+    fn lifecycle_error_serde_all_variants() {
+        let errors: Vec<LifecycleError> = vec![
+            LifecycleError::InvalidTransition {
+                from: LifecycleState::Inactive,
+                to: LifecycleState::Active,
+            },
+            LifecycleError::ActivationValidationFailed {
+                detail: "sig".to_string(),
+            },
+            LifecycleError::ComponentNotFound {
+                component_id: "c".to_string(),
+            },
+            LifecycleError::RolloutPhaseMismatch {
+                expected: RolloutPhase::Ramp,
+                actual: RolloutPhase::Canary,
+            },
+            LifecycleError::NoKnownGoodVersion {
+                component_id: "c".to_string(),
+            },
+            LifecycleError::CrashLoopDetected {
+                component_id: "c".to_string(),
+                crash_count: 5,
+            },
+            LifecycleError::RevocationCheckFailed {
+                detail: "rev".to_string(),
+            },
+            LifecycleError::RollbackHoldoffActive {
+                component_id: "c".to_string(),
+                remaining_ticks: 10,
+            },
+            LifecycleError::CheckpointRegression {
+                component_id: "c".to_string(),
+            },
+        ];
+        for err in &errors {
+            let json = serde_json::to_string(err).unwrap();
+            let deser: LifecycleError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*err, deser);
+        }
+    }
+
+    // ── enrichment: std::error::Error ───────────────────────────────────
+
+    #[test]
+    fn lifecycle_error_is_std_error() {
+        let err: &dyn std::error::Error = &LifecycleError::ComponentNotFound {
+            component_id: "x".to_string(),
+        };
+        assert!(err.source().is_none());
+    }
+
+    // ── enrichment: EphemeralSecret Debug redaction ─────────────────────
+
+    #[test]
+    fn ephemeral_secret_debug_redacts_value() {
+        let secret = EphemeralSecret::new("api_key", vec![0xDE, 0xAD]);
+        let debug = format!("{secret:?}");
+        assert!(debug.contains("REDACTED"), "debug: {debug}");
+        assert!(!debug.contains("dead"), "secret leaked in debug: {debug}");
+    }
+
+    #[test]
+    fn ephemeral_secret_take_returns_value() {
+        let secret = EphemeralSecret::new("k", vec![1, 2, 3]);
+        let val = secret.take();
+        assert_eq!(val, vec![1, 2, 3]);
+    }
+
+    // ── enrichment: LifecycleEvent serde ────────────────────────────────
+
+    #[test]
+    fn lifecycle_event_serde_roundtrip_full_fields() {
+        let event = LifecycleEvent {
+            trace_id: "t-1".to_string(),
+            component: COMPONENT.to_string(),
+            event: "lifecycle_transition".to_string(),
+            outcome: "ok".to_string(),
+            error_code: None,
+            component_id: Some("comp-a".to_string()),
+            from_version: Some("1.0.0".to_string()),
+            to_version: Some("2.0.0".to_string()),
+            from_state: Some("inactive".to_string()),
+            to_state: Some("active".to_string()),
+            trigger: Some("manual".to_string()),
+            timestamp: DeterministicTimestamp(100),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let deser: LifecycleEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, deser);
+    }
+
+    // ── enrichment: PreActivationCheck serde ────────────────────────────
+
+    #[test]
+    fn pre_activation_check_serde_roundtrip() {
+        let check = PreActivationCheck {
+            check_name: "sig-verify".to_string(),
+            passed: true,
+            detail: "ok".to_string(),
+        };
+        let json = serde_json::to_string(&check).unwrap();
+        let deser: PreActivationCheck = serde_json::from_str(&json).unwrap();
+        assert_eq!(check, deser);
+    }
+
+    // ── enrichment: error Display remaining variants ────────────────────
+
+    #[test]
+    fn error_display_rollout_phase_mismatch() {
+        let err = LifecycleError::RolloutPhaseMismatch {
+            expected: RolloutPhase::Canary,
+            actual: RolloutPhase::Shadow,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("canary"), "msg: {msg}");
+        assert!(msg.contains("shadow"), "msg: {msg}");
+    }
+
+    #[test]
+    fn error_display_rollback_holdoff_active() {
+        let err = LifecycleError::RollbackHoldoffActive {
+            component_id: "comp-a".to_string(),
+            remaining_ticks: 15,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("comp-a"), "msg: {msg}");
+        assert!(msg.contains("15"), "msg: {msg}");
+    }
+
+    #[test]
+    fn error_display_all_variants_unique() {
+        let errors: Vec<LifecycleError> = vec![
+            LifecycleError::InvalidTransition {
+                from: LifecycleState::Inactive,
+                to: LifecycleState::Active,
+            },
+            LifecycleError::ActivationValidationFailed {
+                detail: "x".to_string(),
+            },
+            LifecycleError::ComponentNotFound {
+                component_id: "c".to_string(),
+            },
+            LifecycleError::RolloutPhaseMismatch {
+                expected: RolloutPhase::Canary,
+                actual: RolloutPhase::Shadow,
+            },
+            LifecycleError::NoKnownGoodVersion {
+                component_id: "c".to_string(),
+            },
+            LifecycleError::CrashLoopDetected {
+                component_id: "c".to_string(),
+                crash_count: 5,
+            },
+            LifecycleError::RevocationCheckFailed {
+                detail: "r".to_string(),
+            },
+            LifecycleError::RollbackHoldoffActive {
+                component_id: "c".to_string(),
+                remaining_ticks: 10,
+            },
+            LifecycleError::CheckpointRegression {
+                component_id: "c".to_string(),
+            },
+        ];
+        let strings: BTreeSet<_> = errors.iter().map(|e| e.to_string()).collect();
+        assert_eq!(strings.len(), errors.len());
+    }
 }

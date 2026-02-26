@@ -1913,4 +1913,132 @@ mod tests {
             .unwrap();
         assert_eq!(entry.interaction, InteractionClass::ProducerConsumer);
     }
+
+    // ── enrichment: InteractionClass display remaining variants ─────────
+
+    #[test]
+    fn interaction_class_display_all_variants() {
+        assert_eq!(InteractionClass::Independent.to_string(), "independent");
+        assert_eq!(InteractionClass::ReadShared.to_string(), "read_shared");
+        assert_eq!(
+            InteractionClass::ProducerConsumer.to_string(),
+            "producer_consumer"
+        );
+        assert_eq!(
+            InteractionClass::WriteConflict.to_string(),
+            "write_conflict"
+        );
+        assert_eq!(
+            InteractionClass::MutuallyExclusive.to_string(),
+            "mutually_exclusive"
+        );
+    }
+
+    // ── enrichment: Display uniqueness ──────────────────────────────────
+
+    #[test]
+    fn controller_role_display_all_unique() {
+        let roles = ControllerRole::all();
+        let strings: BTreeSet<_> = roles.iter().map(|r| r.to_string()).collect();
+        assert_eq!(strings.len(), roles.len());
+    }
+
+    #[test]
+    fn interaction_class_display_all_unique() {
+        let classes = [
+            InteractionClass::Independent,
+            InteractionClass::ReadShared,
+            InteractionClass::ProducerConsumer,
+            InteractionClass::WriteConflict,
+            InteractionClass::MutuallyExclusive,
+        ];
+        let strings: BTreeSet<_> = classes.iter().map(|c| c.to_string()).collect();
+        assert_eq!(strings.len(), classes.len());
+    }
+
+    #[test]
+    fn gate_failure_reason_display_all_unique() {
+        let reasons = [
+            GateFailureReason::MutuallyExclusiveRoles {
+                role_a: ControllerRole::Router,
+                role_b: ControllerRole::Fallback,
+                controller_a: "r".to_string(),
+                controller_b: "f".to_string(),
+            },
+            GateFailureReason::InsufficientTimescaleSeparation {
+                controller_a: "a".to_string(),
+                controller_b: "b".to_string(),
+                required_millionths: 500_000,
+                actual_millionths: 100_000,
+            },
+            GateFailureReason::MicrobenchBudgetExceeded {
+                pair: "a-b".to_string(),
+                cost_millionths: 200_000,
+                budget_millionths: 100_000,
+            },
+            GateFailureReason::InvalidTimescale {
+                controller_name: "c".to_string(),
+                detail: "zero interval".to_string(),
+            },
+            GateFailureReason::DuplicateController {
+                controller_name: "dup".to_string(),
+            },
+            GateFailureReason::EmptyDeployment,
+        ];
+        let strings: BTreeSet<_> = reasons.iter().map(|r| r.to_string()).collect();
+        assert_eq!(strings.len(), reasons.len());
+    }
+
+    #[test]
+    fn gate_verdict_display_all_unique() {
+        let verdicts = [GateVerdict::Approved, GateVerdict::Rejected];
+        let strings: BTreeSet<_> = verdicts.iter().map(|v| v.to_string()).collect();
+        assert_eq!(strings.len(), verdicts.len());
+    }
+
+    // ── enrichment: ControllerRole as_str matches Display ───────────────
+
+    #[test]
+    fn controller_role_as_str_matches_display() {
+        for role in ControllerRole::all() {
+            assert_eq!(role.as_str(), role.to_string());
+        }
+    }
+
+    #[test]
+    fn interaction_class_as_str_matches_display() {
+        let classes = [
+            InteractionClass::Independent,
+            InteractionClass::ReadShared,
+            InteractionClass::ProducerConsumer,
+            InteractionClass::WriteConflict,
+            InteractionClass::MutuallyExclusive,
+        ];
+        for class in &classes {
+            assert_eq!(class.as_str(), class.to_string());
+        }
+    }
+
+    // ── enrichment: default_matrix symmetry ─────────────────────────────
+
+    #[test]
+    fn default_matrix_is_symmetric() {
+        let matrix = ControllerCompositionMatrix::default_matrix();
+        for &a in ControllerRole::all() {
+            for &b in ControllerRole::all() {
+                let ab = matrix.lookup(a, b);
+                let ba = matrix.lookup(b, a);
+                match (ab, ba) {
+                    (Some(ab_entry), Some(ba_entry)) => {
+                        assert_eq!(
+                            ab_entry.interaction, ba_entry.interaction,
+                            "asymmetry: ({a:?},{b:?}) vs ({b:?},{a:?})"
+                        );
+                    }
+                    (None, None) => {}
+                    _ => panic!("one side has entry but not the other: {a:?}, {b:?}"),
+                }
+            }
+        }
+    }
 }

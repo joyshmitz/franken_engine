@@ -6545,4 +6545,817 @@ mod tests {
         let after = witness.synthesis_unsigned_bytes();
         assert_eq!(base, after, "theorem proof obligations should be stripped");
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: PearlTower 2026-02-26 — WitnessIndexStore tests
+    // -----------------------------------------------------------------------
+
+    fn test_event_context() -> EventContext {
+        EventContext {
+            trace_id: "trace-test".to_string(),
+            decision_id: "decision-test".to_string(),
+            policy_id: "policy-test".to_string(),
+        }
+    }
+
+    #[test]
+    fn witness_index_store_index_and_lookup_by_id() {
+        use crate::storage_adapter::InMemoryStorageAdapter;
+        let adapter = InMemoryStorageAdapter::new();
+        let mut store = WitnessIndexStore::new(adapter);
+        let ctx = test_event_context();
+
+        let witness = build_test_witness();
+        let wid = witness.witness_id.clone();
+        let record = store.index_witness(&witness, 5000, &ctx).unwrap();
+        assert_eq!(record.witness_id, wid);
+        assert_eq!(record.promotion_timestamp_ns, 5000);
+
+        let found = store.witness_by_id(&wid, &ctx).unwrap();
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().witness_id, wid);
+    }
+
+    #[test]
+    fn witness_index_store_lookup_missing_returns_none() {
+        use crate::storage_adapter::InMemoryStorageAdapter;
+        let adapter = InMemoryStorageAdapter::new();
+        let mut store = WitnessIndexStore::new(adapter);
+        let ctx = test_event_context();
+        let result = store.witness_by_id(&test_extension_id(), &ctx).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn witness_index_store_query_by_extension() {
+        use crate::storage_adapter::InMemoryStorageAdapter;
+        let adapter = InMemoryStorageAdapter::new();
+        let mut store = WitnessIndexStore::new(adapter);
+        let ctx = test_event_context();
+
+        let witness = build_test_witness();
+        let ext_id = witness.extension_id.clone();
+        store.index_witness(&witness, 1000, &ctx).unwrap();
+
+        let page = store
+            .query_witnesses(
+                &WitnessIndexQuery {
+                    extension_id: Some(ext_id),
+                    limit: 10,
+                    ..WitnessIndexQuery::default()
+                },
+                &ctx,
+            )
+            .unwrap();
+        assert_eq!(page.records.len(), 1);
+        assert!(page.next_cursor.is_none());
+    }
+
+    #[test]
+    fn witness_index_store_query_zero_limit_rejected() {
+        use crate::storage_adapter::InMemoryStorageAdapter;
+        let adapter = InMemoryStorageAdapter::new();
+        let mut store = WitnessIndexStore::new(adapter);
+        let ctx = test_event_context();
+        let err = store
+            .query_witnesses(
+                &WitnessIndexQuery {
+                    limit: 0,
+                    ..WitnessIndexQuery::default()
+                },
+                &ctx,
+            )
+            .unwrap_err();
+        assert!(matches!(err, WitnessIndexError::InvalidInput { .. }));
+    }
+
+    #[test]
+    fn witness_index_store_query_by_lifecycle_state() {
+        use crate::storage_adapter::InMemoryStorageAdapter;
+        let adapter = InMemoryStorageAdapter::new();
+        let mut store = WitnessIndexStore::new(adapter);
+        let ctx = test_event_context();
+
+        let witness = build_test_witness();
+        store.index_witness(&witness, 1000, &ctx).unwrap();
+
+        let draft_page = store
+            .query_witnesses(
+                &WitnessIndexQuery {
+                    lifecycle_state: Some(LifecycleState::Draft),
+                    limit: 10,
+                    ..WitnessIndexQuery::default()
+                },
+                &ctx,
+            )
+            .unwrap();
+        assert_eq!(draft_page.records.len(), 1);
+
+        let active_page = store
+            .query_witnesses(
+                &WitnessIndexQuery {
+                    lifecycle_state: Some(LifecycleState::Active),
+                    limit: 10,
+                    ..WitnessIndexQuery::default()
+                },
+                &ctx,
+            )
+            .unwrap();
+        assert_eq!(active_page.records.len(), 0);
+    }
+
+    #[test]
+    fn witness_index_store_query_by_capability() {
+        use crate::storage_adapter::InMemoryStorageAdapter;
+        let adapter = InMemoryStorageAdapter::new();
+        let mut store = WitnessIndexStore::new(adapter);
+        let ctx = test_event_context();
+
+        let witness = build_test_witness();
+        store.index_witness(&witness, 1000, &ctx).unwrap();
+
+        let cap_page = store
+            .query_witnesses(
+                &WitnessIndexQuery {
+                    capability: Some(Capability::new("read-data")),
+                    limit: 10,
+                    ..WitnessIndexQuery::default()
+                },
+                &ctx,
+            )
+            .unwrap();
+        assert_eq!(cap_page.records.len(), 1);
+
+        let missing_page = store
+            .query_witnesses(
+                &WitnessIndexQuery {
+                    capability: Some(Capability::new("nonexistent-cap")),
+                    limit: 10,
+                    ..WitnessIndexQuery::default()
+                },
+                &ctx,
+            )
+            .unwrap();
+        assert_eq!(missing_page.records.len(), 0);
+    }
+
+    #[test]
+    fn witness_index_store_query_timestamp_range() {
+        use crate::storage_adapter::InMemoryStorageAdapter;
+        let adapter = InMemoryStorageAdapter::new();
+        let mut store = WitnessIndexStore::new(adapter);
+        let ctx = test_event_context();
+
+        let witness = build_test_witness();
+        store.index_witness(&witness, 5000, &ctx).unwrap();
+
+        let in_range = store
+            .query_witnesses(
+                &WitnessIndexQuery {
+                    start_timestamp_ns: Some(4000),
+                    end_timestamp_ns: Some(6000),
+                    limit: 10,
+                    ..WitnessIndexQuery::default()
+                },
+                &ctx,
+            )
+            .unwrap();
+        assert_eq!(in_range.records.len(), 1);
+
+        let out_range = store
+            .query_witnesses(
+                &WitnessIndexQuery {
+                    start_timestamp_ns: Some(6000),
+                    end_timestamp_ns: Some(7000),
+                    limit: 10,
+                    ..WitnessIndexQuery::default()
+                },
+                &ctx,
+            )
+            .unwrap();
+        assert_eq!(out_range.records.len(), 0);
+    }
+
+    #[test]
+    fn witness_index_store_escrow_receipt_index_and_join() {
+        use crate::storage_adapter::InMemoryStorageAdapter;
+        let adapter = InMemoryStorageAdapter::new();
+        let mut store = WitnessIndexStore::new(adapter);
+        let ctx = test_event_context();
+
+        let witness = build_test_witness();
+        let ext_id = witness.extension_id.clone();
+        store.index_witness(&witness, 1000, &ctx).unwrap();
+
+        let receipt = CapabilityEscrowReceiptRecord {
+            receipt_id: "r-001".to_string(),
+            extension_id: ext_id.clone(),
+            capability: Some(Capability::new("read-data")),
+            decision_kind: "grant".to_string(),
+            outcome: "approved".to_string(),
+            timestamp_ns: 1500,
+            trace_id: "t-1".to_string(),
+            decision_id: "d-1".to_string(),
+            policy_id: "p-1".to_string(),
+            error_code: None,
+        };
+        store.index_escrow_receipt(receipt, &ctx).unwrap();
+
+        let join_query = WitnessReplayJoinQuery {
+            extension_id: ext_id,
+            start_timestamp_ns: None,
+            end_timestamp_ns: None,
+            include_revoked: true,
+        };
+        let rows = store.replay_join(&join_query, &ctx).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].receipts.len(), 1);
+        assert_eq!(rows[0].receipts[0].receipt_id, "r-001");
+    }
+
+    #[test]
+    fn witness_index_store_escrow_receipt_empty_id_rejected() {
+        use crate::storage_adapter::InMemoryStorageAdapter;
+        let adapter = InMemoryStorageAdapter::new();
+        let mut store = WitnessIndexStore::new(adapter);
+        let ctx = test_event_context();
+
+        let receipt = CapabilityEscrowReceiptRecord {
+            receipt_id: "  ".to_string(),
+            extension_id: test_extension_id(),
+            capability: None,
+            decision_kind: "grant".to_string(),
+            outcome: "approved".to_string(),
+            timestamp_ns: 100,
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            error_code: None,
+        };
+        let err = store.index_escrow_receipt(receipt, &ctx).unwrap_err();
+        assert!(matches!(err, WitnessIndexError::InvalidInput { .. }));
+    }
+
+    #[test]
+    fn witness_index_store_escrow_receipt_empty_decision_kind_rejected() {
+        use crate::storage_adapter::InMemoryStorageAdapter;
+        let adapter = InMemoryStorageAdapter::new();
+        let mut store = WitnessIndexStore::new(adapter);
+        let ctx = test_event_context();
+
+        let receipt = CapabilityEscrowReceiptRecord {
+            receipt_id: "r-1".to_string(),
+            extension_id: test_extension_id(),
+            capability: None,
+            decision_kind: "  ".to_string(),
+            outcome: "approved".to_string(),
+            timestamp_ns: 100,
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            error_code: None,
+        };
+        let err = store.index_escrow_receipt(receipt, &ctx).unwrap_err();
+        assert!(matches!(err, WitnessIndexError::InvalidInput { .. }));
+    }
+
+    #[test]
+    fn witness_index_store_escrow_receipt_empty_outcome_rejected() {
+        use crate::storage_adapter::InMemoryStorageAdapter;
+        let adapter = InMemoryStorageAdapter::new();
+        let mut store = WitnessIndexStore::new(adapter);
+        let ctx = test_event_context();
+
+        let receipt = CapabilityEscrowReceiptRecord {
+            receipt_id: "r-1".to_string(),
+            extension_id: test_extension_id(),
+            capability: None,
+            decision_kind: "grant".to_string(),
+            outcome: "".to_string(),
+            timestamp_ns: 100,
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            error_code: None,
+        };
+        let err = store.index_escrow_receipt(receipt, &ctx).unwrap_err();
+        assert!(matches!(err, WitnessIndexError::InvalidInput { .. }));
+    }
+
+    #[test]
+    fn witness_index_store_replay_join_reversed_timestamps_rejected() {
+        use crate::storage_adapter::InMemoryStorageAdapter;
+        let adapter = InMemoryStorageAdapter::new();
+        let mut store = WitnessIndexStore::new(adapter);
+        let ctx = test_event_context();
+
+        let join_query = WitnessReplayJoinQuery {
+            extension_id: test_extension_id(),
+            start_timestamp_ns: Some(999),
+            end_timestamp_ns: Some(100),
+            include_revoked: true,
+        };
+        let err = store.replay_join(&join_query, &ctx).unwrap_err();
+        assert!(matches!(err, WitnessIndexError::InvalidInput { .. }));
+    }
+
+    #[test]
+    fn witness_index_store_deterministic_snapshot_hash() {
+        use crate::storage_adapter::InMemoryStorageAdapter;
+        let adapter = InMemoryStorageAdapter::new();
+        let mut store = WitnessIndexStore::new(adapter);
+        let ctx = test_event_context();
+
+        let witness = build_test_witness();
+        let ext_id = witness.extension_id.clone();
+        store.index_witness(&witness, 1000, &ctx).unwrap();
+
+        let hash1 = store.deterministic_snapshot_hash(&ext_id, &ctx).unwrap();
+        let hash2 = store.deterministic_snapshot_hash(&ext_id, &ctx).unwrap();
+        assert_eq!(hash1, hash2, "snapshot hash should be deterministic");
+        assert!(!hash1.is_empty());
+    }
+
+    #[test]
+    fn witness_index_store_events_emitted() {
+        use crate::storage_adapter::InMemoryStorageAdapter;
+        let adapter = InMemoryStorageAdapter::new();
+        let mut store = WitnessIndexStore::new(adapter);
+        let ctx = test_event_context();
+
+        assert!(store.events().is_empty());
+        let witness = build_test_witness();
+        store.index_witness(&witness, 1000, &ctx).unwrap();
+        assert!(!store.events().is_empty());
+        assert_eq!(store.events()[0].event, "index_witness");
+        assert_eq!(store.events()[0].outcome, "ok");
+    }
+
+    #[test]
+    fn witness_index_store_into_inner_returns_adapter() {
+        use crate::storage_adapter::InMemoryStorageAdapter;
+        let adapter = InMemoryStorageAdapter::new();
+        let store = WitnessIndexStore::new(adapter);
+        let _recovered = store.into_inner();
+    }
+
+    #[test]
+    fn witness_index_store_query_exclude_revoked() {
+        use crate::storage_adapter::InMemoryStorageAdapter;
+        let adapter = InMemoryStorageAdapter::new();
+        let mut store = WitnessIndexStore::new(adapter);
+        let ctx = test_event_context();
+
+        // Create a witness with revoked state
+        let mut witness = build_test_witness();
+        witness.lifecycle_state = LifecycleState::Revoked;
+        rebind_witness(&mut witness, &test_signing_key());
+        store.index_witness(&witness, 1000, &ctx).unwrap();
+
+        let include_page = store
+            .query_witnesses(
+                &WitnessIndexQuery {
+                    include_revoked: true,
+                    limit: 10,
+                    ..WitnessIndexQuery::default()
+                },
+                &ctx,
+            )
+            .unwrap();
+        assert_eq!(include_page.records.len(), 1);
+
+        let exclude_page = store
+            .query_witnesses(
+                &WitnessIndexQuery {
+                    include_revoked: false,
+                    limit: 10,
+                    ..WitnessIndexQuery::default()
+                },
+                &ctx,
+            )
+            .unwrap();
+        assert_eq!(exclude_page.records.len(), 0);
+    }
+
+    #[test]
+    fn witness_index_store_cursor_pagination() {
+        use crate::storage_adapter::InMemoryStorageAdapter;
+        let adapter = InMemoryStorageAdapter::new();
+        let mut store = WitnessIndexStore::new(adapter);
+        let ctx = test_event_context();
+
+        // Index 3 witnesses at different timestamps
+        for seed in [100, 200, 300] {
+            let cap_name = format!("cap-{seed}");
+            let cap = Capability::new(&cap_name);
+            let mut witness = WitnessBuilder::new(
+                test_extension_id_seeded(seed),
+                test_policy_id(),
+                SecurityEpoch::from_raw(seed),
+                seed * 10,
+                test_signing_key(),
+            )
+            .require(cap.clone())
+            .proof(make_proof(&cap))
+            .build()
+            .unwrap();
+            apply_passing_promotion_theorems(&mut witness);
+            store.index_witness(&witness, seed * 100, &ctx).unwrap();
+        }
+
+        // First page with limit 2
+        let page1 = store
+            .query_witnesses(
+                &WitnessIndexQuery {
+                    limit: 2,
+                    ..WitnessIndexQuery::default()
+                },
+                &ctx,
+            )
+            .unwrap();
+        assert_eq!(page1.records.len(), 2);
+        assert!(page1.next_cursor.is_some());
+
+        // Second page with cursor
+        let page2 = store
+            .query_witnesses(
+                &WitnessIndexQuery {
+                    cursor: page1.next_cursor.clone(),
+                    limit: 2,
+                    ..WitnessIndexQuery::default()
+                },
+                &ctx,
+            )
+            .unwrap();
+        assert_eq!(page2.records.len(), 1);
+        assert!(page2.next_cursor.is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: isqrt_millionths edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn isqrt_one() {
+        assert_eq!(isqrt_millionths(1), 1);
+    }
+
+    #[test]
+    fn isqrt_two() {
+        assert_eq!(isqrt_millionths(2), 1);
+    }
+
+    #[test]
+    fn isqrt_very_large() {
+        // sqrt(100_000_000) = 10_000
+        assert_eq!(isqrt_millionths(100_000_000), 10_000);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: ConfidenceInterval edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn confidence_from_trials_all_failures() {
+        let ci = ConfidenceInterval::from_trials(100, 0);
+        assert_eq!(ci.point_estimate_millionths(), 0);
+        assert_eq!(ci.lower_millionths, 0);
+        assert!(ci.upper_millionths > 0, "upper bound should be > 0");
+    }
+
+    #[test]
+    fn confidence_from_single_trial_success() {
+        let ci = ConfidenceInterval::from_trials(1, 1);
+        assert!(ci.lower_millionths >= 0);
+        assert!(ci.upper_millionths <= 1_000_000);
+        assert_eq!(ci.point_estimate_millionths(), 1_000_000);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: WitnessPublicationError::from_mmr
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn publication_error_from_mmr_inclusion() {
+        let err = WitnessPublicationError::from_mmr(
+            MmrProofError::IndexOutOfRange {
+                index: 99,
+                stream_length: 10,
+            },
+            false,
+        );
+        assert!(matches!(
+            err,
+            WitnessPublicationError::InclusionProofFailed { .. }
+        ));
+    }
+
+    #[test]
+    fn publication_error_from_mmr_consistency() {
+        let err = WitnessPublicationError::from_mmr(
+            MmrProofError::IndexOutOfRange {
+                index: 99,
+                stream_length: 10,
+            },
+            true,
+        );
+        assert!(matches!(
+            err,
+            WitnessPublicationError::ConsistencyProofFailed { .. }
+        ));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: PromotionTheoremKind metadata_key edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn promotion_theorem_kind_metadata_key_custom_empty() {
+        let custom = PromotionTheoremKind::Custom(String::new());
+        assert_eq!(custom.metadata_key(), "");
+    }
+
+    #[test]
+    fn promotion_theorem_kind_metadata_key_custom_special_chars() {
+        let custom = PromotionTheoremKind::Custom("A.B-C@D#E".to_string());
+        let key = custom.metadata_key();
+        // All non-alphanumeric chars become '_', letters become lowercase
+        assert_eq!(key, "a_b_c_d_e");
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: WitnessTreeHead preimage determinism
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn tree_head_preimage_deterministic() {
+        let root = ContentHash::compute(b"test-root");
+        let p1 = WitnessTreeHead::preimage(1, 10, &root, 5000, SecurityEpoch::from_raw(7));
+        let p2 = WitnessTreeHead::preimage(1, 10, &root, 5000, SecurityEpoch::from_raw(7));
+        assert_eq!(p1, p2);
+    }
+
+    #[test]
+    fn tree_head_preimage_changes_with_epoch() {
+        let root = ContentHash::compute(b"test-root");
+        let p1 = WitnessTreeHead::preimage(1, 10, &root, 5000, SecurityEpoch::from_raw(7));
+        let p2 = WitnessTreeHead::preimage(1, 10, &root, 5000, SecurityEpoch::from_raw(8));
+        assert_ne!(p1, p2);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: PublicationLogEntry verify_leaf_hash
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn publication_log_entry_verify_leaf_hash_valid() {
+        let pred = ContentHash([0u8; 32]);
+        let leaf_hash = PublicationLogEntry::compute_leaf_hash(&PublicationLeafInput {
+            sequence: 0,
+            kind: PublicationEntryKind::Publish,
+            witness_id: &test_extension_id(),
+            extension_id: &test_extension_id(),
+            policy_id: &test_policy_id(),
+            witness_epoch: SecurityEpoch::from_raw(1),
+            witness_content_hash: &ContentHash::compute(b"w"),
+            timestamp_ns: 1000,
+            revocation_reason: None,
+            predecessor_leaf_hash: &pred,
+        });
+        let entry = PublicationLogEntry {
+            sequence: 0,
+            kind: PublicationEntryKind::Publish,
+            witness_id: test_extension_id(),
+            extension_id: test_extension_id(),
+            policy_id: test_policy_id(),
+            witness_epoch: SecurityEpoch::from_raw(1),
+            witness_content_hash: ContentHash::compute(b"w"),
+            timestamp_ns: 1000,
+            revocation_reason: None,
+            predecessor_leaf_hash: pred,
+            leaf_hash,
+        };
+        assert!(entry.verify_leaf_hash());
+    }
+
+    #[test]
+    fn publication_log_entry_verify_leaf_hash_tampered() {
+        let pred = ContentHash([0u8; 32]);
+        let entry = PublicationLogEntry {
+            sequence: 0,
+            kind: PublicationEntryKind::Publish,
+            witness_id: test_extension_id(),
+            extension_id: test_extension_id(),
+            policy_id: test_policy_id(),
+            witness_epoch: SecurityEpoch::from_raw(1),
+            witness_content_hash: ContentHash::compute(b"w"),
+            timestamp_ns: 1000,
+            revocation_reason: None,
+            predecessor_leaf_hash: pred,
+            leaf_hash: ContentHash([0xffu8; 32]),
+        };
+        assert!(!entry.verify_leaf_hash());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: expand_capability_lattice transitive chain
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn expand_capability_lattice_transitive_chain() {
+        let cap_a = Capability::new("a");
+        let cap_b = Capability::new("b");
+        let cap_c = Capability::new("c");
+
+        let mut lattice = BTreeMap::new();
+        lattice.insert(cap_a.clone(), BTreeSet::from([cap_b.clone()]));
+        lattice.insert(cap_b.clone(), BTreeSet::from([cap_c.clone()]));
+
+        let initial = BTreeSet::from([cap_a.clone()]);
+        let expanded = CapabilityWitness::expand_capability_lattice(&initial, &lattice);
+        assert!(expanded.contains(&cap_a));
+        assert!(expanded.contains(&cap_b));
+        assert!(expanded.contains(&cap_c));
+        assert_eq!(expanded.len(), 3);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: pipeline publish with Active witness
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn pipeline_publish_active_witness_accepted() {
+        let head_key = SigningKey::from_bytes([73u8; 32]);
+        let mut pipeline = WitnessPublicationPipeline::new(
+            SecurityEpoch::from_raw(1),
+            head_key.clone(),
+            WitnessPublicationConfig::default(),
+        )
+        .unwrap();
+        let mut witness = build_promoted_witness(110);
+        witness.transition_to(LifecycleState::Active).unwrap();
+        let pub_id = pipeline.publish_witness(witness, 1000).unwrap();
+        assert!(!pub_id.as_bytes().is_empty());
+
+        WitnessPublicationPipeline::verify_artifact(
+            &pipeline.publications()[0],
+            &test_signing_key().verification_key(),
+            &head_key.verification_key(),
+        )
+        .unwrap();
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: verify_artifact with tampered revocation
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn verify_artifact_rejects_revocation_witness_id_mismatch() {
+        let head_key = SigningKey::from_bytes([74u8; 32]);
+        let mut pipeline = WitnessPublicationPipeline::new(
+            SecurityEpoch::from_raw(1),
+            head_key.clone(),
+            WitnessPublicationConfig::default(),
+        )
+        .unwrap();
+
+        let witness = build_promoted_witness(120);
+        let wid = witness.witness_id.clone();
+        pipeline.publish_witness(witness, 100).unwrap();
+        pipeline.revoke_witness(&wid, "compromised", 200).unwrap();
+
+        let mut artifact = pipeline.publications()[0].clone();
+        // Tamper: change revocation log entry witness_id
+        if let Some(ref mut revocation) = artifact.revocation_proof {
+            revocation.log_entry.witness_id = test_policy_id();
+        }
+
+        let err = WitnessPublicationPipeline::verify_artifact(
+            &artifact,
+            &test_signing_key().verification_key(),
+            &head_key.verification_key(),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            WitnessPublicationError::WitnessVerificationFailed { .. }
+        ));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: WitnessReplayJoinRow serde
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn witness_replay_join_row_serde_roundtrip() {
+        let witness = build_test_witness();
+        let record = WitnessIndexRecord {
+            witness_id: witness.witness_id.clone(),
+            extension_id: witness.extension_id.clone(),
+            policy_id: witness.policy_id.clone(),
+            epoch: witness.epoch,
+            lifecycle_state: witness.lifecycle_state,
+            promotion_timestamp_ns: 1000,
+            content_hash: witness.content_hash.clone(),
+            witness,
+        };
+        let row = WitnessReplayJoinRow {
+            witness: record,
+            receipts: Vec::new(),
+        };
+        let json = serde_json::to_string(&row).unwrap();
+        let back: WitnessReplayJoinRow = serde_json::from_str(&json).unwrap();
+        assert_eq!(row, back);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: WitnessIndexStore migrate_schema
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn witness_index_store_ensure_schema_version() {
+        use crate::storage_adapter::InMemoryStorageAdapter;
+        let adapter = InMemoryStorageAdapter::new();
+        let store = WitnessIndexStore::new(adapter);
+        // InMemoryStorageAdapter starts at version 1, which matches WITNESS_INDEX_SCHEMA_VERSION
+        let result = store.ensure_schema_version();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn witness_index_store_adapter_mut() {
+        use crate::storage_adapter::InMemoryStorageAdapter;
+        let adapter = InMemoryStorageAdapter::new();
+        let mut store = WitnessIndexStore::new(adapter);
+        let _adapter = store.adapter_mut();
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: ConsistencyProofLink serde
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn consistency_proof_link_serde_roundtrip() {
+        let head1 = WitnessTreeHead {
+            checkpoint_seq: 1,
+            log_length: 5,
+            mmr_root: ContentHash::compute(b"root1"),
+            timestamp_ns: 1000,
+            epoch: SecurityEpoch::from_raw(1),
+            head_hash: ContentHash::compute(b"head1"),
+            signature: vec![0xab; 64],
+        };
+        let head2 = WitnessTreeHead {
+            checkpoint_seq: 2,
+            log_length: 10,
+            mmr_root: ContentHash::compute(b"root2"),
+            timestamp_ns: 2000,
+            epoch: SecurityEpoch::from_raw(1),
+            head_hash: ContentHash::compute(b"head2"),
+            signature: vec![0xcd; 64],
+        };
+        let link = ConsistencyProofLink {
+            from_head: head1,
+            to_head: head2,
+            proof: MmrProof {
+                proof_type: crate::mmr_proof::ProofType::Inclusion,
+                marker_index: 5,
+                proof_hashes: Vec::new(),
+                root_hash: ContentHash::compute(b"root2"),
+                stream_length: 10,
+                epoch_id: 1,
+            },
+        };
+        let json = serde_json::to_string(&link).unwrap();
+        let back: ConsistencyProofLink = serde_json::from_str(&json).unwrap();
+        assert_eq!(link, back);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: dependency_transitive_closure
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn dependency_transitive_closure_multi_hop() {
+        let cap_a = Capability::new("a");
+        let cap_b = Capability::new("b");
+        let cap_c = Capability::new("c");
+
+        let mut deps = BTreeMap::new();
+        deps.insert(cap_a.clone(), BTreeSet::from([cap_b.clone()]));
+        deps.insert(cap_b.clone(), BTreeSet::from([cap_c.clone()]));
+
+        let closure = CapabilityWitness::dependency_transitive_closure(&cap_a, &deps);
+        assert!(closure.contains(&cap_b));
+        assert!(closure.contains(&cap_c));
+        assert!(!closure.contains(&cap_a), "root should not be in closure");
+    }
+
+    #[test]
+    fn dependency_transitive_closure_no_deps() {
+        let cap_a = Capability::new("a");
+        let deps = BTreeMap::new();
+        let closure = CapabilityWitness::dependency_transitive_closure(&cap_a, &deps);
+        assert!(closure.is_empty());
+    }
 }

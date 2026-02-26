@@ -5583,4 +5583,962 @@ mod tests {
         // Non-existent policy returns None
         assert!(gate.active_artifact("nonexistent").is_none());
     }
+
+    // -------------------------------------------------------------------
+    // Enrichment: ShadowEvaluationCandidate::validate error paths
+    // -------------------------------------------------------------------
+
+    fn valid_candidate() -> ShadowEvaluationCandidate {
+        candidate_with_metrics(improved_metrics(), 90_000, 900)
+    }
+
+    #[test]
+    fn candidate_validate_empty_trace_id_rejected() {
+        let mut c = valid_candidate();
+        c.trace_id = "  ".to_string();
+        let mut gate = shadow_gate();
+        let result = gate.evaluate_candidate(&create_test_contract(), c, &governance_signing_key());
+        assert!(matches!(
+            result,
+            Err(ContractError::InvalidShadowEvaluation { .. })
+        ));
+    }
+
+    #[test]
+    fn candidate_validate_empty_decision_id_rejected() {
+        let mut c = valid_candidate();
+        c.decision_id = "".to_string();
+        let mut gate = shadow_gate();
+        let result = gate.evaluate_candidate(&create_test_contract(), c, &governance_signing_key());
+        assert!(matches!(
+            result,
+            Err(ContractError::InvalidShadowEvaluation { .. })
+        ));
+    }
+
+    #[test]
+    fn candidate_validate_empty_policy_id_rejected() {
+        let mut c = valid_candidate();
+        c.policy_id = "".to_string();
+        let mut gate = shadow_gate();
+        let result = gate.evaluate_candidate(&create_test_contract(), c, &governance_signing_key());
+        assert!(matches!(
+            result,
+            Err(ContractError::InvalidShadowEvaluation { .. })
+        ));
+    }
+
+    #[test]
+    fn candidate_validate_empty_candidate_version_rejected() {
+        let mut c = valid_candidate();
+        c.candidate_version = "  ".to_string();
+        let mut gate = shadow_gate();
+        let result = gate.evaluate_candidate(&create_test_contract(), c, &governance_signing_key());
+        assert!(matches!(
+            result,
+            Err(ContractError::InvalidShadowEvaluation { .. })
+        ));
+    }
+
+    #[test]
+    fn candidate_validate_empty_rollback_token_rejected() {
+        let mut c = valid_candidate();
+        c.rollback_token = "".to_string();
+        let mut gate = shadow_gate();
+        let result = gate.evaluate_candidate(&create_test_contract(), c, &governance_signing_key());
+        assert!(matches!(
+            result,
+            Err(ContractError::InvalidShadowEvaluation { .. })
+        ));
+    }
+
+    #[test]
+    fn candidate_validate_timestamps_equal_rejected() {
+        let mut c = valid_candidate();
+        c.evaluation_completed_at_ns = c.shadow_started_at_ns;
+        let mut gate = shadow_gate();
+        let result = gate.evaluate_candidate(&create_test_contract(), c, &governance_signing_key());
+        assert!(matches!(
+            result,
+            Err(ContractError::InvalidShadowEvaluation { .. })
+        ));
+    }
+
+    #[test]
+    fn candidate_validate_success_rate_over_million_rejected() {
+        let mut c = valid_candidate();
+        c.shadow_success_rate_millionths = 1_000_001;
+        let mut gate = shadow_gate();
+        let result = gate.evaluate_candidate(&create_test_contract(), c, &governance_signing_key());
+        assert!(matches!(
+            result,
+            Err(ContractError::InvalidShadowEvaluation { .. })
+        ));
+    }
+
+    #[test]
+    fn candidate_validate_negative_epsilon_rejected() {
+        let mut c = valid_candidate();
+        c.epsilon_spent_millionths = -1;
+        let mut gate = shadow_gate();
+        let result = gate.evaluate_candidate(&create_test_contract(), c, &governance_signing_key());
+        assert!(matches!(
+            result,
+            Err(ContractError::InvalidShadowEvaluation { .. })
+        ));
+    }
+
+    #[test]
+    fn candidate_validate_negative_delta_rejected() {
+        let mut c = valid_candidate();
+        c.delta_spent_millionths = -1;
+        let mut gate = shadow_gate();
+        let result = gate.evaluate_candidate(&create_test_contract(), c, &governance_signing_key());
+        assert!(matches!(
+            result,
+            Err(ContractError::InvalidShadowEvaluation { .. })
+        ));
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: ShadowReplayReference::validate error paths
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn replay_reference_empty_corpus_id_rejected() {
+        let mut c = valid_candidate();
+        c.replay_reference.replay_corpus_id = "  ".to_string();
+        let mut gate = shadow_gate();
+        let result = gate.evaluate_candidate(&create_test_contract(), c, &governance_signing_key());
+        assert!(matches!(
+            result,
+            Err(ContractError::InvalidShadowEvaluation { .. })
+        ));
+    }
+
+    #[test]
+    fn replay_reference_empty_randomness_snapshot_id_rejected() {
+        let mut c = valid_candidate();
+        c.replay_reference.randomness_snapshot_id = "".to_string();
+        let mut gate = shadow_gate();
+        let result = gate.evaluate_candidate(&create_test_contract(), c, &governance_signing_key());
+        assert!(matches!(
+            result,
+            Err(ContractError::InvalidShadowEvaluation { .. })
+        ));
+    }
+
+    #[test]
+    fn replay_reference_zero_seed_hash_rejected() {
+        let mut c = valid_candidate();
+        c.replay_reference.replay_seed_hash = [0u8; 32];
+        let mut gate = shadow_gate();
+        let result = gate.evaluate_candidate(&create_test_contract(), c, &governance_signing_key());
+        assert!(matches!(
+            result,
+            Err(ContractError::InvalidShadowEvaluation { .. })
+        ));
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: ShadowBurnInThresholdProfile::validate error paths
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn burn_in_profile_zero_success_rate_rejected() {
+        let config = ShadowEvaluationGateConfig {
+            regression_tolerance_millionths: 5_000,
+            min_required_improvement_millionths: 2_500,
+            default_burn_in_profile: ShadowBurnInThresholdProfile {
+                min_shadow_success_rate_millionths: 0,
+                max_false_deny_rate_millionths: 5_000,
+                min_burn_in_duration_ns: 100,
+                require_verified_rollback_artifacts: true,
+            },
+            burn_in_profiles_by_extension_class: BTreeMap::new(),
+        };
+        let result = ShadowEvaluationGate::new(config);
+        assert!(matches!(
+            result,
+            Err(ContractError::InvalidShadowEvaluation { .. })
+        ));
+    }
+
+    #[test]
+    fn burn_in_profile_over_million_success_rate_rejected() {
+        let config = ShadowEvaluationGateConfig {
+            regression_tolerance_millionths: 5_000,
+            min_required_improvement_millionths: 2_500,
+            default_burn_in_profile: ShadowBurnInThresholdProfile {
+                min_shadow_success_rate_millionths: 1_000_001,
+                max_false_deny_rate_millionths: 5_000,
+                min_burn_in_duration_ns: 100,
+                require_verified_rollback_artifacts: true,
+            },
+            burn_in_profiles_by_extension_class: BTreeMap::new(),
+        };
+        let result = ShadowEvaluationGate::new(config);
+        assert!(matches!(
+            result,
+            Err(ContractError::InvalidShadowEvaluation { .. })
+        ));
+    }
+
+    #[test]
+    fn burn_in_profile_zero_duration_rejected() {
+        let config = ShadowEvaluationGateConfig {
+            regression_tolerance_millionths: 5_000,
+            min_required_improvement_millionths: 2_500,
+            default_burn_in_profile: ShadowBurnInThresholdProfile {
+                min_shadow_success_rate_millionths: 995_000,
+                max_false_deny_rate_millionths: 5_000,
+                min_burn_in_duration_ns: 0,
+                require_verified_rollback_artifacts: true,
+            },
+            burn_in_profiles_by_extension_class: BTreeMap::new(),
+        };
+        let result = ShadowEvaluationGate::new(config);
+        assert!(matches!(
+            result,
+            Err(ContractError::InvalidShadowEvaluation { .. })
+        ));
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: ShadowRollbackReadinessArtifacts::validate error paths
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn rollback_readiness_empty_snapshot_id_rejected() {
+        let mut c = valid_candidate();
+        c.rollback_readiness.previous_policy_snapshot_id = "  ".to_string();
+        let mut gate = shadow_gate();
+        let result = gate.evaluate_candidate(&create_test_contract(), c, &governance_signing_key());
+        assert!(matches!(
+            result,
+            Err(ContractError::InvalidShadowEvaluation { .. })
+        ));
+    }
+
+    #[test]
+    fn rollback_readiness_empty_playbook_ref_rejected() {
+        let mut c = valid_candidate();
+        c.rollback_readiness.rollback_playbook_ref = "".to_string();
+        let mut gate = shadow_gate();
+        let result = gate.evaluate_candidate(&create_test_contract(), c, &governance_signing_key());
+        assert!(matches!(
+            result,
+            Err(ContractError::InvalidShadowEvaluation { .. })
+        ));
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: SafetyMetricSnapshot::validate error path
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn safety_metric_snapshot_validate_missing_metric_rejected() {
+        let mut snap = baseline_metrics();
+        snap.values_millionths
+            .remove(&SafetyMetric::CalibrationError);
+        assert!(matches!(
+            snap.validate(),
+            Err(ContractError::InvalidShadowEvaluation { .. })
+        ));
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: ShadowEvaluationGateConfig::validate error path
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn gate_config_zero_improvement_threshold_rejected() {
+        let config = ShadowEvaluationGateConfig {
+            regression_tolerance_millionths: 5_000,
+            min_required_improvement_millionths: 0,
+            default_burn_in_profile: ShadowBurnInThresholdProfile::default(),
+            burn_in_profiles_by_extension_class: BTreeMap::new(),
+        };
+        let result = ShadowEvaluationGate::new(config);
+        assert!(matches!(
+            result,
+            Err(ContractError::InvalidShadowEvaluation { .. })
+        ));
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: shadow gate specific failure paths
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn shadow_gate_rejects_burn_in_duration_too_short() {
+        let contract = create_test_contract();
+        let mut gate = shadow_gate();
+        let mut c = valid_candidate();
+        // Make burn-in duration = 50ns, below min of 100ns
+        c.shadow_started_at_ns = 1_000_000_000;
+        c.evaluation_completed_at_ns = 1_000_000_050;
+        let artifact = gate
+            .evaluate_candidate(&contract, c, &governance_signing_key())
+            .expect("evaluation should succeed");
+        assert_eq!(artifact.verdict, ShadowPromotionVerdict::Reject);
+        assert!(
+            artifact
+                .failure_reasons
+                .iter()
+                .any(|r| r.contains("burn-in duration"))
+        );
+    }
+
+    #[test]
+    fn shadow_gate_rejects_low_shadow_success_rate() {
+        let contract = create_test_contract();
+        let mut gate = shadow_gate();
+        let mut c = valid_candidate();
+        c.shadow_success_rate_millionths = 990_000; // below 995_000 threshold
+        let artifact = gate
+            .evaluate_candidate(&contract, c, &governance_signing_key())
+            .expect("evaluation should succeed");
+        assert_eq!(artifact.verdict, ShadowPromotionVerdict::Reject);
+        assert!(
+            artifact
+                .failure_reasons
+                .iter()
+                .any(|r| r.contains("shadow success rate"))
+        );
+    }
+
+    #[test]
+    fn shadow_gate_rejects_high_false_deny_rate() {
+        let contract = create_test_contract();
+        let mut gate = shadow_gate();
+        let mut c = valid_candidate();
+        c.false_deny_rate_millionths = 6_000; // above 5_000 threshold
+        let artifact = gate
+            .evaluate_candidate(&contract, c, &governance_signing_key())
+            .expect("evaluation should succeed");
+        assert_eq!(artifact.verdict, ShadowPromotionVerdict::Reject);
+        assert!(artifact.burn_in_early_terminated);
+        assert!(
+            artifact
+                .failure_reasons
+                .iter()
+                .any(|r| r.contains("false-deny rate"))
+        );
+    }
+
+    #[test]
+    fn shadow_gate_rejects_unverified_rollback_artifacts() {
+        let contract = create_test_contract();
+        let mut gate = shadow_gate();
+        let mut c = valid_candidate();
+        c.rollback_readiness.rollback_command_tested = false;
+        c.rollback_readiness.transition_receipt_signed = false;
+        let artifact = gate
+            .evaluate_candidate(&contract, c, &governance_signing_key())
+            .expect("evaluation should succeed");
+        assert_eq!(artifact.verdict, ShadowPromotionVerdict::Reject);
+        assert!(
+            artifact
+                .failure_reasons
+                .iter()
+                .any(|r| r.contains("rollback readiness"))
+        );
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: shadow gate drain_events
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn shadow_gate_drain_events_clears_and_returns() {
+        let contract = create_test_contract();
+        let mut gate = shadow_gate();
+        gate.evaluate_candidate(&contract, valid_candidate(), &governance_signing_key())
+            .expect("evaluate");
+        let events = gate.drain_events();
+        assert!(!events.is_empty());
+        assert!(gate.events().is_empty());
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: post-deployment pass path (no regression)
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn post_deployment_metrics_pass_when_no_regression() {
+        let contract = create_test_contract();
+        let mut gate = shadow_gate();
+        let artifact = gate
+            .evaluate_candidate(&contract, valid_candidate(), &governance_signing_key())
+            .expect("evaluate");
+        assert_eq!(artifact.verdict, ShadowPromotionVerdict::Pass);
+
+        // Post-deployment metrics same as candidate (no regression)
+        let receipt = gate
+            .evaluate_post_deployment_metrics(
+                &artifact,
+                improved_metrics(),
+                &governance_signing_key(),
+            )
+            .expect("post deployment check");
+        assert!(
+            receipt.is_none(),
+            "no rollback expected when metrics stable"
+        );
+        assert!(gate.active_artifact("policy-shadow-1").is_some());
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: DeterministicPrng::draw_counter tracks draws
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn deterministic_prng_draw_counter_increments() {
+        let mut prng = DeterministicPrng::new(
+            "counter-test",
+            PrngAlgorithm::ChaCha20LikeCounter,
+            b"test-seed",
+        )
+        .expect("prng");
+        assert_eq!(prng.draw_counter(), 0);
+        prng.next_u64();
+        assert_eq!(prng.draw_counter(), 1);
+        prng.next_u64();
+        prng.next_u64();
+        assert_eq!(prng.draw_counter(), 3);
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: SeedEscrowRecord success and error paths
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn seed_escrow_open_for_audit_authorized_returns_seed() {
+        let mut auditors = BTreeSet::new();
+        auditors.insert("trusted-auditor".to_string());
+        let mut escrow = SeedEscrowRecord::create(
+            "test-phase",
+            SecurityEpoch::from_raw(3),
+            b"secret-seed",
+            auditors,
+        )
+        .expect("escrow");
+        let seed = escrow
+            .open_for_audit("trusted-auditor", "routine check")
+            .expect("access should be granted");
+        assert_eq!(seed.as_slice(), b"secret-seed");
+        assert_eq!(escrow.access_log.len(), 1);
+        assert!(escrow.access_log[0].approved);
+    }
+
+    #[test]
+    fn seed_escrow_create_empty_phase_id_rejected() {
+        let auditors = BTreeSet::from(["a".to_string()]);
+        let result = SeedEscrowRecord::create("  ", SecurityEpoch::from_raw(1), b"seed", auditors);
+        assert!(matches!(
+            result,
+            Err(ContractError::InvalidRandomnessTranscript { .. })
+        ));
+    }
+
+    #[test]
+    fn seed_escrow_create_empty_seed_rejected() {
+        let auditors = BTreeSet::from(["a".to_string()]);
+        let result = SeedEscrowRecord::create("phase", SecurityEpoch::from_raw(1), b"", auditors);
+        assert!(matches!(
+            result,
+            Err(ContractError::InvalidRandomnessTranscript { .. })
+        ));
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: HumanOverrideJustificationArtifact error paths
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn human_override_empty_operator_id_rejected() {
+        let contract = create_test_contract();
+        let mut gate = shadow_gate();
+        let rejected = gate
+            .evaluate_candidate(
+                &contract,
+                candidate_with_metrics(regressed_metrics(), 90_000, 900),
+                &governance_signing_key(),
+            )
+            .expect("evaluation");
+        assert_eq!(rejected.verdict, ShadowPromotionVerdict::Reject);
+
+        let result = gate.apply_human_override(
+            &rejected,
+            HumanOverrideRequest {
+                operator_id: "  ".to_string(),
+                summary: "valid summary".to_string(),
+                bypassed_risk_criteria: vec!["criterion-1".to_string()],
+                acknowledged_bypass: true,
+            },
+            &governance_signing_key(),
+        );
+        assert!(matches!(
+            result,
+            Err(ContractError::InvalidShadowOverride { .. })
+        ));
+    }
+
+    #[test]
+    fn human_override_empty_summary_rejected() {
+        let contract = create_test_contract();
+        let mut gate = shadow_gate();
+        let rejected = gate
+            .evaluate_candidate(
+                &contract,
+                candidate_with_metrics(regressed_metrics(), 90_000, 900),
+                &governance_signing_key(),
+            )
+            .expect("evaluation");
+
+        let result = gate.apply_human_override(
+            &rejected,
+            HumanOverrideRequest {
+                operator_id: "op-1".to_string(),
+                summary: "".to_string(),
+                bypassed_risk_criteria: vec!["criterion-1".to_string()],
+                acknowledged_bypass: true,
+            },
+            &governance_signing_key(),
+        );
+        assert!(matches!(
+            result,
+            Err(ContractError::InvalidShadowOverride { .. })
+        ));
+    }
+
+    #[test]
+    fn human_override_empty_criteria_rejected() {
+        let contract = create_test_contract();
+        let mut gate = shadow_gate();
+        let rejected = gate
+            .evaluate_candidate(
+                &contract,
+                candidate_with_metrics(regressed_metrics(), 90_000, 900),
+                &governance_signing_key(),
+            )
+            .expect("evaluation");
+
+        let result = gate.apply_human_override(
+            &rejected,
+            HumanOverrideRequest {
+                operator_id: "op-1".to_string(),
+                summary: "valid".to_string(),
+                bypassed_risk_criteria: vec![],
+                acknowledged_bypass: true,
+            },
+            &governance_signing_key(),
+        );
+        assert!(matches!(
+            result,
+            Err(ContractError::InvalidShadowOverride { .. })
+        ));
+    }
+
+    #[test]
+    fn human_override_not_acknowledged_rejected() {
+        let contract = create_test_contract();
+        let mut gate = shadow_gate();
+        let rejected = gate
+            .evaluate_candidate(
+                &contract,
+                candidate_with_metrics(regressed_metrics(), 90_000, 900),
+                &governance_signing_key(),
+            )
+            .expect("evaluation");
+
+        let result = gate.apply_human_override(
+            &rejected,
+            HumanOverrideRequest {
+                operator_id: "op-1".to_string(),
+                summary: "valid".to_string(),
+                bypassed_risk_criteria: vec!["criterion-1".to_string()],
+                acknowledged_bypass: false,
+            },
+            &governance_signing_key(),
+        );
+        assert!(matches!(
+            result,
+            Err(ContractError::InvalidShadowOverride { .. })
+        ));
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: ShadowPromotionDecisionArtifact unsigned_view determinism
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn shadow_promotion_artifact_unsigned_view_is_deterministic() {
+        let contract = create_test_contract();
+        let mut gate = shadow_gate();
+        let artifact = gate
+            .evaluate_candidate(&contract, valid_candidate(), &governance_signing_key())
+            .expect("evaluate");
+        let view1 = artifact.unsigned_view();
+        let view2 = artifact.unsigned_view();
+        assert_eq!(view1, view2);
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: ShadowPromotionDecisionArtifact serde roundtrip
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn shadow_promotion_decision_artifact_serde_roundtrip() {
+        let contract = create_test_contract();
+        let mut gate = shadow_gate();
+        let artifact = gate
+            .evaluate_candidate(&contract, valid_candidate(), &governance_signing_key())
+            .expect("evaluate");
+        let json = serde_json::to_string(&artifact).expect("serialize");
+        let restored: ShadowPromotionDecisionArtifact =
+            serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(artifact, restored);
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: ShadowRollbackIncidentReceipt serde roundtrip
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn shadow_rollback_incident_receipt_serde_roundtrip() {
+        let contract = create_test_contract();
+        let mut gate = shadow_gate();
+        let artifact = gate
+            .evaluate_candidate(&contract, valid_candidate(), &governance_signing_key())
+            .expect("evaluate");
+        let receipt = gate
+            .evaluate_post_deployment_metrics(
+                &artifact,
+                regressed_metrics(),
+                &governance_signing_key(),
+            )
+            .expect("post check")
+            .expect("rollback receipt");
+        let json = serde_json::to_string(&receipt).expect("serialize");
+        let restored: ShadowRollbackIncidentReceipt =
+            serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(receipt, restored);
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: RandomnessSnapshotSummary serde roundtrip
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn randomness_snapshot_summary_serde_roundtrip() {
+        let sk = governance_signing_key();
+        let mut transcript = RandomnessTranscript::new();
+        transcript
+            .commit_seed(
+                &sk,
+                "phase-serde-snap",
+                b"snap-seed",
+                PrngAlgorithm::ChaCha20LikeCounter,
+                SecurityEpoch::from_raw(1),
+                EngineObjectId([0xEE; 32]),
+            )
+            .expect("commit");
+        transcript
+            .emit_snapshot_summary(&sk, "model-1", "policy-1")
+            .expect("summary");
+        let summary = &transcript.snapshot_summaries[0];
+        let json = serde_json::to_string(summary).expect("serialize");
+        let restored: RandomnessSnapshotSummary = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(*summary, restored);
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: RandomnessTranscript serde roundtrip
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn randomness_transcript_serde_roundtrip() {
+        let sk = governance_signing_key();
+        let mut transcript = RandomnessTranscript::new();
+        transcript
+            .commit_seed(
+                &sk,
+                "phase-rt",
+                b"seed-rt",
+                PrngAlgorithm::ChaCha20LikeCounter,
+                SecurityEpoch::from_raw(2),
+                EngineObjectId([0xCC; 32]),
+            )
+            .expect("commit");
+        let json = serde_json::to_string(&transcript).expect("serialize");
+        let restored: RandomnessTranscript = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(transcript, restored);
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: PrivacyLearningContract preimage_bytes determinism
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn contract_preimage_bytes_deterministic() {
+        let c = create_test_contract();
+        let p1 = c.preimage_bytes();
+        let p2 = c.preimage_bytes();
+        assert_eq!(p1, p2);
+        assert!(!p1.is_empty());
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: PrivacyLearningContract build_unsigned_view determinism
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn contract_build_unsigned_view_deterministic() {
+        let c = create_test_contract();
+        let v1 = c.build_unsigned_view();
+        let v2 = c.build_unsigned_view();
+        assert_eq!(v1, v2);
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: commit_seed error paths
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn commit_seed_empty_phase_id_rejected() {
+        let mut transcript = RandomnessTranscript::new();
+        let result = transcript.commit_seed(
+            &governance_signing_key(),
+            "  ",
+            b"seed",
+            PrngAlgorithm::ChaCha20LikeCounter,
+            SecurityEpoch::from_raw(1),
+            EngineObjectId([0x01; 32]),
+        );
+        assert!(matches!(
+            result,
+            Err(ContractError::InvalidRandomnessTranscript { .. })
+        ));
+    }
+
+    #[test]
+    fn commit_seed_empty_seed_rejected() {
+        let mut transcript = RandomnessTranscript::new();
+        let result = transcript.commit_seed(
+            &governance_signing_key(),
+            "phase",
+            b"",
+            PrngAlgorithm::ChaCha20LikeCounter,
+            SecurityEpoch::from_raw(1),
+            EngineObjectId([0x01; 32]),
+        );
+        assert!(matches!(
+            result,
+            Err(ContractError::InvalidRandomnessTranscript { .. })
+        ));
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: emit_snapshot_summary error paths
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn emit_snapshot_summary_empty_model_id_rejected() {
+        let sk = governance_signing_key();
+        let mut transcript = RandomnessTranscript::new();
+        transcript
+            .commit_seed(
+                &sk,
+                "phase",
+                b"seed",
+                PrngAlgorithm::ChaCha20LikeCounter,
+                SecurityEpoch::from_raw(1),
+                EngineObjectId([0x01; 32]),
+            )
+            .expect("commit");
+        let result = transcript.emit_snapshot_summary(&sk, "  ", "policy-1");
+        assert!(matches!(
+            result,
+            Err(ContractError::InvalidRandomnessTranscript { .. })
+        ));
+    }
+
+    #[test]
+    fn emit_snapshot_summary_no_commitments_rejected() {
+        let sk = governance_signing_key();
+        let mut transcript = RandomnessTranscript::new();
+        let result = transcript.emit_snapshot_summary(&sk, "model-1", "policy-1");
+        assert!(matches!(
+            result,
+            Err(ContractError::InvalidRandomnessTranscript { .. })
+        ));
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: ShadowMetricAssessment serde roundtrip
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn shadow_metric_assessment_serde_roundtrip() {
+        let assessment = ShadowMetricAssessment {
+            baseline_value_millionths: 100_000,
+            candidate_value_millionths: 95_000,
+            improvement_millionths: 5_000,
+            regressed: false,
+            significant_improvement: true,
+        };
+        let json = serde_json::to_string(&assessment).expect("serialize");
+        let restored: ShadowMetricAssessment = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(assessment, restored);
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: ShadowPrivacyBudgetStatus serde roundtrip
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn shadow_privacy_budget_status_serde_roundtrip() {
+        let status = ShadowPrivacyBudgetStatus {
+            epsilon_spent_millionths: 50_000,
+            epsilon_limit_millionths: 100_000,
+            delta_spent_millionths: 500,
+            delta_limit_millionths: 1_000,
+            within_budget: true,
+        };
+        let json = serde_json::to_string(&status).expect("serialize");
+        let restored: ShadowPrivacyBudgetStatus = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(status, restored);
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: HumanOverrideRequest serde roundtrip
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn human_override_request_serde_roundtrip() {
+        let request = HumanOverrideRequest {
+            operator_id: "op-1".to_string(),
+            summary: "manual promotion".to_string(),
+            bypassed_risk_criteria: vec!["cr-1".to_string(), "cr-2".to_string()],
+            acknowledged_bypass: true,
+        };
+        let json = serde_json::to_string(&request).expect("serialize");
+        let restored: HumanOverrideRequest = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(request, restored);
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: ShadowEvaluationCandidate serde roundtrip
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn shadow_evaluation_candidate_serde_roundtrip() {
+        let candidate = valid_candidate();
+        let json = serde_json::to_string(&candidate).expect("serialize");
+        let restored: ShadowEvaluationCandidate = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(candidate, restored);
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: ShadowRollbackReadinessArtifacts serde roundtrip
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn shadow_rollback_readiness_serde_roundtrip() {
+        let r = rollback_readiness();
+        let json = serde_json::to_string(&r).expect("serialize");
+        let restored: ShadowRollbackReadinessArtifacts =
+            serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(r, restored);
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: DataRetentionPolicy zero snapshot_retention rejected
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn retention_zero_snapshot_rejected() {
+        let mut ret = test_retention();
+        ret.max_snapshot_retention = 0;
+        assert!(matches!(
+            ret.validate(),
+            Err(ContractError::InvalidRetention { .. })
+        ));
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: DpBudget delta_epoch > delta_lifetime rejected
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn dp_budget_delta_epoch_exceeds_lifetime_rejected() {
+        let mut budget = test_dp_budget();
+        budget.delta_per_epoch_millionths = budget.lifetime_delta_budget_millionths + 1;
+        assert!(matches!(
+            budget.validate(),
+            Err(ContractError::InvalidDpBudget { .. })
+        ));
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: DpBudget zero lifetime epsilon rejected
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn dp_budget_zero_lifetime_epsilon_rejected() {
+        let mut budget = test_dp_budget();
+        budget.lifetime_epsilon_budget_millionths = 0;
+        // This should fail since epsilon_per_epoch > lifetime
+        assert!(budget.validate().is_err());
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: ShadowEvaluationGate evaluate with extension class override
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn shadow_gate_uses_extension_class_burn_in_override() {
+        let mut profiles = BTreeMap::new();
+        profiles.insert(
+            ShadowExtensionClass::Critical,
+            ShadowBurnInThresholdProfile {
+                min_shadow_success_rate_millionths: 999_000,
+                max_false_deny_rate_millionths: 500,
+                min_burn_in_duration_ns: 50,
+                require_verified_rollback_artifacts: true,
+            },
+        );
+        let config = ShadowEvaluationGateConfig {
+            regression_tolerance_millionths: 5_000,
+            min_required_improvement_millionths: 2_500,
+            default_burn_in_profile: ShadowBurnInThresholdProfile {
+                min_shadow_success_rate_millionths: 995_000,
+                max_false_deny_rate_millionths: 5_000,
+                min_burn_in_duration_ns: 100,
+                require_verified_rollback_artifacts: true,
+            },
+            burn_in_profiles_by_extension_class: profiles,
+        };
+        let mut gate = ShadowEvaluationGate::new(config).expect("gate");
+        let contract = create_test_contract();
+        let mut c = valid_candidate();
+        c.extension_class = ShadowExtensionClass::Critical;
+        c.shadow_success_rate_millionths = 998_000; // below 999_000 critical threshold
+        let artifact = gate
+            .evaluate_candidate(&contract, c, &governance_signing_key())
+            .expect("evaluate");
+        assert_eq!(artifact.verdict, ShadowPromotionVerdict::Reject);
+        assert!(
+            artifact
+                .failure_reasons
+                .iter()
+                .any(|r| r.contains("shadow success rate"))
+        );
+        assert_eq!(
+            artifact.burn_in_profile.min_shadow_success_rate_millionths,
+            999_000
+        );
+    }
 }

@@ -1632,4 +1632,213 @@ fn bad_fn(data: &[u8]) {
         let findings = guard.audit_source("ext_host::big", "src/big.rs", &source);
         assert!(findings.is_empty());
     }
+
+    // ── enrichment: ViolationKind display uniqueness ────────────────────
+
+    #[test]
+    fn violation_kind_display_all_unique() {
+        let kinds = [
+            ViolationKind::ForbiddenPattern,
+            ViolationKind::MissingCxParameter,
+            ViolationKind::DirectUpstreamImport,
+            ViolationKind::CanonicalTypeShadow,
+        ];
+        let strings: BTreeSet<_> = kinds.iter().map(|k| k.to_string()).collect();
+        assert_eq!(strings.len(), kinds.len());
+    }
+
+    // ── enrichment: ExemptionRegistry len/is_empty ──────────────────────
+
+    #[test]
+    fn exemption_registry_empty_by_default() {
+        let reg = ExtensionHostExemptionRegistry::new();
+        assert!(reg.is_empty());
+        assert_eq!(reg.len(), 0);
+        assert!(reg.entries().is_empty());
+    }
+
+    #[test]
+    fn exemption_registry_tracks_size() {
+        let mut reg = ExtensionHostExemptionRegistry::new();
+        reg.add(ExtensionHostExemption {
+            exemption_id: "e1".to_string(),
+            module_path: "m".to_string(),
+            kind: ViolationKind::ForbiddenPattern,
+            matched_token: "std::fs".to_string(),
+            reason: "bootstrap".to_string(),
+            line: 0,
+        });
+        assert!(!reg.is_empty());
+        assert_eq!(reg.len(), 1);
+        assert_eq!(reg.entries().len(), 1);
+    }
+
+    // ── enrichment: config()/exemptions() accessors ─────────────────────
+
+    #[test]
+    fn guard_config_accessor() {
+        let guard = standard_guard();
+        let cfg = guard.config();
+        assert!(cfg.include_base_patterns);
+        assert_eq!(cfg.canonical_types.len(), CANONICAL_TYPES.len());
+    }
+
+    #[test]
+    fn guard_exemptions_accessor() {
+        let guard = standard_guard();
+        assert!(guard.exemptions().is_empty());
+    }
+
+    // ── enrichment: audit_result serde with findings ────────────────────
+
+    #[test]
+    fn audit_result_serde_with_findings() {
+        let finding = ExtensionHostFinding {
+            kind: ViolationKind::CanonicalTypeShadow,
+            module_path: "ext_host::m".to_string(),
+            file_path: "src/m.rs".to_string(),
+            line: 10,
+            source_line: "struct TraceId(u64);".to_string(),
+            description: "shadows canonical type".to_string(),
+            remediation: "import instead".to_string(),
+            exempted: false,
+        };
+        let mut summary = BTreeMap::new();
+        summary.insert("canonical_type_shadow".to_string(), 1);
+        let result = ExtensionHostAuditResult {
+            findings: vec![finding],
+            violation_count: 1,
+            exemption_count: 0,
+            modules_audited: vec!["ext_host::m".to_string()],
+            passed: false,
+            summary_by_kind: summary,
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let deser: ExtensionHostAuditResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(result, deser);
+    }
+
+    // ── enrichment: exemption line matching ─────────────────────────────
+
+    #[test]
+    fn exemption_module_wide_matches_any_line() {
+        let mut reg = ExtensionHostExemptionRegistry::new();
+        reg.add(ExtensionHostExemption {
+            exemption_id: "e1".to_string(),
+            module_path: "ext_host::boot".to_string(),
+            kind: ViolationKind::DirectUpstreamImport,
+            matched_token: "use franken_kernel".to_string(),
+            reason: "bootstrap".to_string(),
+            line: 0, // module-wide
+        });
+        // line=0 means matches any line
+        assert!(reg.is_exempted(
+            "ext_host::boot",
+            ViolationKind::DirectUpstreamImport,
+            "use franken_kernel",
+            42,
+        ));
+        assert!(reg.is_exempted(
+            "ext_host::boot",
+            ViolationKind::DirectUpstreamImport,
+            "use franken_kernel",
+            1,
+        ));
+    }
+
+    #[test]
+    fn exemption_specific_line_only_matches_that_line() {
+        let mut reg = ExtensionHostExemptionRegistry::new();
+        reg.add(ExtensionHostExemption {
+            exemption_id: "e2".to_string(),
+            module_path: "ext_host::boot".to_string(),
+            kind: ViolationKind::ForbiddenPattern,
+            matched_token: "std::fs".to_string(),
+            reason: "test".to_string(),
+            line: 5,
+        });
+        assert!(reg.is_exempted(
+            "ext_host::boot",
+            ViolationKind::ForbiddenPattern,
+            "std::fs",
+            5,
+        ));
+        assert!(!reg.is_exempted(
+            "ext_host::boot",
+            ViolationKind::ForbiddenPattern,
+            "std::fs",
+            6,
+        ));
+    }
+
+    #[test]
+    fn exemption_wrong_module_not_matched() {
+        let mut reg = ExtensionHostExemptionRegistry::new();
+        reg.add(ExtensionHostExemption {
+            exemption_id: "e3".to_string(),
+            module_path: "ext_host::a".to_string(),
+            kind: ViolationKind::ForbiddenPattern,
+            matched_token: "std::fs".to_string(),
+            reason: "test".to_string(),
+            line: 0,
+        });
+        assert!(!reg.is_exempted(
+            "ext_host::b",
+            ViolationKind::ForbiddenPattern,
+            "std::fs",
+            1,
+        ));
+    }
+
+    // ── enrichment: GuardConfig serde with custom fields ────────────────
+
+    #[test]
+    fn guard_config_with_custom_fields_serde() {
+        let mut config = GuardConfig::default();
+        config.add_cx_audited_prefix("ext_host");
+        config.add_effectful_indicator("custom_op");
+        config.add_forbidden_import("use bad_crate", "use good_crate instead");
+        let json = serde_json::to_string(&config).unwrap();
+        let deser: GuardConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config, deser);
+    }
+
+    // ── enrichment: ExtensionHostFinding ordering ───────────────────────
+
+    #[test]
+    fn finding_ordering_by_kind_then_path() {
+        let f1 = ExtensionHostFinding {
+            kind: ViolationKind::DirectUpstreamImport,
+            module_path: "a".to_string(),
+            file_path: "a.rs".to_string(),
+            line: 1,
+            source_line: "x".to_string(),
+            description: "d".to_string(),
+            remediation: "r".to_string(),
+            exempted: false,
+        };
+        let f2 = ExtensionHostFinding {
+            kind: ViolationKind::CanonicalTypeShadow,
+            module_path: "a".to_string(),
+            file_path: "a.rs".to_string(),
+            line: 1,
+            source_line: "x".to_string(),
+            description: "d".to_string(),
+            remediation: "r".to_string(),
+            exempted: false,
+        };
+        assert!(f1 < f2); // DirectUpstreamImport < CanonicalTypeShadow
+    }
+
+    // ── enrichment: extract_fn_name edge cases ──────────────────────────
+
+    #[test]
+    fn extract_fn_name_async_fn() {
+        assert_eq!(extract_fn_name("async fn process(cx: &Cx)"), Some("process"));
+    }
+
+    #[test]
+    fn extract_fn_name_empty_string() {
+        assert_eq!(extract_fn_name(""), None);
+    }
 }

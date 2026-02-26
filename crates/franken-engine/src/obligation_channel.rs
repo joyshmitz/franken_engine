@@ -988,4 +988,188 @@ mod tests {
             .unwrap();
         assert_eq!(abort_event.resolution_type, Some("abort".to_string()));
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 3: clone equality, JSON fields, edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn obligation_record_clone_equality() {
+        let rec = ObligationRecord {
+            obligation_id: 42,
+            created_at_tick: 100,
+            creator_trace_id: "trace-x".to_string(),
+            state: ObligationState::Committed,
+            resolution_evidence_hash: Some("hash-abc".to_string()),
+        };
+        let cloned = rec.clone();
+        assert_eq!(rec, cloned);
+    }
+
+    #[test]
+    fn obligation_event_clone_equality() {
+        let evt = ObligationEvent {
+            trace_id: "t1".to_string(),
+            channel_id: "c1".to_string(),
+            obligation_id: 7,
+            state: ObligationState::Aborted,
+            resolution_type: Some("abort".to_string()),
+            evidence_hash: Some("ev-hash".to_string()),
+        };
+        let cloned = evt.clone();
+        assert_eq!(evt, cloned);
+    }
+
+    #[test]
+    fn channel_config_clone_equality() {
+        let cfg = ChannelConfig {
+            max_pending: 128,
+            lab_mode: true,
+        };
+        let cloned = cfg.clone();
+        assert_eq!(cfg, cloned);
+    }
+
+    #[test]
+    fn abort_reason_clone_equality() {
+        let reasons = [
+            AbortReason::DrainTimeout,
+            AbortReason::UpstreamFailure,
+            AbortReason::PolicyViolation,
+            AbortReason::OperatorAbort,
+            AbortReason::Custom("reason-x".to_string()),
+        ];
+        for reason in &reasons {
+            let cloned = reason.clone();
+            assert_eq!(*reason, cloned);
+        }
+    }
+
+    #[test]
+    fn obligation_record_json_field_presence() {
+        let rec = ObligationRecord {
+            obligation_id: 1,
+            created_at_tick: 50,
+            creator_trace_id: "tr".to_string(),
+            state: ObligationState::Pending,
+            resolution_evidence_hash: None,
+        };
+        let json = serde_json::to_string(&rec).unwrap();
+        assert!(json.contains("\"obligation_id\""));
+        assert!(json.contains("\"created_at_tick\""));
+        assert!(json.contains("\"creator_trace_id\""));
+        assert!(json.contains("\"state\""));
+        assert!(json.contains("\"resolution_evidence_hash\""));
+    }
+
+    #[test]
+    fn obligation_event_json_field_presence() {
+        let evt = ObligationEvent {
+            trace_id: "t".to_string(),
+            channel_id: "c".to_string(),
+            obligation_id: 1,
+            state: ObligationState::Leaked,
+            resolution_type: None,
+            evidence_hash: None,
+        };
+        let json = serde_json::to_string(&evt).unwrap();
+        assert!(json.contains("\"trace_id\""));
+        assert!(json.contains("\"channel_id\""));
+        assert!(json.contains("\"obligation_id\""));
+        assert!(json.contains("\"state\""));
+        assert!(json.contains("\"resolution_type\""));
+        assert!(json.contains("\"evidence_hash\""));
+    }
+
+    #[test]
+    fn set_tick_updates_created_at_tick() {
+        let mut chan = test_channel();
+        chan.set_tick(500);
+        let id = chan.send("t").unwrap();
+        let oldest = chan.oldest_pending().unwrap();
+        assert_eq!(oldest.obligation_id, id);
+        assert_eq!(oldest.created_at_tick, 500);
+    }
+
+    #[test]
+    fn force_abort_all_pending_emits_events_for_each() {
+        let mut chan = test_channel();
+        chan.send("t").unwrap();
+        chan.send("t").unwrap();
+        chan.send("t").unwrap();
+        chan.drain_events(); // clear send events
+        chan.force_abort_all_pending("timeout-h");
+        let events = chan.drain_events();
+        assert_eq!(events.len(), 3);
+        for evt in &events {
+            assert_eq!(evt.state, ObligationState::Aborted);
+            assert_eq!(evt.resolution_type, Some("abort".to_string()));
+        }
+    }
+
+    #[test]
+    fn leak_event_has_resolution_type_leak() {
+        let mut chan = test_channel();
+        let id = chan.send("t").unwrap();
+        chan.drain_events(); // clear send event
+        chan.mark_leaked(id).unwrap();
+        let events = chan.drain_events();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].state, ObligationState::Leaked);
+        assert_eq!(events[0].resolution_type, Some("leak".to_string()));
+        assert_eq!(events[0].evidence_hash, None);
+    }
+
+    #[test]
+    fn multiple_leaks_increment_count() {
+        let mut chan = test_channel();
+        let id1 = chan.send("t").unwrap();
+        let id2 = chan.send("t").unwrap();
+        let id3 = chan.send("t").unwrap();
+        chan.mark_leaked(id1).unwrap();
+        assert_eq!(chan.leak_count(), 1);
+        chan.mark_leaked(id2).unwrap();
+        assert_eq!(chan.leak_count(), 2);
+        chan.mark_leaked(id3).unwrap();
+        assert_eq!(chan.leak_count(), 3);
+    }
+
+    #[test]
+    fn backpressure_ignores_resolved_obligations() {
+        let mut chan = ObligationChannel::new(
+            "chan",
+            "t",
+            ChannelConfig {
+                max_pending: 2,
+                lab_mode: false,
+            },
+        );
+        let id1 = chan.send("t").unwrap();
+        let id2 = chan.send("t").unwrap();
+        chan.commit(id1, "h").unwrap();
+        chan.abort(id2, &AbortReason::DrainTimeout, "h").unwrap();
+        // Both resolved, total_count is 2 but pending_count is 0
+        assert_eq!(chan.total_count(), 2);
+        // Should allow 2 more sends since only pending counts
+        chan.send("t").unwrap();
+        chan.send("t").unwrap();
+        assert!(chan.send("t").is_err());
+    }
+
+    #[test]
+    fn pending_event_has_no_resolution_type() {
+        let mut chan = test_channel();
+        chan.send("t").unwrap();
+        let events = chan.drain_events();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].state, ObligationState::Pending);
+        assert_eq!(events[0].resolution_type, None);
+        assert_eq!(events[0].evidence_hash, None);
+    }
+
+    #[test]
+    fn abort_reason_custom_empty_string_display() {
+        let reason = AbortReason::Custom(String::new());
+        assert_eq!(reason.to_string(), "custom:");
+    }
 }

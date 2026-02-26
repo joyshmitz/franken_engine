@@ -3223,4 +3223,1123 @@ mod tests {
             "all 7 tested variants produce distinct messages"
         );
     }
+
+    // ====================================================================
+    // Enrichment: classify_output_divergence_severity
+    // ====================================================================
+
+    #[test]
+    fn classify_divergence_exact_match_after_trim() {
+        let sev = classify_output_divergence_severity("  hello  ", "hello");
+        assert_eq!(sev, DivergenceSeverity::Informational);
+    }
+
+    #[test]
+    fn classify_divergence_case_only_difference() {
+        let sev = classify_output_divergence_severity("Hello World", "hello world");
+        assert_eq!(sev, DivergenceSeverity::Low);
+    }
+
+    #[test]
+    fn classify_divergence_prefix_relation() {
+        let sev = classify_output_divergence_severity("hello world extra", "hello world");
+        assert_eq!(sev, DivergenceSeverity::Low);
+    }
+
+    #[test]
+    fn classify_divergence_medium_severity_similar_length() {
+        // 60% length ratio => Medium
+        let sev = classify_output_divergence_severity("abcdefghij", "ZYXWVU");
+        assert_eq!(sev, DivergenceSeverity::Medium);
+    }
+
+    #[test]
+    fn classify_divergence_high_severity_very_different_length() {
+        // <50% length ratio => High
+        let sev = classify_output_divergence_severity(
+            "this is a very long output string that is significantly longer",
+            "short",
+        );
+        assert_eq!(sev, DivergenceSeverity::High);
+    }
+
+    #[test]
+    fn classify_divergence_both_empty_after_trim() {
+        let sev = classify_output_divergence_severity("  ", "  ");
+        assert_eq!(sev, DivergenceSeverity::Informational);
+    }
+
+    // ====================================================================
+    // Enrichment: timing_divergence_significant
+    // ====================================================================
+
+    #[test]
+    fn timing_divergence_both_zero() {
+        assert!(!timing_divergence_significant(0, 0));
+    }
+
+    #[test]
+    fn timing_divergence_one_zero() {
+        assert!(!timing_divergence_significant(100, 0));
+        assert!(!timing_divergence_significant(0, 100));
+    }
+
+    #[test]
+    fn timing_divergence_within_ratio() {
+        // 150/100 = 150% < 200% => not significant
+        assert!(!timing_divergence_significant(100, 150));
+    }
+
+    #[test]
+    fn timing_divergence_exceeds_ratio() {
+        // 300/100 = 300% > 200% => significant
+        assert!(timing_divergence_significant(100, 300));
+    }
+
+    #[test]
+    fn timing_divergence_symmetric() {
+        assert!(timing_divergence_significant(300, 100));
+        assert!(timing_divergence_significant(100, 300));
+    }
+
+    // ====================================================================
+    // Enrichment: infer_capabilities patterns
+    // ====================================================================
+
+    #[test]
+    fn infer_timer_pattern() {
+        let files = vec![SourceFile {
+            path: "app.js".into(),
+            content: "setTimeout(fn, 1000)".into(),
+        }];
+        let config = MigrationConfig::default();
+        let result = infer_capabilities(&files, &config).unwrap();
+        assert!(result
+            .inferred_capabilities
+            .iter()
+            .any(|c| c.kind == InferredCapabilityKind::TimerAccess));
+        assert!(result.minimum_capability_set.contains("cap:timer"));
+    }
+
+    #[test]
+    fn infer_set_interval_pattern() {
+        let files = vec![SourceFile {
+            path: "worker.js".into(),
+            content: "setInterval(() => {}, 5000)".into(),
+        }];
+        let config = MigrationConfig::default();
+        let result = infer_capabilities(&files, &config).unwrap();
+        assert!(result
+            .inferred_capabilities
+            .iter()
+            .any(|c| c.kind == InferredCapabilityKind::TimerAccess));
+    }
+
+    #[test]
+    fn infer_dynamic_import_pattern() {
+        let files = vec![SourceFile {
+            path: "loader.js".into(),
+            content: r#"const mod = await import("./plugin.js")"#.into(),
+        }];
+        let config = MigrationConfig::default();
+        let result = infer_capabilities(&files, &config).unwrap();
+        assert!(result
+            .inferred_capabilities
+            .iter()
+            .any(|c| c.kind == InferredCapabilityKind::DynamicImport));
+        assert!(result.minimum_capability_set.contains("cap:import:dynamic"));
+    }
+
+    #[test]
+    fn infer_native_addon_node_gyp() {
+        let files = vec![SourceFile {
+            path: "binding.gyp".into(),
+            content: "node-gyp rebuild".into(),
+        }];
+        let config = MigrationConfig::default();
+        let result = infer_capabilities(&files, &config).unwrap();
+        assert!(result
+            .inferred_capabilities
+            .iter()
+            .any(|c| c.kind == InferredCapabilityKind::NativeAddon));
+    }
+
+    #[test]
+    fn infer_native_addon_napi() {
+        let files = vec![SourceFile {
+            path: "index.js".into(),
+            content: "const binding = require('napi-module')".into(),
+        }];
+        let config = MigrationConfig::default();
+        let result = infer_capabilities(&files, &config).unwrap();
+        assert!(result
+            .inferred_capabilities
+            .iter()
+            .any(|c| c.kind == InferredCapabilityKind::NativeAddon));
+    }
+
+    #[test]
+    fn infer_worker_threads_pattern() {
+        let files = vec![SourceFile {
+            path: "pool.js".into(),
+            content: r#"const { Worker } = require("worker_threads")"#.into(),
+        }];
+        let config = MigrationConfig::default();
+        let result = infer_capabilities(&files, &config).unwrap();
+        assert!(result
+            .inferred_capabilities
+            .iter()
+            .any(|c| c.kind == InferredCapabilityKind::WorkerThreads));
+        assert!(result.minimum_capability_set.contains("cap:worker"));
+    }
+
+    #[test]
+    fn infer_new_worker_lower_confidence() {
+        let files = vec![SourceFile {
+            path: "main.js".into(),
+            content: "const w = new Worker('./w.js')".into(),
+        }];
+        let config = MigrationConfig::default();
+        let result = infer_capabilities(&files, &config).unwrap();
+        let cap = result
+            .inferred_capabilities
+            .iter()
+            .find(|c| c.kind == InferredCapabilityKind::WorkerThreads)
+            .unwrap();
+        assert_eq!(cap.confidence_millionths, 700_000);
+        // 700_000 < 800_000 threshold => NOT in minimum set
+        assert!(!result.minimum_capability_set.contains("cap:worker"));
+        // but IS in recommended set
+        assert!(result.recommended_capability_set.contains("cap:worker"));
+    }
+
+    #[test]
+    fn infer_wasm_execution() {
+        let files = vec![SourceFile {
+            path: "wasm.js".into(),
+            content: "WebAssembly.instantiate(buffer)".into(),
+        }];
+        let config = MigrationConfig::default();
+        let result = infer_capabilities(&files, &config).unwrap();
+        assert!(result
+            .inferred_capabilities
+            .iter()
+            .any(|c| c.kind == InferredCapabilityKind::WasmExecution));
+        assert!(result.minimum_capability_set.contains("cap:wasm"));
+    }
+
+    #[test]
+    fn infer_shared_memory() {
+        let files = vec![SourceFile {
+            path: "shared.js".into(),
+            content: "const buf = new SharedArrayBuffer(1024)".into(),
+        }];
+        let config = MigrationConfig::default();
+        let result = infer_capabilities(&files, &config).unwrap();
+        assert!(result
+            .inferred_capabilities
+            .iter()
+            .any(|c| c.kind == InferredCapabilityKind::SharedMemory));
+        assert!(result.minimum_capability_set.contains("cap:shared-memory"));
+    }
+
+    #[test]
+    fn infer_esm_import_fs() {
+        let files = vec![SourceFile {
+            path: "mod.mjs".into(),
+            content: r#"import { readFile } from "fs""#.into(),
+        }];
+        let config = MigrationConfig::default();
+        let result = infer_capabilities(&files, &config).unwrap();
+        assert!(result
+            .inferred_capabilities
+            .iter()
+            .any(|c| c.kind == InferredCapabilityKind::FileSystem));
+    }
+
+    #[test]
+    fn infer_esm_import_crypto() {
+        let files = vec![SourceFile {
+            path: "crypto.mjs".into(),
+            content: r#"import { randomBytes } from "crypto""#.into(),
+        }];
+        let config = MigrationConfig::default();
+        let result = infer_capabilities(&files, &config).unwrap();
+        assert!(result
+            .inferred_capabilities
+            .iter()
+            .any(|c| c.kind == InferredCapabilityKind::CryptoAccess));
+    }
+
+    #[test]
+    fn infer_capabilities_too_many_files() {
+        let files: Vec<SourceFile> = (0..MAX_SOURCE_FILES + 1)
+            .map(|i| SourceFile {
+                path: format!("f{i}.js"),
+                content: String::new(),
+            })
+            .collect();
+        let config = MigrationConfig::default();
+        let err = infer_capabilities(&files, &config).unwrap_err();
+        assert_eq!(err.code(), "FE-MK-0012");
+    }
+
+    // ====================================================================
+    // Enrichment: validate_behavior — timing divergence path
+    // ====================================================================
+
+    #[test]
+    fn validate_behavior_timing_divergence() {
+        let config = MigrationConfig::default();
+        let results = vec![LockstepTestResult {
+            test_name: "timer_test".into(),
+            node_output: "result_a".into(),
+            franken_output: "result_b".into(),
+            node_exit_code: 0,
+            franken_exit_code: 0,
+            node_duration_us: 100,
+            franken_duration_us: 500, // >2x
+        }];
+        let report = validate_behavior(&results, &config).unwrap();
+        assert_eq!(report.divergence_count, 1);
+        assert_eq!(report.divergences[0].kind, DivergenceKind::TimingDifference);
+    }
+
+    #[test]
+    fn validate_behavior_output_format_divergence_no_timing() {
+        let config = MigrationConfig::default();
+        let results = vec![LockstepTestResult {
+            test_name: "fmt_test".into(),
+            node_output: "hello".into(),
+            franken_output: "Hello".into(),
+            node_exit_code: 0,
+            franken_exit_code: 0,
+            node_duration_us: 100,
+            franken_duration_us: 120, // within 2x
+        }];
+        let report = validate_behavior(&results, &config).unwrap();
+        assert_eq!(report.divergence_count, 1);
+        assert_eq!(
+            report.divergences[0].kind,
+            DivergenceKind::OutputFormatDifference
+        );
+    }
+
+    #[test]
+    fn validate_behavior_exit_code_only_mismatch() {
+        let config = MigrationConfig::default();
+        let results = vec![LockstepTestResult {
+            test_name: "exit_test".into(),
+            node_output: "ok".into(),
+            franken_output: "ok".into(),
+            node_exit_code: 0,
+            franken_exit_code: 1,
+            node_duration_us: 100,
+            franken_duration_us: 100,
+        }];
+        let report = validate_behavior(&results, &config).unwrap();
+        assert_eq!(report.divergence_count, 1);
+        assert_eq!(
+            report.divergences[0].kind,
+            DivergenceKind::ErrorBehaviorDifference
+        );
+        assert_eq!(
+            report.divergences[0].severity,
+            DivergenceSeverity::High
+        );
+    }
+
+    #[test]
+    fn validate_behavior_critical_both_differ() {
+        let config = MigrationConfig::default();
+        let results = vec![LockstepTestResult {
+            test_name: "critical_test".into(),
+            node_output: "node_out".into(),
+            franken_output: "franken_out".into(),
+            node_exit_code: 0,
+            franken_exit_code: 1,
+            node_duration_us: 100,
+            franken_duration_us: 100,
+        }];
+        let report = validate_behavior(&results, &config).unwrap();
+        assert_eq!(report.divergence_count, 1);
+        assert_eq!(
+            report.divergences[0].kind,
+            DivergenceKind::SemanticDifference
+        );
+        assert_eq!(
+            report.divergences[0].severity,
+            DivergenceSeverity::Critical
+        );
+    }
+
+    #[test]
+    fn validate_behavior_mixed_pass_and_fail() {
+        let config = MigrationConfig::default();
+        let results = vec![
+            LockstepTestResult {
+                test_name: "pass".into(),
+                node_output: "ok".into(),
+                franken_output: "ok".into(),
+                node_exit_code: 0,
+                franken_exit_code: 0,
+                node_duration_us: 50,
+                franken_duration_us: 50,
+            },
+            LockstepTestResult {
+                test_name: "fail".into(),
+                node_output: "a".into(),
+                franken_output: "b".into(),
+                node_exit_code: 0,
+                franken_exit_code: 0,
+                node_duration_us: 50,
+                franken_duration_us: 50,
+            },
+        ];
+        let report = validate_behavior(&results, &config).unwrap();
+        assert_eq!(report.total_test_cases, 2);
+        assert_eq!(report.passing_count, 1);
+        assert_eq!(report.divergence_count, 1);
+        assert_eq!(report.parity_score_millionths, 500_000);
+    }
+
+    // ====================================================================
+    // Enrichment: generate_remediation — deprecated APIs + divergences
+    // ====================================================================
+
+    #[test]
+    fn generate_remediation_deprecated_api_step() {
+        let compatibility = CompatibilityReport {
+            source_runtime: SourceRuntime::Node,
+            total_apis_used: 1,
+            fully_supported_count: 0,
+            partially_supported_count: 0,
+            unsupported_count: 0,
+            deprecated_count: 1,
+            polyfill_required_count: 0,
+            compatibility_score_millionths: 500_000,
+            api_entries: vec![ApiUsageEntry {
+                api_name: "url.parse".into(),
+                module_path: "url".into(),
+                usage_count: 3,
+                support_level: ApiSupportLevel::Deprecated,
+                notes: "use new URL() constructor".into(),
+            }],
+            dependency_entries: vec![],
+            report_content_hash: ContentHash::compute(b"test"),
+        };
+        let behavior = BehaviorValidationReport {
+            total_test_cases: 1,
+            passing_count: 1,
+            divergence_count: 0,
+            parity_score_millionths: 1_000_000,
+            divergences: vec![],
+            report_content_hash: ContentHash::compute(b"test"),
+        };
+        let caps = CapabilityInferenceResult {
+            inferred_capabilities: vec![],
+            minimum_capability_set: BTreeSet::new(),
+            recommended_capability_set: BTreeSet::new(),
+            capability_hash: ContentHash::compute(b"test"),
+        };
+        let steps = generate_remediation(&compatibility, &behavior, &caps).unwrap();
+        assert_eq!(steps.len(), 1);
+        assert_eq!(steps[0].category, RemediationCategory::ApiReplacement);
+        assert_eq!(steps[0].effort, RemediationEffort::Low);
+        assert!(steps[0].title.contains("deprecated"));
+    }
+
+    #[test]
+    fn generate_remediation_behavior_divergence_critical() {
+        let schema_id = SchemaId::from_definition(DIVERGENCE_SCHEMA_DEF);
+        let div_id = engine_object_id::derive_id(
+            ObjectDomain::EvidenceRecord,
+            MIGRATION_ZONE,
+            &schema_id,
+            b"test-div",
+        )
+        .unwrap();
+        let compatibility = CompatibilityReport {
+            source_runtime: SourceRuntime::Node,
+            total_apis_used: 0,
+            fully_supported_count: 0,
+            partially_supported_count: 0,
+            unsupported_count: 0,
+            deprecated_count: 0,
+            polyfill_required_count: 0,
+            compatibility_score_millionths: 1_000_000,
+            api_entries: vec![],
+            dependency_entries: vec![],
+            report_content_hash: ContentHash::compute(b"test"),
+        };
+        let behavior = BehaviorValidationReport {
+            total_test_cases: 1,
+            passing_count: 0,
+            divergence_count: 1,
+            parity_score_millionths: 0,
+            divergences: vec![BehaviorDivergence {
+                divergence_id: div_id,
+                kind: DivergenceKind::SemanticDifference,
+                severity: DivergenceSeverity::Critical,
+                test_case: "crash_test".into(),
+                node_bun_result: "ok".into(),
+                franken_result: "CRASH".into(),
+                explanation: "fatal divergence".into(),
+                remediation: "fix it".into(),
+            }],
+            report_content_hash: ContentHash::compute(b"test"),
+        };
+        let caps = CapabilityInferenceResult {
+            inferred_capabilities: vec![],
+            minimum_capability_set: BTreeSet::new(),
+            recommended_capability_set: BTreeSet::new(),
+            capability_hash: ContentHash::compute(b"test"),
+        };
+        let steps = generate_remediation(&compatibility, &behavior, &caps).unwrap();
+        assert_eq!(steps.len(), 1);
+        assert_eq!(steps[0].category, RemediationCategory::CodeRefactor);
+        assert_eq!(steps[0].effort, RemediationEffort::Significant);
+        assert_eq!(
+            steps[0].priority_score_millionths,
+            DivergenceSeverity::Critical.penalty_millionths().saturating_mul(5)
+        );
+    }
+
+    #[test]
+    fn generate_remediation_behavior_divergence_high() {
+        let schema_id = SchemaId::from_definition(DIVERGENCE_SCHEMA_DEF);
+        let div_id = engine_object_id::derive_id(
+            ObjectDomain::EvidenceRecord,
+            MIGRATION_ZONE,
+            &schema_id,
+            b"test-div-high",
+        )
+        .unwrap();
+        let compatibility = CompatibilityReport {
+            source_runtime: SourceRuntime::Node,
+            total_apis_used: 0,
+            fully_supported_count: 0,
+            partially_supported_count: 0,
+            unsupported_count: 0,
+            deprecated_count: 0,
+            polyfill_required_count: 0,
+            compatibility_score_millionths: 1_000_000,
+            api_entries: vec![],
+            dependency_entries: vec![],
+            report_content_hash: ContentHash::compute(b"test"),
+        };
+        let behavior = BehaviorValidationReport {
+            total_test_cases: 1,
+            passing_count: 0,
+            divergence_count: 1,
+            parity_score_millionths: 0,
+            divergences: vec![BehaviorDivergence {
+                divergence_id: div_id,
+                kind: DivergenceKind::OutputFormatDifference,
+                severity: DivergenceSeverity::High,
+                test_case: "format_test".into(),
+                node_bun_result: "old".into(),
+                franken_result: "new".into(),
+                explanation: "format issue".into(),
+                remediation: "update format".into(),
+            }],
+            report_content_hash: ContentHash::compute(b"test"),
+        };
+        let caps = CapabilityInferenceResult {
+            inferred_capabilities: vec![],
+            minimum_capability_set: BTreeSet::new(),
+            recommended_capability_set: BTreeSet::new(),
+            capability_hash: ContentHash::compute(b"test"),
+        };
+        let steps = generate_remediation(&compatibility, &behavior, &caps).unwrap();
+        assert_eq!(steps.len(), 1);
+        assert_eq!(steps[0].effort, RemediationEffort::Medium);
+    }
+
+    #[test]
+    fn generate_remediation_skips_low_severity_divergences() {
+        let schema_id = SchemaId::from_definition(DIVERGENCE_SCHEMA_DEF);
+        let div_id = engine_object_id::derive_id(
+            ObjectDomain::EvidenceRecord,
+            MIGRATION_ZONE,
+            &schema_id,
+            b"test-div-low",
+        )
+        .unwrap();
+        let compatibility = CompatibilityReport {
+            source_runtime: SourceRuntime::Node,
+            total_apis_used: 0,
+            fully_supported_count: 0,
+            partially_supported_count: 0,
+            unsupported_count: 0,
+            deprecated_count: 0,
+            polyfill_required_count: 0,
+            compatibility_score_millionths: 1_000_000,
+            api_entries: vec![],
+            dependency_entries: vec![],
+            report_content_hash: ContentHash::compute(b"test"),
+        };
+        let behavior = BehaviorValidationReport {
+            total_test_cases: 1,
+            passing_count: 0,
+            divergence_count: 1,
+            parity_score_millionths: 0,
+            divergences: vec![BehaviorDivergence {
+                divergence_id: div_id,
+                kind: DivergenceKind::OutputFormatDifference,
+                severity: DivergenceSeverity::Low,
+                test_case: "minor_test".into(),
+                node_bun_result: "a".into(),
+                franken_result: "A".into(),
+                explanation: "case difference".into(),
+                remediation: "normalize".into(),
+            }],
+            report_content_hash: ContentHash::compute(b"test"),
+        };
+        let caps = CapabilityInferenceResult {
+            inferred_capabilities: vec![],
+            minimum_capability_set: BTreeSet::new(),
+            recommended_capability_set: BTreeSet::new(),
+            capability_hash: ContentHash::compute(b"test"),
+        };
+        let steps = generate_remediation(&compatibility, &behavior, &caps).unwrap();
+        assert!(steps.is_empty());
+    }
+
+    // ====================================================================
+    // Enrichment: generate_manifest
+    // ====================================================================
+
+    #[test]
+    fn generate_manifest_scoped_package_name_transform() {
+        let compatibility = CompatibilityReport {
+            source_runtime: SourceRuntime::Node,
+            total_apis_used: 0,
+            fully_supported_count: 0,
+            partially_supported_count: 0,
+            unsupported_count: 0,
+            deprecated_count: 0,
+            polyfill_required_count: 0,
+            compatibility_score_millionths: 1_000_000,
+            api_entries: vec![],
+            dependency_entries: vec![],
+            report_content_hash: ContentHash::compute(b"test"),
+        };
+        let behavior = BehaviorValidationReport {
+            total_test_cases: 1,
+            passing_count: 1,
+            divergence_count: 0,
+            parity_score_millionths: 1_000_000,
+            divergences: vec![],
+            report_content_hash: ContentHash::compute(b"test"),
+        };
+        let caps = CapabilityInferenceResult {
+            inferred_capabilities: vec![],
+            minimum_capability_set: BTreeSet::new(),
+            recommended_capability_set: BTreeSet::new(),
+            capability_hash: ContentHash::compute(b"test"),
+        };
+        let input = ManifestGenerationInput {
+            source_runtime: SourceRuntime::Node,
+            source_package_name: "@scope/my-pkg".into(),
+            source_version: "1.0.0".into(),
+            entry_point: "index.js".into(),
+            compatibility,
+            behavior,
+            capabilities: caps,
+            epoch: SecurityEpoch::from_raw(1),
+        };
+        let manifest = generate_manifest(input).unwrap();
+        assert_eq!(manifest.franken_extension_name, "scope__my-pkg");
+        assert_eq!(manifest.franken_extension_version, "0.1.0");
+    }
+
+    #[test]
+    fn generate_manifest_deterministic() {
+        let mk_input = || {
+            let compatibility = CompatibilityReport {
+                source_runtime: SourceRuntime::Node,
+                total_apis_used: 1,
+                fully_supported_count: 1,
+                partially_supported_count: 0,
+                unsupported_count: 0,
+                deprecated_count: 0,
+                polyfill_required_count: 0,
+                compatibility_score_millionths: 1_000_000,
+                api_entries: vec![],
+                dependency_entries: vec![],
+                report_content_hash: ContentHash::compute(b"det"),
+            };
+            let behavior = BehaviorValidationReport {
+                total_test_cases: 2,
+                passing_count: 2,
+                divergence_count: 0,
+                parity_score_millionths: 1_000_000,
+                divergences: vec![],
+                report_content_hash: ContentHash::compute(b"det"),
+            };
+            let caps = CapabilityInferenceResult {
+                inferred_capabilities: vec![],
+                minimum_capability_set: BTreeSet::new(),
+                recommended_capability_set: BTreeSet::new(),
+                capability_hash: ContentHash::compute(b"det"),
+            };
+            ManifestGenerationInput {
+                source_runtime: SourceRuntime::Node,
+                source_package_name: "test-pkg".into(),
+                source_version: "2.0.0".into(),
+                entry_point: "main.js".into(),
+                compatibility,
+                behavior,
+                capabilities: caps,
+                epoch: SecurityEpoch::from_raw(5),
+            }
+        };
+        let m1 = generate_manifest(mk_input()).unwrap();
+        let m2 = generate_manifest(mk_input()).unwrap();
+        assert_eq!(m1.manifest_id, m2.manifest_id);
+        assert_eq!(m1.manifest_content_hash, m2.manifest_content_hash);
+    }
+
+    // ====================================================================
+    // Enrichment: compute_migration_readiness
+    // ====================================================================
+
+    #[test]
+    fn compute_readiness_zero_scores() {
+        let compatibility = CompatibilityReport {
+            source_runtime: SourceRuntime::Node,
+            total_apis_used: 0,
+            fully_supported_count: 0,
+            partially_supported_count: 0,
+            unsupported_count: 0,
+            deprecated_count: 0,
+            polyfill_required_count: 0,
+            compatibility_score_millionths: 0,
+            api_entries: vec![],
+            dependency_entries: vec![],
+            report_content_hash: ContentHash::compute(b"z"),
+        };
+        let behavior = BehaviorValidationReport {
+            total_test_cases: 0,
+            passing_count: 0,
+            divergence_count: 0,
+            parity_score_millionths: 0,
+            divergences: vec![],
+            report_content_hash: ContentHash::compute(b"z"),
+        };
+        let readiness = compute_migration_readiness(&compatibility, &behavior);
+        assert_eq!(readiness, 0);
+    }
+
+    #[test]
+    fn compute_readiness_critical_penalty() {
+        let schema_id = SchemaId::from_definition(DIVERGENCE_SCHEMA_DEF);
+        let div_id = engine_object_id::derive_id(
+            ObjectDomain::EvidenceRecord,
+            MIGRATION_ZONE,
+            &schema_id,
+            b"crit",
+        )
+        .unwrap();
+        let compatibility = CompatibilityReport {
+            source_runtime: SourceRuntime::Node,
+            total_apis_used: 1,
+            fully_supported_count: 1,
+            partially_supported_count: 0,
+            unsupported_count: 0,
+            deprecated_count: 0,
+            polyfill_required_count: 0,
+            compatibility_score_millionths: 1_000_000,
+            api_entries: vec![],
+            dependency_entries: vec![],
+            report_content_hash: ContentHash::compute(b"c"),
+        };
+        let behavior = BehaviorValidationReport {
+            total_test_cases: 1,
+            passing_count: 0,
+            divergence_count: 1,
+            parity_score_millionths: 0,
+            divergences: vec![BehaviorDivergence {
+                divergence_id: div_id,
+                kind: DivergenceKind::SemanticDifference,
+                severity: DivergenceSeverity::Critical,
+                test_case: "c".into(),
+                node_bun_result: "a".into(),
+                franken_result: "b".into(),
+                explanation: String::new(),
+                remediation: String::new(),
+            }],
+            report_content_hash: ContentHash::compute(b"c"),
+        };
+        let readiness = compute_migration_readiness(&compatibility, &behavior);
+        // 40% of 1M = 400_000, 60% of 0 = 0, penalty = 100_000
+        assert_eq!(readiness, 300_000);
+    }
+
+    // ====================================================================
+    // Enrichment: analyze_package — Bun runtime, peer deps, ts entry
+    // ====================================================================
+
+    #[test]
+    fn analyze_package_bun_runtime() {
+        let config = MigrationConfig {
+            source_runtime: SourceRuntime::Bun,
+            ..MigrationConfig::default()
+        };
+        let pkg = r#"{"name":"bun-pkg","dependencies":{"express":"^4"}}"#;
+        let report = analyze_package(pkg, &config).unwrap();
+        assert_eq!(report.source_runtime, SourceRuntime::Bun);
+    }
+
+    #[test]
+    fn analyze_package_peer_deps() {
+        let config = MigrationConfig::default();
+        let pkg = r#"{"name":"test","peerDependencies":{"react":"^18"}}"#;
+        let report = analyze_package(pkg, &config).unwrap();
+        assert!(!report.dependency_entries.is_empty());
+        assert_eq!(report.dependency_entries[0].name, "react");
+    }
+
+    #[test]
+    fn analyze_package_ts_entry_as_esm() {
+        let config = MigrationConfig::default();
+        let pkg = r#"{"name":"ts-app","main":"index.ts"}"#;
+        let report = analyze_package(pkg, &config).unwrap();
+        let esm_entry = report
+            .api_entries
+            .iter()
+            .find(|e| e.api_name == "entry:esm");
+        assert!(esm_entry.is_some());
+    }
+
+    #[test]
+    fn analyze_package_mjs_entry_as_esm() {
+        let config = MigrationConfig::default();
+        let pkg = r#"{"name":"esm-app","module":"dist/index.mjs"}"#;
+        let report = analyze_package(pkg, &config).unwrap();
+        let esm_entry = report
+            .api_entries
+            .iter()
+            .find(|e| e.api_name == "entry:esm");
+        assert!(esm_entry.is_some());
+    }
+
+    #[test]
+    fn analyze_package_cjs_entry() {
+        let config = MigrationConfig::default();
+        let pkg = r#"{"name":"cjs-app","main":"dist/index.js"}"#;
+        let report = analyze_package(pkg, &config).unwrap();
+        let cjs_entry = report
+            .api_entries
+            .iter()
+            .find(|e| e.api_name == "entry:cjs");
+        assert!(cjs_entry.is_some());
+    }
+
+    #[test]
+    fn analyze_package_node_cli_scripts() {
+        let config = MigrationConfig::default();
+        let pkg = r#"{"name":"cli","scripts":{"build":"node build.js","test":"npx jest"}}"#;
+        let report = analyze_package(pkg, &config).unwrap();
+        let cli_entries: Vec<_> = report
+            .api_entries
+            .iter()
+            .filter(|e| e.api_name == "runtime:node-cli")
+            .collect();
+        assert_eq!(cli_entries.len(), 2);
+    }
+
+    // ====================================================================
+    // Enrichment: serde roundtrips
+    // ====================================================================
+
+    #[test]
+    fn serde_roundtrip_migration_manifest() {
+        let compatibility = CompatibilityReport {
+            source_runtime: SourceRuntime::Node,
+            total_apis_used: 0,
+            fully_supported_count: 0,
+            partially_supported_count: 0,
+            unsupported_count: 0,
+            deprecated_count: 0,
+            polyfill_required_count: 0,
+            compatibility_score_millionths: 1_000_000,
+            api_entries: vec![],
+            dependency_entries: vec![],
+            report_content_hash: ContentHash::compute(b"s"),
+        };
+        let behavior = BehaviorValidationReport {
+            total_test_cases: 1,
+            passing_count: 1,
+            divergence_count: 0,
+            parity_score_millionths: 1_000_000,
+            divergences: vec![],
+            report_content_hash: ContentHash::compute(b"s"),
+        };
+        let caps = CapabilityInferenceResult {
+            inferred_capabilities: vec![],
+            minimum_capability_set: BTreeSet::new(),
+            recommended_capability_set: BTreeSet::new(),
+            capability_hash: ContentHash::compute(b"s"),
+        };
+        let input = ManifestGenerationInput {
+            source_runtime: SourceRuntime::Node,
+            source_package_name: "serde-test".into(),
+            source_version: "1.0.0".into(),
+            entry_point: "index.js".into(),
+            compatibility,
+            behavior,
+            capabilities: caps,
+            epoch: SecurityEpoch::from_raw(1),
+        };
+        let manifest = generate_manifest(input).unwrap();
+        let json = serde_json::to_string(&manifest).unwrap();
+        let back: MigrationManifest = serde_json::from_str(&json).unwrap();
+        assert_eq!(manifest, back);
+    }
+
+    #[test]
+    fn serde_roundtrip_behavior_validation_report() {
+        let config = MigrationConfig::default();
+        let results = vec![LockstepTestResult {
+            test_name: "t".into(),
+            node_output: "a".into(),
+            franken_output: "b".into(),
+            node_exit_code: 0,
+            franken_exit_code: 0,
+            node_duration_us: 10,
+            franken_duration_us: 10,
+        }];
+        let report = validate_behavior(&results, &config).unwrap();
+        let json = serde_json::to_string(&report).unwrap();
+        let back: BehaviorValidationReport = serde_json::from_str(&json).unwrap();
+        assert_eq!(report, back);
+    }
+
+    #[test]
+    fn serde_roundtrip_capability_inference_result() {
+        let files = vec![SourceFile {
+            path: "app.js".into(),
+            content: r#"require("fs")"#.into(),
+        }];
+        let config = MigrationConfig::default();
+        let result = infer_capabilities(&files, &config).unwrap();
+        let json = serde_json::to_string(&result).unwrap();
+        let back: CapabilityInferenceResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(result, back);
+    }
+
+    #[test]
+    fn serde_roundtrip_lockstep_test_result() {
+        let ltr = LockstepTestResult {
+            test_name: "rt".into(),
+            node_output: "ok".into(),
+            franken_output: "ok".into(),
+            node_exit_code: 0,
+            franken_exit_code: 0,
+            node_duration_us: 42,
+            franken_duration_us: 43,
+        };
+        let json = serde_json::to_string(&ltr).unwrap();
+        let back: LockstepTestResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(ltr, back);
+    }
+
+    #[test]
+    fn serde_roundtrip_migration_config() {
+        let config = MigrationConfig {
+            source_runtime: SourceRuntime::Bun,
+            analyze_dependencies: false,
+            infer_capabilities: false,
+            run_behavior_validation: false,
+            min_compatibility_score_millionths: 900_000,
+            max_divergence_count: 50,
+            deterministic_seed: 99,
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let back: MigrationConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config, back);
+    }
+
+    #[test]
+    fn serde_roundtrip_migration_event() {
+        let mut details = BTreeMap::new();
+        details.insert("key".into(), "val".into());
+        let event = MigrationEvent {
+            trace_id: "t1".into(),
+            decision_id: "d1".into(),
+            component: COMPONENT.into(),
+            event: "test".into(),
+            outcome: "ok".into(),
+            error_code: Some("FE-MK-0001".into()),
+            details,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: MigrationEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, back);
+    }
+
+    #[test]
+    fn serde_roundtrip_remediation_step() {
+        let schema_id = SchemaId::from_definition(REMEDIATION_SCHEMA_DEF);
+        let step_id = engine_object_id::derive_id(
+            ObjectDomain::EvidenceRecord,
+            MIGRATION_ZONE,
+            &schema_id,
+            b"serde-step",
+        )
+        .unwrap();
+        let step = RemediationStep {
+            step_id,
+            category: RemediationCategory::PolyfillAddition,
+            effort: RemediationEffort::Trivial,
+            title: "Add polyfill".into(),
+            description: "Need polyfill for X".into(),
+            before_snippet: "old".into(),
+            after_snippet: "new".into(),
+            affected_files: vec!["lib.js".into()],
+            priority_score_millionths: 700_000,
+        };
+        let json = serde_json::to_string(&step).unwrap();
+        let back: RemediationStep = serde_json::from_str(&json).unwrap();
+        assert_eq!(step, back);
+    }
+
+    // ====================================================================
+    // Enrichment: error variant exhaustive coverage
+    // ====================================================================
+
+    #[test]
+    fn error_code_all_13_variants_unique() {
+        let codes: Vec<&str> = vec![
+            MigrationKitError::AnalysisFailed { detail: String::new() }.code(),
+            MigrationKitError::ManifestGenerationFailed { detail: String::new() }.code(),
+            MigrationKitError::CapabilityInferenceFailed { detail: String::new() }.code(),
+            MigrationKitError::BehaviorValidationFailed { detail: String::new() }.code(),
+            MigrationKitError::RemediationUnavailable { detail: String::new() }.code(),
+            MigrationKitError::InvalidPackageJson { detail: String::new() }.code(),
+            MigrationKitError::UnsupportedApiDetected { api: String::new(), detail: String::new() }.code(),
+            MigrationKitError::IncompatibleDependency { name: String::new(), reason: String::new() }.code(),
+            MigrationKitError::LockstepMismatch { runtime: String::new(), detail: String::new() }.code(),
+            MigrationKitError::ReportGenerationFailed { detail: String::new() }.code(),
+            MigrationKitError::DeterminismViolation { detail: String::new() }.code(),
+            MigrationKitError::TooManyEntries { kind: String::new(), count: 0, max: 0 }.code(),
+            MigrationKitError::InternalError { detail: String::new() }.code(),
+        ];
+        let unique: BTreeSet<&str> = codes.iter().copied().collect();
+        assert_eq!(unique.len(), 13, "all 13 error variants have unique codes");
+    }
+
+    #[test]
+    fn error_serde_roundtrip_all_variants() {
+        let variants = vec![
+            MigrationKitError::AnalysisFailed { detail: "a".into() },
+            MigrationKitError::ManifestGenerationFailed { detail: "b".into() },
+            MigrationKitError::CapabilityInferenceFailed { detail: "c".into() },
+            MigrationKitError::BehaviorValidationFailed { detail: "d".into() },
+            MigrationKitError::RemediationUnavailable { detail: "e".into() },
+            MigrationKitError::InvalidPackageJson { detail: "f".into() },
+            MigrationKitError::UnsupportedApiDetected { api: "g".into(), detail: "h".into() },
+            MigrationKitError::IncompatibleDependency { name: "i".into(), reason: "j".into() },
+            MigrationKitError::LockstepMismatch { runtime: "k".into(), detail: "l".into() },
+            MigrationKitError::ReportGenerationFailed { detail: "m".into() },
+            MigrationKitError::DeterminismViolation { detail: "n".into() },
+            MigrationKitError::TooManyEntries { kind: "o".into(), count: 1, max: 2 },
+            MigrationKitError::InternalError { detail: "p".into() },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: MigrationKitError = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, &back);
+        }
+    }
+
+    // ====================================================================
+    // Enrichment: enum coverage
+    // ====================================================================
+
+    #[test]
+    fn divergence_severity_penalty_ordering() {
+        assert!(DivergenceSeverity::Critical.penalty_millionths()
+            > DivergenceSeverity::High.penalty_millionths());
+        assert!(DivergenceSeverity::High.penalty_millionths()
+            > DivergenceSeverity::Medium.penalty_millionths());
+        assert!(DivergenceSeverity::Medium.penalty_millionths()
+            > DivergenceSeverity::Low.penalty_millionths());
+        assert!(DivergenceSeverity::Low.penalty_millionths()
+            > DivergenceSeverity::Informational.penalty_millionths());
+        assert_eq!(DivergenceSeverity::Informational.penalty_millionths(), 0);
+    }
+
+    #[test]
+    fn remediation_effort_weight_ordering() {
+        assert!(RemediationEffort::Significant.weight_millionths()
+            > RemediationEffort::High.weight_millionths());
+        assert!(RemediationEffort::High.weight_millionths()
+            > RemediationEffort::Medium.weight_millionths());
+        assert!(RemediationEffort::Medium.weight_millionths()
+            > RemediationEffort::Low.weight_millionths());
+        assert!(RemediationEffort::Low.weight_millionths()
+            > RemediationEffort::Trivial.weight_millionths());
+    }
+
+    #[test]
+    fn all_capability_kinds_have_names() {
+        let kinds = [
+            InferredCapabilityKind::FileSystem,
+            InferredCapabilityKind::Network,
+            InferredCapabilityKind::ProcessSpawn,
+            InferredCapabilityKind::EnvironmentAccess,
+            InferredCapabilityKind::CryptoAccess,
+            InferredCapabilityKind::TimerAccess,
+            InferredCapabilityKind::WorkerThreads,
+            InferredCapabilityKind::ChildProcess,
+            InferredCapabilityKind::DynamicImport,
+            InferredCapabilityKind::WasmExecution,
+            InferredCapabilityKind::SharedMemory,
+            InferredCapabilityKind::NativeAddon,
+        ];
+        let mut names = BTreeSet::new();
+        for kind in &kinds {
+            let name = kind.franken_capability_name();
+            assert!(name.starts_with("cap:"));
+            names.insert(name);
+        }
+        assert_eq!(names.len(), 12, "all 12 capability kinds map to unique names");
+    }
+
+    #[test]
+    fn source_runtime_display() {
+        assert_eq!(format!("{}", SourceRuntime::Node), "Node.js");
+        assert_eq!(format!("{}", SourceRuntime::Bun), "Bun");
+    }
+
+    #[test]
+    fn api_support_level_compatibility_weight_ordering() {
+        assert!(ApiSupportLevel::FullySupported.compatibility_weight_millionths()
+            > ApiSupportLevel::PartiallySupported.compatibility_weight_millionths());
+        assert!(ApiSupportLevel::PartiallySupported.compatibility_weight_millionths()
+            > ApiSupportLevel::Deprecated.compatibility_weight_millionths());
+        assert!(ApiSupportLevel::Deprecated.compatibility_weight_millionths()
+            > ApiSupportLevel::RequiresPolyfill.compatibility_weight_millionths());
+        assert_eq!(ApiSupportLevel::Unsupported.compatibility_weight_millionths(), 0);
+    }
+
+    #[test]
+    fn emit_migration_event_json_output() {
+        let event = MigrationEvent {
+            trace_id: "t".into(),
+            decision_id: "d".into(),
+            component: COMPONENT.into(),
+            event: "test".into(),
+            outcome: "pass".into(),
+            error_code: None,
+            details: BTreeMap::new(),
+        };
+        let json = emit_migration_event(&event);
+        assert!(json.contains("migration_kit"));
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["outcome"], "pass");
+    }
 }

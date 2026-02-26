@@ -1068,4 +1068,120 @@ mod tests {
             );
         }
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 3: clone, ordering, JSON fields, edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn engine_object_id_clone_equality() {
+        let id = derive_id(ObjectDomain::PolicyObject, "z", &test_schema_id(), b"data").unwrap();
+        let cloned = id.clone();
+        assert_eq!(id, cloned);
+    }
+
+    #[test]
+    fn schema_id_clone_equality() {
+        let sid = SchemaId::from_definition(b"test-schema-clone");
+        let cloned = sid.clone();
+        assert_eq!(sid, cloned);
+    }
+
+    #[test]
+    fn id_error_clone_equality() {
+        let errors = vec![
+            IdError::EmptyCanonicalBytes,
+            IdError::NonCanonicalInput {
+                reason: "bad".into(),
+            },
+            IdError::InvalidHexLength {
+                expected: 64,
+                actual: 10,
+            },
+            IdError::InvalidHexChar { position: 5 },
+        ];
+        for e in &errors {
+            let cloned = e.clone();
+            assert_eq!(*e, cloned);
+        }
+    }
+
+    #[test]
+    fn engine_object_id_ordering_deterministic() {
+        let schema = test_schema_id();
+        let id_a = derive_id(ObjectDomain::PolicyObject, "z", &schema, b"aaa").unwrap();
+        let id_b = derive_id(ObjectDomain::PolicyObject, "z", &schema, b"bbb").unwrap();
+        // As long as they're different, ordering should be consistent
+        assert_ne!(id_a, id_b);
+        let cmp1 = id_a.cmp(&id_b);
+        let cmp2 = id_a.cmp(&id_b);
+        assert_eq!(cmp1, cmp2);
+    }
+
+    #[test]
+    fn object_domain_ordering_follows_discriminant() {
+        let mut domains: Vec<ObjectDomain> = ObjectDomain::ALL.to_vec();
+        let sorted = domains.clone();
+        domains.sort();
+        assert_eq!(domains, sorted, "ALL should already be in Ord order");
+    }
+
+    #[test]
+    fn schema_id_display_length_is_64() {
+        let sid = SchemaId::from_definition(b"display-len");
+        let display = sid.to_string();
+        assert_eq!(display.len(), 64);
+        assert!(display.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn engine_object_id_json_field_presence() {
+        let id = EngineObjectId([0xab; OBJECT_ID_LEN]);
+        let json = serde_json::to_string(&id).unwrap();
+        // EngineObjectId is a newtype tuple, serializes as array
+        assert!(!json.is_empty());
+        let back: EngineObjectId = serde_json::from_str(&json).unwrap();
+        assert_eq!(id, back);
+    }
+
+    #[test]
+    fn object_domain_tag_uniqueness() {
+        let tags: std::collections::BTreeSet<&[u8]> =
+            ObjectDomain::ALL.iter().map(|d| d.tag()).collect();
+        assert_eq!(
+            tags.len(),
+            ObjectDomain::ALL.len(),
+            "all domain tags must be unique"
+        );
+    }
+
+    #[test]
+    fn derive_id_long_content() {
+        let schema = test_schema_id();
+        let content = vec![0x42u8; 10_000];
+        let id = derive_id(ObjectDomain::EvidenceRecord, "z", &schema, &content).unwrap();
+        assert_eq!(id.as_bytes().len(), OBJECT_ID_LEN);
+    }
+
+    #[test]
+    fn verify_id_different_zone_fails() {
+        let schema = test_schema_id();
+        let id = derive_id(ObjectDomain::PolicyObject, "zone-a", &schema, b"data").unwrap();
+        let err =
+            verify_id(&id, ObjectDomain::PolicyObject, "zone-b", &schema, b"data").unwrap_err();
+        assert!(matches!(err, IdError::IdMismatch { .. }));
+    }
+
+    #[test]
+    fn from_hex_rejects_odd_length() {
+        let err = EngineObjectId::from_hex("abc").unwrap_err();
+        assert!(matches!(err, IdError::InvalidHexLength { .. }));
+    }
+
+    #[test]
+    fn from_hex_rejects_non_hex_chars() {
+        let hex = "g".repeat(64);
+        let err = EngineObjectId::from_hex(&hex).unwrap_err();
+        assert!(matches!(err, IdError::InvalidHexChar { .. }));
+    }
 }
