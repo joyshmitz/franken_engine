@@ -737,7 +737,7 @@ fn begin_respecialization_requires_baseline_fallback_state() {
 
     // Active state — should fail.
     let err = engine.begin_respecialization(&id, 2000).unwrap_err();
-    assert!(matches!(err, InvalidationError::AlreadyInFallback { .. }));
+    assert!(matches!(err, InvalidationError::InvalidState { .. }));
 }
 
 #[test]
@@ -753,7 +753,7 @@ fn complete_respecialization_requires_respecializing_state() {
     let err = engine
         .complete_respecialization(&id, epoch(111), epoch(130), BTreeSet::new(), 3000)
         .unwrap_err();
-    assert!(matches!(err, InvalidationError::AlreadyInFallback { .. }));
+    assert!(matches!(err, InvalidationError::InvalidState { .. }));
 }
 
 #[test]

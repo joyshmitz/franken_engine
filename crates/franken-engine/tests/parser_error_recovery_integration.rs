@@ -1311,6 +1311,11 @@ fn parser_error_recovery_adversarial_logs_are_structured_and_replayable() {
 fn parser_error_recovery_primitives_respect_resync_edit_bounds() {
     let mut config = diagnostic_config();
     config.max_token_skips = 0;
+    // This test targets the skip-bound primitive; force partial-recover selection
+    // so it does not drift with global loss-matrix tuning.
+    config.loss_matrix.partial_recoverable = 0;
+    config.loss_matrix.partial_ambiguous = 0;
+    config.loss_matrix.partial_unrecoverable = 0;
     let partial_ledger = run_recovery(&[ambiguous_error()], 120, &config);
     let partial_attempt = partial_ledger
         .attempts
