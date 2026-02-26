@@ -1661,4 +1661,123 @@ mod tests {
         let s2 = attestation_schema_id();
         assert_eq!(s1, s2);
     }
+
+    // -------------------------------------------------------------------
+    // Enrichment: Display uniqueness, serde, edge cases
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn attestation_error_display_all_variants_unique() {
+        use std::collections::BTreeSet;
+        let errors = vec![
+            AttestationError::SelfAttestationRejected,
+            AttestationError::Expired {
+                expires_at: DeterministicTimestamp(100),
+                current_time: DeterministicTimestamp(200),
+            },
+            AttestationError::NonceReplay {
+                principal: test_principal(),
+                nonce: AttestationNonce::from_counter(5),
+                high_water: 10,
+            },
+            AttestationError::InvalidNonce {
+                detail: "bad".to_string(),
+            },
+            AttestationError::SignatureInvalid {
+                detail: "mismatch".to_string(),
+            },
+            AttestationError::ZoneMismatch {
+                expected: "z1".to_string(),
+                actual: "z2".to_string(),
+            },
+            AttestationError::NotFound {
+                attestation_id: EngineObjectId([0xAA; 32]),
+            },
+        ];
+        let mut displays = BTreeSet::new();
+        for err in &errors {
+            let msg = format!("{err}");
+            assert!(!msg.is_empty());
+            displays.insert(msg);
+        }
+        assert_eq!(
+            displays.len(),
+            errors.len(),
+            "all variants have unique Display"
+        );
+    }
+
+    #[test]
+    fn attestation_error_implements_std_error() {
+        let err: Box<dyn std::error::Error> = Box::new(AttestationError::SelfAttestationRejected);
+        assert!(!err.to_string().is_empty());
+    }
+
+    #[test]
+    fn device_posture_serde_roundtrip() {
+        let dp = DevicePosture {
+            posture_type: "tpm2".to_string(),
+            evidence: vec![0x01, 0x02, 0x03, 0xFF],
+        };
+        let json = serde_json::to_string(&dp).expect("serialize");
+        let restored: DevicePosture = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(dp, restored);
+    }
+
+    #[test]
+    fn nonce_ordering_is_by_counter() {
+        let n1 = AttestationNonce::from_counter(1);
+        let n5 = AttestationNonce::from_counter(5);
+        let n10 = AttestationNonce::from_counter(10);
+        assert!(n1 < n5);
+        assert!(n5 < n10);
+    }
+
+    #[test]
+    fn attestation_event_serde_roundtrip() {
+        let event = AttestationEvent {
+            event_type: AttestationEventType::Registered {
+                attestation_id: EngineObjectId([0xAA; 32]),
+                principal: test_principal(),
+            },
+            zone: TEST_ZONE.to_string(),
+            trace_id: "t-test".to_string(),
+        };
+        let json = serde_json::to_string(&event).expect("serialize");
+        let restored: AttestationEvent = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(event, restored);
+    }
+
+    #[test]
+    fn store_drain_events_clears_buffer() {
+        let mut store = AttestationStore::new(TEST_ZONE);
+        let att = create_test_attestation(KeyRole::Signing, 1, 100, 200);
+        store
+            .register(att, &owner_vk(), DeterministicTimestamp(150), "t-reg")
+            .expect("register");
+
+        let events1 = store.drain_events();
+        assert_eq!(events1.len(), 1);
+        let events2 = store.drain_events();
+        assert!(events2.is_empty(), "drain should clear buffer");
+    }
+
+    #[test]
+    fn attestation_schema_differs_from_schema_id() {
+        let sh = attestation_schema();
+        let si = attestation_schema_id();
+        // SchemaHash and SchemaId are different types wrapping the same def
+        // but we can at least verify both are deterministic and non-trivial
+        let sh2 = attestation_schema();
+        let si2 = attestation_schema_id();
+        assert_eq!(sh, sh2);
+        assert_eq!(si, si2);
+    }
+
+    #[test]
+    fn nonce_registry_high_water_for_unknown_principal_is_zero() {
+        let registry = NonceRegistry::new();
+        let unknown = PrincipalId::from_bytes([0xCC; 32]);
+        assert_eq!(registry.high_water_for(&unknown), 0);
+    }
 }

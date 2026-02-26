@@ -1375,4 +1375,174 @@ mod tests {
         assert_eq!(spec.enforcement_policy.publisher_bond_millionths, 200_000);
         assert_eq!(spec.enforcement_policy.challenge_window_epochs, 20);
     }
+
+    // -- Enrichment batch 2: Display uniqueness, serde, ordering --
+
+    #[test]
+    fn governance_role_display_uniqueness() {
+        let mut seen = std::collections::BTreeSet::new();
+        for role in GovernanceRole::ALL {
+            seen.insert(role.to_string());
+        }
+        assert_eq!(seen.len(), 5, "all 5 roles have unique display strings");
+    }
+
+    #[test]
+    fn governance_action_display_uniqueness() {
+        let mut seen = std::collections::BTreeSet::new();
+        for action in GovernanceAction::ALL {
+            seen.insert(action.to_string());
+        }
+        assert_eq!(seen.len(), 8, "all 8 actions have unique display strings");
+    }
+
+    #[test]
+    fn incentive_property_display_uniqueness() {
+        let mut seen = std::collections::BTreeSet::new();
+        for prop in IncentiveProperty::ALL {
+            seen.insert(prop.to_string());
+        }
+        assert_eq!(
+            seen.len(),
+            5,
+            "all 5 properties have unique display strings"
+        );
+    }
+
+    #[test]
+    fn governance_role_serde_roundtrip_all() {
+        for role in GovernanceRole::ALL {
+            let json = serde_json::to_string(&role).unwrap();
+            let back: GovernanceRole = serde_json::from_str(&json).unwrap();
+            assert_eq!(role, back);
+        }
+    }
+
+    #[test]
+    fn governance_action_serde_roundtrip_all() {
+        for action in GovernanceAction::ALL {
+            let json = serde_json::to_string(&action).unwrap();
+            let back: GovernanceAction = serde_json::from_str(&json).unwrap();
+            assert_eq!(action, back);
+        }
+    }
+
+    #[test]
+    fn incentive_property_serde_roundtrip_all() {
+        for prop in IncentiveProperty::ALL {
+            let json = serde_json::to_string(&prop).unwrap();
+            let back: IncentiveProperty = serde_json::from_str(&json).unwrap();
+            assert_eq!(prop, back);
+        }
+    }
+
+    #[test]
+    fn verification_status_serde_roundtrip_all() {
+        for status in [
+            VerificationStatus::Verified,
+            VerificationStatus::Falsified,
+            VerificationStatus::Inconclusive,
+        ] {
+            let json = serde_json::to_string(&status).unwrap();
+            let back: VerificationStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(status, back);
+        }
+    }
+
+    #[test]
+    fn payoff_table_empty_is_budget_balanced() {
+        let table = PayoffTable {
+            table_id: "empty".into(),
+            entries: vec![],
+            epoch: test_epoch(),
+        };
+        assert!(table.is_budget_balanced());
+        assert_eq!(table.total_payoff_for_role(GovernanceRole::Publisher), 0);
+    }
+
+    #[test]
+    fn payoff_table_all_negative_is_budget_balanced() {
+        let table = PayoffTable {
+            table_id: "neg".into(),
+            entries: vec![
+                PayoffEntry {
+                    role: GovernanceRole::Publisher,
+                    action: GovernanceAction::Slash,
+                    condition: "a".into(),
+                    payoff_millionths: -50_000,
+                    rationale: "r".into(),
+                },
+                PayoffEntry {
+                    role: GovernanceRole::Operator,
+                    action: GovernanceAction::Slash,
+                    condition: "b".into(),
+                    payoff_millionths: -30_000,
+                    rationale: "r".into(),
+                },
+            ],
+            epoch: test_epoch(),
+        };
+        assert!(table.is_budget_balanced());
+    }
+
+    #[test]
+    fn payoff_table_compute_id_deterministic() {
+        let mk = || PayoffTable {
+            table_id: String::new(),
+            entries: vec![PayoffEntry {
+                role: GovernanceRole::Publisher,
+                action: GovernanceAction::Report,
+                condition: "c".into(),
+                payoff_millionths: 10_000,
+                rationale: "r".into(),
+            }],
+            epoch: test_epoch(),
+        };
+        assert_eq!(mk().compute_id(), mk().compute_id());
+        assert!(mk().compute_id().starts_with("pt-"));
+    }
+
+    #[test]
+    fn strategic_scenario_equal_payoffs_honest_dominates() {
+        let s = StrategicScenario {
+            scenario_id: "s".into(),
+            name: "tie".into(),
+            behavior: StrategicBehavior::FalseReport,
+            role: GovernanceRole::Publisher,
+            description: "d".into(),
+            expected_payoff_millionths: 50_000,
+            honest_alternative_payoff_millionths: 50_000,
+        };
+        assert!(s.honest_dominates(), "equal payoffs means honest dominates");
+    }
+
+    #[test]
+    fn strategic_stress_test_all_honest_is_perfect() {
+        let test = StrategicStressTest {
+            test_id: "t".into(),
+            scenarios: vec![
+                StrategicScenario {
+                    scenario_id: "s1".into(),
+                    name: "a".into(),
+                    behavior: StrategicBehavior::FalseReport,
+                    role: GovernanceRole::Publisher,
+                    description: "d".into(),
+                    expected_payoff_millionths: -100_000,
+                    honest_alternative_payoff_millionths: 50_000,
+                },
+                StrategicScenario {
+                    scenario_id: "s2".into(),
+                    name: "b".into(),
+                    behavior: StrategicBehavior::FrivolousChallenge,
+                    role: GovernanceRole::Challenger,
+                    description: "d".into(),
+                    expected_payoff_millionths: -50_000,
+                    honest_alternative_payoff_millionths: 20_000,
+                },
+            ],
+            epoch: test_epoch(),
+        };
+        assert_eq!(test.honest_dominance_rate_millionths(), MILLION);
+        assert!(test.exploitable_scenarios().is_empty());
+    }
 }

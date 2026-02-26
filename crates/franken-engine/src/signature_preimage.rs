@@ -1200,4 +1200,101 @@ mod tests {
             "all 4 tested variants produce distinct messages"
         );
     }
+
+    // -- Enrichment: Display uniqueness, serde, boundary, determinism --
+
+    #[test]
+    fn signature_event_type_display_all_unique() {
+        let vk1 = VerificationKey::from_bytes([1u8; VERIFICATION_KEY_LEN]);
+        let _vk2 = VerificationKey::from_bytes([2u8; VERIFICATION_KEY_LEN]);
+        let types = [
+            SignatureEventType::Signed {
+                signer: vk1.clone(),
+            },
+            SignatureEventType::Verified {
+                signer: vk1.clone(),
+            },
+            SignatureEventType::VerificationFailed {
+                signer: vk1,
+                reason: "bad".to_string(),
+            },
+        ];
+        let displays: std::collections::BTreeSet<String> =
+            types.iter().map(|t| t.to_string()).collect();
+        assert_eq!(displays.len(), types.len());
+    }
+
+    #[test]
+    fn object_domain_tag_is_deterministic() {
+        let tag1 = ObjectDomain::PolicyObject.tag();
+        let tag2 = ObjectDomain::PolicyObject.tag();
+        assert_eq!(tag1, tag2);
+    }
+
+    #[test]
+    fn signing_key_bytes_roundtrip() {
+        let bytes = [42u8; SIGNING_KEY_LEN];
+        let sk = SigningKey::from_bytes(bytes);
+        assert_eq!(sk.as_bytes(), &bytes);
+    }
+
+    #[test]
+    fn verification_key_bytes_roundtrip() {
+        let bytes = [99u8; VERIFICATION_KEY_LEN];
+        let vk = VerificationKey::from_bytes(bytes);
+        assert_eq!(vk.as_bytes(), &bytes);
+    }
+
+    #[test]
+    fn signature_bytes_roundtrip() {
+        let bytes = [0xCC; SIGNATURE_LEN];
+        let sig = Signature::from_bytes(bytes);
+        assert_eq!(sig.lower, bytes[..32]);
+        assert_eq!(sig.upper, bytes[32..]);
+    }
+
+    #[test]
+    fn context_event_counts_accumulate() {
+        let mut ctx = SignatureContext::new();
+        let sk = test_signing_key();
+        let obj = test_object();
+        ctx.sign(&obj, &sk, "t-1").unwrap();
+        ctx.sign(&obj, &sk, "t-2").unwrap();
+        assert_eq!(ctx.sign_count(), 2);
+        let counts = ctx.event_counts();
+        assert_eq!(counts.get("signed"), Some(&2));
+    }
+
+    #[test]
+    fn canonical_value_map_ordering_deterministic() {
+        let map1 = CanonicalValue::Map(BTreeMap::from([
+            ("z".to_string(), CanonicalValue::U64(1)),
+            ("a".to_string(), CanonicalValue::U64(2)),
+        ]));
+        let map2 = CanonicalValue::Map(BTreeMap::from([
+            ("a".to_string(), CanonicalValue::U64(2)),
+            ("z".to_string(), CanonicalValue::U64(1)),
+        ]));
+        // BTreeMap ensures same canonical form regardless of insertion order
+        let json1 = serde_json::to_string(&map1).unwrap();
+        let json2 = serde_json::to_string(&map2).unwrap();
+        assert_eq!(json1, json2);
+    }
+
+    #[test]
+    fn preimage_hash_different_for_different_data() {
+        let obj1 = TestObject {
+            domain: ObjectDomain::PolicyObject,
+            schema: test_schema(),
+            data: CanonicalValue::U64(1),
+        };
+        let obj2 = TestObject {
+            domain: ObjectDomain::PolicyObject,
+            schema: test_schema(),
+            data: CanonicalValue::U64(2),
+        };
+        let h1 = preimage_hash(&obj1.preimage_bytes());
+        let h2 = preimage_hash(&obj2.preimage_bytes());
+        assert_ne!(h1, h2);
+    }
 }

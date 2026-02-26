@@ -1348,4 +1348,119 @@ mod tests {
         let (_, scope) = chain.resolve_binding("fn_local").unwrap();
         assert_eq!(scope, fn_id);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 2: Display uniqueness, edge cases, serde, defaults
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn env_value_display_uniqueness_for_types() {
+        let displays: std::collections::BTreeSet<String> = [
+            EnvValue::Undefined,
+            EnvValue::Null,
+            EnvValue::Bool(true),
+            EnvValue::Number(42),
+            EnvValue::Str("x".into()),
+            EnvValue::ObjectRef(1),
+            EnvValue::ClosureRef(ClosureHandle(0)),
+            EnvValue::Tdz,
+        ]
+        .iter()
+        .map(|v| v.to_string())
+        .collect();
+        assert_eq!(
+            displays.len(),
+            8,
+            "all 8 EnvValue variant types must produce unique Display"
+        );
+    }
+
+    #[test]
+    fn scope_error_serde_roundtrip_all_variants() {
+        let variants: Vec<ScopeError> = vec![
+            ScopeError::TemporalDeadZone { name: "x".into() },
+            ScopeError::ConstAssignment { name: "PI".into() },
+            ScopeError::UndeclaredVariable { name: "y".into() },
+            ScopeError::DuplicateBinding { name: "z".into() },
+            ScopeError::EmptyScopeChain,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: ScopeError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn scope_error_display_uniqueness() {
+        let displays: std::collections::BTreeSet<String> = [
+            ScopeError::TemporalDeadZone { name: "a".into() },
+            ScopeError::ConstAssignment { name: "b".into() },
+            ScopeError::UndeclaredVariable { name: "c".into() },
+            ScopeError::DuplicateBinding { name: "d".into() },
+            ScopeError::EmptyScopeChain,
+        ]
+        .iter()
+        .map(|e| e.to_string())
+        .collect();
+        assert_eq!(
+            displays.len(),
+            5,
+            "all 5 ScopeError variants must have unique Display"
+        );
+    }
+
+    #[test]
+    fn scope_error_empty_scope_chain_display_non_empty() {
+        let err = ScopeError::EmptyScopeChain;
+        assert!(!err.to_string().is_empty());
+    }
+
+    #[test]
+    fn closure_store_empty_initially() {
+        let store = ClosureStore::new();
+        assert!(store.is_empty());
+        assert_eq!(store.len(), 0);
+        assert!(store.get(ClosureHandle(0)).is_none());
+    }
+
+    #[test]
+    fn closure_store_multiple_closures() {
+        let mut store = ClosureStore::new();
+        let h1 = store.create_closure("f1".into(), 1, true, vec![], EnvironmentHandle(0));
+        let h2 = store.create_closure("f2".into(), 2, false, vec![], EnvironmentHandle(0));
+        assert_eq!(store.len(), 2);
+        assert_ne!(h1, h2);
+        assert_eq!(store.get(h1).unwrap().name, "f1");
+        assert_eq!(store.get(h2).unwrap().name, "f2");
+    }
+
+    #[test]
+    fn environment_record_serde_roundtrip() {
+        let env = EnvironmentRecord::new(
+            EnvironmentHandle(0),
+            ScopeId { depth: 0, index: 0 },
+            ScopeKind::Global,
+            EnvironmentKind::Declarative,
+        );
+        let json = serde_json::to_string(&env).unwrap();
+        let back: EnvironmentRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(env.scope_kind, back.scope_kind);
+        assert_eq!(env.env_kind, back.env_kind);
+    }
+
+    #[test]
+    fn pop_global_scope_fails_underflow() {
+        let mut chain = fresh_chain();
+        let result = chain.pop_scope();
+        assert!(matches!(result, Err(ScopeError::EmptyScopeChain)));
+    }
+
+    #[test]
+    fn closure_handle_serde_roundtrip() {
+        let h = ClosureHandle(42);
+        let json = serde_json::to_string(&h).unwrap();
+        let back: ClosureHandle = serde_json::from_str(&json).unwrap();
+        assert_eq!(h, back);
+    }
 }

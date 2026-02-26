@@ -1904,4 +1904,134 @@ mod tests {
         });
         assert!(!err.to_string().is_empty());
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: Display uniqueness via BTreeSet
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn analysis_method_display_uniqueness() {
+        let displays: BTreeSet<String> = [
+            AnalysisMethod::LatticeReachability,
+            AnalysisMethod::ManifestFallback,
+            AnalysisMethod::TimeoutFallback,
+            AnalysisMethod::ExcludedDeadPath,
+        ]
+        .iter()
+        .map(|m| m.to_string())
+        .collect();
+        assert_eq!(displays.len(), 4);
+    }
+
+    #[test]
+    fn analysis_error_display_uniqueness() {
+        let displays: BTreeSet<String> = [
+            AnalysisError::ExtensionMismatch {
+                graph_ext: "a".into(),
+                manifest_ext: "b".into(),
+            },
+            AnalysisError::EmptyEffectGraph {
+                extension_id: "e".into(),
+            },
+            AnalysisError::NoEntryNode {
+                extension_id: "e".into(),
+            },
+            AnalysisError::TimedOut {
+                extension_id: "e".into(),
+                elapsed_ns: 100,
+                budget_ns: 50,
+            },
+        ]
+        .iter()
+        .map(|e| e.to_string())
+        .collect();
+        assert_eq!(displays.len(), 4);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: optional capability in manifest
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn optional_capabilities_in_manifest_are_handled() {
+        let graph = simple_graph(); // only fs_read
+        let manifest = ManifestIntents {
+            extension_id: "ext-simple".to_string(),
+            declared_capabilities: [cap("fs_read")].into(),
+            optional_capabilities: [cap("net_send")].into(),
+        };
+
+        let analyzer = StaticAuthorityAnalyzer::new(default_config());
+        let report = analyzer
+            .analyze(&graph, &manifest, SecurityEpoch::from_raw(1), 30_000)
+            .expect("analysis");
+
+        // fs_read in graph, net_send not in graph but is optional — should still be
+        // included conservatively (optional counts in manifest union).
+        assert!(report.requires_capability(&cap("fs_read")));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: EffectGraph serde with no nodes
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn empty_effect_graph_serde_roundtrip() {
+        let graph = EffectGraph::new("ext-empty-serde");
+        let json = serde_json::to_string(&graph).expect("serialize");
+        let restored: EffectGraph = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(graph, restored);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: report content hash differs for different inputs
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn different_graphs_produce_different_report_content_hashes() {
+        let analyzer = StaticAuthorityAnalyzer::new(default_config());
+        let r1 = analyzer
+            .analyze(
+                &simple_graph(),
+                &simple_manifest(),
+                SecurityEpoch::from_raw(1),
+                31_000,
+            )
+            .expect("r1");
+        let r2 = analyzer
+            .analyze(
+                &multi_cap_graph(),
+                &multi_cap_manifest(),
+                SecurityEpoch::from_raw(1),
+                32_000,
+            )
+            .expect("r2");
+
+        assert_ne!(r1.content_hash(), r2.content_hash());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: cache miss returns None
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn cache_miss_returns_none() {
+        let cache = AnalysisCache::new(10);
+        let key = AnalysisCacheKey {
+            effect_graph_hash: ContentHash::compute(b"missing"),
+            manifest_hash: ContentHash::compute(b"missing"),
+            path_sensitive: false,
+        };
+        assert!(cache.get(&key).is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: capability ordering
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn capability_ordering_is_alphabetical() {
+        assert!(cap("alpha") < cap("beta"));
+        assert!(cap("beta") < cap("gamma"));
+    }
 }

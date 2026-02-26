@@ -1650,4 +1650,110 @@ mod tests {
         assert_eq!(integration_err.error_code(), "obligation_cell_error");
         assert!(integration_err.to_string().contains("missing"));
     }
+
+    // --- Enrichment tests ---
+
+    #[test]
+    fn category_display_uniqueness_btreeset() {
+        let cats = [
+            TwoPhaseCategory::ResourceAlloc,
+            TwoPhaseCategory::PermissionGrant,
+            TwoPhaseCategory::StateMutation,
+            TwoPhaseCategory::EvidenceCommit,
+        ];
+        let displays: std::collections::BTreeSet<String> =
+            cats.iter().map(|c| c.to_string()).collect();
+        assert_eq!(displays.len(), 4);
+    }
+
+    #[test]
+    fn phase_display_uniqueness_btreeset() {
+        let phases = [
+            OperationPhase::Phase1Active,
+            OperationPhase::Committed,
+            OperationPhase::Aborted,
+            OperationPhase::Leaked,
+        ];
+        let displays: std::collections::BTreeSet<String> =
+            phases.iter().map(|p| p.to_string()).collect();
+        assert_eq!(displays.len(), 4);
+    }
+
+    #[test]
+    fn error_display_uniqueness_btreeset() {
+        let errors = vec![
+            ObligationIntegrationError::CellNotRunning {
+                cell_id: "c1".to_string(),
+                current_state: RegionState::Closed,
+            },
+            ObligationIntegrationError::OperationNotFound {
+                operation_id: "op-1".to_string(),
+            },
+            ObligationIntegrationError::AlreadyResolved {
+                operation_id: "op-2".to_string(),
+                current_phase: OperationPhase::Committed,
+            },
+            ObligationIntegrationError::DuplicateOperation {
+                operation_id: "op-3".to_string(),
+            },
+            ObligationIntegrationError::CellError {
+                message: "cell broke".to_string(),
+            },
+        ];
+        let displays: std::collections::BTreeSet<String> =
+            errors.iter().map(|e| e.to_string()).collect();
+        assert_eq!(displays.len(), 5);
+    }
+
+    #[test]
+    fn error_codes_uniqueness_btreeset() {
+        let errors = vec![
+            ObligationIntegrationError::CellNotRunning {
+                cell_id: "c1".to_string(),
+                current_state: RegionState::Closed,
+            },
+            ObligationIntegrationError::OperationNotFound {
+                operation_id: "op-1".to_string(),
+            },
+            ObligationIntegrationError::AlreadyResolved {
+                operation_id: "op-2".to_string(),
+                current_phase: OperationPhase::Committed,
+            },
+            ObligationIntegrationError::DuplicateOperation {
+                operation_id: "op-3".to_string(),
+            },
+            ObligationIntegrationError::CellError {
+                message: "cell error".to_string(),
+            },
+        ];
+        let codes: std::collections::BTreeSet<String> =
+            errors.iter().map(|e| e.error_code().to_string()).collect();
+        assert_eq!(
+            codes.len(),
+            5,
+            "all 5 error variants should have unique error codes"
+        );
+    }
+
+    #[test]
+    fn tracker_default_has_zero_counts() {
+        let tracker = ObligationTracker::default();
+        assert_eq!(tracker.active_count(), 0);
+        assert_eq!(tracker.total_count(), 0);
+        assert!(!tracker.has_leaks());
+        assert!(!tracker.should_fail_run());
+    }
+
+    #[test]
+    fn get_operation_returns_none_for_missing() {
+        let tracker = ObligationTracker::default();
+        assert!(tracker.get_operation("nonexistent").is_none());
+    }
+
+    #[test]
+    fn category_stats_default_empty() {
+        let tracker = ObligationTracker::default();
+        let stats = tracker.category_stats();
+        assert!(stats.is_empty());
+    }
 }

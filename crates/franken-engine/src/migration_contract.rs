@@ -1746,4 +1746,117 @@ mod tests {
         assert_eq!(runner.migration_count(), 0);
         assert_eq!(runner.applied_count(), 0);
     }
+
+    // -- Enrichment: Display uniqueness via BTreeSet --------------------
+
+    #[test]
+    fn cutover_type_display_uniqueness() {
+        let displays: std::collections::BTreeSet<String> = [
+            CutoverType::HardCutover,
+            CutoverType::SoftMigration,
+            CutoverType::ParallelRun,
+        ]
+        .iter()
+        .map(|c| c.to_string())
+        .collect();
+        assert_eq!(displays.len(), 3);
+    }
+
+    #[test]
+    fn migration_state_display_uniqueness() {
+        let displays: std::collections::BTreeSet<String> = [
+            MigrationState::Declared,
+            MigrationState::DryRunning,
+            MigrationState::DryRunPassed,
+            MigrationState::DryRunFailed,
+            MigrationState::Executing,
+            MigrationState::Verifying,
+            MigrationState::Verified,
+            MigrationState::VerificationFailed,
+            MigrationState::Committed,
+            MigrationState::RollingBack,
+            MigrationState::RolledBack,
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert_eq!(displays.len(), 11);
+    }
+
+    // -- Enrichment: std::error::Error impl --------------------------
+
+    #[test]
+    fn migration_contract_error_implements_std_error() {
+        let err: Box<dyn std::error::Error> = Box::new(MigrationContractError::MigrationNotFound {
+            migration_id: "test".to_string(),
+        });
+        assert!(!err.to_string().is_empty());
+    }
+
+    // -- Enrichment: parallel run cutover behavior ------------------
+
+    #[test]
+    fn parallel_run_full_pipeline() {
+        let mut runner = MigrationRunner::new();
+        run_full_pipeline(&mut runner, "m-par", CutoverType::ParallelRun);
+        assert_eq!(runner.state("m-par"), Some(MigrationState::Committed));
+        assert_eq!(runner.applied_count(), 1);
+    }
+
+    // -- Enrichment: soft migration window for non-soft cutover -----
+
+    #[test]
+    fn soft_migration_window_none_for_hard_cutover() {
+        let mut runner = MigrationRunner::new();
+        run_full_pipeline(&mut runner, "m-hard", CutoverType::HardCutover);
+        // Hard cutover has no transition_end_tick, so window check returns None
+        assert_eq!(runner.check_soft_migration_window("m-hard"), None);
+    }
+
+    // -- Enrichment: check_format_acceptance for unaffected class ----
+
+    #[test]
+    fn format_acceptance_for_unregistered_migration_passes() {
+        let runner = MigrationRunner::new();
+        // No migrations registered, so any format is accepted
+        runner
+            .check_format_acceptance(ObjectClass::SerializationSchema, "v1")
+            .unwrap();
+    }
+
+    // -- Enrichment: MigrationStep ordering -------------------------
+
+    #[test]
+    fn migration_step_ordering() {
+        assert!(MigrationStep::PreMigration < MigrationStep::Checkpoint);
+        assert!(MigrationStep::Checkpoint < MigrationStep::Execute);
+        assert!(MigrationStep::Execute < MigrationStep::Verify);
+        assert!(MigrationStep::Verify < MigrationStep::Commit);
+    }
+
+    // -- Enrichment: rollback after verification failed -------------
+
+    #[test]
+    fn rollback_from_verification_failed() {
+        let mut runner = MigrationRunner::new();
+        runner
+            .declare(make_declaration("m-vf", CutoverType::HardCutover), "t")
+            .unwrap();
+        runner
+            .dry_run("m-vf", passing_dry_run("m-vf"), "t")
+            .unwrap();
+        runner.create_checkpoint("m-vf", 42, "t").unwrap();
+        runner.complete_execution("m-vf", 100, "t").unwrap();
+        let _ = runner.verify("m-vf", failing_verification("m-vf"), "t");
+        assert_eq!(
+            runner.state("m-vf"),
+            Some(MigrationState::VerificationFailed)
+        );
+        // VerificationFailed is terminal — rollback should fail
+        let err = runner.rollback("m-vf", "t").unwrap_err();
+        assert!(matches!(
+            err,
+            MigrationContractError::InvalidTransition { .. }
+        ));
+    }
 }

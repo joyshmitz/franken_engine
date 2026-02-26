@@ -1169,4 +1169,189 @@ mod tests {
             "all 7 variants produce distinct messages"
         );
     }
+
+    // -- Enrichment: additional coverage --
+
+    #[test]
+    fn moonshot_stage_display_uniqueness() {
+        let displays: std::collections::BTreeSet<String> =
+            MoonshotStage::all().iter().map(|s| s.to_string()).collect();
+        assert_eq!(displays.len(), 4, "all 4 stages must have unique Display");
+    }
+
+    #[test]
+    fn distribution_type_display_uniqueness() {
+        let types = [
+            DistributionType::PointEstimate,
+            DistributionType::Uniform,
+            DistributionType::Beta,
+            DistributionType::LogNormal,
+        ];
+        let displays: std::collections::BTreeSet<String> =
+            types.iter().map(|t| t.to_string()).collect();
+        assert_eq!(displays.len(), 4);
+    }
+
+    #[test]
+    fn risk_dimension_display_uniqueness() {
+        let dims = [
+            RiskDimension::SecurityRegression,
+            RiskDimension::PerformanceRegression,
+            RiskDimension::OperationalBurden,
+            RiskDimension::CrossInitiativeInterference,
+        ];
+        let displays: std::collections::BTreeSet<String> =
+            dims.iter().map(|d| d.to_string()).collect();
+        assert_eq!(displays.len(), 4);
+    }
+
+    #[test]
+    fn artifact_type_display_uniqueness() {
+        let types = [
+            ArtifactType::Proof,
+            ArtifactType::BenchmarkResult,
+            ArtifactType::ConformanceEvidence,
+            ArtifactType::OperatorDocumentation,
+            ArtifactType::RiskAssessment,
+        ];
+        let displays: std::collections::BTreeSet<String> =
+            types.iter().map(|t| t.to_string()).collect();
+        assert_eq!(displays.len(), 5);
+    }
+
+    #[test]
+    fn kill_trigger_display_uniqueness() {
+        let triggers = [
+            KillTrigger::BudgetExhaustedNoSignal,
+            KillTrigger::MetricRegression,
+            KillTrigger::ReproducibilityFailure,
+            KillTrigger::RiskConstraintViolation,
+            KillTrigger::TimeExpiry,
+        ];
+        let displays: std::collections::BTreeSet<String> =
+            triggers.iter().map(|t| t.to_string()).collect();
+        assert_eq!(displays.len(), 5);
+    }
+
+    #[test]
+    fn hypothesis_validate_empty_mechanism() {
+        let mut h = test_hypothesis();
+        h.mechanism = String::new();
+        assert!(matches!(
+            h.validate(),
+            Err(ContractError::InvalidHypothesis { .. })
+        ));
+    }
+
+    #[test]
+    fn hypothesis_validate_empty_expected_outcome() {
+        let mut h = test_hypothesis();
+        h.expected_outcome = String::new();
+        assert!(matches!(
+            h.validate(),
+            Err(ContractError::InvalidHypothesis { .. })
+        ));
+    }
+
+    #[test]
+    fn ev_model_validate_uniform_requires_low_high() {
+        let ev = EvModel {
+            success_distribution: DistributionType::Uniform,
+            distribution_params: BTreeMap::new(),
+            cost_millionths: 100_000,
+            benefit_on_success_millionths: 1_000_000,
+            harm_on_failure_millionths: -50_000,
+        };
+        assert!(matches!(
+            ev.validate(),
+            Err(ContractError::InvalidEvModel { .. })
+        ));
+    }
+
+    #[test]
+    fn ev_model_validate_lognormal_requires_mu_sigma() {
+        let ev = EvModel {
+            success_distribution: DistributionType::LogNormal,
+            distribution_params: BTreeMap::new(),
+            cost_millionths: 100_000,
+            benefit_on_success_millionths: 1_000_000,
+            harm_on_failure_millionths: -50_000,
+        };
+        assert!(matches!(
+            ev.validate(),
+            Err(ContractError::InvalidEvModel { .. })
+        ));
+    }
+
+    #[test]
+    fn rollback_plan_rejects_empty_expected_state() {
+        let rp = RollbackPlan {
+            steps: vec![RollbackStep {
+                step_number: 1,
+                description: "step".into(),
+                verification: "verify".into(),
+            }],
+            artifact_references: vec![],
+            expected_state_after_rollback: String::new(),
+        };
+        assert!(matches!(
+            rp.validate(),
+            Err(ContractError::InvalidRollback { .. })
+        ));
+    }
+
+    #[test]
+    fn contract_error_all_variants_serde_roundtrip() {
+        let errors = vec![
+            ContractError::EmptyContractId,
+            ContractError::InvalidHypothesis {
+                reason: "test reason".into(),
+            },
+            ContractError::EmptyTargetMetrics,
+            ContractError::InvalidEvModel {
+                reason: "bad model".into(),
+            },
+            ContractError::InvalidRiskBudget {
+                reason: "empty".into(),
+            },
+            ContractError::EmptyKillCriteria,
+            ContractError::InvalidRollback {
+                reason: "no steps".into(),
+            },
+        ];
+        for err in &errors {
+            let json = serde_json::to_string(err).unwrap();
+            let restored: ContractError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*err, restored);
+        }
+    }
+
+    #[test]
+    fn contract_with_metadata_serde_deterministic() {
+        let mut c1 = test_contract();
+        c1.metadata.insert("owner".into(), "team-alpha".into());
+        c1.metadata.insert("priority".into(), "high".into());
+        let mut c2 = test_contract();
+        c2.metadata.insert("priority".into(), "high".into());
+        c2.metadata.insert("owner".into(), "team-alpha".into());
+        // BTreeMap guarantees deterministic ordering regardless of insert order
+        assert_eq!(
+            serde_json::to_string(&c1).unwrap(),
+            serde_json::to_string(&c2).unwrap()
+        );
+    }
+
+    #[test]
+    fn stage_obligations_met_non_blocking_ignored() {
+        let mut c = test_contract();
+        c.artifact_obligations.push(ArtifactObligation {
+            obligation_id: "optional-doc".into(),
+            required_at_stage: MoonshotStage::Research,
+            artifact_type: ArtifactType::OperatorDocumentation,
+            description: "Optional documentation".into(),
+            blocking: false,
+        });
+        // Non-blocking obligation should not prevent stage promotion
+        assert!(c.stage_obligations_met(MoonshotStage::Research, &["proof-research".into()]));
+    }
 }

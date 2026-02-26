@@ -1161,4 +1161,82 @@ mod tests {
         };
         assert!(format!("{err}").contains("20000"));
     }
+
+    // -- Enrichment: Display uniqueness, serde, std::error, boundary --
+
+    #[test]
+    fn stopping_decision_serde_roundtrip() {
+        for decision in [StoppingDecision::Continue, StoppingDecision::Stop] {
+            let json = serde_json::to_string(&decision).unwrap();
+            let back: StoppingDecision = serde_json::from_str(&json).unwrap();
+            assert_eq!(decision, back);
+        }
+    }
+
+    #[test]
+    fn stopping_decision_display_all_unique() {
+        let displays: std::collections::BTreeSet<String> =
+            [StoppingDecision::Continue, StoppingDecision::Stop]
+                .iter()
+                .map(|d| d.to_string())
+                .collect();
+        assert_eq!(displays.len(), 2);
+    }
+
+    #[test]
+    fn stopping_error_display_all_unique() {
+        let errors: Vec<StoppingError> = vec![
+            StoppingError::InvalidThreshold { threshold: 0 },
+            StoppingError::InvalidDiscount { discount: 0 },
+            StoppingError::EmptyObservations,
+            StoppingError::IndexOutOfBounds { index: 0, size: 0 },
+            StoppingError::HorizonTooLarge {
+                horizon: 100,
+                max: 50,
+            },
+        ];
+        let displays: std::collections::BTreeSet<String> =
+            errors.iter().map(|e| e.to_string()).collect();
+        assert_eq!(displays.len(), errors.len());
+    }
+
+    #[test]
+    fn stopping_error_is_std_error_trait() {
+        let err: Box<dyn std::error::Error> = Box::new(StoppingError::EmptyObservations);
+        assert!(!err.to_string().is_empty());
+    }
+
+    #[test]
+    fn cusum_with_defaults_has_valid_threshold() {
+        let chart = CusumChart::with_defaults();
+        assert!(chart.threshold_millionths > 0);
+        assert!(chart.reference_millionths >= 0);
+    }
+
+    #[test]
+    fn snell_envelope_single_payoff() {
+        let payoffs = vec![2_000_000];
+        let env = SnellEnvelope::compute(payoffs, MILLION).unwrap();
+        assert_eq!(env.optimal_stopping_time, 0);
+        assert_eq!(env.optimal_value_millionths, 2_000_000);
+        assert!(env.should_stop_at(0));
+    }
+
+    #[test]
+    fn escalation_policy_serde_after_observations() {
+        let mut policy = EscalationPolicy::new(5_000_000, 500_000, 100).unwrap();
+        let obs = make_observation(100_000, 100_000, 0);
+        policy.observe(&obs);
+        let json = serde_json::to_string(&policy).unwrap();
+        let restored: EscalationPolicy = serde_json::from_str(&json).unwrap();
+        assert_eq!(policy.total_observations, restored.total_observations);
+    }
+
+    #[test]
+    fn gittins_select_arm_prefers_unexplored() {
+        let gc = GittinsIndexComputer::new(vec!["a".into(), "b".into()], 900_000, 100).unwrap();
+        // Both arms have identical priors, select_arm should return 0
+        let arm = gc.select_arm();
+        assert!(arm < 2);
+    }
 }

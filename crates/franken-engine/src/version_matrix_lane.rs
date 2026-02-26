@@ -1042,4 +1042,118 @@ mod tests {
         let back: VersionSlots = serde_json::from_str(&json).unwrap();
         assert_eq!(s, back);
     }
+
+    // --- Enrichment tests ---
+
+    #[test]
+    fn lane_kind_display_uniqueness_btreeset() {
+        let kinds = [
+            MatrixLaneKind::Current,
+            MatrixLaneKind::Previous,
+            MatrixLaneKind::Next,
+            MatrixLaneKind::Pinned,
+        ];
+        let displays: BTreeSet<String> = kinds.iter().map(|k| k.as_str().to_string()).collect();
+        assert_eq!(
+            displays.len(),
+            4,
+            "all 4 lane kinds should have unique as_str"
+        );
+    }
+
+    #[test]
+    fn version_matrix_error_is_std_error() {
+        let errors: Vec<Box<dyn Error>> = vec![
+            Box::new(VersionMatrixError::MissingCurrentVersion {
+                repo: "engine".into(),
+            }),
+            Box::new(VersionMatrixError::InvalidPinnedCombination {
+                boundary_surface: "ifc".into(),
+                reason: "empty".into(),
+            }),
+        ];
+        let mut displays = BTreeSet::new();
+        for e in &errors {
+            let msg = format!("{e}");
+            assert!(!msg.is_empty());
+            displays.insert(msg);
+        }
+        assert_eq!(
+            displays.len(),
+            2,
+            "both error variants produce distinct messages"
+        );
+    }
+
+    #[test]
+    fn parsed_version_prerelease_ordering_lexicographic() {
+        let alpha = ParsedVersion::parse("1.0.0-alpha").unwrap();
+        let beta = ParsedVersion::parse("1.0.0-beta").unwrap();
+        assert!(alpha < beta);
+    }
+
+    #[test]
+    fn parsed_version_format_roundtrip_stable() {
+        let v = ParsedVersion::parse("3.14.159").unwrap();
+        let formatted = v.format();
+        let reparsed = ParsedVersion::parse(&formatted).unwrap();
+        assert_eq!(v, reparsed);
+    }
+
+    #[test]
+    fn parsed_version_format_roundtrip_prerelease() {
+        let v = ParsedVersion::parse("2.0.0-rc.1").unwrap();
+        let formatted = v.format();
+        let reparsed = ParsedVersion::parse(&formatted).unwrap();
+        assert_eq!(v, reparsed);
+    }
+
+    #[test]
+    fn parsed_version_with_leading_v_and_whitespace() {
+        let v = ParsedVersion::parse("  v1.2.3  ").unwrap();
+        assert_eq!(v.major, 1);
+        assert_eq!(v.minor, 2);
+        assert_eq!(v.patch, 3);
+    }
+
+    #[test]
+    fn derive_slots_only_prereleases_uses_latest_prerelease_as_current() {
+        let source = VersionSource {
+            tags: vec!["v1.0.0-alpha".into(), "v1.0.0-beta".into()],
+            branch_names: vec![],
+            current_override: None,
+            previous_override: None,
+            next_override: None,
+        };
+        let slots = derive_version_slots(&source, "engine").unwrap();
+        // No stable versions; should pick latest prerelease as current
+        assert_eq!(slots.current, "1.0.0-beta");
+    }
+
+    #[test]
+    fn health_summary_with_mixed_outcomes() {
+        let plan = derive_version_matrix(&[test_spec()]).unwrap();
+        let mut results: Vec<MatrixCellResult> = plan
+            .cells
+            .iter()
+            .map(|c| MatrixCellResult {
+                trace_id: "t".into(),
+                decision_id: "d".into(),
+                policy_id: "p".into(),
+                cell_id: c.cell_id.clone(),
+                boundary_surface: c.boundary_surface.clone(),
+                lane_kind: c.lane_kind,
+                outcome: MatrixOutcome::Fail,
+                error_code: Some("E1".into()),
+                failure_fingerprint: Some("fp-all".into()),
+                failure_class: Some("fc1".into()),
+            })
+            .collect();
+        // Pass first cell
+        results[0].outcome = MatrixOutcome::Pass;
+        results[0].failure_fingerprint = None;
+        let health = summarize_matrix_health(&plan, &results);
+        assert_eq!(health.passed_cells, 1);
+        assert_eq!(health.failed_cells, plan.cells.len() - 1);
+    }
 }

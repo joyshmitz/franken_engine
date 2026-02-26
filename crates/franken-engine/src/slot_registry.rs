@@ -3285,4 +3285,181 @@ mod tests {
         });
         assert!(!err.to_string().is_empty());
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: missing serde roundtrips
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn ga_release_guard_config_serde_roundtrip() {
+        let mut core = BTreeSet::new();
+        core.insert(SlotId::new("parser").unwrap());
+        let config = GaReleaseGuardConfig {
+            core_slots: core,
+            non_core_delegate_limit: Some(3),
+            lineage_dashboard_ref: "dash://test".to_string(),
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let back: GaReleaseGuardConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config, back);
+    }
+
+    #[test]
+    fn ga_signed_lineage_artifact_serde_roundtrip() {
+        let art = GaSignedLineageArtifact {
+            slot_id: SlotId::new("parser").unwrap(),
+            former_delegate_digest: "fd-001".into(),
+            replacement_component_digest: "rc-001".into(),
+            replacement_author: "agent-a".into(),
+            replacement_timestamp: "2026-02-25T00:00:00Z".into(),
+            lineage_signature: "sig-001".into(),
+            trust_anchor_ref: "anchor-001".into(),
+            signature_verified: true,
+            equivalence_suite_ref: "suite-001".into(),
+            equivalence_passed: true,
+            delegate_fallback_reachable: false,
+        };
+        let json = serde_json::to_string(&art).unwrap();
+        let back: GaSignedLineageArtifact = serde_json::from_str(&json).unwrap();
+        assert_eq!(art, back);
+    }
+
+    #[test]
+    fn ga_release_slot_status_serde_roundtrip() {
+        let status = GaReleaseSlotStatus {
+            slot_id: SlotId::new("parser").unwrap(),
+            slot_kind: SlotKind::Parser,
+            slot_class: ReleaseSlotClass::Core,
+            promotion_status: "promoted".into(),
+            delegate_backed: false,
+            blocking: false,
+            exemption_id: None,
+            lineage_signature_verified: Some(true),
+            equivalence_passed: Some(true),
+            delegate_fallback_reachable: Some(false),
+            estimated_remediation: "n/a".into(),
+        };
+        let json = serde_json::to_string(&status).unwrap();
+        let back: GaReleaseSlotStatus = serde_json::from_str(&json).unwrap();
+        assert_eq!(status, back);
+    }
+
+    #[test]
+    fn ga_release_guard_artifact_serde_roundtrip() {
+        let artifact = GaReleaseGuardArtifact {
+            trace_id: "t-001".into(),
+            decision_id: "d-001".into(),
+            policy_id: "p-001".into(),
+            component: "ga-guard".into(),
+            verdict: GaReleaseGuardVerdict::Pass,
+            total_slots: 5,
+            core_slot_count: 2,
+            core_delegate_count: 0,
+            non_core_delegate_count: 1,
+            native_coverage_millionths: 800_000,
+            lineage_dashboard_ref: "dash://test".into(),
+            exemptions_applied: vec![],
+            core_slots_missing_lineage: vec![],
+            core_slots_lineage_mismatch: vec![],
+            core_slots_invalid_signature: vec![],
+            core_slots_equivalence_failed: vec![],
+            core_slots_delegate_fallback_reachable: vec![],
+            slot_statuses: vec![],
+            blocking_slots: vec![],
+            events: vec![],
+        };
+        let json = serde_json::to_string(&artifact).unwrap();
+        let back: GaReleaseGuardArtifact = serde_json::from_str(&json).unwrap();
+        assert_eq!(artifact, back);
+    }
+
+    #[test]
+    fn replacement_progress_snapshot_serde_roundtrip() {
+        let snap = ReplacementProgressSnapshot {
+            trace_id: "t-001".into(),
+            decision_id: "d-001".into(),
+            policy_id: "p-001".into(),
+            component: "replacement-progress".into(),
+            total_slots: 4,
+            native_slots: 3,
+            delegate_slots: 1,
+            native_coverage_millionths: 750_000,
+            weighted_native_coverage_millionths: 800_000,
+            weighted_delegate_throughput_uplift_millionths: 100_000,
+            weighted_delegate_security_risk_reduction_millionths: 50_000,
+            recommended_replacement_order: vec![],
+            events: vec![],
+        };
+        let json = serde_json::to_string(&snap).unwrap();
+        let back: ReplacementProgressSnapshot = serde_json::from_str(&json).unwrap();
+        assert_eq!(snap, back);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: utility function tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn saturating_i128_to_i64_within_range() {
+        assert_eq!(saturating_i128_to_i64(42), 42i64);
+        assert_eq!(saturating_i128_to_i64(-42), -42i64);
+        assert_eq!(saturating_i128_to_i64(0), 0i64);
+    }
+
+    #[test]
+    fn saturating_i128_to_i64_overflows() {
+        assert_eq!(saturating_i128_to_i64(i128::MAX), i64::MAX);
+        assert_eq!(saturating_i128_to_i64(i128::MIN), i64::MIN);
+        assert_eq!(saturating_i128_to_i64(i64::MAX as i128 + 1), i64::MAX);
+        assert_eq!(saturating_i128_to_i64(i64::MIN as i128 - 1), i64::MIN);
+    }
+
+    #[test]
+    fn saturating_u128_to_i128_within_range() {
+        assert_eq!(saturating_u128_to_i128(0), 0i128);
+        assert_eq!(saturating_u128_to_i128(42), 42i128);
+    }
+
+    #[test]
+    fn saturating_u128_to_i128_overflows() {
+        assert_eq!(saturating_u128_to_i128(u128::MAX), i128::MAX);
+        assert_eq!(saturating_u128_to_i128(i128::MAX as u128 + 1), i128::MAX);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: method tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn expected_value_score_millionths_sums_components() {
+        let signal = SlotReplacementSignal {
+            invocation_weight_millionths: 1_000_000,
+            throughput_uplift_millionths: 300_000,
+            security_risk_reduction_millionths: 200_000,
+        };
+        assert_eq!(signal.expected_value_score_millionths(), 500_000);
+    }
+
+    #[test]
+    fn expected_value_score_millionths_negative() {
+        let signal = SlotReplacementSignal {
+            invocation_weight_millionths: 1_000_000,
+            throughput_uplift_millionths: -100_000,
+            security_risk_reduction_millionths: 50_000,
+        };
+        assert_eq!(signal.expected_value_score_millionths(), -50_000);
+    }
+
+    #[test]
+    fn slot_registry_serde_roundtrip() {
+        let mut reg = SlotRegistry::new();
+        register_slot(&mut reg, "parser", SlotKind::Parser, "digest-parser");
+        let json = serde_json::to_string(&reg).unwrap();
+        let back: SlotRegistry = serde_json::from_str(&json).unwrap();
+        assert_eq!(reg.len(), back.len());
+        assert_eq!(
+            reg.get(&SlotId::new("parser").unwrap()).unwrap().kind,
+            back.get(&SlotId::new("parser").unwrap()).unwrap().kind,
+        );
+    }
 }

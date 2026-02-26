@@ -1652,4 +1652,116 @@ mod tests {
         let restored: MechanismEvent = serde_json::from_str(&json).unwrap();
         assert_eq!(event, restored);
     }
+
+    // --- Enrichment tests ---
+
+    #[test]
+    fn report_phase_display_uniqueness_btreeset() {
+        let phases = [
+            ReportPhase::Submitted,
+            ReportPhase::UnderReview,
+            ReportPhase::Resolved,
+            ReportPhase::Dismissed,
+        ];
+        let displays: BTreeSet<String> = phases.iter().map(|p| p.to_string()).collect();
+        assert_eq!(displays.len(), 4);
+    }
+
+    #[test]
+    fn challenge_outcome_display_uniqueness_btreeset() {
+        let outcomes = [
+            ChallengeOutcome::Upheld,
+            ChallengeOutcome::Rejected,
+            ChallengeOutcome::Escalated,
+        ];
+        let displays: BTreeSet<String> = outcomes.iter().map(|o| o.to_string()).collect();
+        assert_eq!(displays.len(), 3);
+    }
+
+    #[test]
+    fn quarantine_status_display_uniqueness_btreeset() {
+        let statuses = [
+            QuarantineStatus::Active,
+            QuarantineStatus::Lifted,
+            QuarantineStatus::Expired,
+        ];
+        let displays: BTreeSet<String> = statuses.iter().map(|s| s.to_string()).collect();
+        assert_eq!(displays.len(), 3);
+    }
+
+    #[test]
+    fn error_display_all_variants_unique() {
+        let errors: Vec<MechanismError> = vec![
+            MechanismError::InvalidInput {
+                field: "f1".into(),
+                detail: "bad1".into(),
+            },
+            MechanismError::GameModelMissing {
+                subsystem: "s1".into(),
+            },
+            MechanismError::IncentiveViolation {
+                reason: "r1".into(),
+            },
+            MechanismError::QuarantineConstraintViolated {
+                package_id: "pkg".into(),
+                reason: "d1".into(),
+            },
+            MechanismError::ReinstateNotAllowed {
+                quarantine_id: "q1".into(),
+                reason: "not active".into(),
+            },
+        ];
+        let displays: BTreeSet<String> = errors.iter().map(|e| e.to_string()).collect();
+        assert_eq!(
+            displays.len(),
+            5,
+            "all 5 error variants should have unique Display"
+        );
+    }
+
+    #[test]
+    fn error_serde_roundtrip_all_variants() {
+        let errors = vec![
+            MechanismError::InvalidInput {
+                field: "f".into(),
+                detail: "d".into(),
+            },
+            MechanismError::GameModelMissing {
+                subsystem: "s".into(),
+            },
+            MechanismError::IncentiveViolation { reason: "r".into() },
+            MechanismError::QuarantineConstraintViolated {
+                package_id: "p".into(),
+                reason: "d".into(),
+            },
+            MechanismError::ReinstateNotAllowed {
+                quarantine_id: "q".into(),
+                reason: "r".into(),
+            },
+        ];
+        for err in &errors {
+            let json = serde_json::to_string(err).unwrap();
+            let restored: MechanismError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*err, restored);
+        }
+    }
+
+    #[test]
+    fn ic_class_display_uniqueness_btreeset() {
+        let classes = [
+            IncentiveCompatibilityClass::DominantStrategy,
+            IncentiveCompatibilityClass::BayesNash,
+            IncentiveCompatibilityClass::ExPostRational,
+            IncentiveCompatibilityClass::NonCompliant,
+        ];
+        let displays: BTreeSet<String> = classes.iter().map(|c| c.to_string()).collect();
+        assert_eq!(displays.len(), 4);
+    }
+
+    #[test]
+    fn submit_report_zero_severity_succeeds() {
+        let mut mech = GovernanceMechanism::new(test_epoch());
+        let report = make_report("r0", "pkg-x", 0);
+        assert!(mech.submit_report(report).is_ok());
+    }
 }

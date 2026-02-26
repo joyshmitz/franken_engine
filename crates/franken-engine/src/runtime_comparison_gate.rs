@@ -1791,4 +1791,157 @@ mod tests {
         }
         assert_eq!(blockers.len(), 9);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: Display uniqueness, std::error, determinism, edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn gate_blocker_display_all_unique() {
+        use std::collections::BTreeSet;
+        let blockers = vec![
+            GateBlocker::MissingCategory {
+                category: "micro".to_string(),
+            },
+            GateBlocker::ExcessiveVariance {
+                benchmark_id: "b1".to_string(),
+                runtime: RuntimeId::FrankenEngine,
+                cv_millionths: 50_000,
+                max_cv_millionths: 30_000,
+            },
+            GateBlocker::InsufficientRuns {
+                benchmark_id: "b2".to_string(),
+                runtime: RuntimeId::NodeLts,
+                run_count: 5,
+                required: 30,
+            },
+            GateBlocker::IncompleteMethodology {
+                missing_sections: vec!["warmup_policy".to_string()],
+            },
+            GateBlocker::IncompleteArtifactBundle {
+                missing_artifacts: vec!["replay_script".to_string()],
+            },
+            GateBlocker::ReproducibilityFailed {
+                benchmark_id: "b3".to_string(),
+                original_ns: 1000,
+                replay_ns: 2000,
+                deviation_millionths: 500_000,
+            },
+            GateBlocker::MissingRuntime {
+                runtime: RuntimeId::BunStable,
+            },
+            GateBlocker::NoBenchmarks,
+            GateBlocker::BenchmarkSniffingDetected {
+                detail: "config mismatch".to_string(),
+            },
+        ];
+        let mut displays = BTreeSet::new();
+        for b in &blockers {
+            let msg = format!("{b}");
+            assert!(!msg.is_empty());
+            displays.insert(msg);
+        }
+        assert_eq!(
+            displays.len(),
+            blockers.len(),
+            "all GateBlocker variants have unique Display"
+        );
+    }
+
+    #[test]
+    fn gate_error_display_is_nonempty() {
+        let err = GateError::EmptyBenchmarks;
+        assert!(!err.to_string().is_empty());
+    }
+
+    #[test]
+    fn runtime_id_display_all_unique() {
+        use std::collections::BTreeSet;
+        let mut displays = BTreeSet::new();
+        for id in [
+            RuntimeId::FrankenEngine,
+            RuntimeId::NodeLts,
+            RuntimeId::BunStable,
+        ] {
+            displays.insert(format!("{id}"));
+        }
+        assert_eq!(
+            displays.len(),
+            3,
+            "all RuntimeId variants have unique Display"
+        );
+    }
+
+    #[test]
+    fn benchmark_category_display_all_unique() {
+        use std::collections::BTreeSet;
+        let mut displays = BTreeSet::new();
+        for cat in [
+            BenchmarkCategory::Micro,
+            BenchmarkCategory::Macro,
+            BenchmarkCategory::Startup,
+            BenchmarkCategory::Throughput,
+            BenchmarkCategory::Memory,
+        ] {
+            displays.insert(format!("{cat}"));
+        }
+        assert_eq!(
+            displays.len(),
+            5,
+            "all BenchmarkCategory variants have unique Display"
+        );
+    }
+
+    #[test]
+    fn gate_evidence_deterministic_json() {
+        let results = passing_results();
+        let methodology = passing_methodology();
+        let artifacts = passing_artifacts();
+        let env = test_environment();
+        let input = make_passing_input(&results, &methodology, &artifacts, &[], &env);
+
+        let b1 = evaluate_gate(&input).unwrap();
+        let b2 = evaluate_gate(&input).unwrap();
+        let json1 = serde_json::to_string(&b1).unwrap();
+        let json2 = serde_json::to_string(&b2).unwrap();
+        assert_eq!(json1, json2, "identical inputs must produce identical JSON");
+    }
+
+    #[test]
+    fn performance_summary_serde_roundtrip() {
+        let results = passing_results();
+        let methodology = passing_methodology();
+        let artifacts = passing_artifacts();
+        let env = test_environment();
+        let input = make_passing_input(&results, &methodology, &artifacts, &[], &env);
+        let bundle = evaluate_gate(&input).unwrap();
+
+        let json = serde_json::to_string(&bundle.performance_summary).unwrap();
+        let back: PerformanceSummary = serde_json::from_str(&json).unwrap();
+        assert_eq!(bundle.performance_summary, back);
+    }
+
+    #[test]
+    fn gate_error_serde_roundtrip_all_variants() {
+        let errors = vec![
+            GateError::EmptyBenchmarks,
+            GateError::InvalidFingerprint {
+                detail: "mismatch".to_string(),
+            },
+        ];
+        for err in &errors {
+            let json = serde_json::to_string(err).unwrap();
+            let back: GateError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*err, back);
+        }
+    }
+
+    #[test]
+    fn gate_outcome_display_all_unique() {
+        use std::collections::BTreeSet;
+        let mut displays = BTreeSet::new();
+        displays.insert(GateOutcome::Pass.to_string());
+        displays.insert(GateOutcome::Fail.to_string());
+        assert_eq!(displays.len(), 2);
+    }
 }

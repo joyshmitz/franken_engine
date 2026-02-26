@@ -982,4 +982,128 @@ mod tests {
             ContractValidationError::MissingField { field } if field == "change_summary"
         )));
     }
+
+    // ── Enrichment: Display uniqueness ──────────────────────────
+
+    #[test]
+    fn ev_tier_display_all_unique() {
+        let displays: std::collections::BTreeSet<String> = [
+            EvTier::Reject,
+            EvTier::Marginal,
+            EvTier::Positive,
+            EvTier::HighImpact,
+        ]
+        .iter()
+        .map(|t| t.to_string())
+        .collect();
+        assert_eq!(displays.len(), 4);
+    }
+
+    #[test]
+    fn rollout_stage_display_all_unique() {
+        let displays: std::collections::BTreeSet<String> = [
+            RolloutStage::Shadow,
+            RolloutStage::Canary,
+            RolloutStage::Ramp,
+            RolloutStage::Default,
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert_eq!(displays.len(), 4);
+    }
+
+    // ── Enrichment: validation error Display uniqueness ─────────
+
+    #[test]
+    fn contract_validation_error_display_all_unique() {
+        let variants = vec![
+            ContractValidationError::MissingField {
+                field: "x".to_string(),
+            },
+            ContractValidationError::EvBelowThreshold {
+                score_str: "1.0".to_string(),
+                tier: "marginal".to_string(),
+            },
+            ContractValidationError::EvTierMismatch {
+                score_str: "3.0".to_string(),
+                declared_tier: "reject".to_string(),
+                expected_tier: "positive".to_string(),
+            },
+            ContractValidationError::EmptyRolloutStages,
+            ContractValidationError::InvalidRolloutOrder {
+                stage: "shadow".to_string(),
+                position: 1,
+            },
+            ContractValidationError::IncompatibleVersion {
+                version: "2.0".to_string(),
+            },
+            ContractValidationError::InvalidEvScore,
+        ];
+        let displays: std::collections::BTreeSet<String> =
+            variants.iter().map(|v| v.to_string()).collect();
+        assert_eq!(displays.len(), 7);
+    }
+
+    // ── Enrichment: exact boundary EV 2.0 passes ────────────────
+
+    #[test]
+    fn ev_exactly_2_0_passes_validation() {
+        let mut contract = valid_contract();
+        contract.ev_score = 2.0;
+        contract.ev_tier = EvTier::Positive;
+        assert!(contract.validate().is_ok());
+    }
+
+    // ── Enrichment: contract with high_impact passes ────────────
+
+    #[test]
+    fn contract_high_impact_no_errors() {
+        let mut contract = valid_contract();
+        contract.ev_score = 10.0;
+        contract.ev_tier = EvTier::HighImpact;
+        assert!(contract.validate().is_ok());
+    }
+
+    // ── Enrichment: rollout with skip ───────────────────────────
+
+    #[test]
+    fn rollout_shadow_to_default_skipping_middle_passes() {
+        let mut contract = valid_contract();
+        contract.rollout_stages = vec![RolloutStage::Shadow, RolloutStage::Default];
+        assert!(contract.validate().is_ok());
+    }
+
+    // ── Enrichment: version 1.0 identity ────────────────────────
+
+    #[test]
+    fn contract_version_new_equals_struct() {
+        let v = ContractVersion::new(3, 7);
+        assert_eq!(v.major, 3);
+        assert_eq!(v.minor, 7);
+    }
+
+    // ── Enrichment: multiple error accumulation ─────────────────
+
+    #[test]
+    fn multiple_different_error_kinds_accumulate() {
+        let contract = EvidenceContract {
+            version: ContractVersion::new(2, 0), // incompatible
+            change_summary: String::new(),       // missing
+            hotspot_evidence: "exists".to_string(),
+            ev_score: f64::NAN, // invalid
+            ev_tier: EvTier::Positive,
+            expected_loss_model: "exists".to_string(),
+            fallback_trigger: "exists".to_string(),
+            rollout_stages: vec![], // empty
+            rollback_command: "cmd".to_string(),
+            benchmark_artifacts: "exists".to_string(),
+        };
+        let errors = contract.validate().unwrap_err();
+        assert!(
+            errors.len() >= 4,
+            "should have at least 4 errors: {}",
+            errors.len()
+        );
+    }
 }

@@ -1349,4 +1349,155 @@ mod tests {
         assert!(GateKind::CapabilityPreservation < GateKind::PerformanceThreshold);
         assert!(GateKind::PerformanceThreshold < GateKind::AdversarialSurvival);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: GateKind Display uniqueness via BTreeSet
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn gate_kind_display_all_unique_btreeset() {
+        let mut displays = BTreeSet::new();
+        for gate in GateKind::all() {
+            displays.insert(gate.to_string());
+        }
+        assert_eq!(
+            displays.len(),
+            4,
+            "all GateKind variants produce distinct Display"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: GateVerdict ordering and uniqueness
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn gate_verdict_display_all_unique() {
+        let verdicts = [
+            GateVerdict::Approved,
+            GateVerdict::Denied,
+            GateVerdict::Inconclusive,
+        ];
+        let mut displays = BTreeSet::new();
+        for v in &verdicts {
+            displays.insert(format!("{v:?}"));
+        }
+        assert_eq!(displays.len(), 3);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: GateStrictness defaults for all gates
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn strictness_standard_equivalence_zero_divergences() {
+        let s = GateStrictness::standard(GateKind::Equivalence);
+        assert_eq!(
+            s.max_divergences, 0,
+            "equivalence gate must allow zero divergences by default"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: full run with performance-only fail
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn full_run_performance_only_fail() {
+        let config = GateRunnerConfig::standard(test_slot_id(), "candidate-slow".to_string(), 42);
+        let input = GateRunnerInput {
+            equivalence_cases: passing_equivalence_cases(10),
+            capability_request: passing_capability_request(),
+            performance_measurements: failing_perf_measurements(),
+            adversarial_results: passing_adversarial_results(20),
+        };
+        let output = run_promotion_gates(&config, &input);
+        assert_eq!(output.verdict, GateVerdict::Denied);
+        // Only performance gate should fail
+        let perf_eval = output
+            .evaluations
+            .iter()
+            .find(|e| e.gate == GateKind::PerformanceThreshold)
+            .unwrap();
+        assert!(!perf_eval.passed);
+        let eq_eval = output
+            .evaluations
+            .iter()
+            .find(|e| e.gate == GateKind::Equivalence)
+            .unwrap();
+        assert!(eq_eval.passed);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: evidence bundle artifact count matches gates
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn evidence_bundle_artifact_ids_unique() {
+        let config = GateRunnerConfig::standard(test_slot_id(), "candidate-abc".to_string(), 42);
+        let input = all_passing_input();
+        let output = run_promotion_gates(&config, &input);
+        let mut ids = BTreeSet::new();
+        for artifact in &output.evidence_bundle.artifacts {
+            ids.insert(artifact.artifact_id.clone());
+        }
+        assert_eq!(
+            ids.len(),
+            output.evidence_bundle.artifacts.len(),
+            "artifact IDs must be unique"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: EquivalenceTestCase serde roundtrip
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn equivalence_test_case_serde_roundtrip() {
+        let tc = EquivalenceTestCase {
+            test_id: "eq-42".to_string(),
+            input: vec![1, 2, 3],
+            delegate_output: vec![4, 5],
+            candidate_output: vec![4, 5],
+        };
+        let json = serde_json::to_string(&tc).expect("serialize");
+        let back: EquivalenceTestCase = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(tc, back);
+        assert!(back.is_equivalent());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: PerformanceMeasurement serde roundtrip
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn performance_measurement_serde_roundtrip() {
+        let pm = PerformanceMeasurement {
+            benchmark_id: "bench-99".to_string(),
+            throughput_millionths: 2_000_000,
+            latency_ns: 10_000_000,
+            iterations: 500,
+            seed: 77,
+        };
+        let json = serde_json::to_string(&pm).expect("serialize");
+        let back: PerformanceMeasurement = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(pm, back);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: AdversarialTestResult serde roundtrip
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn adversarial_test_result_serde_roundtrip() {
+        let atr = AdversarialTestResult {
+            test_id: "adv-77".to_string(),
+            passed: false,
+            attack_surface: "injection".to_string(),
+            evidence: "found vulnerability".to_string(),
+        };
+        let json = serde_json::to_string(&atr).expect("serialize");
+        let back: AdversarialTestResult = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(atr, back);
+    }
 }

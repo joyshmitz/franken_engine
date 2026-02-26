@@ -1651,4 +1651,94 @@ mod tests {
                 && f.detail.contains("previous")
         }));
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch — PearlTower 2026-02-25
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn benchmark_split_display_uniqueness_btreeset() {
+        let splits = [
+            BenchmarkSplit::Baseline,
+            BenchmarkSplit::CxThreading,
+            BenchmarkSplit::DecisionContracts,
+            BenchmarkSplit::EvidenceEmission,
+            BenchmarkSplit::FullIntegration,
+        ];
+        let mut displays = BTreeSet::new();
+        for s in &splits {
+            displays.insert(s.to_string());
+        }
+        assert_eq!(
+            displays.len(),
+            5,
+            "all BenchmarkSplit variants produce distinct Display strings"
+        );
+    }
+
+    #[test]
+    fn latency_stats_ns_serde_roundtrip() {
+        let stats = LatencyStatsNs {
+            p50_ns: 1_000,
+            p95_ns: 2_000,
+            p99_ns: 3_000,
+        };
+        let json = serde_json::to_string(&stats).unwrap();
+        let back: LatencyStatsNs = serde_json::from_str(&json).unwrap();
+        assert_eq!(stats, back);
+    }
+
+    #[test]
+    fn split_benchmark_metrics_serde_roundtrip() {
+        let m = metrics(500_000, 100, 200, 300, 1024);
+        let json = serde_json::to_string(&m).unwrap();
+        let back: SplitBenchmarkMetrics = serde_json::from_str(&json).unwrap();
+        assert_eq!(m, back);
+    }
+
+    #[test]
+    fn benchmark_split_snapshot_serde_roundtrip() {
+        let snap = previous_snapshot();
+        let json = serde_json::to_string(&snap).unwrap();
+        let back: BenchmarkSplitSnapshot = serde_json::from_str(&json).unwrap();
+        assert_eq!(snap, back);
+    }
+
+    #[test]
+    fn benchmark_split_as_str_matches_display() {
+        for s in [
+            BenchmarkSplit::Baseline,
+            BenchmarkSplit::CxThreading,
+            BenchmarkSplit::DecisionContracts,
+            BenchmarkSplit::EvidenceEmission,
+            BenchmarkSplit::FullIntegration,
+        ] {
+            assert_eq!(s.as_str(), &s.to_string());
+        }
+    }
+
+    #[test]
+    fn enrichment_default_thresholds_have_sane_values() {
+        let t = BenchmarkSplitThresholds::default();
+        assert!(
+            t.max_cx_throughput_regression_millionths > 0,
+            "cx throughput regression threshold must be positive"
+        );
+        assert!(
+            t.min_baseline_runs > 0,
+            "min baseline runs must be positive"
+        );
+    }
+
+    #[test]
+    fn latency_stats_canonical_value_deterministic() {
+        let stats = LatencyStatsNs {
+            p50_ns: 500,
+            p95_ns: 1000,
+            p99_ns: 1500,
+        };
+        let v1 = stats.canonical_value();
+        let v2 = stats.canonical_value();
+        assert_eq!(v1, v2, "canonical_value must be deterministic");
+    }
 }

@@ -2376,4 +2376,369 @@ mod tests {
         assert!(diagnostic.normalized_ast.is_none());
         assert!(diagnostic.normalized_diagnostic.is_some());
     }
+
+    // -- Enrichment: DriftCategory coverage --
+
+    #[test]
+    fn drift_category_serde_roundtrip() {
+        for cat in [
+            DriftCategory::Semantic,
+            DriftCategory::Diagnostics,
+            DriftCategory::Harness,
+            DriftCategory::Artifact,
+        ] {
+            let json = serde_json::to_string(&cat).unwrap();
+            let back: DriftCategory = serde_json::from_str(&json).unwrap();
+            assert_eq!(cat, back);
+        }
+    }
+
+    #[test]
+    fn drift_category_owner_hint_non_empty() {
+        for cat in [
+            DriftCategory::Semantic,
+            DriftCategory::Diagnostics,
+            DriftCategory::Harness,
+            DriftCategory::Artifact,
+        ] {
+            assert!(!cat.owner_hint().is_empty());
+        }
+    }
+
+    #[test]
+    fn drift_category_remediation_hint_non_empty() {
+        for cat in [
+            DriftCategory::Semantic,
+            DriftCategory::Diagnostics,
+            DriftCategory::Harness,
+            DriftCategory::Artifact,
+        ] {
+            assert!(!cat.remediation_hint().is_empty());
+        }
+    }
+
+    #[test]
+    fn drift_category_owner_hints_all_distinct() {
+        let hints: BTreeSet<&str> = [
+            DriftCategory::Semantic,
+            DriftCategory::Diagnostics,
+            DriftCategory::Harness,
+            DriftCategory::Artifact,
+        ]
+        .iter()
+        .map(|c| c.owner_hint())
+        .collect();
+        assert_eq!(
+            hints.len(),
+            4,
+            "all drift categories must have distinct owner hints"
+        );
+    }
+
+    // -- Enrichment: DriftSeverity coverage --
+
+    #[test]
+    fn drift_severity_serde_roundtrip() {
+        for sev in [DriftSeverity::Minor, DriftSeverity::Critical] {
+            let json = serde_json::to_string(&sev).unwrap();
+            let back: DriftSeverity = serde_json::from_str(&json).unwrap();
+            assert_eq!(sev, back);
+        }
+    }
+
+    #[test]
+    fn drift_severity_comparator_decision_distinct() {
+        assert_ne!(
+            DriftSeverity::Minor.comparator_decision(),
+            DriftSeverity::Critical.comparator_decision()
+        );
+    }
+
+    // -- Enrichment: DriftClassification serde --
+
+    #[test]
+    fn drift_classification_serde_roundtrip() {
+        let dc = DriftClassification {
+            taxonomy_version: DRIFT_CLASSIFICATION_TAXONOMY_VERSION.to_string(),
+            category: DriftCategory::Semantic,
+            severity: DriftSeverity::Critical,
+            comparator_decision: "drift_critical".to_string(),
+            owner_hint: "parser-core".to_string(),
+            remediation_hint: "replay".to_string(),
+        };
+        let json = serde_json::to_string(&dc).unwrap();
+        let back: DriftClassification = serde_json::from_str(&json).unwrap();
+        assert_eq!(dc, back);
+    }
+
+    // -- Enrichment: DriftMinimizationStats serde --
+
+    #[test]
+    fn drift_minimization_stats_serde_roundtrip() {
+        let stats = DriftMinimizationStats {
+            attempted: true,
+            rounds: 5,
+            candidates_evaluated: 100,
+            bytes_removed: 500,
+            original_bytes: 1000,
+            minimized_bytes: 500,
+            fixed_point: true,
+        };
+        let json = serde_json::to_string(&stats).unwrap();
+        let back: DriftMinimizationStats = serde_json::from_str(&json).unwrap();
+        assert_eq!(stats, back);
+    }
+
+    // -- Enrichment: AstNormalizationAdapter / DiagnosticNormalizationAdapter --
+
+    #[test]
+    fn ast_normalization_adapter_serde_roundtrip() {
+        let adapter = AstNormalizationAdapter::CanonicalHashPassthroughV1;
+        let json = serde_json::to_string(&adapter).unwrap();
+        let back: AstNormalizationAdapter = serde_json::from_str(&json).unwrap();
+        assert_eq!(adapter, back);
+    }
+
+    #[test]
+    fn diagnostic_normalization_adapter_serde_roundtrip() {
+        let adapter = DiagnosticNormalizationAdapter::ParserDiagnosticsTaxonomyV1;
+        let json = serde_json::to_string(&adapter).unwrap();
+        let back: DiagnosticNormalizationAdapter = serde_json::from_str(&json).unwrap();
+        assert_eq!(adapter, back);
+    }
+
+    // -- Enrichment: NormalizedAstArtifact / NormalizedDiagnosticArtifact --
+
+    #[test]
+    fn normalized_ast_artifact_serde_roundtrip() {
+        let artifact = NormalizedAstArtifact {
+            schema_version: AST_NORMALIZATION_SCHEMA_VERSION.to_string(),
+            adapter: AstNormalizationAdapter::CanonicalHashPassthroughV1,
+            canonical_hash: "sha256:abc123".to_string(),
+        };
+        let json = serde_json::to_string(&artifact).unwrap();
+        let back: NormalizedAstArtifact = serde_json::from_str(&json).unwrap();
+        assert_eq!(artifact, back);
+    }
+
+    #[test]
+    fn normalized_diagnostic_artifact_serde_roundtrip() {
+        let artifact = NormalizedDiagnosticArtifact {
+            schema_version: DIAGNOSTIC_NORMALIZATION_SCHEMA_VERSION.to_string(),
+            taxonomy_version: EXTERNAL_DIAGNOSTIC_TAXONOMY_VERSION.to_string(),
+            adapter: DiagnosticNormalizationAdapter::ParserDiagnosticsTaxonomyV1,
+            diagnostic_code: "E001".to_string(),
+            category: "syntax".to_string(),
+            severity: "error".to_string(),
+            parse_error_code: Some("unexpected_token".to_string()),
+            canonical_hash: "sha256:def456".to_string(),
+        };
+        let json = serde_json::to_string(&artifact).unwrap();
+        let back: NormalizedDiagnosticArtifact = serde_json::from_str(&json).unwrap();
+        assert_eq!(artifact, back);
+    }
+
+    // -- Enrichment: EngineNormalizedArtifacts::signature --
+
+    #[test]
+    fn engine_normalized_artifacts_signature_both_none() {
+        let artifacts = EngineNormalizedArtifacts {
+            normalized_ast: None,
+            normalized_diagnostic: None,
+        };
+        assert_eq!(artifacts.signature(), "ast:none;diag:none");
+    }
+
+    #[test]
+    fn engine_normalized_artifacts_signature_with_ast() {
+        let artifacts = EngineNormalizedArtifacts {
+            normalized_ast: Some(NormalizedAstArtifact {
+                schema_version: "v1".to_string(),
+                adapter: AstNormalizationAdapter::CanonicalHashPassthroughV1,
+                canonical_hash: "sha256:abc".to_string(),
+            }),
+            normalized_diagnostic: None,
+        };
+        assert_eq!(artifacts.signature(), "ast:sha256:abc;diag:none");
+    }
+
+    // -- Enrichment: EngineObservation --
+
+    #[test]
+    fn engine_observation_hash_kind_and_value() {
+        let obs = EngineObservation::Hash("sha256:xyz".to_string());
+        assert_eq!(obs.kind(), EngineOutcomeKind::Hash);
+        assert_eq!(obs.value(), "sha256:xyz");
+    }
+
+    #[test]
+    fn engine_observation_error_kind_and_value() {
+        let obs = EngineObservation::Error("UnexpectedToken".to_string());
+        assert_eq!(obs.kind(), EngineOutcomeKind::Error);
+        assert_eq!(obs.value(), "UnexpectedToken");
+    }
+
+    // -- Enrichment: DriftReproPack serde --
+
+    #[test]
+    fn drift_repro_pack_serde_roundtrip() {
+        let pack = DriftReproPack {
+            schema_version: DRIFT_REPRO_PACK_SCHEMA_VERSION.to_string(),
+            fixture_id: "fix-1".to_string(),
+            family_id: "fam-1".to_string(),
+            source_hash: "sha256:aaa".to_string(),
+            minimized_source: "x".to_string(),
+            minimized_source_hash: "sha256:bbb".to_string(),
+            replay_command: "cargo test".to_string(),
+            drift_classification: DriftClassification {
+                taxonomy_version: DRIFT_CLASSIFICATION_TAXONOMY_VERSION.to_string(),
+                category: DriftCategory::Semantic,
+                severity: DriftSeverity::Critical,
+                comparator_decision: "drift_critical".to_string(),
+                owner_hint: "parser-core".to_string(),
+                remediation_hint: "replay".to_string(),
+            },
+            minimization: DriftMinimizationStats {
+                attempted: false,
+                rounds: 0,
+                candidates_evaluated: 0,
+                bytes_removed: 0,
+                original_bytes: 1,
+                minimized_bytes: 1,
+                fixed_point: false,
+            },
+            promotion_hooks: vec!["hook-1".to_string()],
+            provenance_hash: "sha256:ccc".to_string(),
+        };
+        let json = serde_json::to_string(&pack).unwrap();
+        let back: DriftReproPack = serde_json::from_str(&json).unwrap();
+        assert_eq!(pack, back);
+    }
+
+    // -- Enrichment: derive_engine_seed determinism --
+
+    #[test]
+    fn derive_engine_seed_same_inputs_deterministic() {
+        let a = derive_engine_seed(42, "fix-1", "engine-a");
+        let b = derive_engine_seed(42, "fix-1", "engine-a");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn derive_engine_seed_different_master_seed() {
+        let a = derive_engine_seed(42, "fix-1", "engine-a");
+        let b = derive_engine_seed(99, "fix-1", "engine-a");
+        assert_ne!(a, b);
+    }
+
+    // -- Enrichment: Display uniqueness, defaults, edge cases --
+
+    #[test]
+    fn harness_engine_kind_display_all_unique() {
+        let kinds = [
+            HarnessEngineKind::FrankenCanonical,
+            HarnessEngineKind::FixtureExpectedHash,
+            HarnessEngineKind::ExternalCommand,
+        ];
+        let jsons: BTreeSet<String> = kinds
+            .iter()
+            .map(|k| serde_json::to_string(k).unwrap())
+            .collect();
+        assert_eq!(jsons.len(), kinds.len());
+    }
+
+    #[test]
+    fn drift_severity_display_all_unique() {
+        let sevs = [DriftSeverity::Minor, DriftSeverity::Critical];
+        let displays: BTreeSet<String> = sevs
+            .iter()
+            .map(|s| s.comparator_decision().to_string())
+            .collect();
+        assert_eq!(displays.len(), sevs.len());
+    }
+
+    #[test]
+    fn validate_config_rejects_empty_trace_id() {
+        let mut config = MultiEngineHarnessConfig::with_defaults(42);
+        config.trace_id = String::new();
+        let err = validate_config(&config).expect_err("empty trace_id should fail");
+        assert!(
+            err.to_string().contains("trace_id"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn canonicalize_sha256_hash_rejects_wrong_prefix() {
+        let result = canonicalize_sha256_hash("md5:abc123");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn canonicalize_sha256_hash_rejects_wrong_length() {
+        let result = canonicalize_sha256_hash("sha256:abc");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn multi_engine_harness_summary_serializes_to_json() {
+        let summary = MultiEngineHarnessSummary {
+            total_fixtures: 50,
+            equivalent_fixtures: 48,
+            divergent_fixtures: 1,
+            fixtures_with_nondeterminism: 1,
+            drift_minor_fixtures: 0,
+            drift_critical_fixtures: 1,
+            drift_counts_by_category: BTreeMap::from([("semantic".to_string(), 1)]),
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        assert!(json.contains("\"total_fixtures\":50"));
+        assert!(json.contains("\"divergent_fixtures\":1"));
+    }
+
+    #[test]
+    fn multi_engine_harness_error_display_all_unique() {
+        let errors: Vec<MultiEngineHarnessError> = vec![
+            MultiEngineHarnessError::DecodeCatalog("a".to_string()),
+            MultiEngineHarnessError::InvalidCatalogSchema {
+                expected: "a".to_string(),
+                actual: "b".to_string(),
+            },
+            MultiEngineHarnessError::InvalidCatalogParserMode {
+                expected: "a".to_string(),
+                actual: "b".to_string(),
+            },
+            MultiEngineHarnessError::EmptyFixtureCatalog,
+            MultiEngineHarnessError::DuplicateFixtureId {
+                fixture_id: "x".to_string(),
+            },
+            MultiEngineHarnessError::UnknownGoal {
+                fixture_id: "x".to_string(),
+                goal: "y".to_string(),
+            },
+            MultiEngineHarnessError::FixtureFilterNotFound {
+                fixture_id: "x".to_string(),
+            },
+            MultiEngineHarnessError::InvalidConfig("z".to_string()),
+            MultiEngineHarnessError::ExternalEngine {
+                engine_id: "e".to_string(),
+                detail: "d".to_string(),
+            },
+            MultiEngineHarnessError::Normalization {
+                engine_id: "e".to_string(),
+                detail: "d".to_string(),
+            },
+        ];
+        let displays: BTreeSet<String> = errors.iter().map(|e| e.to_string()).collect();
+        assert_eq!(displays.len(), errors.len());
+    }
+
+    #[test]
+    fn parser_telemetry_accumulator_empty_finalize_zero_counts() {
+        let acc = ParserTelemetryAccumulator::default();
+        let telemetry = acc.finalize();
+        assert_eq!(telemetry.sample_count, 0);
+        assert_eq!(telemetry.latency_ns_p50, 0);
+        assert_eq!(telemetry.peak_rss_bytes, 0);
+    }
 }

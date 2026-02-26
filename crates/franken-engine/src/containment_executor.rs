@@ -1121,4 +1121,162 @@ mod tests {
             .unwrap();
         assert_eq!(receipt.evidence_refs, vec!["ev-001".to_string()]);
     }
+
+    // -- Enrichment batch 2: Display uniqueness, boundary conditions, error paths --
+
+    #[test]
+    fn containment_state_display_uniqueness_btreeset() {
+        use std::collections::BTreeSet;
+        let all = [
+            ContainmentState::Running,
+            ContainmentState::Challenged,
+            ContainmentState::Sandboxed,
+            ContainmentState::Suspended,
+            ContainmentState::Terminated,
+            ContainmentState::Quarantined,
+        ];
+        let set: BTreeSet<String> = all.iter().map(|s| s.to_string()).collect();
+        assert_eq!(
+            set.len(),
+            all.len(),
+            "all ContainmentState Display strings must be unique"
+        );
+    }
+
+    #[test]
+    fn containment_error_display_uniqueness() {
+        use std::collections::BTreeSet;
+        let errors = vec![
+            ContainmentError::ExtensionNotFound {
+                extension_id: "e".to_string(),
+            },
+            ContainmentError::AlreadyContained {
+                extension_id: "e".to_string(),
+                current_state: ContainmentState::Sandboxed,
+            },
+            ContainmentError::InvalidTransition {
+                from: ContainmentState::Running,
+                action: ContainmentAction::Allow,
+            },
+            ContainmentError::GracePeriodExpired {
+                extension_id: "e".to_string(),
+                elapsed_ns: 1000,
+            },
+            ContainmentError::ChallengeTimeout {
+                extension_id: "e".to_string(),
+            },
+            ContainmentError::Internal {
+                detail: "x".to_string(),
+            },
+        ];
+        let set: BTreeSet<String> = errors.iter().map(|e| e.to_string()).collect();
+        assert_eq!(
+            set.len(),
+            errors.len(),
+            "all ContainmentError Display strings must be unique"
+        );
+    }
+
+    #[test]
+    fn containment_error_serde_all_variants() {
+        let variants = vec![
+            ContainmentError::ExtensionNotFound {
+                extension_id: "ext-1".to_string(),
+            },
+            ContainmentError::AlreadyContained {
+                extension_id: "ext-1".to_string(),
+                current_state: ContainmentState::Sandboxed,
+            },
+            ContainmentError::InvalidTransition {
+                from: ContainmentState::Running,
+                action: ContainmentAction::Challenge,
+            },
+            ContainmentError::GracePeriodExpired {
+                extension_id: "ext-1".to_string(),
+                elapsed_ns: 5_000_000_000,
+            },
+            ContainmentError::ChallengeTimeout {
+                extension_id: "ext-1".to_string(),
+            },
+            ContainmentError::Internal {
+                detail: "oops".to_string(),
+            },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: ContainmentError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn containment_context_default_values() {
+        let ctx = ContainmentContext::default();
+        assert!(ctx.decision_id.is_empty());
+        assert_eq!(ctx.timestamp_ns, 0);
+        assert_eq!(ctx.epoch, SecurityEpoch::GENESIS);
+        assert!(ctx.evidence_refs.is_empty());
+        assert_eq!(ctx.grace_period_ns, DEFAULT_GRACE_PERIOD_NS);
+        assert_eq!(ctx.challenge_timeout_ns, DEFAULT_CHALLENGE_TIMEOUT_NS);
+    }
+
+    #[test]
+    fn sandbox_policy_custom_capabilities() {
+        let policy = SandboxPolicy {
+            allowed_capabilities: vec!["fs-read".to_string(), "net-local".to_string()],
+            allow_network: true,
+            allow_fs_write: false,
+            allow_process_spawn: false,
+            max_memory_bytes: 1024,
+        };
+        assert!(policy.is_allowed("fs-read"));
+        assert!(policy.is_allowed("net-local"));
+        assert!(!policy.is_allowed("fs-write"));
+    }
+
+    #[test]
+    fn resume_from_nonexistent_extension_fails() {
+        let mut executor = ContainmentExecutor::new();
+        let ctx = test_context();
+        let err = executor.resume("nonexistent", &ctx).unwrap_err();
+        assert!(matches!(err, ContainmentError::ExtensionNotFound { .. }));
+    }
+
+    #[test]
+    fn receipt_ids_are_unique_across_actions() {
+        use std::collections::BTreeSet;
+        let mut executor = setup_executor();
+        let ctx = test_context();
+
+        let r1 = executor
+            .execute(ContainmentAction::Challenge, "ext-001", &ctx)
+            .unwrap();
+        let r2 = executor
+            .execute(ContainmentAction::Sandbox, "ext-001", &ctx)
+            .unwrap();
+        let r3 = executor
+            .execute(ContainmentAction::Terminate, "ext-001", &ctx)
+            .unwrap();
+
+        let ids: BTreeSet<&str> = [
+            r1.receipt_id.as_str(),
+            r2.receipt_id.as_str(),
+            r3.receipt_id.as_str(),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(ids.len(), 3, "receipt IDs must be unique");
+    }
+
+    #[test]
+    fn resume_receipt_has_resume_metadata() {
+        let mut executor = setup_executor();
+        let ctx = test_context();
+        executor
+            .execute(ContainmentAction::Suspend, "ext-001", &ctx)
+            .unwrap();
+        let receipt = executor.resume("ext-001", &ctx).unwrap();
+        assert_eq!(receipt.metadata.get("resume"), Some(&"true".to_string()));
+        assert!(receipt.verify_integrity());
+    }
 }

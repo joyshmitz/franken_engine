@@ -1271,4 +1271,86 @@ mod tests {
             "all 5 tested variants produce distinct messages"
         );
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch — PearlTower 2026-02-25
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn trust_zone_class_display_uniqueness_btreeset() {
+        let mut displays = BTreeSet::new();
+        for class in TrustZoneClass::ORDERED {
+            displays.insert(class.to_string());
+        }
+        assert_eq!(
+            displays.len(),
+            4,
+            "all 4 TrustZoneClass variants produce distinct Display strings"
+        );
+    }
+
+    #[test]
+    fn trust_zone_class_as_str_matches_display() {
+        for class in TrustZoneClass::ORDERED {
+            assert_eq!(class.as_str(), &class.to_string());
+        }
+    }
+
+    #[test]
+    fn zone_hierarchy_serde_roundtrip() {
+        let hierarchy = ZoneHierarchy::standard("admin", 1).expect("build hierarchy");
+        let json = serde_json::to_string(&hierarchy).unwrap();
+        let back: ZoneHierarchy = serde_json::from_str(&json).unwrap();
+        assert_eq!(hierarchy, back);
+    }
+
+    #[test]
+    fn owner_zone_has_full_capabilities() {
+        let full_caps = TrustZoneClass::Owner.default_ceiling();
+        let profile_caps = crate::capability::CapabilityProfile::full().capabilities;
+        assert_eq!(
+            full_caps, profile_caps,
+            "Owner zone ceiling must equal full capability profile"
+        );
+    }
+
+    #[test]
+    fn ceiling_monotonicity_across_zone_classes() {
+        // Each zone class from Owner down to Community should have a ceiling
+        // that is a superset of (or equal to) the next.
+        let owner_caps = TrustZoneClass::Owner.default_ceiling();
+        let private_caps = TrustZoneClass::Private.default_ceiling();
+        let team_caps = TrustZoneClass::Team.default_ceiling();
+        let community_caps = TrustZoneClass::Community.default_ceiling();
+
+        assert!(
+            private_caps.is_subset(&owner_caps),
+            "private must be subset of owner"
+        );
+        assert!(
+            team_caps.is_subset(&private_caps),
+            "team must be subset of private"
+        );
+        assert!(
+            community_caps.is_subset(&team_caps),
+            "community must be subset of team"
+        );
+    }
+
+    #[test]
+    fn enrichment_trust_zone_owner_serde() {
+        let hierarchy = ZoneHierarchy::standard("admin", 1).expect("build hierarchy");
+        let zone = hierarchy.zone("owner").unwrap();
+        let json = serde_json::to_string(zone).unwrap();
+        let back: TrustZone = serde_json::from_str(&json).unwrap();
+        assert_eq!(*zone, back);
+    }
+
+    #[test]
+    fn zone_create_request_with_custom_ceiling() {
+        let custom = capset(&[RuntimeCapability::VmDispatch, RuntimeCapability::GcInvoke]);
+        let req = ZoneCreateRequest::new("custom-zone", TrustZoneClass::Team, 1, "tester")
+            .with_declared_ceiling(custom.clone());
+        assert_eq!(req.declared_ceiling, Some(custom));
+    }
 }

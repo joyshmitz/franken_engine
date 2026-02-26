@@ -1434,4 +1434,145 @@ mod tests {
 
         let _ = fs::remove_dir_all(&dir);
     }
+
+    // -- Enrichment: additional coverage --
+
+    #[test]
+    fn attack_category_as_str_uniqueness_via_btreeset() {
+        let strs: std::collections::BTreeSet<&str> =
+            AttackCategory::all().iter().map(|c| c.as_str()).collect();
+        assert_eq!(strs.len(), AttackCategory::all().len());
+    }
+
+    #[test]
+    fn xorshift64_different_seeds_differ() {
+        let mut a = Xorshift64::new(42);
+        let mut b = Xorshift64::new(99);
+        let mut same = true;
+        for _ in 0..10 {
+            if a.next_u64() != b.next_u64() {
+                same = false;
+                break;
+            }
+        }
+        assert!(!same, "different seeds should produce different sequences");
+    }
+
+    #[test]
+    fn capability_escalation_single_extension() {
+        let results = run_capability_escalation(1, 42);
+        assert_eq!(results.len(), 2);
+        assert!(results[0].attack_blocked);
+        assert!(results[1].attack_blocked);
+    }
+
+    #[test]
+    fn resource_exhaustion_single_extension() {
+        let results = run_resource_exhaustion(1, 42);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].attack_blocked);
+        assert!(results[0].evidence_produced);
+    }
+
+    #[test]
+    fn quarantine_cascade_n_quarantine_exceeds_total() {
+        // n_quarantine > n_total should clamp to n_total
+        let results = run_quarantine_cascade(3, 10, 42);
+        let r = &results[0];
+        assert_eq!(r.details["quarantined"], "3");
+        assert_eq!(r.details["running"], "0");
+    }
+
+    #[test]
+    fn suite_blocked_flag_semantics() {
+        let config = SecuritySuiteConfig {
+            seed: 42,
+            n_extensions: 2,
+            n_evidence_updates: 5,
+            run_id: "test-blocked".to_string(),
+        };
+        let result = run_security_suite(&config);
+        // blocked = total_invariant_violations > 0
+        assert_eq!(result.blocked, result.total_invariant_violations > 0);
+    }
+
+    #[test]
+    fn suite_deterministic_with_same_seed() {
+        let config1 = SecuritySuiteConfig {
+            seed: 42,
+            n_extensions: 2,
+            n_evidence_updates: 5,
+            run_id: "det-1".to_string(),
+        };
+        let config2 = SecuritySuiteConfig {
+            seed: 42,
+            n_extensions: 2,
+            n_evidence_updates: 5,
+            run_id: "det-2".to_string(),
+        };
+        let r1 = run_security_suite(&config1);
+        let r2 = run_security_suite(&config2);
+        assert_eq!(r1.scenarios.len(), r2.scenarios.len());
+        assert_eq!(r1.total_security_events, r2.total_security_events);
+        assert_eq!(r1.total_invariant_violations, r2.total_invariant_violations);
+        for (a, b) in r1.scenarios.iter().zip(r2.scenarios.iter()) {
+            assert_eq!(a.scenario_name, b.scenario_name);
+            assert_eq!(a.attack_blocked, b.attack_blocked);
+            assert_eq!(a.security_events, b.security_events);
+        }
+    }
+
+    #[test]
+    fn safe_mode_fallback_activation_and_recovery_counts() {
+        let results = run_safe_mode_fallback(42);
+        for r in &results {
+            let act: u64 = r.details["activation_count"].parse().unwrap();
+            let rec: u64 = r.details["recovery_count"].parse().unwrap();
+            assert!(
+                act >= 1,
+                "activation_count should be >= 1 for {}",
+                r.scenario_name
+            );
+            assert!(
+                rec >= 1,
+                "recovery_count should be >= 1 for {}",
+                r.scenario_name
+            );
+        }
+    }
+
+    #[test]
+    fn epoch_regression_all_zero_invariant_violations() {
+        let results = run_epoch_regression(42);
+        for r in &results {
+            assert_eq!(
+                r.invariant_violations, 0,
+                "scenario {} has invariant violations",
+                r.scenario_name
+            );
+        }
+    }
+
+    #[test]
+    fn containment_verification_zero_invariant_violations() {
+        let results = run_containment_verification(3, 42);
+        for r in &results {
+            assert_eq!(
+                r.invariant_violations, 0,
+                "scenario {} has invariant violations",
+                r.scenario_name
+            );
+        }
+    }
+
+    #[test]
+    fn xorshift64_period_not_trivially_short() {
+        // Verify xorshift64 does not cycle within first 1000 values
+        let mut rng = Xorshift64::new(42);
+        let first = rng.next_u64();
+        for i in 1..1000 {
+            let val = rng.next_u64();
+            assert_ne!(val, first, "xorshift64 repeated initial value at step {i}");
+        }
+    }
 }

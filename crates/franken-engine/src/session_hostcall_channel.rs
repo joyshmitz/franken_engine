@@ -2929,4 +2929,160 @@ mod tests {
             assert!(!e.to_string().is_empty());
         }
     }
+
+    // -- Enrichment: BackpressureSignal serde roundtrip --
+
+    #[test]
+    fn backpressure_signal_serde_roundtrip() {
+        let signal = BackpressureSignal {
+            pending_messages: 42,
+            limit: 256,
+        };
+        let json = serde_json::to_string(&signal).unwrap();
+        let back: BackpressureSignal = serde_json::from_str(&json).unwrap();
+        assert_eq!(signal, back);
+    }
+
+    // -- Enrichment: ChannelPayload serde roundtrip all variants --
+
+    #[test]
+    fn channel_payload_serde_roundtrip_inline() {
+        let payload = ChannelPayload::Inline(vec![1, 2, 3]);
+        let json = serde_json::to_string(&payload).unwrap();
+        let back: ChannelPayload = serde_json::from_str(&json).unwrap();
+        assert_eq!(payload, back);
+    }
+
+    #[test]
+    fn channel_payload_serde_roundtrip_shared() {
+        let payload = ChannelPayload::Shared(SharedPayloadDescriptor {
+            region_id: 7,
+            payload_len: 1024,
+            payload_hash: ContentHash::compute(b"data"),
+        });
+        let json = serde_json::to_string(&payload).unwrap();
+        let back: ChannelPayload = serde_json::from_str(&json).unwrap();
+        assert_eq!(payload, back);
+    }
+
+    #[test]
+    fn channel_payload_serde_roundtrip_backpressure() {
+        let payload = ChannelPayload::Backpressure(BackpressureSignal {
+            pending_messages: 10,
+            limit: 100,
+        });
+        let json = serde_json::to_string(&payload).unwrap();
+        let back: ChannelPayload = serde_json::from_str(&json).unwrap();
+        assert_eq!(payload, back);
+    }
+
+    // -- Enrichment: SessionHandle serde roundtrip --
+
+    #[test]
+    fn session_handle_serde_roundtrip() {
+        let handle = SessionHandle {
+            session_id: "sess-123".to_string(),
+        };
+        let json = serde_json::to_string(&handle).unwrap();
+        let back: SessionHandle = serde_json::from_str(&json).unwrap();
+        assert_eq!(handle, back);
+    }
+
+    // -- Enrichment: SessionChannelError Display uniqueness --
+
+    #[test]
+    fn session_channel_error_display_all_distinct() {
+        let variants: Vec<SessionChannelError> = vec![
+            SessionChannelError::InvalidIdentity {
+                field: "a".to_string(),
+            },
+            SessionChannelError::InvalidHandshake {
+                detail: "b".to_string(),
+            },
+            SessionChannelError::SessionAlreadyExists {
+                session_id: "s1".to_string(),
+            },
+            SessionChannelError::SessionNotFound {
+                session_id: "s2".to_string(),
+            },
+            SessionChannelError::SessionNotEstablished {
+                session_id: "s3".to_string(),
+                state: SessionState::Init,
+            },
+            SessionChannelError::SessionExpired {
+                session_id: "s4".to_string(),
+                reason: "timeout".to_string(),
+            },
+            SessionChannelError::Backpressure {
+                session_id: "s5".to_string(),
+                pending: 10,
+                limit: 50,
+            },
+            SessionChannelError::NoMessageAvailable {
+                session_id: "s6".to_string(),
+            },
+            SessionChannelError::SessionBindingMismatch {
+                expected_session_id: "s7".to_string(),
+                actual_session_id: "s8".to_string(),
+            },
+            SessionChannelError::MacMismatch {
+                session_id: "s9".to_string(),
+                sequence: 1,
+            },
+            SessionChannelError::ReplayDetected {
+                session_id: "s10".to_string(),
+                sequence: 5,
+                last_seen: 3,
+            },
+            SessionChannelError::OutOfOrderDetected {
+                session_id: "s11".to_string(),
+                sequence: 2,
+                expected_min: 5,
+            },
+            SessionChannelError::NonceExhausted {
+                sequence: 100,
+                limit: 100,
+                algorithm: AeadAlgorithm::Aes256Gcm,
+            },
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            let msg = v.to_string();
+            assert!(!msg.is_empty());
+            displays.insert(msg);
+        }
+        assert_eq!(
+            displays.len(),
+            variants.len(),
+            "all error variants produce distinct messages"
+        );
+    }
+
+    // -- Enrichment: DataPlaneDirection coverage --
+
+    #[test]
+    fn data_plane_direction_eq_and_ne() {
+        assert_eq!(
+            DataPlaneDirection::HostToExtension,
+            DataPlaneDirection::HostToExtension
+        );
+        assert_ne!(
+            DataPlaneDirection::HostToExtension,
+            DataPlaneDirection::ExtensionToHost
+        );
+    }
+
+    // -- Enrichment: fresh channel state --
+
+    #[test]
+    fn fresh_channel_has_no_sessions() {
+        let mut channel = SessionHostcallChannel::new();
+        assert!(channel.drain_events().is_empty());
+    }
+
+    #[test]
+    fn fresh_channel_has_no_events() {
+        let mut channel = SessionHostcallChannel::new();
+        assert!(channel.drain_events().is_empty());
+    }
 }

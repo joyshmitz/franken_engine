@@ -964,4 +964,122 @@ mod tests {
         assert_eq!(tree1.canonical_bytes(), tree2.canonical_bytes());
         assert_eq!(tree1.canonical_hash(), tree2.canonical_hash());
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 2: Display, edge cases, hash uniqueness
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_goal_clone_eq() {
+        let a = ParseGoal::Script;
+        let b = a;
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn expression_boolean_false_canonical_value() {
+        let expr = Expression::BooleanLiteral(false);
+        match expr.canonical_value() {
+            CanonicalValue::Map(map) => {
+                assert_eq!(map.get("value"), Some(&CanonicalValue::Bool(false)));
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn syntax_tree_different_bodies_produce_different_hashes() {
+        let span = make_span();
+        let t1 = SyntaxTree {
+            goal: ParseGoal::Script,
+            body: vec![make_expr_stmt(Expression::NumericLiteral(1))],
+            span: span.clone(),
+        };
+        let t2 = SyntaxTree {
+            goal: ParseGoal::Script,
+            body: vec![make_expr_stmt(Expression::NumericLiteral(2))],
+            span,
+        };
+        assert_ne!(t1.canonical_hash(), t2.canonical_hash());
+    }
+
+    #[test]
+    fn syntax_tree_empty_vs_nonempty_body_different_hashes() {
+        let span = make_span();
+        let empty = SyntaxTree {
+            goal: ParseGoal::Script,
+            body: vec![],
+            span: span.clone(),
+        };
+        let nonempty = SyntaxTree {
+            goal: ParseGoal::Script,
+            body: vec![make_expr_stmt(Expression::NullLiteral)],
+            span,
+        };
+        assert_ne!(empty.canonical_hash(), nonempty.canonical_hash());
+    }
+
+    #[test]
+    fn import_without_binding_serde_roundtrip() {
+        let stmt = Statement::Import(ImportDeclaration {
+            binding: None,
+            source: "side-effect-module".to_string(),
+            span: make_span(),
+        });
+        let json = serde_json::to_string(&stmt).expect("serialize");
+        let restored: Statement = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(stmt, restored);
+    }
+
+    #[test]
+    fn export_kind_named_vs_default_different_canonical_value() {
+        let default = ExportKind::Default(Expression::Identifier("x".to_string()));
+        let named = ExportKind::NamedClause("x".to_string());
+        assert_ne!(default.canonical_value(), named.canonical_value());
+    }
+
+    #[test]
+    fn expression_numeric_i64_max() {
+        let expr = Expression::NumericLiteral(i64::MAX);
+        match expr.canonical_value() {
+            CanonicalValue::Map(map) => {
+                assert_eq!(map.get("value"), Some(&CanonicalValue::I64(i64::MAX)));
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn expression_numeric_i64_min() {
+        let expr = Expression::NumericLiteral(i64::MIN);
+        match expr.canonical_value() {
+            CanonicalValue::Map(map) => {
+                assert_eq!(map.get("value"), Some(&CanonicalValue::I64(i64::MIN)));
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn source_span_zero_length_is_valid() {
+        let span = SourceSpan::new(5, 5, 1, 6, 1, 6);
+        assert_eq!(span.start_offset, span.end_offset);
+        let cv = span.canonical_value();
+        match &cv {
+            CanonicalValue::Map(map) => {
+                assert_eq!(map.get("start_offset"), map.get("end_offset"),);
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn expression_await_serde_roundtrip_deep() {
+        let expr = Expression::Await(Box::new(Expression::Await(Box::new(
+            Expression::StringLiteral("deep".to_string()),
+        ))));
+        let json = serde_json::to_string(&expr).expect("serialize");
+        let restored: Expression = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(expr, restored);
+    }
 }

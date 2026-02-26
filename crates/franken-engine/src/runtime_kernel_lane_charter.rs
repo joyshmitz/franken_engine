@@ -1593,4 +1593,104 @@ mod tests {
         assert_eq!(registry.pass_rate_millionths(&RuntimeLane::Js), MILLION);
         assert_eq!(registry.pass_rate_millionths(&RuntimeLane::Wasm), 0);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch — PearlTower 2026-02-25
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn ownership_domain_display_uniqueness_btreeset() {
+        let domains = [
+            OwnershipDomain::ExecutionCorrectness,
+            OwnershipDomain::FootprintBudget,
+            OwnershipDomain::SchedulerDeterminism,
+            OwnershipDomain::AbiStability,
+            OwnershipDomain::FailoverBehavior,
+            OwnershipDomain::RoutingPolicy,
+            OwnershipDomain::TraceEmission,
+            OwnershipDomain::IncidentResponse,
+        ];
+        let mut displays = BTreeSet::new();
+        for d in &domains {
+            displays.insert(d.to_string());
+        }
+        assert_eq!(
+            displays.len(),
+            8,
+            "all 8 OwnershipDomain variants produce distinct Display strings"
+        );
+    }
+
+    #[test]
+    fn runtime_lane_serde_roundtrip() {
+        for lane in [
+            RuntimeLane::Js,
+            RuntimeLane::Wasm,
+            RuntimeLane::HybridRouter,
+        ] {
+            let json = serde_json::to_string(&lane).unwrap();
+            let back: RuntimeLane = serde_json::from_str(&json).unwrap();
+            assert_eq!(lane, back);
+        }
+    }
+
+    #[test]
+    fn footprint_budget_serde_roundtrip() {
+        let budget = FootprintBudget::js_default();
+        let json = serde_json::to_string(&budget).unwrap();
+        let back: FootprintBudget = serde_json::from_str(&json).unwrap();
+        assert_eq!(budget, back);
+    }
+
+    #[test]
+    fn wasm_budget_defaults_differ_from_js() {
+        let js = FootprintBudget::js_default();
+        let wasm = FootprintBudget::wasm_default();
+        assert_ne!(js.lane, wasm.lane);
+        assert_ne!(js.max_heap_bytes, wasm.max_heap_bytes);
+    }
+
+    #[test]
+    fn ownership_domain_serde_roundtrip() {
+        for d in [
+            OwnershipDomain::ExecutionCorrectness,
+            OwnershipDomain::FootprintBudget,
+            OwnershipDomain::SchedulerDeterminism,
+            OwnershipDomain::AbiStability,
+            OwnershipDomain::FailoverBehavior,
+            OwnershipDomain::RoutingPolicy,
+            OwnershipDomain::TraceEmission,
+            OwnershipDomain::IncidentResponse,
+        ] {
+            let json = serde_json::to_string(&d).unwrap();
+            let back: OwnershipDomain = serde_json::from_str(&json).unwrap();
+            assert_eq!(d, back);
+        }
+    }
+
+    #[test]
+    fn lane_display_uniqueness_btreeset() {
+        let lanes = [
+            RuntimeLane::Js,
+            RuntimeLane::Wasm,
+            RuntimeLane::HybridRouter,
+        ];
+        let mut displays = BTreeSet::new();
+        for l in &lanes {
+            displays.insert(l.to_string());
+        }
+        assert_eq!(
+            displays.len(),
+            3,
+            "all RuntimeLane variants produce distinct Display strings"
+        );
+    }
+
+    #[test]
+    fn enrichment_charter_schema_version_matches_constant() {
+        let charter = CharterBuilder::new(test_epoch())
+            .ownership(OwnershipDomain::ExecutionCorrectness)
+            .build();
+        assert_eq!(charter.schema_version, SCHEMA_VERSION);
+    }
 }

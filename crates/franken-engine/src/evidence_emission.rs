@@ -1188,4 +1188,107 @@ mod tests {
         };
         assert!(e.to_string().contains("x"));
     }
+
+    // -- Enrichment batch 2: Display uniqueness, boundary, integrity --
+
+    #[test]
+    fn action_category_display_uniqueness_btreeset() {
+        use std::collections::BTreeSet;
+        let set: BTreeSet<String> = ActionCategory::ALL.iter().map(|c| c.to_string()).collect();
+        assert_eq!(
+            set.len(),
+            ActionCategory::ALL.len(),
+            "all ActionCategory Display strings must be unique"
+        );
+    }
+
+    #[test]
+    fn error_display_uniqueness_btreeset() {
+        use std::collections::BTreeSet;
+        let errors = vec![
+            EvidenceEmissionError::BufferFull { capacity: 1 },
+            EvidenceEmissionError::BudgetExhausted { requested_ms: 1 },
+            EvidenceEmissionError::BuildError {
+                detail: "x".to_string(),
+            },
+            EvidenceEmissionError::ValidationFailed {
+                errors: vec!["x".to_string()],
+            },
+        ];
+        let set: BTreeSet<String> = errors.iter().map(|e| e.to_string()).collect();
+        assert_eq!(
+            set.len(),
+            errors.len(),
+            "all EvidenceEmissionError Display strings must be unique"
+        );
+    }
+
+    #[test]
+    fn evidence_entry_id_serde_roundtrip() {
+        let id = EvidenceEntryId::new("ev-test-42");
+        let json = serde_json::to_string(&id).unwrap();
+        let back: EvidenceEntryId = serde_json::from_str(&json).unwrap();
+        assert_eq!(id, back);
+    }
+
+    #[test]
+    fn emitter_starts_empty() {
+        let em = emitter();
+        assert!(em.is_empty());
+        assert_eq!(em.len(), 0);
+        assert_eq!(em.remaining_capacity(), DEFAULT_BUFFER_CAPACITY);
+        assert!(em.entries().is_empty());
+        assert!(em.events().is_empty());
+        assert!(em.category_counts().is_empty());
+    }
+
+    #[test]
+    fn chain_integrity_on_empty_emitter() {
+        let em = emitter();
+        assert!(em.verify_chain_integrity());
+    }
+
+    #[test]
+    fn chain_integrity_single_entry() {
+        let mut em = emitter();
+        let mut cx = mock_cx();
+        let req = make_request(ActionCategory::DecisionContract, "allow");
+        em.emit(&mut cx, &req).unwrap();
+        assert!(em.verify_chain_integrity());
+        let entry = &em.entries()[0];
+        assert!(entry.verify_artifact_integrity());
+        assert!(entry.verify_chain_link(None));
+    }
+
+    #[test]
+    fn metadata_with_multiple_keys() {
+        let mut em = emitter();
+        let mut cx = mock_cx();
+        let mut req = make_request(ActionCategory::ContainmentAction, "quarantine");
+        req.metadata
+            .insert("ext".to_string(), "ext-001".to_string());
+        req.metadata.insert("region".to_string(), "r-1".to_string());
+        em.emit(&mut cx, &req).unwrap();
+
+        let entry = &em.entries()[0];
+        assert_eq!(entry.metadata.get("ext"), Some(&"ext-001".to_string()));
+        assert_eq!(entry.metadata.get("region"), Some(&"r-1".to_string()));
+    }
+
+    #[test]
+    fn emitter_serde_roundtrip() {
+        let mut em = emitter();
+        em.set_epoch(SecurityEpoch::from_raw(5));
+        let mut cx = mock_cx();
+        em.emit(
+            &mut cx,
+            &make_request(ActionCategory::DecisionContract, "allow"),
+        )
+        .unwrap();
+
+        let json = serde_json::to_string(&em).unwrap();
+        let back: CanonicalEvidenceEmitter = serde_json::from_str(&json).unwrap();
+        assert_eq!(em.len(), back.len());
+        assert_eq!(em.rolling_hash(), back.rolling_hash());
+    }
 }

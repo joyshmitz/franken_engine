@@ -951,4 +951,100 @@ mod tests {
         }
         assert_eq!(displays.len(), 9);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 2: edge cases, nested maps, schema registry, Display
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn schema_hash_display_nonzero_bytes() {
+        let hash = SchemaHash([0xAB; 32]);
+        let display = hash.to_string();
+        assert_eq!(display.len(), 64);
+        assert!(display.chars().all(|c| c.is_ascii_hexdigit()));
+        // Each byte 0xAB -> "ab"
+        assert!(display.starts_with("abab"));
+    }
+
+    #[test]
+    fn schema_hash_from_definition_deterministic() {
+        let h1 = SchemaHash::from_definition(b"same-input");
+        let h2 = SchemaHash::from_definition(b"same-input");
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn schema_hash_from_definition_differs_on_input() {
+        let h1 = SchemaHash::from_definition(b"input-a");
+        let h2 = SchemaHash::from_definition(b"input-b");
+        assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn round_trip_i64_boundaries() {
+        for v in [i64::MIN, -1, 0, 1, i64::MAX] {
+            let val = CanonicalValue::I64(v);
+            let bytes = encode_value(&val);
+            assert_eq!(decode_value(&bytes).unwrap(), val);
+        }
+    }
+
+    #[test]
+    fn round_trip_nested_map_in_map() {
+        let inner = BTreeMap::from([("inner_key".to_string(), CanonicalValue::Bool(true))]);
+        let outer = BTreeMap::from([("outer_key".to_string(), CanonicalValue::Map(inner))]);
+        let val = CanonicalValue::Map(outer);
+        let bytes = encode_value(&val);
+        assert_eq!(decode_value(&bytes).unwrap(), val);
+    }
+
+    #[test]
+    fn registry_len_and_is_empty() {
+        let mut reg = SchemaRegistry::new();
+        assert!(reg.is_empty());
+        assert_eq!(reg.len(), 0);
+        reg.register("A", 1, b"def-a");
+        assert!(!reg.is_empty());
+        assert_eq!(reg.len(), 1);
+        reg.register("B", 2, b"def-b");
+        assert_eq!(reg.len(), 2);
+    }
+
+    #[test]
+    fn schema_definition_serde_roundtrip() {
+        let def = SchemaDefinition {
+            name: "TestObj".to_string(),
+            version: 3,
+            schema_hash: SchemaHash::from_definition(b"schema-def"),
+        };
+        let json = serde_json::to_string(&def).unwrap();
+        let back: SchemaDefinition = serde_json::from_str(&json).unwrap();
+        assert_eq!(def, back);
+    }
+
+    #[test]
+    fn canonical_value_serde_all_variants() {
+        let values = vec![
+            CanonicalValue::U64(999),
+            CanonicalValue::I64(-999),
+            CanonicalValue::Bool(false),
+            CanonicalValue::Bytes(vec![1, 2, 3]),
+            CanonicalValue::String("test".to_string()),
+            CanonicalValue::Array(vec![CanonicalValue::Null]),
+            CanonicalValue::Map(BTreeMap::from([("k".to_string(), CanonicalValue::U64(1))])),
+            CanonicalValue::Null,
+        ];
+        for val in &values {
+            let json = serde_json::to_string(val).unwrap();
+            let back: CanonicalValue = serde_json::from_str(&json).unwrap();
+            assert_eq!(*val, back);
+        }
+    }
+
+    #[test]
+    fn empty_map_round_trip() {
+        let val = CanonicalValue::Map(BTreeMap::new());
+        let bytes = encode_value(&val);
+        assert_eq!(decode_value(&bytes).unwrap(), val);
+    }
 }

@@ -871,4 +871,121 @@ mod tests {
             assert_eq!(*err, restored);
         }
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 2: Display uniqueness, edge cases, error
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn obligation_state_display_all_unique() {
+        let states = [
+            ObligationState::Pending,
+            ObligationState::Committed,
+            ObligationState::Aborted,
+            ObligationState::Leaked,
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for s in &states {
+            seen.insert(s.to_string());
+        }
+        assert_eq!(
+            seen.len(),
+            4,
+            "all 4 ObligationState Display strings must be unique"
+        );
+    }
+
+    #[test]
+    fn abort_reason_display_all_unique() {
+        let reasons = [
+            AbortReason::DrainTimeout,
+            AbortReason::UpstreamFailure,
+            AbortReason::PolicyViolation,
+            AbortReason::OperatorAbort,
+            AbortReason::Custom("test".to_string()),
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for r in &reasons {
+            seen.insert(r.to_string());
+        }
+        assert_eq!(
+            seen.len(),
+            5,
+            "all 5 AbortReason Display strings must be unique"
+        );
+    }
+
+    #[test]
+    fn obligation_error_source_is_none() {
+        let err = ObligationError::NotFound { obligation_id: 1 };
+        assert!(std::error::Error::source(&err).is_none());
+    }
+
+    #[test]
+    fn channel_total_count_includes_all_states() {
+        let mut chan = test_channel();
+        let id1 = chan.send("t").unwrap();
+        let id2 = chan.send("t").unwrap();
+        let id3 = chan.send("t").unwrap();
+        chan.commit(id1, "h").unwrap();
+        chan.abort(id2, &AbortReason::DrainTimeout, "h").unwrap();
+        chan.mark_leaked(id3).unwrap();
+        assert_eq!(chan.total_count(), 3);
+        assert_eq!(chan.pending_count(), 0);
+    }
+
+    #[test]
+    fn force_abort_all_pending_with_no_pending() {
+        let mut chan = test_channel();
+        let id = chan.send("t").unwrap();
+        chan.commit(id, "h").unwrap();
+        let aborted = chan.force_abort_all_pending("timeout-hash");
+        assert_eq!(aborted, 0);
+    }
+
+    #[test]
+    fn send_after_drain_check_true() {
+        let mut chan = test_channel();
+        assert!(chan.drain_check());
+        let id = chan.send("t").unwrap();
+        assert!(!chan.drain_check());
+        chan.commit(id, "h").unwrap();
+        assert!(chan.drain_check());
+    }
+
+    #[test]
+    fn mark_leaked_nonexistent_fails() {
+        let mut chan = test_channel();
+        let err = chan.mark_leaked(999).unwrap_err();
+        assert!(matches!(
+            err,
+            ObligationError::NotFound { obligation_id: 999 }
+        ));
+    }
+
+    #[test]
+    fn oldest_pending_skips_resolved() {
+        let mut chan = test_channel();
+        chan.set_tick(10);
+        let id1 = chan.send("t").unwrap();
+        chan.set_tick(20);
+        chan.send("t").unwrap();
+        chan.commit(id1, "h").unwrap();
+
+        let oldest = chan.oldest_pending().unwrap();
+        assert_eq!(oldest.created_at_tick, 20);
+    }
+
+    #[test]
+    fn abort_event_has_correct_resolution_type() {
+        let mut chan = test_channel();
+        let id = chan.send("t").unwrap();
+        chan.abort(id, &AbortReason::PolicyViolation, "h").unwrap();
+        let events = chan.drain_events();
+        let abort_event = events
+            .iter()
+            .find(|e| e.state == ObligationState::Aborted)
+            .unwrap();
+        assert_eq!(abort_event.resolution_type, Some("abort".to_string()));
+    }
 }

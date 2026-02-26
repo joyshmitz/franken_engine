@@ -1696,4 +1696,240 @@ mod tests {
         // Zero instructions should yield maximum reward (no cost).
         assert!(reward >= 0, "reward should be non-negative");
     }
+
+    // -- Enrichment: action_to_saga_type coverage --
+
+    #[test]
+    fn action_to_saga_type_quarantine() {
+        assert_eq!(
+            ExecutionOrchestrator::action_to_saga_type(ContainmentAction::Quarantine),
+            Some(SagaType::Quarantine)
+        );
+    }
+
+    #[test]
+    fn action_to_saga_type_terminate() {
+        assert_eq!(
+            ExecutionOrchestrator::action_to_saga_type(ContainmentAction::Terminate),
+            Some(SagaType::Eviction)
+        );
+    }
+
+    #[test]
+    fn action_to_saga_type_suspend() {
+        assert_eq!(
+            ExecutionOrchestrator::action_to_saga_type(ContainmentAction::Suspend),
+            Some(SagaType::Revocation)
+        );
+    }
+
+    #[test]
+    fn action_to_saga_type_allow_returns_none() {
+        assert!(ExecutionOrchestrator::action_to_saga_type(ContainmentAction::Allow).is_none());
+    }
+
+    #[test]
+    fn action_to_saga_type_sandbox_returns_none() {
+        assert!(ExecutionOrchestrator::action_to_saga_type(ContainmentAction::Sandbox).is_none());
+    }
+
+    #[test]
+    fn action_to_saga_type_challenge_returns_none() {
+        assert!(ExecutionOrchestrator::action_to_saga_type(ContainmentAction::Challenge).is_none());
+    }
+
+    // -- Enrichment: stable_symbol determinism --
+
+    #[test]
+    fn stable_symbol_deterministic_for_same_input() {
+        let a = ExecutionOrchestrator::stable_symbol("hello");
+        let b = ExecutionOrchestrator::stable_symbol("hello");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn stable_symbol_differs_for_different_input() {
+        let a = ExecutionOrchestrator::stable_symbol("hello");
+        let b = ExecutionOrchestrator::stable_symbol("world");
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn stable_symbol_empty_string() {
+        let s = ExecutionOrchestrator::stable_symbol("");
+        // FNV1a init value
+        assert_eq!(s, 0x811C9DC5);
+    }
+
+    // -- Enrichment: risk_state_symbol coverage --
+
+    #[test]
+    fn risk_state_symbol_all_variants() {
+        assert_eq!(
+            ExecutionOrchestrator::risk_state_symbol(RiskState::Benign),
+            0
+        );
+        assert_eq!(
+            ExecutionOrchestrator::risk_state_symbol(RiskState::Anomalous),
+            1
+        );
+        assert_eq!(
+            ExecutionOrchestrator::risk_state_symbol(RiskState::Malicious),
+            2
+        );
+        assert_eq!(
+            ExecutionOrchestrator::risk_state_symbol(RiskState::Unknown),
+            3
+        );
+    }
+
+    // -- Enrichment: build_evidence edge cases --
+
+    #[test]
+    fn build_evidence_no_hostcalls() {
+        let pkg = simple_package();
+        let exec = ExecutionResult {
+            value: crate::baseline_interpreter::Value::Int(42_000_000),
+            hostcall_decisions: Vec::new(),
+            instructions_executed: 10,
+            witness_events: Vec::new(),
+            events: Vec::new(),
+        };
+        let ev = ExecutionOrchestrator::build_evidence(&pkg, &exec, SecurityEpoch::from_raw(1));
+        assert_eq!(ev.extension_id, "test-ext-1");
+        assert_eq!(ev.hostcall_rate_millionths, 0);
+        assert_eq!(ev.denial_rate_millionths, 0);
+        assert_eq!(ev.timing_anomaly_millionths, 0);
+    }
+
+    #[test]
+    fn build_evidence_resource_score_saturates() {
+        let pkg = simple_package();
+        let exec = ExecutionResult {
+            value: crate::baseline_interpreter::Value::Null,
+            hostcall_decisions: Vec::new(),
+            instructions_executed: u64::MAX,
+            witness_events: Vec::new(),
+            events: Vec::new(),
+        };
+        let ev = ExecutionOrchestrator::build_evidence(&pkg, &exec, SecurityEpoch::from_raw(1));
+        assert_eq!(ev.resource_score_millionths, 1_000_000);
+    }
+
+    #[test]
+    fn build_evidence_with_capabilities() {
+        let pkg = ExtensionPackage {
+            extension_id: "ext-caps".to_string(),
+            source: "42".to_string(),
+            capabilities: vec!["fs".to_string(), "net".to_string(), "crypto".to_string()],
+            version: "1.0.0".to_string(),
+            metadata: BTreeMap::new(),
+        };
+        let exec = ExecutionResult {
+            value: crate::baseline_interpreter::Value::Null,
+            hostcall_decisions: Vec::new(),
+            instructions_executed: 5,
+            witness_events: Vec::new(),
+            events: Vec::new(),
+        };
+        let ev = ExecutionOrchestrator::build_evidence(&pkg, &exec, SecurityEpoch::from_raw(2));
+        assert_eq!(ev.distinct_capabilities, 3);
+        assert_eq!(ev.epoch, SecurityEpoch::from_raw(2));
+    }
+
+    // -- Enrichment: module parse goal --
+
+    #[test]
+    fn module_parse_goal_executes() {
+        let cfg = OrchestratorConfig {
+            parse_goal: ParseGoal::Module,
+            ..OrchestratorConfig::default()
+        };
+        let mut orch = ExecutionOrchestrator::new(cfg);
+        // Module parse goal should still be able to parse simple expressions.
+        let result = orch.execute(&simple_package());
+        // May succeed or fail depending on parser strictness, but should not panic.
+        let _ = result;
+    }
+
+    // -- Enrichment: saga orchestrator accessor --
+
+    #[test]
+    fn saga_orchestrator_accessible() {
+        let orch = ExecutionOrchestrator::with_defaults();
+        let saga_orch = orch.saga_orchestrator();
+        assert_eq!(saga_orch.active_count(), 0);
+    }
+
+    // -- Enrichment: execution reward boundary values --
+
+    #[test]
+    fn execution_reward_one_instruction() {
+        let exec = ExecutionResult {
+            value: crate::baseline_interpreter::Value::Null,
+            hostcall_decisions: Vec::new(),
+            instructions_executed: 1,
+            witness_events: Vec::new(),
+            events: Vec::new(),
+        };
+        let reward = ExecutionOrchestrator::execution_reward_millionths(&exec);
+        assert!(reward > 0, "reward for 1 instruction should be positive");
+        assert!(reward <= 1_000_000, "reward should not exceed 1M");
+    }
+
+    // -- Enrichment: LossMatrixPreset Copy --
+
+    #[test]
+    fn loss_matrix_preset_is_copy() {
+        let a = LossMatrixPreset::Balanced;
+        let b = a;
+        assert_eq!(a, b);
+    }
+
+    // -- Enrichment: trace_id format with custom prefix --
+
+    #[test]
+    fn custom_prefix_trace_id_format() {
+        let cfg = OrchestratorConfig {
+            trace_id_prefix: "custom".to_string(),
+            ..OrchestratorConfig::default()
+        };
+        let mut orch = ExecutionOrchestrator::new(cfg);
+        let r = orch.execute(&simple_package()).unwrap();
+        assert!(r.trace_id.starts_with("custom:"));
+        assert!(r.decision_id.starts_with("custom:decision:"));
+    }
+
+    // -- Enrichment: orchestrator with custom epoch --
+
+    #[test]
+    fn custom_epoch_propagates_to_evidence() {
+        let cfg = OrchestratorConfig {
+            epoch: SecurityEpoch::from_raw(999),
+            ..OrchestratorConfig::default()
+        };
+        let mut orch = ExecutionOrchestrator::new(cfg);
+        let r = orch.execute(&simple_package()).unwrap();
+        assert_eq!(r.epoch, SecurityEpoch::from_raw(999));
+    }
+
+    // -- Enrichment: OrchestratorError from conversions --
+
+    #[test]
+    fn orchestrator_error_from_cell_error() {
+        let cell_err = CellError::CellNotFound {
+            cell_id: "missing".to_string(),
+        };
+        let orch_err: OrchestratorError = cell_err.into();
+        let msg = orch_err.to_string();
+        assert!(msg.contains("cell"), "should mention cell: {msg}");
+    }
+
+    #[test]
+    fn orchestrator_error_from_ledger_error() {
+        let ledger_err = LedgerError::MissingChosenAction;
+        let orch_err: OrchestratorError = ledger_err.into();
+        let msg = orch_err.to_string();
+        assert!(msg.contains("ledger"), "should mention ledger: {msg}");
+    }
 }

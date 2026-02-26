@@ -431,7 +431,7 @@ pub struct TraceRecorder {
 }
 
 /// Configuration for creating a new trace recorder.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecorderConfig {
     pub trace_id: String,
     pub recording_mode: RecordingMode,
@@ -956,7 +956,7 @@ impl CausalReplayEngine {
 // ---------------------------------------------------------------------------
 
 /// Query filter for trace index lookups.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TraceQuery {
     pub trace_id: Option<String>,
     pub extension_id: Option<String>,
@@ -2434,5 +2434,220 @@ mod tests {
             displays.insert(format!("{v}"));
         }
         assert_eq!(displays.len(), 6);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: serde roundtrips for uncovered types
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn nondeterminism_source_serde_all_variants() {
+        let variants = [
+            NondeterminismSource::RandomValue,
+            NondeterminismSource::Timestamp,
+            NondeterminismSource::HostcallResult,
+            NondeterminismSource::IoResult,
+            NondeterminismSource::SchedulingDecision,
+            NondeterminismSource::OsEntropy,
+            NondeterminismSource::FleetEvidenceArrival,
+        ];
+        let mut jsons = BTreeSet::new();
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: NondeterminismSource = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+            jsons.insert(json);
+        }
+        assert_eq!(
+            jsons.len(),
+            variants.len(),
+            "all variants produce distinct JSON"
+        );
+    }
+
+    #[test]
+    fn nondeterminism_entry_serde_roundtrip() {
+        let entry = NondeterminismEntry {
+            sequence: 42,
+            source: NondeterminismSource::Timestamp,
+            value: vec![1, 2, 3],
+            tick: 100,
+            extension_id: Some("ext-001".into()),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let back: NondeterminismEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry, back);
+    }
+
+    #[test]
+    fn nondeterminism_log_serde_roundtrip() {
+        let mut log = NondeterminismLog::default();
+        log.append(NondeterminismSource::RandomValue, vec![0xAB], 10, None);
+        log.append(
+            NondeterminismSource::Timestamp,
+            vec![0xCD],
+            20,
+            Some("ext-1".into()),
+        );
+        let json = serde_json::to_string(&log).unwrap();
+        let back: NondeterminismLog = serde_json::from_str(&json).unwrap();
+        assert_eq!(log, back);
+    }
+
+    #[test]
+    fn decision_snapshot_serde_roundtrip() {
+        let snap = DecisionSnapshot {
+            decision_index: 5,
+            trace_id: "trace-001".into(),
+            decision_id: "dec-001".into(),
+            policy_id: "policy-001".into(),
+            policy_version: 2,
+            epoch: SecurityEpoch::from_raw(10),
+            tick: 500,
+            threshold_millionths: 900_000,
+            loss_matrix: BTreeMap::from([("allow".to_string(), 0i64)]),
+            evidence_hashes: vec![ContentHash::compute(b"ev-hash")],
+            chosen_action: "allow".into(),
+            outcome_millionths: 850_000,
+            extension_id: "ext-001".into(),
+            nondeterminism_range: (0, 2),
+        };
+        let json = serde_json::to_string(&snap).unwrap();
+        let back: DecisionSnapshot = serde_json::from_str(&json).unwrap();
+        assert_eq!(snap, back);
+    }
+
+    #[test]
+    fn replay_decision_outcome_serde_roundtrip() {
+        let outcome = ReplayDecisionOutcome {
+            decision_index: 3,
+            original_action: "allow".into(),
+            replayed_action: "deny".into(),
+            original_outcome_millionths: 500_000,
+            replayed_outcome_millionths: 300_000,
+            diverged: true,
+        };
+        let json = serde_json::to_string(&outcome).unwrap();
+        let back: ReplayDecisionOutcome = serde_json::from_str(&json).unwrap();
+        assert_eq!(outcome, back);
+    }
+
+    #[test]
+    fn replay_verdict_serde_all_variants() {
+        let variants = vec![
+            ReplayVerdict::Identical {
+                decisions_replayed: 10,
+            },
+            ReplayVerdict::Diverged {
+                divergence_point: 5,
+                decisions_replayed: 10,
+                divergences: vec![],
+            },
+            ReplayVerdict::Tampered {
+                detail: "bad chain".into(),
+            },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: ReplayVerdict = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn counterfactual_config_serde_roundtrip() {
+        let config = CounterfactualConfig {
+            branch_id: "branch-001".into(),
+            threshold_override_millionths: Some(800_000),
+            loss_matrix_overrides: BTreeMap::new(),
+            policy_version_override: None,
+            containment_overrides: BTreeMap::new(),
+            evidence_weight_overrides: BTreeMap::new(),
+            branch_from_index: 3,
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let back: CounterfactualConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config, back);
+    }
+
+    #[test]
+    fn decision_delta_serde_roundtrip() {
+        let delta = DecisionDelta {
+            decision_index: 7,
+            original_action: "allow".into(),
+            counterfactual_action: "deny".into(),
+            original_outcome_millionths: 600_000,
+            counterfactual_outcome_millionths: 400_000,
+            diverged: true,
+        };
+        let json = serde_json::to_string(&delta).unwrap();
+        let back: DecisionDelta = serde_json::from_str(&json).unwrap();
+        assert_eq!(delta, back);
+    }
+
+    #[test]
+    fn trace_query_serde_roundtrip() {
+        let query = TraceQuery {
+            trace_id: Some("t-001".into()),
+            extension_id: None,
+            policy_version: Some(2),
+            epoch_range: Some((1, 10)),
+            tick_range: None,
+            incident_id: None,
+            has_divergence: Some(true),
+        };
+        let json = serde_json::to_string(&query).unwrap();
+        let back: TraceQuery = serde_json::from_str(&json).unwrap();
+        assert_eq!(query, back);
+    }
+
+    #[test]
+    fn trace_retention_policy_serde_roundtrip() {
+        let policy = TraceRetentionPolicy::default();
+        let json = serde_json::to_string(&policy).unwrap();
+        let back: TraceRetentionPolicy = serde_json::from_str(&json).unwrap();
+        assert_eq!(policy, back);
+    }
+
+    #[test]
+    fn recorder_config_serde_roundtrip() {
+        let config = RecorderConfig {
+            trace_id: "trace-001".into(),
+            recording_mode: RecordingMode::Full,
+            epoch: SecurityEpoch::from_raw(1),
+            start_tick: 0,
+            signing_key: vec![42u8; 32],
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let back: RecorderConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config, back);
+    }
+
+    #[test]
+    fn replay_error_serde_all_variants() {
+        let variants = vec![
+            ReplayError::ChainIntegrity {
+                entry_index: 0,
+                detail: "bad".into(),
+            },
+            ReplayError::NondeterminismMismatch {
+                expected_sequence: 1,
+                actual_sequence: 2,
+            },
+            ReplayError::BranchDepthExceeded {
+                requested: 10,
+                max: 5,
+            },
+            ReplayError::StorageExhausted,
+            ReplayError::TraceNotFound {
+                trace_id: "t1".into(),
+            },
+            ReplayError::SignatureInvalid,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: ReplayError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
     }
 }

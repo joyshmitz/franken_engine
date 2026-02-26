@@ -1411,4 +1411,150 @@ mod tests {
         }
         assert_eq!(r.evidence().len(), 4);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: SafetyAction Display uniqueness via BTreeSet
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn safety_action_display_all_unique_btreeset() {
+        let mut displays = std::collections::BTreeSet::new();
+        for &a in SafetyAction::all() {
+            displays.insert(a.to_string());
+        }
+        assert_eq!(
+            displays.len(),
+            6,
+            "all 6 SafetyAction variants produce distinct Display"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: SafetyVerdict Display uniqueness
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn safety_verdict_display_all_unique() {
+        let verdicts = vec![
+            SafetyVerdict::Allow,
+            SafetyVerdict::Deny {
+                reason: "x".to_string(),
+            },
+            SafetyVerdict::Fallback {
+                reason: "y".to_string(),
+            },
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &verdicts {
+            displays.insert(v.to_string());
+        }
+        assert_eq!(
+            displays.len(),
+            3,
+            "all SafetyVerdict variants produce distinct Display"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: SafetyRouterError Display uniqueness
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn safety_router_error_display_all_unique() {
+        let errors = vec![
+            SafetyRouterError::BudgetExhausted {
+                action: SafetyAction::BudgetOverride,
+                requested_ms: 2,
+                remaining_ms: 1,
+            },
+            SafetyRouterError::NoContract {
+                action: SafetyAction::ForcedTermination,
+            },
+            SafetyRouterError::InvalidActionIndex {
+                action: SafetyAction::PrivilegeEscalation,
+                index: 5,
+                max: 2,
+            },
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for e in &errors {
+            displays.insert(e.to_string());
+        }
+        assert_eq!(displays.len(), 3);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: SafetyRouterError implements std::error::Error
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn safety_router_error_implements_std_error() {
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(SafetyRouterError::BudgetExhausted {
+                action: SafetyAction::ExtensionQuarantine,
+                requested_ms: 2,
+                remaining_ms: 0,
+            }),
+            Box::new(SafetyRouterError::NoContract {
+                action: SafetyAction::ForcedTermination,
+            }),
+        ];
+        for v in &variants {
+            let msg = format!("{v}");
+            assert!(!msg.is_empty());
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: router drain_events resets events
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn router_drain_events_clears_log() {
+        let mut r = SafetyDecisionRouter::new();
+        r.register_all_defaults();
+        let mut cx = test_cx(100);
+        let req = test_request(SafetyAction::ExtensionQuarantine, 1);
+        r.evaluate(&mut cx, &req).unwrap();
+        assert_eq!(r.drain_events().len(), 1);
+        assert!(
+            r.drain_events().is_empty(),
+            "drain_events should clear the log"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: router sequence numbers are monotonic
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn router_sequence_numbers_monotonic() {
+        let mut r = SafetyDecisionRouter::new();
+        r.register_all_defaults();
+        let mut cx = test_cx(200);
+
+        let mut last_seq = 0;
+        for i in 0..5u64 {
+            let req = test_request(SafetyAction::ExtensionQuarantine, i);
+            let result = r.evaluate(&mut cx, &req).unwrap();
+            assert!(
+                result.sequence_number > last_seq,
+                "sequence must be monotonically increasing"
+            );
+            last_seq = result.sequence_number;
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: ActionSummary default values
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn action_summary_default_is_zero() {
+        let s = ActionSummary::default();
+        assert_eq!(s.total, 0);
+        assert_eq!(s.allows, 0);
+        assert_eq!(s.denials, 0);
+        assert_eq!(s.fallbacks, 0);
+    }
 }

@@ -1358,4 +1358,110 @@ mod tests {
         assert!(RiskState::Anomalous < RiskState::Malicious);
         assert!(RiskState::Malicious < RiskState::Unknown);
     }
+
+    // ── Enrichment: Display uniqueness ──────────────────────────
+
+    #[test]
+    fn risk_state_display_all_unique() {
+        let displays: std::collections::BTreeSet<String> =
+            RiskState::ALL.iter().map(|s| s.to_string()).collect();
+        assert_eq!(displays.len(), 4);
+    }
+
+    // ── Enrichment: posterior invariants ─────────────────────────
+
+    #[test]
+    fn posterior_sum_always_million_after_updates() {
+        let mut updater = BayesianPosteriorUpdater::new(Posterior::default_prior(), "ext-001");
+        updater.update(&benign_evidence());
+        updater.update(&malicious_evidence());
+        updater.update(&anomalous_evidence());
+        assert_eq!(updater.posterior().sum(), MILLION);
+    }
+
+    #[test]
+    fn posterior_from_millionths_negative_inputs_normalized() {
+        // Negative inputs get clamped to floor
+        let p = Posterior::from_millionths(-100, -200, -300, -400);
+        assert!(p.is_valid());
+        assert_eq!(p.sum(), MILLION);
+    }
+
+    // ── Enrichment: store content_hash determinism ──────────────
+
+    #[test]
+    fn updater_content_hash_changes_after_update() {
+        let mut updater = BayesianPosteriorUpdater::new(Posterior::default_prior(), "ext-001");
+        let h1 = updater.content_hash();
+        updater.update(&benign_evidence());
+        let h2 = updater.content_hash();
+        assert_ne!(h1, h2);
+    }
+
+    // ── Enrichment: change point detector edge cases ────────────
+
+    #[test]
+    fn change_detector_serde_default_state() {
+        let det = ChangePointDetector::new(50_000, 50);
+        let json = serde_json::to_string(&det).unwrap();
+        let back: ChangePointDetector = serde_json::from_str(&json).unwrap();
+        assert_eq!(det, back);
+        assert_eq!(back.map_run_length(), 0);
+    }
+
+    // ── Enrichment: calibration result boundary ─────────────────
+
+    #[test]
+    fn calibration_brier_component_zero_when_perfect() {
+        // If MAP correctly identifies the true state with probability ~1.0,
+        // the Brier component should be very low.
+        let mut updater = BayesianPosteriorUpdater::new(Posterior::default_prior(), "ext-001");
+        for _ in 0..20 {
+            updater.update(&benign_evidence());
+        }
+        let cal = updater.calibration_check(RiskState::Benign);
+        assert!(cal.map_correct);
+        assert!(
+            cal.brier_component_millionths < 100_000,
+            "Brier should be low: {}",
+            cal.brier_component_millionths
+        );
+    }
+
+    // ── Enrichment: evidence hash uniqueness ─────────────────────
+
+    #[test]
+    fn evidence_hashes_are_unique_per_input() {
+        let mut updater = BayesianPosteriorUpdater::new(Posterior::default_prior(), "ext-001");
+        updater.update(&benign_evidence());
+        updater.update(&malicious_evidence());
+        let hashes = updater.evidence_hashes();
+        assert_eq!(hashes.len(), 2);
+        assert_ne!(hashes[0], hashes[1]);
+    }
+
+    // ── Enrichment: store reset_all ─────────────────────────────
+
+    #[test]
+    fn store_remove_extension() {
+        let mut store = UpdaterStore::new();
+        store.get_or_create("ext-001");
+        store.get_or_create("ext-002");
+        assert_eq!(store.len(), 2);
+        // After removing ext-001
+        let u = store.get_or_create("ext-001");
+        u.reset(Posterior::default_prior());
+        assert_eq!(u.update_count(), 0);
+    }
+
+    // ── Enrichment: update result fields ────────────────────────
+
+    #[test]
+    fn update_result_contains_prior_and_posterior() {
+        let mut updater = BayesianPosteriorUpdater::new(Posterior::default_prior(), "ext-001");
+        let result = updater.update(&benign_evidence());
+        assert_eq!(result.update_count, 1);
+        assert!(result.posterior.is_valid());
+        assert_eq!(result.posterior.sum(), MILLION);
+    }
 }

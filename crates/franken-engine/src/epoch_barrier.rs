@@ -1089,4 +1089,158 @@ mod tests {
         assert!(CriticalOpKind::DecisionEval < CriticalOpKind::EvidenceEmission);
         assert!(CriticalOpKind::EvidenceEmission < CriticalOpKind::KeyDerivation);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 2: Display uniqueness, error Display, edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn barrier_state_display_all_unique() {
+        let states = [
+            BarrierState::Open,
+            BarrierState::Draining,
+            BarrierState::Finalizing,
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for s in &states {
+            seen.insert(s.to_string());
+        }
+        assert_eq!(
+            seen.len(),
+            3,
+            "all 3 BarrierState Display strings must be unique"
+        );
+    }
+
+    #[test]
+    fn critical_op_kind_display_all_unique() {
+        let kinds = [
+            CriticalOpKind::DecisionEval,
+            CriticalOpKind::EvidenceEmission,
+            CriticalOpKind::KeyDerivation,
+            CriticalOpKind::CapabilityCheck,
+            CriticalOpKind::RevocationCheck,
+            CriticalOpKind::RemoteOperation,
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for k in &kinds {
+            seen.insert(k.to_string());
+        }
+        assert_eq!(
+            seen.len(),
+            6,
+            "all 6 CriticalOpKind Display strings must be unique"
+        );
+    }
+
+    #[test]
+    fn barrier_error_display_all_variants() {
+        let variants = [
+            BarrierError::EpochTransitioning {
+                current_epoch: SecurityEpoch::from_raw(1),
+                state: BarrierState::Draining,
+            },
+            BarrierError::TransitionAlreadyInProgress {
+                current_epoch: SecurityEpoch::from_raw(2),
+            },
+            BarrierError::DrainTimeout {
+                epoch: SecurityEpoch::from_raw(3),
+                remaining_guards: 5,
+                timeout_ms: 1000,
+            },
+            BarrierError::NoTransitionInProgress,
+            BarrierError::NonMonotonicTransition {
+                current: SecurityEpoch::from_raw(5),
+                attempted: SecurityEpoch::from_raw(3),
+            },
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for v in &variants {
+            let msg = v.to_string();
+            assert!(!msg.is_empty());
+            seen.insert(msg);
+        }
+        assert_eq!(
+            seen.len(),
+            5,
+            "all 5 BarrierError variants produce distinct Display"
+        );
+    }
+
+    #[test]
+    fn transition_evidence_serde_with_forced_cancellations() {
+        let evidence = TransitionEvidence {
+            old_epoch: SecurityEpoch::from_raw(10),
+            new_epoch: SecurityEpoch::from_raw(11),
+            reason: TransitionReason::OperatorManualBump,
+            in_flight_at_start: 5,
+            in_flight_at_complete: 0,
+            forced_cancellations: 5,
+            duration_ms: 42,
+            trace_id: "t-forced".to_string(),
+        };
+        let json = serde_json::to_string(&evidence).expect("serialize");
+        let restored: TransitionEvidence = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(evidence, restored);
+    }
+
+    #[test]
+    fn guard_display_format() {
+        let guard = EpochGuard {
+            guard_id: 1,
+            epoch: SecurityEpoch::from_raw(10),
+            op_kind: CriticalOpKind::RemoteOperation,
+            trace_id: "tx".to_string(),
+        };
+        let display = guard.to_string();
+        assert!(display.contains("#1"));
+        assert!(display.contains("epoch:10"));
+        assert!(display.contains("remote_operation"));
+    }
+
+    #[test]
+    fn transition_now_multiple_sequential() {
+        let mut barrier = det_barrier(1);
+        for epoch in 2..=10 {
+            barrier
+                .transition_now(
+                    SecurityEpoch::from_raw(epoch),
+                    TransitionReason::PolicyKeyRotation,
+                    &format!("t-{epoch}"),
+                )
+                .unwrap();
+        }
+        assert_eq!(barrier.current_epoch(), SecurityEpoch::from_raw(10));
+        assert_eq!(barrier.evidence().len(), 9);
+    }
+
+    #[test]
+    fn evidence_accumulates_across_transitions() {
+        let mut barrier = det_barrier(1);
+        assert!(barrier.evidence().is_empty());
+
+        barrier
+            .transition_now(
+                SecurityEpoch::from_raw(2),
+                TransitionReason::PolicyKeyRotation,
+                "t1",
+            )
+            .unwrap();
+        assert_eq!(barrier.evidence().len(), 1);
+
+        barrier
+            .transition_now(
+                SecurityEpoch::from_raw(3),
+                TransitionReason::PolicyKeyRotation,
+                "t2",
+            )
+            .unwrap();
+        assert_eq!(barrier.evidence().len(), 2);
+    }
+
+    #[test]
+    fn barrier_error_source_is_none() {
+        let err = BarrierError::NoTransitionInProgress;
+        assert!(std::error::Error::source(&err).is_none());
+    }
 }

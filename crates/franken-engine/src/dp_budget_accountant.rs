@@ -1132,4 +1132,133 @@ mod tests {
         }
         assert_eq!(displays.len(), 4);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 2: edge cases, forecast, composition, serde
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn consume_zero_epsilon_zero_delta_ok() {
+        let mut acc = test_accountant();
+        let record = acc.consume(0, 0, "no-op", 2_000_000_000).unwrap();
+        assert_eq!(record.composed_epsilon_millionths, 0);
+        assert_eq!(record.composed_delta_millionths, 0);
+        assert_eq!(acc.epoch_epsilon_remaining(), 1_000_000);
+    }
+
+    #[test]
+    fn forecast_lifetime_remaining_tracks_across_epochs() {
+        let mut acc = test_accountant();
+        acc.consume(300_000, 30_000, "ep1", 2_000_000_000).unwrap();
+        acc.advance_epoch(SecurityEpoch::from_raw(2), 10_000_000_000)
+            .unwrap();
+        acc.consume(200_000, 20_000, "ep2", 11_000_000_000).unwrap();
+        let fc = acc.forecast();
+        assert_eq!(
+            fc.lifetime_epsilon_remaining_millionths,
+            10_000_000 - 500_000
+        );
+        assert_eq!(fc.lifetime_delta_remaining_millionths, 1_000_000 - 50_000);
+    }
+
+    #[test]
+    fn budget_forecast_serde_roundtrip() {
+        let fc = BudgetForecast {
+            epoch_epsilon_remaining_millionths: 500_000,
+            epoch_delta_remaining_millionths: 50_000,
+            lifetime_epsilon_remaining_millionths: 5_000_000,
+            lifetime_delta_remaining_millionths: 500_000,
+            estimated_remaining_operations: 42,
+            exhausted: false,
+        };
+        let json = serde_json::to_string(&fc).unwrap();
+        let decoded: BudgetForecast = serde_json::from_str(&json).unwrap();
+        assert_eq!(fc, decoded);
+    }
+
+    #[test]
+    fn accountant_config_serde_roundtrip() {
+        let cfg = test_config();
+        let json = serde_json::to_string(&cfg).unwrap();
+        let decoded: AccountantConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(cfg, decoded);
+    }
+
+    #[test]
+    fn epoch_budget_serde_roundtrip() {
+        let eb = EpochBudget {
+            epoch: SecurityEpoch::from_raw(3),
+            epsilon_budget_millionths: 1_000_000,
+            delta_budget_millionths: 100_000,
+            epsilon_spent_millionths: 250_000,
+            delta_spent_millionths: 25_000,
+            composition_method: CompositionMethod::Renyi,
+            operations_count: 5,
+            created_at_ns: 42,
+            exhausted: false,
+        };
+        let json = serde_json::to_string(&eb).unwrap();
+        let decoded: EpochBudget = serde_json::from_str(&json).unwrap();
+        assert_eq!(eb, decoded);
+    }
+
+    #[test]
+    fn error_display_all_variants_unique() {
+        let variants: Vec<AccountantError> = vec![
+            AccountantError::BudgetExhausted {
+                dimension: "epoch".into(),
+                epsilon_remaining: 0,
+                delta_remaining: 0,
+            },
+            AccountantError::EpochNotAdvanced {
+                current: SecurityEpoch::from_raw(1),
+                proposed: SecurityEpoch::from_raw(1),
+            },
+            AccountantError::InvalidConsumption {
+                reason: "neg".into(),
+            },
+            AccountantError::InvalidConfiguration {
+                reason: "bad".into(),
+            },
+        ];
+        let displays: std::collections::BTreeSet<String> =
+            variants.iter().map(|e| e.to_string()).collect();
+        assert_eq!(
+            displays.len(),
+            4,
+            "all 4 error variants must have unique Display"
+        );
+    }
+
+    #[test]
+    fn isqrt_large_perfect_square() {
+        assert_eq!(isqrt_millionths(1_000_000), 1000);
+        assert_eq!(isqrt_millionths(10_000), 100);
+    }
+
+    #[test]
+    fn advanced_composition_multiple_operations_decreasing_cost() {
+        let mut acc = test_accountant_advanced();
+        let mut composed_costs = Vec::new();
+        for i in 0..5 {
+            let r = acc
+                .consume(
+                    100_000,
+                    10_000,
+                    &format!("op-{i}"),
+                    (i + 2) as u64 * 1_000_000_000,
+                )
+                .unwrap();
+            composed_costs.push(r.composed_epsilon_millionths);
+        }
+        // After the first operation, each subsequent should cost less or equal
+        for i in 1..composed_costs.len() {
+            assert!(
+                composed_costs[i] <= composed_costs[i - 1],
+                "advanced composition cost should decrease: {} > {}",
+                composed_costs[i],
+                composed_costs[i - 1]
+            );
+        }
+    }
 }

@@ -1659,4 +1659,100 @@ mod tests {
 
         assert!(cache.get("mod:up", &v2).is_some());
     }
+
+    // -- Enrichment: Display uniqueness, edge cases, std::error --
+
+    #[test]
+    fn cache_error_code_display_uniqueness() {
+        let codes = [
+            CacheErrorCode::ModuleRevoked,
+            CacheErrorCode::VersionRegression,
+            CacheErrorCode::EmptyModuleId,
+        ];
+        let displays: BTreeSet<String> =
+            codes.iter().map(|c| c.stable_code().to_string()).collect();
+        assert_eq!(
+            displays.len(),
+            3,
+            "all 3 error codes produce distinct stable codes"
+        );
+    }
+
+    #[test]
+    fn cache_error_implements_std_error() {
+        let mut cache = ModuleCache::new();
+        let v = ModuleVersionFingerprint::new(source_hash("s"), 1, 1);
+        let err = cache
+            .insert(
+                CacheInsertRequest::new("", v, ContentHash::compute(b"a"), "/e.js"),
+                &context(),
+            )
+            .unwrap_err();
+        let dyn_err: &dyn std::error::Error = &*err;
+        assert!(!dyn_err.to_string().is_empty());
+    }
+
+    #[test]
+    fn cache_context_fields_match_construction() {
+        let ctx = CacheContext::new("t-abc", "d-def", "p-ghi");
+        assert_eq!(ctx.trace_id, "t-abc");
+        assert_eq!(ctx.decision_id, "d-def");
+        assert_eq!(ctx.policy_id, "p-ghi");
+    }
+
+    #[test]
+    fn insert_same_version_twice_overwrites() {
+        let mut cache = ModuleCache::new();
+        let ctx = context();
+        let v = ModuleVersionFingerprint::new(source_hash("same"), 1, 1);
+        let art1 = ContentHash::compute(b"artifact-1");
+        let art2 = ContentHash::compute(b"artifact-2");
+
+        cache
+            .insert(
+                CacheInsertRequest::new("mod:dup", v.clone(), art1, "/dup.js"),
+                &ctx,
+            )
+            .unwrap();
+        cache
+            .insert(
+                CacheInsertRequest::new("mod:dup", v.clone(), art2.clone(), "/dup.js"),
+                &ctx,
+            )
+            .unwrap();
+
+        let entry = cache.get("mod:dup", &v).unwrap();
+        assert_eq!(
+            entry.artifact_hash, art2,
+            "second insert should overwrite first"
+        );
+    }
+
+    #[test]
+    fn empty_cache_has_no_events() {
+        let cache = ModuleCache::new();
+        assert!(cache.events().is_empty());
+    }
+
+    #[test]
+    fn snapshot_revoked_modules_is_btree_set() {
+        let mut cache = ModuleCache::new();
+        let ctx = context();
+        cache.invalidate_trust_revocation("mod:b", 1, &ctx);
+        cache.invalidate_trust_revocation("mod:a", 2, &ctx);
+        let snap = cache.snapshot();
+        let revoked: Vec<&str> = snap.revoked_modules.iter().map(|s| s.as_str()).collect();
+        assert_eq!(
+            revoked,
+            vec!["mod:a", "mod:b"],
+            "revoked modules should be sorted"
+        );
+    }
+
+    #[test]
+    fn module_version_fingerprint_display_fields() {
+        let fp = ModuleVersionFingerprint::new(source_hash("display-test"), 10, 20);
+        assert_eq!(fp.policy_version, 10);
+        assert_eq!(fp.trust_revision, 20);
+    }
 }

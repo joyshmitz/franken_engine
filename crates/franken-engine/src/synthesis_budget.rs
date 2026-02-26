@@ -1482,4 +1482,121 @@ mod tests {
         let restored: BudgetOverride = serde_json::from_str(&json).unwrap();
         assert_eq!(ovr, restored);
     }
+
+    // -- Enrichment: Display uniqueness, edge cases, determinism --
+
+    #[test]
+    fn synthesis_phase_display_uniqueness_btreeset() {
+        let mut displays = std::collections::BTreeSet::new();
+        for phase in SynthesisPhase::ALL {
+            displays.insert(phase.to_string());
+        }
+        assert_eq!(
+            displays.len(),
+            4,
+            "all 4 phases produce distinct display strings"
+        );
+    }
+
+    #[test]
+    fn budget_dimension_display_uniqueness_btreeset() {
+        let dims = [
+            BudgetDimension::Time,
+            BudgetDimension::Compute,
+            BudgetDimension::Depth,
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for d in &dims {
+            displays.insert(d.to_string());
+        }
+        assert_eq!(
+            displays.len(),
+            3,
+            "all 3 dimensions produce distinct display strings"
+        );
+    }
+
+    #[test]
+    fn fallback_quality_display_uniqueness_btreeset() {
+        let qualities = [
+            FallbackQuality::StaticBound,
+            FallbackQuality::PartialAblation,
+            FallbackQuality::UnverifiedFull,
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for q in &qualities {
+            displays.insert(q.to_string());
+        }
+        assert_eq!(
+            displays.len(),
+            3,
+            "all 3 qualities produce distinct display strings"
+        );
+    }
+
+    #[test]
+    fn phase_consumption_zero_is_all_zeros() {
+        let z = PhaseConsumption::zero();
+        assert_eq!(z.time_ns, 0);
+        assert_eq!(z.compute, 0);
+        assert_eq!(z.depth, 0);
+    }
+
+    #[test]
+    fn phase_budget_at_exact_boundary_not_exceeded() {
+        let budget = PhaseBudget {
+            time_cap_ns: 1000,
+            compute_cap: 100,
+            depth_cap: 10,
+        };
+        let consumed = PhaseConsumption {
+            time_ns: 1000,
+            compute: 100,
+            depth: 10,
+        };
+        assert!(
+            !budget.is_exceeded(&consumed),
+            "exact boundary should not be exceeded"
+        );
+        assert!(budget.exceeded_dimensions(&consumed).is_empty());
+    }
+
+    #[test]
+    fn monitor_remaining_global_after_multi_phase() {
+        let c = tight_contract(); // 1000 / 100 / 10
+        let mut monitor = BudgetMonitor::new(c);
+        monitor.begin_phase(SynthesisPhase::StaticAnalysis).unwrap();
+        monitor.record_consumption(300, 20, 3).unwrap();
+        monitor.begin_phase(SynthesisPhase::Ablation).unwrap();
+        monitor.record_consumption(200, 30, 2).unwrap();
+
+        let remaining = monitor.remaining_global();
+        assert_eq!(remaining.time_ns, 500); // 1000 - 300 - 200
+        assert_eq!(remaining.compute, 50); // 100 - 20 - 30
+        assert_eq!(remaining.depth, 5); // 10 - 3 - 2
+    }
+
+    #[test]
+    fn history_exhaustion_rate_no_entries_returns_zero() {
+        let history = BudgetHistory::new(10);
+        assert_eq!(history.exhaustion_rate("nonexistent"), 0);
+    }
+
+    #[test]
+    fn budget_error_serde_exhausted_variant() {
+        let err = BudgetError::Exhausted(ExhaustionReason {
+            exceeded_dimensions: vec![BudgetDimension::Time, BudgetDimension::Depth],
+            phase: SynthesisPhase::TheoremChecking,
+            global_limit_hit: true,
+            consumption: PhaseConsumption {
+                time_ns: 5000,
+                compute: 200,
+                depth: 50,
+            },
+            limit_value: 3000,
+        });
+        let json = serde_json::to_string(&err).unwrap();
+        let restored: BudgetError = serde_json::from_str(&json).unwrap();
+        assert_eq!(err, restored);
+    }
 }

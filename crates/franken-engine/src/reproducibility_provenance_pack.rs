@@ -1273,4 +1273,105 @@ mod tests {
         let back: PackIntegrityResult = serde_json::from_str(&json).unwrap();
         assert_eq!(result, back);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 2: edge cases, Display uniqueness, determinism
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn artifact_kind_display_uniqueness() {
+        let displays: std::collections::BTreeSet<String> = [
+            ArtifactKind::Source,
+            ArtifactKind::Binary,
+            ArtifactKind::Config,
+            ArtifactKind::TestFixture,
+            ArtifactKind::Evidence,
+            ArtifactKind::LockFile,
+            ArtifactKind::Documentation,
+            ArtifactKind::Legal,
+        ]
+        .iter()
+        .map(|k| k.to_string())
+        .collect();
+        assert_eq!(
+            displays.len(),
+            8,
+            "all ArtifactKind variants must have unique Display"
+        );
+    }
+
+    #[test]
+    fn license_risk_display_uniqueness() {
+        let displays: std::collections::BTreeSet<String> = [
+            LicenseRisk::None,
+            LicenseRisk::Low,
+            LicenseRisk::Medium,
+            LicenseRisk::High,
+        ]
+        .iter()
+        .map(|r| r.to_string())
+        .collect();
+        assert_eq!(
+            displays.len(),
+            4,
+            "all LicenseRisk variants must have unique Display"
+        );
+    }
+
+    #[test]
+    fn toolchain_fingerprint_serde_roundtrip() {
+        let fp = test_env().toolchain;
+        let json = serde_json::to_string(&fp).unwrap();
+        let back: ToolchainFingerprint = serde_json::from_str(&json).unwrap();
+        assert_eq!(fp, back);
+    }
+
+    #[test]
+    fn build_environment_serde_roundtrip() {
+        let env = test_env();
+        let json = serde_json::to_string(&env).unwrap();
+        let back: BuildEnvironment = serde_json::from_str(&json).unwrap();
+        assert_eq!(env, back);
+    }
+
+    #[test]
+    fn pack_artifact_count_and_dependency_count() {
+        let pack = PackBuilder::new("FRX-count".to_string(), test_epoch())
+            .environment(test_env())
+            .artifact(test_artifact("a.rs", ArtifactKind::Source))
+            .artifact(test_artifact("b.rs", ArtifactKind::Source))
+            .artifact(test_artifact("c.bin", ArtifactKind::Binary))
+            .dependency(test_dep("serde", "1.0"))
+            .build()
+            .unwrap();
+        assert_eq!(pack.artifact_count(), 3);
+        assert_eq!(pack.dependency_count(), 1);
+    }
+
+    #[test]
+    fn pack_without_legal_does_not_require_review() {
+        let pack = PackBuilder::new("FRX-nolegal".to_string(), test_epoch())
+            .environment(test_env())
+            .build()
+            .unwrap();
+        assert!(!pack.requires_legal_review());
+        assert!(pack.legal.is_none());
+    }
+
+    #[test]
+    fn pack_low_risk_findings_no_high_risk() {
+        let pack = PackBuilder::new("FRX-low".to_string(), test_epoch())
+            .environment(test_env())
+            .license_finding(LicenseFinding {
+                dependency: "mit-crate".to_string(),
+                license_spdx: "MIT".to_string(),
+                risk: LicenseRisk::Low,
+                notes: "permissive".to_string(),
+            })
+            .build()
+            .unwrap();
+        let legal = pack.legal.as_ref().unwrap();
+        assert!(!legal.has_high_risk);
+        assert_eq!(legal.max_risk, LicenseRisk::Low);
+    }
 }

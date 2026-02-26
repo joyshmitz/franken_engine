@@ -1699,4 +1699,131 @@ mod tests {
             assert_eq!(kind, back);
         }
     }
+
+    // -- Enrichment: Display uniqueness, std::error, edge cases --
+
+    #[test]
+    fn optimization_error_display_all_unique() {
+        let errors: Vec<OptimizationError> = vec![
+            OptimizationError::RuleLimitExceeded {
+                count: 1025,
+                max: 1024,
+            },
+            OptimizationError::BudgetExhausted {
+                kind: BudgetKind::TimeMs,
+            },
+            OptimizationError::UnsoundRewrite {
+                rule_id: "r1".to_string(),
+            },
+            OptimizationError::DuplicateRule("r1".to_string()),
+            OptimizationError::DuplicateCampaign("c1".to_string()),
+            OptimizationError::CampaignLimitExceeded { count: 65, max: 64 },
+        ];
+        let mut displays = BTreeSet::new();
+        for err in &errors {
+            let msg = format!("{err}");
+            assert!(!msg.is_empty());
+            displays.insert(msg);
+        }
+        assert_eq!(
+            displays.len(),
+            errors.len(),
+            "all error variants have unique Display"
+        );
+    }
+
+    #[test]
+    fn optimization_error_display_is_nonempty() {
+        let err = OptimizationError::UnsoundRewrite {
+            rule_id: "bad".to_string(),
+        };
+        assert!(!err.to_string().is_empty());
+    }
+
+    #[test]
+    fn rewrite_family_display_all_unique() {
+        let families = [
+            RewriteFamily::AlgebraicSimplification,
+            RewriteFamily::DeadCodeElimination,
+            RewriteFamily::CommonSubexpression,
+            RewriteFamily::PartialEvaluation,
+            RewriteFamily::MemoizationBoundary,
+            RewriteFamily::EffectHoisting,
+            RewriteFamily::HookSlotFusion,
+            RewriteFamily::SignalGraphOptimization,
+            RewriteFamily::Incrementalization,
+            RewriteFamily::DomUpdateBatching,
+            RewriteFamily::Custom,
+        ];
+        let mut displays = BTreeSet::new();
+        for f in families {
+            displays.insert(f.to_string());
+        }
+        assert_eq!(
+            displays.len(),
+            11,
+            "all RewriteFamily variants have unique Display"
+        );
+    }
+
+    #[test]
+    fn campaign_status_display_all_unique() {
+        let statuses = [
+            CampaignStatus::Pending,
+            CampaignStatus::Extracting,
+            CampaignStatus::Completed,
+            CampaignStatus::Failed,
+            CampaignStatus::RolledBack,
+        ];
+        let mut displays = BTreeSet::new();
+        for s in statuses {
+            displays.insert(s.to_string());
+        }
+        assert_eq!(displays.len(), 5);
+    }
+
+    #[test]
+    fn budget_kind_display_all_unique() {
+        let kinds = [
+            BudgetKind::TimeMs,
+            BudgetKind::EgraphNodes,
+            BudgetKind::MemoryBytes,
+            BudgetKind::RewriteApplications,
+            BudgetKind::SaturationIterations,
+        ];
+        let mut displays = BTreeSet::new();
+        for k in kinds {
+            displays.insert(k.to_string());
+        }
+        assert_eq!(displays.len(), 5);
+    }
+
+    #[test]
+    fn stack_get_nonexistent_campaign_returns_none() {
+        let s = BudgetedOptimizationStack::new();
+        assert!(s.get_campaign("nonexistent").is_none());
+    }
+
+    #[test]
+    fn budget_limit_consume_zero_is_ok() {
+        let mut bl = BudgetLimit::new(BudgetKind::TimeMs, 100);
+        assert!(bl.consume(0));
+        assert_eq!(bl.remaining(), 100);
+        assert_eq!(bl.utilization_millionths(), 0);
+    }
+
+    #[test]
+    fn stack_deterministic_json_output() {
+        let mut s1 = BudgetedOptimizationStack::new();
+        let mut s2 = BudgetedOptimizationStack::new();
+        for s in [&mut s1, &mut s2] {
+            let mut c = make_campaign("c1");
+            c.add_rule(make_rule("r1", RewriteFamily::AlgebraicSimplification))
+                .unwrap();
+            s.register_campaign(c).unwrap();
+        }
+        let json1 = serde_json::to_string(&s1).unwrap();
+        let json2 = serde_json::to_string(&s2).unwrap();
+        assert_eq!(json1, json2, "identical stacks must produce identical JSON");
+    }
 }

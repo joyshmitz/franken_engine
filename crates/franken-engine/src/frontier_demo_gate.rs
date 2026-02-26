@@ -797,6 +797,7 @@ pub fn check_release_readiness(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
 
     fn test_gate_id(suffix: &str) -> EngineObjectId {
         crate::engine_object_id::derive_id(
@@ -1582,5 +1583,135 @@ mod tests {
         let r1 = evaluate_gate(&input, 900);
         let r2 = evaluate_gate(&input, 900);
         assert_eq!(r1, r2);
+    }
+
+    // -- Enrichment: Display uniqueness, serde, boundary conditions --
+
+    #[test]
+    fn frontier_program_display_all_unique() {
+        let displays: BTreeSet<String> = FrontierProgram::all()
+            .iter()
+            .map(|p| p.to_string())
+            .collect();
+        assert_eq!(displays.len(), FrontierProgram::all().len());
+    }
+
+    #[test]
+    fn frontier_program_codes_all_unique() {
+        let codes: BTreeSet<String> = FrontierProgram::all()
+            .iter()
+            .map(|p| p.code().to_string())
+            .collect();
+        assert_eq!(codes.len(), FrontierProgram::all().len());
+    }
+
+    #[test]
+    fn artifact_category_serde_roundtrip_all() {
+        let categories = [
+            ArtifactCategory::TranslationValidation,
+            ArtifactCategory::PerformanceBenchmark,
+            ArtifactCategory::RollbackTest,
+            ArtifactCategory::CompromiseWindowReduction,
+            ArtifactCategory::PropertyProof,
+            ArtifactCategory::CounterexampleEvidence,
+            ArtifactCategory::ConvergenceMeasurement,
+            ArtifactCategory::ErrorRateEvidence,
+            ArtifactCategory::PartitionBehavior,
+            ArtifactCategory::ReplayFidelity,
+            ArtifactCategory::CampaignEvolution,
+            ArtifactCategory::DefenseImprovement,
+            ArtifactCategory::IndependentReproduction,
+        ];
+        for cat in &categories {
+            let json = serde_json::to_string(cat).unwrap();
+            let back: ArtifactCategory = serde_json::from_str(&json).unwrap();
+            assert_eq!(*cat, back);
+        }
+    }
+
+    #[test]
+    fn promotion_decision_serde_roundtrip() {
+        for decision in [
+            PromotionDecision::Promote,
+            PromotionDecision::Hold,
+            PromotionDecision::Reject,
+        ] {
+            let json = serde_json::to_string(&decision).unwrap();
+            let back: PromotionDecision = serde_json::from_str(&json).unwrap();
+            assert_eq!(decision, back);
+        }
+    }
+
+    #[test]
+    fn promotion_decision_display_all_unique() {
+        let displays: BTreeSet<String> = [
+            PromotionDecision::Promote,
+            PromotionDecision::Hold,
+            PromotionDecision::Reject,
+        ]
+        .iter()
+        .map(|d| d.to_string())
+        .collect();
+        assert_eq!(displays.len(), 3);
+    }
+
+    #[test]
+    fn verification_result_serde_roundtrip() {
+        let variants = [
+            VerificationResult::Passed {
+                details: "ok".into(),
+            },
+            VerificationResult::Failed {
+                reason: "bad".into(),
+            },
+            VerificationResult::Skipped {
+                reason: "n/a".into(),
+            },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: VerificationResult = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn gate_override_cannot_override_rejection() {
+        let gate = GateDefinition::for_program(
+            FrontierProgram::ReputationGraph,
+            test_gate_id("rej-override"),
+        );
+        let artifact = test_artifact(ArtifactCategory::CompromiseWindowReduction, "rej-art");
+        let verification = failing_verification(&artifact, "not reproducible");
+
+        let input = GateEvaluationInput {
+            gate,
+            artifacts: vec![artifact],
+            verifications: vec![verification],
+            override_justification: Some(OverrideJustification {
+                authorizer: "owner".to_string(),
+                justification: "emergency".to_string(),
+                signature: "sig".to_string(),
+            }),
+        };
+
+        let receipt = evaluate_gate(&input, 11000);
+        // Override should still promote even on rejection (per override semantics)
+        assert_eq!(receipt.decision, PromotionDecision::Promote);
+        assert!(receipt.override_applied);
+    }
+
+    #[test]
+    fn readiness_summary_serde_roundtrip() {
+        let mut registry = GateRegistry::new();
+        let gate = GateDefinition::for_program(
+            FrontierProgram::ReputationGraph,
+            test_gate_id("ready-serde"),
+        );
+        registry.register_gate(gate);
+        let summary = registry.readiness();
+        let json = serde_json::to_string(&summary).unwrap();
+        let back: ReadinessSummary = serde_json::from_str(&json).unwrap();
+        assert_eq!(summary, back);
     }
 }

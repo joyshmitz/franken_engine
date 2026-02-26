@@ -992,4 +992,171 @@ mod tests {
         }
         assert_eq!(displays.len(), 4);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 2: edge cases, Display uniqueness, determinism
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn allocation_domain_display_uniqueness_btreeset() {
+        let displays: std::collections::BTreeSet<String> = [
+            AllocationDomain::ExtensionHeap,
+            AllocationDomain::RuntimeHeap,
+            AllocationDomain::IrArena,
+            AllocationDomain::EvidenceArena,
+            AllocationDomain::ScratchBuffer,
+        ]
+        .iter()
+        .map(|d| d.to_string())
+        .collect();
+        assert_eq!(
+            displays.len(),
+            5,
+            "all 5 domain variants must have unique Display"
+        );
+    }
+
+    #[test]
+    fn lifetime_class_display_uniqueness_btreeset() {
+        let displays: std::collections::BTreeSet<String> = [
+            LifetimeClass::RequestScoped,
+            LifetimeClass::SessionScoped,
+            LifetimeClass::Global,
+            LifetimeClass::Arena,
+        ]
+        .iter()
+        .map(|l| l.to_string())
+        .collect();
+        assert_eq!(
+            displays.len(),
+            4,
+            "all 4 lifetime variants must have unique Display"
+        );
+    }
+
+    #[test]
+    fn budget_reserve_then_release_then_reserve_cycle() {
+        let mut budget = DomainBudget::new(100);
+        budget.try_reserve(100).unwrap();
+        assert_eq!(budget.remaining(), 0);
+        budget.release(50);
+        assert_eq!(budget.remaining(), 50);
+        budget.try_reserve(50).unwrap();
+        assert_eq!(budget.remaining(), 0);
+        assert!((budget.utilization() - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn registry_with_standard_domains_allocate_all() {
+        let mut reg = DomainRegistry::with_standard_domains(1024);
+        // Allocate 1 byte from each domain
+        for domain in [
+            AllocationDomain::ExtensionHeap,
+            AllocationDomain::RuntimeHeap,
+            AllocationDomain::IrArena,
+            AllocationDomain::EvidenceArena,
+            AllocationDomain::ScratchBuffer,
+        ] {
+            let seq = reg.allocate(domain, 1).unwrap();
+            assert!(seq > 0);
+        }
+        assert_eq!(reg.allocation_sequence(), 5);
+        assert_eq!(reg.total_used(), 5);
+    }
+
+    #[test]
+    fn reset_domain_preserves_allocation_sequence() {
+        let mut reg = DomainRegistry::new();
+        reg.register(AllocationDomain::IrArena, LifetimeClass::Arena, 1024)
+            .unwrap();
+        reg.allocate(AllocationDomain::IrArena, 500).unwrap();
+        let seq_before = reg.allocation_sequence();
+        reg.reset_domain(AllocationDomain::IrArena).unwrap();
+        assert_eq!(
+            reg.allocation_sequence(),
+            seq_before,
+            "reset must not change sequence"
+        );
+        assert_eq!(
+            reg.get(&AllocationDomain::IrArena)
+                .unwrap()
+                .budget
+                .used_bytes,
+            0
+        );
+    }
+
+    #[test]
+    fn domain_config_preserves_lifetime_class() {
+        let mut reg = DomainRegistry::new();
+        reg.register(
+            AllocationDomain::EvidenceArena,
+            LifetimeClass::SessionScoped,
+            256,
+        )
+        .unwrap();
+        let config = reg.get(&AllocationDomain::EvidenceArena).unwrap();
+        assert_eq!(config.lifetime, LifetimeClass::SessionScoped);
+        assert_eq!(config.domain, AllocationDomain::EvidenceArena);
+    }
+
+    #[test]
+    fn registry_serde_preserves_used_bytes_across_domains() {
+        let mut reg = DomainRegistry::with_standard_domains(4096);
+        reg.allocate(AllocationDomain::ExtensionHeap, 100).unwrap();
+        reg.allocate(AllocationDomain::IrArena, 200).unwrap();
+        reg.allocate(AllocationDomain::ScratchBuffer, 300).unwrap();
+
+        let json = serde_json::to_string(&reg).unwrap();
+        let restored: DomainRegistry = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(restored.total_used(), 600);
+        assert_eq!(
+            restored
+                .get(&AllocationDomain::ExtensionHeap)
+                .unwrap()
+                .budget
+                .used_bytes,
+            100
+        );
+        assert_eq!(
+            restored
+                .get(&AllocationDomain::IrArena)
+                .unwrap()
+                .budget
+                .used_bytes,
+            200
+        );
+        assert_eq!(
+            restored
+                .get(&AllocationDomain::ScratchBuffer)
+                .unwrap()
+                .budget
+                .used_bytes,
+            300
+        );
+    }
+
+    #[test]
+    fn budget_try_reserve_one_over_limit_exact_boundary() {
+        let mut b = DomainBudget::new(100);
+        b.try_reserve(99).unwrap();
+        // Exactly one byte remaining
+        assert_eq!(b.remaining(), 1);
+        b.try_reserve(1).unwrap();
+        assert_eq!(b.remaining(), 0);
+        // Now even 1 byte fails
+        let err = b.try_reserve(1).unwrap_err();
+        match err {
+            AllocDomainError::BudgetExceeded {
+                requested,
+                remaining,
+                ..
+            } => {
+                assert_eq!(requested, 1);
+                assert_eq!(remaining, 0);
+            }
+            other => panic!("expected BudgetExceeded, got {other:?}"),
+        }
+    }
 }

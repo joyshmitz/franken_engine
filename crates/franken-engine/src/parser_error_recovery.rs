@@ -1507,4 +1507,120 @@ mod tests {
             assert!(selected_loss <= *loss);
         }
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch — PearlTower 2026-02-25
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn recovery_mode_serde_roundtrip() {
+        for mode in [
+            RecoveryMode::Strict,
+            RecoveryMode::Diagnostic,
+            RecoveryMode::Execution,
+        ] {
+            let json = serde_json::to_string(&mode).unwrap();
+            let back: RecoveryMode = serde_json::from_str(&json).unwrap();
+            assert_eq!(mode, back);
+        }
+    }
+
+    #[test]
+    fn error_state_serde_roundtrip() {
+        for state in [
+            ErrorState::Recoverable,
+            ErrorState::Ambiguous,
+            ErrorState::Unrecoverable,
+        ] {
+            let json = serde_json::to_string(&state).unwrap();
+            let back: ErrorState = serde_json::from_str(&json).unwrap();
+            assert_eq!(state, back);
+        }
+    }
+
+    #[test]
+    fn recovery_action_display_uniqueness_btreeset() {
+        let actions = [
+            RecoveryAction::RecoverContinue,
+            RecoveryAction::PartialRecover,
+            RecoveryAction::FailStrict,
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for a in &actions {
+            displays.insert(a.to_string());
+        }
+        assert_eq!(
+            displays.len(),
+            3,
+            "all RecoveryAction variants produce distinct Display strings"
+        );
+    }
+
+    #[test]
+    fn recovery_outcome_display_uniqueness_btreeset() {
+        let outcomes = [
+            RecoveryOutcome::CleanParse,
+            RecoveryOutcome::Recovered,
+            RecoveryOutcome::PartiallyRecovered,
+            RecoveryOutcome::StrictFailed,
+            RecoveryOutcome::RecoveryFailed,
+            RecoveryOutcome::BudgetExhausted,
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for o in &outcomes {
+            displays.insert(o.to_string());
+        }
+        assert_eq!(
+            displays.len(),
+            6,
+            "all RecoveryOutcome variants produce distinct Display strings"
+        );
+    }
+
+    #[test]
+    fn state_probabilities_default_is_valid() {
+        let sp = StateProbabilities::default();
+        assert!(sp.is_valid(), "default probabilities must sum to 1_000_000");
+        assert_eq!(sp.recoverable, DEFAULT_PRIOR_RECOVERABLE_MILLIONTHS);
+    }
+
+    #[test]
+    fn state_probabilities_most_likely_for_each_extreme() {
+        let rec = StateProbabilities {
+            recoverable: 800_000,
+            ambiguous: 100_000,
+            unrecoverable: 100_000,
+        };
+        assert_eq!(rec.most_likely(), ErrorState::Recoverable);
+
+        let amb = StateProbabilities {
+            recoverable: 100_000,
+            ambiguous: 800_000,
+            unrecoverable: 100_000,
+        };
+        assert_eq!(amb.most_likely(), ErrorState::Ambiguous);
+
+        let unrec = StateProbabilities {
+            recoverable: 100_000,
+            ambiguous: 100_000,
+            unrecoverable: 800_000,
+        };
+        assert_eq!(unrec.most_likely(), ErrorState::Unrecoverable);
+    }
+
+    #[test]
+    fn syntax_error_serde_roundtrip() {
+        let err = simple_error();
+        let json = serde_json::to_string(&err).unwrap();
+        let back: SyntaxError = serde_json::from_str(&json).unwrap();
+        assert_eq!(err, back);
+    }
+
+    #[test]
+    fn recovery_config_serde_roundtrip() {
+        let config = RecoveryConfig::default();
+        let json = serde_json::to_string(&config).unwrap();
+        let back: RecoveryConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config, back);
+    }
 }

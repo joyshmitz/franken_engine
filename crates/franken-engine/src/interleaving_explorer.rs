@@ -1515,4 +1515,114 @@ mod tests {
         let cat = RaceSurfaceCatalog::default();
         assert!(cat.surfaces.is_empty());
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 2: Display uniqueness, boundary, determinism
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn operation_type_display_uniqueness() {
+        let variants = [
+            OperationType::CheckpointWrite,
+            OperationType::RevocationPropagation,
+            OperationType::PolicyUpdate,
+            OperationType::EvidenceEmission,
+            OperationType::RegionClose,
+            OperationType::ObligationCommit,
+            OperationType::TaskCompletion,
+            OperationType::FaultInjection,
+            OperationType::CancelInjection,
+            OperationType::TimeAdvance,
+        ];
+        let displays: std::collections::BTreeSet<String> =
+            variants.iter().map(|o| o.to_string()).collect();
+        assert_eq!(
+            displays.len(),
+            10,
+            "all OperationType variants must have unique Display"
+        );
+    }
+
+    #[test]
+    fn race_severity_display_uniqueness() {
+        let displays: std::collections::BTreeSet<String> = [
+            RaceSeverity::Low,
+            RaceSeverity::Medium,
+            RaceSeverity::High,
+            RaceSeverity::Critical,
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert_eq!(
+            displays.len(),
+            4,
+            "all RaceSeverity variants must have unique Display"
+        );
+    }
+
+    #[test]
+    fn invariant_checker_all_tasks_terminal_serde_roundtrip() {
+        let checker = InvariantChecker::AllTasksTerminal;
+        let json = serde_json::to_string(&checker).unwrap();
+        let restored: InvariantChecker = serde_json::from_str(&json).unwrap();
+        assert_eq!(checker, restored);
+    }
+
+    #[test]
+    fn exploration_report_no_failures_summary() {
+        let scenario = Scenario {
+            task_count: 2,
+            actions: vec![
+                ScenarioAction::RunTask { task_index: 0 },
+                ScenarioAction::CompleteTask { task_index: 0 },
+                ScenarioAction::RunTask { task_index: 1 },
+                ScenarioAction::CompleteTask { task_index: 1 },
+            ],
+            seed: 99,
+        };
+        let explorer = InterleavingExplorer::new(RaceSurfaceCatalog::default_catalog(), vec![]);
+        let report = explorer.explore(
+            &scenario,
+            &ExplorationStrategy::Exhaustive {
+                max_permutations: 5,
+            },
+            "no-failures-test",
+        );
+        assert!(report.failures.is_empty());
+        assert!(report.regression_transcripts.is_empty());
+    }
+
+    #[test]
+    fn default_catalog_has_known_surfaces() {
+        let catalog = RaceSurfaceCatalog::default_catalog();
+        assert!(!catalog.surfaces.is_empty());
+        // All race surfaces have non-empty invariants
+        for (_id, surface) in &catalog.surfaces {
+            assert!(!surface.invariant.is_empty());
+            assert!(!surface.race_id.is_empty());
+        }
+    }
+
+    #[test]
+    fn exploration_failure_with_minimized_transcript() {
+        let failure = ExplorationFailure {
+            transcript: ScheduleTranscript::new(1),
+            violations: vec!["v1".to_string()],
+            minimized_transcript: Some(ScheduleTranscript::new(1)),
+            related_race_ids: vec!["r1".to_string()],
+        };
+        let json = serde_json::to_string(&failure).unwrap();
+        let restored: ExplorationFailure = serde_json::from_str(&json).unwrap();
+        assert_eq!(failure, restored);
+        assert!(restored.minimized_transcript.is_some());
+    }
+
+    #[test]
+    fn targeted_race_strategy_with_empty_ids() {
+        let strategy = ExplorationStrategy::TargetedRace { race_ids: vec![] };
+        let json = serde_json::to_string(&strategy).unwrap();
+        let restored: ExplorationStrategy = serde_json::from_str(&json).unwrap();
+        assert_eq!(strategy, restored);
+    }
 }

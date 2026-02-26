@@ -1685,4 +1685,117 @@ mod tests {
             assert_eq!(kind, restored);
         }
     }
+
+    // ── Enrichment: Display uniqueness ──────────────────────────
+
+    #[test]
+    fn module_syntax_display_unique() {
+        let displays: BTreeSet<String> = [ModuleSyntax::EsModule, ModuleSyntax::CommonJs]
+            .iter()
+            .map(|s| s.as_str().to_string())
+            .collect();
+        assert_eq!(displays.len(), 2);
+    }
+
+    #[test]
+    fn import_style_display_unique() {
+        let displays: BTreeSet<String> = [ImportStyle::Import, ImportStyle::Require]
+            .iter()
+            .map(|s| s.as_str().to_string())
+            .collect();
+        assert_eq!(displays.len(), 2);
+    }
+
+    #[test]
+    fn resolution_error_code_stable_codes_unique_in_set() {
+        let codes = [
+            ResolutionErrorCode::EmptySpecifier,
+            ResolutionErrorCode::InvalidReferrer,
+            ResolutionErrorCode::UnsupportedSpecifier,
+            ResolutionErrorCode::ModuleNotFound,
+            ResolutionErrorCode::PolicyDenied,
+        ];
+        let stable: BTreeSet<String> = codes.iter().map(|c| c.stable_code().to_string()).collect();
+        assert_eq!(stable.len(), 5);
+    }
+
+    // ── Enrichment: path normalization edge cases ───────────────
+
+    #[test]
+    fn normalize_deeply_nested_dotdot() {
+        assert_eq!(normalize_absolute_path("/a/b/c/d/../../e"), "/a/b/e");
+    }
+
+    #[test]
+    fn normalize_dotdot_at_root_stays_at_root() {
+        assert_eq!(normalize_absolute_path("/../../../a"), "/a");
+    }
+
+    // ── Enrichment: default resolver ────────────────────────────
+
+    #[test]
+    fn default_resolver_is_empty() {
+        let resolver = DeterministicModuleResolver::default();
+        // No modules registered, so any resolve should fail
+        let request = ModuleRequest::new("anything", ImportStyle::Import);
+        let err = resolver
+            .resolve(&request, &context(), &AllowAllPolicy)
+            .expect_err("empty resolver cannot resolve");
+        assert_eq!(err.code, ResolutionErrorCode::ModuleNotFound);
+    }
+
+    // ── Enrichment: resolve_chain with policy denial ────────────
+
+    #[test]
+    fn resolve_chain_fails_on_policy_denial_of_entry() {
+        let mut resolver = DeterministicModuleResolver::new("/app");
+        resolver
+            .register_workspace_module(
+                "/app/restricted.js",
+                ModuleDefinition::new(ModuleSyntax::EsModule, "export default 1;")
+                    .require_capability(RuntimeCapability::FsWrite),
+            )
+            .unwrap();
+
+        let policy = CapabilityPolicyHook::new(BTreeSet::new()); // no caps granted
+        let request = ModuleRequest::new("/app/restricted.js", ImportStyle::Import);
+        let err = resolver
+            .resolve_chain(&request, &context(), &policy)
+            .expect_err("should deny due to missing cap");
+        assert_eq!(err.code, ResolutionErrorCode::PolicyDenied);
+    }
+
+    // ── Enrichment: RegistryErrorCode serde ─────────────────────
+
+    #[test]
+    fn registry_error_code_serde_roundtrip() {
+        let code = RegistryErrorCode::EmptyKey;
+        let json = serde_json::to_string(&code).expect("serialize");
+        let back: RegistryErrorCode = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(code, back);
+    }
+
+    // ── Enrichment: capability policy with multiple caps ────────
+
+    #[test]
+    fn capability_policy_grants_multiple_caps() {
+        let mut resolver = DeterministicModuleResolver::new("/app");
+        resolver
+            .register_workspace_module(
+                "/app/multi.js",
+                ModuleDefinition::new(ModuleSyntax::EsModule, "export default 1;")
+                    .require_capability(RuntimeCapability::FsRead)
+                    .require_capability(RuntimeCapability::FsWrite),
+            )
+            .unwrap();
+
+        let mut granted = BTreeSet::new();
+        granted.insert(RuntimeCapability::FsRead);
+        granted.insert(RuntimeCapability::FsWrite);
+        let policy = CapabilityPolicyHook::new(granted);
+
+        let request = ModuleRequest::new("/app/multi.js", ImportStyle::Import);
+        let outcome = resolver.resolve(&request, &context(), &policy).unwrap();
+        assert_eq!(outcome.event.outcome, "allow");
+    }
 }

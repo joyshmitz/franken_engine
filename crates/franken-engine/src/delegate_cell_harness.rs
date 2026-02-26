@@ -683,6 +683,7 @@ impl std::error::Error for DelegateCellError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
 
     // -- Test helpers --
 
@@ -1373,5 +1374,92 @@ mod tests {
             harness.verify_replay(&r1, b"output-b", 50_000),
             ReplayVerification::Mismatch { .. }
         ));
+    }
+
+    // -- Enrichment: Display uniqueness, serde, boundary, defaults --
+
+    #[test]
+    fn cell_lifecycle_display_all_unique() {
+        let states = [
+            CellLifecycle::Created,
+            CellLifecycle::Starting,
+            CellLifecycle::Running,
+            CellLifecycle::Suspended,
+            CellLifecycle::Stopping,
+            CellLifecycle::Terminated,
+            CellLifecycle::Quarantined,
+        ];
+        let displays: BTreeSet<String> = states.iter().map(|s| s.to_string()).collect();
+        assert_eq!(displays.len(), states.len());
+    }
+
+    #[test]
+    fn harness_event_type_display_all_unique() {
+        let types = [
+            HarnessEventType::LifecycleTransition,
+            HarnessEventType::InvocationCompleted,
+            HarnessEventType::CapabilityCheck,
+            HarnessEventType::ResourceViolation,
+            HarnessEventType::ReplayVerification,
+        ];
+        let displays: BTreeSet<String> = types.iter().map(|t| t.to_string()).collect();
+        assert_eq!(displays.len(), types.len());
+    }
+
+    #[test]
+    fn delegate_cell_error_std_error_trait() {
+        let err: Box<dyn std::error::Error> = Box::new(DelegateCellError::NotRunning {
+            state: CellLifecycle::Suspended,
+        });
+        assert!(!err.to_string().is_empty());
+    }
+
+    #[test]
+    fn resource_usage_default_is_zero() {
+        let usage = ResourceUsage::default();
+        assert_eq!(usage.heap_bytes_used, 0);
+        assert_eq!(usage.execution_ns, 0);
+        assert_eq!(usage.hostcall_count, 0);
+        assert_eq!(usage.network_egress_bytes, 0);
+        assert_eq!(usage.filesystem_read_bytes, 0);
+    }
+
+    #[test]
+    fn resource_usage_serde_roundtrip() {
+        let usage = ok_usage();
+        let json = serde_json::to_string(&usage).unwrap();
+        let back: ResourceUsage = serde_json::from_str(&json).unwrap();
+        assert_eq!(usage, back);
+    }
+
+    #[test]
+    fn sandbox_configuration_serde_roundtrip() {
+        let sandbox = test_sandbox();
+        let json = serde_json::to_string(&sandbox).unwrap();
+        let back: SandboxConfiguration = serde_json::from_str(&json).unwrap();
+        assert_eq!(sandbox, back);
+    }
+
+    #[test]
+    fn lifecycle_valid_transitions_non_empty_for_non_terminal() {
+        for state in [
+            CellLifecycle::Created,
+            CellLifecycle::Starting,
+            CellLifecycle::Running,
+            CellLifecycle::Suspended,
+            CellLifecycle::Stopping,
+        ] {
+            assert!(
+                !state.valid_transitions().is_empty(),
+                "{state} should have valid transitions"
+            );
+        }
+    }
+
+    #[test]
+    fn harness_events_of_type_empty_for_unmatched() {
+        let harness = test_harness();
+        let events = harness.events_of_type(&HarnessEventType::ResourceViolation);
+        assert!(events.is_empty());
     }
 }

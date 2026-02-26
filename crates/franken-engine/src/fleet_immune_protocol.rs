@@ -1699,4 +1699,82 @@ mod tests {
             "all 7 variants produce distinct messages"
         );
     }
+
+    // -- Enrichment: Display uniqueness, ordering, determinism, edge cases --
+
+    #[test]
+    fn containment_action_display_all_unique() {
+        let mut displays = std::collections::BTreeSet::new();
+        for action in [
+            ContainmentAction::Allow,
+            ContainmentAction::Sandbox,
+            ContainmentAction::Suspend,
+            ContainmentAction::Terminate,
+            ContainmentAction::Quarantine,
+        ] {
+            displays.insert(action.to_string());
+        }
+        assert_eq!(
+            displays.len(),
+            5,
+            "all ContainmentAction variants have unique Display"
+        );
+    }
+
+    #[test]
+    fn containment_action_ordering_monotonic() {
+        assert!(ContainmentAction::Allow < ContainmentAction::Sandbox);
+        assert!(ContainmentAction::Sandbox < ContainmentAction::Suspend);
+        assert!(ContainmentAction::Suspend < ContainmentAction::Terminate);
+        assert!(ContainmentAction::Terminate < ContainmentAction::Quarantine);
+    }
+
+    #[test]
+    fn node_id_serde_roundtrip() {
+        let node = NodeId::new("test-node-42");
+        let json = serde_json::to_string(&node).unwrap();
+        let back: NodeId = serde_json::from_str(&json).unwrap();
+        assert_eq!(node, back);
+    }
+
+    #[test]
+    fn sequence_range_serde_roundtrip() {
+        let range = SequenceRange::new(5, 15);
+        let json = serde_json::to_string(&range).unwrap();
+        let back: SequenceRange = serde_json::from_str(&json).unwrap();
+        assert_eq!(range, back);
+    }
+
+    #[test]
+    fn health_tracker_empty_returns_none() {
+        let tracker = NodeHealthTracker::new();
+        assert!(
+            tracker
+                .last_heartbeat_ns(&NodeId::new("nonexistent"))
+                .is_none()
+        );
+        assert_eq!(tracker.known_node_count(), 0);
+    }
+
+    #[test]
+    fn state_resolve_intents_no_intents_returns_none() {
+        let state = FleetProtocolState::new(NodeId::new("local"), GossipConfig::default());
+        assert!(state.resolve_intents("ext-unknown").is_none());
+    }
+
+    #[test]
+    fn accumulator_new_is_empty() {
+        let acc = EvidenceAccumulator::new();
+        assert!(acc.extensions().is_empty());
+        assert_eq!(acc.posterior_delta("anything"), 0);
+        assert_eq!(acc.evidence_count("anything"), 0);
+    }
+
+    #[test]
+    fn heartbeat_liveness_serde_roundtrip() {
+        let hb = test_heartbeat("node-1", 1, 5_000_000_000);
+        let json = serde_json::to_string(&hb).unwrap();
+        let back: HeartbeatLiveness = serde_json::from_str(&json).unwrap();
+        assert_eq!(hb, back);
+    }
 }

@@ -1381,4 +1381,202 @@ mod tests {
 
         assert_eq!(proof.chain_summary.len(), 3);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: Display uniqueness for ChainError via BTreeSet
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn chain_error_display_all_variants_unique() {
+        let mut amplified = BTreeSet::new();
+        amplified.insert(RuntimeCapability::FsWrite);
+        let variants: Vec<ChainError> = vec![
+            ChainError::EmptyChain,
+            ChainError::DepthExceeded {
+                max_depth: 5,
+                actual_depth: 10,
+            },
+            ChainError::UnauthorizedRoot {
+                root_issuer: make_sk(1).verification_key(),
+            },
+            ChainError::MissingCheckpointBinding { index: 0 },
+            ChainError::MissingRevocationFreshnessBinding { index: 1 },
+            ChainError::TokenVerificationFailed {
+                index: 2,
+                error: TokenError::EmptyCapabilities,
+            },
+            ChainError::AttenuationViolation {
+                index: 1,
+                parent_capability_count: 1,
+                child_capability_count: 2,
+                amplified_capabilities: amplified,
+            },
+            ChainError::ZoneMismatch {
+                index: 0,
+                expected_zone: "a".to_string(),
+                actual_zone: "b".to_string(),
+            },
+            ChainError::RevokedLink {
+                index: 0,
+                token_id: EngineObjectId([0xBB; 32]),
+            },
+            ChainError::MissingCapabilityAtLeaf {
+                required: RuntimeCapability::NetworkEgress,
+                leaf_capabilities: BTreeSet::new(),
+            },
+        ];
+        let mut displays = BTreeSet::new();
+        for v in &variants {
+            displays.insert(v.to_string());
+        }
+        assert_eq!(
+            displays.len(),
+            variants.len(),
+            "all ChainError variants produce distinct Display"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: DelegationChain serde empty
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn delegation_chain_empty_serde_roundtrip() {
+        let empty = DelegationChain::new(Vec::new());
+        let json = serde_json::to_string(&empty).expect("serialize");
+        let restored: DelegationChain = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(empty, restored);
+        assert!(restored.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: chain_hash differs for different capabilities
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn chain_hash_differs_for_different_capabilities() {
+        let root_sk = make_sk(1);
+        let leaf_a = make_principal(99);
+        let ctx = make_ctx(&root_sk);
+
+        let link_vm = make_bound_token(&root_sk, leaf_a.clone(), &[RuntimeCapability::VmDispatch]);
+        let link_both = make_bound_token(
+            &root_sk,
+            leaf_a.clone(),
+            &[
+                RuntimeCapability::VmDispatch,
+                RuntimeCapability::NetworkEgress,
+            ],
+        );
+
+        let proof_vm = verify_chain(
+            &DelegationChain::new(vec![link_vm]),
+            RuntimeCapability::VmDispatch,
+            &leaf_a,
+            &ctx,
+            &NoRevocationOracle,
+        )
+        .unwrap();
+        let proof_both = verify_chain(
+            &DelegationChain::new(vec![link_both]),
+            RuntimeCapability::VmDispatch,
+            &leaf_a,
+            &ctx,
+            &NoRevocationOracle,
+        )
+        .unwrap();
+
+        assert_ne!(proof_vm.chain_hash, proof_both.chain_hash);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: SetRevocationOracle — non-revoked tokens pass
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn set_revocation_oracle_non_revoked_passes() {
+        let mut revoked = BTreeSet::new();
+        revoked.insert(EngineObjectId([0xAA; 32]));
+        let oracle = SetRevocationOracle { revoked };
+        assert!(!oracle.is_revoked(&EngineObjectId([0xBB; 32])));
+        assert!(oracle.is_revoked(&EngineObjectId([0xAA; 32])));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: DelegationVerificationContext serde with multiple roots
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn delegation_context_serde_with_multiple_roots() {
+        let mut roots = BTreeSet::new();
+        roots.insert(make_sk(1).verification_key());
+        roots.insert(make_sk(2).verification_key());
+        roots.insert(make_sk(3).verification_key());
+        let ctx = DelegationVerificationContext {
+            current_tick: 1000,
+            verifier_checkpoint_seq: 50,
+            verifier_revocation_seq: 25,
+            max_chain_depth: 4,
+            authorized_roots: roots,
+            required_zone: None,
+        };
+        let json = serde_json::to_string(&ctx).expect("serialize");
+        let restored: DelegationVerificationContext =
+            serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(ctx, restored);
+        assert_eq!(restored.authorized_roots.len(), 3);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: proof root_issuer matches first link
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn proof_root_issuer_matches_root_link() {
+        let root_sk = make_sk(1);
+        let leaf_delegate = make_principal(99);
+        let link = make_bound_token(
+            &root_sk,
+            leaf_delegate.clone(),
+            &[RuntimeCapability::VmDispatch],
+        );
+        let chain = DelegationChain::new(vec![link]);
+        let ctx = make_ctx(&root_sk);
+
+        let proof = verify_chain(
+            &chain,
+            RuntimeCapability::VmDispatch,
+            &leaf_delegate,
+            &ctx,
+            &NoRevocationOracle,
+        )
+        .unwrap();
+
+        assert_eq!(
+            proof.root_issuer,
+            principal_id_from_verification_key(&root_sk.verification_key())
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: DelegationLinkSummary Display-like fields
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn delegation_link_summary_fields_are_correct() {
+        let summary = DelegationLinkSummary {
+            index: 2,
+            token_id: EngineObjectId([0x42; 32]),
+            issuer: make_principal(10),
+            delegate: make_principal(20),
+            capability_count: 5,
+            zone: "zone-prod".to_string(),
+            not_before_tick: 500,
+            expiry_tick: 5000,
+        };
+        assert_eq!(summary.index, 2);
+        assert_eq!(summary.capability_count, 5);
+        assert_eq!(summary.zone, "zone-prod");
+        assert!(summary.not_before_tick < summary.expiry_tick);
+    }
 }

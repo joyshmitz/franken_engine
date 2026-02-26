@@ -509,6 +509,16 @@ impl ChannelState {
         self.buffer_used = self.buffer_used.saturating_sub(1);
     }
 
+    /// Reset all counters for a new epoch.
+    pub fn epoch_reset(&mut self, new_epoch: SecurityEpoch) {
+        self.epoch = new_epoch;
+        self.items_emitted = 0;
+        self.items_dropped = 0;
+        self.items_degraded = 0;
+        self.buffer_used = 0;
+        self.violations.clear();
+    }
+
     /// Check if the channel is in a healthy state.
     pub fn is_healthy(&self, spec: &ChannelSpec) -> bool {
         self.items_dropped <= spec.failure_budget.max_drops_per_epoch
@@ -1334,5 +1344,109 @@ mod tests {
         assert_eq!(budget.max_drops_per_epoch, 0);
         assert_eq!(budget.max_degraded_per_epoch, 10);
         assert!(budget.fail_closed);
+    }
+
+    // -- Enrichment: Display uniqueness via BTreeSet --
+
+    #[test]
+    fn payload_family_display_all_unique() {
+        let displays: std::collections::BTreeSet<String> =
+            PayloadFamily::ALL.iter().map(|f| f.to_string()).collect();
+        assert_eq!(displays.len(), PayloadFamily::ALL.len());
+    }
+
+    #[test]
+    fn channel_path_display_all_unique() {
+        let displays: std::collections::BTreeSet<String> =
+            ChannelPath::ALL.iter().map(|p| p.to_string()).collect();
+        assert_eq!(displays.len(), ChannelPath::ALL.len());
+    }
+
+    #[test]
+    fn distortion_metric_display_all_unique() {
+        let metrics = [
+            DistortionMetric::Hamming,
+            DistortionMetric::SquaredError,
+            DistortionMetric::LogLoss,
+            DistortionMetric::EditDistance,
+            DistortionMetric::BinaryFidelity,
+        ];
+        let displays: std::collections::BTreeSet<String> =
+            metrics.iter().map(|m| m.to_string()).collect();
+        assert_eq!(displays.len(), metrics.len());
+    }
+
+    #[test]
+    fn violation_kind_serde_roundtrip() {
+        let kinds = [
+            ViolationKind::UncappedTelemetry,
+            ViolationKind::UnverifiableLoss,
+            ViolationKind::DropBudgetExceeded,
+            ViolationKind::DegradationBudgetExceeded,
+            ViolationKind::BackpressureOverflow,
+        ];
+        for kind in &kinds {
+            let json = serde_json::to_string(kind).unwrap();
+            let back: ViolationKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(*kind, back);
+        }
+    }
+
+    #[test]
+    fn violation_kind_display_all_unique() {
+        let kinds = [
+            ViolationKind::UncappedTelemetry,
+            ViolationKind::UnverifiableLoss,
+            ViolationKind::DropBudgetExceeded,
+            ViolationKind::DegradationBudgetExceeded,
+            ViolationKind::BackpressureOverflow,
+        ];
+        let displays: std::collections::BTreeSet<String> =
+            kinds.iter().map(|k| k.to_string()).collect();
+        assert_eq!(displays.len(), kinds.len());
+    }
+
+    #[test]
+    fn rate_distortion_envelope_serde_roundtrip() {
+        let env = RateDistortionEnvelope {
+            family: PayloadFamily::Security,
+            metric: DistortionMetric::BinaryFidelity,
+            frontier: vec![RateDistortionPoint {
+                distortion_millionths: 0,
+                rate_millibits: 500_000,
+            }],
+            max_distortion_millionths: 0,
+            min_rate_millibits: 500_000,
+        };
+        let json = serde_json::to_string(&env).unwrap();
+        let back: RateDistortionEnvelope = serde_json::from_str(&json).unwrap();
+        assert_eq!(env, back);
+    }
+
+    #[test]
+    fn channel_state_epoch_reset_clears_counters() {
+        let spec = &canonical_channel_specs()[0];
+        let mut state = ChannelState::new(spec.channel_id.clone(), epoch(1));
+        state.emit(spec, 0).unwrap();
+        assert_eq!(state.items_emitted, 1);
+        state.epoch_reset(epoch(2));
+        assert_eq!(state.items_emitted, 0);
+        assert_eq!(state.buffer_used, 0);
+        assert_eq!(state.epoch, epoch(2));
+    }
+
+    #[test]
+    fn report_with_different_states_produces_different_hashes() {
+        let specs = canonical_channel_specs();
+        let mut states1 = BTreeMap::new();
+        let mut states2 = BTreeMap::new();
+        let mut s1 = ChannelState::new(specs[0].channel_id.clone(), epoch(1));
+        s1.items_emitted = 10;
+        states1.insert(specs[0].channel_id.clone(), s1);
+        let s2 = ChannelState::new(specs[0].channel_id.clone(), epoch(1));
+        states2.insert(specs[0].channel_id.clone(), s2);
+        let r1 = generate_report(&specs, &states1, epoch(1));
+        let r2 = generate_report(&specs, &states2, epoch(1));
+        assert_ne!(r1.content_hash, r2.content_hash);
     }
 }

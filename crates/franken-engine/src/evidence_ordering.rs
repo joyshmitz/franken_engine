@@ -1047,4 +1047,164 @@ mod tests {
         assert!(display.contains("500"));
         assert!(display.contains("256"));
     }
+
+    // -- Enrichment: additional coverage --
+
+    #[test]
+    fn size_bounds_custom_values_serde_roundtrip() {
+        let bounds = SizeBounds {
+            max_candidates: 10,
+            max_witnesses: 20,
+            max_constraints: 5,
+        };
+        let json = serde_json::to_string(&bounds).unwrap();
+        let restored: SizeBounds = serde_json::from_str(&json).unwrap();
+        assert_eq!(bounds, restored);
+    }
+
+    #[test]
+    fn dedup_witnesses_empty_vec() {
+        let mut witnesses: Vec<Witness> = vec![];
+        dedup_witnesses(&mut witnesses);
+        assert!(witnesses.is_empty());
+    }
+
+    #[test]
+    fn sort_candidates_empty_slice() {
+        let mut candidates: Vec<CandidateAction> = vec![];
+        sort_candidates(&mut candidates);
+        assert!(candidates.is_empty());
+    }
+
+    #[test]
+    fn sort_witnesses_empty_slice() {
+        let mut witnesses: Vec<Witness> = vec![];
+        sort_witnesses(&mut witnesses);
+        assert!(witnesses.is_empty());
+    }
+
+    #[test]
+    fn sort_constraints_empty_slice() {
+        let mut constraints: Vec<Constraint> = vec![];
+        sort_constraints(&mut constraints);
+        assert!(constraints.is_empty());
+    }
+
+    #[test]
+    fn validate_entry_at_exact_bound_passes() {
+        let candidates: Vec<CandidateAction> = (0..3)
+            .map(|i| CandidateAction::new(format!("act-{i:03}"), i * 1000))
+            .collect();
+        let mut entry = make_entry_with(candidates, vec![], vec![]);
+        normalize_entry(&mut entry, &SizeBounds::default());
+        let bounds = SizeBounds {
+            max_candidates: 3,
+            max_witnesses: 256,
+            max_constraints: 32,
+        };
+        assert!(validate_entry_ordering(&entry, &bounds).is_ok());
+    }
+
+    #[test]
+    fn ordering_violation_all_variants_serde_roundtrip() {
+        let variants = vec![
+            OrderingViolation::CandidatesNotSorted {
+                first_unsorted_index: 0,
+            },
+            OrderingViolation::WitnessesNotSorted {
+                first_unsorted_index: 1,
+            },
+            OrderingViolation::ConstraintsNotSorted {
+                first_unsorted_index: 2,
+            },
+            OrderingViolation::DuplicateWitnessId {
+                witness_id: "w-dup".to_string(),
+            },
+            OrderingViolation::CandidatesExceedBound {
+                count: 100,
+                max: 64,
+            },
+            OrderingViolation::WitnessesExceedBound {
+                count: 300,
+                max: 256,
+            },
+            OrderingViolation::ConstraintsExceedBound { count: 50, max: 32 },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let restored: OrderingViolation = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, restored);
+        }
+    }
+
+    #[test]
+    fn normalize_no_truncation_when_within_bounds() {
+        let candidates: Vec<CandidateAction> = (0..5)
+            .map(|i| CandidateAction::new(format!("act-{i:03}"), i * 1000))
+            .collect();
+        let mut entry = make_entry_with(candidates, vec![], vec![]);
+        let result = normalize_entry(&mut entry, &SizeBounds::default());
+        assert!(result.truncations.is_empty());
+        assert_eq!(result.duplicates_removed, 0);
+    }
+
+    #[test]
+    fn truncation_marker_display_contains_policy() {
+        let marker = TruncationMarker {
+            list_name: "constraints".to_string(),
+            original_count: 40,
+            retained_count: 32,
+            policy: "top-K by constraint_id".to_string(),
+        };
+        let display = marker.to_string();
+        assert!(display.contains("top-K by constraint_id"));
+    }
+
+    #[test]
+    fn normalize_then_validate_stress_all_lists_oversized() {
+        let candidates: Vec<CandidateAction> = (0..200)
+            .rev()
+            .map(|i| CandidateAction::new(format!("act-{i:04}"), i * 100))
+            .collect();
+        let witnesses: Vec<Witness> = (0..300)
+            .rev()
+            .map(|i| Witness {
+                witness_id: format!("w-{i:04}"),
+                witness_type: "t".to_string(),
+                value: format!("{i}"),
+            })
+            .collect();
+        let constraints: Vec<Constraint> = (0..50)
+            .rev()
+            .map(|i| Constraint {
+                constraint_id: format!("c-{i:03}"),
+                description: "d".to_string(),
+                active: true,
+            })
+            .collect();
+        let mut entry = make_entry_with(candidates, witnesses, constraints);
+        let bounds = SizeBounds {
+            max_candidates: 64,
+            max_witnesses: 256,
+            max_constraints: 32,
+        };
+        normalize_entry(&mut entry, &bounds);
+        assert!(validate_entry_ordering(&entry, &bounds).is_ok());
+        assert!(entry.candidates.len() <= 64);
+        assert!(entry.witnesses.len() <= 256);
+        assert!(entry.constraints.len() <= 32);
+    }
+
+    #[test]
+    fn sort_candidates_negative_loss_values() {
+        let mut candidates = vec![
+            CandidateAction::new("action", 100),
+            CandidateAction::new("action", -500),
+            CandidateAction::new("action", 0),
+        ];
+        sort_candidates(&mut candidates);
+        assert_eq!(candidates[0].expected_loss_millionths, -500);
+        assert_eq!(candidates[1].expected_loss_millionths, 0);
+        assert_eq!(candidates[2].expected_loss_millionths, 100);
+    }
 }

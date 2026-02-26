@@ -1521,4 +1521,125 @@ mod tests {
         let t2 = make_override(OperationType::ExtensionActivation, 2000);
         assert_eq!(t1.preimage_bytes(), t2.preimage_bytes());
     }
+
+    // ---------------------------------------------------------------
+    // Enrichment: Display uniqueness via BTreeSet
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn freshness_state_display_uniqueness() {
+        let displays: BTreeSet<String> = [
+            FreshnessState::Fresh,
+            FreshnessState::Stale,
+            FreshnessState::Degraded,
+            FreshnessState::Recovering,
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert_eq!(displays.len(), 4);
+    }
+
+    #[test]
+    fn operation_type_display_uniqueness() {
+        let displays: BTreeSet<String> = [
+            OperationType::SafeOperation,
+            OperationType::TokenAcceptance,
+            OperationType::ExtensionActivation,
+            OperationType::HighRiskOperation,
+            OperationType::HealthCheck,
+        ]
+        .iter()
+        .map(|o| o.to_string())
+        .collect();
+        assert_eq!(displays.len(), 5);
+    }
+
+    // ---------------------------------------------------------------
+    // Enrichment: std::error::Error impls
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn degraded_denial_implements_std_error() {
+        let denial = DegradedDenial {
+            operation_type: OperationType::TokenAcceptance,
+            local_head_seq: 0,
+            expected_head_seq: 10,
+            staleness_gap: 10,
+        };
+        let err: Box<dyn std::error::Error> = Box::new(denial);
+        assert!(!err.to_string().is_empty());
+    }
+
+    #[test]
+    fn override_error_implements_std_error() {
+        let err: Box<dyn std::error::Error> = Box::new(OverrideError::Expired {
+            expiry: DeterministicTimestamp(1000),
+            current: DeterministicTimestamp(2000),
+        });
+        assert!(!err.to_string().is_empty());
+    }
+
+    // ---------------------------------------------------------------
+    // Enrichment: default FreshnessState
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn freshness_state_default_is_fresh() {
+        assert_eq!(FreshnessState::default(), FreshnessState::Fresh);
+    }
+
+    // ---------------------------------------------------------------
+    // Enrichment: override schema id determinism
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn override_schema_id_is_deterministic() {
+        let id1 = override_schema_id();
+        let id2 = override_schema_id();
+        assert_eq!(id1, id2);
+    }
+
+    // ---------------------------------------------------------------
+    // Enrichment: outcome count accumulation across types
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn outcome_counts_track_multiple_denied_types() {
+        let mut ctrl = make_controller();
+        ctrl.update_expected_head(10, "t-degrade");
+
+        // Generate denials for different operation types in degraded mode.
+        let _ = ctrl.evaluate(OperationType::TokenAcceptance, "t-deny-ta");
+        let _ = ctrl.evaluate(OperationType::ExtensionActivation, "t-deny-ea");
+        let _ = ctrl.evaluate(OperationType::HighRiskOperation, "t-deny-hr");
+
+        let counts = ctrl.outcome_counts();
+        assert_eq!(counts.get("denied"), Some(&3));
+    }
+
+    // ---------------------------------------------------------------
+    // Enrichment: double drain empties events
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn drain_state_events_idempotent() {
+        let mut ctrl = make_controller();
+        ctrl.update_expected_head(10, "t-drain");
+        let first = ctrl.drain_state_events();
+        assert!(!first.is_empty());
+        let second = ctrl.drain_state_events();
+        assert!(second.is_empty());
+    }
+
+    #[test]
+    fn drain_decision_events_idempotent() {
+        let mut ctrl = make_controller();
+        ctrl.update_expected_head(10, "t-degrade");
+        let _ = ctrl.evaluate(OperationType::TokenAcceptance, "t-dec");
+        let first = ctrl.drain_decision_events();
+        assert!(!first.is_empty());
+        let second = ctrl.drain_decision_events();
+        assert!(second.is_empty());
+    }
 }

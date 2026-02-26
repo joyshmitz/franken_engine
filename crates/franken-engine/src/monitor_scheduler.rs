@@ -1121,4 +1121,105 @@ mod tests {
             .expect("integrity probe");
         assert!(integrity.scheduled);
     }
+
+    // -- Enrichment: Display uniqueness via BTreeSet --
+
+    #[test]
+    fn probe_kind_display_uniqueness() {
+        let displays: std::collections::BTreeSet<String> = [
+            ProbeKind::HealthCheck,
+            ProbeKind::DeepDiagnostic,
+            ProbeKind::CalibrationProbe,
+            ProbeKind::IntegrityAudit,
+        ]
+        .iter()
+        .map(|k| k.to_string())
+        .collect();
+        assert_eq!(displays.len(), 4);
+    }
+
+    #[test]
+    fn scheduler_error_display_uniqueness() {
+        let displays: std::collections::BTreeSet<String> = [
+            SchedulerError::DuplicateProbe {
+                probe_id: "a".into(),
+            },
+            SchedulerError::ProbeNotFound {
+                probe_id: "b".into(),
+            },
+        ]
+        .iter()
+        .map(|e| e.to_string())
+        .collect();
+        assert_eq!(displays.len(), 2);
+    }
+
+    // -- Enrichment: staleness growth across multiple intervals --
+
+    #[test]
+    fn staleness_grows_linearly_across_intervals() {
+        let config = SchedulerConfig {
+            scheduler_id: "s".to_string(),
+            base_budget_millionths: 50_000, // too small to schedule deep probe
+            regime_budgets: BTreeMap::new(),
+            relevance_overrides: BTreeMap::new(),
+        };
+        let mut sched = MonitorScheduler::new(config);
+        sched.register_probe(deep_probe("d1")).unwrap();
+
+        for expected in 1..=5 {
+            sched.schedule(Regime::Normal);
+            assert_eq!(sched.probe("d1").unwrap().staleness, expected);
+        }
+    }
+
+    // -- Enrichment: VOI ordering determines schedule priority --
+
+    #[test]
+    fn higher_voi_probe_scheduled_first() {
+        let config = SchedulerConfig {
+            scheduler_id: "s".to_string(),
+            base_budget_millionths: 200_000, // only fits one health probe
+            regime_budgets: BTreeMap::new(),
+            relevance_overrides: BTreeMap::new(),
+        };
+        let mut sched = MonitorScheduler::new(config);
+        // Two health probes with different info gain
+        let mut low_info = health_probe("low-info");
+        low_info.information_gain_millionths = 100_000; // 0.1
+        let mut high_info = health_probe("high-info");
+        high_info.information_gain_millionths = 900_000; // 0.9
+
+        sched.register_probe(low_info).unwrap();
+        sched.register_probe(high_info).unwrap();
+
+        let result = sched.schedule(Regime::Normal);
+        // high-info should be scheduled, low-info deferred
+        let high = result
+            .decisions
+            .iter()
+            .find(|d| d.probe_id == "high-info")
+            .unwrap();
+        assert!(high.scheduled);
+    }
+
+    // -- Enrichment: ScheduleResult serde roundtrip --
+
+    #[test]
+    fn schedule_result_serde_roundtrip() {
+        let mut sched = test_scheduler();
+        let result = sched.schedule(Regime::Normal);
+        let json = serde_json::to_string(&result).expect("serialize");
+        let restored: ScheduleResult = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(result, restored);
+    }
+
+    // -- Enrichment: schedule result budget_total matches config --
+
+    #[test]
+    fn schedule_result_budget_total_matches_regime_config() {
+        let mut sched = test_scheduler();
+        let result = sched.schedule(Regime::Attack);
+        assert_eq!(result.budget_total, 10_000_000); // from test_config attack budget
+    }
 }

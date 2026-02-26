@@ -1542,4 +1542,131 @@ mod tests {
         assert!(report.all_valid);
         assert_eq!(report.total_chunks, 3);
     }
+
+    // ── Enrichment: Display uniqueness ──────────────────────────
+
+    #[test]
+    fn sufficiency_dimension_display_all_unique() {
+        let displays: BTreeSet<String> = SufficiencyDimension::ALL
+            .iter()
+            .map(|d| d.to_string())
+            .collect();
+        assert_eq!(displays.len(), 5);
+    }
+
+    #[test]
+    fn reconstruction_kind_display_all_unique() {
+        let displays: BTreeSet<String> = [
+            ReconstructionKind::Inline,
+            ReconstructionKind::ContentAddressed,
+            ReconstructionKind::DeterministicReplay,
+            ReconstructionKind::Hybrid,
+        ]
+        .iter()
+        .map(|k| k.to_string())
+        .collect();
+        assert_eq!(displays.len(), 4);
+    }
+
+    // ── Enrichment: compilation error serde roundtrip ───────────
+
+    #[test]
+    fn compilation_error_serde_all_variants() {
+        let variants = [
+            CompilationError::NoEvidence,
+            CompilationError::MissingProvenance,
+            CompilationError::ChunkTooLarge {
+                index: 0,
+                size: 9999,
+                max: 4096,
+            },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: CompilationError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    // ── Enrichment: compilation error Display all distinct ──────
+
+    #[test]
+    fn compilation_error_display_all_distinct() {
+        let errors = vec![
+            CompilationError::NoEvidence,
+            CompilationError::MissingProvenance,
+            CompilationError::ChunkTooLarge {
+                index: 0,
+                size: 999,
+                max: 512,
+            },
+        ];
+        let displays: std::collections::BTreeSet<String> =
+            errors.iter().map(|e| e.to_string()).collect();
+        assert_eq!(displays.len(), 3, "all variants produce distinct Display");
+    }
+
+    // ── Enrichment: merkle tree with large number of leaves ─────
+
+    #[test]
+    fn merkle_tree_63_leaves_all_proofs_verify() {
+        let leaves: Vec<[u8; 32]> = (0..63)
+            .map(|i| EvidenceChunk::new(i, "x", vec![i as u8; 15]).leaf_hash())
+            .collect();
+        let tree = MerkleTree::build(&leaves);
+        for i in 0..63 {
+            assert!(
+                tree.inclusion_proof(i).unwrap().verify(),
+                "proof for leaf {i} failed"
+            );
+        }
+    }
+
+    // ── Enrichment: sufficiency certificate overall score ───────
+
+    #[test]
+    fn certify_sufficiency_uses_minimum_score_as_overall() {
+        let schema = test_schema();
+        let result = WitnessCompiler::new(schema.clone())
+            .add_chunk("decision", b"data".to_vec())
+            .provenance(test_provenance())
+            .compile(test_epoch())
+            .unwrap();
+        let mut scores = BTreeMap::new();
+        scores.insert("replay_completeness".into(), 900_000);
+        scores.insert("verification_coverage".into(), 700_000);
+        let cert = result.certify_sufficiency(&schema, scores);
+        assert_eq!(cert.overall_score_millionths, 700_000);
+    }
+
+    // ── Enrichment: provenance with legal_summary ───────────────
+
+    #[test]
+    fn provenance_with_legal_summary_serde_roundtrip() {
+        let mut prov = test_provenance();
+        prov.legal_summary = Some("Retained per 7-year policy".into());
+        let json = serde_json::to_string(&prov).unwrap();
+        let back: ProvenanceAttachment = serde_json::from_str(&json).unwrap();
+        assert_eq!(prov, back);
+        assert_eq!(
+            back.legal_summary,
+            Some("Retained per 7-year policy".into())
+        );
+    }
+
+    // ── Enrichment: evidence chunk size calculation ──────────────
+
+    #[test]
+    fn evidence_chunk_size_bytes_matches_data_length() {
+        let data = vec![0u8; 512];
+        let chunk = EvidenceChunk::new(0, "test", data.clone());
+        assert_eq!(chunk.size_bytes, 512);
+    }
+
+    // ── Enrichment: schema version constant ─────────────────────
+
+    #[test]
+    fn schema_version_constant_matches() {
+        assert_eq!(SCHEMA_VERSION, "franken-engine.succinct-witness.v1");
+    }
 }

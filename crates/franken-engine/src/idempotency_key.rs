@@ -1119,4 +1119,166 @@ mod tests {
         assert_eq!(events[0].dedup_result, "new");
         assert_eq!(events[1].dedup_result, "cached");
     }
+
+    // -- Enrichment batch 2: Display uniqueness, boundaries, serde --
+
+    #[test]
+    fn dedup_status_display_uniqueness() {
+        let statuses = [
+            DedupStatus::InProgress,
+            DedupStatus::Completed {
+                result_hash: test_result_hash(),
+            },
+            DedupStatus::Failed {
+                error_code: "x".into(),
+            },
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for s in &statuses {
+            seen.insert(s.to_string());
+        }
+        assert_eq!(seen.len(), 3, "all 3 statuses have unique display strings");
+    }
+
+    #[test]
+    fn dedup_result_display_uniqueness() {
+        let results = [
+            DedupResult::New,
+            DedupResult::CachedResult {
+                result_hash: test_result_hash(),
+            },
+            DedupResult::DuplicateInProgress,
+            DedupResult::PreviouslyFailed {
+                error_code: "x".into(),
+            },
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for r in &results {
+            seen.insert(r.to_string());
+        }
+        assert_eq!(seen.len(), 4, "all 4 results have unique display strings");
+    }
+
+    #[test]
+    fn idempotency_error_display_uniqueness() {
+        let errors = [
+            IdempotencyError::EpochMismatch {
+                key_epoch: SecurityEpoch::from_raw(1),
+                current_epoch: SecurityEpoch::from_raw(2),
+            },
+            IdempotencyError::MaxRetriesExceeded {
+                computation_name: "c".into(),
+                max_retries: 3,
+                attempt: 4,
+            },
+            IdempotencyError::DuplicateInProgress {
+                computation_name: "d".into(),
+            },
+            IdempotencyError::EntryNotFound {
+                key_hex: "abc".into(),
+            },
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for e in &errors {
+            seen.insert(e.to_string());
+        }
+        assert_eq!(seen.len(), 4, "all 4 error variants have unique display");
+    }
+
+    #[test]
+    fn retry_config_default_values() {
+        let config = RetryConfig::default();
+        assert_eq!(config.max_retries, 3);
+        assert_eq!(config.entry_ttl_ticks, 600);
+    }
+
+    #[test]
+    fn key_hex_all_lowercase_hex() {
+        let input = test_derivation_input();
+        let key = derive_idempotency_key(&test_session_key(), test_epoch(), &input);
+        let hex = key.to_hex();
+        assert!(
+            hex.chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+        );
+    }
+
+    #[test]
+    fn key_display_format() {
+        let input = test_derivation_input();
+        let key = derive_idempotency_key(&test_session_key(), test_epoch(), &input);
+        let display = key.to_string();
+        assert!(display.starts_with("idem:"));
+        assert!(display.contains('@'));
+        // The hex part should be 64 chars
+        let hex_part = display.strip_prefix("idem:").unwrap();
+        let hex_part = hex_part.split('@').next().unwrap();
+        assert_eq!(hex_part.len(), 64);
+    }
+
+    #[test]
+    fn store_retry_config_fallback_to_default() {
+        let store = IdempotencyStore::new(test_epoch(), test_session_key());
+        let config = store.retry_config("unknown_computation");
+        assert_eq!(config.max_retries, 3);
+        assert_eq!(config.entry_ttl_ticks, 600);
+    }
+
+    #[test]
+    fn store_custom_retry_config_overrides_default() {
+        let mut store = IdempotencyStore::new(test_epoch(), test_session_key());
+        store.set_retry_config(
+            "special_comp",
+            RetryConfig {
+                max_retries: 10,
+                entry_ttl_ticks: 1000,
+            },
+        );
+        let config = store.retry_config("special_comp");
+        assert_eq!(config.max_retries, 10);
+        assert_eq!(config.entry_ttl_ticks, 1000);
+        // Other computations still use default
+        let default_config = store.retry_config("other_comp");
+        assert_eq!(default_config.max_retries, 3);
+    }
+
+    #[test]
+    fn store_advance_epoch_updates_session_key() {
+        let mut store = IdempotencyStore::new(test_epoch(), test_session_key());
+        let input = test_derivation_input();
+        let key_before = store.derive_key(&input);
+
+        store.advance_epoch(
+            SecurityEpoch::from_raw(2),
+            b"new-key-material-32byteshere!!".to_vec(),
+        );
+        assert_eq!(store.epoch(), SecurityEpoch::from_raw(2));
+
+        let key_after = store.derive_key(&input);
+        // Different epoch + different session key -> different key hash
+        assert_ne!(key_before.key_hash, key_after.key_hash);
+    }
+
+    #[test]
+    fn key_derivation_input_serde_roundtrip() {
+        let input = test_derivation_input();
+        let json = serde_json::to_string(&input).unwrap();
+        let back: KeyDerivationInput = serde_json::from_str(&json).unwrap();
+        assert_eq!(input, back);
+    }
+
+    #[test]
+    fn dedup_entry_serde_roundtrip() {
+        let entry = DedupEntry {
+            status: DedupStatus::Completed {
+                result_hash: test_result_hash(),
+            },
+            computation_name: "comp".into(),
+            created_at_ticks: 42,
+            epoch: test_epoch(),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let back: DedupEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry, back);
+    }
 }

@@ -1317,4 +1317,144 @@ mod tests {
                 .is_none()
         );
     }
+
+    // -- Enrichment batch 2: Display uniqueness, determinism, boundary --
+
+    #[test]
+    fn pipeline_error_display_uniqueness_btreeset() {
+        use std::collections::BTreeSet;
+        let variants: Vec<PipelineError> = vec![
+            PipelineError::FlowAlreadyLegal {
+                source: Label::Public,
+                sink: Label::Internal,
+            },
+            PipelineError::PolicyUnavailable {
+                reason: "gone".to_string(),
+            },
+            PipelineError::NoMatchingRoute {
+                source: Label::Secret,
+                sink: Label::Public,
+            },
+            PipelineError::LossExceedsThreshold {
+                expected_loss_milli: 500,
+                threshold_milli: 100,
+            },
+            PipelineError::EmergencyExpired {
+                request_id: "req-1".to_string(),
+                expiry_ms: 999,
+            },
+            PipelineError::SigningError {
+                detail: "bad key".to_string(),
+            },
+            PipelineError::ValidationError(IfcValidationError::EmptyClaim {
+                claim_id: "c-1".to_string(),
+            }),
+        ];
+        let set: BTreeSet<String> = variants.iter().map(|e| e.to_string()).collect();
+        assert_eq!(
+            set.len(),
+            variants.len(),
+            "all PipelineError Display strings must be unique"
+        );
+    }
+
+    #[test]
+    fn policy_eval_result_serde_all_variants_unique_display() {
+        use std::collections::BTreeSet;
+        let variants = vec![
+            PolicyEvalResult::RouteApproved {
+                route_id: "r1".to_string(),
+                conditions_met: vec!["c1".to_string()],
+            },
+            PolicyEvalResult::ConditionsNotMet {
+                route_id: "r1".to_string(),
+                failed_conditions: vec!["c2".to_string()],
+            },
+            PolicyEvalResult::NoMatchingRoute,
+            PolicyEvalResult::PolicyUnavailable {
+                reason: "gone".to_string(),
+            },
+        ];
+        let set: BTreeSet<String> = variants
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
+        assert_eq!(
+            set.len(),
+            variants.len(),
+            "all PolicyEvalResult serde forms must be unique"
+        );
+    }
+
+    #[test]
+    fn receipt_signature_is_not_sentinel() {
+        let mut pipeline = DeclassificationPipeline::default();
+        let policy = make_policy();
+        let request = make_request("declass-secret-internal", Label::Secret, Label::Internal);
+        let receipt = pipeline
+            .process(&request, &policy, &low_loss(), &test_key())
+            .unwrap();
+        let sentinel = Signature::from_bytes(SIGNATURE_SENTINEL);
+        assert_ne!(receipt.signature, sentinel, "receipt must be signed");
+    }
+
+    #[test]
+    fn receipt_replay_linkage_not_empty() {
+        let mut pipeline = DeclassificationPipeline::default();
+        let policy = make_policy();
+        let request = make_request("declass-secret-internal", Label::Secret, Label::Internal);
+        let receipt = pipeline
+            .process(&request, &policy, &low_loss(), &test_key())
+            .unwrap();
+        assert!(!receipt.replay_linkage.is_empty());
+    }
+
+    #[test]
+    fn request_serde_preserves_emergency_flag() {
+        let mut req = make_request("route-1", Label::Secret, Label::Internal);
+        req.is_emergency = true;
+        let json = serde_json::to_string(&req).unwrap();
+        let parsed: DeclassificationRequest = serde_json::from_str(&json).unwrap();
+        assert!(parsed.is_emergency);
+    }
+
+    #[test]
+    fn stats_emergency_grants_tracked() {
+        let mut pipeline = DeclassificationPipeline::default();
+        let policy = make_policy();
+        let mut request = make_request("bad-route", Label::Secret, Label::Public);
+        request.is_emergency = true;
+
+        pipeline
+            .process(&request, &policy, &low_loss(), &test_key())
+            .unwrap();
+
+        let stats = pipeline.stats();
+        assert_eq!(stats.emergency_grants_active, 1);
+    }
+
+    #[test]
+    fn flow_already_legal_public_to_public() {
+        let mut pipeline = DeclassificationPipeline::default();
+        let policy = make_policy();
+        let request = make_request("declass-public-public", Label::Public, Label::Public);
+        let err = pipeline
+            .process(&request, &policy, &low_loss(), &test_key())
+            .unwrap_err();
+        assert!(matches!(err, PipelineError::FlowAlreadyLegal { .. }));
+    }
+
+    #[test]
+    fn receipts_accumulate_across_calls() {
+        let mut pipeline = DeclassificationPipeline::default();
+        let policy = make_policy();
+        let key = test_key();
+
+        for i in 0..5 {
+            let mut req = make_request("declass-secret-internal", Label::Secret, Label::Internal);
+            req.request_id = format!("req-{i}");
+            pipeline.process(&req, &policy, &low_loss(), &key).unwrap();
+        }
+        assert_eq!(pipeline.receipts().len(), 5);
+    }
 }

@@ -765,4 +765,113 @@ mod tests {
         let a = AuthenticityHash::compute(b"shared-test-vector");
         assert_eq!(c.as_bytes(), a.as_bytes());
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 2: Display uniqueness, edge cases, hex format
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn hash_tier_display_all_unique() {
+        let tiers = [
+            HashTier::Integrity,
+            HashTier::Content,
+            HashTier::Authenticity,
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for t in &tiers {
+            seen.insert(t.to_string());
+        }
+        assert_eq!(
+            seen.len(),
+            3,
+            "all 3 HashTier Display strings must be unique"
+        );
+    }
+
+    #[test]
+    fn hash_algorithm_display_all_unique() {
+        let algs = [
+            HashAlgorithm::WyhashInspired,
+            HashAlgorithm::SipInspiredCr,
+            HashAlgorithm::SipInspiredKeyed,
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for a in &algs {
+            seen.insert(a.to_string());
+        }
+        assert_eq!(
+            seen.len(),
+            3,
+            "all 3 HashAlgorithm Display strings must be unique"
+        );
+    }
+
+    #[test]
+    fn integrity_hash_display_format_hex_length() {
+        let h = IntegrityHash(0x0123_4567_89ab_cdef);
+        let display = h.to_string();
+        assert_eq!(display, "integrity:0123456789abcdef");
+    }
+
+    #[test]
+    fn content_hash_hex_is_lowercase() {
+        let h = ContentHash::compute(b"lowercase check");
+        let hex = h.to_hex();
+        assert!(
+            hex.chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        );
+    }
+
+    #[test]
+    fn authenticity_hash_hex_is_lowercase() {
+        let h = AuthenticityHash::compute_keyed(b"k", b"d");
+        let hex = h.to_hex();
+        assert!(
+            hex.chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        );
+    }
+
+    #[test]
+    fn content_hash_display_format() {
+        let h = ContentHash::compute(b"display format");
+        let display = h.to_string();
+        assert!(display.starts_with("content:"));
+        assert_eq!(display.len(), "content:".len() + 64);
+    }
+
+    #[test]
+    fn authenticity_hash_display_format() {
+        let h = AuthenticityHash::compute_keyed(b"k", b"d");
+        let display = h.to_string();
+        assert!(display.starts_with("authenticity:"));
+        assert_eq!(display.len(), "authenticity:".len() + 64);
+    }
+
+    #[test]
+    fn integrity_hash_single_byte_inputs_differ() {
+        let h0 = IntegrityHash::compute(&[0u8]);
+        let h1 = IntegrityHash::compute(&[1u8]);
+        let hff = IntegrityHash::compute(&[0xffu8]);
+        assert_ne!(h0, h1);
+        assert_ne!(h1, hff);
+        assert_ne!(h0, hff);
+    }
+
+    #[test]
+    fn content_hash_ordering_is_byte_based() {
+        let a = ContentHash::compute(b"aaa");
+        let b = ContentHash::compute(b"bbb");
+        // Ordering should be defined and consistent (byte comparison)
+        let cmp1 = a.cmp(&b);
+        let cmp2 = a.cmp(&b);
+        assert_eq!(cmp1, cmp2);
+    }
+
+    #[test]
+    fn authenticity_constant_time_eq_reflexive() {
+        let h = AuthenticityHash::compute_keyed(b"key", b"data");
+        assert!(h.constant_time_eq(&h));
+    }
 }

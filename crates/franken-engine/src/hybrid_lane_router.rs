@@ -1710,4 +1710,103 @@ mod tests {
             compatibility_errors: 0,
         }
     }
+
+    // ── Enrichment: Display uniqueness ──────────────────────────
+
+    #[test]
+    fn lane_choice_display_unique() {
+        let displays: std::collections::BTreeSet<String> = LaneChoice::ALL
+            .iter()
+            .map(|l| l.as_str().to_string())
+            .collect();
+        assert_eq!(displays.len(), 2);
+    }
+
+    #[test]
+    fn routing_policy_serde_roundtrip() {
+        for policy in [RoutingPolicy::Conservative, RoutingPolicy::Adaptive] {
+            let json = serde_json::to_string(&policy).unwrap();
+            let back: RoutingPolicy = serde_json::from_str(&json).unwrap();
+            assert_eq!(policy, back);
+        }
+    }
+
+    // ── Enrichment: LaneObservation serde ───────────────────────
+
+    #[test]
+    fn lane_observation_serde_roundtrip() {
+        let obs = good_observation(LaneChoice::Wasm);
+        let json = serde_json::to_string(&obs).unwrap();
+        let back: LaneObservation = serde_json::from_str(&json).unwrap();
+        assert_eq!(obs, back);
+    }
+
+    // ── Enrichment: risk budget default ─────────────────────────
+
+    #[test]
+    fn risk_budget_default_has_positive_budgets() {
+        let budget = RiskBudget::default_budget();
+        assert!(budget.tail_latency_budget_us > 0);
+        assert!(budget.compatibility_error_budget > 0);
+        assert!(budget.regret_budget_millionths > 0);
+    }
+
+    // ── Enrichment: router config serde ─────────────────────────
+
+    #[test]
+    fn router_config_serde_roundtrip() {
+        let config = RouterConfig::default_config();
+        let json = serde_json::to_string(&config).unwrap();
+        let back: RouterConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config, back);
+    }
+
+    // ── Enrichment: promote when already adaptive fails ─────────
+
+    #[test]
+    fn promote_to_adaptive_idempotent() {
+        let mut router = HybridLaneRouter::with_defaults();
+        router.promote_to_adaptive().unwrap();
+        // Calling again is idempotent (returns Ok)
+        router.promote_to_adaptive().unwrap();
+        assert_eq!(router.policy, RoutingPolicy::Adaptive);
+    }
+
+    // ── Enrichment: RouterError serde ───────────────────────────
+
+    #[test]
+    fn router_error_serde_roundtrip() {
+        for err in [
+            RouterError::AlreadyConservative,
+            RouterError::InvalidConfig {
+                reason: "bad".into(),
+            },
+        ] {
+            let json = serde_json::to_string(&err).unwrap();
+            let back: RouterError = serde_json::from_str(&json).unwrap();
+            assert_eq!(err, back);
+        }
+    }
+
+    // ── Enrichment: exp_millionths precision ────────────────────
+
+    #[test]
+    fn exp_millionths_one_million_is_e() {
+        // e^1 ~ 2.718, so exp_millionths(1_000_000) should be ~ 2_718_000
+        let val = exp_millionths(MILLION);
+        assert!(
+            val > 2_500_000 && val < 3_000_000,
+            "exp(1.0) should be ~2.718M, got {val}"
+        );
+    }
+
+    // ── Enrichment: conformal config serde ──────────────────────
+
+    #[test]
+    fn conformal_config_serde_roundtrip() {
+        let config = ConformalConfig::default_config();
+        let json = serde_json::to_string(&config).unwrap();
+        let back: ConformalConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config, back);
+    }
 }

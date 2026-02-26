@@ -1309,4 +1309,159 @@ mod tests {
         let decoded: GcEvent = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(decoded, event);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: GcError Display uniqueness via BTreeSet
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn gc_error_display_all_variants_unique() {
+        let errors: Vec<GcError> = vec![
+            GcError::HeapNotFound {
+                extension_id: "ext-a".into(),
+            },
+            GcError::DuplicateHeap {
+                extension_id: "ext-b".into(),
+            },
+            GcError::ObjectNotFound {
+                extension_id: "ext-c".into(),
+                object_id: GcObjectId(7),
+            },
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for e in &errors {
+            displays.insert(e.to_string());
+        }
+        assert_eq!(
+            displays.len(),
+            errors.len(),
+            "all GcError variants produce distinct Display"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: GcPhase Display uniqueness
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn gc_phase_display_all_unique() {
+        let mut displays = std::collections::BTreeSet::new();
+        for phase in &[GcPhase::Mark, GcPhase::Sweep, GcPhase::Complete] {
+            displays.insert(phase.to_string());
+        }
+        assert_eq!(displays.len(), 3);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: collect_all determinism
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn collect_all_deterministic_across_runs() {
+        fn run_scenario() -> Vec<GcEvent> {
+            let mut gc = GcCollector::new(GcConfig::deterministic());
+            gc.register_heap("ext-b".into()).unwrap();
+            gc.register_heap("ext-a".into()).unwrap();
+            gc.allocate("ext-a", 100).unwrap();
+            gc.allocate("ext-b", 200).unwrap();
+            gc.collect_all()
+        }
+        let r1 = run_scenario();
+        let r2 = run_scenario();
+        assert_eq!(r1, r2);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: heap_count after register and remove
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn heap_count_tracks_registrations_and_removals() {
+        let mut gc = deterministic_collector();
+        assert_eq!(gc.heap_count(), 0);
+        gc.register_heap("ext-a".into()).unwrap();
+        assert_eq!(gc.heap_count(), 1);
+        gc.register_heap("ext-b".into()).unwrap();
+        assert_eq!(gc.heap_count(), 2);
+        gc.remove_heap("ext-a").unwrap();
+        assert_eq!(gc.heap_count(), 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: GcConfig serde roundtrip
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn gc_config_serde_roundtrip() {
+        let configs = [
+            GcConfig::default(),
+            GcConfig::deterministic(),
+            GcConfig {
+                deterministic: true,
+                pressure_threshold_percent: 90,
+            },
+        ];
+        for config in &configs {
+            let json = serde_json::to_string(config).expect("serialize");
+            let back: GcConfig = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(config.deterministic, back.deterministic);
+            assert_eq!(
+                config.pressure_threshold_percent,
+                back.pressure_threshold_percent
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: pressure_ratio boundary values
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn gc_config_pressure_ratio_boundary() {
+        let config_zero = GcConfig {
+            deterministic: true,
+            pressure_threshold_percent: 0,
+        };
+        assert!((config_zero.pressure_ratio() - 0.0).abs() < f64::EPSILON);
+
+        let config_hundred = GcConfig {
+            deterministic: true,
+            pressure_threshold_percent: 100,
+        };
+        assert!((config_hundred.pressure_ratio() - 1.0).abs() < f64::EPSILON);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: GcObjectId ordering
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn gc_object_id_ordering() {
+        let a = GcObjectId(1);
+        let b = GcObjectId(2);
+        let c = GcObjectId(1);
+        assert!(a < b);
+        assert_eq!(a, c);
+        let mut set = std::collections::BTreeSet::new();
+        set.insert(b);
+        set.insert(a);
+        set.insert(c);
+        assert_eq!(set.len(), 2);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: DomainError variant in GcError serde
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn gc_error_domain_error_serde_roundtrip() {
+        let err = GcError::DomainError(AllocDomainError::BudgetExceeded {
+            requested: 200,
+            remaining: 100,
+            domain: Some(AllocationDomain::ExtensionHeap),
+        });
+        let json = serde_json::to_string(&err).expect("serialize");
+        let decoded: GcError = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(decoded, err);
+    }
 }

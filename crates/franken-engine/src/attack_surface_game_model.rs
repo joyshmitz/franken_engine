@@ -1183,4 +1183,136 @@ mod tests {
         };
         assert_eq!(automaton.constraint_count(), 2);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 2: Display uniqueness, edge cases, builder
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn subsystem_display_uniqueness_btreeset() {
+        let displays: BTreeSet<String> = [
+            Subsystem::Compiler,
+            Subsystem::Runtime,
+            Subsystem::ControlPlane,
+            Subsystem::ExtensionHost,
+            Subsystem::EvidencePipeline,
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert_eq!(
+            displays.len(),
+            5,
+            "all Subsystem variants must have unique Display"
+        );
+    }
+
+    #[test]
+    fn loss_dimension_display_uniqueness_btreeset() {
+        let displays: BTreeSet<String> = [
+            LossDimension::UserHarm,
+            LossDimension::PerformanceCost,
+            LossDimension::FalsePositiveCost,
+            LossDimension::AvailabilityCost,
+            LossDimension::EvidenceIntegrityCost,
+        ]
+        .iter()
+        .map(|d| d.to_string())
+        .collect();
+        assert_eq!(
+            displays.len(),
+            5,
+            "all LossDimension variants must have unique Display"
+        );
+    }
+
+    #[test]
+    fn player_display_uniqueness_btreeset() {
+        let displays: BTreeSet<String> = [Player::Attacker, Player::Defender]
+            .iter()
+            .map(|p| p.to_string())
+            .collect();
+        assert_eq!(displays.len(), 2);
+    }
+
+    #[test]
+    fn tensor_content_hash_changes_with_subsystem() {
+        let entries = vec![LossEntry {
+            attacker_action: atk("a"),
+            defender_action: atk("d"),
+            dimension: LossDimension::UserHarm,
+            loss_millionths: 100_000,
+        }];
+        let t1 = LossTensor::from_entries(Subsystem::Runtime, entries.clone());
+        let t2 = LossTensor::from_entries(Subsystem::Compiler, entries);
+        assert_ne!(t1.content_hash, t2.content_hash);
+    }
+
+    #[test]
+    fn builder_multiple_losses_same_pair() {
+        let model = GameModelBuilder::new(Subsystem::Runtime, test_epoch())
+            .attacker_action(make_attacker_action("a1", Subsystem::Runtime))
+            .defender_action(make_defender_action("d1", Subsystem::Runtime))
+            .loss(LossEntry {
+                attacker_action: atk("a1"),
+                defender_action: atk("d1"),
+                dimension: LossDimension::UserHarm,
+                loss_millionths: 100_000,
+            })
+            .loss(LossEntry {
+                attacker_action: atk("a1"),
+                defender_action: atk("d1"),
+                dimension: LossDimension::PerformanceCost,
+                loss_millionths: 50_000,
+            })
+            .build();
+
+        assert_eq!(model.loss_tensor.entries.len(), 2);
+        assert_eq!(
+            model.loss_tensor.total_loss(&atk("a1"), &atk("d1")),
+            150_000
+        );
+    }
+
+    #[test]
+    fn automaton_all_forbidden_yields_empty_admissible() {
+        let automaton = AdmissibleActionAutomaton {
+            subsystem: Subsystem::Runtime,
+            constraints: vec![HardConstraint {
+                constraint_id: "c-all".to_string(),
+                description: "forbid all".to_string(),
+                forbidden_actions: BTreeSet::from([atk("d1"), atk("d2")]),
+                active_conditions: vec![],
+            }],
+            all_defender_actions: BTreeSet::from([atk("d1"), atk("d2")]),
+        };
+        let admissible = automaton.admissible_actions();
+        assert!(admissible.is_empty());
+    }
+
+    #[test]
+    fn action_space_empty_has_zero_count() {
+        let space = ActionSpace {
+            player: Player::Attacker,
+            subsystem: Subsystem::Compiler,
+            actions: vec![],
+        };
+        assert_eq!(space.action_count(), 0);
+        assert!(space.admissible_actions().is_empty());
+    }
+
+    #[test]
+    fn subsystem_summary_serde_roundtrip() {
+        let summary = SubsystemSummary {
+            subsystem: "runtime".to_string(),
+            attacker_actions: 3,
+            defender_actions: 2,
+            admissible_actions: 1,
+            constraints: 1,
+            minimax_recommendation: Some("block".to_string()),
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        let back: SubsystemSummary = serde_json::from_str(&json).unwrap();
+        assert_eq!(summary, back);
+    }
 }

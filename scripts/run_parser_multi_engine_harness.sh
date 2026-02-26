@@ -31,11 +31,78 @@ mkdir -p "$run_dir"
 
 run_rch() {
   if command -v rch >/dev/null 2>&1; then
-    rch exec -- env "RUSTUP_TOOLCHAIN=${toolchain}" "CARGO_TARGET_DIR=${target_dir}" "$@"
+    if [[ "${PARSER_MULTI_ENGINE_RCH_VERBOSE:-0}" == "1" ]]; then
+      rch exec -- env "RUSTUP_TOOLCHAIN=${toolchain}" "CARGO_TARGET_DIR=${target_dir}" "$@"
+    else
+      rch exec -q -- env "RUSTUP_TOOLCHAIN=${toolchain}" "CARGO_TARGET_DIR=${target_dir}" "$@"
+    fi
   else
     echo "warning: rch not found; running locally" >&2
     env "RUSTUP_TOOLCHAIN=${toolchain}" "CARGO_TARGET_DIR=${target_dir}" "$@"
   fi
+}
+
+extract_json_report() {
+  local source_path="$1"
+  local destination_path="$2"
+
+  awk '
+    function strip_strings(line,    ch, i, in_string, escaped, result) {
+      result = ""
+      in_string = 0
+      escaped = 0
+      for (i = 1; i <= length(line); i++) {
+        ch = substr(line, i, 1)
+        if (in_string) {
+          if (escaped) {
+            escaped = 0
+            continue
+          }
+          if (ch == "\\") {
+            escaped = 1
+            continue
+          }
+          if (ch == "\"") {
+            in_string = 0
+          }
+          continue
+        }
+        if (ch == "\"") {
+          in_string = 1
+          continue
+        }
+        result = result ch
+      }
+      return result
+    }
+
+    BEGIN {
+      capture = 0
+      depth = 0
+    }
+
+    {
+      line = $0
+      if (!capture) {
+        if (line ~ /^[[:space:]]*\{[[:space:]]*$/) {
+          capture = 1
+        } else {
+          next
+        }
+      }
+
+      if (capture) {
+        print line
+        stripped = strip_strings(line)
+        opens = gsub(/\{/, "&", stripped)
+        closes = gsub(/\}/, "&", stripped)
+        depth += opens - closes
+        if (depth == 0) {
+          exit
+        }
+      }
+    }
+  ' "$source_path" >"$destination_path"
 }
 
 declare -a commands_run=()
@@ -98,16 +165,12 @@ run_report_step() {
   sed -E 's/\x1B\[[0-9;]*[[:alpha:]]//g' "$report_stdout_path" >"$report_stdout_clean_path"
 
   if [[ ! -f "$report_path" && -s "$report_stdout_path" ]]; then
-    if jq -e '.' "$report_stdout_clean_path" >/dev/null 2>&1; then
+    if jq -e '.summary and .parser_telemetry and .schema_version' "$report_stdout_clean_path" >/dev/null 2>&1; then
       cp "$report_stdout_clean_path" "$report_path"
     else
       local extracted_json_path="${run_dir}/report.stdout.extracted.json"
-      awk '
-        BEGIN { capture=0 }
-        /^[[:space:]]*\{/ { capture=1 }
-        capture { print }
-      ' "$report_stdout_clean_path" >"$extracted_json_path"
-      if [[ -s "$extracted_json_path" ]] && jq -e '.' "$extracted_json_path" >/dev/null 2>&1; then
+      extract_json_report "$report_stdout_clean_path" "$extracted_json_path"
+      if [[ -s "$extracted_json_path" ]] && jq -e '.summary and .parser_telemetry and .schema_version' "$extracted_json_path" >/dev/null 2>&1; then
         cp "$extracted_json_path" "$report_path"
       fi
     fi

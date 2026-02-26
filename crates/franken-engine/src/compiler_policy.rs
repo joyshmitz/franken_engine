@@ -1650,4 +1650,147 @@ mod tests {
             .class_policy(&OptimizationClass::PathElimination);
         assert!(!path_policy.enabled);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 2: Display uniqueness, error codes, edge cases, serde
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn specialization_outcome_error_code_uniqueness_enrichment() {
+        let outcomes = [
+            SpecializationOutcome::Applied,
+            SpecializationOutcome::RejectedGlobalDisable,
+            SpecializationOutcome::RejectedClassDisabled,
+            SpecializationOutcome::RejectedNoProofs,
+            SpecializationOutcome::RejectedInsufficientProofs,
+            SpecializationOutcome::RejectedMissingRequiredProofTypes,
+            SpecializationOutcome::RejectedProofExpired,
+            SpecializationOutcome::RejectedEpochMismatch,
+            SpecializationOutcome::RejectedProofNotFound,
+            SpecializationOutcome::InvalidatedByEpochChange,
+        ];
+        let codes: BTreeSet<String> = outcomes
+            .iter()
+            .map(|o| o.error_code().to_string())
+            .collect();
+        assert_eq!(
+            codes.len(),
+            10,
+            "all SpecializationOutcome variants must have unique error_code"
+        );
+    }
+
+    #[test]
+    fn specialization_outcome_serde_roundtrip() {
+        let outcomes = [
+            SpecializationOutcome::Applied,
+            SpecializationOutcome::RejectedGlobalDisable,
+            SpecializationOutcome::RejectedClassDisabled,
+            SpecializationOutcome::RejectedNoProofs,
+            SpecializationOutcome::RejectedInsufficientProofs,
+            SpecializationOutcome::RejectedMissingRequiredProofTypes,
+            SpecializationOutcome::RejectedProofExpired,
+            SpecializationOutcome::RejectedEpochMismatch,
+            SpecializationOutcome::RejectedProofNotFound,
+            SpecializationOutcome::InvalidatedByEpochChange,
+        ];
+        for o in &outcomes {
+            let json = serde_json::to_string(o).unwrap();
+            let back: SpecializationOutcome = serde_json::from_str(&json).unwrap();
+            assert_eq!(*o, back);
+        }
+    }
+
+    #[test]
+    fn proof_store_empty_state() {
+        let store = ProofStore::new();
+        assert!(store.is_empty());
+        assert_eq!(store.len(), 0);
+        assert!(store.get(&make_proof_id("nonexistent")).is_none());
+    }
+
+    #[test]
+    fn proof_store_resolve_empty_list() {
+        let store = ProofStore::new();
+        let resolved = store.resolve(&[]);
+        assert!(resolved.is_empty());
+    }
+
+    #[test]
+    fn global_disable_blocks_all_evaluations() {
+        let epoch = SecurityEpoch::from_raw(1);
+        let mut config = CompilerPolicyConfig::new("policy-disabled", epoch);
+        config.global_disable = true;
+        let mut engine = CompilerPolicyEngine::new(config);
+
+        let proof = cap_witness_proof("p1", epoch);
+        let proof_id = proof.proof_id().clone();
+        engine.register_proof(proof);
+
+        let region = make_region(
+            "region-1",
+            OptimizationClass::HostcallDispatchSpecialization,
+            vec![proof_id],
+        );
+        let d = engine.evaluate(&region, "trace-1", 1000);
+        assert_eq!(d.outcome, SpecializationOutcome::RejectedGlobalDisable);
+        assert!(!d.outcome.is_applied());
+    }
+
+    #[test]
+    fn class_disabled_blocks_that_class() {
+        let epoch = SecurityEpoch::from_raw(1);
+        let mut config = CompilerPolicyConfig::new("policy-class-off", epoch);
+        config.class_policies.insert(
+            OptimizationClass::PathElimination,
+            OptimizationClassPolicy {
+                enabled: false,
+                ..Default::default()
+            },
+        );
+        let mut engine = CompilerPolicyEngine::new(config);
+
+        let proof = cap_witness_proof("p1", epoch);
+        let proof_id = proof.proof_id().clone();
+        engine.register_proof(proof);
+
+        let region = make_region(
+            "region-1",
+            OptimizationClass::PathElimination,
+            vec![proof_id],
+        );
+        let d = engine.evaluate(&region, "trace-1", 1000);
+        assert_eq!(d.outcome, SpecializationOutcome::RejectedClassDisabled);
+    }
+
+    #[test]
+    fn optimization_class_serde_roundtrip() {
+        let classes = [
+            OptimizationClass::HostcallDispatchSpecialization,
+            OptimizationClass::PathElimination,
+            OptimizationClass::IfcCheckElision,
+            OptimizationClass::SuperinstructionFusion,
+        ];
+        for c in &classes {
+            let json = serde_json::to_string(c).unwrap();
+            let back: OptimizationClass = serde_json::from_str(&json).unwrap();
+            assert_eq!(*c, back);
+        }
+    }
+
+    #[test]
+    fn policy_event_serde_roundtrip() {
+        let event = CompilerPolicyEvent {
+            trace_id: "t1".to_string(),
+            decision_id: "d1".to_string(),
+            policy_id: "p1".to_string(),
+            component: "compiler_policy".to_string(),
+            event: "test".to_string(),
+            outcome: "OK".to_string(),
+            error_code: None,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: CompilerPolicyEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, back);
+    }
 }

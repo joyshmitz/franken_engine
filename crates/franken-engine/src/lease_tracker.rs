@@ -1319,4 +1319,103 @@ mod tests {
         let events = store.drain_events();
         assert!(events.len() >= 2); // grant + renew
     }
+
+    // --- Enrichment tests ---
+
+    #[test]
+    fn lease_type_display_uniqueness_btreeset() {
+        let types = [
+            LeaseType::RemoteEndpoint,
+            LeaseType::Operation,
+            LeaseType::Session,
+        ];
+        let displays: std::collections::BTreeSet<String> =
+            types.iter().map(|t| t.to_string()).collect();
+        assert_eq!(displays.len(), 3);
+    }
+
+    #[test]
+    fn lease_status_display_uniqueness_btreeset() {
+        let statuses = [
+            LeaseStatus::Active,
+            LeaseStatus::Expired,
+            LeaseStatus::Released,
+        ];
+        let displays: std::collections::BTreeSet<String> =
+            statuses.iter().map(|s| s.to_string()).collect();
+        assert_eq!(displays.len(), 3);
+    }
+
+    #[test]
+    fn lease_is_active_at_boundary() {
+        let mut store = LeaseStore::new(test_epoch());
+        let id = store
+            .grant("node-1", LeaseType::RemoteEndpoint, 100, 0, "t")
+            .unwrap();
+        let lease = store.get(&id).unwrap();
+        // Active just before expiration
+        assert!(lease.is_active_at(99));
+        // Not active at exactly expires_at
+        assert!(!lease.is_active_at(100));
+    }
+
+    #[test]
+    fn lease_id_from_raw_round_trip() {
+        let id = LeaseId::from_raw(12345);
+        assert_eq!(id.as_u64(), 12345);
+        assert_eq!(id.to_string(), "lease:12345");
+    }
+
+    #[test]
+    fn escalation_action_display_uniqueness_btreeset() {
+        let actions = vec![
+            EscalationAction::MarkEndpointUnreachable {
+                holder: "a".to_string(),
+            },
+            EscalationAction::CancelOperation {
+                holder: "b".to_string(),
+            },
+            EscalationAction::TerminateSession {
+                holder: "c".to_string(),
+            },
+        ];
+        let displays: std::collections::BTreeSet<String> =
+            actions.iter().map(|a| a.to_string()).collect();
+        assert_eq!(displays.len(), 3);
+    }
+
+    #[test]
+    fn lease_serde_roundtrip() {
+        let mut store = LeaseStore::new(test_epoch());
+        let id = store
+            .grant("node-1", LeaseType::RemoteEndpoint, 100, 0, "t1")
+            .unwrap();
+        let lease = store.get(&id).unwrap();
+        let json = serde_json::to_string(lease).unwrap();
+        let restored: Lease = serde_json::from_str(&json).unwrap();
+        assert_eq!(*lease, restored);
+    }
+
+    #[test]
+    fn release_already_released_lease_fails() {
+        let mut store = LeaseStore::new(test_epoch());
+        let id = store
+            .grant("node-1", LeaseType::RemoteEndpoint, 100, 0, "t")
+            .unwrap();
+        store.release(&id, "t-rel1").unwrap();
+        let result = store.release(&id, "t-rel2");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn epoch_advance_emits_events() {
+        let mut store = LeaseStore::new(test_epoch());
+        store
+            .grant("node-1", LeaseType::RemoteEndpoint, 1000, 0, "t")
+            .unwrap();
+        store.drain_events();
+        store.advance_epoch(SecurityEpoch::from_raw(2), "trace-epoch");
+        let events = store.drain_events();
+        assert!(!events.is_empty());
+    }
 }

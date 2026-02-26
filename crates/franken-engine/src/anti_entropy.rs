@@ -2026,4 +2026,105 @@ mod tests {
         assert!(ReconcileObjectType::RevocationEvent < ReconcileObjectType::CheckpointMarker);
         assert!(ReconcileObjectType::CheckpointMarker < ReconcileObjectType::EvidenceEntry);
     }
+
+    // -- Enrichment: Display uniqueness, edge cases, defaults --
+
+    #[test]
+    fn reconcile_object_type_display_uniqueness() {
+        let variants = [
+            ReconcileObjectType::RevocationEvent,
+            ReconcileObjectType::CheckpointMarker,
+            ReconcileObjectType::EvidenceEntry,
+        ];
+        let displays: BTreeSet<String> = variants.iter().map(|v| v.to_string()).collect();
+        assert_eq!(
+            displays.len(),
+            3,
+            "all 3 variants produce distinct display strings"
+        );
+    }
+
+    #[test]
+    fn fallback_trigger_display_uniqueness() {
+        let triggers = [
+            FallbackTrigger::PeelFailed { remaining_cells: 1 },
+            FallbackTrigger::VerificationFailed {
+                object_hash: "h".into(),
+                reason: "r".into(),
+            },
+            FallbackTrigger::Timeout {
+                elapsed_ms: 1,
+                slo_ms: 1,
+            },
+            FallbackTrigger::MmrConsistencyFailure {
+                details: "d".into(),
+            },
+        ];
+        let displays: BTreeSet<String> = triggers.iter().map(|t| t.to_string()).collect();
+        assert_eq!(
+            displays.len(),
+            4,
+            "all 4 trigger variants produce distinct display strings"
+        );
+    }
+
+    #[test]
+    fn reconcile_config_default_has_expected_hash_count() {
+        let config = ReconcileConfig::default();
+        assert_eq!(config.iblt_hashes, 3, "default uses 3 hash functions");
+    }
+
+    #[test]
+    fn iblt_cell_default_is_zero() {
+        let cell = IbltCell::default();
+        assert_eq!(cell.count, 0);
+        assert_eq!(cell.checksum_xor, 0);
+        assert_eq!(cell.key_hash_xor, [0u8; 32]);
+    }
+
+    #[test]
+    fn iblt_num_cells_accessor_matches_construction() {
+        let iblt = Iblt::new(42, 3);
+        assert_eq!(iblt.num_cells(), 42);
+    }
+
+    #[test]
+    fn iblt_double_insert_remove_cancels() {
+        let mut iblt = Iblt::new(64, 3);
+        let h1 = make_hash(10);
+        let h2 = make_hash(20);
+        iblt.insert(&h1);
+        iblt.insert(&h2);
+        iblt.remove(&h1);
+        iblt.remove(&h2);
+        let empty = Iblt::new(64, 3);
+        assert_eq!(iblt, empty);
+    }
+
+    #[test]
+    fn object_id_display_contains_epoch() {
+        let id = ObjectId {
+            content_hash: ContentHash::compute(b"epoch-test"),
+            object_type: ReconcileObjectType::EvidenceEntry,
+            epoch: SecurityEpoch::from_raw(42),
+        };
+        let s = id.to_string();
+        assert!(
+            s.contains("evidence_entry"),
+            "display must include object type"
+        );
+        assert!(s.contains("42"), "display must include epoch");
+    }
+
+    #[test]
+    fn iblt_cell_serde_roundtrip() {
+        let cell = IbltCell {
+            count: -3,
+            key_hash_xor: make_hash(77),
+            checksum_xor: 0xDEAD_BEEF,
+        };
+        let json = serde_json::to_string(&cell).expect("serialize");
+        let restored: IbltCell = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(cell, restored);
+    }
 }

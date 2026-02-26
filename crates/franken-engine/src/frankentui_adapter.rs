@@ -5628,4 +5628,669 @@ mod tests {
         assert!(f.risk_level.is_none());
         assert!(f.promotion_status.is_none());
     }
+
+    // -- Enrichment: helper function coverage --
+
+    #[test]
+    fn normalize_non_empty_whitespace_only_returns_unknown() {
+        assert_eq!(normalize_non_empty("   ".to_string()), "unknown");
+    }
+
+    #[test]
+    fn normalize_non_empty_empty_returns_unknown() {
+        assert_eq!(normalize_non_empty(String::new()), "unknown");
+    }
+
+    #[test]
+    fn normalize_non_empty_trims_leading_trailing() {
+        assert_eq!(normalize_non_empty("  hello  ".to_string()), "hello");
+    }
+
+    #[test]
+    fn normalize_optional_non_empty_none_stays_none() {
+        assert!(normalize_optional_non_empty(None).is_none());
+    }
+
+    #[test]
+    fn normalize_optional_non_empty_blank_becomes_unknown() {
+        assert_eq!(
+            normalize_optional_non_empty(Some("  ".to_string())),
+            Some("unknown".to_string())
+        );
+    }
+
+    #[test]
+    fn normalize_optional_non_empty_valid_trims() {
+        assert_eq!(
+            normalize_optional_non_empty(Some("  val  ".to_string())),
+            Some("val".to_string())
+        );
+    }
+
+    #[test]
+    fn canonicalize_coverage_clamps_above_million() {
+        assert_eq!(canonicalize_coverage_millionths(2_000_000), 1_000_000);
+    }
+
+    #[test]
+    fn canonicalize_coverage_passthrough_below_million() {
+        assert_eq!(canonicalize_coverage_millionths(500_000), 500_000);
+    }
+
+    #[test]
+    fn canonicalize_coverage_at_million_is_identity() {
+        assert_eq!(canonicalize_coverage_millionths(1_000_000), 1_000_000);
+    }
+
+    #[test]
+    fn implementation_is_native_case_insensitive() {
+        assert!(implementation_is_native("native"));
+        assert!(implementation_is_native("NATIVE"));
+        assert!(implementation_is_native("Native"));
+        assert!(!implementation_is_native("delegate"));
+        assert!(!implementation_is_native(""));
+    }
+
+    // -- Enrichment: threshold_matches all comparators --
+
+    #[test]
+    fn threshold_matches_greater_than() {
+        assert!(threshold_matches(ThresholdComparator::GreaterThan, 5, 3));
+        assert!(!threshold_matches(ThresholdComparator::GreaterThan, 3, 3));
+        assert!(!threshold_matches(ThresholdComparator::GreaterThan, 2, 3));
+    }
+
+    #[test]
+    fn threshold_matches_greater_or_equal() {
+        assert!(threshold_matches(ThresholdComparator::GreaterOrEqual, 5, 3));
+        assert!(threshold_matches(ThresholdComparator::GreaterOrEqual, 3, 3));
+        assert!(!threshold_matches(
+            ThresholdComparator::GreaterOrEqual,
+            2,
+            3
+        ));
+    }
+
+    #[test]
+    fn threshold_matches_less_than() {
+        assert!(threshold_matches(ThresholdComparator::LessThan, 2, 3));
+        assert!(!threshold_matches(ThresholdComparator::LessThan, 3, 3));
+        assert!(!threshold_matches(ThresholdComparator::LessThan, 5, 3));
+    }
+
+    #[test]
+    fn threshold_matches_less_or_equal() {
+        assert!(threshold_matches(ThresholdComparator::LessOrEqual, 2, 3));
+        assert!(threshold_matches(ThresholdComparator::LessOrEqual, 3, 3));
+        assert!(!threshold_matches(ThresholdComparator::LessOrEqual, 5, 3));
+    }
+
+    #[test]
+    fn threshold_matches_equal() {
+        assert!(threshold_matches(ThresholdComparator::Equal, 3, 3));
+        assert!(!threshold_matches(ThresholdComparator::Equal, 2, 3));
+        assert!(!threshold_matches(ThresholdComparator::Equal, 4, 3));
+    }
+
+    // -- Enrichment: build_native_coverage_meter --
+
+    #[test]
+    fn build_native_coverage_meter_empty_slots() {
+        let meter = build_native_coverage_meter(&[], vec![]);
+        assert_eq!(meter.native_slots, 0);
+        assert_eq!(meter.delegate_slots, 0);
+        assert_eq!(meter.native_coverage_millionths, 0);
+    }
+
+    #[test]
+    fn build_native_coverage_meter_all_native() {
+        let rows = vec![
+            SlotStatusOverviewRow {
+                slot_id: "s1".to_string(),
+                slot_kind: "compute".to_string(),
+                implementation_kind: "native".to_string(),
+                risk_level: ReplacementRiskLevel::Low,
+                promotion_status: "promoted".to_string(),
+                last_transition_unix_ms: 1000,
+                health: "healthy".to_string(),
+                lineage_ref: "lr1".to_string(),
+            },
+            SlotStatusOverviewRow {
+                slot_id: "s2".to_string(),
+                slot_kind: "io".to_string(),
+                implementation_kind: "NATIVE".to_string(),
+                risk_level: ReplacementRiskLevel::Low,
+                promotion_status: "promoted".to_string(),
+                last_transition_unix_ms: 2000,
+                health: "healthy".to_string(),
+                lineage_ref: "lr2".to_string(),
+            },
+        ];
+        let meter = build_native_coverage_meter(&rows, vec![]);
+        assert_eq!(meter.native_slots, 2);
+        assert_eq!(meter.delegate_slots, 0);
+        assert_eq!(meter.native_coverage_millionths, 1_000_000);
+    }
+
+    #[test]
+    fn build_native_coverage_meter_mixed() {
+        let rows = vec![
+            SlotStatusOverviewRow {
+                slot_id: "s1".to_string(),
+                slot_kind: "a".to_string(),
+                implementation_kind: "native".to_string(),
+                risk_level: ReplacementRiskLevel::Low,
+                promotion_status: "p".to_string(),
+                last_transition_unix_ms: 0,
+                health: "ok".to_string(),
+                lineage_ref: String::new(),
+            },
+            SlotStatusOverviewRow {
+                slot_id: "s2".to_string(),
+                slot_kind: "b".to_string(),
+                implementation_kind: "delegate".to_string(),
+                risk_level: ReplacementRiskLevel::Medium,
+                promotion_status: "p".to_string(),
+                last_transition_unix_ms: 0,
+                health: "ok".to_string(),
+                lineage_ref: String::new(),
+            },
+        ];
+        let meter = build_native_coverage_meter(&rows, vec![]);
+        assert_eq!(meter.native_slots, 1);
+        assert_eq!(meter.delegate_slots, 1);
+        assert_eq!(meter.native_coverage_millionths, 500_000);
+    }
+
+    // -- Enrichment: rank_replacement_opportunities --
+
+    #[test]
+    fn rank_replacement_opportunities_empty() {
+        let ranked = rank_replacement_opportunities(vec![]);
+        assert!(ranked.is_empty());
+    }
+
+    #[test]
+    fn rank_replacement_opportunities_sorts_by_ev_desc() {
+        let inputs = vec![
+            ReplacementOpportunityInput {
+                slot_id: "low".to_string(),
+                slot_kind: "a".to_string(),
+                performance_uplift_millionths: 100_000,
+                invocation_frequency_per_minute: 1,
+                risk_reduction_millionths: 0,
+            },
+            ReplacementOpportunityInput {
+                slot_id: "high".to_string(),
+                slot_kind: "b".to_string(),
+                performance_uplift_millionths: 500_000,
+                invocation_frequency_per_minute: 10,
+                risk_reduction_millionths: 100_000,
+            },
+        ];
+        let ranked = rank_replacement_opportunities(inputs);
+        assert_eq!(ranked.len(), 2);
+        assert_eq!(ranked[0].slot_id, "high");
+        assert_eq!(ranked[1].slot_id, "low");
+    }
+
+    // -- Enrichment: build_specialization_performance_impact --
+
+    #[test]
+    fn build_spec_perf_impact_empty_inputs() {
+        let impact = build_specialization_performance_impact(&[], &[]);
+        assert_eq!(impact.active_specialization_count, 0);
+        assert_eq!(impact.aggregate_latency_reduction_millionths, 0);
+        assert_eq!(impact.aggregate_throughput_increase_millionths, 0);
+        assert_eq!(impact.specialization_coverage_millionths, 1_000_000);
+    }
+
+    #[test]
+    fn build_spec_perf_impact_aggregates_latency_and_throughput() {
+        let specs = vec![
+            ActiveSpecializationRowView {
+                specialization_id: "sp1".to_string(),
+                target_id: "t1".to_string(),
+                target_kind: "fn".to_string(),
+                optimization_class: "oc".to_string(),
+                proof_input_ids: vec!["p1".to_string()],
+                latency_reduction_millionths: 100_000,
+                throughput_increase_millionths: 200_000,
+                transformation_ref: "tr1".to_string(),
+                receipt_ref: "r1".to_string(),
+                activated_at_unix_ms: 1000,
+            },
+            ActiveSpecializationRowView {
+                specialization_id: "sp2".to_string(),
+                target_id: "t2".to_string(),
+                target_kind: "fn".to_string(),
+                optimization_class: "oc".to_string(),
+                proof_input_ids: vec!["p2".to_string()],
+                latency_reduction_millionths: 50_000,
+                throughput_increase_millionths: 80_000,
+                transformation_ref: "tr2".to_string(),
+                receipt_ref: "r2".to_string(),
+                activated_at_unix_ms: 2000,
+            },
+        ];
+        let impact = build_specialization_performance_impact(&specs, &[]);
+        assert_eq!(impact.active_specialization_count, 2);
+        assert_eq!(impact.aggregate_latency_reduction_millionths, 150_000);
+        assert_eq!(impact.aggregate_throughput_increase_millionths, 280_000);
+    }
+
+    // -- Enrichment: ReplayEventView constructor --
+
+    #[test]
+    fn replay_event_view_new_normalizes_fields() {
+        let ev = ReplayEventView::new(1, "  comp  ", "  evt  ", "  ok  ", 9999);
+        assert_eq!(ev.sequence, 1);
+        assert_eq!(ev.component, "comp");
+        assert_eq!(ev.event, "evt");
+        assert_eq!(ev.outcome, "ok");
+        assert_eq!(ev.timestamp_unix_ms, 9999);
+        assert!(ev.error_code.is_none());
+    }
+
+    #[test]
+    fn replay_event_view_new_blank_becomes_unknown() {
+        let ev = ReplayEventView::new(0, "", "", "", 0);
+        assert_eq!(ev.component, "unknown");
+        assert_eq!(ev.event, "unknown");
+        assert_eq!(ev.outcome, "unknown");
+    }
+
+    // -- Enrichment: ControlDashboardView::from_partial --
+
+    #[test]
+    fn control_dashboard_from_partial_defaults_epoch() {
+        let partial = ControlDashboardPartial {
+            cluster: "us-east".to_string(),
+            zone: "z1".to_string(),
+            security_epoch: None,
+            runtime_mode: "production".to_string(),
+            ..Default::default()
+        };
+        let view = ControlDashboardView::from_partial(partial);
+        assert_eq!(view.security_epoch, 0);
+        assert_eq!(view.cluster, "us-east");
+    }
+
+    #[test]
+    fn control_dashboard_from_partial_with_epoch() {
+        let partial = ControlDashboardPartial {
+            cluster: "eu".to_string(),
+            zone: "z2".to_string(),
+            security_epoch: Some(42),
+            runtime_mode: "staging".to_string(),
+            ..Default::default()
+        };
+        let view = ControlDashboardView::from_partial(partial);
+        assert_eq!(view.security_epoch, 42);
+    }
+
+    // -- Enrichment: IncidentReplayView::snapshot --
+
+    #[test]
+    fn incident_replay_snapshot_with_events_is_complete() {
+        let events = vec![ReplayEventView::new(1, "c", "e", "o", 100)];
+        let replay = IncidentReplayView::snapshot("t", "s", events);
+        assert_eq!(replay.replay_status, ReplayStatus::Complete);
+        assert!(replay.deterministic);
+        assert_eq!(replay.events.len(), 1);
+    }
+
+    #[test]
+    fn incident_replay_snapshot_normalizes_blank_fields() {
+        let replay = IncidentReplayView::snapshot("  ", "  ", vec![]);
+        assert_eq!(replay.trace_id, "unknown");
+        assert_eq!(replay.scenario_name, "unknown");
+    }
+
+    // -- Enrichment: AdapterEnvelope builder --
+
+    #[test]
+    fn adapter_envelope_new_has_schema_version() {
+        let replay = IncidentReplayView::snapshot("t", "s", vec![]);
+        let env = AdapterEnvelope::new(
+            "trace-1",
+            1000,
+            AdapterStream::IncidentReplay,
+            UpdateKind::Snapshot,
+            FrankentuiViewPayload::IncidentReplay(replay),
+        );
+        assert_eq!(env.schema_version, FRANKENTUI_ADAPTER_SCHEMA_VERSION);
+        assert!(env.decision_id.is_none());
+        assert!(env.policy_id.is_none());
+    }
+
+    #[test]
+    fn adapter_envelope_with_decision_context_sets_ids() {
+        let replay = IncidentReplayView::snapshot("t", "s", vec![]);
+        let env = AdapterEnvelope::new(
+            "trace-1",
+            1000,
+            AdapterStream::IncidentReplay,
+            UpdateKind::Snapshot,
+            FrankentuiViewPayload::IncidentReplay(replay),
+        )
+        .with_decision_context("dec-1", "pol-1");
+        assert_eq!(env.decision_id, Some("dec-1".to_string()));
+        assert_eq!(env.policy_id, Some("pol-1".to_string()));
+    }
+
+    // -- Enrichment: DashboardRefreshPolicy::normalized --
+
+    #[test]
+    fn dashboard_refresh_policy_normalized_clamps_evidence_to_five() {
+        let policy = DashboardRefreshPolicy {
+            evidence_stream_refresh_secs: 30,
+            aggregate_refresh_secs: 120,
+        }
+        .normalized();
+        assert_eq!(policy.evidence_stream_refresh_secs, 5);
+    }
+
+    #[test]
+    fn dashboard_refresh_policy_normalized_zero_evidence_defaults_five() {
+        let policy = DashboardRefreshPolicy {
+            evidence_stream_refresh_secs: 0,
+            aggregate_refresh_secs: 60,
+        }
+        .normalized();
+        assert_eq!(policy.evidence_stream_refresh_secs, 5);
+    }
+
+    #[test]
+    fn dashboard_refresh_policy_normalized_zero_aggregate_defaults_sixty() {
+        let policy = DashboardRefreshPolicy {
+            evidence_stream_refresh_secs: 5,
+            aggregate_refresh_secs: 0,
+        }
+        .normalized();
+        assert_eq!(policy.aggregate_refresh_secs, 60);
+    }
+
+    // -- Enrichment: compute_expected_value_score --
+
+    #[test]
+    fn expected_value_score_zero_inputs() {
+        let input = ReplacementOpportunityInput {
+            slot_id: "s".to_string(),
+            slot_kind: "k".to_string(),
+            performance_uplift_millionths: 0,
+            invocation_frequency_per_minute: 0,
+            risk_reduction_millionths: 0,
+        };
+        assert_eq!(compute_expected_value_score_millionths(&input), 0);
+    }
+
+    #[test]
+    fn expected_value_score_risk_only() {
+        let input = ReplacementOpportunityInput {
+            slot_id: "s".to_string(),
+            slot_kind: "k".to_string(),
+            performance_uplift_millionths: 0,
+            invocation_frequency_per_minute: 0,
+            risk_reduction_millionths: 100_000,
+        };
+        let score = compute_expected_value_score_millionths(&input);
+        assert_eq!(score, 300_000); // 100_000 * 3
+    }
+
+    // -- Enrichment: ProofSpecializationDashboardFilter default --
+
+    #[test]
+    fn proof_specialization_dashboard_filter_default_all_none() {
+        let f = ProofSpecializationDashboardFilter::default();
+        assert!(f.target_id.is_none());
+        assert!(f.optimization_class.is_none());
+        assert!(f.proof_id.is_none());
+        assert!(f.start_unix_ms.is_none());
+        assert!(f.end_unix_ms.is_none());
+    }
+
+    // -- Enrichment: CapabilityDeltaDashboardFilter default --
+
+    #[test]
+    fn capability_delta_dashboard_filter_default_all_none() {
+        let f = CapabilityDeltaDashboardFilter::default();
+        assert!(f.extension_id.is_none());
+        assert!(f.capability.is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: enum serde roundtrips covering all variants
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn decision_outcome_kind_serde_all_variants() {
+        for v in [
+            DecisionOutcomeKind::Allow,
+            DecisionOutcomeKind::Deny,
+            DecisionOutcomeKind::Fallback,
+        ] {
+            let json = serde_json::to_string(&v).unwrap();
+            let back: DecisionOutcomeKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, back);
+        }
+    }
+
+    #[test]
+    fn obligation_state_serde_all_variants() {
+        for v in [
+            ObligationState::Open,
+            ObligationState::Fulfilled,
+            ObligationState::Failed,
+        ] {
+            let json = serde_json::to_string(&v).unwrap();
+            let back: ObligationState = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, back);
+        }
+    }
+
+    #[test]
+    fn cancellation_kind_serde_all_variants() {
+        for v in [
+            CancellationKind::Unload,
+            CancellationKind::Quarantine,
+            CancellationKind::Suspend,
+            CancellationKind::Terminate,
+            CancellationKind::Revocation,
+        ] {
+            let json = serde_json::to_string(&v).unwrap();
+            let back: CancellationKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, back);
+        }
+    }
+
+    #[test]
+    fn replay_health_status_serde_all_variants() {
+        for v in [
+            ReplayHealthStatus::Pass,
+            ReplayHealthStatus::Fail,
+            ReplayHealthStatus::Unknown,
+        ] {
+            let json = serde_json::to_string(&v).unwrap();
+            let back: ReplayHealthStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, back);
+        }
+    }
+
+    #[test]
+    fn recovery_status_serde_all_variants() {
+        for v in [
+            RecoveryStatus::Recovering,
+            RecoveryStatus::Recovered,
+            RecoveryStatus::Waived,
+        ] {
+            let json = serde_json::to_string(&v).unwrap();
+            let back: RecoveryStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, back);
+        }
+    }
+
+    #[test]
+    fn schema_compatibility_status_serde_all_variants() {
+        for v in [
+            SchemaCompatibilityStatus::Unknown,
+            SchemaCompatibilityStatus::Compatible,
+            SchemaCompatibilityStatus::NeedsMigration,
+            SchemaCompatibilityStatus::Incompatible,
+        ] {
+            let json = serde_json::to_string(&v).unwrap();
+            let back: SchemaCompatibilityStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, back);
+        }
+    }
+
+    #[test]
+    fn declassification_outcome_serde_all_variants() {
+        for v in [
+            DeclassificationOutcome::Approved,
+            DeclassificationOutcome::Denied,
+        ] {
+            let json = serde_json::to_string(&v).unwrap();
+            let back: DeclassificationOutcome = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, back);
+        }
+    }
+
+    #[test]
+    fn confinement_status_serde_all_variants() {
+        for v in [
+            ConfinementStatus::Full,
+            ConfinementStatus::Partial,
+            ConfinementStatus::Degraded,
+        ] {
+            let json = serde_json::to_string(&v).unwrap();
+            let back: ConfinementStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, back);
+        }
+    }
+
+    #[test]
+    fn replacement_risk_level_serde_all_variants() {
+        for v in [
+            ReplacementRiskLevel::Low,
+            ReplacementRiskLevel::Medium,
+            ReplacementRiskLevel::High,
+        ] {
+            let json = serde_json::to_string(&v).unwrap();
+            let back: ReplacementRiskLevel = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, back);
+        }
+    }
+
+    #[test]
+    fn rollback_status_serde_all_variants() {
+        for v in [
+            RollbackStatus::Investigating,
+            RollbackStatus::Resolved,
+            RollbackStatus::Waived,
+        ] {
+            let json = serde_json::to_string(&v).unwrap();
+            let back: RollbackStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, back);
+        }
+    }
+
+    #[test]
+    fn proof_inventory_kind_serde_all_variants() {
+        for v in [
+            ProofInventoryKind::CapabilityWitness,
+            ProofInventoryKind::FlowProof,
+            ProofInventoryKind::ReplayMotif,
+        ] {
+            let json = serde_json::to_string(&v).unwrap();
+            let back: ProofInventoryKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, back);
+        }
+    }
+
+    #[test]
+    fn proof_specialization_invalidation_reason_serde_all_variants() {
+        for v in [
+            ProofSpecializationInvalidationReason::EpochChange,
+            ProofSpecializationInvalidationReason::ProofExpired,
+            ProofSpecializationInvalidationReason::ProofRevoked,
+        ] {
+            let json = serde_json::to_string(&v).unwrap();
+            let back: ProofSpecializationInvalidationReason = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, back);
+        }
+    }
+
+    #[test]
+    fn specialization_fallback_reason_serde_all_variants() {
+        for v in [
+            SpecializationFallbackReason::ProofUnavailable,
+            SpecializationFallbackReason::ProofExpired,
+            SpecializationFallbackReason::ProofRevoked,
+            SpecializationFallbackReason::ValidationFailed,
+        ] {
+            let json = serde_json::to_string(&v).unwrap();
+            let back: SpecializationFallbackReason = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, back);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: struct serde roundtrips
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn dashboard_metric_view_custom_unit_roundtrip() {
+        let m = DashboardMetricView {
+            metric: "latency_p99".into(),
+            value: 42_000,
+            unit: "ms".into(),
+        };
+        let json = serde_json::to_string(&m).unwrap();
+        let back: DashboardMetricView = serde_json::from_str(&json).unwrap();
+        assert_eq!(m, back);
+    }
+
+    #[test]
+    fn extension_status_row_fields_roundtrip() {
+        let row = ExtensionStatusRow {
+            extension_id: "ext-001".into(),
+            state: "active".into(),
+            trust_level: "trusted".into(),
+        };
+        let json = serde_json::to_string(&row).unwrap();
+        let back: ExtensionStatusRow = serde_json::from_str(&json).unwrap();
+        assert_eq!(row, back);
+    }
+
+    #[test]
+    fn blocked_promotion_view_serde_roundtrip() {
+        let bpv = BlockedPromotionView {
+            slot_id: "scheduler".into(),
+            gate_failure_code: "FE-1001".into(),
+            failure_detail: "failing equivalence".into(),
+            recommended_remediation: "fix tests".into(),
+            lineage_ref: "lineage-001".into(),
+            evidence_ref: "evidence-001".into(),
+        };
+        let json = serde_json::to_string(&bpv).unwrap();
+        let back: BlockedPromotionView = serde_json::from_str(&json).unwrap();
+        assert_eq!(bpv, back);
+    }
+
+    #[test]
+    fn replacement_opportunity_view_serde_roundtrip() {
+        let rov = ReplacementOpportunityView {
+            slot_id: "parser".into(),
+            slot_kind: "parser".into(),
+            expected_value_score_millionths: 700_000,
+            performance_uplift_millionths: 500_000,
+            invocation_frequency_per_minute: 1000,
+            risk_reduction_millionths: 200_000,
+            rationale: "high-value slot".into(),
+        };
+        let json = serde_json::to_string(&rov).unwrap();
+        let back: ReplacementOpportunityView = serde_json::from_str(&json).unwrap();
+        assert_eq!(rov, back);
+    }
 }

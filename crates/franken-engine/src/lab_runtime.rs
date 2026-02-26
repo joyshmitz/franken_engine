@@ -1072,4 +1072,116 @@ mod tests {
         let mut rt = LabRuntime::new(42);
         assert!(rt.run_task(999).is_none());
     }
+
+    // -- Enrichment: Display uniqueness, determinism, edge cases --
+
+    #[test]
+    fn fault_kind_display_all_unique() {
+        use std::collections::BTreeSet;
+        let mut displays = BTreeSet::new();
+        for kind in [
+            FaultKind::Panic,
+            FaultKind::ChannelDisconnect,
+            FaultKind::ObligationLeak,
+            FaultKind::DeadlineExpired,
+            FaultKind::RegionClose,
+        ] {
+            displays.insert(kind.to_string());
+        }
+        assert_eq!(
+            displays.len(),
+            5,
+            "all FaultKind variants have unique Display"
+        );
+    }
+
+    #[test]
+    fn task_state_display_all_unique() {
+        use std::collections::BTreeSet;
+        let mut displays = BTreeSet::new();
+        for state in [
+            TaskState::Ready,
+            TaskState::Running,
+            TaskState::Completed,
+            TaskState::Faulted,
+            TaskState::Cancelled,
+        ] {
+            displays.insert(state.to_string());
+        }
+        assert_eq!(
+            displays.len(),
+            5,
+            "all TaskState variants have unique Display"
+        );
+    }
+
+    #[test]
+    fn replay_with_fault_injection_produces_deterministic_events() {
+        // Only use transcript-recorded actions (complete_task is not recorded).
+        let mut rt = LabRuntime::new(77);
+        let t1 = rt.spawn_task();
+        let t2 = rt.spawn_task();
+        rt.run_task(t1);
+        rt.advance_time(10);
+        rt.inject_fault(t2, FaultKind::ObligationLeak);
+        rt.inject_cancel("region-x");
+        let result = rt.finalize();
+
+        let replayed_events = replay_transcript(&result.transcript);
+        assert_eq!(result.events, replayed_events);
+    }
+
+    #[test]
+    fn multiple_regions_cancelled_independently() {
+        let mut rt = LabRuntime::new(42);
+        rt.inject_cancel("region-a");
+        rt.inject_cancel("region-b");
+        rt.inject_cancel("region-c");
+        assert!(rt.is_region_cancelled("region-a"));
+        assert!(rt.is_region_cancelled("region-b"));
+        assert!(rt.is_region_cancelled("region-c"));
+        assert!(!rt.is_region_cancelled("region-d"));
+    }
+
+    #[test]
+    fn finalize_seed_preserved() {
+        let rt = LabRuntime::new(12345);
+        let result = rt.finalize();
+        assert_eq!(result.seed, 12345);
+    }
+
+    #[test]
+    fn lab_event_none_fields_serde_roundtrip() {
+        let event = LabEvent {
+            virtual_time: 0,
+            step_index: 1,
+            action: "test_action".to_string(),
+            task_id: None,
+            region_id: None,
+            outcome: "ok".to_string(),
+        };
+        let json = serde_json::to_string(&event).expect("serialize");
+        let restored: LabEvent = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(event, restored);
+    }
+
+    #[test]
+    fn verdict_fail_reason_preserved_in_serde() {
+        let v = Verdict::Fail {
+            reason: "critical error with special chars: <>\"&".to_string(),
+        };
+        let json = serde_json::to_string(&v).unwrap();
+        let restored: Verdict = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, restored);
+    }
+
+    #[test]
+    fn runtime_now_reflects_advance_time() {
+        let mut rt = LabRuntime::new(0);
+        assert_eq!(rt.now(), 0);
+        rt.advance_time(1);
+        rt.advance_time(2);
+        rt.advance_time(3);
+        assert_eq!(rt.now(), 6);
+    }
 }

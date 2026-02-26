@@ -1377,4 +1377,159 @@ mod tests {
         let back: ScorecardLogEntry = serde_json::from_str(&json).unwrap();
         assert_eq!(back.trace_id, "t1");
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: DisruptionDimension Display uniqueness via BTreeSet
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn dimension_display_all_unique_btreeset() {
+        let mut displays = std::collections::BTreeSet::new();
+        for dim in DisruptionDimension::all() {
+            displays.insert(dim.to_string());
+        }
+        assert_eq!(
+            displays.len(),
+            3,
+            "all 3 dimensions produce distinct Display"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: ScorecardError Display uniqueness
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn scorecard_error_display_all_unique() {
+        let errors: Vec<ScorecardError> = vec![
+            ScorecardError::MissingDimension {
+                dimension: "a".into(),
+            },
+            ScorecardError::InvalidThreshold {
+                dimension: "b".into(),
+                detail: "x".into(),
+            },
+            ScorecardError::MissingEvidence {
+                dimension: "c".into(),
+            },
+            ScorecardError::EmptyEvidenceBundle,
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for e in &errors {
+            displays.insert(e.to_string());
+        }
+        assert_eq!(
+            displays.len(),
+            4,
+            "all ScorecardError variants produce distinct Display"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: ScorecardError implements std::error::Error
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn scorecard_error_display_coverage() {
+        let variants: Vec<ScorecardError> = vec![
+            ScorecardError::MissingDimension {
+                dimension: "a".into(),
+            },
+            ScorecardError::EmptyEvidenceBundle,
+        ];
+        for v in &variants {
+            assert!(!v.to_string().is_empty());
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: ScorecardResult with all dimensions at boundary
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn compute_scorecard_at_exact_floor() {
+        let schema = default_schema();
+        // Security floor = 500_000, autonomy floor = 600_000
+        let evidence = vec![
+            make_evidence(DisruptionDimension::PerformanceDelta, 0, &["bd-1ze"]),
+            make_evidence(DisruptionDimension::SecurityDelta, 500_000, &["bd-3rd"]),
+            make_evidence(DisruptionDimension::AutonomyDelta, 600_000, &["bd-181"]),
+        ];
+        let result = compute_scorecard(
+            &schema,
+            &evidence,
+            SecurityEpoch::from_raw(1),
+            "boundary-test".to_string(),
+        )
+        .unwrap();
+        assert!(
+            result.outcome.is_pass(),
+            "scores at exact floor should pass"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: ScorecardHistory empty has_regression is false
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn history_empty_has_no_regression() {
+        let history = ScorecardHistory::new();
+        assert!(!history.has_regression());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: SCORECARD_COMPONENT and SCORECARD_SCHEMA_VERSION constants
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn scorecard_constants_are_non_empty() {
+        assert!(!SCORECARD_COMPONENT.is_empty());
+        assert!(!SCORECARD_SCHEMA_VERSION.is_empty());
+        assert!(SCORECARD_SCHEMA_VERSION.contains("v1"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: ScorecardError serde roundtrip
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn scorecard_error_serde_roundtrip() {
+        let errors: Vec<ScorecardError> = vec![
+            ScorecardError::MissingDimension {
+                dimension: "perf".into(),
+            },
+            ScorecardError::InvalidThreshold {
+                dimension: "sec".into(),
+                detail: "floor > target".into(),
+            },
+            ScorecardError::MissingEvidence {
+                dimension: "auto".into(),
+            },
+            ScorecardError::EmptyEvidenceBundle,
+        ];
+        for e in &errors {
+            let json = serde_json::to_string(e).unwrap();
+            let back: ScorecardError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*e, back);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: DimensionThreshold serde roundtrip
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn dimension_threshold_serde_roundtrip() {
+        let t = DimensionThreshold {
+            dimension: DisruptionDimension::SecurityDelta,
+            floor_millionths: 500_000,
+            target_millionths: 800_000,
+            description: "security threshold".to_string(),
+        };
+        let json = serde_json::to_string(&t).unwrap();
+        let back: DimensionThreshold = serde_json::from_str(&json).unwrap();
+        assert_eq!(t.floor_millionths, back.floor_millionths);
+        assert_eq!(t.target_millionths, back.target_millionths);
+    }
 }

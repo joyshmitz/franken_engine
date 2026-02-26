@@ -1030,4 +1030,129 @@ mod tests {
         assert_eq!(gate.permitted_counts().get("grpc_call"), Some(&1));
         assert_eq!(gate.permitted_counts().get("dns_resolution"), Some(&1));
     }
+
+    // -- Enrichment batch 2: Display uniqueness, boundary, error --
+
+    #[test]
+    fn operation_type_display_uniqueness_btreeset() {
+        use std::collections::BTreeSet;
+        let all = [
+            RemoteOperationType::HttpRequest,
+            RemoteOperationType::GrpcCall,
+            RemoteOperationType::DnsResolution,
+            RemoteOperationType::DistributedStateMutation,
+            RemoteOperationType::LeaseRenewal,
+            RemoteOperationType::RemoteIpc,
+        ];
+        let set: BTreeSet<String> = all.iter().map(|o| o.to_string()).collect();
+        assert_eq!(
+            set.len(),
+            all.len(),
+            "all RemoteOperationType Display strings must be unique"
+        );
+    }
+
+    #[test]
+    fn remote_capability_denied_display_contains_trace_id() {
+        let denied = RemoteCapabilityDenied {
+            operation: RemoteOperationType::DnsResolution,
+            component: "resolver".to_string(),
+            held_profile: ProfileKind::EngineCore,
+            required_capabilities: vec![RuntimeCapability::NetworkEgress],
+            trace_id: "trace-unique-456".to_string(),
+        };
+        let msg = denied.to_string();
+        assert!(msg.contains("trace-unique-456"));
+        assert!(msg.contains("dns_resolution"));
+        assert!(msg.contains("resolver"));
+    }
+
+    #[test]
+    fn sanitize_endpoint_handles_multiple_at_signs() {
+        // Only the first @ should be used for stripping credentials.
+        let result = sanitize_endpoint("https://user:pass@host@extra/path");
+        assert_eq!(result, "https://***@host@extra/path");
+    }
+
+    #[test]
+    fn sanitize_endpoint_empty_string() {
+        assert_eq!(sanitize_endpoint(""), "");
+    }
+
+    #[test]
+    fn gate_event_sanitized_endpoint_recorded() {
+        let mut gate = RemoteOperationGate::new(test_epoch());
+        gate.check(
+            &remote_profile(),
+            RemoteOperationType::HttpRequest,
+            "sync",
+            "https://user:pw@host.com/api",
+            "t-1",
+            100,
+        )
+        .unwrap();
+
+        let events = gate.drain_events();
+        assert_eq!(events[0].remote_endpoint, "https://***@host.com/api");
+    }
+
+    #[test]
+    fn gate_event_epoch_id_matches() {
+        let epoch = SecurityEpoch::from_raw(77);
+        let mut gate = RemoteOperationGate::new(epoch);
+        gate.check(
+            &remote_profile(),
+            RemoteOperationType::HttpRequest,
+            "s",
+            "e",
+            "t",
+            500,
+        )
+        .unwrap();
+
+        let events = gate.drain_events();
+        assert_eq!(events[0].epoch_id, 77);
+        assert_eq!(events[0].timestamp_ticks, 500);
+    }
+
+    #[test]
+    fn transport_error_capability_denied_variant_serde() {
+        let denied = RemoteCapabilityDenied {
+            operation: RemoteOperationType::GrpcCall,
+            component: "rpc".to_string(),
+            held_profile: ProfileKind::ComputeOnly,
+            required_capabilities: vec![RuntimeCapability::NetworkEgress],
+            trace_id: "t".to_string(),
+        };
+        let err = RemoteTransportError::CapabilityDenied(denied);
+        let json = serde_json::to_string(&err).unwrap();
+        let restored: RemoteTransportError = serde_json::from_str(&json).unwrap();
+        assert_eq!(err, restored);
+    }
+
+    #[test]
+    fn mock_transport_records_multiple_operations() {
+        let mut transport = MockRemoteTransport {
+            response: b"ok".to_vec(),
+            ..Default::default()
+        };
+
+        transport
+            .execute(&RemoteOperationType::HttpRequest, "http://a", b"1")
+            .unwrap();
+        transport
+            .execute(&RemoteOperationType::GrpcCall, "grpc://b", b"2")
+            .unwrap();
+        transport
+            .execute(&RemoteOperationType::DnsResolution, "dns://c", b"3")
+            .unwrap();
+
+        assert_eq!(transport.recorded.len(), 3);
+        assert_eq!(transport.recorded[0].payload, b"1");
+        assert_eq!(transport.recorded[1].endpoint, "grpc://b");
+        assert_eq!(
+            transport.recorded[2].operation,
+            RemoteOperationType::DnsResolution
+        );
+    }
 }

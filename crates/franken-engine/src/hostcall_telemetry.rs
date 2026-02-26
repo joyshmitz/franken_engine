@@ -1445,4 +1445,157 @@ mod tests {
         assert!(recorder.verify_all_integrity().is_empty());
         assert!(recorder.snapshots().is_empty());
     }
+
+    // ── Enrichment: Display uniqueness ──────────────────────────
+
+    #[test]
+    fn hostcall_type_display_all_unique() {
+        let displays: std::collections::BTreeSet<String> = [
+            HostcallType::FsRead,
+            HostcallType::FsWrite,
+            HostcallType::NetworkSend,
+            HostcallType::NetworkRecv,
+            HostcallType::ProcessSpawn,
+            HostcallType::EnvRead,
+            HostcallType::MemAlloc,
+            HostcallType::TimerCreate,
+            HostcallType::CryptoOp,
+            HostcallType::IpcSend,
+            HostcallType::IpcRecv,
+        ]
+        .iter()
+        .map(|t| t.to_string())
+        .collect();
+        assert_eq!(displays.len(), 11);
+    }
+
+    #[test]
+    fn hostcall_result_display_all_unique() {
+        let displays: std::collections::BTreeSet<String> = [
+            HostcallResult::Success,
+            HostcallResult::Denied {
+                reason: "no cap".to_string(),
+            },
+            HostcallResult::Error { code: 1 },
+            HostcallResult::Timeout,
+        ]
+        .iter()
+        .map(|r| r.to_string())
+        .collect();
+        assert_eq!(displays.len(), 4);
+    }
+
+    // ── Enrichment: TelemetryError serde roundtrip ──────────────
+
+    #[test]
+    fn telemetry_error_serde_all_variants() {
+        let errors = vec![
+            TelemetryError::ChannelFull,
+            TelemetryError::EmptyExtensionId,
+            TelemetryError::MonotonicityViolation {
+                field: "ts".to_string(),
+                previous: 100,
+                attempted: 50,
+            },
+            TelemetryError::SnapshotOutOfRange {
+                requested: 10,
+                max: 5,
+            },
+        ];
+        for err in &errors {
+            let json = serde_json::to_string(err).unwrap();
+            let back: TelemetryError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*err, back);
+        }
+    }
+
+    // ── Enrichment: TelemetryError Display all distinct ─────────
+
+    #[test]
+    fn telemetry_error_display_all_distinct() {
+        let errors = vec![
+            TelemetryError::ChannelFull,
+            TelemetryError::MonotonicityViolation {
+                field: "timestamp".into(),
+                previous: 10,
+                attempted: 5,
+            },
+            TelemetryError::EmptyExtensionId,
+            TelemetryError::SnapshotOutOfRange {
+                requested: 99,
+                max: 50,
+            },
+        ];
+        let displays: std::collections::BTreeSet<String> =
+            errors.iter().map(|e| e.to_string()).collect();
+        assert_eq!(displays.len(), 4, "all 4 variants produce distinct Display");
+    }
+
+    // ── Enrichment: content_hash determinism ────────────────────
+
+    #[test]
+    fn recorder_content_hash_changes_after_record() {
+        let mut recorder = test_recorder();
+        let h1 = recorder.content_hash();
+        recorder
+            .record(1000, test_input("ext-001", HostcallType::FsRead))
+            .unwrap();
+        let h2 = recorder.content_hash();
+        assert_ne!(h1, h2);
+    }
+
+    // ── Enrichment: snapshot at specific record count ────────────
+
+    #[test]
+    fn snapshot_records_correct_id() {
+        let mut recorder = test_recorder();
+        recorder
+            .record(1000, test_input("ext-001", HostcallType::FsRead))
+            .unwrap();
+        recorder
+            .record(2000, test_input("ext-001", HostcallType::FsWrite))
+            .unwrap();
+        recorder
+            .record(3000, test_input("ext-002", HostcallType::NetworkSend))
+            .unwrap();
+        let snap = recorder.snapshot();
+        assert_eq!(snap.record_count, 3);
+        assert_eq!(snap.record_id_at_snapshot, 2); // last record_id is 2 (0-indexed)
+    }
+
+    // ── Enrichment: extension summary zero calls ────────────────
+
+    #[test]
+    fn extension_summary_unknown_extension_all_zeros() {
+        let recorder = populate_recorder();
+        let query = TelemetryQuery::new(recorder.records());
+        let summary = query.extension_summary("nonexistent", 0, 10_000);
+        assert_eq!(summary.total_calls, 0);
+        assert_eq!(summary.success_count, 0);
+        assert_eq!(summary.denied_count, 0);
+        assert_eq!(summary.error_count, 0);
+        assert_eq!(summary.timeout_count, 0);
+    }
+
+    // ── Enrichment: FlowLabel with empty strings ────────────────
+
+    #[test]
+    fn flow_label_empty_strings_display() {
+        let fl = FlowLabel::new("", "");
+        assert_eq!(fl.to_string(), ":");
+    }
+
+    // ── Enrichment: ResourceDelta serde with negatives ──────────
+
+    #[test]
+    fn resource_delta_negative_values_serde() {
+        let rd = ResourceDelta {
+            memory_bytes: -4096,
+            fd_count: -1,
+            network_bytes: -2048,
+        };
+        let json = serde_json::to_string(&rd).unwrap();
+        let back: ResourceDelta = serde_json::from_str(&json).unwrap();
+        assert_eq!(rd, back);
+    }
 }

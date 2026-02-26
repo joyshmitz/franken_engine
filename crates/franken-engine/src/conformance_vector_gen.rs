@@ -1603,4 +1603,121 @@ mod tests {
             "expected warning about missing positive vectors"
         );
     }
+
+    // --- Enrichment tests ---
+
+    #[test]
+    fn vector_category_display_uniqueness_btreeset() {
+        let cats = [
+            VectorCategory::Positive,
+            VectorCategory::Negative,
+            VectorCategory::Degraded,
+            VectorCategory::Fault,
+        ];
+        let displays: BTreeSet<String> = cats.iter().map(|c| c.to_string()).collect();
+        assert_eq!(displays.len(), 4);
+    }
+
+    #[test]
+    fn degraded_scenario_display_uniqueness() {
+        let scenarios = vec![
+            DegradedScenario::StaleRevocationHead { epochs_behind: 1 },
+            DegradedScenario::PartialAvailability {
+                available_fraction_millionths: 500_000,
+            },
+            DegradedScenario::Timeout { timeout_ms: 100 },
+            DegradedScenario::SchemaDrift {
+                local_version: SemanticVersion::new(1, 0, 0),
+                remote_version: SemanticVersion::new(2, 0, 0),
+            },
+            DegradedScenario::EmptyResponse,
+        ];
+        let displays: BTreeSet<String> = scenarios.iter().map(|s| s.to_string()).collect();
+        assert_eq!(
+            displays.len(),
+            5,
+            "all 5 degraded scenarios should have unique Display"
+        );
+    }
+
+    #[test]
+    fn fault_scenario_display_uniqueness() {
+        let scenarios = vec![
+            FaultScenario::CorruptedPayload {
+                corruption_offset: 0,
+            },
+            FaultScenario::TruncatedMessage {
+                retain_fraction_millionths: 500_000,
+            },
+            FaultScenario::OutOfOrderSequence {
+                expected_seq: 1,
+                actual_seq: 0,
+            },
+            FaultScenario::ReplayAttack { original_nonce: 42 },
+            FaultScenario::MalformedJson,
+            FaultScenario::EncodingMismatch {
+                expected: "json".into(),
+                actual: "binary".into(),
+            },
+        ];
+        let displays: BTreeSet<String> = scenarios.iter().map(|s| s.to_string()).collect();
+        assert_eq!(
+            displays.len(),
+            6,
+            "all 6 fault scenarios should have unique Display"
+        );
+    }
+
+    #[test]
+    fn det_rng_next_range_single_value() {
+        let mut rng = DetRng::new(7);
+        for _ in 0..50 {
+            assert_eq!(rng.next_range(1), 0);
+        }
+    }
+
+    #[test]
+    fn build_valid_json_for_fields_field_values_deterministic() {
+        let fields = vec!["alpha".to_string(), "beta".to_string()];
+        let json1 = build_valid_json_for_fields(&fields, 42);
+        let json2 = build_valid_json_for_fields(&fields, 42);
+        assert_eq!(json1, json2);
+    }
+
+    #[test]
+    fn build_valid_json_for_fields_different_seeds_may_differ() {
+        let fields = vec!["x".to_string(), "y".to_string(), "z".to_string()];
+        let json1 = build_valid_json_for_fields(&fields, 100);
+        let json2 = build_valid_json_for_fields(&fields, 200);
+        // Structure is the same but values may differ (or not) depending on impl.
+        // Both should parse as valid JSON.
+        let _: serde_json::Value = serde_json::from_str(&json1).unwrap();
+        let _: serde_json::Value = serde_json::from_str(&json2).unwrap();
+    }
+
+    #[test]
+    fn generator_config_with_both_filters_active() {
+        let catalog = test_catalog();
+        let mut config = default_config();
+        config.sibling_filter.insert(SiblingRepo::Frankentui);
+        config.surface_filter.insert(SurfaceKind::TuiEventContract);
+
+        let result = generate_vectors(&catalog, &config);
+        for v in &result.vectors {
+            assert_eq!(v.boundary, SiblingRepo::Frankentui);
+            assert_eq!(v.surface_kind, SurfaceKind::TuiEventContract);
+        }
+    }
+
+    #[test]
+    fn positive_vectors_have_no_fault_or_degraded_scenario() {
+        let catalog = test_catalog();
+        let result = generate_vectors(&catalog, &default_config());
+        for v in &result.vectors {
+            if v.category == VectorCategory::Positive {
+                assert!(v.degraded_scenario.is_none());
+                assert!(v.fault_scenario.is_none());
+            }
+        }
+    }
 }

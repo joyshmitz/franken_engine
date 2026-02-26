@@ -1031,4 +1031,98 @@ mod tests {
         let result = run_scenario(ScenarioKind::MultiExtension, 7, &mut cx);
         assert_eq!(result.extensions_loaded.len(), 4);
     }
+
+    // -- Enrichment batch 2: Display uniqueness, serde, boundary --
+
+    #[test]
+    fn scenario_kind_display_uniqueness_btreeset() {
+        use std::collections::BTreeSet;
+        let all = [
+            ScenarioKind::Startup,
+            ScenarioKind::NormalShutdown,
+            ScenarioKind::ForcedCancel,
+            ScenarioKind::Quarantine,
+            ScenarioKind::Revocation,
+            ScenarioKind::DegradedMode,
+            ScenarioKind::MultiExtension,
+        ];
+        let set: BTreeSet<String> = all.iter().map(|k| k.to_string()).collect();
+        assert_eq!(
+            set.len(),
+            all.len(),
+            "all ScenarioKind Display strings must be unique"
+        );
+    }
+
+    #[test]
+    fn scenario_kind_ord_follows_declaration_order() {
+        assert!(ScenarioKind::Startup < ScenarioKind::NormalShutdown);
+        assert!(ScenarioKind::NormalShutdown < ScenarioKind::ForcedCancel);
+        assert!(ScenarioKind::ForcedCancel < ScenarioKind::Quarantine);
+        assert!(ScenarioKind::Quarantine < ScenarioKind::Revocation);
+        assert!(ScenarioKind::Revocation < ScenarioKind::DegradedMode);
+        assert!(ScenarioKind::DegradedMode < ScenarioKind::MultiExtension);
+    }
+
+    #[test]
+    fn scenario_result_assert_true_failure_sets_passed_false() {
+        let mut result = ScenarioResult::new(ScenarioKind::Startup, 0);
+        assert!(result.passed);
+        result.assert_true("this should fail", false);
+        assert!(!result.passed);
+        assert_eq!(result.assertions.len(), 1);
+        assert!(!result.assertions[0].passed);
+        assert!(!result.assertions[0].detail.is_empty());
+    }
+
+    #[test]
+    fn scenario_result_assert_eq_failure_records_diff() {
+        let mut result = ScenarioResult::new(ScenarioKind::Startup, 0);
+        result.assert_eq("mismatch", 42_u64, 99_u64);
+        assert!(!result.passed);
+        let a = &result.assertions[0];
+        assert!(!a.passed);
+        assert!(a.detail.contains("42"));
+        assert!(a.detail.contains("99"));
+    }
+
+    #[test]
+    fn suite_seed_zero_still_passes() {
+        let mut cx = mock_cx(100_000);
+        let suite = run_all_scenarios(0, &mut cx);
+        assert_eq!(suite.verdict, Verdict::Pass);
+        assert_eq!(suite.seed, 0);
+    }
+
+    #[test]
+    fn suite_max_seed_still_passes() {
+        let mut cx = mock_cx(100_000);
+        let suite = run_all_scenarios(u64::MAX, &mut cx);
+        assert_eq!(suite.verdict, Verdict::Pass);
+        assert_eq!(suite.seed, u64::MAX);
+    }
+
+    #[test]
+    fn scenario_assertion_clone_equality() {
+        let a = ScenarioAssertion {
+            description: "clone test".to_string(),
+            passed: true,
+            detail: String::new(),
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn scenario_suite_result_json_scenarios_array() {
+        let mut cx = mock_cx(100_000);
+        let suite = run_all_scenarios(42, &mut cx);
+        let json = serde_json::to_string(&suite).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let scenarios = parsed["scenarios"].as_array().unwrap();
+        assert_eq!(scenarios.len(), 7);
+        for s in scenarios {
+            assert!(s["passed"].as_bool().unwrap());
+        }
+    }
 }

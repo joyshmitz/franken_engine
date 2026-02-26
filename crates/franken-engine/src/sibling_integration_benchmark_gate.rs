@@ -1543,4 +1543,96 @@ mod tests {
         );
         assert_ne!(d1.decision_id, d2.decision_id);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch — PearlTower 2026-02-25
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn sibling_integration_display_uniqueness_btreeset() {
+        let integrations = [
+            SiblingIntegration::Frankentui,
+            SiblingIntegration::Frankensqlite,
+            SiblingIntegration::SqlmodelRust,
+            SiblingIntegration::FastapiRust,
+        ];
+        let mut displays = BTreeSet::new();
+        for i in &integrations {
+            displays.insert(i.to_string());
+        }
+        assert_eq!(
+            displays.len(),
+            4,
+            "all SiblingIntegration variants produce distinct Display strings"
+        );
+    }
+
+    #[test]
+    fn control_plane_operation_display_uniqueness_btreeset() {
+        let ops = [
+            ControlPlaneOperation::EvidenceWrite,
+            ControlPlaneOperation::PolicyQuery,
+            ControlPlaneOperation::TelemetryIngestion,
+            ControlPlaneOperation::TuiDataUpdate,
+        ];
+        let mut displays = BTreeSet::new();
+        for op in &ops {
+            displays.insert(op.to_string());
+        }
+        assert_eq!(
+            displays.len(),
+            4,
+            "all ControlPlaneOperation variants produce distinct Display strings"
+        );
+    }
+
+    #[test]
+    fn operation_latency_samples_serde_roundtrip() {
+        let samples = make_samples(&[100, 200, 300], &[150, 250, 350]);
+        let json = serde_json::to_string(&samples).unwrap();
+        let back: OperationLatencySamples = serde_json::from_str(&json).unwrap();
+        assert_eq!(samples, back);
+    }
+
+    #[test]
+    fn enrichment_thresholds_default_has_required_integrations() {
+        let t = BenchmarkGateThresholds::default();
+        assert_eq!(
+            t.required_integrations.len(),
+            4,
+            "default thresholds must require all 4 integrations"
+        );
+        assert!(!t.per_operation.is_empty(), "must have per-operation SLOs");
+    }
+
+    #[test]
+    fn enrichment_sibling_integration_as_str_matches_display() {
+        for i in [
+            SiblingIntegration::Frankentui,
+            SiblingIntegration::Frankensqlite,
+            SiblingIntegration::SqlmodelRust,
+            SiblingIntegration::FastapiRust,
+        ] {
+            assert_eq!(i.as_str(), &i.to_string());
+        }
+    }
+
+    #[test]
+    fn enrichment_benchmark_snapshot_base_serde() {
+        let snap = base_snapshot();
+        let json = serde_json::to_string(&snap).unwrap();
+        let back: BenchmarkSnapshot = serde_json::from_str(&json).unwrap();
+        assert_eq!(snap, back);
+    }
+
+    #[test]
+    fn operation_latency_sorted_preserves_length() {
+        let samples = make_samples(&[300, 100, 200], &[350, 150, 250]);
+        let sorted_w = samples.sorted_without();
+        let sorted_wi = samples.sorted_with();
+        assert_eq!(sorted_w.len(), 3);
+        assert_eq!(sorted_wi.len(), 3);
+        assert_eq!(sorted_w[0], 100);
+        assert_eq!(sorted_wi[2], 350);
+    }
 }

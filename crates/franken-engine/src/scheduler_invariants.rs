@@ -1254,4 +1254,589 @@ mod tests {
         });
         assert!(comp.overall_compatible);
     }
+
+    // -- Enrichment: additional coverage --
+
+    #[test]
+    fn property_kind_as_str_uniqueness() {
+        let kinds = [
+            PropertyKind::Safety,
+            PropertyKind::Liveness,
+            PropertyKind::Fairness,
+            PropertyKind::Determinism,
+            PropertyKind::Composition,
+        ];
+        let strs: BTreeSet<&str> = kinds.iter().map(|k| k.as_str()).collect();
+        assert_eq!(
+            strs.len(),
+            5,
+            "all PropertyKind::as_str values must be unique"
+        );
+    }
+
+    #[test]
+    fn verification_status_as_str_uniqueness() {
+        let statuses = [
+            VerificationStatus::Verified,
+            VerificationStatus::Violated,
+            VerificationStatus::Inconclusive,
+            VerificationStatus::Pending,
+        ];
+        let strs: BTreeSet<&str> = statuses.iter().map(|s| s.as_str()).collect();
+        assert_eq!(
+            strs.len(),
+            4,
+            "all VerificationStatus::as_str values must be unique"
+        );
+    }
+
+    #[test]
+    fn interference_severity_as_str_uniqueness() {
+        let severities = [
+            InterferenceSeverity::None,
+            InterferenceSeverity::Benign,
+            InterferenceSeverity::Serious,
+            InterferenceSeverity::Critical,
+        ];
+        let strs: BTreeSet<&str> = severities.iter().map(|s| s.as_str()).collect();
+        assert_eq!(
+            strs.len(),
+            4,
+            "all InterferenceSeverity::as_str values must be unique"
+        );
+    }
+
+    #[test]
+    fn transitions_from_empty_state() {
+        let a = SchedulerAutomaton::new("test", StateId::new("s0"));
+        let from_nonexistent = a.transitions_from(&StateId::new("nonexistent"));
+        assert!(from_nonexistent.is_empty());
+    }
+
+    #[test]
+    fn is_reachable_initial_state_always_true() {
+        let a = SchedulerAutomaton::new("test", StateId::new("init"));
+        assert!(a.is_reachable(&StateId::new("init")));
+    }
+
+    #[test]
+    fn state_id_serde_roundtrip() {
+        let s = StateId::new("test-state");
+        let json = serde_json::to_string(&s).unwrap();
+        let back: StateId = serde_json::from_str(&json).unwrap();
+        assert_eq!(s, back);
+    }
+
+    #[test]
+    fn transition_label_serde_roundtrip() {
+        let t = TransitionLabel::new("go");
+        let json = serde_json::to_string(&t).unwrap();
+        let back: TransitionLabel = serde_json::from_str(&json).unwrap();
+        assert_eq!(t, back);
+    }
+
+    #[test]
+    fn counterexample_empty_trace_fixture_unknown_state() {
+        let cx = Counterexample {
+            property_id: "P-EMPTY".to_string(),
+            trace: vec![],
+            violation_description: "empty trace".to_string(),
+        };
+        let fixture = RegressionFixture::from_counterexample("fix-empty", &cx);
+        assert_eq!(fixture.expected_final_state, StateId::new("unknown"));
+        assert!(fixture.replay_actions.is_empty());
+        assert!(fixture.expects_violation);
+    }
+
+    #[test]
+    fn registry_get_result_existing() {
+        let mut reg = InvariantRegistry::new();
+        reg.record_result(VerificationResult {
+            property_id: "P1".to_string(),
+            status: VerificationStatus::Verified,
+            counterexample: None,
+            states_explored: 100,
+            verification_time_us: 500,
+        });
+        assert!(reg.get_result("P1").is_some());
+        assert_eq!(
+            reg.get_result("P1").unwrap().status,
+            VerificationStatus::Verified
+        );
+    }
+
+    #[test]
+    fn registry_get_result_missing() {
+        let reg = InvariantRegistry::new();
+        assert!(reg.get_result("P-MISSING").is_none());
+    }
+
+    #[test]
+    fn composition_serious_count() {
+        let mut check = CompositionCheck::new(
+            vec![ControllerId::new("a"), ControllerId::new("b")],
+            vec![SharedResource::new("res")],
+        );
+        check.add_interference(InterferenceReport {
+            controller_a: ControllerId::new("a"),
+            controller_b: ControllerId::new("b"),
+            resource: SharedResource::new("res"),
+            severity: InterferenceSeverity::Serious,
+            description: "May cause starvation under load".to_string(),
+            mitigation: Some("Add backoff".to_string()),
+        });
+        assert_eq!(check.serious_count(), 1);
+        assert_eq!(check.critical_count(), 0);
+        assert!(!check.overall_compatible);
+    }
+
+    #[test]
+    fn scheduler_lifecycle_accepting_states_are_idle_and_halted() {
+        let a = scheduler_lifecycle_automaton();
+        assert!(a.accepting_states.contains(&StateId::new("idle")));
+        assert!(a.accepting_states.contains(&StateId::new("halted")));
+        assert_eq!(a.accepting_states.len(), 2);
+    }
+
+    #[test]
+    fn registry_overall_status_inconclusive_for_mixed() {
+        let mut reg = InvariantRegistry::new();
+        reg.record_result(VerificationResult {
+            property_id: "P1".to_string(),
+            status: VerificationStatus::Verified,
+            counterexample: None,
+            states_explored: 100,
+            verification_time_us: 500,
+        });
+        reg.record_result(VerificationResult {
+            property_id: "P2".to_string(),
+            status: VerificationStatus::Inconclusive,
+            counterexample: None,
+            states_explored: 100,
+            verification_time_us: 5000,
+        });
+        assert_eq!(reg.overall_status(), VerificationStatus::Inconclusive);
+    }
+
+    #[test]
+    fn invariant_registry_default_is_new() {
+        let default_reg = InvariantRegistry::default();
+        let new_reg = InvariantRegistry::new();
+        assert_eq!(default_reg, new_reg);
+    }
+
+    // -- Enrichment: ordering, serde, edge cases --
+
+    #[test]
+    fn state_id_ordering() {
+        let a = StateId::new("alpha");
+        let b = StateId::new("beta");
+        let c = StateId::new("alpha");
+        assert!(a < b);
+        assert_eq!(a, c);
+        assert!(b > a);
+    }
+
+    #[test]
+    fn transition_label_ordering() {
+        let a = TransitionLabel::new("activate");
+        let b = TransitionLabel::new("deactivate");
+        assert!(a < b);
+    }
+
+    #[test]
+    fn transition_serde_none_guard() {
+        let t = Transition {
+            from: StateId::new("s0"),
+            label: TransitionLabel::new("go"),
+            to: StateId::new("s1"),
+            guard: None,
+        };
+        let json = serde_json::to_string(&t).unwrap();
+        let back: Transition = serde_json::from_str(&json).unwrap();
+        assert_eq!(t, back);
+        assert!(back.guard.is_none());
+    }
+
+    #[test]
+    fn transition_serde_with_guard() {
+        let t = Transition {
+            from: StateId::new("s0"),
+            label: TransitionLabel::new("go"),
+            to: StateId::new("s1"),
+            guard: Some("x > 0".to_string()),
+        };
+        let json = serde_json::to_string(&t).unwrap();
+        let back: Transition = serde_json::from_str(&json).unwrap();
+        assert_eq!(t, back);
+        assert_eq!(back.guard, Some("x > 0".to_string()));
+    }
+
+    #[test]
+    fn add_accepting_also_adds_to_states() {
+        let mut a = SchedulerAutomaton::new("test", StateId::new("s0"));
+        a.add_accepting(StateId::new("s_new"));
+        assert!(a.states.contains(&StateId::new("s_new")));
+        assert!(a.accepting_states.contains(&StateId::new("s_new")));
+    }
+
+    #[test]
+    fn is_deterministic_no_transitions() {
+        let a = SchedulerAutomaton::new("test", StateId::new("s0"));
+        assert!(a.is_deterministic());
+    }
+
+    #[test]
+    fn dead_states_all_reachable() {
+        let mut a = SchedulerAutomaton::new("test", StateId::new("s0"));
+        a.add_transition(Transition {
+            from: StateId::new("s0"),
+            label: TransitionLabel::new("go"),
+            to: StateId::new("s1"),
+            guard: None,
+        });
+        assert!(a.dead_states().is_empty());
+    }
+
+    #[test]
+    fn automaton_derive_id_differs_by_structure() {
+        let a1 = SchedulerAutomaton::new("test", StateId::new("s0"));
+        let mut a2 = SchedulerAutomaton::new("test", StateId::new("s0"));
+        a2.add_state(StateId::new("s1"));
+        assert_ne!(a1.derive_id(), a2.derive_id());
+    }
+
+    #[test]
+    fn automaton_derive_id_differs_by_name() {
+        let a1 = SchedulerAutomaton::new("alpha", StateId::new("s0"));
+        let a2 = SchedulerAutomaton::new("beta", StateId::new("s0"));
+        assert_ne!(a1.derive_id(), a2.derive_id());
+    }
+
+    #[test]
+    fn property_kind_serde_roundtrip() {
+        for k in [
+            PropertyKind::Safety,
+            PropertyKind::Liveness,
+            PropertyKind::Fairness,
+            PropertyKind::Determinism,
+            PropertyKind::Composition,
+        ] {
+            let json = serde_json::to_string(&k).unwrap();
+            let back: PropertyKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(k, back);
+        }
+    }
+
+    #[test]
+    fn property_kind_as_str_values() {
+        assert_eq!(PropertyKind::Safety.as_str(), "safety");
+        assert_eq!(PropertyKind::Liveness.as_str(), "liveness");
+        assert_eq!(PropertyKind::Fairness.as_str(), "fairness");
+        assert_eq!(PropertyKind::Determinism.as_str(), "determinism");
+        assert_eq!(PropertyKind::Composition.as_str(), "composition");
+    }
+
+    #[test]
+    fn verification_status_as_str_values() {
+        assert_eq!(VerificationStatus::Verified.as_str(), "verified");
+        assert_eq!(VerificationStatus::Violated.as_str(), "violated");
+        assert_eq!(VerificationStatus::Inconclusive.as_str(), "inconclusive");
+        assert_eq!(VerificationStatus::Pending.as_str(), "pending");
+    }
+
+    #[test]
+    fn verification_status_ordering() {
+        assert!(VerificationStatus::Verified < VerificationStatus::Violated);
+        assert!(VerificationStatus::Violated < VerificationStatus::Inconclusive);
+        assert!(VerificationStatus::Inconclusive < VerificationStatus::Pending);
+    }
+
+    #[test]
+    fn interference_severity_as_str_values() {
+        assert_eq!(InterferenceSeverity::None.as_str(), "none");
+        assert_eq!(InterferenceSeverity::Benign.as_str(), "benign");
+        assert_eq!(InterferenceSeverity::Serious.as_str(), "serious");
+        assert_eq!(InterferenceSeverity::Critical.as_str(), "critical");
+    }
+
+    #[test]
+    fn interference_severity_ordering() {
+        assert!(InterferenceSeverity::None < InterferenceSeverity::Benign);
+        assert!(InterferenceSeverity::Benign < InterferenceSeverity::Serious);
+        assert!(InterferenceSeverity::Serious < InterferenceSeverity::Critical);
+    }
+
+    #[test]
+    fn verification_result_serde_roundtrip() {
+        let r = VerificationResult {
+            property_id: "P-SAFETY-01".to_string(),
+            status: VerificationStatus::Violated,
+            counterexample: Some(Counterexample {
+                property_id: "P-SAFETY-01".to_string(),
+                trace: vec![CounterexampleStep {
+                    step: 0,
+                    state: StateId::new("idle"),
+                    action: TransitionLabel::new("go"),
+                    next_state: StateId::new("halted"),
+                    state_vars: BTreeMap::from([("x".to_string(), "1".to_string())]),
+                }],
+                violation_description: "test".to_string(),
+            }),
+            states_explored: 1000,
+            verification_time_us: 5000,
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        let back: VerificationResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(r, back);
+    }
+
+    #[test]
+    fn property_spec_serde_roundtrip() {
+        let spec = PropertySpec {
+            id: "P1".to_string(),
+            name: "Test Prop".to_string(),
+            kind: PropertyKind::Safety,
+            description: "test".to_string(),
+            formula: "G(true)".to_string(),
+            components: vec!["scheduler".to_string()],
+        };
+        let json = serde_json::to_string(&spec).unwrap();
+        let back: PropertySpec = serde_json::from_str(&json).unwrap();
+        assert_eq!(spec, back);
+    }
+
+    #[test]
+    fn counterexample_serde_roundtrip() {
+        let cx = Counterexample {
+            property_id: "P1".to_string(),
+            trace: vec![CounterexampleStep {
+                step: 0,
+                state: StateId::new("a"),
+                action: TransitionLabel::new("go"),
+                next_state: StateId::new("b"),
+                state_vars: BTreeMap::new(),
+            }],
+            violation_description: "test violation".to_string(),
+        };
+        let json = serde_json::to_string(&cx).unwrap();
+        let back: Counterexample = serde_json::from_str(&json).unwrap();
+        assert_eq!(cx, back);
+    }
+
+    #[test]
+    fn counterexample_step_with_state_vars() {
+        let step = CounterexampleStep {
+            step: 3,
+            state: StateId::new("executing"),
+            action: TransitionLabel::new("budget_exceeded"),
+            next_state: StateId::new("safe_mode"),
+            state_vars: BTreeMap::from([
+                ("budget_remaining".to_string(), "0".to_string()),
+                ("lane_active".to_string(), "js".to_string()),
+            ]),
+        };
+        let json = serde_json::to_string(&step).unwrap();
+        let back: CounterexampleStep = serde_json::from_str(&json).unwrap();
+        assert_eq!(step, back);
+        assert_eq!(back.state_vars.len(), 2);
+    }
+
+    #[test]
+    fn regression_fixture_serde_roundtrip() {
+        let fixture = RegressionFixture {
+            fixture_id: "fix-001".to_string(),
+            property_id: "P1".to_string(),
+            description: "test".to_string(),
+            replay_actions: vec![TransitionLabel::new("go"), TransitionLabel::new("stop")],
+            expected_final_state: StateId::new("halted"),
+            expects_violation: true,
+        };
+        let json = serde_json::to_string(&fixture).unwrap();
+        let back: RegressionFixture = serde_json::from_str(&json).unwrap();
+        assert_eq!(fixture, back);
+    }
+
+    #[test]
+    fn interference_report_serde_roundtrip() {
+        let report = InterferenceReport {
+            controller_a: ControllerId::new("router"),
+            controller_b: ControllerId::new("optimizer"),
+            resource: SharedResource::new("budget"),
+            severity: InterferenceSeverity::Serious,
+            description: "both modify budget".to_string(),
+            mitigation: Some("add lock".to_string()),
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        let back: InterferenceReport = serde_json::from_str(&json).unwrap();
+        assert_eq!(report, back);
+    }
+
+    #[test]
+    fn controller_id_serde_roundtrip() {
+        let id = ControllerId::new("hybrid_router");
+        let json = serde_json::to_string(&id).unwrap();
+        let back: ControllerId = serde_json::from_str(&json).unwrap();
+        assert_eq!(id, back);
+    }
+
+    #[test]
+    fn controller_id_ordering() {
+        let a = ControllerId::new("alpha");
+        let b = ControllerId::new("beta");
+        assert!(a < b);
+    }
+
+    #[test]
+    fn shared_resource_serde_roundtrip() {
+        let r = SharedResource::new("signal_graph");
+        let json = serde_json::to_string(&r).unwrap();
+        let back: SharedResource = serde_json::from_str(&json).unwrap();
+        assert_eq!(r, back);
+    }
+
+    #[test]
+    fn shared_resource_ordering() {
+        let a = SharedResource::new("budget");
+        let b = SharedResource::new("signal_graph");
+        assert!(a < b);
+    }
+
+    #[test]
+    fn composition_none_severity_stays_compatible() {
+        let mut check = CompositionCheck::new(
+            vec![ControllerId::new("a"), ControllerId::new("b")],
+            vec![SharedResource::new("res")],
+        );
+        check.add_interference(InterferenceReport {
+            controller_a: ControllerId::new("a"),
+            controller_b: ControllerId::new("b"),
+            resource: SharedResource::new("res"),
+            severity: InterferenceSeverity::None,
+            description: "Controllers are fully independent".to_string(),
+            mitigation: None,
+        });
+        assert!(check.overall_compatible);
+        assert_eq!(check.critical_count(), 0);
+        assert_eq!(check.serious_count(), 0);
+    }
+
+    #[test]
+    fn composition_serde_roundtrip() {
+        let mut check = CompositionCheck::new(
+            vec![ControllerId::new("a"), ControllerId::new("b")],
+            vec![SharedResource::new("r1")],
+        );
+        check.add_interference(InterferenceReport {
+            controller_a: ControllerId::new("a"),
+            controller_b: ControllerId::new("b"),
+            resource: SharedResource::new("r1"),
+            severity: InterferenceSeverity::Benign,
+            description: "benign".to_string(),
+            mitigation: None,
+        });
+        let json = serde_json::to_string(&check).unwrap();
+        let back: CompositionCheck = serde_json::from_str(&json).unwrap();
+        assert_eq!(check, back);
+    }
+
+    #[test]
+    fn registry_overall_status_only_inconclusive() {
+        let mut reg = InvariantRegistry::new();
+        reg.record_result(VerificationResult {
+            property_id: "P1".to_string(),
+            status: VerificationStatus::Inconclusive,
+            counterexample: None,
+            states_explored: 1000,
+            verification_time_us: 60_000_000,
+        });
+        assert_eq!(reg.overall_status(), VerificationStatus::Inconclusive);
+    }
+
+    #[test]
+    fn registry_violated_without_counterexample_no_fixture() {
+        let mut reg = InvariantRegistry::new();
+        reg.record_result(VerificationResult {
+            property_id: "P1".to_string(),
+            status: VerificationStatus::Violated,
+            counterexample: None,
+            states_explored: 500,
+            verification_time_us: 1000,
+        });
+        assert_eq!(reg.violated_count(), 1);
+        assert!(reg.fixtures.is_empty(), "no fixture without counterexample");
+    }
+
+    #[test]
+    fn registry_derive_id_differs_after_results() {
+        let r1 = InvariantRegistry::new();
+        let mut r2 = InvariantRegistry::new();
+        r2.record_result(VerificationResult {
+            property_id: "P1".to_string(),
+            status: VerificationStatus::Verified,
+            counterexample: None,
+            states_explored: 100,
+            verification_time_us: 500,
+        });
+        assert_ne!(r1.derive_id(), r2.derive_id());
+    }
+
+    #[test]
+    fn fallback_automaton_accepting_states() {
+        let a = fallback_transition_automaton();
+        assert!(a.accepting_states.contains(&StateId::new("adaptive")));
+        assert!(a.accepting_states.contains(&StateId::new("halted")));
+        assert_eq!(a.accepting_states.len(), 2);
+    }
+
+    #[test]
+    fn fallback_automaton_transition_count() {
+        let a = fallback_transition_automaton();
+        assert_eq!(a.transitions.len(), 9);
+    }
+
+    #[test]
+    fn scheduler_lifecycle_transition_count() {
+        let a = scheduler_lifecycle_automaton();
+        assert_eq!(a.transitions.len(), 14);
+    }
+
+    #[test]
+    fn scheduler_lifecycle_state_count() {
+        let a = scheduler_lifecycle_automaton();
+        assert_eq!(a.states.len(), 8);
+    }
+
+    #[test]
+    fn fixture_derive_id_differs_by_fixture_id() {
+        let f1 = RegressionFixture {
+            fixture_id: "fix-001".to_string(),
+            property_id: "P1".to_string(),
+            description: "test".to_string(),
+            replay_actions: vec![],
+            expected_final_state: StateId::new("idle"),
+            expects_violation: false,
+        };
+        let f2 = RegressionFixture {
+            fixture_id: "fix-002".to_string(),
+            ..f1.clone()
+        };
+        assert_ne!(f1.derive_id(), f2.derive_id());
+    }
+
+    #[test]
+    fn verification_result_derive_id_differs_by_status() {
+        let r1 = VerificationResult {
+            property_id: "P1".to_string(),
+            status: VerificationStatus::Verified,
+            counterexample: None,
+            states_explored: 100,
+            verification_time_us: 500,
+        };
+        let r2 = VerificationResult {
+            status: VerificationStatus::Violated,
+            ..r1.clone()
+        };
+        assert_ne!(r1.derive_id(), r2.derive_id());
+    }
 }

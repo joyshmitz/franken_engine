@@ -2159,4 +2159,292 @@ mod tests {
             );
         }
     }
+
+    // -- Enrichment: AlienRiskAlertLevel --
+
+    #[test]
+    fn alien_risk_alert_level_serde_roundtrip() {
+        for level in [
+            AlienRiskAlertLevel::Nominal,
+            AlienRiskAlertLevel::Elevated,
+            AlienRiskAlertLevel::Critical,
+        ] {
+            let json = serde_json::to_string(&level).unwrap();
+            let back: AlienRiskAlertLevel = serde_json::from_str(&json).unwrap();
+            assert_eq!(level, back);
+        }
+    }
+
+    #[test]
+    fn alien_risk_alert_level_display_all_distinct() {
+        let strs: BTreeSet<String> = [
+            AlienRiskAlertLevel::Nominal,
+            AlienRiskAlertLevel::Elevated,
+            AlienRiskAlertLevel::Critical,
+        ]
+        .iter()
+        .map(|l| l.to_string())
+        .collect();
+        assert_eq!(strs.len(), 3);
+    }
+
+    // -- Enrichment: RuntimeDecisionScoringError --
+
+    #[test]
+    fn runtime_decision_scoring_error_serde_roundtrip() {
+        let errors = [
+            RuntimeDecisionScoringError::MissingField {
+                field: "trace_id".to_string(),
+            },
+            RuntimeDecisionScoringError::ZeroAttackerCost,
+            RuntimeDecisionScoringError::AllActionsBlocked,
+        ];
+        for err in &errors {
+            let json = serde_json::to_string(err).unwrap();
+            let back: RuntimeDecisionScoringError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*err, back);
+        }
+    }
+
+    #[test]
+    fn runtime_decision_scoring_error_display_all_distinct() {
+        let strs: BTreeSet<String> = [
+            RuntimeDecisionScoringError::MissingField {
+                field: "x".to_string(),
+            },
+            RuntimeDecisionScoringError::ZeroAttackerCost,
+            RuntimeDecisionScoringError::AllActionsBlocked,
+        ]
+        .iter()
+        .map(|e| e.to_string())
+        .collect();
+        assert_eq!(strs.len(), 3);
+    }
+
+    #[test]
+    fn runtime_decision_scoring_error_is_std_error() {
+        let err: Box<dyn std::error::Error> =
+            Box::new(RuntimeDecisionScoringError::ZeroAttackerCost);
+        assert!(!err.to_string().is_empty());
+    }
+
+    // -- Enrichment: DecisionConfidenceInterval serde --
+
+    #[test]
+    fn decision_confidence_interval_serde_roundtrip() {
+        let ci = DecisionConfidenceInterval {
+            lower_millionths: 500_000,
+            upper_millionths: 1_500_000,
+        };
+        let json = serde_json::to_string(&ci).unwrap();
+        let back: DecisionConfidenceInterval = serde_json::from_str(&json).unwrap();
+        assert_eq!(ci, back);
+    }
+
+    // -- Enrichment: CandidateActionScore serde --
+
+    #[test]
+    fn candidate_action_score_serde_roundtrip() {
+        let mut contributions = BTreeMap::new();
+        contributions.insert("Benign".to_string(), 0);
+        contributions.insert("Malicious".to_string(), 50_000_000);
+        let score = CandidateActionScore {
+            action: ContainmentAction::Allow,
+            expected_loss_millionths: 25_000_000,
+            state_contributions_millionths: contributions,
+            guardrail_blocked: false,
+        };
+        let json = serde_json::to_string(&score).unwrap();
+        let back: CandidateActionScore = serde_json::from_str(&json).unwrap();
+        assert_eq!(score, back);
+    }
+
+    // -- Enrichment: RuntimeDecisionScoreEvent serde --
+
+    #[test]
+    fn runtime_decision_score_event_serde_roundtrip() {
+        let event = RuntimeDecisionScoreEvent {
+            trace_id: "t1".to_string(),
+            decision_id: "d1".to_string(),
+            policy_id: "p1".to_string(),
+            component: RUNTIME_DECISION_SCORING_COMPONENT.to_string(),
+            event: "score".to_string(),
+            outcome: "pass".to_string(),
+            error_code: None,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: RuntimeDecisionScoreEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, back);
+    }
+
+    // -- Enrichment: AlienRiskEnvelope serde --
+
+    #[test]
+    fn alien_risk_envelope_serde_roundtrip() {
+        let envelope = AlienRiskEnvelope {
+            tail_confidence_millionths: 900_000,
+            tail_var_millionths: 5_000_000,
+            tail_cvar_millionths: 6_000_000,
+            conformal_quantile_millionths: 750_000,
+            conformal_p_value_millionths: 100_000,
+            e_value_millionths: 2_000_000,
+            regime_shift_score_millionths: 1_500_000,
+            alert_level: AlienRiskAlertLevel::Elevated,
+            recommended_floor_action: Some(ContainmentAction::Sandbox),
+        };
+        let json = serde_json::to_string(&envelope).unwrap();
+        let back: AlienRiskEnvelope = serde_json::from_str(&json).unwrap();
+        assert_eq!(envelope, back);
+    }
+
+    // -- Enrichment: ContainmentAction::ALL has 6 elements --
+
+    #[test]
+    fn containment_action_all_has_six_variants() {
+        assert_eq!(ContainmentAction::ALL.len(), 6);
+    }
+
+    #[test]
+    fn containment_action_all_in_severity_order() {
+        for window in ContainmentAction::ALL.windows(2) {
+            assert!(
+                window[0].severity() < window[1].severity(),
+                "{:?} should have lower severity than {:?}",
+                window[0],
+                window[1]
+            );
+        }
+    }
+
+    // -- Enrichment: LossMatrix::loss for missing pair returns 0 --
+
+    #[test]
+    fn loss_matrix_missing_pair_returns_zero() {
+        let matrix = LossMatrix {
+            matrix_id: "empty".to_string(),
+            entries: vec![],
+        };
+        assert_eq!(matrix.loss(ContainmentAction::Allow, RiskState::Benign), 0);
+    }
+
+    // -- Enrichment: DecisionExplanation serde --
+
+    #[test]
+    fn decision_explanation_serde_roundtrip() {
+        let mut losses = BTreeMap::new();
+        losses.insert("Allow".to_string(), 0);
+        losses.insert("Quarantine".to_string(), 50_000_000);
+        let explanation = DecisionExplanation {
+            posterior_snapshot: certain_benign(),
+            loss_matrix_id: "balanced-v1".to_string(),
+            all_expected_losses: losses,
+            margin_millionths: 50_000_000,
+        };
+        let json = serde_json::to_string(&explanation).unwrap();
+        let back: DecisionExplanation = serde_json::from_str(&json).unwrap();
+        assert_eq!(explanation, back);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch — PearlTower 2026-02-25
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn enrichment_containment_action_display_uniqueness() {
+        let mut displays = BTreeSet::new();
+        for action in &ContainmentAction::ALL {
+            let s = action.to_string();
+            assert!(!s.is_empty());
+            displays.insert(s);
+        }
+        assert_eq!(
+            displays.len(),
+            ContainmentAction::ALL.len(),
+            "all ContainmentAction variants produce distinct Display strings"
+        );
+    }
+
+    #[test]
+    fn enrichment_loss_entry_serde_nonzero() {
+        let entry = LossEntry {
+            action: ContainmentAction::Sandbox,
+            state: RiskState::Anomalous,
+            loss_millionths: 3_500_000,
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let back: LossEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry, back);
+    }
+
+    #[test]
+    fn enrichment_loss_matrix_content_hash_differs() {
+        let balanced = LossMatrix::balanced();
+        let conservative = LossMatrix::conservative();
+        assert_ne!(
+            balanced.content_hash(),
+            conservative.content_hash(),
+            "balanced and conservative matrices must have different content hashes"
+        );
+    }
+
+    #[test]
+    fn enrichment_permissive_matrix_loss_lookups() {
+        let m = LossMatrix::permissive();
+        // permissive: Allow+Malicious = 50_000_000
+        assert_eq!(
+            m.loss(ContainmentAction::Allow, RiskState::Malicious),
+            50_000_000
+        );
+        // permissive: Quarantine+Benign = 25_000_000
+        assert_eq!(
+            m.loss(ContainmentAction::Quarantine, RiskState::Benign),
+            25_000_000
+        );
+    }
+
+    #[test]
+    fn enrichment_severity_ordering_matches_all_array() {
+        for window in ContainmentAction::ALL.windows(2) {
+            assert!(
+                window[0].severity() < window[1].severity(),
+                "{:?} should have lower severity than {:?}",
+                window[0],
+                window[1]
+            );
+        }
+    }
+
+    #[test]
+    fn enrichment_selector_certain_benign_chooses_allow() {
+        let mut selector = ExpectedLossSelector::new(LossMatrix::balanced());
+        let decision = selector.select(&certain_benign());
+        assert_eq!(decision.action, ContainmentAction::Allow);
+        // Expected loss is minimal for Allow on a benign posterior.
+        assert!(
+            decision.expected_loss_millionths < 100_000,
+            "expected loss for allow on benign should be very low, got {}",
+            decision.expected_loss_millionths
+        );
+    }
+
+    #[test]
+    fn enrichment_selector_certain_malicious_never_allows() {
+        let mut selector = ExpectedLossSelector::new(LossMatrix::balanced());
+        let decision = selector.select(&certain_malicious());
+        assert_ne!(decision.action, ContainmentAction::Allow);
+    }
+
+    #[test]
+    fn enrichment_loss_matrix_incomplete_is_not_complete() {
+        let entries = vec![LossEntry {
+            action: ContainmentAction::Allow,
+            state: RiskState::Benign,
+            loss_millionths: 0,
+        }];
+        let m = LossMatrix {
+            matrix_id: "partial".to_string(),
+            entries,
+        };
+        assert!(!m.is_complete());
+    }
 }

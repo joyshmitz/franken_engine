@@ -886,4 +886,118 @@ mod tests {
         // Still just 1 event — no duplicate
         assert_eq!(ctx.event_count(), 1);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 2: Display uniqueness, edge cases, serde
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn mask_outcome_display_uniqueness() {
+        let displays: std::collections::BTreeSet<String> = [
+            MaskOutcome::CleanRelease,
+            MaskOutcome::BoundExceeded,
+            MaskOutcome::CancelDeferred,
+        ]
+        .iter()
+        .map(|o| o.to_string())
+        .collect();
+        assert_eq!(
+            displays.len(),
+            3,
+            "all MaskOutcome variants must have unique Display"
+        );
+    }
+
+    #[test]
+    fn mask_error_display_uniqueness() {
+        let displays: std::collections::BTreeSet<String> = [
+            MaskError::NestingDenied,
+            MaskError::OperationNotAllowed {
+                operation_name: "test".to_string(),
+            },
+            MaskError::AlreadyReleased,
+        ]
+        .iter()
+        .map(|e| e.to_string())
+        .collect();
+        assert_eq!(
+            displays.len(),
+            3,
+            "all MaskError variants must have unique Display"
+        );
+    }
+
+    #[test]
+    fn three_sequential_masks_increment_ids() {
+        let mut ctx = test_context();
+        for expected_id in 1..=3 {
+            let id = ctx.create_mask(&checkpoint_justification()).unwrap();
+            assert_eq!(id, expected_id);
+            ctx.release_mask(false).unwrap();
+        }
+        assert_eq!(ctx.event_count(), 3);
+    }
+
+    #[test]
+    fn mask_justification_fields() {
+        let just = MaskJustification {
+            operation_name: "test_op".to_string(),
+            expected_ops_hint: 42,
+            atomicity_reason: "must be atomic".to_string(),
+        };
+        assert_eq!(just.operation_name, "test_op");
+        assert_eq!(just.expected_ops_hint, 42);
+        assert_eq!(just.atomicity_reason, "must be atomic");
+    }
+
+    #[test]
+    fn mask_event_fields_for_cancel_deferred() {
+        let mut ctx = test_context();
+        ctx.create_mask(&checkpoint_justification()).unwrap();
+        for _ in 0..5 {
+            ctx.tick();
+        }
+        ctx.release_mask(true).unwrap();
+
+        let events = ctx.drain_events();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].outcome, MaskOutcome::CancelDeferred);
+        assert_eq!(events[0].ops_executed, 5);
+        assert_eq!(events[0].mask_id, 1);
+    }
+
+    #[test]
+    fn policy_with_custom_bounds() {
+        let mut policy = MaskPolicy::standard();
+        policy
+            .operation_bounds
+            .insert("custom_op".to_string(), MaskBounds { max_ops: 4 });
+        assert!(policy.is_allowed("custom_op"));
+        assert_eq!(
+            policy.bounds_for("custom_op"),
+            Some(MaskBounds { max_ops: 4 })
+        );
+    }
+
+    #[test]
+    fn zero_tick_clean_release() {
+        let mut ctx = test_context();
+        ctx.create_mask(&checkpoint_justification()).unwrap();
+        // Release immediately without any ticks
+        let outcome = ctx.release_mask(false).unwrap();
+        assert_eq!(outcome, MaskOutcome::CleanRelease);
+        let events = ctx.drain_events();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].ops_executed, 0);
+    }
+
+    #[test]
+    fn lab_mode_policy_serde_roundtrip() {
+        let mut policy = MaskPolicy::standard();
+        policy.lab_mode = true;
+        let json = serde_json::to_string(&policy).unwrap();
+        let restored: MaskPolicy = serde_json::from_str(&json).unwrap();
+        assert_eq!(policy, restored);
+        assert!(restored.lab_mode);
+    }
 }

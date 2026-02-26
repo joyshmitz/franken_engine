@@ -1614,4 +1614,139 @@ mod tests {
             Err(DualBackendParserError::AllBackendsFailed(_))
         ));
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: DualBackendParserError Display uniqueness via BTreeSet
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parser_error_display_all_unique() {
+        let errors: Vec<DualBackendParserError> = vec![
+            DualBackendParserError::NoBackendsRegistered,
+            DualBackendParserError::BackendNotFound("test".into()),
+            DualBackendParserError::TooManyBackends { count: 10, max: 8 },
+            DualBackendParserError::AllBackendsFailed(vec!["swc".into()]),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for e in &errors {
+            displays.insert(e.to_string());
+        }
+        assert_eq!(
+            displays.len(),
+            errors.len(),
+            "all error variants produce distinct Display"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: DualBackendParserError implements std::error::Error
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parser_error_implements_std_error() {
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(DualBackendParserError::NoBackendsRegistered),
+            Box::new(DualBackendParserError::BackendNotFound("x".into())),
+            Box::new(DualBackendParserError::TooManyBackends { count: 9, max: 8 }),
+        ];
+        for v in &variants {
+            assert!(!v.to_string().is_empty());
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: DiagnosticSeverity Display uniqueness via BTreeSet
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn diagnostic_severity_display_all_unique() {
+        let mut displays = std::collections::BTreeSet::new();
+        for sev in &[
+            DiagnosticSeverity::Hint,
+            DiagnosticSeverity::Warning,
+            DiagnosticSeverity::Error,
+            DiagnosticSeverity::Fatal,
+        ] {
+            displays.insert(sev.to_string());
+        }
+        assert_eq!(displays.len(), 4);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: DiagnosticCategory Display uniqueness
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn diagnostic_category_display_all_unique() {
+        let mut displays = std::collections::BTreeSet::new();
+        for cat in &[
+            DiagnosticCategory::Syntax,
+            DiagnosticCategory::Semantic,
+            DiagnosticCategory::Type,
+            DiagnosticCategory::Resource,
+            DiagnosticCategory::Encoding,
+        ] {
+            displays.insert(cat.to_string());
+        }
+        assert_eq!(displays.len(), 5);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: BackendCapability serde roundtrip
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn backend_capability_serde_roundtrip() {
+        let caps = [BackendCapability::full(), BackendCapability::minimal()];
+        for cap in &caps {
+            let json = serde_json::to_string(cap).unwrap();
+            let back: BackendCapability = serde_json::from_str(&json).unwrap();
+            assert_eq!(cap.typescript, back.typescript);
+            assert_eq!(cap.jsx, back.jsx);
+            assert_eq!(cap.source_maps, back.source_maps);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: BackendRegistration serde roundtrip
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn backend_registration_serde_roundtrip() {
+        let reg = make_registration(BackendId::swc(), 1, true);
+        let json = serde_json::to_string(&reg).unwrap();
+        let back: BackendRegistration = serde_json::from_str(&json).unwrap();
+        assert_eq!(reg.backend_id, back.backend_id);
+        assert_eq!(reg.priority, back.priority);
+        assert_eq!(reg.healthy, back.healthy);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: DualBackendParser parse_count and fallback_count initial
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parser_initial_counts_are_zero() {
+        let parser = make_parser();
+        assert_eq!(parser.parse_count, 0);
+        assert_eq!(parser.fallback_count, 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: DivergenceClass serde roundtrip
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn divergence_class_serde_roundtrip() {
+        for dc in &[
+            DivergenceClass::AstDivergence,
+            DivergenceClass::DiagnosticsDivergence,
+            DivergenceClass::SpanDivergence,
+            DivergenceClass::ErrorDivergence,
+        ] {
+            let json = serde_json::to_string(dc).unwrap();
+            let back: DivergenceClass = serde_json::from_str(&json).unwrap();
+            assert_eq!(*dc, back);
+        }
+    }
 }

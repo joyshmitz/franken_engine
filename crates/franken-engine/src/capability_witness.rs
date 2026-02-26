@@ -5240,4 +5240,426 @@ mod tests {
         let unique: BTreeSet<&str> = codes.iter().copied().collect();
         assert_eq!(codes.len(), unique.len());
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: WitnessSchemaVersion
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn schema_version_enrichment_display_format() {
+        assert_eq!(WitnessSchemaVersion::CURRENT.to_string(), "1.0");
+        let v = WitnessSchemaVersion { major: 2, minor: 3 };
+        assert_eq!(v.to_string(), "2.3");
+    }
+
+    #[test]
+    fn schema_version_compatible_same_major_higher_minor() {
+        let reader = WitnessSchemaVersion { major: 1, minor: 2 };
+        let witness = WitnessSchemaVersion { major: 1, minor: 1 };
+        assert!(reader.is_compatible_with(&witness));
+    }
+
+    #[test]
+    fn schema_version_enrichment_lower_minor_rejects() {
+        let reader = WitnessSchemaVersion { major: 1, minor: 0 };
+        let witness = WitnessSchemaVersion { major: 1, minor: 1 };
+        assert!(!reader.is_compatible_with(&witness));
+    }
+
+    #[test]
+    fn schema_version_enrichment_different_major_rejects() {
+        let reader = WitnessSchemaVersion { major: 2, minor: 0 };
+        let witness = WitnessSchemaVersion { major: 1, minor: 0 };
+        assert!(!reader.is_compatible_with(&witness));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: LifecycleState
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn lifecycle_state_display_all_distinct() {
+        let states = [
+            LifecycleState::Draft,
+            LifecycleState::Validated,
+            LifecycleState::Promoted,
+            LifecycleState::Active,
+            LifecycleState::Superseded,
+            LifecycleState::Revoked,
+        ];
+        let displays: BTreeSet<String> = states.iter().map(|s| s.to_string()).collect();
+        assert_eq!(displays.len(), states.len());
+    }
+
+    #[test]
+    fn lifecycle_is_terminal_only_for_superseded_and_revoked() {
+        assert!(!LifecycleState::Draft.is_terminal());
+        assert!(!LifecycleState::Validated.is_terminal());
+        assert!(!LifecycleState::Promoted.is_terminal());
+        assert!(!LifecycleState::Active.is_terminal());
+        assert!(LifecycleState::Superseded.is_terminal());
+        assert!(LifecycleState::Revoked.is_terminal());
+    }
+
+    #[test]
+    fn lifecycle_is_active_only_for_active() {
+        assert!(!LifecycleState::Draft.is_active());
+        assert!(LifecycleState::Active.is_active());
+    }
+
+    #[test]
+    fn lifecycle_valid_transitions_counts() {
+        assert_eq!(LifecycleState::Draft.valid_transitions().len(), 1);
+        assert_eq!(LifecycleState::Validated.valid_transitions().len(), 1);
+        assert_eq!(LifecycleState::Promoted.valid_transitions().len(), 1);
+        assert_eq!(LifecycleState::Active.valid_transitions().len(), 2);
+        assert_eq!(LifecycleState::Superseded.valid_transitions().len(), 0);
+        assert_eq!(LifecycleState::Revoked.valid_transitions().len(), 0);
+    }
+
+    #[test]
+    fn lifecycle_can_transition_draft_to_validated() {
+        assert!(LifecycleState::Draft.can_transition_to(LifecycleState::Validated));
+        assert!(!LifecycleState::Draft.can_transition_to(LifecycleState::Active));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: WitnessError Display all-distinct
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn witness_error_display_all_distinct() {
+        let errors: Vec<WitnessError> = vec![
+            WitnessError::EmptyRequiredSet,
+            WitnessError::MissingProofObligation {
+                capability: "cap".to_string(),
+            },
+            WitnessError::InvalidConfidence {
+                reason: "r".to_string(),
+            },
+            WitnessError::InvalidTransition {
+                from: LifecycleState::Draft,
+                to: LifecycleState::Active,
+            },
+            WitnessError::IncompatibleSchema {
+                witness: WitnessSchemaVersion::CURRENT,
+                reader: WitnessSchemaVersion { major: 2, minor: 0 },
+            },
+            WitnessError::SignatureInvalid {
+                detail: "bad".to_string(),
+            },
+            WitnessError::IntegrityFailure {
+                expected: "a".to_string(),
+                actual: "b".to_string(),
+            },
+            WitnessError::IdDerivation("id".to_string()),
+            WitnessError::InvalidRollbackToken {
+                reason: "r".to_string(),
+            },
+            WitnessError::EpochMismatch {
+                witness_epoch: 1,
+                current_epoch: 2,
+            },
+            WitnessError::MissingPromotionTheoremProofs {
+                missing_checks: vec!["a".to_string()],
+            },
+            WitnessError::PromotionTheoremFailed {
+                failed_checks: vec!["b".to_string()],
+            },
+        ];
+        let displays: BTreeSet<String> = errors.iter().map(|e| e.to_string()).collect();
+        assert_eq!(displays.len(), errors.len());
+    }
+
+    #[test]
+    fn witness_error_is_std_error() {
+        let err: &dyn std::error::Error = &WitnessError::EmptyRequiredSet;
+        assert!(!err.to_string().is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: ProofKind Display all-distinct
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn proof_kind_display_all_distinct() {
+        let kinds = [
+            ProofKind::StaticAnalysis,
+            ProofKind::DynamicAblation,
+            ProofKind::PolicyTheoremCheck,
+            ProofKind::OperatorAttestation,
+            ProofKind::InheritedFromPredecessor,
+        ];
+        let displays: BTreeSet<String> = kinds.iter().map(|k| k.to_string()).collect();
+        assert_eq!(displays.len(), kinds.len());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: PromotionTheoremKind metadata_key
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn promotion_theorem_kind_metadata_key_builtin() {
+        assert_eq!(
+            PromotionTheoremKind::MergeLegality.metadata_key(),
+            "merge_legality"
+        );
+        assert_eq!(
+            PromotionTheoremKind::AttenuationLegality.metadata_key(),
+            "attenuation_legality"
+        );
+        assert_eq!(
+            PromotionTheoremKind::NonInterference.metadata_key(),
+            "non_interference"
+        );
+    }
+
+    #[test]
+    fn promotion_theorem_kind_metadata_key_custom_sanitizes() {
+        let custom = PromotionTheoremKind::Custom("My-Theorem!2".to_string());
+        let key = custom.metadata_key();
+        assert_eq!(key, "my_theorem_2");
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: ConfidenceInterval edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn confidence_from_trials_zero_returns_zero() {
+        let ci = ConfidenceInterval::from_trials(0, 0);
+        assert_eq!(ci.lower_millionths, 0);
+        assert_eq!(ci.upper_millionths, 0);
+        assert_eq!(ci.point_estimate_millionths(), 0);
+    }
+
+    #[test]
+    fn confidence_point_estimate_millionths() {
+        let ci = ConfidenceInterval::from_trials(100, 95);
+        assert_eq!(ci.point_estimate_millionths(), 950_000);
+    }
+
+    #[test]
+    fn confidence_meets_threshold_boundary() {
+        let ci = ConfidenceInterval {
+            lower_millionths: 900_000,
+            upper_millionths: 950_000,
+            n_trials: 100,
+            n_successes: 95,
+        };
+        assert!(ci.meets_threshold(900_000));
+        assert!(!ci.meets_threshold(900_001));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: WitnessIndexError / WitnessPublicationError std::error
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn witness_index_error_is_std_error() {
+        let err: &dyn std::error::Error = &WitnessIndexError::InvalidInput {
+            detail: "test".to_string(),
+        };
+        assert!(!err.to_string().is_empty());
+    }
+
+    #[test]
+    fn witness_publication_error_is_std_error() {
+        let err: &dyn std::error::Error = &WitnessPublicationError::EmptyRevocationReason;
+        assert!(!err.to_string().is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: PromotionTheoremReport structured_events
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn promotion_theorem_report_structured_events_count() {
+        let witness = build_test_witness();
+        let input = PromotionTheoremInput {
+            source_capability_sets: vec![SourceCapabilitySet {
+                source_id: "src".to_string(),
+                capabilities: witness.required_capabilities.clone(),
+            }],
+            manifest_capabilities: witness.required_capabilities.clone(),
+            capability_lattice: BTreeMap::new(),
+            non_interference_dependencies: BTreeMap::new(),
+            custom_extensions: Vec::new(),
+        };
+        let report = witness.evaluate_promotion_theorems(&input).unwrap();
+        let events = report.structured_events("t1", "d1", "p1");
+        // 3 theorem checks + 1 gate summary = 4 events
+        assert_eq!(events.len(), 4);
+        assert_eq!(events.last().unwrap().event, "promotion_theorem_gate");
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: WitnessBuilder deny and rollback
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn builder_deny_adds_to_denied_capabilities() {
+        let cap_r = Capability::new("read");
+        let cap_w = Capability::new("write");
+        let witness = WitnessBuilder::new(
+            test_extension_id(),
+            test_policy_id(),
+            SecurityEpoch::from_raw(1),
+            1000,
+            test_signing_key(),
+        )
+        .require(cap_r.clone())
+        .proof(make_proof(&cap_r))
+        .deny(cap_w.clone(), "not needed")
+        .build()
+        .unwrap();
+        assert!(witness.denied_capabilities.contains(&cap_w));
+        assert_eq!(witness.denial_records.len(), 1);
+        assert_eq!(witness.denial_records[0].reason, "not needed");
+    }
+
+    #[test]
+    fn builder_with_rollback_token() {
+        let cap = Capability::new("read");
+        let token = RollbackToken {
+            previous_witness_hash: ContentHash::compute(b"old"),
+            previous_witness_id: None,
+            created_epoch: SecurityEpoch::from_raw(1),
+            sequence: 7,
+        };
+        let witness = WitnessBuilder::new(
+            test_extension_id(),
+            test_policy_id(),
+            SecurityEpoch::from_raw(2),
+            2000,
+            test_signing_key(),
+        )
+        .require(cap.clone())
+        .proof(make_proof(&cap))
+        .rollback(token.clone())
+        .build()
+        .unwrap();
+        assert_eq!(witness.rollback_token.unwrap().sequence, 7);
+    }
+
+    #[test]
+    fn builder_empty_required_set_fails() {
+        let result = WitnessBuilder::new(
+            test_extension_id(),
+            test_policy_id(),
+            SecurityEpoch::from_raw(1),
+            1000,
+            test_signing_key(),
+        )
+        .build();
+        assert!(matches!(result, Err(WitnessError::EmptyRequiredSet)));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: Store iter
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn store_iter_yields_all_witnesses() {
+        let mut store = WitnessStore::new();
+        let w1 = build_test_witness();
+        let w1_id = w1.witness_id.clone();
+        store.insert(w1);
+
+        let cap = Capability::new("network");
+        let w2 = WitnessBuilder::new(
+            test_extension_id(),
+            test_policy_id(),
+            SecurityEpoch::from_raw(99),
+            9000,
+            test_signing_key(),
+        )
+        .require(cap.clone())
+        .proof(make_proof(&cap))
+        .build()
+        .unwrap();
+        let w2_id = w2.witness_id.clone();
+        store.insert(w2);
+
+        let ids: BTreeSet<_> = store.iter().map(|(id, _)| id.clone()).collect();
+        assert!(ids.contains(&w1_id));
+        assert!(ids.contains(&w2_id));
+        assert_eq!(ids.len(), 2);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: WitnessReplayJoinQuery serde
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn witness_replay_join_query_serde_roundtrip() {
+        let q = WitnessReplayJoinQuery {
+            extension_id: test_extension_id(),
+            start_timestamp_ns: Some(100),
+            end_timestamp_ns: Some(999),
+            include_revoked: false,
+        };
+        let json = serde_json::to_string(&q).unwrap();
+        let restored: WitnessReplayJoinQuery = serde_json::from_str(&json).unwrap();
+        assert_eq!(q, restored);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: synthesis_unsigned_bytes strips theorem metadata
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn synthesis_unsigned_bytes_strips_promotion_metadata() {
+        let mut witness = build_test_witness();
+        let base = witness.synthesis_unsigned_bytes();
+
+        witness.metadata.insert(
+            "promotion_theorem.merge_legality".to_string(),
+            "pass".to_string(),
+        );
+        let after = witness.synthesis_unsigned_bytes();
+
+        assert_eq!(base, after, "theorem metadata should be stripped");
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: PromotionTheoremInput serde
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn promotion_theorem_input_serde_roundtrip() {
+        let input = PromotionTheoremInput {
+            source_capability_sets: vec![SourceCapabilitySet {
+                source_id: "s1".to_string(),
+                capabilities: BTreeSet::from([Capability::new("read")]),
+            }],
+            manifest_capabilities: BTreeSet::from([Capability::new("read")]),
+            capability_lattice: BTreeMap::new(),
+            non_interference_dependencies: BTreeMap::new(),
+            custom_extensions: Vec::new(),
+        };
+        let json = serde_json::to_string(&input).unwrap();
+        let restored: PromotionTheoremInput = serde_json::from_str(&json).unwrap();
+        assert_eq!(input, restored);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: PromotionTheoremLogEvent serde
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn promotion_theorem_log_event_fields() {
+        let ev = PromotionTheoremLogEvent {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            component: "c".to_string(),
+            event: "e".to_string(),
+            outcome: "pass".to_string(),
+            error_code: None,
+        };
+        let json = serde_json::to_string(&ev).unwrap();
+        assert!(json.contains("\"outcome\":\"pass\""));
+        assert!(json.contains("\"error_code\":null"));
+    }
 }

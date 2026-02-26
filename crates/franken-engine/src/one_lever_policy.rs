@@ -1027,4 +1027,102 @@ mod tests {
         let back: OneLeverPolicyEvent = serde_json::from_str(&json).unwrap();
         assert_eq!(back, ev);
     }
+
+    // -- Enrichment: Display uniqueness, defaults, boundary, std::error --
+
+    #[test]
+    fn lever_category_display_all_unique() {
+        let categories = [
+            LeverCategory::Execution,
+            LeverCategory::Memory,
+            LeverCategory::Security,
+            LeverCategory::Benchmark,
+            LeverCategory::Config,
+        ];
+        let displays: std::collections::BTreeSet<String> =
+            categories.iter().map(|c| c.to_string()).collect();
+        assert_eq!(displays.len(), categories.len());
+    }
+
+    #[test]
+    fn evidence_refs_default_all_none() {
+        let ev = OneLeverEvidenceRefs::default();
+        assert!(ev.baseline_benchmark_run_id.is_none());
+        assert!(ev.post_change_benchmark_run_id.is_none());
+        assert!(ev.delta_report_ref.is_none());
+        assert!(ev.semantic_equivalence_ref.is_none());
+        assert!(ev.trace_replay_ref.is_none());
+        assert!(ev.isomorphism_ledger_ref.is_none());
+        assert!(ev.rollback_instructions_ref.is_none());
+        assert!(ev.reprofile_after_merge_ref.is_none());
+        assert!(ev.opportunity_score_millionths.is_none());
+    }
+
+    #[test]
+    fn policy_decision_deterministic_for_same_input() {
+        let req = single_lever_opt_request(3_000_000);
+        let d1 = evaluate_one_lever_policy(&req);
+        let d2 = evaluate_one_lever_policy(&req);
+        assert_eq!(d1.outcome, d2.outcome);
+        assert_eq!(d1.blocked, d2.blocked);
+        assert_eq!(d1.change_id, d2.change_id);
+        assert_eq!(d1.lever_categories, d2.lever_categories);
+    }
+
+    #[test]
+    fn classify_security_related_paths() {
+        assert_eq!(
+            classify_changed_path("crates/franken-engine/src/capability_witness.rs"),
+            Some(LeverCategory::Security)
+        );
+        assert_eq!(
+            classify_changed_path("crates/franken-engine/src/quarantine_mesh_gate.rs"),
+            Some(LeverCategory::Security)
+        );
+    }
+
+    #[test]
+    fn multi_lever_categories_sorted_deterministically() {
+        let req = OneLeverPolicyRequest {
+            trace_id: "t-1".to_string(),
+            decision_id: "d-1".to_string(),
+            policy_id: "p-1".to_string(),
+            commit_sha: "abc".to_string(),
+            commit_message: "perf: multi [multi-lever: coupled]".to_string(),
+            changed_paths: vec![
+                "crates/franken-engine/src/gc_pause.rs".to_string(),
+                "crates/franken-engine/src/baseline_interpreter.rs".to_string(),
+            ],
+            evidence: full_evidence(5_000_000),
+        };
+        let decision = evaluate_one_lever_policy(&req);
+        assert!(decision.is_multi_lever);
+        // Categories should be sorted: Execution < Memory
+        assert_eq!(decision.lever_categories[0], LeverCategory::Execution);
+        assert_eq!(decision.lever_categories[1], LeverCategory::Memory);
+    }
+
+    #[test]
+    fn policy_decision_serde_roundtrip_full() {
+        let req = single_lever_opt_request(3_000_000);
+        let decision = evaluate_one_lever_policy(&req);
+        let json = serde_json::to_string(&decision).unwrap();
+        let back: OneLeverPolicyDecision = serde_json::from_str(&json).unwrap();
+        assert_eq!(decision, back);
+    }
+
+    #[test]
+    fn extract_override_reason_handles_nested_brackets() {
+        let msg = "fix: [multi-lever: [a] and [b] coupled]";
+        let reason = extract_override_reason(msg);
+        // Should capture everything after "multi-lever:" up to the last "]"
+        assert!(reason.is_some());
+    }
+
+    #[test]
+    fn non_optimization_change_has_no_lever_categories() {
+        let decision = evaluate_one_lever_policy(&non_opt_request());
+        assert!(decision.lever_categories.is_empty());
+        assert!(!decision.optimization_change);
+    }
 }

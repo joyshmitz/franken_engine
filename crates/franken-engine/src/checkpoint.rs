@@ -968,4 +968,126 @@ mod tests {
         let events = guard.drain_events();
         assert_eq!(events[0].timestamp_virtual, 10);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 2: Display uniqueness, serde, edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn checkpoint_reason_display_all_unique() {
+        let reasons = [
+            CheckpointReason::Periodic,
+            CheckpointReason::CancelPending,
+            CheckpointReason::BudgetExhausted,
+            CheckpointReason::Explicit,
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for r in &reasons {
+            seen.insert(r.to_string());
+        }
+        assert_eq!(
+            seen.len(),
+            4,
+            "all 4 CheckpointReason Display strings must be unique"
+        );
+    }
+
+    #[test]
+    fn checkpoint_action_equality() {
+        assert_eq!(CheckpointAction::Continue, CheckpointAction::Continue);
+        assert_ne!(CheckpointAction::Continue, CheckpointAction::Drain);
+        assert_ne!(CheckpointAction::Drain, CheckpointAction::Abort);
+    }
+
+    #[test]
+    fn checkpoint_event_serde_with_custom_loop_site() {
+        let event = CheckpointEvent {
+            trace_id: "t".to_string(),
+            component: "c".to_string(),
+            loop_site: LoopSite::Custom("my_custom".to_string()),
+            iteration_count: 5,
+            total_iterations: 50,
+            reason: CheckpointReason::Explicit,
+            action: CheckpointAction::Continue,
+            timestamp_virtual: 100,
+        };
+        let json = serde_json::to_string(&event).expect("serialize");
+        let restored: CheckpointEvent = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(event, restored);
+    }
+
+    #[test]
+    fn guard_no_events_before_checkpoint() {
+        let (mut guard, _) = test_guard();
+        for _ in 0..5 {
+            guard.tick();
+        }
+        // No check() called — should have no events
+        assert_eq!(guard.event_count(), 0);
+    }
+
+    #[test]
+    fn guard_budget_check_reports_correct_total() {
+        let token = CancellationToken::new();
+        let mut guard = CheckpointGuard::new(
+            LoopSite::ModuleVerify,
+            "verifier",
+            "t",
+            DensityConfig {
+                max_iterations: 1000,
+                max_total_iterations: 50,
+            },
+            token,
+        );
+        for _ in 0..50 {
+            guard.tick();
+        }
+        let action = guard.check();
+        assert_eq!(action, CheckpointAction::Abort);
+        assert_eq!(guard.total_iterations(), 50);
+    }
+
+    #[test]
+    fn loop_site_serde_all_mandatory_variants() {
+        let sites = [
+            LoopSite::BytecodeDispatch,
+            LoopSite::GcScanning,
+            LoopSite::GcSweep,
+            LoopSite::PolicyIteration,
+            LoopSite::ContractEvaluation,
+            LoopSite::ReplayStep,
+            LoopSite::ModuleDecode,
+            LoopSite::ModuleVerify,
+            LoopSite::IrLowering,
+            LoopSite::IrCompilation,
+        ];
+        for site in &sites {
+            let json = serde_json::to_string(site).expect("serialize");
+            let restored: LoopSite = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*site, restored);
+        }
+    }
+
+    #[test]
+    fn coverage_register_idempotent() {
+        let mut cov = CheckpointCoverage::new();
+        cov.register("bytecode_dispatch");
+        cov.register("bytecode_dispatch");
+        assert_eq!(cov.total(), 10); // no duplicate entries
+        assert_eq!(cov.covered_count(), 1);
+    }
+
+    #[test]
+    fn explicit_checkpoint_after_cancel_emits_drain() {
+        let (mut guard, token) = test_guard();
+        guard.tick();
+        guard.tick();
+        token.cancel();
+        let action = guard.explicit_checkpoint();
+        assert_eq!(action, CheckpointAction::Drain);
+        let events = guard.drain_events();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].reason, CheckpointReason::Explicit);
+        assert_eq!(events[0].action, CheckpointAction::Drain);
+    }
 }

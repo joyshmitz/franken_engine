@@ -1652,4 +1652,137 @@ mod tests {
     fn threshold_scope_all_variants() {
         assert_eq!(ThresholdScope::ALL.len(), 4);
     }
+
+    // -- Enrichment: Display uniqueness, serde, edge cases --
+
+    #[test]
+    fn threshold_scope_display_uniqueness_btreeset() {
+        let mut displays = BTreeSet::new();
+        for scope in ThresholdScope::ALL {
+            displays.insert(scope.to_string());
+        }
+        assert_eq!(displays.len(), ThresholdScope::ALL.len());
+    }
+
+    #[test]
+    fn threshold_event_type_serde_roundtrip() {
+        let holder =
+            ShareHolderId::from_verification_key(&make_share_keys(1)[0].verification_key());
+        let events = vec![
+            ThresholdEventType::CeremonyInitiated {
+                scope: ThresholdScope::EmergencyRevocation,
+                threshold_k: 2,
+                total_authorized: 3,
+            },
+            ThresholdEventType::PartialSignatureSubmitted {
+                signer: holder.clone(),
+                signatures_collected: 1,
+                threshold_k: 2,
+            },
+            ThresholdEventType::CeremonyFinalized {
+                participants: vec![holder.clone()],
+            },
+            ThresholdEventType::UnauthorizedSubmission { signer: holder },
+        ];
+        for evt in &events {
+            let json = serde_json::to_string(evt).expect("serialize");
+            let restored: ThresholdEventType = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*evt, restored);
+        }
+    }
+
+    #[test]
+    fn threshold_result_verify_deterministic_across_runs() {
+        let keys = make_share_keys(3);
+        let policy = create_test_policy(2, &keys);
+        let run = || {
+            let mut c = ThresholdCeremony::new(
+                &policy,
+                ThresholdScope::EmergencyRevocation,
+                TEST_PREIMAGE,
+                DeterministicTimestamp(1000),
+            )
+            .unwrap();
+            c.submit_partial(&keys[0], TEST_PREIMAGE, DeterministicTimestamp(1001))
+                .unwrap();
+            c.submit_partial(&keys[1], TEST_PREIMAGE, DeterministicTimestamp(1002))
+                .unwrap();
+            c.finalize(TEST_PREIMAGE).unwrap()
+        };
+        let r1 = run();
+        let r2 = run();
+        let json1 = serde_json::to_string(&r1).unwrap();
+        let json2 = serde_json::to_string(&r2).unwrap();
+        assert_eq!(json1, json2, "serialized results must be byte-identical");
+    }
+
+    #[test]
+    fn share_holder_id_ord_deterministic() {
+        let keys = make_share_keys(5);
+        let holders: BTreeSet<ShareHolderId> = keys
+            .iter()
+            .map(|sk| ShareHolderId::from_verification_key(&sk.verification_key()))
+            .collect();
+        // BTreeSet guarantees deterministic ordering; re-collect and compare.
+        let holders2: BTreeSet<ShareHolderId> = keys
+            .iter()
+            .map(|sk| ShareHolderId::from_verification_key(&sk.verification_key()))
+            .collect();
+        assert_eq!(
+            holders.iter().collect::<Vec<_>>(),
+            holders2.iter().collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn policy_id_differs_for_different_principals() {
+        let keys = make_share_keys(3);
+        let p1 = ThresholdSigningPolicy::create(CreateThresholdPolicyInput {
+            principal_id: PrincipalId::from_bytes([0x01; 32]),
+            threshold_k: 2,
+            authorized_shares: make_share_holder_ids(&keys),
+            scoped_operations: make_scopes(),
+            epoch: SecurityEpoch::from_raw(1),
+            zone: TEST_ZONE,
+        })
+        .unwrap();
+        let p2 = ThresholdSigningPolicy::create(CreateThresholdPolicyInput {
+            principal_id: PrincipalId::from_bytes([0x02; 32]),
+            threshold_k: 2,
+            authorized_shares: make_share_holder_ids(&keys),
+            scoped_operations: make_scopes(),
+            epoch: SecurityEpoch::from_raw(1),
+            zone: TEST_ZONE,
+        })
+        .unwrap();
+        assert_ne!(p1.policy_id, p2.policy_id);
+    }
+
+    #[test]
+    fn schema_ids_are_distinct() {
+        let policy_schema = threshold_policy_schema_id();
+        let ceremony_schema = threshold_ceremony_schema_id();
+        assert_ne!(policy_schema, ceremony_schema);
+    }
+
+    #[test]
+    fn ceremony_id_differs_for_different_timestamps() {
+        let keys = make_share_keys(3);
+        let policy = create_test_policy(2, &keys);
+        let c1 = ThresholdCeremony::new(
+            &policy,
+            ThresholdScope::EmergencyRevocation,
+            TEST_PREIMAGE,
+            DeterministicTimestamp(1000),
+        )
+        .unwrap();
+        let c2 = ThresholdCeremony::new(
+            &policy,
+            ThresholdScope::EmergencyRevocation,
+            TEST_PREIMAGE,
+            DeterministicTimestamp(2000),
+        )
+        .unwrap();
+        assert_ne!(c1.ceremony_id, c2.ceremony_id);
+    }
 }

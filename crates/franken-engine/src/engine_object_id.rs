@@ -948,4 +948,124 @@ mod tests {
         }
         assert_eq!(displays.len(), 5);
     }
+
+    // -- Enrichment: additional coverage --
+
+    #[test]
+    fn object_domain_display_uniqueness_via_btreeset() {
+        let displays: std::collections::BTreeSet<String> =
+            ObjectDomain::ALL.iter().map(|d| d.to_string()).collect();
+        assert_eq!(
+            displays.len(),
+            ObjectDomain::ALL.len(),
+            "all ObjectDomain Display strings must be unique"
+        );
+    }
+
+    #[test]
+    fn object_domain_display_covers_attestation_and_key_bundle() {
+        assert_eq!(ObjectDomain::Attestation.to_string(), "attestation");
+        assert_eq!(ObjectDomain::KeyBundle.to_string(), "key_bundle");
+    }
+
+    #[test]
+    fn hex_roundtrip_all_zeros() {
+        let id = EngineObjectId([0u8; OBJECT_ID_LEN]);
+        let hex = id.to_hex();
+        assert_eq!(hex, "0".repeat(64));
+        let restored = EngineObjectId::from_hex(&hex).unwrap();
+        assert_eq!(id, restored);
+    }
+
+    #[test]
+    fn hex_roundtrip_all_0xff() {
+        let id = EngineObjectId([0xff; OBJECT_ID_LEN]);
+        let hex = id.to_hex();
+        assert_eq!(hex, "ff".repeat(32));
+        let restored = EngineObjectId::from_hex(&hex).unwrap();
+        assert_eq!(id, restored);
+    }
+
+    #[test]
+    fn from_hex_accepts_uppercase() {
+        let id = derive_id(
+            ObjectDomain::PolicyObject,
+            "zone",
+            &test_schema_id(),
+            b"upper",
+        )
+        .unwrap();
+        let hex_upper = id.to_hex().to_uppercase();
+        let restored = EngineObjectId::from_hex(&hex_upper).unwrap();
+        assert_eq!(id, restored);
+    }
+
+    #[test]
+    fn id_error_id_mismatch_display_contains_both_ids() {
+        let schema = test_schema_id();
+        let id_a = derive_id(ObjectDomain::PolicyObject, "z", &schema, b"aaa").unwrap();
+        let id_b = derive_id(ObjectDomain::PolicyObject, "z", &schema, b"bbb").unwrap();
+        let err = IdError::IdMismatch {
+            expected: id_a.clone(),
+            computed: id_b.clone(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains(&id_a.to_hex()));
+        assert!(msg.contains(&id_b.to_hex()));
+    }
+
+    #[test]
+    fn id_error_non_canonical_input_display() {
+        let err = IdError::NonCanonicalInput {
+            reason: "trailing NUL".into(),
+        };
+        assert!(err.to_string().contains("trailing NUL"));
+    }
+
+    #[test]
+    fn schema_id_from_bytes_preserves_raw() {
+        let raw = [0xab; OBJECT_ID_LEN];
+        let schema = SchemaId::from_bytes(raw);
+        assert_eq!(*schema.as_bytes(), raw);
+    }
+
+    #[test]
+    fn derive_id_single_byte_content() {
+        let schema = test_schema_id();
+        let id = derive_id(ObjectDomain::EvidenceRecord, "z", &schema, &[0x42]).unwrap();
+        assert_eq!(id.as_bytes().len(), OBJECT_ID_LEN);
+        // Deterministic
+        let id2 = derive_id(ObjectDomain::EvidenceRecord, "z", &schema, &[0x42]).unwrap();
+        assert_eq!(id, id2);
+    }
+
+    #[test]
+    fn id_error_id_mismatch_serde_roundtrip() {
+        let schema = test_schema_id();
+        let id_a = derive_id(ObjectDomain::PolicyObject, "z", &schema, b"x").unwrap();
+        let id_b = derive_id(ObjectDomain::PolicyObject, "z", &schema, b"y").unwrap();
+        let err = IdError::IdMismatch {
+            expected: id_a,
+            computed: id_b,
+        };
+        let json = serde_json::to_string(&err).unwrap();
+        let restored: IdError = serde_json::from_str(&json).unwrap();
+        assert_eq!(err, restored);
+    }
+
+    #[test]
+    fn object_domain_all_count() {
+        assert_eq!(ObjectDomain::ALL.len(), 9);
+    }
+
+    #[test]
+    fn object_domain_tags_are_ascii() {
+        for domain in ObjectDomain::ALL {
+            let tag = domain.tag();
+            assert!(
+                tag.iter().all(|b| b.is_ascii()),
+                "{domain:?} tag contains non-ASCII"
+            );
+        }
+    }
 }

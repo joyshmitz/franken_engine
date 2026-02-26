@@ -2184,4 +2184,416 @@ mod tests {
         assert_eq!(evaluation.final_metrics.get("cpu"), Some(&50));
         assert_eq!(evaluation.final_metrics.get("latency"), Some(&200));
     }
+
+    // -- Enrichment: helper function coverage --
+
+    #[test]
+    fn to_hex_empty() {
+        assert_eq!(to_hex(&[]), "");
+    }
+
+    #[test]
+    fn to_hex_known_bytes() {
+        assert_eq!(to_hex(&[0x00, 0xff, 0x0a, 0xde]), "00ff0ade");
+    }
+
+    #[test]
+    fn hash_bytes_deterministic() {
+        let a = hash_bytes(b"hello");
+        let b = hash_bytes(b"hello");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn hash_bytes_different_inputs_differ() {
+        let a = hash_bytes(b"hello");
+        let b = hash_bytes(b"world");
+        assert_ne!(a, b);
+    }
+
+    // -- Enrichment: ConflictResolutionMode coverage --
+
+    #[test]
+    fn conflict_resolution_mode_display_serialize() {
+        assert_eq!(ConflictResolutionMode::Serialize.to_string(), "serialize");
+    }
+
+    #[test]
+    fn conflict_resolution_mode_display_reject() {
+        assert_eq!(ConflictResolutionMode::Reject.to_string(), "reject");
+    }
+
+    // -- Enrichment: InterferenceConfig default --
+
+    #[test]
+    fn interference_config_default_reject_mode() {
+        let config = InterferenceConfig::default();
+        assert_eq!(
+            config.conflict_resolution_mode,
+            ConflictResolutionMode::Reject
+        );
+    }
+
+    #[test]
+    fn interference_config_default_min_separation() {
+        let config = InterferenceConfig::default();
+        assert_eq!(config.min_timescale_separation_millionths, 100_000);
+    }
+
+    // -- Enrichment: InterferenceFailureCode Display all distinct --
+
+    #[test]
+    fn failure_code_display_all_distinct() {
+        let codes = [
+            InterferenceFailureCode::DuplicateController,
+            InterferenceFailureCode::MissingTimescaleStatement,
+            InterferenceFailureCode::InvalidTimescaleInterval,
+            InterferenceFailureCode::UnknownController,
+            InterferenceFailureCode::UnauthorizedRead,
+            InterferenceFailureCode::UnauthorizedWrite,
+            InterferenceFailureCode::TimescaleConflict,
+        ];
+        let strs: BTreeSet<String> = codes.iter().map(|c| c.to_string()).collect();
+        assert_eq!(
+            strs.len(),
+            codes.len(),
+            "all failure codes produce distinct Display strings"
+        );
+    }
+
+    // -- Enrichment: subscription ordering is deterministic --
+
+    #[test]
+    fn subscription_ordering_deterministic_across_controllers() {
+        let registrations = vec![
+            registration("ctrl-z", &["cpu", "mem"], &[], 1_000_000, 1_000_000, "ok"),
+            registration("ctrl-a", &["cpu", "mem"], &[], 1_000_000, 1_000_000, "ok"),
+        ];
+        let subs = [
+            MetricSubscription {
+                controller_id: "ctrl-z".into(),
+                metric: "cpu".into(),
+            },
+            MetricSubscription {
+                controller_id: "ctrl-a".into(),
+                metric: "cpu".into(),
+            },
+            MetricSubscription {
+                controller_id: "ctrl-a".into(),
+                metric: "mem".into(),
+            },
+        ];
+        let config = InterferenceConfig::default();
+        let mut metrics = initial_metrics();
+        metrics.insert("mem".into(), 8192);
+        let eval = evaluate_controller_interference(&scenario(
+            "t",
+            "p",
+            &config,
+            &registrations,
+            (&[], &[], &subs),
+            &metrics,
+        ));
+        assert!(eval.pass);
+        // ctrl-a comes before ctrl-z in sorted order
+        let ctrl_a_updates = eval.subscription_streams.get("ctrl-a").unwrap();
+        let ctrl_z_updates = eval.subscription_streams.get("ctrl-z").unwrap();
+        assert_eq!(ctrl_a_updates.len(), 2);
+        assert_eq!(ctrl_z_updates.len(), 1);
+        // ctrl-a gets cpu (seq 1), mem (seq 2) before ctrl-z cpu (seq 3)
+        assert_eq!(ctrl_a_updates[0].sequence, 1);
+        assert_eq!(ctrl_a_updates[0].metric, "cpu");
+        assert_eq!(ctrl_a_updates[1].sequence, 2);
+        assert_eq!(ctrl_a_updates[1].metric, "mem");
+        assert_eq!(ctrl_z_updates[0].sequence, 3);
+    }
+
+    // -- Enrichment: boundary timescale separation --
+
+    #[test]
+    fn timescale_exactly_at_min_separation_passes() {
+        let config = InterferenceConfig {
+            min_timescale_separation_millionths: 100_000,
+            conflict_resolution_mode: ConflictResolutionMode::Reject,
+        };
+        let registrations = vec![
+            registration("ctrl-a", &[], &["cpu"], 1_000_000, 200_000, "ok"),
+            registration("ctrl-b", &[], &["cpu"], 1_000_000, 100_000, "ok"),
+        ];
+        let writes = [
+            MetricWriteRequest {
+                controller_id: "ctrl-a".into(),
+                metric: "cpu".into(),
+                value: 10,
+            },
+            MetricWriteRequest {
+                controller_id: "ctrl-b".into(),
+                metric: "cpu".into(),
+                value: 20,
+            },
+        ];
+        let metrics = initial_metrics();
+        let eval = evaluate_controller_interference(&scenario(
+            "t",
+            "p",
+            &config,
+            &registrations,
+            (&[], &writes, &[]),
+            &metrics,
+        ));
+        assert!(eval.pass);
+        assert_eq!(eval.applied_writes.len(), 2);
+    }
+
+    #[test]
+    fn timescale_one_below_min_separation_conflicts() {
+        let config = InterferenceConfig {
+            min_timescale_separation_millionths: 100_000,
+            conflict_resolution_mode: ConflictResolutionMode::Reject,
+        };
+        let registrations = vec![
+            registration("ctrl-a", &[], &["cpu"], 1_000_000, 200_000, "ok"),
+            registration("ctrl-b", &[], &["cpu"], 1_000_000, 100_001, "ok"),
+        ];
+        let writes = [
+            MetricWriteRequest {
+                controller_id: "ctrl-a".into(),
+                metric: "cpu".into(),
+                value: 10,
+            },
+            MetricWriteRequest {
+                controller_id: "ctrl-b".into(),
+                metric: "cpu".into(),
+                value: 20,
+            },
+        ];
+        let metrics = initial_metrics();
+        let eval = evaluate_controller_interference(&scenario(
+            "t",
+            "p",
+            &config,
+            &registrations,
+            (&[], &writes, &[]),
+            &metrics,
+        ));
+        assert!(!eval.pass);
+        assert!(
+            eval.findings
+                .iter()
+                .any(|f| f.code == InterferenceFailureCode::TimescaleConflict)
+        );
+    }
+
+    // -- Enrichment: InterferenceLogEvent --
+
+    #[test]
+    fn log_event_serde_roundtrip_with_error_code() {
+        let log = InterferenceLogEvent {
+            trace_id: "t1".to_string(),
+            decision_id: "d1".to_string(),
+            policy_id: "p1".to_string(),
+            component: "comp".to_string(),
+            event: "evt".to_string(),
+            outcome: "fail".to_string(),
+            error_code: Some("err_code".to_string()),
+            metric: Some("cpu".to_string()),
+            controller_ids: vec!["ctrl-a".to_string()],
+        };
+        let json = serde_json::to_string(&log).unwrap();
+        let back: InterferenceLogEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, log);
+    }
+
+    // -- Enrichment: InterferenceResolution serde --
+
+    #[test]
+    fn interference_resolution_serde_roundtrip_serialize_mode() {
+        let resolution = InterferenceResolution {
+            metric: "cpu".into(),
+            controller_ids: vec!["a".into(), "b".into()],
+            mode: ConflictResolutionMode::Serialize,
+            detail: "serialized writes".into(),
+        };
+        let json = serde_json::to_string(&resolution).unwrap();
+        let back: InterferenceResolution = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, resolution);
+    }
+
+    // -- Enrichment: last write wins semantics --
+
+    #[test]
+    fn last_write_wins_for_serialized_same_metric() {
+        let config = InterferenceConfig {
+            min_timescale_separation_millionths: 100_000,
+            conflict_resolution_mode: ConflictResolutionMode::Serialize,
+        };
+        let registrations = vec![
+            registration("ctrl-a", &[], &["cpu"], 1_000_000, 100_000, "fast"),
+            registration("ctrl-b", &[], &["cpu"], 1_000_000, 100_000, "fast"),
+        ];
+        let writes = [
+            MetricWriteRequest {
+                controller_id: "ctrl-a".into(),
+                metric: "cpu".into(),
+                value: 10,
+            },
+            MetricWriteRequest {
+                controller_id: "ctrl-b".into(),
+                metric: "cpu".into(),
+                value: 20,
+            },
+        ];
+        let metrics = initial_metrics();
+        let eval = evaluate_controller_interference(&scenario(
+            "t",
+            "p",
+            &config,
+            &registrations,
+            (&[], &writes, &[]),
+            &metrics,
+        ));
+        assert!(eval.pass);
+        assert!(eval.resolutions.len() >= 1);
+        // writes are sorted by controller_id, so ctrl-b writes last
+        let final_cpu = eval.final_metrics.get("cpu").copied().unwrap();
+        assert_eq!(final_cpu, 20);
+    }
+
+    // -- Enrichment: TimescaleSeparationStatement serde with edge values --
+
+    #[test]
+    fn timescale_separation_zero_intervals_serde() {
+        let ts = TimescaleSeparationStatement {
+            observation_interval_millionths: 0,
+            write_interval_millionths: 0,
+            statement: "zero".to_string(),
+        };
+        let json = serde_json::to_string(&ts).unwrap();
+        let back: TimescaleSeparationStatement = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, ts);
+    }
+
+    // ── Enrichment: Display uniqueness ──────────────────────────
+
+    #[test]
+    fn conflict_resolution_mode_display_unique_in_btreeset() {
+        let displays: BTreeSet<String> = [
+            ConflictResolutionMode::Serialize,
+            ConflictResolutionMode::Reject,
+        ]
+        .iter()
+        .map(|m| m.to_string())
+        .collect();
+        assert_eq!(displays.len(), 2);
+    }
+
+    #[test]
+    fn interference_failure_code_display_all_seven_unique() {
+        let codes = [
+            InterferenceFailureCode::DuplicateController,
+            InterferenceFailureCode::MissingTimescaleStatement,
+            InterferenceFailureCode::InvalidTimescaleInterval,
+            InterferenceFailureCode::UnknownController,
+            InterferenceFailureCode::UnauthorizedRead,
+            InterferenceFailureCode::UnauthorizedWrite,
+            InterferenceFailureCode::TimescaleConflict,
+        ];
+        let displays: BTreeSet<String> = codes.iter().map(|c| c.to_string()).collect();
+        assert_eq!(displays.len(), 7);
+    }
+
+    #[test]
+    fn interference_failure_code_serde_all_variants() {
+        let codes = [
+            InterferenceFailureCode::DuplicateController,
+            InterferenceFailureCode::MissingTimescaleStatement,
+            InterferenceFailureCode::InvalidTimescaleInterval,
+            InterferenceFailureCode::UnknownController,
+            InterferenceFailureCode::UnauthorizedRead,
+            InterferenceFailureCode::UnauthorizedWrite,
+            InterferenceFailureCode::TimescaleConflict,
+        ];
+        for code in &codes {
+            let json = serde_json::to_string(code).unwrap();
+            let back: InterferenceFailureCode = serde_json::from_str(&json).unwrap();
+            assert_eq!(*code, back);
+        }
+    }
+
+    #[test]
+    fn conflict_resolution_mode_serde_all_variants() {
+        for mode in [
+            ConflictResolutionMode::Serialize,
+            ConflictResolutionMode::Reject,
+        ] {
+            let json = serde_json::to_string(&mode).unwrap();
+            let back: ConflictResolutionMode = serde_json::from_str(&json).unwrap();
+            assert_eq!(mode, back);
+        }
+    }
+
+    #[test]
+    fn metric_update_ordering_by_sequence() {
+        let u1 = MetricUpdate {
+            sequence: 1,
+            metric: "cpu".into(),
+            value: 10,
+        };
+        let u2 = MetricUpdate {
+            sequence: 2,
+            metric: "cpu".into(),
+            value: 20,
+        };
+        assert_ne!(u1, u2);
+    }
+
+    #[test]
+    fn controller_registration_with_empty_sets() {
+        let reg = ControllerRegistration {
+            controller_id: "empty".to_string(),
+            read_metrics: BTreeSet::new(),
+            write_metrics: BTreeSet::new(),
+            timescale: TimescaleSeparationStatement {
+                observation_interval_millionths: 1_000_000,
+                write_interval_millionths: 1_000_000,
+                statement: "ok".to_string(),
+            },
+        };
+        let json = serde_json::to_string(&reg).unwrap();
+        let back: ControllerRegistration = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, reg);
+        assert!(back.read_metrics.is_empty());
+        assert!(back.write_metrics.is_empty());
+    }
+
+    #[test]
+    fn interference_evaluation_empty_scenario_serializes() {
+        let config = InterferenceConfig::default();
+        let metrics = BTreeMap::new();
+        let evaluation = evaluate_controller_interference(&scenario(
+            "t",
+            "p",
+            &config,
+            &[],
+            (&[], &[], &[]),
+            &metrics,
+        ));
+        let json = serde_json::to_string(&evaluation).unwrap();
+        let back: InterferenceEvaluation = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.pass, true);
+        assert!(back.findings.is_empty());
+    }
+
+    #[test]
+    fn interference_finding_with_no_metric() {
+        let finding = InterferenceFinding {
+            code: InterferenceFailureCode::DuplicateController,
+            metric: None,
+            controller_ids: vec!["ctrl-a".into()],
+            detail: "duplicate registration".into(),
+        };
+        let json = serde_json::to_string(&finding).unwrap();
+        let back: InterferenceFinding = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.metric, None);
+    }
 }

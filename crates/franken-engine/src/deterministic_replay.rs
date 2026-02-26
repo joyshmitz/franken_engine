@@ -1619,4 +1619,128 @@ mod tests {
             assert_eq!(s, back);
         }
     }
+
+    // ── Enrichment: Display uniqueness ──────────────────────────
+
+    #[test]
+    fn nondeterminism_source_as_str_all_unique() {
+        let strs: std::collections::BTreeSet<&str> = NondeterminismSource::ALL
+            .iter()
+            .map(|s| s.as_str())
+            .collect();
+        assert_eq!(strs.len(), 6);
+    }
+
+    #[test]
+    fn incident_severity_as_str_all_unique() {
+        let strs: std::collections::BTreeSet<&str> = [
+            IncidentSeverity::Info,
+            IncidentSeverity::Warning,
+            IncidentSeverity::Error,
+            IncidentSeverity::Critical,
+        ]
+        .iter()
+        .map(|s| s.as_str())
+        .collect();
+        assert_eq!(strs.len(), 4);
+    }
+
+    // ── Enrichment: replay error serde ──────────────────────────
+
+    #[test]
+    fn replay_error_serde_all_variants() {
+        let errors = vec![
+            ReplayError::TraceExhausted {
+                cursor: 3,
+                total: 10,
+            },
+            ReplayError::SourceMismatch {
+                expected: NondeterminismSource::TimerRead,
+                actual: NondeterminismSource::LaneSelectionRandom,
+                sequence: 0,
+            },
+            ReplayError::CriticalDivergence {
+                source: NondeterminismSource::ExternalApiResponse,
+                sequence: 1,
+            },
+        ];
+        for err in &errors {
+            let json = serde_json::to_string(err).unwrap();
+            let back: ReplayError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*err, back);
+        }
+    }
+
+    // ── Enrichment: ReplayMode serde ────────────────────────────
+
+    #[test]
+    fn replay_mode_serde_roundtrip() {
+        for mode in [
+            ReplayMode::Strict,
+            ReplayMode::BestEffort,
+            ReplayMode::Validate,
+        ] {
+            let json = serde_json::to_string(&mode).unwrap();
+            let back: ReplayMode = serde_json::from_str(&json).unwrap();
+            assert_eq!(mode, back);
+        }
+    }
+
+    // ── Enrichment: FailoverError serde ─────────────────────────
+
+    #[test]
+    fn failover_error_serde_roundtrip() {
+        let errors = vec![
+            FailoverError::MaxFailoversExceeded {
+                count: 11,
+                limit: 10,
+            },
+            FailoverError::Halted,
+        ];
+        for err in &errors {
+            let json = serde_json::to_string(err).unwrap();
+            let back: FailoverError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*err, back);
+        }
+    }
+
+    // ── Enrichment: FailoverStrategy serde ──────────────────────
+
+    #[test]
+    fn failover_strategy_serde_all_variants() {
+        for strategy in [
+            FailoverStrategy::RetryThenBaseline,
+            FailoverStrategy::ImmediateBaseline,
+            FailoverStrategy::Halt,
+        ] {
+            let json = serde_json::to_string(&strategy).unwrap();
+            let back: FailoverStrategy = serde_json::from_str(&json).unwrap();
+            assert_eq!(strategy, back);
+        }
+    }
+
+    // ── Enrichment: IncidentBundle empty finalise ────────────────
+
+    #[test]
+    fn incident_bundle_finalise_empty_produces_hash() {
+        let mut bundle =
+            IncidentBundle::new("INC-EMPTY", IncidentSeverity::Info, "Empty", "comp", 0);
+        bundle.finalise();
+        assert!(bundle.is_finalised());
+        assert!(!bundle.bundle_hash.is_empty());
+    }
+
+    // ── Enrichment: classify_divergence all sources ─────────────
+
+    #[test]
+    fn classify_divergence_user_interaction_is_benign() {
+        let s = classify_divergence(&NondeterminismSource::UserInteractionTiming, &[1], &[2]);
+        assert_eq!(s, DivergenceSeverity::Benign);
+    }
+
+    #[test]
+    fn classify_divergence_resource_check_is_critical() {
+        let s = classify_divergence(&NondeterminismSource::ResourceCheck, &[1], &[2]);
+        assert_eq!(s, DivergenceSeverity::Critical);
+    }
 }

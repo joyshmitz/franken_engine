@@ -1393,4 +1393,115 @@ mod tests {
         };
         assert!(err.to_string().contains("hardware fault"));
     }
+
+    // ── Enrichment: Display uniqueness, edge cases, determinism ────────
+
+    #[test]
+    fn key_domain_display_all_unique() {
+        let mut displays = std::collections::BTreeSet::new();
+        for domain in KeyDomain::ALL {
+            displays.insert(domain.to_string());
+        }
+        assert_eq!(
+            displays.len(),
+            5,
+            "all 5 KeyDomain variants have unique Display"
+        );
+    }
+
+    #[test]
+    fn key_domain_separator_all_unique() {
+        let mut seps = std::collections::BTreeSet::new();
+        for domain in KeyDomain::ALL {
+            seps.insert(domain.separator().to_vec());
+        }
+        assert_eq!(seps.len(), 5, "all domains have unique separators");
+    }
+
+    #[test]
+    fn key_domain_serde_roundtrip_all() {
+        for domain in KeyDomain::ALL {
+            let json = serde_json::to_string(domain).unwrap();
+            let back: KeyDomain = serde_json::from_str(&json).unwrap();
+            assert_eq!(*domain, back);
+        }
+    }
+
+    #[test]
+    fn cache_get_returns_cached_on_second_call() {
+        let mut cache = EpochKeyCache::new(
+            DeterministicTestDeriver,
+            test_master_key(),
+            SecurityEpoch::from_raw(1),
+            32,
+        );
+        let ctx = DerivationContext::empty();
+        let key1 = cache
+            .get_or_derive(KeyDomain::Symbol, &ctx, "t1")
+            .unwrap()
+            .clone();
+        // Second call should return the cached key (no new event).
+        let key2 = cache
+            .get_or_derive(KeyDomain::Symbol, &ctx, "t2")
+            .unwrap()
+            .clone();
+        assert_eq!(key1.key_bytes, key2.key_bytes);
+        // Only 1 derivation event, the second was a cache hit.
+        assert_eq!(cache.events().len(), 1);
+    }
+
+    #[test]
+    fn empty_master_key_rejected() {
+        let deriver = DeterministicTestDeriver;
+        let err = deriver
+            .derive(&DerivationRequest {
+                master_key: vec![],
+                epoch: SecurityEpoch::from_raw(1),
+                domain: KeyDomain::Symbol,
+                context: DerivationContext::empty(),
+                output_len: 32,
+            })
+            .unwrap_err();
+        assert!(matches!(err, KeyDerivationError::EmptyMasterKey));
+    }
+
+    #[test]
+    fn zero_output_length_rejected() {
+        let deriver = DeterministicTestDeriver;
+        let err = deriver
+            .derive(&DerivationRequest {
+                master_key: test_master_key(),
+                epoch: SecurityEpoch::from_raw(1),
+                domain: KeyDomain::Symbol,
+                context: DerivationContext::empty(),
+                output_len: 0,
+            })
+            .unwrap_err();
+        assert!(matches!(err, KeyDerivationError::ZeroOutputLength));
+    }
+
+    #[test]
+    fn derived_key_is_valid_at_correct_epoch() {
+        let key = DerivedKey {
+            key_bytes: vec![42],
+            domain: KeyDomain::Authentication,
+            epoch: SecurityEpoch::from_raw(7),
+            context_hash: vec![],
+        };
+        assert!(key.is_valid_at(SecurityEpoch::from_raw(7)));
+        assert!(!key.is_valid_at(SecurityEpoch::from_raw(6)));
+        assert!(!key.is_valid_at(SecurityEpoch::from_raw(8)));
+    }
+
+    #[test]
+    fn context_ordering_is_deterministic() {
+        let mut ctx_a = DerivationContext::empty();
+        ctx_a.add("z", "last");
+        ctx_a.add("a", "first");
+        let mut ctx_b = DerivationContext::empty();
+        ctx_b.add("a", "first");
+        ctx_b.add("z", "last");
+        // BTreeMap ensures deterministic order regardless of insertion order
+        assert_eq!(ctx_a.to_canonical_bytes(), ctx_b.to_canonical_bytes());
+    }
 }

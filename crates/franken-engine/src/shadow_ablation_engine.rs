@@ -2766,4 +2766,153 @@ mod tests {
         assert!(AblationFailureClass::ExecutionFailure < AblationFailureClass::OracleError);
         assert!(AblationFailureClass::InvalidOracleResult < AblationFailureClass::BudgetExhausted);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: helper function coverage
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn to_hex_empty_bytes() {
+        assert_eq!(to_hex(&[]), "");
+    }
+
+    #[test]
+    fn to_hex_known_values() {
+        assert_eq!(to_hex(&[0x00, 0xff, 0x0a, 0xb3]), "00ff0ab3");
+    }
+
+    #[test]
+    fn capability_names_preserves_btree_order() {
+        let mut caps = BTreeSet::new();
+        caps.insert(cap("z_last"));
+        caps.insert(cap("a_first"));
+        caps.insert(cap("m_mid"));
+        let names = capability_names(&caps);
+        assert_eq!(names, vec!["a_first", "m_mid", "z_last"]);
+    }
+
+    #[test]
+    fn capability_names_empty_set() {
+        let caps = BTreeSet::new();
+        assert!(capability_names(&caps).is_empty());
+    }
+
+    #[test]
+    fn capability_set_digest_deterministic() {
+        let mut caps = BTreeSet::new();
+        caps.insert(cap("alpha"));
+        caps.insert(cap("beta"));
+        let d1 = capability_set_digest(&caps);
+        let d2 = capability_set_digest(&caps);
+        assert_eq!(d1, d2, "digest must be deterministic");
+    }
+
+    #[test]
+    fn capability_set_digest_differs_for_different_sets() {
+        let mut a = BTreeSet::new();
+        a.insert(cap("alpha"));
+        let mut b = BTreeSet::new();
+        b.insert(cap("beta"));
+        assert_ne!(capability_set_digest(&a), capability_set_digest(&b));
+    }
+
+    #[test]
+    fn capability_value_produces_array() {
+        let mut caps = BTreeSet::new();
+        caps.insert(cap("read"));
+        caps.insert(cap("write"));
+        let val = capability_value(&caps);
+        if let CanonicalValue::Array(arr) = &val {
+            assert_eq!(arr.len(), 2);
+        } else {
+            panic!("expected Array, got {val:?}");
+        }
+    }
+
+    #[test]
+    fn string_map_value_produces_map() {
+        let mut m = BTreeMap::new();
+        m.insert("enabled".to_string(), true);
+        m.insert("verbose".to_string(), false);
+        let val = string_map_value(&m);
+        if let CanonicalValue::Map(map) = &val {
+            assert_eq!(map.len(), 2);
+            assert_eq!(map["enabled"], CanonicalValue::Bool(true));
+            assert_eq!(map["verbose"], CanonicalValue::Bool(false));
+        } else {
+            panic!("expected Map, got {val:?}");
+        }
+    }
+
+    #[test]
+    fn phase_consumption_value_fields() {
+        let pc = PhaseConsumption {
+            time_ns: 42,
+            compute: 7,
+            depth: 3,
+        };
+        let val = phase_consumption_value(&pc);
+        if let CanonicalValue::Map(map) = &val {
+            assert_eq!(map["time_ns"], CanonicalValue::U64(42));
+            assert_eq!(map["compute"], CanonicalValue::U64(7));
+            assert_eq!(map["depth"], CanonicalValue::U64(3));
+        } else {
+            panic!("expected Map, got {val:?}");
+        }
+    }
+
+    #[test]
+    fn utilization_value_all_dimensions() {
+        let mut m = BTreeMap::new();
+        m.insert(BudgetDimension::Time, 100);
+        m.insert(BudgetDimension::Compute, -50);
+        m.insert(BudgetDimension::Depth, 0);
+        let val = utilization_value(&m);
+        if let CanonicalValue::Map(map) = &val {
+            assert_eq!(map.len(), 3);
+        } else {
+            panic!("expected Map, got {val:?}");
+        }
+    }
+
+    #[test]
+    fn fallback_value_none_is_null() {
+        assert_eq!(fallback_value(&None), CanonicalValue::Null);
+    }
+
+    #[test]
+    fn fallback_value_some_has_quality_key() {
+        let result = FallbackResult {
+            quality: FallbackQuality::StaticBound,
+            result_digest: "digest-001".to_string(),
+            exhaustion_reason: ExhaustionReason {
+                exceeded_dimensions: vec![BudgetDimension::Time],
+                phase: SynthesisPhase::Ablation,
+                global_limit_hit: false,
+                consumption: PhaseConsumption {
+                    time_ns: 999,
+                    compute: 0,
+                    depth: 0,
+                },
+                limit_value: 1000,
+            },
+            increase_likely_helpful: true,
+            recommended_multiplier: Some(2_000_000),
+        };
+        let val = fallback_value(&Some(result));
+        if let CanonicalValue::Map(map) = &val {
+            assert!(map.contains_key("quality"));
+            assert!(map.contains_key("result_digest"));
+            assert!(map.contains_key("exhaustion_reason"));
+            assert!(map.contains_key("increase_likely_helpful"));
+        } else {
+            panic!("expected Map, got {val:?}");
+        }
+    }
+
+    #[test]
+    fn capability_as_str_returns_inner_name() {
+        let c = cap("network.http");
+        assert_eq!(c.as_str(), "network.http");
+    }
 }

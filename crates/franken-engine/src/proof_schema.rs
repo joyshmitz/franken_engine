@@ -1516,4 +1516,117 @@ mod tests {
             "all 4 tested variants produce distinct messages"
         );
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: Display uniqueness
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn optimization_class_display_uniqueness() {
+        let displays: BTreeSet<String> = [
+            OptimizationClass::Superinstruction,
+            OptimizationClass::TraceSpecialization,
+            OptimizationClass::LayoutSpecialization,
+            OptimizationClass::DevirtualizedHostcallFastPath,
+        ]
+        .iter()
+        .map(|c| c.to_string())
+        .collect();
+        assert_eq!(displays.len(), 4);
+    }
+
+    #[test]
+    fn activation_stage_display_uniqueness() {
+        let displays: BTreeSet<String> = [
+            ActivationStage::Shadow,
+            ActivationStage::Canary,
+            ActivationStage::Ramp,
+            ActivationStage::Default,
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert_eq!(displays.len(), 4);
+    }
+
+    #[test]
+    fn signer_role_display_uniqueness() {
+        let displays: BTreeSet<String> = [
+            SignerRole::OptimizerSubsystem,
+            SignerRole::PolicyPlane,
+            SignerRole::AttestationCell,
+        ]
+        .iter()
+        .map(|r| r.to_string())
+        .collect();
+        assert_eq!(displays.len(), 3);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: schema version helpers
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn schema_version_v1_0_does_not_support_attestation() {
+        let v1_0 = proof_schema_version_v1_0();
+        assert!(!v1_0.supports_attestation_bindings());
+    }
+
+    #[test]
+    fn schema_version_v1_1_supports_attestation() {
+        let v1_1 = proof_schema_version_v1_1();
+        assert!(v1_1.supports_attestation_bindings());
+    }
+
+    #[test]
+    fn schema_version_current_equals_v1_1() {
+        assert_eq!(proof_schema_version_current(), proof_schema_version_v1_1());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: attestation validity window serde roundtrip
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn attestation_validity_window_serde_roundtrip() {
+        let window = AttestationValidityWindow {
+            start_timestamp_ticks: 100,
+            end_timestamp_ticks: 200,
+        };
+        let json = serde_json::to_string(&window).expect("serialize");
+        let restored: AttestationValidityWindow = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(window, restored);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: nonce registry serde roundtrip
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn nonce_registry_serde_roundtrip() {
+        let mut registry = ReceiptNonceRegistry::new();
+        let key_id = test_signer_key_id();
+        // Record a nonce via the public API.
+        registry
+            .check_and_record(&key_id, [42u8; 32])
+            .expect("first record");
+        let json = serde_json::to_string(&registry).expect("serialize");
+        let restored: ReceiptNonceRegistry = serde_json::from_str(&json).expect("deserialize");
+        // The restored registry should detect replay of the same nonce.
+        let mut restored = restored;
+        assert!(restored.check_and_record(&key_id, [42u8; 32]).is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: attestation requirement policy default
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn attestation_requirement_policy_default_roundtrip() {
+        let policy = AttestationRequirementPolicy::default();
+        let json = serde_json::to_string(&policy).expect("serialize");
+        let restored: AttestationRequirementPolicy =
+            serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(policy, restored);
+    }
 }

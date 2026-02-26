@@ -868,6 +868,193 @@ impl Default for HookEffectContract {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Unsupported semantics + deterministic fallback contract (FRX-02.3)
+// ---------------------------------------------------------------------------
+
+/// Deterministic reasons the compile path may be rejected while preserving
+/// compatibility through a fallback execution route.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum UnsupportedSemanticsTrigger {
+    /// Hook topology changed between renders (count/order/kind drift).
+    HookTopologyDrift,
+    /// Dependency array shape changed in an unsupported way.
+    DependencyShapeDrift,
+    /// A hook escaped render phase boundaries.
+    OutOfRenderHookExecution,
+    /// Scheduler ordering cannot be proven equivalent.
+    SchedulerOrderingAmbiguity,
+    /// A hook primitive is not currently supported by lowering path.
+    UnsupportedHookPrimitive,
+    /// Required transformation witness/proof is absent.
+    TransformationProofMissing,
+}
+
+impl UnsupportedSemanticsTrigger {
+    /// Stable operator-facing error code.
+    pub fn stable_error_code(&self) -> &'static str {
+        match self {
+            Self::HookTopologyDrift => "FE-HOOK-UNSUPPORTED-0001",
+            Self::DependencyShapeDrift => "FE-HOOK-UNSUPPORTED-0002",
+            Self::OutOfRenderHookExecution => "FE-HOOK-UNSUPPORTED-0003",
+            Self::SchedulerOrderingAmbiguity => "FE-HOOK-UNSUPPORTED-0004",
+            Self::UnsupportedHookPrimitive => "FE-HOOK-UNSUPPORTED-0005",
+            Self::TransformationProofMissing => "FE-HOOK-UNSUPPORTED-0006",
+        }
+    }
+
+    /// Deterministic human-readable compile-path rejection reason.
+    pub fn rejection_reason(&self) -> &'static str {
+        match self {
+            Self::HookTopologyDrift => {
+                "hook slot topology drifted from prior render; compile path rejected"
+            }
+            Self::DependencyShapeDrift => {
+                "dependency array shape drift detected; compile path rejected"
+            }
+            Self::OutOfRenderHookExecution => {
+                "hook executed outside render phase constraints; compile path rejected"
+            }
+            Self::SchedulerOrderingAmbiguity => {
+                "effect schedule ordering could not be proven equivalent; compile path rejected"
+            }
+            Self::UnsupportedHookPrimitive => {
+                "hook primitive unsupported by current lowering path; compile path rejected"
+            }
+            Self::TransformationProofMissing => {
+                "required transformation proof receipt missing; compile path rejected"
+            }
+        }
+    }
+
+    /// Guidance to incrementally harden the unsupported case.
+    pub fn hardening_guidance(&self) -> &'static str {
+        match self {
+            Self::HookTopologyDrift => {
+                "stabilize hook call order/count, then rerun FRX hook consistency gate"
+            }
+            Self::DependencyShapeDrift => {
+                "normalize dependency arrays to fixed cardinality and rerun dependency proofs"
+            }
+            Self::OutOfRenderHookExecution => {
+                "move hook invocation into render boundary and enforce phase-typed transitions"
+            }
+            Self::SchedulerOrderingAmbiguity => {
+                "emit explicit scheduling witness proving insertion/layout/passive equivalence"
+            }
+            Self::UnsupportedHookPrimitive => {
+                "route primitive through compatibility lane and add lowering support behind proofs"
+            }
+            Self::TransformationProofMissing => {
+                "generate transformation receipt and attach proof-obligation witness"
+            }
+        }
+    }
+}
+
+/// Compatibility-preserving route selected when compile path is rejected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum FallbackExecutionRoute {
+    /// Deterministic compatibility runtime lane preserving semantics.
+    CompatibilityRuntimeLane,
+    /// Baseline interpreter lane with no speculative transforms.
+    BaselineInterpreterLane,
+    /// Strict safe mode lane for phase/scheduler safety.
+    DeterministicSafeModeLane,
+}
+
+/// Structured diagnostic emitted when unsupported semantics trigger fallback.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UnsupportedSemanticsDiagnostic {
+    pub schema_version: String,
+    pub component_name: String,
+    pub trigger: UnsupportedSemanticsTrigger,
+    pub fallback_route: FallbackExecutionRoute,
+    pub compile_path_rejected: bool,
+    pub reason: String,
+    pub hardening_guidance: String,
+    pub error_code: String,
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+}
+
+impl UnsupportedSemanticsDiagnostic {
+    pub fn derive_id(&self) -> EngineObjectId {
+        let canonical = format!(
+            "unsupported_semantics:{}:{:?}:{:?}:{}",
+            self.component_name, self.trigger, self.fallback_route, self.error_code,
+        );
+        derive_id(
+            ObjectDomain::EvidenceRecord,
+            "hook-effect",
+            &contract_schema(),
+            canonical.as_bytes(),
+        )
+        .expect("unsupported semantics diagnostic id derivation")
+    }
+}
+
+/// Deterministically map unsupported trigger to compatibility-preserving route.
+pub fn fallback_route_for_trigger(trigger: UnsupportedSemanticsTrigger) -> FallbackExecutionRoute {
+    match trigger {
+        UnsupportedSemanticsTrigger::HookTopologyDrift
+        | UnsupportedSemanticsTrigger::DependencyShapeDrift
+        | UnsupportedSemanticsTrigger::UnsupportedHookPrimitive => {
+            FallbackExecutionRoute::CompatibilityRuntimeLane
+        }
+        UnsupportedSemanticsTrigger::TransformationProofMissing => {
+            FallbackExecutionRoute::BaselineInterpreterLane
+        }
+        UnsupportedSemanticsTrigger::OutOfRenderHookExecution
+        | UnsupportedSemanticsTrigger::SchedulerOrderingAmbiguity => {
+            FallbackExecutionRoute::DeterministicSafeModeLane
+        }
+    }
+}
+
+/// Classify a hook rule violation into FRX-02.3 unsupported semantics triggers.
+pub fn classify_unsupported_semantics(
+    violation: &HookRuleViolation,
+) -> UnsupportedSemanticsTrigger {
+    match violation {
+        HookRuleViolation::HookCountMismatch { .. }
+        | HookRuleViolation::HookKindMismatch { .. }
+        | HookRuleViolation::ConditionalHookCall { .. } => {
+            UnsupportedSemanticsTrigger::HookTopologyDrift
+        }
+        HookRuleViolation::DepsLengthMismatch { .. } => {
+            UnsupportedSemanticsTrigger::DependencyShapeDrift
+        }
+        HookRuleViolation::HookOutsideRender { .. } => {
+            UnsupportedSemanticsTrigger::OutOfRenderHookExecution
+        }
+    }
+}
+
+/// Build deterministic, actionable fallback diagnostics for unsupported cases.
+pub fn build_unsupported_semantics_diagnostic(
+    component_name: impl Into<String>,
+    trigger: UnsupportedSemanticsTrigger,
+    trace_id: impl Into<String>,
+    decision_id: impl Into<String>,
+) -> UnsupportedSemanticsDiagnostic {
+    let route = fallback_route_for_trigger(trigger);
+    UnsupportedSemanticsDiagnostic {
+        schema_version: "franken-engine.hook-effect-unsupported-semantics.v1".to_string(),
+        component_name: component_name.into(),
+        trigger,
+        fallback_route: route,
+        compile_path_rejected: true,
+        reason: trigger.rejection_reason().to_string(),
+        hardening_guidance: trigger.hardening_guidance().to_string(),
+        error_code: trigger.stable_error_code().to_string(),
+        trace_id: trace_id.into(),
+        decision_id: decision_id.into(),
+        policy_id: "policy-frx-unsupported-semantics-v1".to_string(),
+    }
+}
+
 // ===========================================================================
 // Tests
 // ===========================================================================
@@ -1809,5 +1996,84 @@ mod tests {
         // Verify receipt has stable ID
         let id = receipt.derive_id();
         assert_eq!(id, receipt.derive_id());
+    }
+
+    // ---- Unsupported semantics + fallback tests ----
+
+    #[test]
+    fn classify_unsupported_semantics_from_hook_violations() {
+        let mismatch = HookRuleViolation::HookCountMismatch {
+            component: "App".into(),
+            previous_count: 3,
+            current_count: 2,
+        };
+        let deps = HookRuleViolation::DepsLengthMismatch {
+            component: "App".into(),
+            slot: HookSlotIndex(1),
+            previous_len: 2,
+            current_len: 1,
+        };
+        let outside = HookRuleViolation::HookOutsideRender {
+            component: "App".into(),
+            slot: HookSlotIndex(1),
+            actual_phase: RenderPhase::Idle,
+        };
+
+        assert_eq!(
+            classify_unsupported_semantics(&mismatch),
+            UnsupportedSemanticsTrigger::HookTopologyDrift
+        );
+        assert_eq!(
+            classify_unsupported_semantics(&deps),
+            UnsupportedSemanticsTrigger::DependencyShapeDrift
+        );
+        assert_eq!(
+            classify_unsupported_semantics(&outside),
+            UnsupportedSemanticsTrigger::OutOfRenderHookExecution
+        );
+    }
+
+    #[test]
+    fn fallback_routes_are_deterministic_for_each_trigger() {
+        for trigger in [
+            UnsupportedSemanticsTrigger::HookTopologyDrift,
+            UnsupportedSemanticsTrigger::DependencyShapeDrift,
+            UnsupportedSemanticsTrigger::OutOfRenderHookExecution,
+            UnsupportedSemanticsTrigger::SchedulerOrderingAmbiguity,
+            UnsupportedSemanticsTrigger::UnsupportedHookPrimitive,
+            UnsupportedSemanticsTrigger::TransformationProofMissing,
+        ] {
+            assert_eq!(
+                fallback_route_for_trigger(trigger),
+                fallback_route_for_trigger(trigger)
+            );
+            assert!(!trigger.stable_error_code().is_empty());
+            assert!(!trigger.rejection_reason().is_empty());
+            assert!(!trigger.hardening_guidance().is_empty());
+        }
+    }
+
+    #[test]
+    fn build_unsupported_semantics_diagnostic_is_actionable_and_stable() {
+        let diagnostic = build_unsupported_semantics_diagnostic(
+            "Counter",
+            UnsupportedSemanticsTrigger::TransformationProofMissing,
+            "trace-1",
+            "decision-1",
+        );
+
+        assert_eq!(
+            diagnostic.schema_version,
+            "franken-engine.hook-effect-unsupported-semantics.v1"
+        );
+        assert!(diagnostic.compile_path_rejected);
+        assert_eq!(
+            diagnostic.fallback_route,
+            FallbackExecutionRoute::BaselineInterpreterLane
+        );
+        assert_eq!(diagnostic.error_code, "FE-HOOK-UNSUPPORTED-0006");
+        assert!(!diagnostic.reason.is_empty());
+        assert!(!diagnostic.hardening_guidance.is_empty());
+        assert_eq!(diagnostic.derive_id(), diagnostic.derive_id());
     }
 }

@@ -4204,4 +4204,303 @@ mod tests {
             ParseEventMaterializationErrorCode::ParseFailedEventStream
         );
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: ParseErrorCode as_str all variants
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_error_code_as_str_all_distinct() {
+        let strs: BTreeSet<&str> = ParseErrorCode::ALL.iter().map(|c| c.as_str()).collect();
+        assert_eq!(strs.len(), ParseErrorCode::ALL.len());
+    }
+
+    #[test]
+    fn parse_error_code_stable_diagnostic_code_all_distinct() {
+        let codes: BTreeSet<&str> = ParseErrorCode::ALL
+            .iter()
+            .map(|c| c.stable_diagnostic_code())
+            .collect();
+        assert_eq!(codes.len(), ParseErrorCode::ALL.len());
+    }
+
+    #[test]
+    fn parse_error_code_diagnostic_category_covers_all_categories() {
+        let categories: BTreeSet<_> = ParseErrorCode::ALL
+            .iter()
+            .map(|c| c.diagnostic_category().as_str())
+            .collect();
+        // At least 4 distinct categories
+        assert!(categories.len() >= 4, "got {:?}", categories);
+    }
+
+    #[test]
+    fn parse_error_code_diagnostic_severity_covers_both() {
+        let severities: BTreeSet<_> = ParseErrorCode::ALL
+            .iter()
+            .map(|c| c.diagnostic_severity().as_str())
+            .collect();
+        assert!(severities.contains("error"));
+        assert!(severities.contains("fatal"));
+    }
+
+    #[test]
+    fn parse_error_code_diagnostic_message_template_non_empty() {
+        for code in &ParseErrorCode::ALL {
+            assert!(
+                !code.diagnostic_message_template(None).is_empty(),
+                "empty template for {:?}",
+                code
+            );
+        }
+    }
+
+    #[test]
+    fn budget_exceeded_message_template_with_budget_kind() {
+        let msg = ParseErrorCode::BudgetExceeded
+            .diagnostic_message_template(Some(ParseBudgetKind::TokenCount));
+        assert!(
+            msg.contains("token"),
+            "expected token-related msg, got: {msg}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: ParseDiagnosticCategory as_str all distinct
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_diagnostic_category_as_str_all_distinct() {
+        let categories = [
+            ParseDiagnosticCategory::Input,
+            ParseDiagnosticCategory::Goal,
+            ParseDiagnosticCategory::Syntax,
+            ParseDiagnosticCategory::Encoding,
+            ParseDiagnosticCategory::Resource,
+            ParseDiagnosticCategory::System,
+        ];
+        let strs: BTreeSet<&str> = categories.iter().map(|c| c.as_str()).collect();
+        assert_eq!(strs.len(), categories.len());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: ParseBudgetKind as_str all distinct
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_budget_kind_as_str_all_distinct() {
+        let kinds = [
+            ParseBudgetKind::SourceBytes,
+            ParseBudgetKind::TokenCount,
+            ParseBudgetKind::RecursionDepth,
+        ];
+        let strs: BTreeSet<&str> = kinds.iter().map(|k| k.as_str()).collect();
+        assert_eq!(strs.len(), kinds.len());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: ParseEventKind as_str all distinct
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_event_kind_as_str_all_distinct() {
+        let kinds = [
+            ParseEventKind::ParseStarted,
+            ParseEventKind::StatementParsed,
+            ParseEventKind::ParseCompleted,
+            ParseEventKind::ParseFailed,
+        ];
+        let strs: BTreeSet<&str> = kinds.iter().map(|k| k.as_str()).collect();
+        assert_eq!(strs.len(), kinds.len());
+    }
+
+    #[test]
+    fn parse_event_kind_canonical_value_matches_as_str() {
+        for kind in [
+            ParseEventKind::ParseStarted,
+            ParseEventKind::StatementParsed,
+            ParseEventKind::ParseCompleted,
+            ParseEventKind::ParseFailed,
+        ] {
+            if let CanonicalValue::String(s) = kind.canonical_value() {
+                assert_eq!(s, kind.as_str());
+            } else {
+                panic!("expected CanonicalValue::String");
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: ParseEventMaterializationErrorCode as_str
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_event_materialization_error_code_as_str_all_distinct() {
+        let codes = [
+            ParseEventMaterializationErrorCode::UnsupportedContractVersion,
+            ParseEventMaterializationErrorCode::UnsupportedSchemaVersion,
+            ParseEventMaterializationErrorCode::ParseFailedEventStream,
+            ParseEventMaterializationErrorCode::MissingParseStarted,
+            ParseEventMaterializationErrorCode::MissingParseCompleted,
+            ParseEventMaterializationErrorCode::InvalidEventSequence,
+            ParseEventMaterializationErrorCode::InconsistentEventEnvelope,
+            ParseEventMaterializationErrorCode::GoalMismatch,
+            ParseEventMaterializationErrorCode::ModeMismatch,
+            ParseEventMaterializationErrorCode::StatementCountMismatch,
+            ParseEventMaterializationErrorCode::StatementIndexMismatch,
+            ParseEventMaterializationErrorCode::StatementKindMismatch,
+            ParseEventMaterializationErrorCode::StatementHashMismatch,
+            ParseEventMaterializationErrorCode::StatementSpanMismatch,
+            ParseEventMaterializationErrorCode::SourceHashMismatch,
+            ParseEventMaterializationErrorCode::AstHashMismatch,
+            ParseEventMaterializationErrorCode::SourceParseFailed,
+        ];
+        let strs: BTreeSet<&str> = codes.iter().map(|c| c.as_str()).collect();
+        assert_eq!(strs.len(), codes.len());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: ParseEventMaterializationError Display
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn materialization_error_display_with_sequence() {
+        let err = ParseEventMaterializationError::new(
+            ParseEventMaterializationErrorCode::GoalMismatch,
+            "mismatch".to_string(),
+            Some(5),
+        );
+        let display = err.to_string();
+        assert!(display.contains("sequence=5"), "got: {display}");
+        assert!(display.contains("goal_mismatch"), "got: {display}");
+    }
+
+    #[test]
+    fn materialization_error_display_without_sequence() {
+        let err = ParseEventMaterializationError::new(
+            ParseEventMaterializationErrorCode::SourceHashMismatch,
+            "hash differs".to_string(),
+            None,
+        );
+        let display = err.to_string();
+        assert!(!display.contains("sequence="), "got: {display}");
+        assert!(display.contains("source_hash_mismatch"), "got: {display}");
+    }
+
+    #[test]
+    fn materialization_error_is_std_error() {
+        let err: &dyn std::error::Error = &ParseEventMaterializationError::new(
+            ParseEventMaterializationErrorCode::ParseFailedEventStream,
+            "msg".to_string(),
+            None,
+        );
+        assert!(!err.to_string().is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: serde roundtrips for missing types
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_diagnostic_rule_serde_roundtrip() {
+        let rule = ParseDiagnosticRule {
+            parse_error_code: ParseErrorCode::EmptySource,
+            diagnostic_code: "FE-PARSER-DIAG-EMPTY-SOURCE-0001".to_string(),
+            category: ParseDiagnosticCategory::Input,
+            severity: ParseDiagnosticSeverity::Error,
+            message_template: "source is empty".to_string(),
+        };
+        let json = serde_json::to_string(&rule).unwrap();
+        let restored: ParseDiagnosticRule = serde_json::from_str(&json).unwrap();
+        assert_eq!(rule, restored);
+    }
+
+    #[test]
+    fn parse_diagnostic_taxonomy_serde_roundtrip() {
+        let taxonomy = ParseDiagnosticTaxonomy::v1();
+        let json = serde_json::to_string(&taxonomy).unwrap();
+        let restored: ParseDiagnosticTaxonomy = serde_json::from_str(&json).unwrap();
+        assert_eq!(taxonomy, restored);
+    }
+
+    #[test]
+    fn parse_event_materialization_error_serde_roundtrip() {
+        let err = ParseEventMaterializationError::new(
+            ParseEventMaterializationErrorCode::InvalidEventSequence,
+            "bad seq".to_string(),
+            Some(3),
+        );
+        let json = serde_json::to_string(&err).unwrap();
+        let restored: ParseEventMaterializationError = serde_json::from_str(&json).unwrap();
+        assert_eq!(err, restored);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: helper functions
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn line_count_single_line() {
+        assert_eq!(line_count("hello"), 1);
+    }
+
+    #[test]
+    fn line_count_multiple_lines() {
+        assert_eq!(line_count("a\nb\nc"), 3);
+    }
+
+    #[test]
+    fn line_count_trailing_newline() {
+        assert_eq!(line_count("a\n"), 2);
+    }
+
+    #[test]
+    fn is_identifier_empty_returns_false() {
+        assert!(!is_identifier(""));
+    }
+
+    #[test]
+    fn is_identifier_valid() {
+        assert!(is_identifier("foo"));
+        assert!(is_identifier("_bar"));
+        assert!(is_identifier("$baz"));
+        assert!(is_identifier("x2"));
+    }
+
+    #[test]
+    fn is_identifier_invalid() {
+        assert!(!is_identifier("2x"));
+        assert!(!is_identifier("foo bar"));
+        assert!(!is_identifier("-x"));
+    }
+
+    #[test]
+    fn canonicalize_whitespace_normalizes() {
+        assert_eq!(canonicalize_whitespace("  a   b  c  "), "a b c");
+    }
+
+    #[test]
+    fn canonicalize_whitespace_empty() {
+        assert_eq!(canonicalize_whitespace("   "), "");
+    }
+
+    #[test]
+    fn is_identifier_start_cases() {
+        assert!(is_identifier_start('a'));
+        assert!(is_identifier_start('Z'));
+        assert!(is_identifier_start('_'));
+        assert!(is_identifier_start('$'));
+        assert!(!is_identifier_start('0'));
+        assert!(!is_identifier_start('-'));
+    }
+
+    #[test]
+    fn is_identifier_continue_cases() {
+        assert!(is_identifier_continue('a'));
+        assert!(is_identifier_continue('0'));
+        assert!(is_identifier_continue('_'));
+        assert!(is_identifier_continue('$'));
+        assert!(!is_identifier_continue('-'));
+        assert!(!is_identifier_continue(' '));
+    }
 }

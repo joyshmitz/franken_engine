@@ -2149,4 +2149,128 @@ mod tests {
         let set: BTreeSet<PipelineStage> = stages.into_iter().collect();
         assert_eq!(set.len(), 5);
     }
+
+    // -- Enrichment: Display uniqueness, std::error, determinism, edge cases --
+
+    #[test]
+    fn synthesis_error_display_all_unique() {
+        let errors = vec![
+            SynthesisError::EmptySpec,
+            SynthesisError::InvalidVariable {
+                name: "x".to_string(),
+            },
+            SynthesisError::InvalidConstraint {
+                id: "c1".to_string(),
+                reason: "bad".to_string(),
+            },
+            SynthesisError::Infeasible {
+                constraint_ids: vec!["c1".into()],
+            },
+            SynthesisError::BudgetExhausted {
+                stage: PipelineStage::TableGeneration,
+            },
+        ];
+        let mut displays = BTreeSet::new();
+        for err in &errors {
+            let msg = format!("{err}");
+            assert!(!msg.is_empty());
+            displays.insert(msg);
+        }
+        assert_eq!(
+            displays.len(),
+            errors.len(),
+            "all error variants have unique Display"
+        );
+    }
+
+    #[test]
+    fn synthesis_error_implements_std_error() {
+        let err: Box<dyn std::error::Error> = Box::new(SynthesisError::EmptySpec);
+        assert!(!err.to_string().is_empty());
+    }
+
+    #[test]
+    fn pipeline_stage_display_all_unique() {
+        let stages = [
+            PipelineStage::ConstraintParsing,
+            PipelineStage::OptimizationSolving,
+            PipelineStage::TableGeneration,
+            PipelineStage::ThresholdCalibration,
+            PipelineStage::ArtifactAssembly,
+        ];
+        let mut displays = BTreeSet::new();
+        for stage in stages {
+            displays.insert(format!("{stage:?}"));
+        }
+        assert_eq!(displays.len(), 5);
+    }
+
+    #[test]
+    fn pipeline_deterministic_output_across_runs() {
+        let p = pipeline();
+        let spec = simple_spec();
+        let out1 = p.synthesize(&spec).unwrap();
+        let out2 = p.synthesize(&spec).unwrap();
+        let json1 = serde_json::to_string(&out1).unwrap();
+        let json2 = serde_json::to_string(&out2).unwrap();
+        assert_eq!(
+            json1, json2,
+            "identical inputs must produce identical output"
+        );
+    }
+
+    #[test]
+    fn resource_usage_serde_roundtrip() {
+        let usage = ResourceUsage {
+            time_ms: 150,
+            iterations: 50_000,
+            memory_bytes: 2_000_000,
+            budget_limited: true,
+        };
+        let json = serde_json::to_string(&usage).unwrap();
+        let back: ResourceUsage = serde_json::from_str(&json).unwrap();
+        assert_eq!(usage, back);
+    }
+
+    #[test]
+    fn automaton_step_unknown_state_stays_in_place() {
+        let p = pipeline();
+        let output = p.synthesize(&simple_spec()).unwrap();
+        let automaton = &output.automata[0];
+        let bindings = BTreeMap::new();
+        let (new_state, action) = automaton.step("nonexistent_state", &bindings);
+        assert_eq!(new_state, "nonexistent_state");
+        assert!(action.is_none());
+    }
+
+    #[test]
+    fn stage_status_serde_all_variants() {
+        let variants = [
+            StageStatus::Pending,
+            StageStatus::Running,
+            StageStatus::Completed { duration_ms: 42 },
+            StageStatus::Failed {
+                reason: "oom".to_string(),
+            },
+            StageStatus::BudgetExhausted,
+        ];
+        for status in &variants {
+            let json = serde_json::to_string(status).unwrap();
+            let back: StageStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(*status, back);
+        }
+    }
+
+    #[test]
+    fn evidence_category_ordering() {
+        let cats = [
+            EvidenceCategory::DifferentialTest,
+            EvidenceCategory::StatisticalTest,
+            EvidenceCategory::FormalProof,
+            EvidenceCategory::BoundednessProof,
+            EvidenceCategory::MonotonicityCheck,
+        ];
+        let set: BTreeSet<EvidenceCategory> = cats.into_iter().collect();
+        assert_eq!(set.len(), 5);
+    }
 }

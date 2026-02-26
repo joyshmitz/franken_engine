@@ -1644,4 +1644,173 @@ mod tests {
         assert!(GateCheckKind::EvidenceReplay < GateCheckKind::ObligationTracking);
         assert!(GateCheckKind::ObligationTracking < GateCheckKind::EvidenceCompleteness);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: Display uniqueness for GateCheckKind
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn gate_check_kind_display_all_unique_in_btreeset() {
+        let mut displays = std::collections::BTreeSet::new();
+        for kind in &[
+            GateCheckKind::FrankenlabScenario,
+            GateCheckKind::EvidenceReplay,
+            GateCheckKind::ObligationTracking,
+            GateCheckKind::EvidenceCompleteness,
+        ] {
+            displays.insert(kind.to_string());
+        }
+        assert_eq!(
+            displays.len(),
+            4,
+            "all four check kinds must have distinct Display"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: GateCheckResult boundary — zero items
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn gate_check_result_zero_items_passes() {
+        let check = GateCheckResult {
+            kind: GateCheckKind::ObligationTracking,
+            passed: true,
+            summary: "no items".to_string(),
+            failure_details: Vec::new(),
+            items_checked: 0,
+            items_passed: 0,
+        };
+        assert!(check.passed);
+        assert_eq!(check.items_checked, 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: GateFailureReport — non-blocked report
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn gate_failure_report_non_blocked_round_trip() {
+        let report = GateFailureReport {
+            blocked: false,
+            failing_gates: Vec::new(),
+            details: Vec::new(),
+            summary: "all gates passed".to_string(),
+            seed: 99,
+            result_digest: "0123456789abcdef".to_string(),
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        let back: GateFailureReport = serde_json::from_str(&json).unwrap();
+        assert_eq!(report, back);
+        assert!(!back.blocked);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: GateEvent with error_code
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn gate_event_with_error_code_serde() {
+        let mut metadata = BTreeMap::new();
+        metadata.insert("severity".to_string(), "critical".to_string());
+        let event = GateEvent {
+            trace_id: "t-007".to_string(),
+            decision_id: "d-007".to_string(),
+            policy_id: "p-007".to_string(),
+            component: "release_gate".to_string(),
+            event: "infrastructure_failure".to_string(),
+            outcome: "fail".to_string(),
+            error_code: Some("GATE_INFRASTRUCTURE_FAILURE".to_string()),
+            metadata,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: GateEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, back);
+        assert_eq!(
+            back.error_code.as_deref(),
+            Some("GATE_INFRASTRUCTURE_FAILURE")
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: IdempotencyVerification non-hermetic
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn idempotency_verification_non_hermetic_when_digests_differ() {
+        let v = IdempotencyVerification {
+            digests_match: false,
+            verdicts_match: true,
+            checks_match: true,
+            first_digest: "aaaa".to_string(),
+            second_digest: "bbbb".to_string(),
+        };
+        assert!(!v.is_hermetic());
+    }
+
+    #[test]
+    fn idempotency_verification_non_hermetic_when_verdicts_differ() {
+        let v = IdempotencyVerification {
+            digests_match: true,
+            verdicts_match: false,
+            checks_match: true,
+            first_digest: "abcd".to_string(),
+            second_digest: "abcd".to_string(),
+        };
+        assert!(!v.is_hermetic());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: ExceptionPolicy requires_security_review
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn exception_with_security_review_required_succeeds() {
+        let policy = ExceptionPolicy {
+            allow_exceptions: true,
+            requires_adr_reference: false,
+            requires_security_review: true,
+            max_exception_hours: 72,
+        };
+        let gate = ReleaseGate::with_exception_policy(42, policy);
+        let mut result = ReleaseGateResult {
+            seed: 42,
+            checks: Vec::new(),
+            verdict: Verdict::Fail {
+                reason: "test".to_string(),
+            },
+            total_checks: 1,
+            passed_checks: 0,
+            exception_applied: false,
+            exception_justification: String::new(),
+            gate_events: Vec::new(),
+            result_digest: "original".to_string(),
+        };
+        // Security review is required but the exception still applies
+        // (the requires_security_review flag is advisory in the current impl).
+        gate.apply_exception(&mut result, "critical hotfix", None)
+            .unwrap();
+        assert!(result.exception_applied);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: multiple seeds produce unique digests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn all_seeds_produce_unique_digests() {
+        let seeds = [1u64, 2, 3, 42, 100, 999];
+        let mut digests = std::collections::BTreeSet::new();
+        for seed in seeds {
+            let mut gate = ReleaseGate::new(seed);
+            let mut cx = mock_cx(200000);
+            let result = gate.evaluate(&mut cx);
+            digests.insert(result.result_digest.clone());
+        }
+        assert_eq!(
+            digests.len(),
+            seeds.len(),
+            "each seed should produce a unique digest"
+        );
+    }
 }

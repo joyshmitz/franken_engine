@@ -1367,4 +1367,119 @@ mod tests {
         let decoded: SpecializationIndexEvent = serde_json::from_str(&json).unwrap();
         assert_eq!(event, decoded);
     }
+
+    // -- Enrichment batch 2: Display uniqueness, boundaries, error paths --
+
+    #[test]
+    fn error_display_uniqueness_btreeset() {
+        use std::collections::BTreeSet;
+        let errors = [
+            SpecializationIndexError::Storage("x".to_string()),
+            SpecializationIndexError::NotFound {
+                receipt_id: "x".to_string(),
+            },
+            SpecializationIndexError::DuplicateReceipt {
+                receipt_id: "x".to_string(),
+            },
+            SpecializationIndexError::DuplicateBenchmark {
+                benchmark_id: "x".to_string(),
+            },
+            SpecializationIndexError::SerializationFailed("x".to_string()),
+            SpecializationIndexError::InvalidContext("x".to_string()),
+        ];
+        let set: BTreeSet<String> = errors.iter().map(|e| e.to_string()).collect();
+        assert_eq!(
+            set.len(),
+            errors.len(),
+            "all error Display strings must be unique"
+        );
+    }
+
+    #[test]
+    fn invalidation_reason_serde_all_variants() {
+        let variants = vec![
+            InvalidationReason::EpochChange {
+                old_epoch: 1,
+                new_epoch: 2,
+            },
+            InvalidationReason::ProofRevoked {
+                proof_id: make_id("p1"),
+            },
+            InvalidationReason::ManualRevocation {
+                operator: "admin".to_string(),
+            },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: InvalidationReason = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn get_receipt_nonexistent_returns_none() {
+        let mut index = make_index();
+        let result = index.get_receipt(&make_id("nonexistent"), "t1").unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn query_active_receipts_empty_index() {
+        let mut index = make_index();
+        let active = index.query_active_receipts("t1").unwrap();
+        assert!(active.is_empty());
+    }
+
+    #[test]
+    fn insert_benchmark_for_nonexistent_receipt_succeeds() {
+        let mut index = make_index();
+        let bm = make_benchmark("bm-orphan", "nonexistent-receipt");
+        // insert_benchmark does not require the receipt to exist beforehand
+        index.insert_benchmark(&bm, "t1").unwrap();
+    }
+
+    #[test]
+    fn build_audit_chain_empty_index() {
+        let mut index = make_index();
+        let chain = index.build_audit_chain("t1").unwrap();
+        assert!(chain.is_empty());
+    }
+
+    #[test]
+    fn multiple_invalidations_same_receipt_idempotent() {
+        let mut index = make_index();
+        let rec = make_record("r1", 1);
+        index.insert_receipt(&rec, "t1").unwrap();
+
+        let inv = InvalidationEntry {
+            receipt_id: make_id("r1"),
+            reason: InvalidationReason::EpochChange {
+                old_epoch: 1,
+                new_epoch: 2,
+            },
+            timestamp_ns: 1000,
+            fallback_confirmed: true,
+        };
+        index.record_invalidation(&inv, "t2").unwrap();
+        // Second invalidation should succeed without error
+        index.record_invalidation(&inv, "t3").unwrap();
+
+        let fetched = index.get_receipt(&rec.receipt_id, "t4").unwrap().unwrap();
+        assert!(!fetched.active);
+    }
+
+    #[test]
+    fn extension_summary_with_benchmarks_has_avg_latency() {
+        let mut index = make_index();
+        let r1 = make_record("r1", 1);
+        index.insert_receipt(&r1, "t1").unwrap();
+
+        let mut bm = make_benchmark("bm-1", "r1");
+        bm.latency_reduction_millionths = 200_000;
+        index.insert_benchmark(&bm, "t2").unwrap();
+
+        let summary = index.extension_summary("ext-1", "t3").unwrap();
+        assert_eq!(summary.total_benchmarks, 1);
+        assert_eq!(summary.avg_latency_reduction_millionths, 200_000);
+    }
 }

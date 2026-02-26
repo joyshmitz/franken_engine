@@ -1439,4 +1439,117 @@ mod tests {
         assert!(HighImpactAction::Cancellation < HighImpactAction::ContractEvaluation);
         assert!(HighImpactAction::ContractEvaluation < HighImpactAction::RemoteAuthorization);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 2: Display uniqueness, metadata, edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn high_impact_action_display_all_unique() {
+        let mut seen = std::collections::BTreeSet::new();
+        for action in HighImpactAction::ALL {
+            seen.insert(action.to_string());
+        }
+        assert_eq!(
+            seen.len(),
+            20,
+            "all 20 HighImpactAction Display strings must be unique"
+        );
+    }
+
+    #[test]
+    fn high_impact_action_all_serde_roundtrip() {
+        for action in HighImpactAction::ALL {
+            let json = serde_json::to_string(&action).unwrap();
+            let restored: HighImpactAction = serde_json::from_str(&json).unwrap();
+            assert_eq!(action, restored);
+        }
+    }
+
+    #[test]
+    fn emission_policy_default_values() {
+        let policy = EmissionPolicy::default();
+        assert!(policy.buffer_capacity > 0);
+        assert!(policy.max_candidates > 0);
+        assert!(policy.max_witnesses > 0);
+        assert_eq!(policy.mandatory_actions.len(), HighImpactAction::ALL.len());
+    }
+
+    #[test]
+    fn emission_policy_serde_roundtrip() {
+        let policy = EmissionPolicy::default();
+        let json = serde_json::to_string(&policy).unwrap();
+        let restored: EmissionPolicy = serde_json::from_str(&json).unwrap();
+        assert_eq!(policy, restored);
+    }
+
+    #[test]
+    fn receipts_accumulate_across_emissions() {
+        let mut emitter = CanonicalEvidenceEmitter::with_defaults();
+        for i in 0..3 {
+            let mut ctx = test_context(HighImpactAction::Sandbox);
+            ctx.decision_id = format!("dec-{i:03}");
+            emitter
+                .emit(
+                    &ctx,
+                    test_candidates(),
+                    test_constraints(),
+                    test_chosen(),
+                    test_witnesses(),
+                    BTreeMap::new(),
+                )
+                .unwrap();
+        }
+        assert_eq!(emitter.receipts().len(), 3);
+    }
+
+    #[test]
+    fn log_events_accumulate_on_success() {
+        let mut emitter = CanonicalEvidenceEmitter::with_defaults();
+        emit_standard(&mut emitter);
+        let logs = emitter.log_events();
+        assert!(!logs.is_empty());
+        assert_eq!(logs[0].outcome, "success");
+        assert!(logs[0].error_code.is_none());
+    }
+
+    #[test]
+    fn metadata_passed_through_to_entry() {
+        let mut emitter = CanonicalEvidenceEmitter::with_defaults();
+        let mut metadata = BTreeMap::new();
+        metadata.insert("key".to_string(), "value".to_string());
+
+        emitter
+            .emit(
+                &test_context(HighImpactAction::Sandbox),
+                test_candidates(),
+                test_constraints(),
+                test_chosen(),
+                test_witnesses(),
+                metadata,
+            )
+            .unwrap();
+
+        let entry = &emitter.ledger()[0];
+        assert_eq!(entry.metadata.get("key"), Some(&"value".to_string()));
+    }
+
+    #[test]
+    fn empty_decision_id_rejected_via_validation() {
+        let mut emitter = CanonicalEvidenceEmitter::with_defaults();
+        let mut ctx = test_context(HighImpactAction::Sandbox);
+        ctx.decision_id.clear();
+
+        let err = emitter
+            .emit(
+                &ctx,
+                test_candidates(),
+                test_constraints(),
+                test_chosen(),
+                test_witnesses(),
+                BTreeMap::new(),
+            )
+            .unwrap_err();
+        assert!(matches!(err, EmissionError::MissingField { field } if field == "decision_id"));
+    }
 }

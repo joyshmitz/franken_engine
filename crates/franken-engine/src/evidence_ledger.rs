@@ -991,4 +991,185 @@ mod tests {
         assert_ne!(e1.evidence_hash, e2.evidence_hash);
         assert_ne!(e1.entry_id, e2.entry_id);
     }
+
+    // -- Enrichment batch 2: additional coverage --
+
+    #[test]
+    fn candidate_negative_expected_loss_round_trips() {
+        let c = CandidateAction::new("action", -999_999);
+        assert_eq!(c.expected_loss_millionths, -999_999);
+        let json = serde_json::to_string(&c).unwrap();
+        let restored: CandidateAction = serde_json::from_str(&json).unwrap();
+        assert_eq!(c, restored);
+    }
+
+    #[test]
+    fn ledger_error_schema_validation_display() {
+        let err = LedgerError::SchemaValidationFailed {
+            reason: "missing field xyz".to_string(),
+        };
+        let display = err.to_string();
+        assert!(display.contains("schema validation failed"));
+        assert!(display.contains("missing field xyz"));
+    }
+
+    #[test]
+    fn ledger_error_display_uniqueness() {
+        let errors = [
+            LedgerError::MissingChosenAction,
+            LedgerError::SchemaValidationFailed {
+                reason: "bad".to_string(),
+            },
+            LedgerError::IncompatibleSchema {
+                entry_version: SchemaVersion::new(2, 0, 0),
+                reader_version: current_schema_version(),
+            },
+            LedgerError::DuplicateEntryId {
+                entry_id: "ev-x".to_string(),
+            },
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for e in &errors {
+            displays.insert(e.to_string());
+        }
+        assert_eq!(
+            displays.len(),
+            4,
+            "all 4 error variants have distinct display"
+        );
+    }
+
+    #[test]
+    fn deterministic_hash_empty_input() {
+        let h1 = deterministic_hash("");
+        let h2 = deterministic_hash("");
+        assert_eq!(h1, h2);
+        assert_eq!(h1.len(), 16);
+    }
+
+    #[test]
+    fn builder_multiple_metadata_keys_sorted() {
+        let entry = EvidenceEntryBuilder::new(
+            "t",
+            "d",
+            "p",
+            SecurityEpoch::from_raw(1),
+            DecisionType::SecurityAction,
+        )
+        .meta("z_key", "zval")
+        .meta("a_key", "aval")
+        .meta("m_key", "mval")
+        .chosen(ChosenAction {
+            action_name: "allow".to_string(),
+            expected_loss_millionths: 0,
+            rationale: "r".to_string(),
+        })
+        .build()
+        .unwrap();
+        // BTreeMap keys should be in sorted order
+        let keys: Vec<&String> = entry.metadata.keys().collect();
+        assert_eq!(keys, vec!["a_key", "m_key", "z_key"]);
+    }
+
+    #[test]
+    fn builder_multiple_witnesses_preserved_in_order() {
+        let entry = EvidenceEntryBuilder::new(
+            "t",
+            "d",
+            "p",
+            SecurityEpoch::from_raw(1),
+            DecisionType::SecurityAction,
+        )
+        .witness(Witness {
+            witness_id: "w-2".to_string(),
+            witness_type: "b".to_string(),
+            value: "v2".to_string(),
+        })
+        .witness(Witness {
+            witness_id: "w-1".to_string(),
+            witness_type: "a".to_string(),
+            value: "v1".to_string(),
+        })
+        .chosen(ChosenAction {
+            action_name: "allow".to_string(),
+            expected_loss_millionths: 0,
+            rationale: "r".to_string(),
+        })
+        .build()
+        .unwrap();
+        assert_eq!(entry.witnesses.len(), 2);
+        assert_eq!(entry.witnesses[0].witness_id, "w-2");
+        assert_eq!(entry.witnesses[1].witness_id, "w-1");
+    }
+
+    #[test]
+    fn ledger_multiple_epochs_filter() {
+        let mut ledger = InMemoryLedger::new();
+        for epoch_raw in [1u64, 2, 3] {
+            let entry = EvidenceEntryBuilder::new(
+                format!("t-{epoch_raw}"),
+                format!("d-{epoch_raw}"),
+                "p",
+                SecurityEpoch::from_raw(epoch_raw),
+                DecisionType::SecurityAction,
+            )
+            .chosen(ChosenAction {
+                action_name: "allow".to_string(),
+                expected_loss_millionths: 0,
+                rationale: "r".to_string(),
+            })
+            .build()
+            .unwrap();
+            ledger.emit(entry).unwrap();
+        }
+        assert_eq!(ledger.len(), 3);
+        assert_eq!(ledger.by_epoch(SecurityEpoch::from_raw(2)).len(), 1);
+        assert_eq!(ledger.by_epoch(SecurityEpoch::from_raw(99)).len(), 0);
+    }
+
+    #[test]
+    fn ledger_multiple_decision_types_filter() {
+        let mut ledger = InMemoryLedger::new();
+        for (i, dt) in [
+            DecisionType::SecurityAction,
+            DecisionType::PolicyUpdate,
+            DecisionType::PolicyUpdate,
+            DecisionType::EpochTransition,
+        ]
+        .iter()
+        .enumerate()
+        {
+            let entry = EvidenceEntryBuilder::new(
+                format!("t-{i}"),
+                format!("d-{i}"),
+                "p",
+                SecurityEpoch::from_raw(1),
+                *dt,
+            )
+            .chosen(ChosenAction {
+                action_name: "a".to_string(),
+                expected_loss_millionths: 0,
+                rationale: "r".to_string(),
+            })
+            .build()
+            .unwrap();
+            ledger.emit(entry).unwrap();
+        }
+        assert_eq!(ledger.by_decision_type(DecisionType::PolicyUpdate).len(), 2);
+        assert_eq!(
+            ledger.by_decision_type(DecisionType::EpochTransition).len(),
+            1
+        );
+        assert_eq!(ledger.by_decision_type(DecisionType::Revocation).len(), 0);
+    }
+
+    #[test]
+    fn schema_version_compatibility_same_major_higher_minor() {
+        let v1_5 = SchemaVersion::new(1, 5, 0);
+        let v1_3 = SchemaVersion::new(1, 3, 0);
+        // v1.3 is compatible with reader v1.5
+        assert!(v1_3.is_compatible_with(&v1_5));
+        // v1.5 is NOT compatible with reader v1.3
+        assert!(!v1_5.is_compatible_with(&v1_3));
+    }
 }

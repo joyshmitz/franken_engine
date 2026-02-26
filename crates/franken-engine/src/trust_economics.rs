@@ -1876,7 +1876,130 @@ mod tests {
         assert_eq!(m.expected_roi(), Some(1_000_000)); // 1.0x ROI
     }
 
-    // -- Enrichment: std::error --
+    // -- Enrichment: Display uniqueness, ordering, std::error --
+
+    #[test]
+    fn true_state_display_all_unique() {
+        let mut displays = std::collections::BTreeSet::new();
+        for state in TrueState::ALL {
+            displays.insert(state.to_string());
+        }
+        assert_eq!(
+            displays.len(),
+            4,
+            "all TrueState variants have unique Display"
+        );
+    }
+
+    #[test]
+    fn containment_action_display_all_unique() {
+        let mut displays = std::collections::BTreeSet::new();
+        for action in ContainmentAction::ALL {
+            displays.insert(action.to_string());
+        }
+        assert_eq!(
+            displays.len(),
+            7,
+            "all ContainmentAction variants have unique Display"
+        );
+    }
+
+    #[test]
+    fn roi_alert_level_all_variants_distinct() {
+        let levels = [
+            RoiAlertLevel::Unprofitable,
+            RoiAlertLevel::Neutral,
+            RoiAlertLevel::Profitable,
+            RoiAlertLevel::HighlyProfitable,
+        ];
+        // Verify all variants are distinct by comparing Debug strings
+        let mut debugs = std::collections::BTreeSet::new();
+        for level in levels {
+            debugs.insert(format!("{level:?}"));
+        }
+        assert_eq!(debugs.len(), 4);
+    }
+
+    #[test]
+    fn roi_alert_level_serde_roundtrip() {
+        for level in [
+            RoiAlertLevel::Unprofitable,
+            RoiAlertLevel::Neutral,
+            RoiAlertLevel::Profitable,
+            RoiAlertLevel::HighlyProfitable,
+        ] {
+            let json = serde_json::to_string(&level).unwrap();
+            let back: RoiAlertLevel = serde_json::from_str(&json).unwrap();
+            assert_eq!(level, back);
+        }
+    }
+
+    #[test]
+    fn roi_trend_serde_roundtrip() {
+        for trend in [RoiTrend::Falling, RoiTrend::Stable, RoiTrend::Rising] {
+            let json = serde_json::to_string(&trend).unwrap();
+            let back: RoiTrend = serde_json::from_str(&json).unwrap();
+            assert_eq!(trend, back);
+        }
+    }
+
+    #[test]
+    fn sub_loss_serde_roundtrip() {
+        let sl = SubLoss {
+            direct_damage: 100,
+            operational_disruption: 200,
+            trust_damage: 300,
+            containment_cost: 400,
+            false_action_cost: 500,
+        };
+        let json = serde_json::to_string(&sl).unwrap();
+        let back: SubLoss = serde_json::from_str(&json).unwrap();
+        assert_eq!(sl, back);
+    }
+
+    #[test]
+    fn action_cost_serde_roundtrip() {
+        let ac = ActionCost {
+            execution_latency_us: 1000,
+            resource_consumption: 200,
+            collateral_impact: 300,
+            operator_burden: 400,
+            reversibility_cost: 500,
+        };
+        let json = serde_json::to_string(&ac).unwrap();
+        let back: ActionCost = serde_json::from_str(&json).unwrap();
+        assert_eq!(ac, back);
+    }
+
+    #[test]
+    fn trust_economics_error_display_all_unique() {
+        let errors = vec![
+            TrustEconomicsError::IncompleteLossMatrix {
+                populated: 5,
+                expected: 28,
+            },
+            TrustEconomicsError::CascadeProbabilityOutOfRange { value: -1 },
+            TrustEconomicsError::ZeroAttackerCost,
+            TrustEconomicsError::AsymmetryViolation {
+                action: "allow".into(),
+                benign_loss: 100,
+                malicious_loss: 50,
+            },
+            TrustEconomicsError::VersionRegression {
+                current: 3,
+                attempted: 1,
+            },
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for err in &errors {
+            displays.insert(err.to_string());
+        }
+        assert_eq!(
+            displays.len(),
+            errors.len(),
+            "all error variants have unique Display"
+        );
+    }
 
     #[test]
     fn trust_economics_error_implements_std_error() {

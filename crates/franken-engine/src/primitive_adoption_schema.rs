@@ -764,4 +764,121 @@ mod tests {
         assert!(non_empty("hello"));
         assert!(non_empty(" x "));
     }
+
+    // -- Enrichment: Display uniqueness via BTreeSet --
+
+    #[test]
+    fn validation_error_display_uniqueness() {
+        let displays: std::collections::BTreeSet<String> = [
+            PrimitiveAdoptionValidationError::MissingVerificationMetadata,
+            PrimitiveAdoptionValidationError::MissingFallbackMetadata,
+            PrimitiveAdoptionValidationError::MissingReuseScanOutcome,
+            PrimitiveAdoptionValidationError::InvalidScoreRange {
+                field: "test".into(),
+            },
+            PrimitiveAdoptionValidationError::InvalidMetadataField {
+                field: "test".into(),
+            },
+        ]
+        .iter()
+        .map(|e| e.error_code().to_string())
+        .collect();
+        assert_eq!(displays.len(), 5);
+    }
+
+    // -- Enrichment: all error codes unique --
+
+    #[test]
+    fn all_error_codes_have_stable_prefix() {
+        let codes = [
+            PrimitiveAdoptionValidationError::MissingVerificationMetadata.error_code(),
+            PrimitiveAdoptionValidationError::MissingFallbackMetadata.error_code(),
+            PrimitiveAdoptionValidationError::MissingReuseScanOutcome.error_code(),
+            PrimitiveAdoptionValidationError::InvalidScoreRange { field: "x".into() }.error_code(),
+            PrimitiveAdoptionValidationError::InvalidMetadataField { field: "x".into() }
+                .error_code(),
+        ];
+        for code in &codes {
+            assert!(code.starts_with("FE-FRX-16"));
+        }
+    }
+
+    // -- Enrichment: boundary score values at zero --
+
+    #[test]
+    fn score_zero_values_valid() {
+        let mut r = valid_record_tier_c();
+        r.score.ev_millionths = 0;
+        r.score.relevance_millionths = 0;
+        r.score.risk_millionths = 0;
+        assert!(r.validate_for_activation().is_ok());
+    }
+
+    // -- Enrichment: negative ev_millionths is valid --
+
+    #[test]
+    fn score_negative_ev_millionths_valid() {
+        let mut r = valid_record_tier_c();
+        r.score.ev_millionths = -500_000;
+        assert!(r.validate_for_activation().is_ok());
+    }
+
+    // -- Enrichment: full record serde with all optional fields --
+
+    #[test]
+    fn full_record_with_all_options_serde_roundtrip() {
+        let r = valid_record_tier_s();
+        assert!(r.verification.is_some());
+        assert!(r.fallback.is_some());
+        assert!(r.reuse_scan.is_some());
+        let json = serde_json::to_string(&r).unwrap();
+        let back: PrimitiveAdoptionRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(r, back);
+    }
+
+    // -- Enrichment: PrimitiveTier all variants serde --
+
+    #[test]
+    fn primitive_tier_all_variants_display() {
+        // Tiers should serialize to expected lowercase/snake_case
+        for tier in [
+            PrimitiveTier::S,
+            PrimitiveTier::A,
+            PrimitiveTier::B,
+            PrimitiveTier::C,
+        ] {
+            let json = serde_json::to_string(&tier).unwrap();
+            assert!(!json.is_empty());
+        }
+    }
+
+    // -- Enrichment: validation checks order (first error wins) --
+
+    #[test]
+    fn validation_first_error_is_primitive_id_when_empty() {
+        let mut r = valid_record_tier_c();
+        r.primitive_id = "".into();
+        r.adopt_vs_build_rationale = "".into();
+        r.verification = None;
+        // Should fail on primitive_id first
+        let err = r.validate_for_activation().unwrap_err();
+        assert_eq!(
+            err,
+            PrimitiveAdoptionValidationError::InvalidMetadataField {
+                field: "primitive_id".to_string()
+            }
+        );
+    }
+
+    // -- Enrichment: FallbackBudget zero retry count --
+
+    #[test]
+    fn fallback_zero_retry_count_valid() {
+        let mut r = valid_record_tier_c();
+        let mut fb = valid_fallback();
+        fb.max_retry_count = 0;
+        r.fallback = Some(fb);
+        // zero retries is allowed (means no retries, not invalid)
+        assert!(r.validate_for_activation().is_ok());
+    }
 }

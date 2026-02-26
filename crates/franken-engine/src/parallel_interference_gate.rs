@@ -1399,4 +1399,117 @@ mod tests {
         let result = evaluate_gate(source, &config);
         assert_eq!(result.decision, GateDecision::Promote);
     }
+
+    // --- Enrichment tests ---
+
+    #[test]
+    fn interference_class_display_uniqueness_btreeset() {
+        let classes = [
+            InterferenceClass::MergeOrder,
+            InterferenceClass::Scheduler,
+            InterferenceClass::DataStructureIteration,
+            InterferenceClass::ArtifactPipeline,
+            InterferenceClass::TimeoutRace,
+            InterferenceClass::BackpressureDrift,
+        ];
+        let displays: BTreeSet<String> = classes.iter().map(|c| c.to_string()).collect();
+        assert_eq!(
+            displays.len(),
+            6,
+            "all 6 classes should have unique Display"
+        );
+    }
+
+    #[test]
+    fn interference_severity_display_uniqueness_btreeset() {
+        let severities = [
+            InterferenceSeverity::Info,
+            InterferenceSeverity::Warning,
+            InterferenceSeverity::Critical,
+        ];
+        let displays: BTreeSet<String> = severities.iter().map(|s| s.to_string()).collect();
+        assert_eq!(
+            displays.len(),
+            3,
+            "all 3 severities should have unique Display"
+        );
+    }
+
+    #[test]
+    fn gate_decision_display_uniqueness_btreeset() {
+        let decisions = [
+            GateDecision::Promote,
+            GateDecision::Hold,
+            GateDecision::Reject,
+        ];
+        let displays: BTreeSet<String> = decisions.iter().map(|d| d.to_string()).collect();
+        assert_eq!(displays.len(), 3);
+    }
+
+    #[test]
+    fn interference_class_serde_roundtrip_all_variants() {
+        let classes = [
+            InterferenceClass::MergeOrder,
+            InterferenceClass::Scheduler,
+            InterferenceClass::DataStructureIteration,
+            InterferenceClass::ArtifactPipeline,
+            InterferenceClass::TimeoutRace,
+            InterferenceClass::BackpressureDrift,
+        ];
+        for class in classes {
+            let json = serde_json::to_string(&class).unwrap();
+            let back: InterferenceClass = serde_json::from_str(&json).unwrap();
+            assert_eq!(class, back);
+        }
+    }
+
+    #[test]
+    fn gate_decision_serde_roundtrip_all_variants() {
+        for dec in [
+            GateDecision::Promote,
+            GateDecision::Hold,
+            GateDecision::Reject,
+        ] {
+            let json = serde_json::to_string(&dec).unwrap();
+            let back: GateDecision = serde_json::from_str(&json).unwrap();
+            assert_eq!(dec, back);
+        }
+    }
+
+    #[test]
+    fn flake_rate_boundary_single_run_single_mismatch() {
+        let fr = FlakeRate::compute(1, 1, 0);
+        assert_eq!(fr.rate_millionths, 1_000_000);
+        assert!(!fr.within_threshold);
+    }
+
+    #[test]
+    fn flake_rate_at_exact_threshold_boundary() {
+        // 10 runs, 1 mismatch, threshold 100_000 (10%)
+        let fr = FlakeRate::compute(10, 1, 100_000);
+        assert_eq!(fr.rate_millionths, 100_000);
+        assert!(fr.within_threshold);
+    }
+
+    #[test]
+    fn witness_diff_only_witness_hash_differs() {
+        let w1 = MergeWitness {
+            merged_hash: ContentHash::compute(b"same"),
+            witness_hash: ContentHash::compute(b"w1"),
+            chunk_count: 3,
+            boundary_repairs: 1,
+            total_tokens: 50,
+        };
+        let w2 = MergeWitness {
+            merged_hash: ContentHash::compute(b"same"),
+            witness_hash: ContentHash::compute(b"w2"),
+            chunk_count: 3,
+            boundary_repairs: 1,
+            total_tokens: 50,
+        };
+        let diff = compare_witnesses(&w1, &w2);
+        assert!(!diff.matches);
+        assert_eq!(diff.diffs.len(), 1);
+        assert_eq!(diff.diffs[0].field, "witness_hash");
+    }
 }

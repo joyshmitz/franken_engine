@@ -1479,4 +1479,122 @@ mod tests {
         assert_eq!(lr.threshold_millionths, restored.threshold_millionths);
         assert_eq!(lr.high_ratio_millionths, restored.high_ratio_millionths);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: GuardrailState display uniqueness
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn guardrail_state_display_uniqueness() {
+        let displays: std::collections::BTreeSet<String> = [
+            GuardrailState::Active,
+            GuardrailState::Triggered,
+            GuardrailState::Suspended,
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert_eq!(displays.len(), 3);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: suspend emits SuspendedEvent
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn suspend_emits_event() {
+        let mut gr = test_guardrail();
+        gr.suspend("planned maintenance");
+        let events = gr.drain_events();
+        assert_eq!(events.len(), 1);
+        assert!(matches!(&events[0], GuardrailEvent::SuspendedEvent { .. }));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: resume emits Resumed event
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn resume_emits_event() {
+        let mut gr = test_guardrail();
+        gr.suspend("maint");
+        gr.drain_events(); // clear suspend event
+        gr.resume();
+        let events = gr.drain_events();
+        assert_eq!(events.len(), 1);
+        assert!(matches!(&events[0], GuardrailEvent::Resumed { .. }));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: multiple guardrails in registry tracking
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn registry_guardrail_count() {
+        let mut registry = GuardrailRegistry::new();
+        assert!(registry.is_empty());
+
+        let blocked = BTreeSet::new();
+        let gr = EProcessGuardrail::new(
+            "gr1",
+            "m",
+            "test",
+            100_000_000,
+            blocked,
+            SecurityEpoch::GENESIS,
+            Box::new(ThresholdLikelihoodRatio {
+                threshold_millionths: 0,
+                high_ratio_millionths: 2_000_000,
+                low_ratio_millionths: 500_000,
+            }),
+        );
+        registry.add(gr);
+        assert!(!registry.is_empty());
+        assert!(registry.get("gr1").is_some());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: e_value always starts at 1_000_000 (1.0)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn initial_e_value_is_one() {
+        let gr = test_guardrail();
+        assert_eq!(gr.e_value(), 1_000_000);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: trigger after single massive observation
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn single_observation_can_trigger_if_ratio_exceeds_threshold() {
+        let blocked = BTreeSet::new();
+        let mut gr = EProcessGuardrail::new(
+            "single-trigger",
+            "metric",
+            "test",
+            5_000_000, // threshold = 5.0
+            blocked,
+            SecurityEpoch::GENESIS,
+            Box::new(ThresholdLikelihoodRatio {
+                threshold_millionths: 0,
+                high_ratio_millionths: 10_000_000, // ratio = 10.0
+                low_ratio_millionths: 500_000,
+            }),
+        );
+        // Single observation at ratio 10.0: e = 1.0 * 10.0 = 10.0 >= 5.0
+        gr.update(1_000_000).unwrap();
+        assert_eq!(gr.state(), GuardrailState::Triggered);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: guardrail_id accessor
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn guardrail_id_matches_construction() {
+        let gr = test_guardrail();
+        assert_eq!(gr.guardrail_id, "fnr-guard");
+    }
 }

@@ -926,4 +926,113 @@ mod tests {
         assert!(c.error_envelope_ok);
         assert!(c.weight.is_none());
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 2: Display uniqueness, edge cases, error coverage
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn error_display_all_variants_unique() {
+        let variants: Vec<BenchmarkDenominatorError> = vec![
+            BenchmarkDenominatorError::EmptyCaseSet {
+                baseline: "node".into(),
+            },
+            BenchmarkDenominatorError::EmptyWorkloadId {
+                baseline: "bun".into(),
+            },
+            BenchmarkDenominatorError::DuplicateWorkloadId {
+                baseline: "node".into(),
+                workload_id: "w1".into(),
+            },
+            BenchmarkDenominatorError::InvalidWeight {
+                workload_id: "w1".into(),
+                reason: "bad".into(),
+            },
+            BenchmarkDenominatorError::InvalidThroughput {
+                workload_id: "w1".into(),
+                field: "f".into(),
+            },
+            BenchmarkDenominatorError::InvalidWeightSum {
+                baseline: "node".into(),
+                sum: 0.5,
+            },
+            BenchmarkDenominatorError::MissingCoverageProgression,
+            BenchmarkDenominatorError::MissingReplacementLineage,
+            BenchmarkDenominatorError::SerializationFailure("err".into()),
+        ];
+        let displays: BTreeSet<String> = variants.iter().map(|e| e.to_string()).collect();
+        assert_eq!(
+            displays.len(),
+            9,
+            "all 9 error variants must have unique Display"
+        );
+    }
+
+    #[test]
+    fn error_implements_std_error() {
+        let err: Box<dyn std::error::Error> = Box::new(BenchmarkDenominatorError::EmptyCaseSet {
+            baseline: "node".into(),
+        });
+        assert!(!err.to_string().is_empty());
+    }
+
+    #[test]
+    fn geometric_mean_single_case_equals_speedup() {
+        let cases = vec![test_case("w1", 5000.0, 1000.0)];
+        let score = weighted_geometric_mean(&cases, BaselineEngine::Node).unwrap();
+        assert!((score - 5.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn geometric_mean_deterministic_across_calls() {
+        let cases = vec![
+            test_case("w1", 3000.0, 1000.0),
+            test_case("w2", 4000.0, 1000.0),
+            test_case("w3", 5000.0, 1000.0),
+        ];
+        let s1 = weighted_geometric_mean(&cases, BaselineEngine::Bun).unwrap();
+        let s2 = weighted_geometric_mean(&cases, BaselineEngine::Bun).unwrap();
+        assert_eq!(s1, s2, "geometric mean must be deterministic");
+    }
+
+    #[test]
+    fn gate_decision_events_count() {
+        let input = test_gate_input();
+        let decision = evaluate_publication_gate(&input, &test_context()).unwrap();
+        // Should have: node_score, bun_score, publication_gate_decision = 3 events
+        assert_eq!(decision.events.len(), 3);
+    }
+
+    #[test]
+    fn gate_passing_events_all_pass() {
+        let input = test_gate_input();
+        let decision = evaluate_publication_gate(&input, &test_context()).unwrap();
+        for event in &decision.events {
+            assert!(
+                event.outcome == "pass" || event.outcome == "allow",
+                "expected pass/allow, got {}",
+                event.outcome
+            );
+            assert!(event.error_code.is_none());
+        }
+    }
+
+    #[test]
+    fn geometric_mean_invalid_throughput_inf() {
+        let cases = vec![test_case("w1", f64::INFINITY, 1000.0)];
+        assert!(weighted_geometric_mean(&cases, BaselineEngine::Node).is_err());
+    }
+
+    #[test]
+    fn publication_gate_input_serde_roundtrip() {
+        let input = test_gate_input();
+        let json = serde_json::to_string(&input).unwrap();
+        let back: PublicationGateInput = serde_json::from_str(&json).unwrap();
+        assert_eq!(input.node_cases.len(), back.node_cases.len());
+        assert_eq!(input.bun_cases.len(), back.bun_cases.len());
+        assert_eq!(
+            input.native_coverage_progression.len(),
+            back.native_coverage_progression.len()
+        );
+    }
 }

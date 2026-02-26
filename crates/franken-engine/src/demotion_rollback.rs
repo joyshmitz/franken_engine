@@ -2399,4 +2399,225 @@ mod tests {
         assert!(DemotionSeverity::Advisory < DemotionSeverity::Warning);
         assert!(DemotionSeverity::Warning < DemotionSeverity::Critical);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: getter method coverage
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn monitor_native_cell_digest_matches_receipt() {
+        let monitor = test_monitor();
+        let receipt = test_promotion_receipt();
+        assert_eq!(monitor.native_cell_digest(), receipt.new_cell_digest);
+    }
+
+    #[test]
+    fn monitor_previous_cell_digest_matches_receipt() {
+        let monitor = test_monitor();
+        let receipt = test_promotion_receipt();
+        assert_eq!(monitor.previous_cell_digest(), receipt.old_cell_digest);
+    }
+
+    #[test]
+    fn monitor_rollback_token_matches_receipt() {
+        let monitor = test_monitor();
+        let receipt = test_promotion_receipt();
+        assert_eq!(monitor.rollback_token(), receipt.rollback_token);
+    }
+
+    #[test]
+    fn monitor_policy_matches_construction() {
+        let policy = test_policy();
+        let monitor = test_monitor();
+        assert_eq!(monitor.policy(), &policy);
+    }
+
+    #[test]
+    fn monitor_fresh_divergence_count_is_zero() {
+        let monitor = test_monitor();
+        assert_eq!(monitor.divergence_count(), 0);
+    }
+
+    #[test]
+    fn monitor_fresh_observations_processed_is_zero() {
+        let monitor = test_monitor();
+        assert_eq!(monitor.observations_processed(), 0);
+    }
+
+    #[test]
+    fn demotion_receipt_schema_hash_deterministic() {
+        let h1 = demotion_receipt_schema_hash();
+        let h2 = demotion_receipt_schema_hash();
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn monitor_clone_equals_original() {
+        let monitor = test_monitor();
+        let cloned = monitor.clone();
+        assert_eq!(monitor, cloned);
+    }
+
+    // ── Enrichment: Display uniqueness ──────────────────────────
+
+    #[test]
+    fn demotion_reason_category_all_unique() {
+        let categories: std::collections::BTreeSet<&str> = [
+            DemotionReason::SemanticDivergence {
+                divergence_count: 1,
+                first_divergence_artifact: ContentHash::compute(b"test"),
+            },
+            DemotionReason::PerformanceBreach {
+                metric_name: "lat".into(),
+                observed_millionths: 100,
+                threshold_millionths: 50,
+                sustained_duration_ns: 1000,
+            },
+            DemotionReason::RiskThresholdBreach {
+                observed_risk_millionths: 900_000,
+                max_risk_millionths: 500_000,
+            },
+            DemotionReason::CapabilityViolation {
+                attempted_capability: "fs_write".into(),
+                envelope_digest: ContentHash::compute(b"env"),
+            },
+            DemotionReason::OperatorInitiated {
+                operator_id: "ops".into(),
+                reason: "maintenance".into(),
+            },
+        ]
+        .iter()
+        .map(|r| r.category())
+        .collect();
+        assert_eq!(categories.len(), 5);
+    }
+
+    #[test]
+    fn demotion_severity_display_all_unique() {
+        let displays: std::collections::BTreeSet<String> = [
+            DemotionSeverity::Advisory,
+            DemotionSeverity::Warning,
+            DemotionSeverity::Critical,
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert_eq!(displays.len(), 3);
+    }
+
+    // ── Enrichment: DemotionReason serde roundtrip ──────────────
+
+    #[test]
+    fn demotion_reason_serde_all_variants() {
+        let reasons = vec![
+            DemotionReason::SemanticDivergence {
+                divergence_count: 5,
+                first_divergence_artifact: ContentHash::compute(b"div"),
+            },
+            DemotionReason::PerformanceBreach {
+                metric_name: "latency_p99".into(),
+                observed_millionths: 800_000,
+                threshold_millionths: 500_000,
+                sustained_duration_ns: 5_000_000_000,
+            },
+            DemotionReason::RiskThresholdBreach {
+                observed_risk_millionths: 900_000,
+                max_risk_millionths: 700_000,
+            },
+            DemotionReason::CapabilityViolation {
+                attempted_capability: "network_egress".into(),
+                envelope_digest: ContentHash::compute(b"env"),
+            },
+            DemotionReason::OperatorInitiated {
+                operator_id: "ops-42".into(),
+                reason: "security patch".into(),
+            },
+        ];
+        for reason in &reasons {
+            let json = serde_json::to_string(reason).unwrap();
+            let back: DemotionReason = serde_json::from_str(&json).unwrap();
+            assert_eq!(*reason, back);
+        }
+    }
+
+    // ── Enrichment: DemotionSeverity serde ──────────────────────
+
+    #[test]
+    fn demotion_severity_serde_all_variants() {
+        for severity in [
+            DemotionSeverity::Advisory,
+            DemotionSeverity::Warning,
+            DemotionSeverity::Critical,
+        ] {
+            let json = serde_json::to_string(&severity).unwrap();
+            let back: DemotionSeverity = serde_json::from_str(&json).unwrap();
+            assert_eq!(severity, back);
+        }
+    }
+
+    // ── Enrichment: DemotionSeverity ordering ───────────────────
+
+    #[test]
+    fn enrichment_demotion_severity_ordering() {
+        assert!(DemotionSeverity::Advisory < DemotionSeverity::Warning);
+        assert!(DemotionSeverity::Warning < DemotionSeverity::Critical);
+    }
+
+    // ── Enrichment: DemotionEvidenceItem serde ──────────────────
+
+    #[test]
+    fn enrichment_demotion_evidence_item_serde_roundtrip() {
+        let item = DemotionEvidenceItem {
+            artifact_hash: ContentHash::compute(b"evidence-data"),
+            category: "divergence_trace".into(),
+            collected_at_ns: 123_456_789,
+            summary: "Found 3 output differences".into(),
+        };
+        let json = serde_json::to_string(&item).unwrap();
+        let back: DemotionEvidenceItem = serde_json::from_str(&json).unwrap();
+        assert_eq!(item, back);
+    }
+
+    // ── Enrichment: DemotionReason Display ──────────────────────
+
+    #[test]
+    fn enrichment_demotion_reason_display_all_variants() {
+        let reasons = vec![
+            DemotionReason::SemanticDivergence {
+                divergence_count: 3,
+                first_divergence_artifact: ContentHash::compute(b"x"),
+            },
+            DemotionReason::PerformanceBreach {
+                metric_name: "throughput".into(),
+                observed_millionths: 100,
+                threshold_millionths: 200,
+                sustained_duration_ns: 1000,
+            },
+            DemotionReason::RiskThresholdBreach {
+                observed_risk_millionths: 900_000,
+                max_risk_millionths: 500_000,
+            },
+            DemotionReason::CapabilityViolation {
+                attempted_capability: "spawn".into(),
+                envelope_digest: ContentHash::compute(b"env"),
+            },
+            DemotionReason::OperatorInitiated {
+                operator_id: "admin".into(),
+                reason: "patching".into(),
+            },
+        ];
+        let displays: std::collections::BTreeSet<String> =
+            reasons.iter().map(|r| r.to_string()).collect();
+        assert_eq!(displays.len(), 5, "all 5 variants produce distinct Display");
+    }
+
+    // ── Enrichment: DemotionPolicy serde roundtrip ──────────────
+
+    #[test]
+    fn enrichment_demotion_policy_serde_roundtrip() {
+        let policy = test_policy();
+        let json = serde_json::to_string(&policy).unwrap();
+        let back: DemotionPolicy = serde_json::from_str(&json).unwrap();
+        assert_eq!(policy, back);
+    }
 }

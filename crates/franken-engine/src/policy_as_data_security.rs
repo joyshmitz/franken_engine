@@ -1354,4 +1354,547 @@ mod tests {
         let back: PolicyVerificationResult = serde_json::from_str(&json).unwrap();
         assert_eq!(result, back);
     }
+
+    // -- Enrichment: ordering, display, edge cases --
+
+    #[test]
+    fn policy_kind_ordering() {
+        assert!(PolicyDataKind::LaneRouting < PolicyDataKind::SecurityPolicy);
+        assert!(PolicyDataKind::SecurityPolicy < PolicyDataKind::ContainmentPolicy);
+        assert!(PolicyDataKind::ContainmentPolicy < PolicyDataKind::GovernancePolicy);
+        assert!(PolicyDataKind::GovernancePolicy < PolicyDataKind::FallbackPolicy);
+        assert!(PolicyDataKind::FallbackPolicy < PolicyDataKind::OptimizationPolicy);
+    }
+
+    #[test]
+    fn expected_outcome_display_all() {
+        assert_eq!(ExpectedOutcome::Blocked.to_string(), "blocked");
+        assert_eq!(
+            ExpectedOutcome::FallbackTriggered.to_string(),
+            "fallback_triggered"
+        );
+        assert_eq!(ExpectedOutcome::Contained.to_string(), "contained");
+        assert_eq!(ExpectedOutcome::DetectedOnly.to_string(), "detected_only");
+    }
+
+    #[test]
+    fn escalation_level_display_all() {
+        assert_eq!(EscalationLevel::Observe.to_string(), "observe");
+        assert_eq!(EscalationLevel::Alert.to_string(), "alert");
+        assert_eq!(EscalationLevel::Mitigate.to_string(), "mitigate");
+        assert_eq!(EscalationLevel::Escalate.to_string(), "escalate");
+        assert_eq!(EscalationLevel::Emergency.to_string(), "emergency");
+    }
+
+    #[test]
+    fn scenario_category_ordering() {
+        assert!(ScenarioCategory::PolicyTampering < ScenarioCategory::ReplayAttack);
+        assert!(ScenarioCategory::ReplayAttack < ScenarioCategory::PrivilegeEscalation);
+        assert!(ScenarioCategory::PrivilegeEscalation < ScenarioCategory::ResourceExhaustion);
+        assert!(ScenarioCategory::ResourceExhaustion < ScenarioCategory::ContainmentEscape);
+        assert!(ScenarioCategory::ContainmentEscape < ScenarioCategory::FallbackSuppression);
+    }
+
+    #[test]
+    fn artifact_id_differs_by_name() {
+        let id1 = SignedPolicyArtifact::compute_artifact_id(
+            &PolicyDataKind::SecurityPolicy,
+            "policy-alpha",
+            1,
+            &test_epoch(),
+        );
+        let id2 = SignedPolicyArtifact::compute_artifact_id(
+            &PolicyDataKind::SecurityPolicy,
+            "policy-beta",
+            1,
+            &test_epoch(),
+        );
+        assert_ne!(id1, id2);
+    }
+
+    #[test]
+    fn artifact_id_differs_by_epoch() {
+        let id1 = SignedPolicyArtifact::compute_artifact_id(
+            &PolicyDataKind::SecurityPolicy,
+            "test",
+            1,
+            &SecurityEpoch::from_raw(5),
+        );
+        let id2 = SignedPolicyArtifact::compute_artifact_id(
+            &PolicyDataKind::SecurityPolicy,
+            "test",
+            1,
+            &SecurityEpoch::from_raw(6),
+        );
+        assert_ne!(id1, id2);
+    }
+
+    #[test]
+    fn artifact_id_differs_by_version() {
+        let id1 = SignedPolicyArtifact::compute_artifact_id(
+            &PolicyDataKind::SecurityPolicy,
+            "test",
+            1,
+            &test_epoch(),
+        );
+        let id2 = SignedPolicyArtifact::compute_artifact_id(
+            &PolicyDataKind::SecurityPolicy,
+            "test",
+            2,
+            &test_epoch(),
+        );
+        assert_ne!(id1, id2);
+    }
+
+    #[test]
+    fn preimage_bytes_differ_by_name() {
+        let a1 = test_signed_artifact();
+        let mut a2 = test_signed_artifact();
+        a2.policy_name = "other-policy".to_string();
+        assert_ne!(a1.preimage_bytes(), a2.preimage_bytes());
+    }
+
+    #[test]
+    fn preimage_bytes_differ_by_kind() {
+        let a1 = test_signed_artifact();
+        let mut a2 = test_signed_artifact();
+        a2.kind = PolicyDataKind::FallbackPolicy;
+        assert_ne!(a1.preimage_bytes(), a2.preimage_bytes());
+    }
+
+    #[test]
+    fn preimage_bytes_differ_by_epoch() {
+        let a1 = test_signed_artifact();
+        let mut a2 = test_signed_artifact();
+        a2.epoch = SecurityEpoch::from_raw(99);
+        assert_ne!(a1.preimage_bytes(), a2.preimage_bytes());
+    }
+
+    #[test]
+    fn sandbox_unlimited_memory_never_exceeds() {
+        let sandbox = SandboxRestriction {
+            restriction_id: "unlimited-mem".to_string(),
+            description: "unlimited memory".to_string(),
+            allowed_capabilities: BTreeSet::new(),
+            allow_network: false,
+            allow_fs_write: false,
+            max_memory_bytes: 0,
+            max_execution_ns: 5_000_000_000,
+            allow_process_spawn: false,
+        };
+        assert!(!sandbox.would_exceed_memory(u64::MAX));
+    }
+
+    #[test]
+    fn sandbox_unlimited_time_never_exceeds() {
+        let sandbox = SandboxRestriction {
+            restriction_id: "unlimited-time".to_string(),
+            description: "unlimited time".to_string(),
+            allowed_capabilities: BTreeSet::new(),
+            allow_network: false,
+            allow_fs_write: false,
+            max_memory_bytes: 64 * 1024 * 1024,
+            max_execution_ns: 0,
+            allow_process_spawn: false,
+        };
+        assert!(!sandbox.would_exceed_time(u64::MAX));
+    }
+
+    #[test]
+    fn canonical_security_profile_is_deny_all() {
+        let profiles = canonical_sandbox_profiles();
+        let security = profiles
+            .iter()
+            .find(|p| p.name == "security_policy")
+            .unwrap();
+        assert!(security.restriction.allowed_capabilities.is_empty());
+        assert!(!security.restriction.allow_network);
+        assert!(!security.restriction.allow_fs_write);
+        assert!(!security.restriction.allow_process_spawn);
+    }
+
+    #[test]
+    fn canonical_governance_profile_allows_read_evidence() {
+        let profiles = canonical_sandbox_profiles();
+        let governance = profiles
+            .iter()
+            .find(|p| p.name == "governance_policy")
+            .unwrap();
+        assert!(governance.restriction.is_allowed("read_evidence"));
+        assert!(!governance.restriction.is_allowed("write_policy"));
+    }
+
+    #[test]
+    fn suite_pass_rate_multiple_categories() {
+        let mut suite = AdversarialSuite::new("multi".to_string(), test_epoch());
+        suite.add_scenario(AdversarialScenario {
+            scenario_id: "s-1".to_string(),
+            name: "tamper".to_string(),
+            category: ScenarioCategory::PolicyTampering,
+            expected_outcome: ExpectedOutcome::Blocked,
+            description: "test".to_string(),
+            severity_millionths: MILLION,
+            target_kinds: BTreeSet::new(),
+        });
+        suite.add_scenario(AdversarialScenario {
+            scenario_id: "s-2".to_string(),
+            name: "replay".to_string(),
+            category: ScenarioCategory::ReplayAttack,
+            expected_outcome: ExpectedOutcome::Blocked,
+            description: "test".to_string(),
+            severity_millionths: MILLION,
+            target_kinds: BTreeSet::new(),
+        });
+        suite.record_result(ScenarioResult {
+            scenario_id: "s-1".to_string(),
+            actual_outcome: ExpectedOutcome::Blocked,
+            passed: true,
+            detail: "ok".to_string(),
+            evidence_hash: "h1".to_string(),
+        });
+        suite.record_result(ScenarioResult {
+            scenario_id: "s-2".to_string(),
+            actual_outcome: ExpectedOutcome::Blocked,
+            passed: true,
+            detail: "ok".to_string(),
+            evidence_hash: "h2".to_string(),
+        });
+        let rates = suite.pass_rate_by_category();
+        assert_eq!(rates.len(), 2);
+        assert_eq!(rates.get("policy_tampering"), Some(&MILLION));
+        assert_eq!(rates.get("replay_attack"), Some(&MILLION));
+    }
+
+    #[test]
+    fn suite_pass_rate_unknown_scenario_ignored() {
+        let mut suite = AdversarialSuite::new("test".to_string(), test_epoch());
+        suite.record_result(ScenarioResult {
+            scenario_id: "nonexistent".to_string(),
+            actual_outcome: ExpectedOutcome::Blocked,
+            passed: true,
+            detail: "ok".to_string(),
+            evidence_hash: "h".to_string(),
+        });
+        let rates = suite.pass_rate_by_category();
+        assert!(rates.is_empty());
+    }
+
+    #[test]
+    fn playbook_max_level_empty_steps() {
+        let pb = FailurePlaybook::new(
+            "empty".to_string(),
+            ScenarioCategory::PolicyTampering,
+            vec![],
+            false,
+        );
+        assert_eq!(pb.max_level(), None);
+        assert_eq!(pb.step_count(), 0);
+    }
+
+    #[test]
+    fn playbook_content_hash_differs_on_step_change() {
+        let steps_a = vec![PlaybookStep {
+            step: 1,
+            level: EscalationLevel::Alert,
+            action: "alert".to_string(),
+            escalation_condition: "cond".to_string(),
+            max_duration_ns: 0,
+        }];
+        let steps_b = vec![PlaybookStep {
+            step: 1,
+            level: EscalationLevel::Emergency,
+            action: "suspend".to_string(),
+            escalation_condition: "cond".to_string(),
+            max_duration_ns: 0,
+        }];
+        let p1 = FailurePlaybook::new(
+            "pb".to_string(),
+            ScenarioCategory::PolicyTampering,
+            steps_a,
+            false,
+        );
+        let p2 = FailurePlaybook::new(
+            "pb".to_string(),
+            ScenarioCategory::PolicyTampering,
+            steps_b,
+            false,
+        );
+        assert_ne!(p1.content_hash, p2.content_hash);
+    }
+
+    #[test]
+    fn canonical_playbooks_have_correct_categories() {
+        let playbooks = canonical_failure_playbooks();
+        let cats: BTreeSet<_> = playbooks.iter().map(|p| p.scenario_category).collect();
+        assert!(cats.contains(&ScenarioCategory::PolicyTampering));
+        assert!(cats.contains(&ScenarioCategory::ResourceExhaustion));
+    }
+
+    #[test]
+    fn generate_report_zero_artifacts() {
+        let suite = AdversarialSuite::new("test".to_string(), test_epoch());
+        let report = generate_report(&test_epoch(), 0, 0, &suite, 2, 1);
+        // artifact_rate = MILLION (no artifacts = no risk), adversarial = 0, playbook = MILLION
+        // posture = (MILLION*400000 + 0*400000 + MILLION*200000) / MILLION = 600000
+        assert_eq!(report.security_posture_millionths, 600_000);
+    }
+
+    #[test]
+    fn generate_report_zero_playbooks() {
+        let suite = AdversarialSuite::new("test".to_string(), test_epoch());
+        let report = generate_report(&test_epoch(), 1, 1, &suite, 0, 1);
+        // artifact_rate = MILLION, adversarial = 0, playbook_rate = 0
+        // posture = (MILLION*400000 + 0*400000 + 0*200000) / MILLION = 400000
+        assert_eq!(report.security_posture_millionths, 400_000);
+    }
+
+    #[test]
+    fn report_hash_changes_on_input_change() {
+        let suite = AdversarialSuite::new("test".to_string(), test_epoch());
+        let r1 = generate_report(&test_epoch(), 10, 10, &suite, 1, 1);
+        let r2 = generate_report(&test_epoch(), 10, 5, &suite, 1, 1);
+        assert_ne!(r1.report_hash, r2.report_hash);
+    }
+
+    #[test]
+    fn verification_result_all_valid_false() {
+        let result = PolicyVerificationResult {
+            artifact_id: "pol-tampered".to_string(),
+            definition_hash_valid: false,
+            signature_valid: true,
+            epoch_current: true,
+            all_valid: false,
+            detail: "definition hash mismatch".to_string(),
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let back: PolicyVerificationResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(result, back);
+        assert!(!back.all_valid);
+        assert!(!back.definition_hash_valid);
+    }
+
+    #[test]
+    fn playbook_step_serde_roundtrip() {
+        let step = PlaybookStep {
+            step: 2,
+            level: EscalationLevel::Mitigate,
+            action: "quarantine artifact".to_string(),
+            escalation_condition: "repeated from multiple sources".to_string(),
+            max_duration_ns: 60_000_000_000,
+        };
+        let json = serde_json::to_string(&step).unwrap();
+        let back: PlaybookStep = serde_json::from_str(&json).unwrap();
+        assert_eq!(step, back);
+    }
+
+    #[test]
+    fn adversarial_scenario_serde_roundtrip() {
+        let scenario = AdversarialScenario {
+            scenario_id: "adv-test".to_string(),
+            name: "Test scenario".to_string(),
+            category: ScenarioCategory::ContainmentEscape,
+            expected_outcome: ExpectedOutcome::Blocked,
+            description: "escape attempt".to_string(),
+            severity_millionths: 800_000,
+            target_kinds: BTreeSet::from([PolicyDataKind::ContainmentPolicy]),
+        };
+        let json = serde_json::to_string(&scenario).unwrap();
+        let back: AdversarialScenario = serde_json::from_str(&json).unwrap();
+        assert_eq!(scenario, back);
+    }
+
+    #[test]
+    fn scenario_result_serde_roundtrip() {
+        let result = ScenarioResult {
+            scenario_id: "s-1".to_string(),
+            actual_outcome: ExpectedOutcome::FallbackTriggered,
+            passed: false,
+            detail: "expected blocked, got fallback".to_string(),
+            evidence_hash: "abc123".to_string(),
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let back: ScenarioResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(result, back);
+    }
+
+    #[test]
+    fn policy_sandbox_profile_serde_roundtrip() {
+        let profile = PolicySandboxProfile {
+            name: "test-profile".to_string(),
+            applicable_kinds: BTreeSet::from([PolicyDataKind::LaneRouting]),
+            restriction: SandboxRestriction::deny_all("sandbox-test".to_string()),
+            is_default: false,
+        };
+        let json = serde_json::to_string(&profile).unwrap();
+        let back: PolicySandboxProfile = serde_json::from_str(&json).unwrap();
+        assert_eq!(profile, back);
+    }
+
+    #[test]
+    fn sandbox_memory_at_boundary() {
+        let sandbox = SandboxRestriction::deny_all("test".to_string());
+        let limit = sandbox.max_memory_bytes;
+        assert!(!sandbox.would_exceed_memory(limit));
+        assert!(sandbox.would_exceed_memory(limit + 1));
+    }
+
+    #[test]
+    fn sandbox_time_at_boundary() {
+        let sandbox = SandboxRestriction::deny_all("test".to_string());
+        let limit = sandbox.max_execution_ns;
+        assert!(!sandbox.would_exceed_time(limit));
+        assert!(sandbox.would_exceed_time(limit + 1));
+    }
+
+    #[test]
+    fn suite_all_pass_false_when_empty() {
+        let suite = AdversarialSuite::new("empty".to_string(), test_epoch());
+        assert!(!suite.all_pass());
+    }
+
+    #[test]
+    fn canonical_scenarios_severity_range() {
+        let scenarios = canonical_adversarial_scenarios();
+        for s in &scenarios {
+            assert!(
+                s.severity_millionths > 0 && s.severity_millionths <= MILLION,
+                "severity out of range for {}",
+                s.scenario_id
+            );
+        }
+    }
+
+    #[test]
+    fn canonical_scenarios_all_have_target_kinds() {
+        let scenarios = canonical_adversarial_scenarios();
+        for s in &scenarios {
+            assert!(
+                !s.target_kinds.is_empty(),
+                "scenario {} has no target kinds",
+                s.scenario_id
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 2: Display uniqueness, serde, edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn policy_data_kind_display_all_unique() {
+        let kinds = [
+            PolicyDataKind::LaneRouting,
+            PolicyDataKind::SecurityPolicy,
+            PolicyDataKind::ContainmentPolicy,
+            PolicyDataKind::GovernancePolicy,
+            PolicyDataKind::FallbackPolicy,
+            PolicyDataKind::OptimizationPolicy,
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for k in &kinds {
+            seen.insert(format!("{k:?}"));
+        }
+        assert_eq!(
+            seen.len(),
+            6,
+            "all 6 PolicyDataKind Debug strings must be unique"
+        );
+    }
+
+    #[test]
+    fn scenario_category_display_all_unique() {
+        let cats = [
+            ScenarioCategory::PolicyTampering,
+            ScenarioCategory::ReplayAttack,
+            ScenarioCategory::PrivilegeEscalation,
+            ScenarioCategory::ResourceExhaustion,
+            ScenarioCategory::ContainmentEscape,
+            ScenarioCategory::FallbackSuppression,
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for c in &cats {
+            seen.insert(c.to_string());
+        }
+        assert_eq!(
+            seen.len(),
+            6,
+            "all 6 ScenarioCategory Display strings must be unique"
+        );
+    }
+
+    #[test]
+    fn expected_outcome_display_all_unique() {
+        let outcomes = [
+            ExpectedOutcome::Blocked,
+            ExpectedOutcome::FallbackTriggered,
+            ExpectedOutcome::Contained,
+            ExpectedOutcome::DetectedOnly,
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for o in &outcomes {
+            seen.insert(o.to_string());
+        }
+        assert_eq!(
+            seen.len(),
+            4,
+            "all 4 ExpectedOutcome Display strings must be unique"
+        );
+    }
+
+    #[test]
+    fn escalation_level_display_all_unique() {
+        let levels = [
+            EscalationLevel::Observe,
+            EscalationLevel::Alert,
+            EscalationLevel::Mitigate,
+            EscalationLevel::Escalate,
+            EscalationLevel::Emergency,
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for l in &levels {
+            seen.insert(l.to_string());
+        }
+        assert_eq!(
+            seen.len(),
+            5,
+            "all 5 EscalationLevel Display strings must be unique"
+        );
+    }
+
+    #[test]
+    fn signed_artifact_serde_roundtrip_full() {
+        let artifact = test_signed_artifact();
+        let json = serde_json::to_string(&artifact).unwrap();
+        let restored: SignedPolicyArtifact = serde_json::from_str(&json).unwrap();
+        assert_eq!(artifact, restored);
+    }
+
+    #[test]
+    fn sandbox_deny_all_has_no_capabilities() {
+        let sandbox = SandboxRestriction::deny_all("test".to_string());
+        assert!(sandbox.allowed_capabilities.is_empty());
+        assert!(!sandbox.allow_network);
+        assert!(!sandbox.allow_fs_write);
+        assert!(!sandbox.allow_process_spawn);
+    }
+
+    #[test]
+    fn sandbox_is_allowed_returns_false_for_absent_cap() {
+        let sandbox = SandboxRestriction::deny_all("test".to_string());
+        assert!(!sandbox.is_allowed("anything"));
+    }
+
+    #[test]
+    fn canonical_sandbox_profiles_all_have_restrictions() {
+        let profiles = canonical_sandbox_profiles();
+        for p in &profiles {
+            assert!(!p.restriction.restriction_id.is_empty());
+            assert!(!p.restriction.description.is_empty());
+        }
+    }
+
+    #[test]
+    fn schema_version_constant_is_stable() {
+        assert_eq!(SCHEMA_VERSION, "franken-engine.policy-as-data-security.v1");
+    }
 }

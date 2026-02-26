@@ -1005,4 +1005,121 @@ mod tests {
         let r2 = request(100);
         assert_eq!(r1, r2);
     }
+
+    // -- Enrichment batch 2: Display uniqueness, serde, determinism --
+
+    #[test]
+    fn decision_verdict_display_uniqueness() {
+        let variants = [
+            DecisionVerdict::Allow,
+            DecisionVerdict::Deny,
+            DecisionVerdict::Timeout,
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for v in &variants {
+            seen.insert(v.as_str());
+        }
+        assert_eq!(seen.len(), 3, "all 3 verdicts have unique as_str values");
+    }
+
+    #[test]
+    fn decision_request_different_seeds_differ() {
+        let r1 = request(1);
+        let r2 = request(2);
+        assert_ne!(r1, r2);
+    }
+
+    #[test]
+    fn decision_request_conversion_boundary_zero() {
+        let req = DecisionRequest {
+            decision_id: decision_id_from_seed(0),
+            policy_id: policy_id_from_seed(0),
+            trace_id: trace_id_from_seed(0),
+            ts_unix_ms: 0,
+            calibration_score_bps: 0,
+            e_process_milli: 0,
+            ci_width_milli: 0,
+        };
+        assert!((req.calibration_score() - 0.0).abs() < 1e-12);
+        assert!((req.e_process() - 0.0).abs() < 1e-12);
+        assert!((req.ci_width() - 0.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn decision_request_conversion_boundary_max_bps() {
+        let req = DecisionRequest {
+            decision_id: decision_id_from_seed(0),
+            policy_id: policy_id_from_seed(0),
+            trace_id: trace_id_from_seed(0),
+            ts_unix_ms: 0,
+            calibration_score_bps: 10_000,
+            e_process_milli: u32::MAX,
+            ci_width_milli: u32::MAX,
+        };
+        assert!((req.calibration_score() - 1.0).abs() < 1e-9);
+        assert!(req.e_process() > 4_000_000.0);
+        assert!(req.ci_width() > 4_000_000.0);
+    }
+
+    #[test]
+    fn action_to_verdict_case_insensitive_mixed() {
+        assert_eq!(action_to_verdict("Allow"), Some(DecisionVerdict::Allow));
+        assert_eq!(action_to_verdict("DENY"), Some(DecisionVerdict::Deny));
+        assert_eq!(action_to_verdict("Timeout"), Some(DecisionVerdict::Timeout));
+        assert_eq!(action_to_verdict("PERMIT"), Some(DecisionVerdict::Allow));
+        assert_eq!(action_to_verdict("REJECT"), Some(DecisionVerdict::Deny));
+        assert_eq!(action_to_verdict("DEFER"), Some(DecisionVerdict::Timeout));
+    }
+
+    #[test]
+    fn in_memory_evidence_emitter_multiple_entries() {
+        let mut emitter = InMemoryEvidenceEmitter::new();
+        for seed in 1..=5 {
+            let req = request(seed);
+            emitter
+                .emit(&req, evidence(req.ts_unix_ms, "allow"))
+                .unwrap();
+        }
+        assert_eq!(emitter.entries().len(), 5);
+        assert_eq!(emitter.events().len(), 5);
+    }
+
+    #[test]
+    fn new_event_helper_populates_all_fields() {
+        let req = request(77);
+        let event = new_event(&req, "test_event", "test_outcome", Some("err_code"));
+        assert_eq!(event.event, "test_event");
+        assert_eq!(event.outcome, "test_outcome");
+        assert_eq!(event.error_code.as_deref(), Some("err_code"));
+        assert_eq!(event.component, ADAPTER_COMPONENT);
+    }
+
+    #[test]
+    fn new_event_helper_none_error_code() {
+        let req = request(88);
+        let event = new_event(&req, "ev", "ok", None);
+        assert!(event.error_code.is_none());
+    }
+
+    #[test]
+    fn mock_budget_exact_boundary_consume() {
+        let mut b = MockBudget::new(10);
+        b.consume(10).expect("exact boundary should succeed");
+        assert_eq!(b.remaining_ms(), 0);
+        assert_eq!(b.consumed_ms(), 10);
+        // Next consume of 1 should fail
+        let err = b.consume(1).unwrap_err();
+        assert!(matches!(
+            err,
+            ControlPlaneAdapterError::BudgetExhausted { requested_ms: 1 }
+        ));
+    }
+
+    #[test]
+    fn schema_version_from_seed_deterministic() {
+        use super::mocks::schema_version_from_seed;
+        let v1 = schema_version_from_seed(5);
+        let v2 = schema_version_from_seed(5);
+        assert_eq!(v1, v2);
+    }
 }

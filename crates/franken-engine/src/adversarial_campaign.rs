@@ -4140,4 +4140,321 @@ mod tests {
     fn campaign_attack_category_ordering() {
         assert!(CampaignAttackCategory::Injection < CampaignAttackCategory::TimingSideChannel);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: helper functions
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn clamp_millionths_within_range() {
+        assert_eq!(clamp_millionths(500_000), 500_000);
+    }
+
+    #[test]
+    fn clamp_millionths_above_range() {
+        assert_eq!(clamp_millionths(2_000_000), 1_000_000);
+    }
+
+    #[test]
+    fn short_hash_deterministic() {
+        let h1 = short_hash("hello");
+        let h2 = short_hash("hello");
+        assert_eq!(h1, h2);
+        assert_eq!(h1.len(), 8);
+    }
+
+    #[test]
+    fn short_hash_different_inputs_differ() {
+        assert_ne!(short_hash("alpha"), short_hash("beta"));
+    }
+
+    #[test]
+    fn compromise_rate_zero_attempts_returns_zero() {
+        assert_eq!(compromise_rate_millionths(5, 0), 0);
+    }
+
+    #[test]
+    fn compromise_rate_all_succeed_returns_million() {
+        assert_eq!(compromise_rate_millionths(100, 100), 1_000_000);
+    }
+
+    #[test]
+    fn wilson_interval_zero_attempts_returns_full_range() {
+        let (lo, hi) = wilson_interval_millionths(0, 0);
+        assert_eq!(lo, 0);
+        assert_eq!(hi, 1_000_000);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: DeterministicRng edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn rng_range_u64_single_value() {
+        let mut rng = DeterministicRng::new(42).unwrap();
+        assert_eq!(rng.range_u64(7, 7), 7);
+    }
+
+    #[test]
+    fn rng_choose_index_one_element() {
+        let mut rng = DeterministicRng::new(42).unwrap();
+        assert_eq!(rng.choose_index(1), 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: CampaignComplexity target_steps
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn campaign_complexity_target_steps() {
+        assert_eq!(CampaignComplexity::Probe.target_steps(), 4);
+        assert_eq!(CampaignComplexity::MultiStage.target_steps(), 8);
+        assert_eq!(CampaignComplexity::Apt.target_steps(), 12);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: RedBlueCalibrationConfig default
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn red_blue_calibration_config_default_values() {
+        let c = RedBlueCalibrationConfig::default();
+        assert_eq!(c.target_false_negative_millionths, 10_000);
+        assert_eq!(c.target_false_positive_millionths, 10_000);
+        assert_eq!(c.max_threshold_delta_millionths, 50_000);
+        assert_eq!(c.evidence_weight_delta_millionths, 20_000);
+        assert_eq!(c.max_evidence_weight_millionths, 950_000);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: PolicyRegressionSuite
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn policy_regression_suite_upsert_and_get() {
+        let mut suite = PolicyRegressionSuite::default();
+        assert!(suite.is_empty());
+        let campaign = sample_campaign(CampaignComplexity::Probe, 42);
+        let fixture = AutoMinimizer::build_fixture(
+            &campaign,
+            "expected",
+            "actual",
+            MinimizationProof {
+                rounds: 1,
+                removed_steps: 0,
+                is_fixed_point: true,
+            },
+        );
+        let entry = PolicyRegressionEntry {
+            campaign_id: campaign.campaign_id.clone(),
+            fixture,
+            subsystem: DefenseSubsystem::Sentinel,
+            threat_category: ThreatCategory::PolicyEvasion,
+            severity: CampaignSeverity::Moderate,
+            discovered_at_ns: 1000,
+            calibration_id: None,
+        };
+        suite.upsert(entry);
+        assert_eq!(suite.len(), 1);
+        assert!(suite.get(&campaign.campaign_id).is_some());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: serde roundtrips for untested types
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn deterministic_repro_fixture_serde_roundtrip() {
+        let campaign = sample_campaign(CampaignComplexity::Probe, 42);
+        let fixture = AutoMinimizer::build_fixture(
+            &campaign,
+            "expected",
+            "actual",
+            MinimizationProof {
+                rounds: 2,
+                removed_steps: 1,
+                is_fixed_point: true,
+            },
+        );
+        let json = serde_json::to_string(&fixture).unwrap();
+        let restored: DeterministicReproFixture = serde_json::from_str(&json).unwrap();
+        assert_eq!(fixture, restored);
+    }
+
+    #[test]
+    fn regression_replay_result_serde_roundtrip() {
+        let r = RegressionReplayResult {
+            campaign_id: "camp-abc".to_string(),
+            passed: true,
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        let restored: RegressionReplayResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(r, restored);
+    }
+
+    #[test]
+    fn regression_gate_decision_serde_roundtrip() {
+        let d = RegressionGateDecision {
+            passed: false,
+            failed_campaign_ids: vec!["camp-x".to_string()],
+        };
+        let json = serde_json::to_string(&d).unwrap();
+        let restored: RegressionGateDecision = serde_json::from_str(&json).unwrap();
+        assert_eq!(d, restored);
+    }
+
+    #[test]
+    fn counterfactual_hint_serde_roundtrip() {
+        let h = CounterfactualHint {
+            campaign_id: "camp-1".to_string(),
+            description: "hint".to_string(),
+            threshold_adjustment_needed_millionths: -50_000,
+            would_previous_week_detect: true,
+        };
+        let json = serde_json::to_string(&h).unwrap();
+        let restored: CounterfactualHint = serde_json::from_str(&json).unwrap();
+        assert_eq!(h, restored);
+    }
+
+    #[test]
+    fn red_blue_integration_event_serde_roundtrip() {
+        let ev = RedBlueIntegrationEvent {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            component: "c".to_string(),
+            event: "e".to_string(),
+            outcome: "ok".to_string(),
+            error_code: None,
+            campaign_id: Some("camp-1".to_string()),
+            calibration_id: None,
+        };
+        let json = serde_json::to_string(&ev).unwrap();
+        let restored: RedBlueIntegrationEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(ev, restored);
+    }
+
+    #[test]
+    fn calibration_justification_metrics_serde_roundtrip() {
+        let m = CalibrationJustificationMetrics {
+            false_negative_millionths: 5000,
+            false_positive_millionths: 3000,
+            attack_escape_count: 2,
+            benign_false_positive_count: 1,
+            near_miss_count: 3,
+        };
+        let json = serde_json::to_string(&m).unwrap();
+        let restored: CalibrationJustificationMetrics = serde_json::from_str(&json).unwrap();
+        assert_eq!(m, restored);
+    }
+
+    #[test]
+    fn suppression_gate_failure_serde_roundtrip() {
+        let f = SuppressionGateFailure {
+            error_code: "FE-ADV-GATE-0001".to_string(),
+            detail: "missing data".to_string(),
+            attack_category: Some(CampaignAttackCategory::Injection),
+            baseline_runtime: Some(CampaignRuntime::NodeLts),
+            campaign_id: None,
+        };
+        let json = serde_json::to_string(&f).unwrap();
+        let restored: SuppressionGateFailure = serde_json::from_str(&json).unwrap();
+        assert_eq!(f, restored);
+    }
+
+    #[test]
+    fn policy_regression_entry_serde_roundtrip() {
+        let campaign = sample_campaign(CampaignComplexity::Probe, 77);
+        let fixture = AutoMinimizer::build_fixture(
+            &campaign,
+            "expected",
+            "actual",
+            MinimizationProof {
+                rounds: 1,
+                removed_steps: 0,
+                is_fixed_point: true,
+            },
+        );
+        let entry = PolicyRegressionEntry {
+            campaign_id: campaign.campaign_id.clone(),
+            fixture,
+            subsystem: DefenseSubsystem::Containment,
+            threat_category: ThreatCategory::Exfiltration,
+            severity: CampaignSeverity::Critical,
+            discovered_at_ns: 5000,
+            calibration_id: Some("cal-1".to_string()),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let restored: PolicyRegressionEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry, restored);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: ExploitObjectiveScore difficulty thresholds
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn exploit_scoring_easy_difficulty() {
+        let result = CampaignExecutionResult {
+            undetected_steps: 0,
+            total_steps: 5,
+            objective_achieved_before_containment: false,
+            damage_potential_millionths: 50_000,
+            evidence_atoms_before_detection: 2,
+            novel_technique: false,
+        };
+        let score = ExploitObjectiveScore::from_result(&result).unwrap();
+        assert_eq!(score.difficulty, ContainmentDifficulty::Easy);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: GuardplaneCalibrationState serde
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn guardplane_calibration_state_serde_roundtrip() {
+        let state = GuardplaneCalibrationState::default();
+        let json = serde_json::to_string(&state).unwrap();
+        let restored: GuardplaneCalibrationState = serde_json::from_str(&json).unwrap();
+        assert_eq!(state, restored);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: CampaignOutcomeRecord validate
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn campaign_outcome_record_rejects_false_positive_without_benign_control() {
+        let campaign = sample_campaign(CampaignComplexity::Probe, 99);
+        let result = sample_result();
+        let score = ExploitObjectiveScore::from_result(&result).unwrap();
+        let record = CampaignOutcomeRecord {
+            campaign,
+            result,
+            score,
+            benign_control: false,
+            false_positive: true,
+            timestamp_ns: 1000,
+        };
+        let err = record.validate().unwrap_err();
+        assert!(err.to_string().contains("false_positive"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: ExploitEscalationRecord validate
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn escalation_record_rejects_missing_latency_on_triggered_escalation() {
+        let record = ExploitEscalationRecord {
+            campaign_id: "camp-1".to_string(),
+            attack_category: CampaignAttackCategory::Injection,
+            target_runtime: CampaignRuntime::FrankenEngine,
+            successful_exploit: true,
+            escalation_triggered: true,
+            escalation_latency_seconds: None,
+        };
+        let err = record.validate().unwrap_err();
+        assert!(err.to_string().contains("latency"));
+    }
 }

@@ -1408,4 +1408,106 @@ mod tests {
             status: OpportunityStatus::Identified,
         }
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch — PearlTower 2026-02-25
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn comparison_direction_serde_roundtrip() {
+        for d in [
+            ComparisonDirection::Improvement,
+            ComparisonDirection::Regression,
+            ComparisonDirection::Neutral,
+        ] {
+            let json = serde_json::to_string(&d).unwrap();
+            let back: ComparisonDirection = serde_json::from_str(&json).unwrap();
+            assert_eq!(d, back);
+        }
+    }
+
+    #[test]
+    fn opportunity_status_serde_roundtrip() {
+        for s in [
+            OpportunityStatus::Identified,
+            OpportunityStatus::Evaluating,
+            OpportunityStatus::Approved,
+            OpportunityStatus::Implemented,
+            OpportunityStatus::Rejected,
+        ] {
+            let json = serde_json::to_string(&s).unwrap();
+            let back: OpportunityStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(s, back);
+        }
+    }
+
+    #[test]
+    fn memory_snapshot_serde_roundtrip() {
+        let snap = MemorySnapshot {
+            heap_bytes: 1024,
+            stack_bytes: 512,
+            peak_heap_bytes: 2048,
+            live_allocations: 10,
+            total_allocations: 100,
+            total_deallocations: 90,
+        };
+        let json = serde_json::to_string(&snap).unwrap();
+        let back: MemorySnapshot = serde_json::from_str(&json).unwrap();
+        assert_eq!(snap, back);
+    }
+
+    #[test]
+    fn hotspot_serde_roundtrip() {
+        let hs = Hotspot {
+            symbol: "my_func".to_string(),
+            percentage_millionths: 250_000,
+            samples: 500,
+            module_path: "src/lib.rs".to_string(),
+        };
+        let json = serde_json::to_string(&hs).unwrap();
+        let back: Hotspot = serde_json::from_str(&json).unwrap();
+        assert_eq!(hs, back);
+    }
+
+    #[test]
+    fn significance_threshold_serde_roundtrip() {
+        let t = SignificanceThreshold::default_threshold();
+        let json = serde_json::to_string(&t).unwrap();
+        let back: SignificanceThreshold = serde_json::from_str(&json).unwrap();
+        assert_eq!(t, back);
+    }
+
+    #[test]
+    fn memory_snapshot_empty_has_no_leak() {
+        let snap = MemorySnapshot::empty();
+        assert!(!snap.potential_leak());
+        assert_eq!(snap.allocation_churn(), 0);
+    }
+
+    #[test]
+    fn memory_snapshot_potential_leak_detection() {
+        let snap = MemorySnapshot {
+            heap_bytes: 1024,
+            stack_bytes: 0,
+            peak_heap_bytes: 1024,
+            live_allocations: 5,
+            total_allocations: 100,
+            total_deallocations: 95,
+        };
+        assert!(snap.potential_leak());
+        assert_eq!(snap.allocation_churn(), 5);
+    }
+
+    #[test]
+    fn profile_kind_as_str_all_distinct() {
+        let mut displays = std::collections::BTreeSet::new();
+        for kind in ProfileKind::ALL {
+            displays.insert(kind.as_str());
+        }
+        assert_eq!(
+            displays.len(),
+            5,
+            "all ProfileKind variants have distinct as_str values"
+        );
+    }
 }

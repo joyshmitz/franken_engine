@@ -1678,4 +1678,172 @@ mod tests {
         let mut verifier = test_verifier();
         assert_eq!(verifier.revoke_all_authorizations(), 0);
     }
+
+    // -- Enrichment: Display uniqueness, edge cases, determinism --
+
+    #[test]
+    fn handshake_outcome_display_uniqueness_btreeset() {
+        let variants = [
+            HandshakeOutcome::Authorized,
+            HandshakeOutcome::ChallengeTimeout,
+            HandshakeOutcome::MeasurementRejected,
+            HandshakeOutcome::QuoteFailed,
+            HandshakeOutcome::KeyBindingFailed,
+            HandshakeOutcome::SignatureFailed,
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            displays.insert(v.to_string());
+        }
+        assert_eq!(
+            displays.len(),
+            6,
+            "all 6 outcomes produce distinct display strings"
+        );
+    }
+
+    #[test]
+    fn reattestation_trigger_display_uniqueness_btreeset() {
+        let variants = [
+            ReattestationTrigger::Periodic,
+            ReattestationTrigger::PolicyChange,
+            ReattestationTrigger::EpochTransition,
+            ReattestationTrigger::TrustRootUpdate,
+            ReattestationTrigger::Manual,
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            displays.insert(v.to_string());
+        }
+        assert_eq!(
+            displays.len(),
+            5,
+            "all 5 triggers produce distinct display strings"
+        );
+    }
+
+    #[test]
+    fn handshake_error_display_uniqueness_btreeset() {
+        let errors = [
+            HandshakeError::ChallengeExpired {
+                challenge_timestamp_ns: 1,
+                deadline_ns: 2,
+                current_ns: 3,
+            },
+            HandshakeError::ChallengeSignatureInvalid,
+            HandshakeError::MeasurementNotApproved {
+                measurement_hash: ContentHash::compute(b"a"),
+            },
+            HandshakeError::QuoteVerificationFailed {
+                result: "bad".to_string(),
+            },
+            HandshakeError::NonceMismatch,
+            HandshakeError::KeyBindingInvalid,
+            HandshakeError::ResponseSignatureInvalid,
+            HandshakeError::AuthorizationExpired {
+                issued_at_ns: 1,
+                validity_window_ns: 2,
+                current_ns: 3,
+            },
+            HandshakeError::AuthorizationSignatureInvalid,
+            HandshakeError::OperationNotAuthorized {
+                operation: "op".to_string(),
+            },
+            HandshakeError::CellNotFound {
+                cell_id: "c".to_string(),
+            },
+            HandshakeError::ReattestationRequired {
+                reason: "r".to_string(),
+            },
+            HandshakeError::IdDerivation("id".to_string()),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for e in &errors {
+            displays.insert(e.to_string());
+        }
+        assert_eq!(
+            displays.len(),
+            13,
+            "all 13 error variants produce distinct messages"
+        );
+    }
+
+    #[test]
+    fn cell_function_display_coverage() {
+        let funcs = [
+            CellFunction::DecisionReceiptSigner,
+            CellFunction::EvidenceAccumulator,
+            CellFunction::PolicyEvaluator,
+            CellFunction::ProofValidator,
+            CellFunction::ExtensionRuntime,
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for f in &funcs {
+            displays.insert(f.to_string());
+        }
+        assert_eq!(
+            displays.len(),
+            5,
+            "all 5 cell functions produce distinct display strings"
+        );
+    }
+
+    #[test]
+    fn challenge_different_nonces_produce_different_ids() {
+        let verifier = test_verifier();
+        let c1 = verifier.generate_challenge([1u8; 32], 1000, 500).unwrap();
+        let c2 = verifier.generate_challenge([2u8; 32], 1000, 500).unwrap();
+        assert_ne!(c1.challenge_id, c2.challenge_id);
+    }
+
+    #[test]
+    fn multiple_handshakes_increment_authorization_count() {
+        let mut verifier = test_verifier();
+        let root = test_trust_root();
+        let measurement = test_measurement(&root);
+        verifier.approve_measurement(measurement.composite_hash());
+
+        for i in 0..3u32 {
+            let mut client = test_client();
+            client.cell_id = format!("cell-{i:03}");
+            do_full_handshake(
+                &mut verifier,
+                &client,
+                &root,
+                &measurement,
+                1000 + u64::from(i) * 1000,
+            )
+            .unwrap();
+        }
+        assert_eq!(verifier.authorization_count(), 3);
+        assert_eq!(verifier.authorized_cells().len(), 3);
+    }
+
+    #[test]
+    fn handshake_event_serde_all_outcomes() {
+        let outcomes = [
+            HandshakeOutcome::Authorized,
+            HandshakeOutcome::ChallengeTimeout,
+            HandshakeOutcome::MeasurementRejected,
+            HandshakeOutcome::QuoteFailed,
+            HandshakeOutcome::KeyBindingFailed,
+            HandshakeOutcome::SignatureFailed,
+        ];
+        for outcome in &outcomes {
+            let event = HandshakeEvent {
+                seq: 0,
+                timestamp_ns: 1000,
+                epoch: test_epoch(),
+                cell_id: "cell-test".to_string(),
+                outcome: outcome.clone(),
+                measurement_hash: None,
+                policy_version: 1,
+                trust_level: None,
+                failure_reason: None,
+            };
+            let json = serde_json::to_string(&event).unwrap();
+            let restored: HandshakeEvent = serde_json::from_str(&json).unwrap();
+            assert_eq!(event, restored);
+        }
+    }
 }

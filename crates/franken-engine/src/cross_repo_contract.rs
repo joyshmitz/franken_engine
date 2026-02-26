@@ -1693,4 +1693,101 @@ mod tests {
             verify_deterministic_serde(&class).expect("must be deterministic");
         }
     }
+
+    // -- Enrichment: Display uniqueness, edge cases, serde, error trait --
+
+    #[test]
+    fn regression_class_display_all_unique() {
+        let displays: BTreeSet<String> = [
+            RegressionClass::Breaking,
+            RegressionClass::Behavioral,
+            RegressionClass::Observability,
+            RegressionClass::Performance,
+        ]
+        .iter()
+        .map(|c| c.to_string())
+        .collect();
+        assert_eq!(displays.len(), 4);
+    }
+
+    #[test]
+    fn field_type_display_all_unique() {
+        let displays: BTreeSet<String> = [
+            FieldType::String,
+            FieldType::Number,
+            FieldType::Bool,
+            FieldType::Array,
+            FieldType::Object,
+            FieldType::Null,
+        ]
+        .iter()
+        .map(|f| f.to_string())
+        .collect();
+        assert_eq!(displays.len(), 6);
+    }
+
+    #[test]
+    fn contract_violation_display_includes_all_parts() {
+        let v = ContractViolation {
+            boundary: "tui".to_string(),
+            contract_name: "Envelope".to_string(),
+            regression_class: RegressionClass::Breaking,
+            detail: "missing field".to_string(),
+        };
+        let display = v.to_string();
+        assert!(display.contains("BREAKING"));
+        assert!(display.contains("tui"));
+        assert!(display.contains("Envelope"));
+        assert!(display.contains("missing field"));
+    }
+
+    #[test]
+    fn contract_violation_serde_roundtrip() {
+        let v = ContractViolation {
+            boundary: "sqlite".to_string(),
+            contract_name: "StoreRecord".to_string(),
+            regression_class: RegressionClass::Behavioral,
+            detail: "ordering changed".to_string(),
+        };
+        let json = serde_json::to_string(&v).unwrap();
+        let back: ContractViolation = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+    }
+
+    #[test]
+    fn schema_contract_verify_non_object_returns_breaking() {
+        let contract = frankentui_envelope_contract();
+        let violations = contract.verify(&serde_json::json!("not an object"));
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].regression_class, RegressionClass::Breaking);
+        assert!(violations[0].detail.contains("expected JSON object"));
+    }
+
+    #[test]
+    fn verify_error_code_format_checks_prefix() {
+        assert!(verify_error_code_format("FE-IFC-001", "FE-IFC"));
+        assert!(!verify_error_code_format("FE-IFC-001", "FE-SAFE"));
+        assert!(!verify_error_code_format("", "FE-"));
+    }
+
+    #[test]
+    fn verify_structured_log_missing_fields() {
+        let log_json = serde_json::json!({"trace_id": "t1"});
+        let violations = verify_structured_log(&log_json, "test");
+        // Should report missing component, event, outcome
+        assert!(violations.len() >= 3);
+        assert!(
+            violations
+                .iter()
+                .all(|v| v.regression_class == RegressionClass::Observability)
+        );
+    }
+
+    #[test]
+    fn schema_contract_serde_roundtrip() {
+        let contract = frankentui_envelope_contract();
+        let json = serde_json::to_string(&contract).unwrap();
+        let back: SchemaContract = serde_json::from_str(&json).unwrap();
+        assert_eq!(contract, back);
+    }
 }

@@ -1299,4 +1299,163 @@ mod tests {
         }
         assert_eq!(displays.len(), 3);
     }
+
+    // -- Enrichment batch 2: Display uniqueness, serde, modes --
+
+    #[test]
+    fn lifecycle_event_display_uniqueness() {
+        let events = [
+            LifecycleEvent::Unload,
+            LifecycleEvent::Quarantine,
+            LifecycleEvent::Suspend,
+            LifecycleEvent::Terminate,
+            LifecycleEvent::Revocation,
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for e in &events {
+            seen.insert(e.to_string());
+        }
+        assert_eq!(seen.len(), 5, "all 5 events have unique display strings");
+    }
+
+    #[test]
+    fn lifecycle_event_serde_roundtrip_all() {
+        for event in [
+            LifecycleEvent::Unload,
+            LifecycleEvent::Quarantine,
+            LifecycleEvent::Suspend,
+            LifecycleEvent::Terminate,
+            LifecycleEvent::Revocation,
+        ] {
+            let json = serde_json::to_string(&event).unwrap();
+            let back: LifecycleEvent = serde_json::from_str(&json).unwrap();
+            assert_eq!(event, back);
+        }
+    }
+
+    #[test]
+    fn lifecycle_event_is_forced_only_terminate() {
+        assert!(LifecycleEvent::Terminate.is_forced());
+        assert!(!LifecycleEvent::Unload.is_forced());
+        assert!(!LifecycleEvent::Quarantine.is_forced());
+        assert!(!LifecycleEvent::Suspend.is_forced());
+        assert!(!LifecycleEvent::Revocation.is_forced());
+    }
+
+    #[test]
+    fn lifecycle_event_is_cooperative_unload_and_suspend() {
+        assert!(LifecycleEvent::Unload.is_cooperative());
+        assert!(LifecycleEvent::Suspend.is_cooperative());
+        assert!(!LifecycleEvent::Quarantine.is_cooperative());
+        assert!(!LifecycleEvent::Terminate.is_cooperative());
+        assert!(!LifecycleEvent::Revocation.is_cooperative());
+    }
+
+    #[test]
+    fn cancellation_mode_for_event_drain_budget_ordering() {
+        // Unload has highest drain budget, terminate has 0
+        let unload = CancellationMode::for_event(LifecycleEvent::Unload);
+        let quarantine = CancellationMode::for_event(LifecycleEvent::Quarantine);
+        let suspend = CancellationMode::for_event(LifecycleEvent::Suspend);
+        let terminate = CancellationMode::for_event(LifecycleEvent::Terminate);
+        let revocation = CancellationMode::for_event(LifecycleEvent::Revocation);
+
+        assert_eq!(terminate.drain_budget_ticks, 0);
+        assert!(revocation.drain_budget_ticks < quarantine.drain_budget_ticks);
+        assert!(quarantine.drain_budget_ticks < suspend.drain_budget_ticks);
+        assert!(suspend.drain_budget_ticks < unload.drain_budget_ticks);
+    }
+
+    #[test]
+    fn cancellation_mode_serde_roundtrip_all_events() {
+        let mode = CancellationMode::for_event(LifecycleEvent::Quarantine);
+        let json = serde_json::to_string(&mode).unwrap();
+        let back: CancellationMode = serde_json::from_str(&json).unwrap();
+        assert_eq!(mode, back);
+    }
+
+    #[test]
+    fn cancellation_error_error_code_uniqueness() {
+        let codes = [
+            CancellationError::CellNotFound {
+                cell_id: "a".into(),
+            }
+            .error_code(),
+            CancellationError::BudgetExhausted {
+                cell_id: "b".into(),
+                event: LifecycleEvent::Unload,
+            }
+            .error_code(),
+            CancellationError::CellError {
+                cell_id: "c".into(),
+                error_code: "e".into(),
+                message: "m".into(),
+            }
+            .error_code(),
+        ];
+        let set: std::collections::BTreeSet<&str> = codes.iter().copied().collect();
+        assert_eq!(set.len(), 3, "all 3 error codes are distinct");
+    }
+
+    #[test]
+    fn cancellation_error_serde_roundtrip_all() {
+        let errors = vec![
+            CancellationError::CellNotFound {
+                cell_id: "c1".into(),
+            },
+            CancellationError::BudgetExhausted {
+                cell_id: "c2".into(),
+                event: LifecycleEvent::Quarantine,
+            },
+            CancellationError::CellError {
+                cell_id: "c3".into(),
+                error_code: "code".into(),
+                message: "msg".into(),
+            },
+        ];
+        for err in &errors {
+            let json = serde_json::to_string(err).unwrap();
+            let back: CancellationError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*err, back);
+        }
+    }
+
+    #[test]
+    fn cancellation_event_serde_roundtrip_unload() {
+        let event = CancellationEvent {
+            trace_id: "t".into(),
+            cell_id: "c".into(),
+            cell_kind: CellKind::Extension,
+            lifecycle_event: LifecycleEvent::Unload,
+            phase: "request".into(),
+            outcome: "ok".into(),
+            component: "cancellation_lifecycle".into(),
+            obligations_pending: 0,
+            budget_consumed_ms: 0,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: CancellationEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, back);
+    }
+
+    #[test]
+    fn cancel_reason_mapping_all_events() {
+        // Each event maps to a distinct cancel reason
+        let events = [
+            LifecycleEvent::Unload,
+            LifecycleEvent::Quarantine,
+            LifecycleEvent::Suspend,
+            LifecycleEvent::Terminate,
+            LifecycleEvent::Revocation,
+        ];
+        let mut reasons = std::collections::BTreeSet::new();
+        for e in &events {
+            reasons.insert(format!("{:?}", e.cancel_reason()));
+        }
+        assert_eq!(
+            reasons.len(),
+            5,
+            "all events map to distinct cancel reasons"
+        );
+    }
 }

@@ -1064,4 +1064,97 @@ mod tests {
         let incident = &manifest.incident_schedule;
         assert!(incident.event_coverage_millionths >= normal.event_coverage_millionths);
     }
+
+    // -- Enrichment: Display uniqueness, serde, edge cases --
+
+    #[test]
+    fn probe_domain_display_all_unique() {
+        let domains = [
+            ProbeDomain::Compiler,
+            ProbeDomain::Runtime,
+            ProbeDomain::Router,
+            ProbeDomain::EvidencePipeline,
+            ProbeDomain::Scheduler,
+            ProbeDomain::Governance,
+        ];
+        let json_set: std::collections::BTreeSet<String> = domains
+            .iter()
+            .map(|d| serde_json::to_string(d).unwrap())
+            .collect();
+        assert_eq!(json_set.len(), domains.len());
+    }
+
+    #[test]
+    fn probe_granularity_serde_roundtrip() {
+        for granularity in [
+            ProbeGranularity::Coarse,
+            ProbeGranularity::Medium,
+            ProbeGranularity::Fine,
+            ProbeGranularity::Trace,
+        ] {
+            let json = serde_json::to_string(&granularity).unwrap();
+            let back: ProbeGranularity = serde_json::from_str(&json).unwrap();
+            assert_eq!(granularity, back);
+        }
+    }
+
+    #[test]
+    fn probe_design_error_display_all_unique() {
+        let errors = [
+            ProbeDesignError::UniverseCapacityExceeded,
+            ProbeDesignError::DuplicateProbe,
+            ProbeDesignError::EmptyUniverse,
+            ProbeDesignError::InvalidBudget("test".to_string()),
+        ];
+        let displays: std::collections::BTreeSet<String> =
+            errors.iter().map(|e| e.to_string()).collect();
+        assert_eq!(displays.len(), errors.len());
+    }
+
+    #[test]
+    fn probe_marginal_gain_empty_covers_events_returns_raw_utility() {
+        let probe = make_probe("p", ProbeDomain::Compiler, 500_000, 10, 100, &[]);
+        let covered = BTreeSet::new();
+        assert_eq!(probe.marginal_gain(&covered), 500_000);
+    }
+
+    #[test]
+    fn schedule_empty_universe_produces_zero_coverage() {
+        let u = ProbeUniverse::new();
+        let schedule = build_schedule(&u, OperatingMode::Normal, ObservabilityBudget::normal());
+        assert_eq!(schedule.probe_count(), 0);
+        // Empty universe means full coverage by convention
+        assert_eq!(schedule.event_coverage_millionths, MILLION);
+        assert!(schedule.within_budget);
+    }
+
+    #[test]
+    fn probe_universe_default_is_empty() {
+        let u = ProbeUniverse::default();
+        assert!(u.probes.is_empty());
+        assert!(u.all_events.is_empty());
+    }
+
+    #[test]
+    fn schedule_meets_coverage_boundary() {
+        let u = make_universe_with_probes();
+        let mut schedule = build_schedule(&u, OperatingMode::Normal, ObservabilityBudget::normal());
+        // Force coverage to exactly match minimum
+        schedule.event_coverage_millionths = schedule.budget.min_event_coverage_millionths;
+        assert!(schedule.meets_coverage());
+        // One less should fail
+        schedule.event_coverage_millionths -= 1;
+        assert!(!schedule.meets_coverage());
+    }
+
+    #[test]
+    fn utility_ledger_serde_roundtrip() {
+        let u = make_universe_with_probes();
+        let budget = ObservabilityBudget::normal();
+        let result = greedy_submodular_select(&u, &budget);
+        let ledger = ProbeUtilityLedger::from_optimization(&u, &result);
+        let json = serde_json::to_string(&ledger).unwrap();
+        let back: ProbeUtilityLedger = serde_json::from_str(&json).unwrap();
+        assert_eq!(ledger, back);
+    }
 }

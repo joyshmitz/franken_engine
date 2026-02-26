@@ -1986,4 +1986,97 @@ mod tests {
         }
         assert_eq!(errors.len(), 3);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch — PearlTower 2026-02-25
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn trace_validation_error_display_uniqueness_btreeset() {
+        let variants = [
+            TraceValidationError::NonMonotonicTimestamp {
+                record_index: 0,
+                prev_ns: 100,
+                current_ns: 50,
+            },
+            TraceValidationError::InvalidPosterior { step_index: 1 },
+            TraceValidationError::DecisionCountMismatch {
+                decisions: 3,
+                posteriors: 2,
+            },
+            TraceValidationError::EvidenceCountMismatch {
+                evidence: 5,
+                posteriors: 4,
+            },
+            TraceValidationError::EmptyTrace,
+            TraceValidationError::TelemetryIntegrityFailure { record_id: 10 },
+            TraceValidationError::ReceiptIntegrityFailure {
+                receipt_id: "r-1".to_string(),
+            },
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            let s = format!("{v}");
+            assert!(!s.is_empty());
+            displays.insert(s);
+        }
+        assert_eq!(
+            displays.len(),
+            7,
+            "all 7 TraceValidationError variants produce distinct Display strings"
+        );
+    }
+
+    #[test]
+    fn replay_config_serde_roundtrip() {
+        let config = ReplayConfig::default();
+        let json = serde_json::to_string(&config).unwrap();
+        let back: ReplayConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config, back);
+    }
+
+    #[test]
+    fn replay_config_default_verifies_all() {
+        let config = ReplayConfig::default();
+        assert!(config.verify_telemetry_integrity);
+        assert!(config.verify_receipt_integrity);
+        assert_eq!(config.max_steps, 0);
+    }
+
+    #[test]
+    fn counterfactual_spec_identity_has_no_overrides() {
+        let spec = CounterfactualSpec::identity();
+        assert!(spec.override_prior.is_none());
+        assert!(spec.override_loss_matrix.is_none());
+        assert!(spec.override_likelihood_model.is_none());
+        assert!(spec.skip_evidence_indices.is_empty());
+        assert!(spec.inject_evidence.is_empty());
+    }
+
+    #[test]
+    fn enrichment_counterfactual_spec_identity_serde() {
+        let spec = CounterfactualSpec::identity();
+        let json = serde_json::to_string(&spec).unwrap();
+        let back: CounterfactualSpec = serde_json::from_str(&json).unwrap();
+        assert_eq!(spec, back);
+    }
+
+    #[test]
+    fn incident_trace_content_hash_deterministic() {
+        let trace = build_trace(vec![benign_evidence()]);
+        let h1 = trace.content_hash();
+        let h2 = trace.content_hash();
+        assert_eq!(h1, h2, "content_hash must be deterministic");
+    }
+
+    #[test]
+    fn incident_trace_content_hash_differs_for_different_evidence_counts() {
+        let trace1 = build_trace(vec![benign_evidence()]);
+        let trace2 = build_trace(vec![benign_evidence(), suspicious_evidence()]);
+        assert_ne!(
+            trace1.content_hash(),
+            trace2.content_hash(),
+            "traces with different evidence counts must have different content hashes"
+        );
+    }
 }

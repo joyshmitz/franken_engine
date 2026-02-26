@@ -2012,4 +2012,461 @@ mod tests {
         assert!(ids.contains("opt-1"));
         assert!(ids.contains("opt-2"));
     }
+
+    // -- Enrichment: ValidationMode serde roundtrip --
+
+    #[test]
+    fn validation_mode_serde_roundtrip_golden() {
+        let mode = ValidationMode::GoldenCorpusReplay {
+            corpus_hash: ContentHash::compute(b"corpus"),
+            vector_count: 100,
+        };
+        let json = serde_json::to_string(&mode).unwrap();
+        let back: ValidationMode = serde_json::from_str(&json).unwrap();
+        assert_eq!(mode, back);
+    }
+
+    #[test]
+    fn validation_mode_serde_roundtrip_symbolic() {
+        let mode = ValidationMode::SymbolicEquivalence {
+            proof_hash: ContentHash::compute(b"proof"),
+        };
+        let json = serde_json::to_string(&mode).unwrap();
+        let back: ValidationMode = serde_json::from_str(&json).unwrap();
+        assert_eq!(mode, back);
+    }
+
+    #[test]
+    fn validation_mode_serde_roundtrip_differential() {
+        let mode = ValidationMode::DifferentialTrace {
+            workload_hash: ContentHash::compute(b"workload"),
+            trace_pair_count: 50,
+        };
+        let json = serde_json::to_string(&mode).unwrap();
+        let back: ValidationMode = serde_json::from_str(&json).unwrap();
+        assert_eq!(mode, back);
+    }
+
+    // -- Enrichment: ValidationMode Display --
+
+    #[test]
+    fn validation_mode_display_all_variants() {
+        let golden = ValidationMode::GoldenCorpusReplay {
+            corpus_hash: ContentHash::compute(b"c"),
+            vector_count: 42,
+        };
+        assert!(golden.to_string().contains("42"));
+        assert!(golden.to_string().contains("golden"));
+
+        let symbolic = ValidationMode::SymbolicEquivalence {
+            proof_hash: ContentHash::compute(b"p"),
+        };
+        assert!(symbolic.to_string().contains("symbolic"));
+
+        let diff = ValidationMode::DifferentialTrace {
+            workload_hash: ContentHash::compute(b"w"),
+            trace_pair_count: 7,
+        };
+        assert!(diff.to_string().contains("7"));
+        assert!(diff.to_string().contains("differential"));
+    }
+
+    // -- Enrichment: ValidationVerdict permits_activation --
+
+    #[test]
+    fn verdict_pass_permits_activation_enrichment() {
+        assert!(pass_verdict().permits_activation());
+    }
+
+    #[test]
+    fn verdict_fail_does_not_permit_activation() {
+        assert!(!fail_verdict().permits_activation());
+    }
+
+    #[test]
+    fn verdict_inconclusive_does_not_permit_activation() {
+        assert!(!inconclusive_verdict().permits_activation());
+    }
+
+    // -- Enrichment: ValidationVerdict Display --
+
+    #[test]
+    fn verdict_display_all_variants() {
+        let pass = pass_verdict().to_string();
+        assert!(pass.starts_with("PASS"), "pass display: {pass}");
+
+        let fail = fail_verdict().to_string();
+        assert!(fail.starts_with("FAIL"), "fail display: {fail}");
+
+        let inc = inconclusive_verdict().to_string();
+        assert!(
+            inc.starts_with("INCONCLUSIVE"),
+            "inconclusive display: {inc}"
+        );
+    }
+
+    // -- Enrichment: ValidationVerdict serde roundtrip --
+
+    #[test]
+    fn verdict_serde_roundtrip_pass() {
+        let v = pass_verdict();
+        let json = serde_json::to_string(&v).unwrap();
+        let back: ValidationVerdict = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+    }
+
+    #[test]
+    fn verdict_serde_roundtrip_fail() {
+        let v = fail_verdict();
+        let json = serde_json::to_string(&v).unwrap();
+        let back: ValidationVerdict = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+    }
+
+    #[test]
+    fn verdict_serde_roundtrip_inconclusive() {
+        let v = inconclusive_verdict();
+        let json = serde_json::to_string(&v).unwrap();
+        let back: ValidationVerdict = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+    }
+
+    // -- Enrichment: RollbackReceipt serde roundtrip --
+
+    #[test]
+    fn rollback_receipt_serde_roundtrip_enrichment() {
+        let receipt = RollbackReceipt {
+            rollback_token_id: "tok-1".to_string(),
+            optimization_id: "opt-1".to_string(),
+            failure_reason: "divergence".to_string(),
+            counterexample_hash: Some(ContentHash::compute(b"cx")),
+            restoration_baseline_hash: ContentHash::compute(b"base"),
+            rollback_from_stage: ActivationStage::Shadow,
+            timestamp_ticks: 5000,
+            epoch: SecurityEpoch::from_raw(1),
+            signature: AuthenticityHash::compute_keyed(b"key", b"data"),
+        };
+        let json = serde_json::to_string(&receipt).unwrap();
+        let back: RollbackReceipt = serde_json::from_str(&json).unwrap();
+        assert_eq!(receipt, back);
+    }
+
+    // -- Enrichment: RollbackReceipt sign and verify --
+
+    #[test]
+    fn rollback_receipt_sign_verify() {
+        let receipt = RollbackReceipt {
+            rollback_token_id: "tok-1".to_string(),
+            optimization_id: "opt-1".to_string(),
+            failure_reason: "divergence".to_string(),
+            counterexample_hash: None,
+            restoration_baseline_hash: ContentHash::compute(b"base"),
+            rollback_from_stage: ActivationStage::Canary,
+            timestamp_ticks: 1000,
+            epoch: SecurityEpoch::from_raw(1),
+            signature: AuthenticityHash::compute_keyed(b"", b""),
+        };
+        let signed = receipt.sign(TEST_KEY);
+        assert!(signed.verify_signature(TEST_KEY));
+        assert!(!signed.verify_signature(b"wrong-key"));
+    }
+
+    // -- Enrichment: StagePromotion serde roundtrip --
+
+    #[test]
+    fn stage_promotion_serde_roundtrip_enrichment() {
+        let promo = StagePromotion {
+            optimization_id: "opt-1".to_string(),
+            from_stage: ActivationStage::Shadow,
+            to_stage: ActivationStage::Canary,
+            evidence_hash: ContentHash::compute(b"ev"),
+            timestamp_ticks: 3000,
+            epoch: SecurityEpoch::from_raw(1),
+            signature: AuthenticityHash::compute_keyed(b"k", b"d"),
+        };
+        let json = serde_json::to_string(&promo).unwrap();
+        let back: StagePromotion = serde_json::from_str(&json).unwrap();
+        assert_eq!(promo, back);
+    }
+
+    // -- Enrichment: StagePromotion sign and verify --
+
+    #[test]
+    fn stage_promotion_sign_verify() {
+        let promo = StagePromotion {
+            optimization_id: "opt-1".to_string(),
+            from_stage: ActivationStage::Shadow,
+            to_stage: ActivationStage::Canary,
+            evidence_hash: ContentHash::compute(b"ev"),
+            timestamp_ticks: 3000,
+            epoch: SecurityEpoch::from_raw(1),
+            signature: AuthenticityHash::compute_keyed(b"", b""),
+        };
+        let signed = promo.sign(TEST_KEY);
+        assert!(signed.verify_signature(TEST_KEY));
+        assert!(!signed.verify_signature(b"wrong-key"));
+    }
+
+    // -- Enrichment: ValidationGateError serde roundtrip --
+
+    #[test]
+    fn validation_gate_error_serde_roundtrip() {
+        let err = ValidationGateError::Quarantined {
+            optimization_id: "opt-1".to_string(),
+            reason: "divergence".to_string(),
+        };
+        let json = serde_json::to_string(&err).unwrap();
+        let back: ValidationGateError = serde_json::from_str(&json).unwrap();
+        assert_eq!(err, back);
+    }
+
+    // -- Enrichment: ValidationGateError Display uniqueness --
+
+    #[test]
+    fn validation_gate_error_display_all_distinct() {
+        let variants: Vec<ValidationGateError> = vec![
+            ValidationGateError::InvalidReceiptSignature {
+                optimization_id: "o1".to_string(),
+            },
+            ValidationGateError::InvalidTokenSignature {
+                token_id: "t1".to_string(),
+            },
+            ValidationGateError::TokenExpired {
+                token_id: "t2".to_string(),
+                expiry_epoch: 1,
+                current_epoch: 2,
+            },
+            ValidationGateError::TokenReceiptMismatch {
+                token_optimization_id: "a".to_string(),
+                receipt_optimization_id: "b".to_string(),
+            },
+            ValidationGateError::Quarantined {
+                optimization_id: "o2".to_string(),
+                reason: "bad".to_string(),
+            },
+            ValidationGateError::InvalidStageTransition {
+                from: ActivationStage::Shadow,
+                to: ActivationStage::Shadow,
+            },
+            ValidationGateError::OptimizationNotFound {
+                optimization_id: "o3".to_string(),
+            },
+            ValidationGateError::DuplicateSubmission {
+                optimization_id: "o4".to_string(),
+            },
+            ValidationGateError::ActivationDenied {
+                verdict: "FAIL".to_string(),
+            },
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            let msg = v.to_string();
+            assert!(!msg.is_empty());
+            displays.insert(msg);
+        }
+        assert_eq!(
+            displays.len(),
+            variants.len(),
+            "all error variants produce distinct messages"
+        );
+    }
+
+    // -- Enrichment: fresh gate state --
+
+    #[test]
+    fn fresh_gate_has_no_tracked() {
+        let gate = TranslationValidationGate::new();
+        assert_eq!(gate.tracked_count(), 0);
+    }
+
+    #[test]
+    fn fresh_gate_has_no_quarantined() {
+        let gate = TranslationValidationGate::new();
+        assert_eq!(gate.quarantine_count(), 0);
+    }
+
+    #[test]
+    fn fresh_gate_has_no_events() {
+        let gate = TranslationValidationGate::new();
+        assert!(gate.events().is_empty());
+    }
+
+    #[test]
+    fn fresh_gate_has_no_rollback_receipts() {
+        let gate = TranslationValidationGate::new();
+        assert!(gate.rollback_receipts().is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: ValidationGateError implements std::error::Error
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn validation_gate_error_implements_std_error() {
+        let variants: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(ValidationGateError::InvalidReceiptSignature {
+                optimization_id: "opt-1".into(),
+            }),
+            Box::new(ValidationGateError::OptimizationNotFound {
+                optimization_id: "opt-x".into(),
+            }),
+            Box::new(ValidationGateError::DuplicateSubmission {
+                optimization_id: "opt-d".into(),
+            }),
+            Box::new(ValidationGateError::ActivationDenied {
+                verdict: "no pass".into(),
+            }),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            let msg = format!("{v}");
+            assert!(!msg.is_empty());
+            displays.insert(msg);
+        }
+        assert_eq!(
+            displays.len(),
+            4,
+            "all 4 variants produce distinct messages"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: QuarantineEntry with counterexample serde
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn quarantine_entry_with_counterexample_serde_roundtrip() {
+        let entry = QuarantineEntry {
+            optimization_id: "opt-cx".into(),
+            reason: "hostcall divergence".into(),
+            counterexample_hash: Some(ContentHash::compute(b"counterexample-data")),
+            quarantined_epoch: SecurityEpoch::from_raw(5),
+            quarantined_at_ticks: 99999,
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let restored: QuarantineEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry, restored);
+        assert!(restored.counterexample_hash.is_some());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: ActivationStage ordering via next_stage
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn activation_stage_ordering_follows_chain() {
+        // Verify the stage progression chain: Shadow < Canary < Ramp < Default
+        assert!(ActivationStage::Shadow < ActivationStage::Canary);
+        assert!(ActivationStage::Canary < ActivationStage::Ramp);
+        assert!(ActivationStage::Ramp < ActivationStage::Default);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: gate event_count tracks all operations
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn gate_event_count_tracks_submit_verdict_promote() {
+        let mut gate = TranslationValidationGate::new();
+        let epoch = SecurityEpoch::from_raw(1);
+        assert_eq!(gate.event_count(), 0);
+
+        gate.submit(
+            &test_receipt("opt-1"),
+            &test_token("opt-1"),
+            TEST_KEY,
+            epoch,
+            1000,
+        )
+        .unwrap();
+        assert_eq!(gate.event_count(), 1);
+
+        gate.record_verdict("opt-1", pass_verdict(), TEST_KEY, epoch, 2000)
+            .unwrap();
+        assert_eq!(gate.event_count(), 2);
+
+        gate.promote("opt-1", ContentHash::compute(b"ev"), TEST_KEY, epoch, 3000)
+            .unwrap();
+        assert_eq!(gate.event_count(), 3);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: ValidationEventType serde roundtrip
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn validation_event_type_serde_roundtrip() {
+        let types = vec![
+            ValidationEventType::Submitted,
+            ValidationEventType::Validated {
+                verdict: "pass".into(),
+            },
+            ValidationEventType::RolledBack {
+                reason: "divergence".into(),
+            },
+            ValidationEventType::StagePromoted {
+                from: ActivationStage::Shadow,
+                to: ActivationStage::Canary,
+            },
+            ValidationEventType::StageDemoted {
+                from: ActivationStage::Canary,
+                to: ActivationStage::Shadow,
+            },
+            ValidationEventType::QuarantineLifted {
+                override_reason: "new evidence".into(),
+            },
+        ];
+        for evt_type in &types {
+            let event = ValidationEvent {
+                optimization_id: "opt-test".into(),
+                event_type: evt_type.clone(),
+                timestamp_ticks: 42,
+                epoch: SecurityEpoch::from_raw(1),
+            };
+            let json = serde_json::to_string(&event).unwrap();
+            let back: ValidationEvent = serde_json::from_str(&json).unwrap();
+            assert_eq!(event, back);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: demote unknown optimization fails
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn demote_unknown_optimization_fails() {
+        let mut gate = TranslationValidationGate::new();
+        let epoch = SecurityEpoch::from_raw(1);
+        assert!(matches!(
+            gate.demote(
+                "nonexistent",
+                ActivationStage::Shadow,
+                "reason",
+                TEST_KEY,
+                epoch,
+                1000
+            ),
+            Err(ValidationGateError::OptimizationNotFound { .. })
+        ));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: promote unknown optimization fails
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn promote_unknown_optimization_fails() {
+        let mut gate = TranslationValidationGate::new();
+        let epoch = SecurityEpoch::from_raw(1);
+        assert!(matches!(
+            gate.promote(
+                "nonexistent",
+                ContentHash::compute(b"ev"),
+                TEST_KEY,
+                epoch,
+                1000
+            ),
+            Err(ValidationGateError::OptimizationNotFound { .. })
+        ));
+    }
 }

@@ -1781,4 +1781,127 @@ mod tests {
                 .is_empty()
         );
     }
+
+    // ── Enrichment: Display uniqueness ──────────────────────────
+
+    #[test]
+    fn key_role_display_all_unique() {
+        let displays: std::collections::BTreeSet<String> =
+            KeyRole::ALL.iter().map(|r| r.to_string()).collect();
+        assert_eq!(displays.len(), 3);
+    }
+
+    #[test]
+    fn key_status_display_all_unique() {
+        let displays: std::collections::BTreeSet<String> = [
+            KeyStatus::Pending,
+            KeyStatus::Active,
+            KeyStatus::Rotated,
+            KeyStatus::Revoked,
+            KeyStatus::Expired,
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert_eq!(displays.len(), 5);
+    }
+
+    // ── Enrichment: PrincipalKeyStore serde roundtrip ────────────
+
+    #[test]
+    fn principal_key_store_register_and_count() {
+        let seed = test_seed();
+        let epoch = SecurityEpoch::from_raw(1);
+        let sk = make_signing_key(&seed, epoch);
+        let enc = make_encryption_private(&seed, epoch);
+
+        let mut store = PrincipalKeyStore::new();
+        assert_eq!(store.total_key_count(), 0);
+        store
+            .register_key(make_role_entry(
+                KeyRole::Signing,
+                sk.verification_key(),
+                None,
+                KeyStatus::Active,
+                epoch,
+                0,
+            ))
+            .unwrap();
+        assert_eq!(store.total_key_count(), 1);
+        store
+            .register_key(make_role_entry(
+                KeyRole::Encryption,
+                VerificationKey([0u8; 32]),
+                Some(enc.public_key()),
+                KeyStatus::Active,
+                epoch,
+                0,
+            ))
+            .unwrap();
+        assert_eq!(store.total_key_count(), 2);
+    }
+
+    // ── Enrichment: derive_role_key domain separation includes epoch ──
+
+    #[test]
+    fn derive_role_key_same_role_different_epochs_differ() {
+        let seed = test_seed();
+        let k1 = derive_role_key(&seed, KeyRole::Encryption, SecurityEpoch::from_raw(1));
+        let k2 = derive_role_key(&seed, KeyRole::Encryption, SecurityEpoch::from_raw(2));
+        assert_ne!(k1, k2);
+    }
+
+    // ── Enrichment: revoke non-existent key fails ───────────────
+
+    #[test]
+    fn revoke_nonexistent_key_fails() {
+        let mut store = PrincipalKeyStore::new();
+        let result = store.revoke_key(KeyRole::Signing, 99, SecurityEpoch::from_raw(1));
+        assert!(result.is_err());
+    }
+
+    // ── Enrichment: activate non-existent sequence fails ────────
+
+    #[test]
+    fn activate_nonexistent_sequence_fails() {
+        let mut store = PrincipalKeyStore::new();
+        let result = store.activate_key(KeyRole::Signing, 0, SecurityEpoch::from_raw(1));
+        assert!(result.is_err());
+    }
+
+    // ── Enrichment: OwnerKeyBundle serde roundtrip ──────────────
+
+    #[test]
+    fn owner_key_bundle_serde_roundtrip() {
+        let seed = test_seed();
+        let epoch = SecurityEpoch::from_raw(1);
+        let sk = make_signing_key(&seed, epoch);
+        let enc = make_encryption_private(&seed, epoch);
+        let iss = make_issuance_key(&seed, epoch);
+
+        let bundle = OwnerKeyBundle::create_signed(
+            &sk,
+            sk.verification_key(),
+            enc.public_key(),
+            iss.verification_key(),
+            epoch,
+            1,
+        )
+        .unwrap();
+
+        let json = serde_json::to_string(&bundle).unwrap();
+        let back: OwnerKeyBundle = serde_json::from_str(&json).unwrap();
+        assert_eq!(bundle.sequence, back.sequence);
+        assert_eq!(bundle.epoch, back.epoch);
+    }
+
+    // ── Enrichment: encryption key display length ───────────────
+
+    #[test]
+    fn encryption_private_key_public_derivation_deterministic() {
+        let sk = EncryptionPrivateKey::from_bytes([0x42; 32]);
+        let pk1 = sk.public_key();
+        let pk2 = sk.public_key();
+        assert_eq!(pk1, pk2);
+    }
 }

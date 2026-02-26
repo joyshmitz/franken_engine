@@ -2014,4 +2014,135 @@ mod tests {
             }
         )));
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch — PearlTower 2026-02-25
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn revocation_target_type_display_uniqueness_btreeset() {
+        let types = [
+            RevocationTargetType::Key,
+            RevocationTargetType::Token,
+            RevocationTargetType::Attestation,
+            RevocationTargetType::Extension,
+            RevocationTargetType::Checkpoint,
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for t in &types {
+            displays.insert(t.to_string());
+        }
+        assert_eq!(
+            displays.len(),
+            5,
+            "all RevocationTargetType variants produce distinct Display strings"
+        );
+    }
+
+    #[test]
+    fn revocation_reason_display_uniqueness_btreeset() {
+        let reasons = [
+            RevocationReason::Compromised,
+            RevocationReason::Expired,
+            RevocationReason::Superseded,
+            RevocationReason::PolicyViolation,
+            RevocationReason::Administrative,
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for r in &reasons {
+            displays.insert(r.to_string());
+        }
+        assert_eq!(
+            displays.len(),
+            5,
+            "all RevocationReason variants produce distinct Display strings"
+        );
+    }
+
+    #[test]
+    fn revocation_serde_roundtrip() {
+        let rev = make_revocation(
+            RevocationTargetType::Key,
+            RevocationReason::Compromised,
+            [1; 32],
+            &test_revocation_key(),
+        );
+        let json = serde_json::to_string(&rev).unwrap();
+        let back: Revocation = serde_json::from_str(&json).unwrap();
+        assert_eq!(rev, back);
+    }
+
+    #[test]
+    fn chain_hash_changes_on_second_append() {
+        let sk = test_signing_key();
+        let mut chain = RevocationChain::new(TEST_ZONE);
+
+        let rev1 = make_revocation(
+            RevocationTargetType::Key,
+            RevocationReason::Compromised,
+            [1; 32],
+            &test_revocation_key(),
+        );
+        chain.append(rev1, &sk, "trace-1").unwrap();
+        let hash_after_first = chain.head().unwrap().chain_hash.clone();
+
+        let rev2 = make_revocation(
+            RevocationTargetType::Token,
+            RevocationReason::Expired,
+            [3; 32],
+            &test_revocation_key(),
+        );
+        chain.append(rev2, &sk, "trace-2").unwrap();
+        let hash_after_second = chain.head().unwrap().chain_hash.clone();
+
+        assert_ne!(
+            hash_after_first, hash_after_second,
+            "chain_hash must change after appending a revocation"
+        );
+    }
+
+    #[test]
+    fn schema_functions_are_deterministic() {
+        let s1 = revocation_schema();
+        let s2 = revocation_schema();
+        assert_eq!(s1, s2);
+
+        let es1 = revocation_event_schema();
+        let es2 = revocation_event_schema();
+        assert_eq!(es1, es2);
+
+        let hs1 = revocation_head_schema();
+        let hs2 = revocation_head_schema();
+        assert_eq!(hs1, hs2);
+    }
+
+    #[test]
+    fn revocation_target_type_serde_roundtrip() {
+        for t in [
+            RevocationTargetType::Key,
+            RevocationTargetType::Token,
+            RevocationTargetType::Attestation,
+            RevocationTargetType::Extension,
+            RevocationTargetType::Checkpoint,
+        ] {
+            let json = serde_json::to_string(&t).unwrap();
+            let back: RevocationTargetType = serde_json::from_str(&json).unwrap();
+            assert_eq!(t, back);
+        }
+    }
+
+    #[test]
+    fn revocation_reason_serde_roundtrip() {
+        for r in [
+            RevocationReason::Compromised,
+            RevocationReason::Expired,
+            RevocationReason::Superseded,
+            RevocationReason::PolicyViolation,
+            RevocationReason::Administrative,
+        ] {
+            let json = serde_json::to_string(&r).unwrap();
+            let back: RevocationReason = serde_json::from_str(&json).unwrap();
+            assert_eq!(r, back);
+        }
+    }
 }

@@ -2515,4 +2515,450 @@ mod tests {
         let count = detector.exit_safe_mode("zone-a", "t").unwrap();
         assert_eq!(count, 0);
     }
+
+    // -- Enrichment: ForkError serde roundtrip --
+
+    #[test]
+    fn fork_error_serde_roundtrip_all_variants() {
+        let variants = vec![
+            ForkError::ForkDetected {
+                checkpoint_seq: 10,
+                existing_id: EngineObjectId([0xAA; 32]),
+                divergent_id: EngineObjectId([0xBB; 32]),
+            },
+            ForkError::SafeModeActive {
+                incident_seq: 5,
+                reason: "split-brain".to_string(),
+            },
+            ForkError::AcknowledgmentRequired { incident_count: 3 },
+            ForkError::InvalidResolution {
+                fork_seq: 7,
+                resolution_seq: 2,
+            },
+            ForkError::PersistenceFailed {
+                detail: "disk full".to_string(),
+            },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: ForkError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    // -- Enrichment: ForkError Display contains key info --
+
+    #[test]
+    fn fork_error_display_fork_detected_contains_seq() {
+        let err = ForkError::ForkDetected {
+            checkpoint_seq: 42,
+            existing_id: EngineObjectId([0x11; 32]),
+            divergent_id: EngineObjectId([0x22; 32]),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("42"), "should contain seq: {msg}");
+        assert!(msg.contains("fork"), "should mention fork: {msg}");
+    }
+
+    #[test]
+    fn fork_error_display_safe_mode_contains_reason() {
+        let err = ForkError::SafeModeActive {
+            incident_seq: 5,
+            reason: "compromised signer".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(
+            msg.contains("compromised signer"),
+            "should contain reason: {msg}"
+        );
+        assert!(msg.contains("5"), "should contain seq: {msg}");
+    }
+
+    #[test]
+    fn fork_error_display_acknowledgment_required_contains_count() {
+        let err = ForkError::AcknowledgmentRequired { incident_count: 7 };
+        let msg = err.to_string();
+        assert!(msg.contains("7"), "should contain count: {msg}");
+    }
+
+    #[test]
+    fn fork_error_display_invalid_resolution_contains_seqs() {
+        let err = ForkError::InvalidResolution {
+            fork_seq: 10,
+            resolution_seq: 3,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("10"), "should contain fork_seq: {msg}");
+        assert!(msg.contains("3"), "should contain resolution_seq: {msg}");
+    }
+
+    #[test]
+    fn fork_error_display_persistence_failed_contains_detail() {
+        let err = ForkError::PersistenceFailed {
+            detail: "io error".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("io error"), "should contain detail: {msg}");
+    }
+
+    // -- Enrichment: ForkEventType Display distinctness --
+
+    #[test]
+    fn fork_event_type_display_all_distinct() {
+        let variants = vec![
+            ForkEventType::ForkDetected {
+                zone: "z1".to_string(),
+                checkpoint_seq: 1,
+            },
+            ForkEventType::SafeModeEntered {
+                zone: "z2".to_string(),
+                trigger_seq: 2,
+            },
+            ForkEventType::SafeModeExited {
+                zone: "z3".to_string(),
+                acknowledged_incidents: 3,
+            },
+            ForkEventType::CheckpointRecorded {
+                zone: "z4".to_string(),
+                checkpoint_seq: 4,
+            },
+            ForkEventType::OperationDenied {
+                zone: "z5".to_string(),
+                operation: "write".to_string(),
+            },
+            ForkEventType::HistoryTrimmed {
+                zone: "z6".to_string(),
+                removed_count: 5,
+            },
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            let msg = v.to_string();
+            assert!(!msg.is_empty());
+            displays.insert(msg);
+        }
+        assert_eq!(
+            displays.len(),
+            6,
+            "all 6 variants produce distinct messages"
+        );
+    }
+
+    // -- Enrichment: ForkEventType serde roundtrip --
+
+    #[test]
+    fn fork_event_type_serde_roundtrip() {
+        let evt = ForkEventType::ForkDetected {
+            zone: "zone-a".to_string(),
+            checkpoint_seq: 42,
+        };
+        let json = serde_json::to_string(&evt).unwrap();
+        let back: ForkEventType = serde_json::from_str(&json).unwrap();
+        assert_eq!(evt, back);
+    }
+
+    // -- Enrichment: ForkEvent serde roundtrip --
+
+    #[test]
+    fn fork_event_serde_roundtrip() {
+        let evt = ForkEvent {
+            event_type: ForkEventType::SafeModeEntered {
+                zone: "zone-b".to_string(),
+                trigger_seq: 10,
+            },
+            trace_id: "t-42".to_string(),
+        };
+        let json = serde_json::to_string(&evt).unwrap();
+        let back: ForkEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(evt, back);
+    }
+
+    // -- Enrichment: ForkIncidentReport serde roundtrip --
+
+    #[test]
+    fn fork_incident_report_serde_roundtrip() {
+        let report = ForkIncidentReport {
+            incident_id: "inc-1".to_string(),
+            fork_seq: 5,
+            existing_checkpoint_id: EngineObjectId([0xAA; 32]),
+            divergent_checkpoint_id: EngineObjectId([0xBB; 32]),
+            existing_epoch: SecurityEpoch::GENESIS,
+            divergent_epoch: SecurityEpoch::from_raw(2),
+            zone: "zone-a".to_string(),
+            frontier_seq_at_detection: 4,
+            frontier_epoch_at_detection: SecurityEpoch::GENESIS,
+            detected_at_tick: 1000,
+            trace_id: "t-report".to_string(),
+            existing_was_accepted: true,
+            acknowledged: false,
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        let back: ForkIncidentReport = serde_json::from_str(&json).unwrap();
+        assert_eq!(report, back);
+    }
+
+    // -- Enrichment: SafeModeState default --
+
+    #[test]
+    fn safe_mode_state_default_is_inactive() {
+        let state = SafeModeState::default();
+        assert!(!state.active);
+        assert!(state.trigger_seq.is_none());
+        assert_eq!(state.unacknowledged_count, 0);
+    }
+
+    // -- Enrichment: SafeModeState serde roundtrip --
+
+    #[test]
+    fn safe_mode_state_serde_roundtrip() {
+        let state = SafeModeState {
+            active: true,
+            trigger_seq: Some(42),
+            unacknowledged_count: 3,
+        };
+        let json = serde_json::to_string(&state).unwrap();
+        let back: SafeModeState = serde_json::from_str(&json).unwrap();
+        assert_eq!(state, back);
+    }
+
+    // -- Enrichment: SafeModeStartupSource Display --
+
+    #[test]
+    fn safe_mode_startup_source_display_all_variants() {
+        assert_eq!(
+            SafeModeStartupSource::NotRequested.to_string(),
+            "not-requested"
+        );
+        assert_eq!(SafeModeStartupSource::CliFlag.to_string(), "cli-flag");
+        assert_eq!(
+            SafeModeStartupSource::EnvironmentVariable.to_string(),
+            "environment-variable"
+        );
+    }
+
+    // -- Enrichment: SafeModeRestrictions conservative vs normal --
+
+    #[test]
+    fn safe_mode_restrictions_conservative_all_true() {
+        let r = SafeModeRestrictions::conservative();
+        assert!(r.all_extensions_sandboxed);
+        assert!(r.auto_promotion_disabled);
+        assert!(r.conservative_policy_defaults);
+        assert!(r.enhanced_telemetry);
+        assert!(r.adaptive_tuning_disabled);
+    }
+
+    #[test]
+    fn safe_mode_restrictions_normal_all_false() {
+        let r = SafeModeRestrictions::normal();
+        assert!(!r.all_extensions_sandboxed);
+        assert!(!r.auto_promotion_disabled);
+        assert!(!r.conservative_policy_defaults);
+        assert!(!r.enhanced_telemetry);
+        assert!(!r.adaptive_tuning_disabled);
+    }
+
+    // -- Enrichment: evaluate_safe_mode_startup --
+
+    #[test]
+    fn evaluate_startup_normal_mode() {
+        let input = SafeModeStartupInput {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            cli_safe_mode: false,
+            environment: BTreeMap::new(),
+        };
+        let artifact = evaluate_safe_mode_startup(&input).unwrap();
+        assert!(!artifact.safe_mode_active);
+        assert_eq!(artifact.source, SafeModeStartupSource::NotRequested);
+        assert!(artifact.restricted_features.is_empty());
+    }
+
+    #[test]
+    fn evaluate_startup_cli_safe_mode() {
+        let input = SafeModeStartupInput {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            cli_safe_mode: true,
+            environment: BTreeMap::new(),
+        };
+        let artifact = evaluate_safe_mode_startup(&input).unwrap();
+        assert!(artifact.safe_mode_active);
+        assert_eq!(artifact.source, SafeModeStartupSource::CliFlag);
+        assert!(!artifact.restricted_features.is_empty());
+    }
+
+    #[test]
+    fn evaluate_startup_env_safe_mode() {
+        let mut env = BTreeMap::new();
+        env.insert("FRANKEN_SAFE_MODE".to_string(), "true".to_string());
+        let input = SafeModeStartupInput {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            cli_safe_mode: false,
+            environment: env,
+        };
+        let artifact = evaluate_safe_mode_startup(&input).unwrap();
+        assert!(artifact.safe_mode_active);
+        assert_eq!(artifact.source, SafeModeStartupSource::EnvironmentVariable);
+    }
+
+    #[test]
+    fn evaluate_startup_missing_trace_id_fails() {
+        let input = SafeModeStartupInput {
+            trace_id: "".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            cli_safe_mode: false,
+            environment: BTreeMap::new(),
+        };
+        let err = evaluate_safe_mode_startup(&input).unwrap_err();
+        assert!(err.to_string().contains("trace_id"));
+    }
+
+    // -- Enrichment: evaluate_safe_mode_exit --
+
+    #[test]
+    fn evaluate_exit_can_exit_when_clean() {
+        let input = SafeModeExitCheckInput {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            active_incidents: 0,
+            pending_quarantines: 0,
+            evidence_ledger_flushed: true,
+        };
+        let artifact = evaluate_safe_mode_exit(&input).unwrap();
+        assert!(artifact.can_exit);
+        assert!(artifact.blocking_reasons.is_empty());
+    }
+
+    #[test]
+    fn evaluate_exit_blocked_by_incidents() {
+        let input = SafeModeExitCheckInput {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            active_incidents: 2,
+            pending_quarantines: 0,
+            evidence_ledger_flushed: true,
+        };
+        let artifact = evaluate_safe_mode_exit(&input).unwrap();
+        assert!(!artifact.can_exit);
+        assert!(
+            artifact
+                .blocking_reasons
+                .iter()
+                .any(|r| r.contains("active_incidents"))
+        );
+    }
+
+    #[test]
+    fn evaluate_exit_blocked_by_unflushed_ledger() {
+        let input = SafeModeExitCheckInput {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            active_incidents: 0,
+            pending_quarantines: 0,
+            evidence_ledger_flushed: false,
+        };
+        let artifact = evaluate_safe_mode_exit(&input).unwrap();
+        assert!(!artifact.can_exit);
+        assert!(
+            artifact
+                .blocking_reasons
+                .iter()
+                .any(|r| r.contains("ledger"))
+        );
+    }
+
+    // -- Enrichment: SafeModeStartupError Display --
+
+    #[test]
+    fn safe_mode_startup_error_display_contains_field() {
+        let err = SafeModeStartupError::MissingField {
+            field: "decision_id".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("decision_id"), "should name the field: {msg}");
+    }
+
+    // -- Enrichment: SafeModeStartupError implements std::error --
+
+    #[test]
+    fn safe_mode_startup_error_is_std_error() {
+        let err: Box<dyn std::error::Error> = Box::new(SafeModeStartupError::MissingField {
+            field: "x".to_string(),
+        });
+        assert!(!err.to_string().is_empty());
+    }
+
+    // -- Enrichment: SAFE_MODE_ENV_FLAGS --
+
+    #[test]
+    fn safe_mode_env_flags_contains_expected_keys() {
+        assert!(SAFE_MODE_ENV_FLAGS.contains(&"FRANKEN_SAFE_MODE"));
+        assert!(SAFE_MODE_ENV_FLAGS.contains(&"FRANKENENGINE_SAFE_MODE"));
+        assert_eq!(SAFE_MODE_ENV_FLAGS.len(), 2);
+    }
+
+    // -- Enrichment: ForkDetector with_defaults fresh state --
+
+    #[test]
+    fn fresh_detector_is_not_safe_mode() {
+        let detector = ForkDetector::with_defaults();
+        assert!(!detector.is_safe_mode("any-zone"));
+    }
+
+    #[test]
+    fn fresh_detector_has_no_events() {
+        let mut detector = ForkDetector::with_defaults();
+        assert!(detector.drain_events().is_empty());
+    }
+
+    // -- Enrichment: env parsing edge cases --
+
+    #[test]
+    fn env_safe_mode_various_true_values() {
+        for val in ["1", "true", "yes", "on", "  TRUE  ", " Yes ", " ON "] {
+            let mut env = BTreeMap::new();
+            env.insert("FRANKENENGINE_SAFE_MODE".to_string(), val.to_string());
+            let input = SafeModeStartupInput {
+                trace_id: "t".to_string(),
+                decision_id: "d".to_string(),
+                policy_id: "p".to_string(),
+                cli_safe_mode: false,
+                environment: env,
+            };
+            let artifact = evaluate_safe_mode_startup(&input).unwrap();
+            assert!(
+                artifact.safe_mode_active,
+                "'{val}' should activate safe mode"
+            );
+        }
+    }
+
+    #[test]
+    fn env_safe_mode_false_values_do_not_activate() {
+        for val in ["0", "false", "no", "off", "maybe", ""] {
+            let mut env = BTreeMap::new();
+            env.insert("FRANKEN_SAFE_MODE".to_string(), val.to_string());
+            let input = SafeModeStartupInput {
+                trace_id: "t".to_string(),
+                decision_id: "d".to_string(),
+                policy_id: "p".to_string(),
+                cli_safe_mode: false,
+                environment: env,
+            };
+            let artifact = evaluate_safe_mode_startup(&input).unwrap();
+            assert!(
+                !artifact.safe_mode_active,
+                "'{val}' should NOT activate safe mode"
+            );
+        }
+    }
 }

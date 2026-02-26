@@ -1402,4 +1402,95 @@ mod tests {
     fn evidence_record_kind_ordering() {
         assert!(EvidenceRecordKind::DecisionReceipt < EvidenceRecordKind::ReplayArtifact);
     }
+
+    // -- Enrichment: Display uniqueness via BTreeSet --
+
+    #[test]
+    fn evidence_severity_display_all_unique() {
+        let displays: BTreeSet<String> = [
+            EvidenceSeverity::Info,
+            EvidenceSeverity::Warning,
+            EvidenceSeverity::Critical,
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert_eq!(displays.len(), 3);
+    }
+
+    #[test]
+    fn evidence_record_kind_display_all_unique() {
+        let displays: BTreeSet<String> = [
+            EvidenceRecordKind::DecisionReceipt,
+            EvidenceRecordKind::HostcallTelemetry,
+            EvidenceRecordKind::ContainmentAction,
+            EvidenceRecordKind::PolicyChange,
+            EvidenceRecordKind::ReplayArtifact,
+        ]
+        .iter()
+        .map(|k| k.to_string())
+        .collect();
+        assert_eq!(displays.len(), 5);
+    }
+
+    #[test]
+    fn filter_severity_exact_match() {
+        let filter = EvidenceExportFilter {
+            severity: Some(EvidenceSeverity::Warning),
+            ..EvidenceExportFilter::default()
+        };
+        // Severity filter does exact match, not ordering-based
+        assert!(!filter.matches_severity(EvidenceSeverity::Info));
+        assert!(filter.matches_severity(EvidenceSeverity::Warning));
+        assert!(!filter.matches_severity(EvidenceSeverity::Critical));
+    }
+
+    #[test]
+    fn runtime_extension_state_serde_roundtrip() {
+        let state = RuntimeExtensionState {
+            extension_id: "ext-test".to_string(),
+            containment_state: ContainmentState::Sandboxed,
+        };
+        let json = serde_json::to_string(&state).unwrap();
+        let back: RuntimeExtensionState = serde_json::from_str(&json).unwrap();
+        assert_eq!(state, back);
+    }
+
+    #[test]
+    fn runtime_state_input_serde_roundtrip() {
+        let state = sample_runtime_state();
+        let json = serde_json::to_string(&state).unwrap();
+        let back: RuntimeStateInput = serde_json::from_str(&json).unwrap();
+        assert_eq!(state, back);
+    }
+
+    #[test]
+    fn diagnostics_snapshot_sorts_gc_pressure() {
+        let state = sample_runtime_state();
+        let out = collect_runtime_diagnostics(&state, "t", "d", "p");
+        // gc_pressure should be sorted by extension_id
+        for window in out.gc_pressure.windows(2) {
+            assert!(window[0].extension_id <= window[1].extension_id);
+        }
+    }
+
+    #[test]
+    fn evidence_export_output_serde_roundtrip() {
+        let input = sample_input();
+        let output = export_evidence_bundle(&input, EvidenceExportFilter::default());
+        let json = serde_json::to_string(&output).unwrap();
+        let back: EvidenceExportOutput = serde_json::from_str(&json).unwrap();
+        assert_eq!(output, back);
+    }
+
+    #[test]
+    fn filter_decision_type_matching() {
+        let filter = EvidenceExportFilter {
+            decision_type: Some(DecisionType::SecurityAction),
+            ..EvidenceExportFilter::default()
+        };
+        assert!(filter.matches_decision_type(Some(DecisionType::SecurityAction)));
+        assert!(!filter.matches_decision_type(Some(DecisionType::PolicyUpdate)));
+        assert!(!filter.matches_decision_type(None));
+    }
 }

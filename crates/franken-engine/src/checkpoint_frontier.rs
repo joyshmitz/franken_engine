@@ -1879,4 +1879,154 @@ mod tests {
             "all 7 variants produce distinct messages"
         );
     }
+
+    // -- Enrichment: Display uniqueness, edge cases, determinism --
+
+    #[test]
+    fn frontier_error_display_uniqueness_btreeset() {
+        let errors = vec![
+            FrontierError::RollbackRejected {
+                zone: "z".into(),
+                frontier_seq: 10,
+                attempted_seq: 5,
+            },
+            FrontierError::DuplicateCheckpoint {
+                zone: "z".into(),
+                checkpoint_seq: 3,
+            },
+            FrontierError::ChainLinkageFailure {
+                zone: "z".into(),
+                detail: "link".into(),
+            },
+            FrontierError::QuorumFailure {
+                zone: "z".into(),
+                detail: "quorum".into(),
+            },
+            FrontierError::UnknownZone { zone: "z".into() },
+            FrontierError::EpochRegression {
+                zone: "z".into(),
+                frontier_epoch: SecurityEpoch::from_raw(5),
+                attempted_epoch: SecurityEpoch::from_raw(2),
+            },
+            FrontierError::PersistenceFailed {
+                zone: "z".into(),
+                detail: "disk".into(),
+            },
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for e in &errors {
+            displays.insert(e.to_string());
+        }
+        assert_eq!(displays.len(), 7);
+    }
+
+    #[test]
+    fn frontier_event_type_display_uniqueness_btreeset() {
+        let events = vec![
+            FrontierEventType::ZoneInitialized {
+                zone: "z".into(),
+                genesis_seq: 0,
+            },
+            FrontierEventType::CheckpointAccepted {
+                zone: "z".into(),
+                prev_seq: 0,
+                new_seq: 1,
+            },
+            FrontierEventType::RollbackRejected {
+                zone: "z".into(),
+                frontier_seq: 5,
+                attempted_seq: 3,
+            },
+            FrontierEventType::DuplicateRejected {
+                zone: "z".into(),
+                checkpoint_seq: 5,
+            },
+            FrontierEventType::EpochRegressionRejected {
+                zone: "z".into(),
+                frontier_epoch: SecurityEpoch::from_raw(5),
+                attempted_epoch: SecurityEpoch::from_raw(2),
+            },
+            FrontierEventType::FrontierLoaded {
+                zone: "z".into(),
+                frontier_seq: 10,
+            },
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for e in &events {
+            displays.insert(e.to_string());
+        }
+        assert_eq!(
+            displays.len(),
+            6,
+            "all 6 event types produce distinct display strings"
+        );
+    }
+
+    #[test]
+    fn frontier_state_from_genesis_default_fields() {
+        let sk = make_sk(1);
+        let genesis = build_genesis(&[sk], "zone-test");
+        let state = FrontierState::from_genesis("zone-test", &genesis);
+        assert_eq!(state.zone, "zone-test");
+        assert_eq!(state.frontier_seq, 0);
+        assert_eq!(state.accept_count, 1);
+        assert_eq!(state.recent_ids.len(), 1);
+        assert_eq!(state.recent_ids[0].checkpoint_seq, 0);
+    }
+
+    #[test]
+    fn frontier_state_advance_increments_correctly() {
+        let sk = make_sk(1);
+        let genesis = build_genesis(std::slice::from_ref(&sk), "zone-a");
+        let mut state = FrontierState::from_genesis("zone-a", &genesis);
+
+        let cp1 = build_after(
+            &genesis,
+            1,
+            SecurityEpoch::GENESIS,
+            200,
+            std::slice::from_ref(&sk),
+            "zone-a",
+        );
+        state.advance(&cp1);
+
+        assert_eq!(state.frontier_seq, 1);
+        assert_eq!(state.frontier_checkpoint_id, cp1.checkpoint_id);
+        assert_eq!(state.accept_count, 2);
+        assert_eq!(state.recent_ids.len(), 2);
+    }
+
+    #[test]
+    fn frontier_state_serde_deterministic() {
+        let sk = make_sk(1);
+        let genesis = build_genesis(std::slice::from_ref(&sk), "zone-a");
+        let state = FrontierState::from_genesis("zone-a", &genesis);
+        let json1 = serde_json::to_string(&state).unwrap();
+        let json2 = serde_json::to_string(&state).unwrap();
+        assert_eq!(json1, json2, "serialization must be deterministic");
+    }
+
+    #[test]
+    fn event_counts_empty_for_fresh_manager() {
+        let mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
+        let counts = mgr.event_counts();
+        assert!(counts.is_empty() || counts.values().all(|v| *v == 0));
+    }
+
+    #[test]
+    fn multiple_zones_have_independent_event_counts() {
+        let sk = make_sk(1);
+        let vk = sk.verification_key();
+        let genesis_a = build_genesis(std::slice::from_ref(&sk), "zone-a");
+        let genesis_b = build_genesis(std::slice::from_ref(&sk), "zone-b");
+
+        let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
+        mgr.accept_checkpoint("zone-a", &genesis_a, 1, std::slice::from_ref(&vk), "t-a")
+            .unwrap();
+        mgr.accept_checkpoint("zone-b", &genesis_b, 1, std::slice::from_ref(&vk), "t-b")
+            .unwrap();
+
+        let counts = mgr.event_counts();
+        assert_eq!(counts["zone_initialized"], 2);
+    }
 }

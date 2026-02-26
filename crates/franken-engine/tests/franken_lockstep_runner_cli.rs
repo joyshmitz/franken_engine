@@ -67,6 +67,43 @@ command = \"sh\"
 args = ['-c', 'cat >/dev/null; echo \"{{\\\"hash\\\":\\\"{expected_hash}\\\"}}\"']
 "
     );
+    write_runtime_specs_content(path, toml.as_str());
+}
+
+fn write_runtime_specs_content(path: &Path, content: &str) {
+    fs::write(path, content).expect("runtime spec file should be written");
+}
+
+fn write_invalid_schema_runtime_specs(path: &Path) {
+    let toml = r#"schema_version = "franken-engine.lockstep-runtimes.v0"
+
+[[runtimes]]
+runtime_id = "node"
+display_name = "Node.js test adapter"
+version_pin = "node@test"
+command = "sh"
+args = ['-c', 'echo "{\"hash\":\"sha256:invalid\"}"']
+"#;
+    write_runtime_specs_content(path, toml);
+}
+
+fn write_duplicate_runtime_id_specs(path: &Path) {
+    let toml = r#"schema_version = "franken-engine.lockstep-runtimes.v1"
+
+[[runtimes]]
+runtime_id = "node"
+display_name = "Node.js test adapter"
+version_pin = "node@test"
+command = "sh"
+args = ['-c', 'echo "{\"hash\":\"sha256:one\"}"']
+
+[[runtimes]]
+runtime_id = "node"
+display_name = "Node.js duplicate adapter"
+version_pin = "node@duplicate"
+command = "sh"
+args = ['-c', 'echo "{\"hash\":\"sha256:two\"}"']
+"#;
     fs::write(path, toml).expect("runtime spec file should be written");
 }
 
@@ -254,4 +291,66 @@ fn lockstep_runner_rejects_runtime_specs_and_engine_specs_combination() {
     let _ = fs::remove_file(catalog_path);
     let _ = fs::remove_file(runtime_specs_path);
     let _ = fs::remove_file(engine_specs_path);
+}
+
+#[test]
+fn lockstep_runner_rejects_runtime_specs_with_invalid_schema_version() {
+    let catalog_path = temp_path("franken_lockstep_runner_invalid_schema_catalog", "json");
+    let runtime_specs_path = temp_path("franken_lockstep_runner_invalid_schema_specs", "toml");
+    write_fixture_catalog(&catalog_path);
+    write_invalid_schema_runtime_specs(&runtime_specs_path);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_franken_lockstep_runner"))
+        .args([
+            "--fixture-catalog",
+            catalog_path
+                .to_str()
+                .expect("fixture path should be valid utf8"),
+            "--runtime-specs",
+            runtime_specs_path
+                .to_str()
+                .expect("runtime specs path should be valid utf8"),
+        ])
+        .output()
+        .expect("lockstep runner should execute");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf8");
+    assert!(stderr.contains("schema_version"));
+
+    let _ = fs::remove_file(catalog_path);
+    let _ = fs::remove_file(runtime_specs_path);
+}
+
+#[test]
+fn lockstep_runner_rejects_runtime_specs_with_duplicate_runtime_id() {
+    let catalog_path = temp_path(
+        "franken_lockstep_runner_duplicate_runtime_id_catalog",
+        "json",
+    );
+    let runtime_specs_path =
+        temp_path("franken_lockstep_runner_duplicate_runtime_id_specs", "toml");
+    write_fixture_catalog(&catalog_path);
+    write_duplicate_runtime_id_specs(&runtime_specs_path);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_franken_lockstep_runner"))
+        .args([
+            "--fixture-catalog",
+            catalog_path
+                .to_str()
+                .expect("fixture path should be valid utf8"),
+            "--runtime-specs",
+            runtime_specs_path
+                .to_str()
+                .expect("runtime specs path should be valid utf8"),
+        ])
+        .output()
+        .expect("lockstep runner should execute");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf8");
+    assert!(stderr.contains("appears more than once"));
+
+    let _ = fs::remove_file(catalog_path);
+    let _ = fs::remove_file(runtime_specs_path);
 }

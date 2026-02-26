@@ -1462,4 +1462,120 @@ mod tests {
         engine.run_calibration_cycle(&outcomes, &ctx).unwrap();
         assert!(engine.alerts().len() >= alerts_after_first);
     }
+
+    // -- Enrichment batch 2: Display uniqueness, determinism, error paths --
+
+    #[test]
+    fn effectiveness_trend_display_uniqueness_btreeset() {
+        use std::collections::BTreeSet;
+        let all = [
+            EffectivenessTrend::Improving,
+            EffectivenessTrend::Stable,
+            EffectivenessTrend::Degrading,
+        ];
+        let set: BTreeSet<String> = all.iter().map(|t| t.to_string()).collect();
+        assert_eq!(
+            set.len(),
+            all.len(),
+            "all EffectivenessTrend Display strings must be unique"
+        );
+    }
+
+    #[test]
+    fn calibration_error_display_uniqueness_btreeset() {
+        use std::collections::BTreeSet;
+        let errors = vec![
+            CalibrationError::EmptyCampaignBatch,
+            CalibrationError::CampaignValidationFailed {
+                detail: "a".to_string(),
+            },
+            CalibrationError::CalibrationFailed {
+                detail: "b".to_string(),
+            },
+            CalibrationError::InvalidConfig {
+                detail: "c".to_string(),
+            },
+        ];
+        let set: BTreeSet<String> = errors.iter().map(|e| e.to_string()).collect();
+        assert_eq!(
+            set.len(),
+            errors.len(),
+            "all CalibrationError Display strings must be unique"
+        );
+    }
+
+    #[test]
+    fn empty_campaign_batch_returns_error() {
+        let mut engine = GuardplaneCalibrationEngine::new();
+        let ctx = test_ctx();
+        let err = engine.run_calibration_cycle(&[], &ctx).unwrap_err();
+        assert!(matches!(err, CalibrationError::EmptyCampaignBatch));
+        assert_eq!(err.code(), "FE-GCAL-0001");
+    }
+
+    #[test]
+    fn engine_new_starts_empty() {
+        let engine = GuardplaneCalibrationEngine::new();
+        assert_eq!(engine.cycle_count(), 0);
+        assert_eq!(engine.total_campaigns_ingested(), 0);
+        assert!(engine.alerts().is_empty());
+        assert!(engine.events().is_empty());
+    }
+
+    #[test]
+    fn state_digest_deterministic_same_input() {
+        let mut engine = GuardplaneCalibrationEngine::new();
+        let ctx = test_ctx();
+        let outcomes = vec![make_outcome(AttackDimension::Exfiltration, 2, 10, false)];
+
+        let r1 = engine.run_calibration_cycle(&outcomes, &ctx).unwrap();
+        let r2 = engine.run_calibration_cycle(&outcomes, &ctx).unwrap();
+
+        // Digest is deterministic — same input produces same calibration state
+        assert!(!r1.state_digest.is_empty());
+        assert!(!r2.state_digest.is_empty());
+        assert_eq!(r1.state_digest.len(), 16);
+    }
+
+    #[test]
+    fn calibration_result_severity_counts_populated() {
+        let mut engine = GuardplaneCalibrationEngine::new();
+        let ctx = test_ctx();
+        let outcomes = vec![
+            make_outcome(AttackDimension::Exfiltration, 0, 10, false),
+            make_outcome(AttackDimension::PrivilegeEscalation, 5, 10, false),
+        ];
+
+        let result = engine.run_calibration_cycle(&outcomes, &ctx).unwrap();
+        let total_severity: usize = result.severity_counts.values().sum();
+        assert_eq!(
+            total_severity, 2,
+            "severity counts should sum to campaign count"
+        );
+    }
+
+    #[test]
+    fn defense_effectiveness_detection_rate_boundary() {
+        let mut engine = GuardplaneCalibrationEngine::new();
+        let ctx = test_ctx();
+        // All campaigns detected (zero evasions, zero escapes)
+        let outcomes = vec![
+            make_outcome(AttackDimension::Exfiltration, 0, 10, false),
+            make_outcome(AttackDimension::PrivilegeEscalation, 0, 10, false),
+            make_outcome(AttackDimension::PolicyEvasion, 0, 10, false),
+        ];
+
+        engine.run_calibration_cycle(&outcomes, &ctx).unwrap();
+        let eff = engine.defense_effectiveness();
+        assert_eq!(eff.total_campaigns, 3);
+        assert_eq!(eff.total_evasions, 0);
+        assert_eq!(eff.total_containment_escapes, 0);
+        assert_eq!(eff.overall_detection_rate_millionths, 1_000_000); // 100%
+    }
+
+    #[test]
+    fn trend_with_two_data_points_stable() {
+        let history = vec![300_000, 300_000];
+        assert_eq!(compute_trend(&history), EffectivenessTrend::Stable);
+    }
 }

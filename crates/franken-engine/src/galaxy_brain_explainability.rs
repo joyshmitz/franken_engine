@@ -1643,4 +1643,115 @@ mod tests {
         // (2 + 0) / 2 = 1.0 = 1_000_000 millionths
         assert_eq!(report.average_alternatives_millionths, MILLION);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch — PearlTower 2026-02-25
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn enrichment_rejection_reason_display_uniqueness() {
+        let reasons = [
+            RejectionReason::HigherLoss,
+            RejectionReason::GuardrailViolation,
+            RejectionReason::BudgetInsufficient,
+            RejectionReason::CalibrationInsufficient,
+            RejectionReason::RegimeRestriction,
+            RejectionReason::PolicyForbidden,
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for r in &reasons {
+            let s = format!("{r}");
+            assert!(!s.is_empty());
+            displays.insert(s);
+        }
+        assert_eq!(
+            displays.len(),
+            6,
+            "all 6 RejectionReason variants produce distinct Display strings"
+        );
+    }
+
+    #[test]
+    fn enrichment_explanation_index_insert_and_query() {
+        let mut idx = ExplanationIndex::new();
+        let expl =
+            ExplanationBuilder::new("d-500".to_string(), test_epoch(), DecisionDomain::Security)
+                .chosen(LaneAction::FallbackSafe, 0)
+                .rationale("test rationale".to_string())
+                .build()
+                .unwrap();
+        let eid = expl.explanation_id.clone();
+        idx.insert(expl);
+        assert_eq!(idx.len(), 1);
+        assert!(idx.get(&eid).is_some());
+    }
+
+    #[test]
+    fn enrichment_governing_equation_serde_roundtrip() {
+        let mut params = BTreeMap::new();
+        params.insert("alpha".to_string(), 500_000i64);
+        let eq = GoverningEquation {
+            name: "test-equation".to_string(),
+            formula: "alpha * x".to_string(),
+            parameters: params,
+            result_millionths: 250_000,
+            threshold_millionths: Some(300_000),
+            threshold_exceeded: false,
+        };
+        let json = serde_json::to_string(&eq).unwrap();
+        let back: GoverningEquation = serde_json::from_str(&json).unwrap();
+        assert_eq!(eq, back);
+    }
+
+    #[test]
+    fn enrichment_decision_domain_display_uniqueness() {
+        let domains = [
+            DecisionDomain::LaneRouting,
+            DecisionDomain::Fallback,
+            DecisionDomain::Optimization,
+            DecisionDomain::Security,
+            DecisionDomain::Governance,
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for d in &domains {
+            displays.insert(d.to_string());
+        }
+        assert_eq!(
+            displays.len(),
+            5,
+            "all 5 DecisionDomain variants produce distinct Display strings"
+        );
+    }
+
+    #[test]
+    fn enrichment_empty_index_by_domain_returns_empty() {
+        let idx = ExplanationIndex::new();
+        let by_domain = idx.by_domain(DecisionDomain::LaneRouting);
+        assert!(by_domain.is_empty());
+    }
+
+    #[test]
+    fn enrichment_report_on_empty_index() {
+        let idx = ExplanationIndex::new();
+        let report = generate_report(&idx, &test_epoch());
+        assert_eq!(report.total_explained, 0);
+        assert_eq!(report.average_alternatives_millionths, 0);
+    }
+
+    #[test]
+    fn enrichment_governing_equation_plain_language_contains_name() {
+        let eq = GoverningEquation {
+            name: "my-equation".to_string(),
+            formula: "a + b".to_string(),
+            parameters: BTreeMap::new(),
+            result_millionths: 100_000,
+            threshold_millionths: None,
+            threshold_exceeded: false,
+        };
+        let summary = eq.plain_language();
+        assert!(
+            summary.contains("my-equation"),
+            "plain_language should mention the equation name"
+        );
+    }
 }

@@ -1276,4 +1276,168 @@ mod tests {
         let boxed: &dyn std::error::Error = &err;
         assert!(!format!("{boxed}").is_empty());
     }
+
+    // -- Enrichment batch 2: Display uniqueness, edge cases, serde --
+
+    #[test]
+    fn canonical_violation_display_uniqueness() {
+        let violations = [
+            CanonicalViolation::NonLexicographicKeys {
+                prev_key: "z".into(),
+                current_key: "a".into(),
+            },
+            CanonicalViolation::DuplicateKey { key: "k".into() },
+            CanonicalViolation::TrailingBytes { count: 1 },
+            CanonicalViolation::LeadingPadding { byte_count: 1 },
+            CanonicalViolation::RoundTripMismatch {
+                first_diff_offset: 0,
+                expected: 0,
+                actual: 1,
+            },
+            CanonicalViolation::LengthMismatch {
+                input_len: 10,
+                canonical_len: 9,
+            },
+            CanonicalViolation::DeserializationFailed {
+                detail: "bad".into(),
+            },
+            CanonicalViolation::InvalidTag {
+                tag: 0xFF,
+                offset: 0,
+            },
+            CanonicalViolation::SchemaViolation {
+                detail: "mismatch".into(),
+            },
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for v in &violations {
+            seen.insert(v.to_string());
+        }
+        assert_eq!(
+            seen.len(),
+            9,
+            "all 9 violation types have unique display strings"
+        );
+    }
+
+    #[test]
+    fn guard_event_type_display_uniqueness() {
+        let types = [
+            GuardEventType::Accepted,
+            GuardEventType::Rejected {
+                violation: CanonicalViolation::TrailingBytes { count: 1 },
+            },
+            GuardEventType::UnregisteredClass,
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for t in &types {
+            seen.insert(t.to_string());
+        }
+        assert_eq!(
+            seen.len(),
+            3,
+            "all 3 event types have unique display strings"
+        );
+    }
+
+    #[test]
+    fn guard_acceptance_and_rejection_counts() {
+        let (mut guard, schema) = setup_guard();
+
+        // Two valid inputs
+        for i in 0..2 {
+            let bytes = make_canonical_payload(&schema, &CanonicalValue::U64(i));
+            guard
+                .validate(ObjectDomain::PolicyObject, &bytes, &format!("t-ac-{i}"))
+                .unwrap();
+        }
+        // One invalid
+        let mut bad = make_canonical_payload(&schema, &CanonicalValue::Null);
+        bad.push(0xFF);
+        guard
+            .validate(ObjectDomain::PolicyObject, &bad, "t-rej")
+            .unwrap_err();
+
+        assert_eq!(guard.acceptance_count(), 2);
+        assert_eq!(guard.rejection_count(), 1);
+    }
+
+    #[test]
+    fn guard_unregistered_class_rejected() {
+        let mut guard = CanonicalGuard::new();
+        // Don't register any class, try to validate
+        let bytes = vec![1, 2, 3];
+        let result = guard.validate(ObjectDomain::PolicyObject, &bytes, "t-unreg");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn canonical_value_nested_map_round_trip() {
+        let (mut guard, schema) = setup_guard();
+        let mut inner = BTreeMap::new();
+        inner.insert("a".to_string(), CanonicalValue::U64(1));
+        inner.insert("b".to_string(), CanonicalValue::Bool(true));
+        let value = CanonicalValue::Map(inner);
+        let bytes = make_canonical_payload(&schema, &value);
+        let result = guard
+            .validate(ObjectDomain::PolicyObject, &bytes, "t-nested")
+            .unwrap();
+        assert_eq!(result, value);
+    }
+
+    #[test]
+    fn canonical_value_nested_array_round_trip() {
+        let (mut guard, schema) = setup_guard();
+        let value = CanonicalValue::Array(vec![
+            CanonicalValue::U64(42),
+            CanonicalValue::String("hello".to_string()),
+            CanonicalValue::Bool(false),
+            CanonicalValue::Null,
+        ]);
+        let bytes = make_canonical_payload(&schema, &value);
+        let result = guard
+            .validate(ObjectDomain::PolicyObject, &bytes, "t-arr")
+            .unwrap();
+        assert_eq!(result, value);
+    }
+
+    #[test]
+    fn non_canonical_error_trace_id_preserved() {
+        let (mut guard, schema) = setup_guard();
+        let mut bytes = make_canonical_payload(&schema, &CanonicalValue::Null);
+        bytes.push(0x00);
+        let err = guard
+            .validate(ObjectDomain::PolicyObject, &bytes, "trace-id-123")
+            .unwrap_err();
+        assert_eq!(err.trace_id, "trace-id-123");
+        assert_eq!(err.object_class, ObjectDomain::PolicyObject);
+    }
+
+    #[test]
+    fn is_canonical_raw_accepts_all_value_types() {
+        for value in [
+            CanonicalValue::U64(0),
+            CanonicalValue::I64(-1),
+            CanonicalValue::Bool(true),
+            CanonicalValue::Bool(false),
+            CanonicalValue::Null,
+            CanonicalValue::String("test".to_string()),
+            CanonicalValue::Bytes(vec![0xAB, 0xCD]),
+        ] {
+            let bytes = encode_value(&value);
+            assert!(
+                CanonicalGuard::is_canonical_raw(&bytes).is_ok(),
+                "failed for {value:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn guard_new_and_default_equivalent() {
+        let g1 = CanonicalGuard::new();
+        let g2 = CanonicalGuard::default();
+        assert_eq!(g1.registered_class_count(), g2.registered_class_count());
+        assert_eq!(g1.acceptance_count(), g2.acceptance_count());
+        assert_eq!(g1.rejection_count(), g2.rejection_count());
+    }
 }

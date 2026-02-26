@@ -1659,4 +1659,110 @@ mod tests {
         let errors = validate_catalog(&catalog);
         assert!(errors.is_empty(), "errors: {errors:?}");
     }
+
+    // -- Enrichment: Display uniqueness, serde, edge cases --
+
+    #[test]
+    fn sibling_repo_display_uniqueness() {
+        let displays: BTreeSet<String> = SiblingRepo::all().iter().map(|r| r.to_string()).collect();
+        assert_eq!(
+            displays.len(),
+            6,
+            "all 6 sibling repos produce distinct display strings"
+        );
+    }
+
+    #[test]
+    fn version_class_display_uniqueness() {
+        let variants = [
+            VersionClass::Patch,
+            VersionClass::Minor,
+            VersionClass::Major,
+        ];
+        let displays: BTreeSet<String> = variants.iter().map(|v| v.to_string()).collect();
+        assert_eq!(
+            displays.len(),
+            3,
+            "all 3 version classes produce distinct display strings"
+        );
+    }
+
+    #[test]
+    fn version_compatibility_display_uniqueness() {
+        let variants = [
+            VersionCompatibility::Exact,
+            VersionCompatibility::PatchCompatible,
+            VersionCompatibility::MinorCompatible,
+            VersionCompatibility::MajorIncompatible,
+        ];
+        let displays: BTreeSet<String> = variants.iter().map(|v| v.to_string()).collect();
+        assert_eq!(
+            displays.len(),
+            4,
+            "all 4 compatibility levels produce distinct display strings"
+        );
+    }
+
+    #[test]
+    fn regression_class_display_uniqueness() {
+        let variants = [
+            RegressionClass::Breaking,
+            RegressionClass::Behavioral,
+            RegressionClass::Observability,
+            RegressionClass::Performance,
+        ];
+        let displays: BTreeSet<String> = variants.iter().map(|v| v.to_string()).collect();
+        assert_eq!(
+            displays.len(),
+            4,
+            "all 4 regression classes produce distinct display strings"
+        );
+    }
+
+    #[test]
+    fn surface_kind_display_uniqueness() {
+        let kinds = [
+            SurfaceKind::IdentifierSchema,
+            SurfaceKind::DecisionPayload,
+            SurfaceKind::EvidencePayload,
+            SurfaceKind::ApiMessage,
+            SurfaceKind::PersistenceSemantics,
+            SurfaceKind::ReplayFormat,
+            SurfaceKind::ExportFormat,
+            SurfaceKind::TuiEventContract,
+            SurfaceKind::TuiStateContract,
+            SurfaceKind::TelemetrySchema,
+        ];
+        let displays: BTreeSet<String> = kinds.iter().map(|k| k.to_string()).collect();
+        assert_eq!(
+            displays.len(),
+            10,
+            "all 10 surface kinds produce distinct display strings"
+        );
+    }
+
+    #[test]
+    fn negotiate_version_symmetric_for_patch() {
+        let a = SemanticVersion::new(1, 2, 3);
+        let b = SemanticVersion::new(1, 2, 5);
+        assert_eq!(negotiate_version(a, b), negotiate_version(b, a));
+    }
+
+    #[test]
+    fn semantic_version_zero_zero_zero_display() {
+        let v = SemanticVersion::new(0, 0, 0);
+        assert_eq!(v.to_string(), "0.0.0");
+    }
+
+    #[test]
+    fn catalog_validation_error_serde_roundtrip() {
+        let err = CatalogValidationError {
+            entry_id: Some("test/serde".to_string()),
+            field: "vectors".to_string(),
+            detail: "empty".to_string(),
+        };
+        let json = serde_json::to_string(&err).expect("serialize");
+        let decoded: CatalogValidationError = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(err, decoded);
+    }
 }

@@ -902,4 +902,104 @@ mod tests {
         assert!(v.to_string().contains("1000"));
         assert!(v.to_string().contains("500"));
     }
+
+    // -- Enrichment batch 2: Display uniqueness, boundaries, determinism --
+
+    #[test]
+    fn percentile_display_uniqueness_btreeset() {
+        use std::collections::BTreeSet;
+        let all = [Percentile::P50, Percentile::P95, Percentile::P99];
+        let set: BTreeSet<String> = all.iter().map(|p| p.to_string()).collect();
+        assert_eq!(
+            set.len(),
+            all.len(),
+            "all Percentile Display strings must be unique"
+        );
+    }
+
+    #[test]
+    fn pause_tracker_deterministic_global_percentiles() {
+        let run = || {
+            let mut tracker = PauseTracker::default();
+            for i in 1..=50 {
+                tracker.record(&make_event(i, "ext-a", i * 100, i as u64, i * 10));
+            }
+            tracker.global_percentiles()
+        };
+        assert_eq!(run(), run());
+    }
+
+    #[test]
+    fn percentile_value_boundary_100_percent() {
+        let data = [10u64, 20, 30, 40, 50];
+        // p100 should be max value
+        let val = percentile_value(&data, 100);
+        assert_eq!(val, 50);
+    }
+
+    #[test]
+    fn percentile_value_boundary_1_percent() {
+        let data: Vec<u64> = (1..=100).collect();
+        let val = percentile_value(&data, 1);
+        assert_eq!(val, 1);
+    }
+
+    #[test]
+    fn tracker_total_bytes_and_objects_across_extensions() {
+        let mut tracker = PauseTracker::default();
+        tracker.record(&make_event(1, "ext-a", 100, 10, 1024));
+        tracker.record(&make_event(2, "ext-b", 200, 20, 2048));
+        tracker.record(&make_event(3, "ext-c", 300, 30, 4096));
+
+        assert_eq!(tracker.total_bytes_reclaimed(), 1024 + 2048 + 4096);
+        assert_eq!(tracker.total_objects_collected(), 10 + 20 + 30);
+        assert_eq!(tracker.extensions().len(), 3);
+    }
+
+    #[test]
+    fn budget_at_exact_threshold_no_violation() {
+        let budget = PauseBudget::new(500, 1000, 2000);
+        let snap = PercentileSnapshot {
+            count: 10,
+            min_ns: 100,
+            max_ns: 2000,
+            p50_ns: 500,  // exactly at budget
+            p95_ns: 1000, // exactly at budget
+            p99_ns: 2000, // exactly at budget
+        };
+        let violations = snap.check_budget(&budget, "test");
+        assert!(
+            violations.is_empty(),
+            "values at exact threshold should not violate"
+        );
+    }
+
+    #[test]
+    fn ring_buffer_capacity_zero_means_unlimited() {
+        let mut tracker = PauseTracker::with_capacity(PauseBudget::default(), 0);
+        for i in 1..=100 {
+            tracker.record(&make_event(i, "ext-a", i * 10, 0, 0));
+        }
+        assert_eq!(tracker.count(), 100);
+    }
+
+    #[test]
+    fn pause_record_fields_from_gc_event() {
+        let event = GcEvent {
+            sequence: 42,
+            extension_id: "ext-detailed".to_string(),
+            phase: GcPhase::Complete,
+            marked_count: 100,
+            swept_count: 50,
+            bytes_reclaimed: 8192,
+            pause_ns: 999_999,
+        };
+        let record = PauseRecord::from_gc_event(&event);
+        assert_eq!(record.sequence, 42);
+        assert_eq!(record.extension_id, "ext-detailed");
+        assert_eq!(record.pause_ns, 999_999);
+        assert_eq!(record.objects_scanned, 100);
+        assert_eq!(record.objects_collected, 50);
+        assert_eq!(record.bytes_reclaimed, 8192);
+    }
 }

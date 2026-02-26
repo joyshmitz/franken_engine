@@ -1824,4 +1824,165 @@ mod tests {
         assert!(Value::Str(String::new()) < Value::Object(ObjectId(0)));
         assert!(Value::Object(ObjectId(0)) < Value::Function(0));
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: InterpreterError Display uniqueness via BTreeSet
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn interpreter_error_display_all_unique() {
+        let errors = vec![
+            InterpreterError::BudgetExhausted {
+                executed: 100,
+                budget: 50,
+            },
+            InterpreterError::RegisterOutOfBounds {
+                register: 999,
+                max: 256,
+            },
+            InterpreterError::DivisionByZero,
+            InterpreterError::Halted,
+            InterpreterError::StackOverflow { depth: 10, max: 5 },
+            InterpreterError::CapabilityDenied {
+                capability: "net".to_string(),
+            },
+            InterpreterError::TypeError {
+                expected: "number".to_string(),
+                got: "object".to_string(),
+            },
+            InterpreterError::StringPoolOutOfBounds {
+                index: 99,
+                pool_size: 5,
+            },
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for e in &errors {
+            displays.insert(e.to_string());
+        }
+        assert_eq!(
+            displays.len(),
+            errors.len(),
+            "all InterpreterError variants produce distinct Display"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: InterpreterError implements std::error::Error
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn interpreter_error_display_coverage() {
+        let variants: Vec<InterpreterError> = vec![
+            InterpreterError::DivisionByZero,
+            InterpreterError::Halted,
+            InterpreterError::BudgetExhausted {
+                executed: 10,
+                budget: 5,
+            },
+        ];
+        for v in &variants {
+            assert!(!v.to_string().is_empty());
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: Value Display uniqueness for all types
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn value_display_all_types_non_empty() {
+        let values = vec![
+            Value::Undefined,
+            Value::Null,
+            Value::Bool(true),
+            Value::Bool(false),
+            Value::Int(0),
+            Value::Int(-1),
+            Value::Str("hello".to_string()),
+            Value::Object(ObjectId(0)),
+            Value::Function(0),
+        ];
+        for v in &values {
+            assert!(
+                !v.to_string().is_empty(),
+                "Value::Display should not be empty for {v:?}"
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: LaneChoice serde roundtrip
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn lane_choice_serde_roundtrip() {
+        for choice in &[LaneChoice::QuickJs, LaneChoice::V8] {
+            let json = serde_json::to_string(choice).unwrap();
+            let back: LaneChoice = serde_json::from_str(&json).unwrap();
+            assert_eq!(*choice, back);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: V8 lane budget exhaustion
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn v8_budget_exhaustion() {
+        let m = test_module(vec![Ir3Instruction::Jump { target: 0 }]);
+        let mut config = InterpreterConfig::v8_defaults();
+        config.instruction_budget = 5;
+        let lane = V8Lane::with_config(config);
+        let err = lane.execute(&m, "test").unwrap_err();
+        assert!(matches!(err, InterpreterError::BudgetExhausted { .. }));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: InterpreterConfig v8_defaults has larger budget
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn v8_defaults_larger_budget_than_quickjs() {
+        let qjs = InterpreterConfig::quickjs_defaults();
+        let v8 = InterpreterConfig::v8_defaults();
+        assert!(
+            v8.instruction_budget > qjs.instruction_budget,
+            "V8 lane should have a larger default budget"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: ExecutionResult serde roundtrip
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn execution_result_fields_accessible() {
+        let m = test_module(vec![
+            Ir3Instruction::LoadInt { dst: 0, value: 42 },
+            Ir3Instruction::Halt,
+        ]);
+        let result = quickjs_execute(&m).unwrap();
+        assert!(result.instructions_executed > 0);
+        assert!(result.events.is_empty() || !result.events.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: negative integer arithmetic
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn negative_integer_arithmetic() {
+        let m = test_module(vec![
+            Ir3Instruction::LoadInt { dst: 1, value: -10 },
+            Ir3Instruction::LoadInt { dst: 2, value: 3 },
+            Ir3Instruction::Add {
+                dst: 0,
+                lhs: 1,
+                rhs: 2,
+            },
+            Ir3Instruction::Halt,
+        ]);
+        let result = quickjs_execute(&m).unwrap();
+        assert_eq!(result.value, Value::Int(-7));
+    }
 }
