@@ -1,0 +1,253 @@
+{
+  "schema_version": "franken-engine.compiler-hotspot-optimization-campaign.v1",
+  "campaign_version": "1.0.0",
+  "metric_schema_version": "franken-engine.compiler-hotspot-telemetry.v1",
+  "required_log_keys": [
+    "schema_version",
+    "trace_id",
+    "decision_id",
+    "policy_id",
+    "component",
+    "event",
+    "outcome",
+    "error_code"
+  ],
+  "campaign_runs": [
+    {
+      "campaign_id": "cmp-olv-analysis-graph",
+      "lever_id": "analysis_graph_construction",
+      "lever_category": "analysis_graph",
+      "commit": "deadbeef0001",
+      "run_id": "cmp-run-001",
+      "generated_at_utc": "2026-02-26T00:00:00Z",
+      "changed_paths": [
+        "crates/franken-engine/src/static_analysis_graph.rs"
+      ],
+      "hotspot": {
+        "hotspot_id": "hotspot-analysis-graph",
+        "phase": "analysis_graph_construction",
+        "baseline_share_millionths": 310000,
+        "baseline_profile_ref": "artifacts/flamegraph_pipeline/<timestamp>/analysis_graph.folded"
+      },
+      "attribution_note": "BTreeMap edge-index preallocation removes repeated map growth in analysis graph assembly.",
+      "baseline_metrics": {
+        "analysis_graph_construction_ns": 7200000,
+        "lowering_sources_per_second_millionths": 5000000,
+        "optimization_pass_ns": 9800000,
+        "codegen_output_bytes": 840000,
+        "compile_latency_ns": 16500000
+      },
+      "candidate_metrics": {
+        "analysis_graph_construction_ns": 5760000,
+        "lowering_sources_per_second_millionths": 5300000,
+        "optimization_pass_ns": 9506000,
+        "codegen_output_bytes": 840000,
+        "compile_latency_ns": 15675000
+      },
+      "ev_inputs": {
+        "impact": 260,
+        "confidence": 230,
+        "reuse": 180,
+        "effort": 140,
+        "friction": 120
+      },
+      "expected_ev_score_millionths": 640714285,
+      "expected_gain_millionths": 68000,
+      "isomorphism_proof": {
+        "proof_method": "metamorphic_oracle",
+        "verification_contract_ref": "crates/franken-engine/tests/frx_track_b_compiler_frir_spine.rs",
+        "drift_status": "no_drift"
+      },
+      "rollback_plan_ref": "docs/FRX_OPTIMIZATION_LANE_CHARTER_V1.md#Regression-and-Rollback-Gates",
+      "replay_command": "./scripts/run_compiler_hotspot_optimization_campaign.sh test",
+      "artifact_manifest": "artifacts/compiler_hotspot_optimization_campaign/<timestamp>/run_manifest.json",
+      "artifact_report": "artifacts/compiler_hotspot_optimization_campaign/<timestamp>/campaign_report_cmp-olv-analysis-graph.json"
+    },
+    {
+      "campaign_id": "cmp-olv-lowering-throughput",
+      "lever_id": "lowering_throughput",
+      "lever_category": "lowering_throughput",
+      "commit": "deadbeef0002",
+      "run_id": "cmp-run-002",
+      "generated_at_utc": "2026-02-26T00:05:00Z",
+      "changed_paths": [
+        "crates/franken-engine/src/lowering_pipeline.rs"
+      ],
+      "hotspot": {
+        "hotspot_id": "hotspot-lowering",
+        "phase": "lowering_throughput",
+        "baseline_share_millionths": 340000,
+        "baseline_profile_ref": "artifacts/flamegraph_pipeline/<timestamp>/lowering_pipeline.folded"
+      },
+      "attribution_note": "Lowering stage dispatch tables collapsed into deterministic flat lookup for higher source throughput.",
+      "baseline_metrics": {
+        "analysis_graph_construction_ns": 7200000,
+        "lowering_sources_per_second_millionths": 5000000,
+        "optimization_pass_ns": 9800000,
+        "codegen_output_bytes": 840000,
+        "compile_latency_ns": 16500000
+      },
+      "candidate_metrics": {
+        "analysis_graph_construction_ns": 7128000,
+        "lowering_sources_per_second_millionths": 6200000,
+        "optimization_pass_ns": 9702000,
+        "codegen_output_bytes": 831600,
+        "compile_latency_ns": 14850000
+      },
+      "ev_inputs": {
+        "impact": 310,
+        "confidence": 250,
+        "reuse": 220,
+        "effort": 150,
+        "friction": 130
+      },
+      "expected_ev_score_millionths": 874358974,
+      "expected_gain_millionths": 74000,
+      "isomorphism_proof": {
+        "proof_method": "differential_oracle",
+        "verification_contract_ref": "crates/franken-engine/tests/parser_oracle_integration.rs",
+        "drift_status": "no_drift"
+      },
+      "rollback_plan_ref": "docs/FRX_OPTIMIZATION_LANE_CHARTER_V1.md#Regression-and-Rollback-Gates",
+      "replay_command": "./scripts/run_compiler_hotspot_optimization_campaign.sh test",
+      "artifact_manifest": "artifacts/compiler_hotspot_optimization_campaign/<timestamp>/run_manifest.json",
+      "artifact_report": "artifacts/compiler_hotspot_optimization_campaign/<timestamp>/campaign_report_cmp-olv-lowering-throughput.json"
+    },
+    {
+      "campaign_id": "cmp-olv-egraph-saturation",
+      "lever_id": "optimization_pass_cost",
+      "lever_category": "optimization_pass",
+      "commit": "deadbeef0003",
+      "run_id": "cmp-run-003",
+      "generated_at_utc": "2026-02-26T00:10:00Z",
+      "changed_paths": [
+        "crates/franken-engine/src/budgeted_optimization.rs"
+      ],
+      "hotspot": {
+        "hotspot_id": "hotspot-egraph",
+        "phase": "optimization_pass_cost",
+        "baseline_share_millionths": 220000,
+        "baseline_profile_ref": "artifacts/flamegraph_pipeline/<timestamp>/egraph_pass.folded"
+      },
+      "attribution_note": "E-graph saturation cutoff reduces pathological pass costs while preserving pass witness obligations.",
+      "baseline_metrics": {
+        "analysis_graph_construction_ns": 7200000,
+        "lowering_sources_per_second_millionths": 5000000,
+        "optimization_pass_ns": 9800000,
+        "codegen_output_bytes": 840000,
+        "compile_latency_ns": 16500000
+      },
+      "candidate_metrics": {
+        "analysis_graph_construction_ns": 7056000,
+        "lowering_sources_per_second_millionths": 5400000,
+        "optimization_pass_ns": 8330000,
+        "codegen_output_bytes": 798000,
+        "compile_latency_ns": 15840000
+      },
+      "ev_inputs": {
+        "impact": 280,
+        "confidence": 240,
+        "reuse": 210,
+        "effort": 160,
+        "friction": 140
+      },
+      "expected_ev_score_millionths": 630000000,
+      "expected_gain_millionths": 68000,
+      "isomorphism_proof": {
+        "proof_method": "proof_specialization_receipt",
+        "verification_contract_ref": "crates/franken-engine/tests/proof_specialization_receipt_integration.rs",
+        "drift_status": "no_drift"
+      },
+      "rollback_plan_ref": "docs/FRX_OPTIMIZATION_LANE_CHARTER_V1.md#Regression-and-Rollback-Gates",
+      "replay_command": "./scripts/run_compiler_hotspot_optimization_campaign.sh test",
+      "artifact_manifest": "artifacts/compiler_hotspot_optimization_campaign/<timestamp>/run_manifest.json",
+      "artifact_report": "artifacts/compiler_hotspot_optimization_campaign/<timestamp>/campaign_report_cmp-olv-egraph-saturation.json"
+    },
+    {
+      "campaign_id": "cmp-olv-codegen-latency",
+      "lever_id": "codegen_output_and_latency",
+      "lever_category": "codegen_latency",
+      "commit": "deadbeef0004",
+      "run_id": "cmp-run-004",
+      "generated_at_utc": "2026-02-26T00:15:00Z",
+      "changed_paths": [
+        "crates/franken-engine/src/frir_schema.rs"
+      ],
+      "hotspot": {
+        "hotspot_id": "hotspot-codegen",
+        "phase": "codegen_output_and_latency",
+        "baseline_share_millionths": 180000,
+        "baseline_profile_ref": "artifacts/flamegraph_pipeline/<timestamp>/codegen.folded"
+      },
+      "attribution_note": "Codegen emission compacts redundant metadata payloads to reduce output size and compile latency.",
+      "baseline_metrics": {
+        "analysis_graph_construction_ns": 7200000,
+        "lowering_sources_per_second_millionths": 5000000,
+        "optimization_pass_ns": 9800000,
+        "codegen_output_bytes": 840000,
+        "compile_latency_ns": 16500000
+      },
+      "candidate_metrics": {
+        "analysis_graph_construction_ns": 7200000,
+        "lowering_sources_per_second_millionths": 5050000,
+        "optimization_pass_ns": 9506000,
+        "codegen_output_bytes": 714000,
+        "compile_latency_ns": 15510000
+      },
+      "ev_inputs": {
+        "impact": 240,
+        "confidence": 220,
+        "reuse": 200,
+        "effort": 140,
+        "friction": 130
+      },
+      "expected_ev_score_millionths": 580219780,
+      "expected_gain_millionths": 50000,
+      "isomorphism_proof": {
+        "proof_method": "verification_lane_charter_suite",
+        "verification_contract_ref": "crates/franken-engine/tests/frx_verification_lane_charter.rs",
+        "drift_status": "no_drift"
+      },
+      "rollback_plan_ref": "docs/FRX_OPTIMIZATION_LANE_CHARTER_V1.md#Regression-and-Rollback-Gates",
+      "replay_command": "./scripts/run_compiler_hotspot_optimization_campaign.sh test",
+      "artifact_manifest": "artifacts/compiler_hotspot_optimization_campaign/<timestamp>/run_manifest.json",
+      "artifact_report": "artifacts/compiler_hotspot_optimization_campaign/<timestamp>/campaign_report_cmp-olv-codegen-latency.json"
+    }
+  ],
+  "expected_ev_ranking": [
+    "cmp-olv-lowering-throughput",
+    "cmp-olv-analysis-graph",
+    "cmp-olv-egraph-saturation",
+    "cmp-olv-codegen-latency"
+  ],
+  "expected_gain_ranking": [
+    "cmp-olv-lowering-throughput",
+    "cmp-olv-analysis-graph",
+    "cmp-olv-egraph-saturation",
+    "cmp-olv-codegen-latency"
+  ],
+  "expected_selected_campaign": "cmp-olv-lowering-throughput",
+  "cross_subsystem_replay_scenarios": [
+    {
+      "scenario_id": "compiler-hotspot-normal",
+      "scenario_kind": "normal",
+      "replay_command": "./scripts/e2e/compiler_hotspot_optimization_campaign_replay.sh test",
+      "expected_pass": true,
+      "expected_outcome": "pass"
+    },
+    {
+      "scenario_id": "compiler-hotspot-adversarial-proof-missing",
+      "scenario_kind": "adversarial",
+      "replay_command": "./scripts/e2e/compiler_hotspot_optimization_campaign_replay.sh test",
+      "expected_pass": false,
+      "expected_outcome": "fail_closed"
+    },
+    {
+      "scenario_id": "compiler-hotspot-recovery-after-rollback",
+      "scenario_kind": "recovery",
+      "replay_command": "./scripts/e2e/compiler_hotspot_optimization_campaign_replay.sh test",
+      "expected_pass": true,
+      "expected_outcome": "recovered"
+    }
+  ]
+}
