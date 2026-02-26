@@ -2596,4 +2596,519 @@ mod tests {
         let back: InterferenceFinding = serde_json::from_str(&json).unwrap();
         assert_eq!(back.metric, None);
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn decision_id_sensitive_to_policy_id() {
+        let registrations = vec![registration(
+            "ctrl-a",
+            &["cpu"],
+            &[],
+            1_000_000,
+            1_000_000,
+            "ok",
+        )];
+        let config = InterferenceConfig::default();
+        let metrics = initial_metrics();
+        let a = evaluate_controller_interference(&scenario(
+            "t",
+            "policy-1",
+            &config,
+            &registrations,
+            (&[], &[], &[]),
+            &metrics,
+        ));
+        let b = evaluate_controller_interference(&scenario(
+            "t",
+            "policy-2",
+            &config,
+            &registrations,
+            (&[], &[], &[]),
+            &metrics,
+        ));
+        assert_ne!(a.decision_id, b.decision_id);
+    }
+
+    #[test]
+    fn decision_id_sensitive_to_config() {
+        let registrations = vec![registration(
+            "ctrl-a",
+            &["cpu"],
+            &[],
+            1_000_000,
+            1_000_000,
+            "ok",
+        )];
+        let config_a = InterferenceConfig {
+            min_timescale_separation_millionths: 100_000,
+            conflict_resolution_mode: ConflictResolutionMode::Reject,
+        };
+        let config_b = InterferenceConfig {
+            min_timescale_separation_millionths: 200_000,
+            conflict_resolution_mode: ConflictResolutionMode::Reject,
+        };
+        let metrics = initial_metrics();
+        let a = evaluate_controller_interference(&scenario(
+            "t",
+            "p",
+            &config_a,
+            &registrations,
+            (&[], &[], &[]),
+            &metrics,
+        ));
+        let b = evaluate_controller_interference(&scenario(
+            "t",
+            "p",
+            &config_b,
+            &registrations,
+            (&[], &[], &[]),
+            &metrics,
+        ));
+        assert_ne!(a.decision_id, b.decision_id);
+    }
+
+    #[test]
+    fn decision_id_sensitive_to_initial_metrics() {
+        let registrations = vec![registration(
+            "ctrl-a",
+            &["cpu"],
+            &[],
+            1_000_000,
+            1_000_000,
+            "ok",
+        )];
+        let config = InterferenceConfig::default();
+        let metrics_a = initial_metrics();
+        let mut metrics_b = initial_metrics();
+        metrics_b.insert("cpu".into(), 999);
+        let a = evaluate_controller_interference(&scenario(
+            "t",
+            "p",
+            &config,
+            &registrations,
+            (&[], &[], &[]),
+            &metrics_a,
+        ));
+        let b = evaluate_controller_interference(&scenario(
+            "t",
+            "p",
+            &config,
+            &registrations,
+            (&[], &[], &[]),
+            &metrics_b,
+        ));
+        assert_ne!(a.decision_id, b.decision_id);
+    }
+
+    #[test]
+    fn final_metrics_unchanged_when_all_writes_rejected() {
+        let registrations = vec![
+            registration("ctrl-a", &[], &["cpu"], 100_000, 100_000, "fast"),
+            registration("ctrl-b", &[], &["cpu"], 100_000, 100_000, "fast"),
+        ];
+        let config = InterferenceConfig {
+            min_timescale_separation_millionths: 100_000,
+            conflict_resolution_mode: ConflictResolutionMode::Reject,
+        };
+        let writes = [
+            MetricWriteRequest {
+                controller_id: "ctrl-a".into(),
+                metric: "cpu".into(),
+                value: 50,
+            },
+            MetricWriteRequest {
+                controller_id: "ctrl-b".into(),
+                metric: "cpu".into(),
+                value: 60,
+            },
+        ];
+        let metrics = initial_metrics();
+        let eval = evaluate_controller_interference(&scenario(
+            "t",
+            "p",
+            &config,
+            &registrations,
+            (&[], &writes, &[]),
+            &metrics,
+        ));
+        assert!(!eval.pass);
+        // Final metrics should equal initial since all writes were rejected
+        assert_eq!(eval.final_metrics.get("cpu"), Some(&10));
+        assert_eq!(eval.final_metrics.get("latency"), Some(&100));
+    }
+
+    #[test]
+    fn log_events_include_read_snapshot_entries() {
+        let registrations = vec![registration(
+            "ctrl-a",
+            &["cpu", "latency"],
+            &[],
+            1_000_000,
+            1_000_000,
+            "ok",
+        )];
+        let reads = [
+            MetricReadRequest {
+                controller_id: "ctrl-a".into(),
+                metric: "cpu".into(),
+            },
+            MetricReadRequest {
+                controller_id: "ctrl-a".into(),
+                metric: "latency".into(),
+            },
+        ];
+        let config = InterferenceConfig::default();
+        let metrics = initial_metrics();
+        let eval = evaluate_controller_interference(&scenario(
+            "t",
+            "p",
+            &config,
+            &registrations,
+            (&reads, &[], &[]),
+            &metrics,
+        ));
+        let read_logs: Vec<_> = eval
+            .logs
+            .iter()
+            .filter(|l| l.event == "read_snapshot")
+            .collect();
+        assert_eq!(read_logs.len(), 2);
+        assert!(read_logs.iter().all(|l| l.outcome == "pass"));
+        assert!(read_logs.iter().any(|l| l.metric.as_deref() == Some("cpu")));
+        assert!(
+            read_logs
+                .iter()
+                .any(|l| l.metric.as_deref() == Some("latency"))
+        );
+    }
+
+    #[test]
+    fn log_events_include_write_conflict_serialized() {
+        let registrations = vec![
+            registration("ctrl-a", &[], &["cpu"], 1_000_000, 100_000, "fast"),
+            registration("ctrl-b", &[], &["cpu"], 1_000_000, 100_000, "fast"),
+        ];
+        let config = InterferenceConfig {
+            min_timescale_separation_millionths: 100_000,
+            conflict_resolution_mode: ConflictResolutionMode::Serialize,
+        };
+        let writes = [
+            MetricWriteRequest {
+                controller_id: "ctrl-a".into(),
+                metric: "cpu".into(),
+                value: 10,
+            },
+            MetricWriteRequest {
+                controller_id: "ctrl-b".into(),
+                metric: "cpu".into(),
+                value: 20,
+            },
+        ];
+        let metrics = initial_metrics();
+        let eval = evaluate_controller_interference(&scenario(
+            "t",
+            "p",
+            &config,
+            &registrations,
+            (&[], &writes, &[]),
+            &metrics,
+        ));
+        assert!(eval.pass);
+        let serialized_logs: Vec<_> = eval
+            .logs
+            .iter()
+            .filter(|l| l.event == "write_conflict_serialized")
+            .collect();
+        assert_eq!(serialized_logs.len(), 1);
+        assert_eq!(serialized_logs[0].outcome, "pass");
+        assert_eq!(serialized_logs[0].metric.as_deref(), Some("cpu"));
+        assert!(serialized_logs[0].error_code.is_none());
+    }
+
+    #[test]
+    fn three_writers_mixed_conflict_and_independent() {
+        let registrations = vec![
+            registration("ctrl-a", &[], &["cpu"], 1_000_000, 100_000, "fast"),
+            registration("ctrl-b", &[], &["cpu"], 1_000_000, 100_000, "fast"),
+            registration("ctrl-c", &[], &["latency"], 1_000_000, 100_000, "fast"),
+        ];
+        let config = InterferenceConfig {
+            min_timescale_separation_millionths: 100_000,
+            conflict_resolution_mode: ConflictResolutionMode::Reject,
+        };
+        let writes = [
+            MetricWriteRequest {
+                controller_id: "ctrl-a".into(),
+                metric: "cpu".into(),
+                value: 50,
+            },
+            MetricWriteRequest {
+                controller_id: "ctrl-b".into(),
+                metric: "cpu".into(),
+                value: 60,
+            },
+            MetricWriteRequest {
+                controller_id: "ctrl-c".into(),
+                metric: "latency".into(),
+                value: 200,
+            },
+        ];
+        let metrics = initial_metrics();
+        let eval = evaluate_controller_interference(&scenario(
+            "t",
+            "p",
+            &config,
+            &registrations,
+            (&[], &writes, &[]),
+            &metrics,
+        ));
+        // CPU writes conflict (rejected), latency write independent (applied)
+        assert!(!eval.pass);
+        assert!(
+            eval.findings
+                .iter()
+                .any(|f| f.code == InterferenceFailureCode::TimescaleConflict
+                    && f.metric.as_deref() == Some("cpu"))
+        );
+        assert_eq!(eval.final_metrics.get("latency"), Some(&200));
+        assert!(eval.applied_writes.iter().any(|w| w.metric == "latency"));
+        assert_eq!(
+            eval.rejected_writes
+                .iter()
+                .filter(|w| w.metric == "cpu")
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn subscription_delivers_initial_metric_without_writes() {
+        let registrations = vec![registration(
+            "ctrl-a",
+            &["cpu"],
+            &[],
+            1_000_000,
+            1_000_000,
+            "ok",
+        )];
+        let subs = [MetricSubscription {
+            controller_id: "ctrl-a".into(),
+            metric: "cpu".into(),
+        }];
+        let config = InterferenceConfig::default();
+        let metrics = initial_metrics();
+        let eval = evaluate_controller_interference(&scenario(
+            "t",
+            "p",
+            &config,
+            &registrations,
+            (&[], &[], &subs),
+            &metrics,
+        ));
+        assert!(eval.pass);
+        let updates = eval.subscription_streams.get("ctrl-a").unwrap();
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].value, 10); // initial cpu value
+        assert_eq!(updates[0].metric, "cpu");
+    }
+
+    #[test]
+    fn zero_min_timescale_separation_allows_same_interval_writes() {
+        let registrations = vec![
+            registration("ctrl-a", &[], &["cpu"], 1_000_000, 100_000, "fast"),
+            registration("ctrl-b", &[], &["cpu"], 1_000_000, 100_000, "fast"),
+        ];
+        let config = InterferenceConfig {
+            min_timescale_separation_millionths: 0,
+            conflict_resolution_mode: ConflictResolutionMode::Reject,
+        };
+        let writes = [
+            MetricWriteRequest {
+                controller_id: "ctrl-a".into(),
+                metric: "cpu".into(),
+                value: 50,
+            },
+            MetricWriteRequest {
+                controller_id: "ctrl-b".into(),
+                metric: "cpu".into(),
+                value: 60,
+            },
+        ];
+        let metrics = initial_metrics();
+        let eval = evaluate_controller_interference(&scenario(
+            "t",
+            "p",
+            &config,
+            &registrations,
+            (&[], &writes, &[]),
+            &metrics,
+        ));
+        assert!(eval.pass);
+        assert_eq!(eval.applied_writes.len(), 2);
+    }
+
+    #[test]
+    fn duplicate_controller_skips_second_registration_validation() {
+        // First registration is valid, second is duplicate with blank statement.
+        // Only DuplicateController should appear, not MissingTimescaleStatement for the dupe.
+        let registrations = vec![
+            registration("ctrl-a", &["cpu"], &[], 1_000_000, 1_000_000, "ok"),
+            registration("ctrl-a", &["cpu"], &[], 1_000_000, 1_000_000, "   "),
+        ];
+        let config = InterferenceConfig::default();
+        let metrics = initial_metrics();
+        let eval = evaluate_controller_interference(&scenario(
+            "t",
+            "p",
+            &config,
+            &registrations,
+            (&[], &[], &[]),
+            &metrics,
+        ));
+        assert!(!eval.pass);
+        assert!(
+            eval.findings
+                .iter()
+                .any(|f| f.code == InterferenceFailureCode::DuplicateController)
+        );
+        assert!(
+            !eval
+                .findings
+                .iter()
+                .any(|f| f.code == InterferenceFailureCode::MissingTimescaleStatement),
+            "duplicate should skip further validation"
+        );
+    }
+
+    #[test]
+    fn decision_id_hex_portion_is_32_chars() {
+        let config = InterferenceConfig::default();
+        let metrics = initial_metrics();
+        let eval = evaluate_controller_interference(&scenario(
+            "t",
+            "p",
+            &config,
+            &[],
+            (&[], &[], &[]),
+            &metrics,
+        ));
+        let hex_part = eval.decision_id.strip_prefix("ctrl-interference-").unwrap();
+        assert_eq!(hex_part.len(), 32, "16 bytes = 32 hex chars");
+        assert!(hex_part.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn read_and_write_same_controller_same_metric() {
+        let registrations = vec![registration(
+            "ctrl-a",
+            &["cpu"],
+            &["cpu"],
+            1_000_000,
+            1_000_000,
+            "ok",
+        )];
+        let reads = [MetricReadRequest {
+            controller_id: "ctrl-a".into(),
+            metric: "cpu".into(),
+        }];
+        let writes = [MetricWriteRequest {
+            controller_id: "ctrl-a".into(),
+            metric: "cpu".into(),
+            value: 42,
+        }];
+        let config = InterferenceConfig::default();
+        let metrics = initial_metrics();
+        let eval = evaluate_controller_interference(&scenario(
+            "t",
+            "p",
+            &config,
+            &registrations,
+            (&reads, &writes, &[]),
+            &metrics,
+        ));
+        assert!(eval.pass);
+        // Read snapshot captures initial value (before write)
+        assert_eq!(eval.read_snapshots.get("ctrl-a:cpu"), Some(&10));
+        // Final metrics reflect write
+        assert_eq!(eval.final_metrics.get("cpu"), Some(&42));
+    }
+
+    #[test]
+    fn subscription_no_update_for_metric_absent_from_final() {
+        let registrations = vec![registration(
+            "ctrl-a",
+            &["ghost"],
+            &[],
+            1_000_000,
+            1_000_000,
+            "ok",
+        )];
+        let subs = [MetricSubscription {
+            controller_id: "ctrl-a".into(),
+            metric: "ghost".into(),
+        }];
+        let config = InterferenceConfig::default();
+        let metrics = BTreeMap::new(); // no initial metrics at all
+        let eval = evaluate_controller_interference(&scenario(
+            "t",
+            "p",
+            &config,
+            &registrations,
+            (&[], &[], &subs),
+            &metrics,
+        ));
+        assert!(eval.pass);
+        assert!(
+            eval.subscription_streams
+                .get("ctrl-a")
+                .is_none_or(|u| u.is_empty()),
+            "no update for metric absent from final_metrics"
+        );
+    }
+
+    #[test]
+    fn timescale_conflict_log_includes_error_code_and_controller_ids() {
+        let registrations = vec![
+            registration("ctrl-a", &[], &["cpu"], 1_000_000, 100_000, "fast"),
+            registration("ctrl-b", &[], &["cpu"], 1_000_000, 100_000, "fast"),
+        ];
+        let config = InterferenceConfig {
+            min_timescale_separation_millionths: 100_000,
+            conflict_resolution_mode: ConflictResolutionMode::Reject,
+        };
+        let writes = [
+            MetricWriteRequest {
+                controller_id: "ctrl-a".into(),
+                metric: "cpu".into(),
+                value: 10,
+            },
+            MetricWriteRequest {
+                controller_id: "ctrl-b".into(),
+                metric: "cpu".into(),
+                value: 20,
+            },
+        ];
+        let metrics = initial_metrics();
+        let eval = evaluate_controller_interference(&scenario(
+            "t",
+            "p",
+            &config,
+            &registrations,
+            (&[], &writes, &[]),
+            &metrics,
+        ));
+        let conflict_log = eval
+            .logs
+            .iter()
+            .find(|l| l.event == "timescale_conflict")
+            .expect("conflict log event must exist");
+        assert_eq!(conflict_log.outcome, "fail");
+        assert_eq!(
+            conflict_log.error_code.as_deref(),
+            Some("timescale_conflict")
+        );
+        assert_eq!(conflict_log.metric.as_deref(), Some("cpu"));
+        assert_eq!(conflict_log.controller_ids.len(), 2);
+    }
 }

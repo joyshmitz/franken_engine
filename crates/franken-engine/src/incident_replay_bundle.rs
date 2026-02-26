@@ -2626,4 +2626,237 @@ mod tests {
         assert!(VerificationCategory::ReceiptChain < VerificationCategory::Counterfactual);
         assert!(VerificationCategory::Counterfactual < VerificationCategory::Compatibility);
     }
+
+    // -------------------------------------------------------------------
+    // Enrichment: BundleFormatVersion behavior
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn bundle_format_version_display() {
+        let v = BundleFormatVersion { major: 2, minor: 3 };
+        assert_eq!(v.to_string(), "2.3");
+    }
+
+    #[test]
+    fn bundle_format_version_compatible_same_major_higher_minor() {
+        let reader = BundleFormatVersion { major: 1, minor: 2 };
+        let bundle = BundleFormatVersion { major: 1, minor: 1 };
+        assert!(reader.is_compatible_with(&bundle));
+    }
+
+    #[test]
+    fn bundle_format_version_incompatible_lower_minor() {
+        let reader = BundleFormatVersion { major: 1, minor: 0 };
+        let bundle = BundleFormatVersion { major: 1, minor: 1 };
+        assert!(!reader.is_compatible_with(&bundle));
+    }
+
+    #[test]
+    fn bundle_format_version_incompatible_different_major() {
+        let reader = BundleFormatVersion { major: 2, minor: 0 };
+        let bundle = BundleFormatVersion { major: 1, minor: 0 };
+        assert!(!reader.is_compatible_with(&bundle));
+    }
+
+    #[test]
+    fn bundle_format_version_compatible_same_version() {
+        let v = BundleFormatVersion { major: 1, minor: 0 };
+        assert!(v.is_compatible_with(&v));
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: BundleError std::error::Error
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn bundle_error_implements_std_error() {
+        let errors: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(BundleError::IntegrityFailure {
+                expected: "a".into(),
+                actual: "b".into(),
+            }),
+            Box::new(BundleError::SignatureInvalid),
+            Box::new(BundleError::EmptyBundle),
+            Box::new(BundleError::TraceNotFound {
+                trace_id: "t".into(),
+            }),
+            Box::new(BundleError::IdDerivation("x".into())),
+            Box::new(BundleError::ReplayFailed("y".into())),
+            Box::new(BundleError::RedactionViolation { field: "f".into() }),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for err in &errors {
+            displays.insert(err.to_string());
+        }
+        assert_eq!(displays.len(), 7, "all 7 variants have distinct messages");
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: RedactionPolicy
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn redaction_policy_default_all_false() {
+        let policy = RedactionPolicy::default();
+        assert!(!policy.redact_extension_ids);
+        assert!(!policy.redact_evidence_metadata);
+        assert!(!policy.redact_nondeterminism_values);
+        assert!(!policy.redact_node_ids);
+        assert!(policy.custom_redaction_keys.is_empty());
+    }
+
+    #[test]
+    fn redaction_policy_serde_with_custom_keys() {
+        let mut policy = RedactionPolicy::default();
+        policy.redact_extension_ids = true;
+        policy.redact_node_ids = true;
+        policy.custom_redaction_keys.insert("api-key".to_string());
+        let json = serde_json::to_string(&policy).expect("serialize");
+        let restored: RedactionPolicy = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(policy, restored);
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: CheckOutcome helpers
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn check_outcome_is_pass_and_is_fail() {
+        assert!(CheckOutcome::Pass.is_pass());
+        assert!(!CheckOutcome::Pass.is_fail());
+
+        let fail = CheckOutcome::Fail {
+            reason: "bad".to_string(),
+        };
+        assert!(!fail.is_pass());
+        assert!(fail.is_fail());
+
+        let skipped = CheckOutcome::Skipped {
+            reason: "n/a".to_string(),
+        };
+        assert!(!skipped.is_pass());
+        assert!(!skipped.is_fail());
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: Merkle tree edge cases
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn merkle_root_empty_is_hash_of_empty() {
+        let root = compute_merkle_root(&[]);
+        let expected = ContentHash::compute(b"");
+        assert_eq!(root, expected);
+    }
+
+    #[test]
+    fn merkle_root_single_leaf_is_leaf() {
+        let leaf = ContentHash::compute(b"only-one");
+        let root = compute_merkle_root(&[leaf.clone()]);
+        assert_eq!(root, leaf);
+    }
+
+    #[test]
+    fn merkle_proof_build_and_verify() {
+        let leaves: Vec<ContentHash> = (0..5)
+            .map(|i| ContentHash::compute(format!("leaf-{i}").as_bytes()))
+            .collect();
+        let root = compute_merkle_root(&leaves);
+
+        for i in 0..leaves.len() {
+            let proof = build_merkle_proof(&leaves, i);
+            assert!(
+                verify_merkle_proof(&leaves[i], &proof, &root),
+                "proof for leaf {i} should verify"
+            );
+        }
+    }
+
+    #[test]
+    fn merkle_proof_wrong_root_fails() {
+        let leaves: Vec<ContentHash> = (0..3)
+            .map(|i| ContentHash::compute(format!("leaf-{i}").as_bytes()))
+            .collect();
+        let proof = build_merkle_proof(&leaves, 0);
+        let wrong_root = ContentHash::compute(b"not-a-real-root");
+        assert!(!verify_merkle_proof(&leaves[0], &proof, &wrong_root));
+    }
+
+    #[test]
+    fn merkle_proof_empty_for_single_leaf() {
+        let leaf = ContentHash::compute(b"alone");
+        let proof = build_merkle_proof(&[leaf.clone()], 0);
+        assert!(proof.is_empty());
+    }
+
+    #[test]
+    fn merkle_proof_out_of_bounds_returns_empty() {
+        let leaves: Vec<ContentHash> = (0..3)
+            .map(|i| ContentHash::compute(format!("leaf-{i}").as_bytes()))
+            .collect();
+        let proof = build_merkle_proof(&leaves, 10);
+        assert!(proof.is_empty());
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: BundleInspection serde
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn bundle_inspection_serde_roundtrip() {
+        let bundle = build_test_bundle();
+        let verifier = BundleVerifier::new();
+        let inspection = verifier.inspect(&bundle);
+        let json = serde_json::to_string(&inspection).expect("serialize");
+        let restored: BundleInspection = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(inspection, restored);
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: VerificationReport pass/fail counting
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn verification_report_pass_fail_counts() {
+        let bundle = build_test_bundle();
+        let verifier = BundleVerifier::new();
+        let report = verifier.verify_integrity(&bundle, 6000);
+
+        assert!(report.passed);
+        assert!(report.pass_count() > 0);
+        assert_eq!(report.fail_count(), 0);
+        assert_eq!(
+            report.pass_count()
+                + report.fail_count()
+                + report
+                    .checks
+                    .iter()
+                    .filter(|c| matches!(c.outcome, CheckOutcome::Skipped { .. }))
+                    .count() as u64,
+            report.checks.len() as u64
+        );
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: BundleArtifactKind Display all variants
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn bundle_artifact_kind_display_all_variants() {
+        let cases = [
+            (BundleArtifactKind::Trace, "trace"),
+            (BundleArtifactKind::Evidence, "evidence"),
+            (BundleArtifactKind::OptReceipt, "opt-receipt"),
+            (BundleArtifactKind::QuorumCheckpoint, "quorum-checkpoint"),
+            (BundleArtifactKind::NondeterminismLog, "nondeterminism-log"),
+            (
+                BundleArtifactKind::CounterfactualResult,
+                "counterfactual-result",
+            ),
+            (BundleArtifactKind::PolicySnapshot, "policy-snapshot"),
+        ];
+        for (kind, expected) in &cases {
+            assert_eq!(kind.to_string(), *expected);
+        }
+    }
 }

@@ -1374,4 +1374,155 @@ mod tests {
         assert!(GateFailureCode::FallbackCrashed < GateFailureCode::FallbackHung);
         assert!(GateFailureCode::InsufficientSamples < GateFailureCode::EmptyInput);
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn gate_failure_code_serde_roundtrip() {
+        let variants = [
+            GateFailureCode::NoPositiveDelta,
+            GateFailureCode::InsufficientSignificance,
+            GateFailureCode::InsufficientReceiptCoverage,
+            GateFailureCode::FallbackIncorrectOutput,
+            GateFailureCode::FallbackCrashed,
+            GateFailureCode::FallbackHung,
+            GateFailureCode::FallbackNoReceipt,
+            GateFailureCode::FallbackPerformanceRegression,
+            GateFailureCode::ReceiptChainReplayFailed,
+            GateFailureCode::InsufficientSamples,
+            GateFailureCode::EmptyInput,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: GateFailureCode = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn lane_type_as_str_all_distinct() {
+        let variants = [LaneType::ProofSpecialized, LaneType::AmbientAuthority];
+        let mut set = std::collections::BTreeSet::new();
+        for v in &variants {
+            set.insert(v.as_str());
+        }
+        assert_eq!(set.len(), variants.len());
+    }
+
+    #[test]
+    fn gate_failure_code_display_all_distinct() {
+        let variants = [
+            GateFailureCode::NoPositiveDelta,
+            GateFailureCode::InsufficientSignificance,
+            GateFailureCode::InsufficientReceiptCoverage,
+            GateFailureCode::FallbackIncorrectOutput,
+            GateFailureCode::FallbackCrashed,
+            GateFailureCode::FallbackHung,
+            GateFailureCode::FallbackNoReceipt,
+            GateFailureCode::FallbackPerformanceRegression,
+            GateFailureCode::ReceiptChainReplayFailed,
+            GateFailureCode::InsufficientSamples,
+            GateFailureCode::EmptyInput,
+        ];
+        let mut set = std::collections::BTreeSet::new();
+        for v in &variants {
+            set.insert(v.to_string());
+        }
+        assert_eq!(set.len(), variants.len());
+    }
+
+    #[test]
+    fn benchmark_sample_serde_roundtrip() {
+        let sample = BenchmarkSample {
+            workload_id: "wl-1".into(),
+            lane_type: LaneType::ProofSpecialized,
+            wall_time_ns: 1_000_000,
+            memory_peak_bytes: 4096,
+            throughput_ops_per_sec: Some(100),
+        };
+        let json = serde_json::to_string(&sample).unwrap();
+        let back: BenchmarkSample = serde_json::from_str(&json).unwrap();
+        assert_eq!(sample, back);
+    }
+
+    #[test]
+    fn benchmark_comparison_serde_roundtrip() {
+        let comp = BenchmarkComparison::from_samples(
+            BenchmarkSample {
+                workload_id: "wl-1".into(),
+                lane_type: LaneType::ProofSpecialized,
+                wall_time_ns: 800_000,
+                memory_peak_bytes: 3000,
+                throughput_ops_per_sec: None,
+            },
+            BenchmarkSample {
+                workload_id: "wl-1".into(),
+                lane_type: LaneType::AmbientAuthority,
+                wall_time_ns: 1_000_000,
+                memory_peak_bytes: 4000,
+                throughput_ops_per_sec: None,
+            },
+        );
+        let json = serde_json::to_string(&comp).unwrap();
+        let back: BenchmarkComparison = serde_json::from_str(&json).unwrap();
+        assert_eq!(comp, back);
+    }
+
+    #[test]
+    fn receipt_coverage_entry_serde_roundtrip() {
+        let entry = ReceiptCoverageEntry {
+            optimization_name: "opt-1".into(),
+            receipt_present: true,
+            receipt_hash: Some(ContentHash::compute(b"receipt")),
+            proof_reference: Some("proof-1".into()),
+            capability_witness_ref: Some("wit-1".into()),
+            performance_measurement_present: true,
+            signature_valid: true,
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let back: ReceiptCoverageEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry, back);
+    }
+
+    #[test]
+    fn receipt_coverage_entry_is_fully_covered() {
+        let entry = ReceiptCoverageEntry {
+            optimization_name: "opt-1".into(),
+            receipt_present: true,
+            receipt_hash: Some(ContentHash::compute(b"receipt")),
+            proof_reference: Some("proof-1".into()),
+            capability_witness_ref: Some("wit-1".into()),
+            performance_measurement_present: true,
+            signature_valid: true,
+        };
+        assert!(entry.is_fully_covered());
+        assert!(entry.coverage_gaps().is_empty());
+    }
+
+    #[test]
+    fn receipt_coverage_entry_gaps_when_missing_fields() {
+        let entry = ReceiptCoverageEntry {
+            optimization_name: "opt-1".into(),
+            receipt_present: false,
+            receipt_hash: None,
+            proof_reference: None,
+            capability_witness_ref: None,
+            performance_measurement_present: false,
+            signature_valid: false,
+        };
+        assert!(!entry.is_fully_covered());
+        assert_eq!(entry.coverage_gaps().len(), 6);
+    }
+
+    #[test]
+    fn gate_finding_serde_roundtrip() {
+        let finding = GateFinding {
+            code: GateFailureCode::FallbackCrashed,
+            detail: "segfault in wasm lane".into(),
+            affected_item: Some("wl-1".into()),
+        };
+        let json = serde_json::to_string(&finding).unwrap();
+        let back: GateFinding = serde_json::from_str(&json).unwrap();
+        assert_eq!(finding, back);
+    }
 }

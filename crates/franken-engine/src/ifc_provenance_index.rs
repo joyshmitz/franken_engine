@@ -2470,4 +2470,155 @@ mod tests {
         }
         assert_eq!(displays.len(), 5);
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn flow_decision_display_all_distinct() {
+        let variants = [
+            FlowDecision::Allowed,
+            FlowDecision::Blocked,
+            FlowDecision::Declassified,
+        ];
+        let mut set = std::collections::BTreeSet::new();
+        for v in &variants {
+            set.insert(v.to_string());
+        }
+        assert_eq!(set.len(), variants.len());
+    }
+
+    #[test]
+    fn lineage_evidence_type_display_all_distinct() {
+        let variants = [
+            LineageEvidenceType::FlowEvent,
+            LineageEvidenceType::FlowProof,
+            LineageEvidenceType::DeclassificationReceipt,
+        ];
+        let mut set = std::collections::BTreeSet::new();
+        for v in &variants {
+            set.insert(v.to_string());
+        }
+        assert_eq!(set.len(), variants.len());
+    }
+
+    #[test]
+    fn record_counts_total_matches_fields_sum() {
+        let counts = RecordCounts {
+            flow_events: 3,
+            flow_proofs: 2,
+            declass_receipts: 1,
+            confinement_claims: 4,
+        };
+        assert_eq!(counts.total(), 3 + 2 + 1 + 4);
+    }
+
+    #[test]
+    fn record_counts_total_all_zero() {
+        let counts = RecordCounts {
+            flow_events: 0,
+            flow_proofs: 0,
+            declass_receipts: 0,
+            confinement_claims: 0,
+        };
+        assert_eq!(counts.total(), 0);
+    }
+
+    #[test]
+    fn confinement_status_no_proofs_no_claims() {
+        let status = ConfinementStatus {
+            extension_id: "ext-z".into(),
+            proven_flows: 0,
+            unproven_flows: 5,
+            strongest_claim: None,
+            latest_proof_epoch: None,
+        };
+        assert_eq!(status.proven_flows, 0);
+        assert!(status.strongest_claim.is_none());
+        assert!(status.latest_proof_epoch.is_none());
+    }
+
+    #[test]
+    fn lineage_hop_with_each_evidence_type() {
+        let types = [
+            LineageEvidenceType::FlowEvent,
+            LineageEvidenceType::FlowProof,
+            LineageEvidenceType::DeclassificationReceipt,
+        ];
+        for et in &types {
+            let hop = LineageHop {
+                source_label: Label::Public,
+                sink_clearance: Label::Internal,
+                evidence_ref: format!("ref-{et}"),
+                evidence_type: *et,
+            };
+            let json = serde_json::to_string(&hop).unwrap();
+            let back: LineageHop = serde_json::from_str(&json).unwrap();
+            assert_eq!(hop, back);
+        }
+    }
+
+    #[test]
+    fn lineage_path_sort_is_deterministic() {
+        let path_a = LineagePath {
+            extension_id: "ext-a".into(),
+            hops: vec![LineageHop {
+                source_label: Label::Public,
+                sink_clearance: Label::Internal,
+                evidence_ref: "e1".into(),
+                evidence_type: LineageEvidenceType::FlowEvent,
+            }],
+        };
+        let path_b = LineagePath {
+            extension_id: "ext-b".into(),
+            hops: vec![LineageHop {
+                source_label: Label::Public,
+                sink_clearance: Label::Secret,
+                evidence_ref: "e2".into(),
+                evidence_type: LineageEvidenceType::FlowProof,
+            }],
+        };
+        assert!(path_a < path_b);
+        let mut sorted = vec![path_b.clone(), path_a.clone()];
+        sorted.sort();
+        assert_eq!(sorted[0], path_a);
+        assert_eq!(sorted[1], path_b);
+    }
+
+    #[test]
+    fn provenance_event_optional_fields_none() {
+        let event = ProvenanceEvent {
+            trace_id: "t-1".into(),
+            component: "test".into(),
+            event: "insert".into(),
+            outcome: "ok".into(),
+            error_code: None,
+            extension_id: None,
+            record_count: None,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: ProvenanceEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, back);
+        assert!(back.error_code.is_none());
+        assert!(back.extension_id.is_none());
+        assert!(back.record_count.is_none());
+    }
+
+    #[test]
+    fn flow_event_record_ord_deterministic() {
+        let a = flow_event(
+            "ev-a",
+            "ext-1",
+            Label::Public,
+            Label::Internal,
+            FlowDecision::Allowed,
+        );
+        let b = flow_event(
+            "ev-b",
+            "ext-1",
+            Label::Public,
+            Label::Internal,
+            FlowDecision::Allowed,
+        );
+        assert!(a < b);
+    }
 }

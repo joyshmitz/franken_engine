@@ -1884,4 +1884,180 @@ mod tests {
     fn reference_runtime_ord() {
         assert!(ReferenceRuntime::Node < ReferenceRuntime::Bun);
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn reference_runtime_serde_round_trip() {
+        for variant in [ReferenceRuntime::Node, ReferenceRuntime::Bun] {
+            let json = serde_json::to_string(&variant).unwrap();
+            let back: ReferenceRuntime = serde_json::from_str(&json).unwrap();
+            assert_eq!(variant, back);
+        }
+    }
+
+    #[test]
+    fn explicit_shim_serde_round_trip() {
+        let shim = valid_shim(CompatibilityMode::NodeCompat);
+        let json = serde_json::to_string(&shim).unwrap();
+        let back: ExplicitShim = serde_json::from_str(&json).unwrap();
+        assert_eq!(shim, back);
+    }
+
+    #[test]
+    fn divergence_policy_serde_round_trip() {
+        let policy = DivergencePolicy {
+            diverges_from: vec![ReferenceRuntime::Node],
+            reason: "spec extension".to_string(),
+            impact: "none".to_string(),
+            waiver_id: "waiver-1".to_string(),
+            migration_guidance: "wrap in try/catch".to_string(),
+        };
+        let json = serde_json::to_string(&policy).unwrap();
+        let back: DivergencePolicy = serde_json::from_str(&json).unwrap();
+        assert_eq!(policy, back);
+    }
+
+    #[test]
+    fn compatibility_matrix_entry_serde_round_trip() {
+        let entry = valid_entry("case-serde");
+        let json = serde_json::to_string(&entry).unwrap();
+        let back: CompatibilityMatrixEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry, back);
+    }
+
+    #[test]
+    fn compatibility_context_serde_round_trip() {
+        let ctx = context();
+        let json = serde_json::to_string(&ctx).unwrap();
+        let back: CompatibilityContext = serde_json::from_str(&json).unwrap();
+        assert_eq!(ctx, back);
+    }
+
+    #[test]
+    fn compatibility_observation_serde_round_trip() {
+        let obs = CompatibilityObservation::new(
+            "case-1",
+            CompatibilityRuntime::FrankenEngine,
+            CompatibilityMode::Native,
+            "ok",
+        );
+        let json = serde_json::to_string(&obs).unwrap();
+        let back: CompatibilityObservation = serde_json::from_str(&json).unwrap();
+        assert_eq!(obs, back);
+    }
+
+    #[test]
+    fn compatibility_matrix_error_serde_round_trip() {
+        let err = CompatibilityMatrixError {
+            code: CompatibilityMatrixErrorCode::CaseNotFound,
+            message: "case not found".to_string(),
+            event: None,
+        };
+        let json = serde_json::to_string(&err).unwrap();
+        let back: CompatibilityMatrixError = serde_json::from_str(&json).unwrap();
+        assert_eq!(err, back);
+    }
+
+    #[test]
+    fn required_waiver_ids_empty_for_no_divergences() {
+        let matrix = ModuleCompatibilityMatrix::from_entries(
+            "v1".to_string(),
+            vec![valid_entry("case-no-div")],
+        )
+        .unwrap();
+        let waivers = matrix.required_waiver_ids();
+        assert!(waivers.is_empty());
+    }
+
+    #[test]
+    fn required_waiver_ids_deduplicates() {
+        let mut entry_a = valid_entry("case-a");
+        entry_a.franken_native_behavior = "divergent".to_string();
+        entry_a.divergence = Some(DivergencePolicy {
+            diverges_from: vec![ReferenceRuntime::Node],
+            reason: "r".to_string(),
+            impact: "none".to_string(),
+            waiver_id: "shared-waiver".to_string(),
+            migration_guidance: "m".to_string(),
+        });
+        entry_a.explicit_shims = vec![valid_shim(CompatibilityMode::Native)];
+
+        let mut entry_b = valid_entry("case-b");
+        entry_b.franken_native_behavior = "also-divergent".to_string();
+        entry_b.divergence = Some(DivergencePolicy {
+            diverges_from: vec![ReferenceRuntime::Node],
+            reason: "r2".to_string(),
+            impact: "none".to_string(),
+            waiver_id: "shared-waiver".to_string(),
+            migration_guidance: "m2".to_string(),
+        });
+        entry_b.explicit_shims = vec![valid_shim(CompatibilityMode::Native)];
+
+        let matrix =
+            ModuleCompatibilityMatrix::from_entries("v1".to_string(), vec![entry_a, entry_b])
+                .unwrap();
+        let waivers = matrix.required_waiver_ids();
+        assert_eq!(waivers.len(), 1);
+        assert!(waivers.contains("shared-waiver"));
+    }
+
+    #[test]
+    fn canonical_hash_stable_across_calls() {
+        let matrix = ModuleCompatibilityMatrix::from_entries(
+            "v1".to_string(),
+            vec![valid_entry("case-hash")],
+        )
+        .unwrap();
+        let h1 = matrix.canonical_hash();
+        let h2 = matrix.canonical_hash();
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn entries_returns_all_added() {
+        let matrix = ModuleCompatibilityMatrix::from_entries(
+            "v1".to_string(),
+            vec![valid_entry("a"), valid_entry("b"), valid_entry("c")],
+        )
+        .unwrap();
+        assert_eq!(matrix.entries().len(), 3);
+        assert!(matrix.entry("a").is_some());
+        assert!(matrix.entry("b").is_some());
+        assert!(matrix.entry("c").is_some());
+        assert!(matrix.entry("nonexistent").is_none());
+    }
+
+    #[test]
+    fn error_code_stable_codes_are_unique() {
+        let codes = [
+            CompatibilityMatrixErrorCode::MatrixParseError,
+            CompatibilityMatrixErrorCode::DuplicateCaseId,
+            CompatibilityMatrixErrorCode::CaseNotFound,
+            CompatibilityMatrixErrorCode::HiddenShim,
+            CompatibilityMatrixErrorCode::MissingWaiver,
+            CompatibilityMatrixErrorCode::MissingMigrationGuidance,
+            CompatibilityMatrixErrorCode::InvalidMatrix,
+            CompatibilityMatrixErrorCode::ObservationMismatch,
+        ];
+        let strs: Vec<&str> = codes.iter().map(|c| c.stable_code()).collect();
+        let mut deduped = strs.clone();
+        deduped.sort();
+        deduped.dedup();
+        assert_eq!(strs.len(), deduped.len());
+    }
+
+    #[test]
+    fn error_display_contains_message() {
+        let err = CompatibilityMatrixError {
+            code: CompatibilityMatrixErrorCode::InvalidMatrix,
+            message: "schema version is empty".to_string(),
+            event: None,
+        };
+        let display = err.to_string();
+        assert!(
+            display.contains("schema version is empty"),
+            "display: {display}"
+        );
+    }
 }

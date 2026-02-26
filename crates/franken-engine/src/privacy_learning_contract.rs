@@ -5342,4 +5342,245 @@ mod tests {
         let restored: SeedEscrowAccessEvent = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(event, restored);
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn compute_merkle_root_single_element_returns_leaf() {
+        let leaf = hash_bytes(b"leaf-0");
+        let root = compute_merkle_root(&[leaf]);
+        // Single element: level.len() == 1 so loop doesn't execute
+        assert_eq!(root, leaf);
+    }
+
+    #[test]
+    fn compute_merkle_root_odd_elements_duplicate_last() {
+        let leaves = [
+            hash_bytes(b"leaf-0"),
+            hash_bytes(b"leaf-1"),
+            hash_bytes(b"leaf-2"),
+        ];
+        let root = compute_merkle_root(&leaves);
+        // Level 1: hash(leaf0,leaf1), hash(leaf2,leaf2)
+        let mut p01 = Vec::new();
+        p01.extend_from_slice(RANDOMNESS_MERKLE_DOMAIN);
+        p01.extend_from_slice(&leaves[0]);
+        p01.extend_from_slice(&leaves[1]);
+        let h01 = hash_bytes(&p01);
+        let mut p22 = Vec::new();
+        p22.extend_from_slice(RANDOMNESS_MERKLE_DOMAIN);
+        p22.extend_from_slice(&leaves[2]);
+        p22.extend_from_slice(&leaves[2]);
+        let h22 = hash_bytes(&p22);
+        // Level 2: hash(h01, h22)
+        let mut final_p = Vec::new();
+        final_p.extend_from_slice(RANDOMNESS_MERKLE_DOMAIN);
+        final_p.extend_from_slice(&h01);
+        final_p.extend_from_slice(&h22);
+        let expected = hash_bytes(&final_p);
+        assert_eq!(root, expected);
+    }
+
+    #[test]
+    fn compute_merkle_root_empty_returns_zeros() {
+        assert_eq!(compute_merkle_root(&[]), [0u8; 32]);
+    }
+
+    #[test]
+    fn xor_escrow_roundtrip_recovers_original() {
+        let seed = b"secret-seed-data-for-testing";
+        let encrypted = xor_escrow(seed);
+        assert_ne!(encrypted.as_slice(), seed.as_slice());
+        let decrypted = xor_escrow(&encrypted);
+        assert_eq!(decrypted.as_slice(), seed.as_slice());
+    }
+
+    #[test]
+    fn hash_optional_none_is_null() {
+        assert_eq!(hash_optional(None), CanonicalValue::Null);
+    }
+
+    #[test]
+    fn hash_optional_some_is_bytes() {
+        let h = [0xAB; 32];
+        let val = hash_optional(Some(h));
+        assert_eq!(val, CanonicalValue::Bytes(h.to_vec()));
+    }
+
+    #[test]
+    fn rollback_readiness_is_verified_ready_both_true() {
+        let r = ShadowRollbackReadinessArtifacts {
+            rollback_command_tested: true,
+            previous_policy_snapshot_id: "snap-1".to_string(),
+            transition_receipt_signed: true,
+            rollback_playbook_ref: "playbook-ref".to_string(),
+        };
+        assert!(r.is_verified_ready());
+    }
+
+    #[test]
+    fn rollback_readiness_is_verified_ready_command_not_tested() {
+        let r = ShadowRollbackReadinessArtifacts {
+            rollback_command_tested: false,
+            previous_policy_snapshot_id: "snap-1".to_string(),
+            transition_receipt_signed: true,
+            rollback_playbook_ref: "playbook-ref".to_string(),
+        };
+        assert!(!r.is_verified_ready());
+    }
+
+    #[test]
+    fn rollback_readiness_is_verified_ready_receipt_not_signed() {
+        let r = ShadowRollbackReadinessArtifacts {
+            rollback_command_tested: true,
+            previous_policy_snapshot_id: "snap-1".to_string(),
+            transition_receipt_signed: false,
+            rollback_playbook_ref: "playbook-ref".to_string(),
+        };
+        assert!(!r.is_verified_ready());
+    }
+
+    #[test]
+    fn safety_metric_higher_is_better_only_drift_detection() {
+        assert!(!SafetyMetric::FalsePositiveRate.higher_is_better());
+        assert!(!SafetyMetric::FalseNegativeRate.higher_is_better());
+        assert!(!SafetyMetric::CalibrationError.higher_is_better());
+        assert!(SafetyMetric::DriftDetectionAccuracy.higher_is_better());
+        assert!(!SafetyMetric::ContainmentTime.higher_is_better());
+    }
+
+    #[test]
+    fn safety_metric_snapshot_missing_key_returns_zero() {
+        let snap = SafetyMetricSnapshot {
+            values_millionths: BTreeMap::new(),
+        };
+        assert_eq!(snap.metric_value(SafetyMetric::CalibrationError), 0);
+    }
+
+    #[test]
+    fn burn_in_profile_for_returns_override_when_present() {
+        let custom = ShadowBurnInThresholdProfile {
+            min_shadow_success_rate_millionths: 999_000,
+            max_false_deny_rate_millionths: 500,
+            min_burn_in_duration_ns: 100_000,
+            require_verified_rollback_artifacts: true,
+        };
+        let mut profiles = BTreeMap::new();
+        profiles.insert(ShadowExtensionClass::Critical, custom.clone());
+        let config = ShadowEvaluationGateConfig {
+            regression_tolerance_millionths: 5_000,
+            min_required_improvement_millionths: 2_500,
+            default_burn_in_profile: ShadowBurnInThresholdProfile::default(),
+            burn_in_profiles_by_extension_class: profiles,
+        };
+        // Critical class should use override
+        let profile = config.burn_in_profile_for(ShadowExtensionClass::Critical);
+        assert_eq!(profile.min_shadow_success_rate_millionths, 999_000);
+        // Standard class should fall back to default
+        let default_profile = config.burn_in_profile_for(ShadowExtensionClass::Standard);
+        assert_eq!(
+            default_profile.min_shadow_success_rate_millionths,
+            config
+                .default_burn_in_profile
+                .min_shadow_success_rate_millionths
+        );
+    }
+
+    #[test]
+    fn dp_budget_max_epochs_advanced_composition() {
+        let budget = DpBudgetSemantics {
+            epsilon_per_epoch_millionths: 100_000,
+            delta_per_epoch_millionths: 10_000,
+            composition_method: CompositionMethod::Advanced,
+            lifetime_epsilon_budget_millionths: 1_000_000,
+            lifetime_delta_budget_millionths: 1_000_000,
+            fail_closed_on_exhaustion: true,
+        };
+        // Advanced: (lifetime/epoch)^2 = (10)^2 = 100
+        // delta: 1_000_000/10_000 = 100
+        // min(100, 100) = 100
+        assert_eq!(budget.max_epochs(), 100);
+    }
+
+    #[test]
+    fn seed_escrow_record_serde_roundtrip() {
+        let record = SeedEscrowRecord {
+            phase_id: "noise-phase-1".to_string(),
+            epoch_id: SecurityEpoch::from_raw(5),
+            seed_hash: hash_bytes(b"test-seed"),
+            encrypted_seed: xor_escrow(b"test-seed"),
+            authorized_auditors: BTreeSet::from([
+                "auditor-alice".to_string(),
+                "auditor-bob".to_string(),
+            ]),
+            access_log: vec![SeedEscrowAccessEvent {
+                principal: "auditor-alice".to_string(),
+                reason: "routine audit".to_string(),
+                approved: true,
+            }],
+        };
+        let json = serde_json::to_string(&record).expect("serialize");
+        let restored: SeedEscrowRecord = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(record, restored);
+    }
+
+    #[test]
+    fn randomness_commitment_serde_roundtrip() {
+        let signing_key = governance_signing_key();
+        let mut transcript = RandomnessTranscript::new();
+        transcript
+            .commit_seed(
+                &signing_key,
+                "phase-serde",
+                b"seed-for-serde-test",
+                PrngAlgorithm::ChaCha20LikeCounter,
+                SecurityEpoch::from_raw(1),
+                EngineObjectId([0xDD; 32]),
+            )
+            .expect("commit seed");
+        let commitment = &transcript.commitments[0];
+        let json = serde_json::to_string(commitment).expect("serialize");
+        let restored: RandomnessCommitment = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(*commitment, restored);
+    }
+
+    #[test]
+    fn contract_registry_serde_roundtrip() {
+        let registry = ContractRegistry::new();
+        let json = serde_json::to_string(&registry).expect("serialize");
+        let restored: ContractRegistry = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(registry.total_count(), restored.total_count());
+        assert_eq!(registry.zone_count(), restored.zone_count());
+    }
+
+    #[test]
+    fn shadow_gate_scorecard_entries_populated_after_evaluation() {
+        let mut gate = shadow_gate();
+        let contract = create_test_contract();
+        let candidate = candidate_with_metrics(improved_metrics(), 90_000, 900);
+        let artifact = gate
+            .evaluate_candidate(&contract, candidate, &governance_signing_key())
+            .expect("evaluate");
+        assert_eq!(artifact.verdict, ShadowPromotionVerdict::Pass);
+        let scorecard = gate.scorecard_entries();
+        assert_eq!(scorecard.len(), 1);
+        assert_eq!(scorecard[0].policy_id, "policy-shadow-1");
+        assert_eq!(scorecard[0].verdict, ShadowPromotionVerdict::Pass);
+    }
+
+    #[test]
+    fn shadow_gate_active_artifact_after_promotion() {
+        let mut gate = shadow_gate();
+        let contract = create_test_contract();
+        let candidate = candidate_with_metrics(improved_metrics(), 90_000, 900);
+        let artifact = gate
+            .evaluate_candidate(&contract, candidate, &governance_signing_key())
+            .expect("evaluate");
+        assert_eq!(artifact.verdict, ShadowPromotionVerdict::Pass);
+        let active = gate.active_artifact("policy-shadow-1");
+        assert!(active.is_some());
+        assert_eq!(active.unwrap().verdict, ShadowPromotionVerdict::Pass);
+        // Non-existent policy returns None
+        assert!(gate.active_artifact("nonexistent").is_none());
+    }
 }

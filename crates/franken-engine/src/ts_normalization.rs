@@ -1921,4 +1921,51 @@ const value: number = 1;
         let result = strip_type_annotations("const s = 'key: val';");
         assert!(result.contains("key: val"));
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn ts_normalization_error_display_distinct() {
+        let variants: Vec<TsNormalizationError> = vec![
+            TsNormalizationError::EmptySource,
+            TsNormalizationError::UnsupportedSyntax {
+                feature: "decorators",
+            },
+            TsNormalizationError::UnsupportedCompilerOption {
+                option: "target",
+                value: "es3".into(),
+            },
+        ];
+        let set: std::collections::BTreeSet<String> =
+            variants.iter().map(|e| format!("{e}")).collect();
+        assert_eq!(set.len(), variants.len());
+    }
+
+    #[test]
+    fn ts_compiler_options_default_serde_roundtrip() {
+        let opts = TsCompilerOptions::default();
+        let json = serde_json::to_string(&opts).unwrap();
+        let back: TsCompilerOptions = serde_json::from_str(&json).unwrap();
+        assert_eq!(opts, back);
+    }
+
+    #[test]
+    fn ts_normalization_config_default_serde_roundtrip() {
+        let config = TsNormalizationConfig::default();
+        let json = serde_json::to_string(&config).unwrap();
+        let back: TsNormalizationConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config, back);
+    }
+
+    #[test]
+    fn normalization_decision_serde_roundtrip() {
+        let d = NormalizationDecision {
+            step: "strip_types".into(),
+            changed: true,
+            detail: "removed 5 annotations".into(),
+        };
+        let json = serde_json::to_string(&d).unwrap();
+        let back: NormalizationDecision = serde_json::from_str(&json).unwrap();
+        assert_eq!(d, back);
+    }
 }

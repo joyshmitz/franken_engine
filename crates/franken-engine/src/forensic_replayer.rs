@@ -2079,4 +2079,291 @@ mod tests {
             "traces with different evidence counts must have different content hashes"
         );
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn trace_content_hash_sensitive_to_trace_id() {
+        let mut t1 = build_trace(vec![benign_evidence()]);
+        let mut t2 = build_trace(vec![benign_evidence()]);
+        t1.metadata.trace_id = "alpha".to_string();
+        t2.metadata.trace_id = "beta".to_string();
+        assert_ne!(t1.content_hash(), t2.content_hash());
+    }
+
+    #[test]
+    fn trace_content_hash_sensitive_to_extension_id() {
+        let mut t1 = build_trace(vec![benign_evidence()]);
+        let mut t2 = build_trace(vec![benign_evidence()]);
+        t1.metadata.extension_id = "ext-aaa".to_string();
+        t2.metadata.extension_id = "ext-bbb".to_string();
+        assert_ne!(t1.content_hash(), t2.content_hash());
+    }
+
+    #[test]
+    fn trace_content_hash_sensitive_to_start_timestamp() {
+        let mut t1 = build_trace(vec![benign_evidence()]);
+        let mut t2 = build_trace(vec![benign_evidence()]);
+        t1.metadata.start_timestamp_ns = 100;
+        t2.metadata.start_timestamp_ns = 200;
+        assert_ne!(t1.content_hash(), t2.content_hash());
+    }
+
+    #[test]
+    fn trace_content_hash_sensitive_to_end_timestamp() {
+        let mut t1 = build_trace(vec![benign_evidence()]);
+        let mut t2 = build_trace(vec![benign_evidence()]);
+        t1.metadata.end_timestamp_ns = 1000;
+        t2.metadata.end_timestamp_ns = 2000;
+        assert_ne!(t1.content_hash(), t2.content_hash());
+    }
+
+    #[test]
+    fn replay_error_display_validation_failed_includes_count() {
+        let err = ReplayError::ValidationFailed {
+            errors: vec![
+                TraceValidationError::EmptyTrace,
+                TraceValidationError::InvalidPosterior { step_index: 0 },
+            ],
+        };
+        let s = err.to_string();
+        assert!(s.contains("2"), "should include error count: {s}");
+        assert!(s.contains("validation"), "should mention validation: {s}");
+    }
+
+    #[test]
+    fn decision_change_display_same_action_different_margin_content() {
+        let dc = DecisionChange::SameActionDifferentMargin {
+            original_margin: 100_000,
+            counterfactual_margin: 200_000,
+        };
+        let s = dc.to_string();
+        assert!(s.contains("100000"), "should include original margin: {s}");
+        assert!(
+            s.contains("200000"),
+            "should include counterfactual margin: {s}"
+        );
+        assert!(s.contains("same action"), "should say same action: {s}");
+    }
+
+    #[test]
+    fn counterfactual_spec_with_loss_matrix_builder_sets_fields() {
+        let matrix = LossMatrix::conservative();
+        let spec = CounterfactualSpec::with_loss_matrix(matrix.clone(), "test matrix");
+        assert!(spec.override_loss_matrix.is_some());
+        assert_eq!(spec.override_loss_matrix.unwrap(), matrix);
+        assert!(spec.override_prior.is_none());
+        assert!(spec.override_likelihood_model.is_none());
+        assert!(spec.skip_evidence_indices.is_empty());
+        assert!(spec.inject_evidence.is_empty());
+        assert_eq!(spec.description, "test matrix");
+    }
+
+    #[test]
+    fn counterfactual_spec_with_prior_builder_sets_fields() {
+        let prior = Posterior::uniform();
+        let spec = CounterfactualSpec::with_prior(prior.clone(), "test prior");
+        assert!(spec.override_prior.is_some());
+        assert_eq!(spec.override_prior.unwrap(), prior);
+        assert!(spec.override_loss_matrix.is_none());
+        assert!(spec.override_likelihood_model.is_none());
+        assert_eq!(spec.description, "test prior");
+    }
+
+    #[test]
+    fn replay_config_custom_values_serde_roundtrip() {
+        let config = ReplayConfig {
+            verify_telemetry_integrity: false,
+            verify_receipt_integrity: false,
+            max_steps: 42,
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let decoded: ReplayConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config, decoded);
+        assert!(!decoded.verify_telemetry_integrity);
+        assert!(!decoded.verify_receipt_integrity);
+        assert_eq!(decoded.max_steps, 42);
+    }
+
+    #[test]
+    fn replayer_serde_preserves_replay_count_after_replays() {
+        let trace = build_trace(vec![benign_evidence()]);
+        let mut replayer = ForensicReplayer::new();
+        replayer.replay(&trace, &ReplayConfig::default()).unwrap();
+        replayer.replay(&trace, &ReplayConfig::default()).unwrap();
+        assert_eq!(replayer.replay_count(), 2);
+
+        let json = serde_json::to_string(&replayer).unwrap();
+        let decoded: ForensicReplayer = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.replay_count(), 2);
+    }
+
+    #[test]
+    fn determine_final_state_sandbox_transition() {
+        let make = |idx: u64, action: ContainmentAction| ReplayStep {
+            step_index: idx,
+            evidence: benign_evidence(),
+            update_result: UpdateResult {
+                posterior: Posterior::default_prior(),
+                likelihoods: [1_000_000; 4],
+                cumulative_llr_millionths: 0,
+                update_count: idx + 1,
+            },
+            decision: ActionDecision {
+                action,
+                expected_loss_millionths: 0,
+                runner_up_action: ContainmentAction::Allow,
+                runner_up_loss_millionths: 0,
+                explanation: crate::expected_loss_selector::DecisionExplanation {
+                    posterior_snapshot: Posterior::default_prior(),
+                    loss_matrix_id: "t".to_string(),
+                    all_expected_losses: BTreeMap::new(),
+                    margin_millionths: 0,
+                },
+                epoch: SecurityEpoch::GENESIS,
+            },
+        };
+        let steps = vec![
+            make(0, ContainmentAction::Challenge),
+            make(1, ContainmentAction::Sandbox),
+        ];
+        assert_eq!(determine_final_state(&steps), ContainmentState::Sandboxed);
+    }
+
+    #[test]
+    fn determine_final_state_quarantine_from_running() {
+        let make = |idx: u64, action: ContainmentAction| ReplayStep {
+            step_index: idx,
+            evidence: benign_evidence(),
+            update_result: UpdateResult {
+                posterior: Posterior::default_prior(),
+                likelihoods: [1_000_000; 4],
+                cumulative_llr_millionths: 0,
+                update_count: idx + 1,
+            },
+            decision: ActionDecision {
+                action,
+                expected_loss_millionths: 0,
+                runner_up_action: ContainmentAction::Allow,
+                runner_up_loss_millionths: 0,
+                explanation: crate::expected_loss_selector::DecisionExplanation {
+                    posterior_snapshot: Posterior::default_prior(),
+                    loss_matrix_id: "t".to_string(),
+                    all_expected_losses: BTreeMap::new(),
+                    margin_millionths: 0,
+                },
+                epoch: SecurityEpoch::GENESIS,
+            },
+        };
+        let steps = vec![make(0, ContainmentAction::Quarantine)];
+        assert_eq!(determine_final_state(&steps), ContainmentState::Quarantined);
+    }
+
+    #[test]
+    fn determine_final_state_suspend_then_terminate() {
+        let make = |idx: u64, action: ContainmentAction| ReplayStep {
+            step_index: idx,
+            evidence: benign_evidence(),
+            update_result: UpdateResult {
+                posterior: Posterior::default_prior(),
+                likelihoods: [1_000_000; 4],
+                cumulative_llr_millionths: 0,
+                update_count: idx + 1,
+            },
+            decision: ActionDecision {
+                action,
+                expected_loss_millionths: 0,
+                runner_up_action: ContainmentAction::Allow,
+                runner_up_loss_millionths: 0,
+                explanation: crate::expected_loss_selector::DecisionExplanation {
+                    posterior_snapshot: Posterior::default_prior(),
+                    loss_matrix_id: "t".to_string(),
+                    all_expected_losses: BTreeMap::new(),
+                    margin_millionths: 0,
+                },
+                epoch: SecurityEpoch::GENESIS,
+            },
+        };
+        let steps = vec![
+            make(0, ContainmentAction::Suspend),
+            make(1, ContainmentAction::Terminate),
+        ];
+        let state = determine_final_state(&steps);
+        assert_eq!(state, ContainmentState::Terminated);
+    }
+
+    #[test]
+    fn build_counterfactual_evidence_skip_and_inject_combined() {
+        let replayer = ForensicReplayer::new();
+        let evidence = vec![
+            benign_evidence(),
+            suspicious_evidence(),
+            malicious_evidence(),
+        ];
+        // Skip index 1 (suspicious), inject malicious before index 0.
+        let injected = malicious_evidence();
+        let result =
+            replayer.build_counterfactual_evidence(&evidence, &[1], &[(0, injected.clone())]);
+        // Result: injected(before 0), benign(0), malicious(2) — skipping suspicious(1)
+        assert_eq!(result.len(), 3);
+        assert_eq!(
+            result[0].hostcall_rate_millionths,
+            injected.hostcall_rate_millionths
+        );
+        assert_eq!(
+            result[1].hostcall_rate_millionths,
+            benign_evidence().hostcall_rate_millionths
+        );
+        assert_eq!(
+            result[2].hostcall_rate_millionths,
+            malicious_evidence().hostcall_rate_millionths
+        );
+    }
+
+    #[test]
+    fn incident_metadata_with_annotations_serde_roundtrip() {
+        let mut annotations = BTreeMap::new();
+        annotations.insert("severity".to_string(), "high".to_string());
+        annotations.insert("origin".to_string(), "automated".to_string());
+        let meta = IncidentMetadata {
+            trace_id: "trace-ann".to_string(),
+            extension_id: "ext-ann".to_string(),
+            start_epoch: SecurityEpoch::GENESIS,
+            start_timestamp_ns: 100,
+            end_timestamp_ns: 200,
+            initial_prior: Posterior::default_prior(),
+            loss_matrix_id: "balanced".to_string(),
+            annotations,
+        };
+        let json = serde_json::to_string(&meta).unwrap();
+        let decoded: IncidentMetadata = serde_json::from_str(&json).unwrap();
+        assert_eq!(meta, decoded);
+        assert_eq!(decoded.annotations.len(), 2);
+        assert_eq!(decoded.annotations["severity"], "high");
+    }
+
+    #[test]
+    fn incident_trace_full_serde_roundtrip() {
+        let trace = build_trace(vec![benign_evidence(), suspicious_evidence()]);
+        let json = serde_json::to_string(&trace).unwrap();
+        let decoded: IncidentTrace = serde_json::from_str(&json).unwrap();
+        assert_eq!(trace, decoded);
+        assert_eq!(decoded.evidence_log.len(), 2);
+        assert_eq!(decoded.decision_log.len(), 2);
+    }
+
+    #[test]
+    fn replay_result_content_hash_sensitive_to_trace_id() {
+        let mut trace1 = build_trace(vec![benign_evidence()]);
+        let mut trace2 = build_trace(vec![benign_evidence()]);
+        trace1.metadata.trace_id = "trace-aaa".to_string();
+        trace2.metadata.trace_id = "trace-bbb".to_string();
+        let mut replayer = ForensicReplayer::new();
+        let r1 = replayer.replay(&trace1, &ReplayConfig::default()).unwrap();
+        let r2 = replayer.replay(&trace2, &ReplayConfig::default()).unwrap();
+        assert_ne!(
+            r1.content_hash, r2.content_hash,
+            "different trace_ids should produce different replay result hashes"
+        );
+    }
 }

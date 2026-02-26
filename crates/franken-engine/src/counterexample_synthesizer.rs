@@ -2391,4 +2391,215 @@ mod tests {
         assert!(MutationKind::AddGrant < MutationKind::RemovePropertyClaim);
         assert!(MutationKind::RemoveConstraint < MutationKind::DuplicateNode);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: additional serde roundtrips
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn synthesis_error_serde_all_variants() {
+        let variants: Vec<SynthesisError> = vec![
+            SynthesisError::NoViolations,
+            SynthesisError::Timeout {
+                elapsed_ns: 5000,
+                budget_ns: 10000,
+                partial: None,
+            },
+            SynthesisError::InvalidPolicy {
+                reason: "bad".to_string(),
+            },
+            SynthesisError::IdDerivation("deriv".to_string()),
+            SynthesisError::MinimizationExhausted { rounds: 50 },
+            SynthesisError::CompilerFailure("compile".to_string()),
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).expect("serialize");
+            let restored: SynthesisError = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*v, restored);
+        }
+    }
+
+    #[test]
+    fn synthesis_error_implements_std_error() {
+        let errors: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(SynthesisError::NoViolations),
+            Box::new(SynthesisError::Timeout {
+                elapsed_ns: 1,
+                budget_ns: 2,
+                partial: None,
+            }),
+            Box::new(SynthesisError::InvalidPolicy {
+                reason: "x".to_string(),
+            }),
+            Box::new(SynthesisError::IdDerivation("y".to_string())),
+            Box::new(SynthesisError::MinimizationExhausted { rounds: 5 }),
+            Box::new(SynthesisError::CompilerFailure("z".to_string())),
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for err in &errors {
+            displays.insert(err.to_string());
+        }
+        assert_eq!(displays.len(), 6, "all 6 variants have distinct messages");
+    }
+
+    #[test]
+    fn synthesis_outcome_serde_roundtrip() {
+        for v in [
+            SynthesisOutcome::Complete,
+            SynthesisOutcome::Partial,
+            SynthesisOutcome::Incomplete,
+        ] {
+            let json = serde_json::to_string(&v).expect("serialize");
+            let restored: SynthesisOutcome = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(v, restored);
+        }
+    }
+
+    #[test]
+    fn synthesis_strategy_serde_roundtrip() {
+        for v in [
+            SynthesisStrategy::CompilerExtraction,
+            SynthesisStrategy::Enumeration,
+            SynthesisStrategy::Mutation,
+            SynthesisStrategy::TimeBounded,
+        ] {
+            let json = serde_json::to_string(&v).expect("serialize");
+            let restored: SynthesisStrategy = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(v, restored);
+        }
+    }
+
+    #[test]
+    fn interference_kind_serde_roundtrip() {
+        for v in [
+            InterferenceKind::InvariantInvalidation,
+            InterferenceKind::Oscillation,
+            InterferenceKind::TimescaleConflict,
+        ] {
+            let json = serde_json::to_string(&v).expect("serialize");
+            let restored: InterferenceKind = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(v, restored);
+        }
+    }
+
+    #[test]
+    fn mutation_kind_serde_all_variants() {
+        for v in [
+            MutationKind::ChangeMergeOp,
+            MutationKind::AddGrant,
+            MutationKind::RemovePropertyClaim,
+            MutationKind::ChangePriority,
+            MutationKind::RemoveConstraint,
+            MutationKind::DuplicateNode,
+        ] {
+            let json = serde_json::to_string(&v).expect("serialize");
+            let restored: MutationKind = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(v, restored);
+        }
+    }
+
+    #[test]
+    fn mutation_kind_display_remaining() {
+        assert_eq!(
+            MutationKind::RemovePropertyClaim.to_string(),
+            "remove-property-claim"
+        );
+        assert_eq!(MutationKind::ChangePriority.to_string(), "change-priority");
+        assert_eq!(
+            MutationKind::RemoveConstraint.to_string(),
+            "remove-constraint"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: ControllerInterferenceEvent serde
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn controller_interference_event_serde_roundtrip() {
+        let event = ControllerInterferenceEvent {
+            trace_id: "t1".to_string(),
+            decision_id: "d1".to_string(),
+            policy_id: "p1".to_string(),
+            component: "counterexample_synthesizer".to_string(),
+            event: "controller_interference_rejected".to_string(),
+            outcome: "reject".to_string(),
+            error_code: Some("FE-CX-INTERFERENCE-TIMESCALE".to_string()),
+            kind: InterferenceKind::TimescaleConflict,
+            controller_ids: vec!["a".to_string(), "b".to_string()],
+            shared_metrics: vec!["m1".to_string()],
+            timescale_separation_millionths: 50_000,
+        };
+        let json = serde_json::to_string(&event).expect("serialize");
+        let restored: ControllerInterferenceEvent =
+            serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(event, restored);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: synthesizer accessor coverage
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn synthesizer_config_accessor() {
+        let cfg = test_config();
+        let synth = CounterexampleSynthesizer::new(cfg.clone());
+        assert_eq!(*synth.config(), cfg);
+    }
+
+    #[test]
+    fn synthesizer_diagnostics_empty_initially() {
+        let synth = CounterexampleSynthesizer::new(test_config());
+        assert!(synth.diagnostics().is_empty());
+        assert_eq!(synth.synthesis_count(), 0);
+    }
+
+    #[test]
+    fn synthesizer_corpus_empty_initially() {
+        let synth = CounterexampleSynthesizer::new(test_config());
+        assert!(synth.corpus().is_empty());
+        assert_eq!(synth.corpus().len(), 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: apply_mutation additional coverage
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn apply_mutation_add_grant_adds_to_node() {
+        let base = make_valid_policy();
+        let mutation = PolicyMutation {
+            kind: MutationKind::AddGrant,
+            target_node: "node-1".to_string(),
+            new_value: "write-access".to_string(),
+        };
+        let mutated = apply_mutation(&base, &mutation);
+        assert_eq!(mutated.nodes[0].grants.len(), 2);
+        assert_eq!(mutated.nodes[0].grants[1].subject, "mutated-subject");
+    }
+
+    #[test]
+    fn apply_mutation_change_priority() {
+        let base = make_valid_policy();
+        let mutation = PolicyMutation {
+            kind: MutationKind::ChangePriority,
+            target_node: "node-1".to_string(),
+            new_value: "99".to_string(),
+        };
+        let mutated = apply_mutation(&base, &mutation);
+        assert_eq!(mutated.nodes[0].priority, 99);
+    }
+
+    #[test]
+    fn apply_mutation_nonexistent_target_no_change() {
+        let base = make_valid_policy();
+        let mutation = PolicyMutation {
+            kind: MutationKind::ChangePriority,
+            target_node: "nonexistent".to_string(),
+            new_value: "99".to_string(),
+        };
+        let mutated = apply_mutation(&base, &mutation);
+        // Original priority preserved.
+        assert_eq!(mutated.nodes[0].priority, base.nodes[0].priority);
+    }
 }

@@ -1184,4 +1184,58 @@ mod tests {
         let back: ConstrainedAmbientSummary = serde_json::from_str(&json).unwrap();
         assert_eq!(s, back);
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn constrained_ambient_error_is_std_error() {
+        let e = ConstrainedAmbientError::InvalidRequest {
+            field: "trace_id".into(),
+            detail: "empty".into(),
+        };
+        let _: &dyn std::error::Error = &e;
+    }
+
+    #[test]
+    fn constrained_ambient_error_stable_code_distinct() {
+        let codes = [
+            ConstrainedAmbientError::InvalidRequest {
+                field: "f".into(),
+                detail: "d".into(),
+            }
+            .stable_code(),
+            ConstrainedAmbientError::InvalidMetric {
+                field: "f".into(),
+                subject: "s".into(),
+                detail: "d".into(),
+            }
+            .stable_code(),
+        ];
+        let set: std::collections::BTreeSet<&str> = codes.iter().copied().collect();
+        assert_eq!(set.len(), codes.len());
+    }
+
+    #[test]
+    fn constrained_ambient_error_display_contains_fields() {
+        let e = ConstrainedAmbientError::InvalidRequest {
+            field: "trace_id".into(),
+            detail: "must be non-empty".into(),
+        };
+        let msg = format!("{e}");
+        assert!(msg.contains("trace_id"));
+        assert!(msg.contains("must be non-empty"));
+    }
+
+    #[test]
+    fn constrained_ambient_error_display_metric_contains_subject() {
+        let e = ConstrainedAmbientError::InvalidMetric {
+            field: "throughput".into(),
+            subject: "workload-1".into(),
+            detail: "must be positive".into(),
+        };
+        let msg = format!("{e}");
+        assert!(msg.contains("throughput"));
+        assert!(msg.contains("workload-1"));
+        assert!(msg.contains("must be positive"));
+    }
 }

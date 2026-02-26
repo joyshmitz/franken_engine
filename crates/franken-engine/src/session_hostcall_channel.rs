@@ -3085,4 +3085,315 @@ mod tests {
         let mut channel = SessionHostcallChannel::new();
         assert!(channel.drain_events().is_empty());
     }
+
+    // -- Enrichment: SessionState Display all variants --
+
+    #[test]
+    fn session_state_display_covers_all() {
+        let cases = [
+            (SessionState::Init, "init"),
+            (SessionState::Established, "established"),
+            (SessionState::Expired, "expired"),
+            (SessionState::Closed, "closed"),
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for (state, expected) in &cases {
+            let s = state.to_string();
+            assert_eq!(&s, *expected);
+            seen.insert(s);
+        }
+        assert_eq!(seen.len(), 4);
+    }
+
+    // -- Enrichment: SequencePolicy serde all variants --
+
+    #[test]
+    fn sequence_policy_serde_all_variants() {
+        for policy in [SequencePolicy::Strict, SequencePolicy::Monotonic] {
+            let json = serde_json::to_string(&policy).unwrap();
+            let restored: SequencePolicy = serde_json::from_str(&json).unwrap();
+            assert_eq!(policy, restored);
+        }
+    }
+
+    // -- Enrichment: SessionState serde all variants --
+
+    #[test]
+    fn session_state_serde_all_variants() {
+        for state in [
+            SessionState::Init,
+            SessionState::Established,
+            SessionState::Expired,
+            SessionState::Closed,
+        ] {
+            let json = serde_json::to_string(&state).unwrap();
+            let restored: SessionState = serde_json::from_str(&json).unwrap();
+            assert_eq!(state, restored);
+        }
+    }
+
+    // -- Enrichment: AeadAlgorithm nonce_len and max_messages_per_key --
+
+    #[test]
+    fn aead_algorithm_nonce_len_all_variants() {
+        assert_eq!(AeadAlgorithm::ChaCha20Poly1305.nonce_len(), 12);
+        assert_eq!(AeadAlgorithm::Aes256Gcm.nonce_len(), 12);
+        assert_eq!(AeadAlgorithm::XChaCha20Poly1305.nonce_len(), 24);
+    }
+
+    #[test]
+    fn aead_algorithm_max_messages_per_key_values() {
+        assert_eq!(AeadAlgorithm::Aes256Gcm.max_messages_per_key(), 1u64 << 32);
+        assert_eq!(
+            AeadAlgorithm::ChaCha20Poly1305.max_messages_per_key(),
+            u64::MAX
+        );
+        assert_eq!(
+            AeadAlgorithm::XChaCha20Poly1305.max_messages_per_key(),
+            u64::MAX
+        );
+    }
+
+    // -- Enrichment: AeadAlgorithm serde all variants --
+
+    #[test]
+    fn aead_algorithm_serde_all_variants() {
+        for alg in [
+            AeadAlgorithm::ChaCha20Poly1305,
+            AeadAlgorithm::Aes256Gcm,
+            AeadAlgorithm::XChaCha20Poly1305,
+        ] {
+            let json = serde_json::to_string(&alg).unwrap();
+            let restored: AeadAlgorithm = serde_json::from_str(&json).unwrap();
+            assert_eq!(alg, restored);
+        }
+    }
+
+    // -- Enrichment: SharedPayloadDescriptor serde --
+
+    #[test]
+    fn shared_payload_descriptor_serde_roundtrip() {
+        let desc = SharedPayloadDescriptor {
+            region_id: 42,
+            payload_len: 1024,
+            payload_hash: ContentHash::compute(b"test-payload"),
+        };
+        let json = serde_json::to_string(&desc).unwrap();
+        let restored: SharedPayloadDescriptor = serde_json::from_str(&json).unwrap();
+        assert_eq!(desc, restored);
+    }
+
+    // -- Enrichment: BackpressureSignal serde --
+
+    #[test]
+    fn backpressure_signal_fields_and_serde() {
+        let signal = BackpressureSignal {
+            pending_messages: 200,
+            limit: 256,
+        };
+        let json = serde_json::to_string(&signal).unwrap();
+        let restored: BackpressureSignal = serde_json::from_str(&json).unwrap();
+        assert_eq!(signal, restored);
+        assert_eq!(restored.pending_messages, 200);
+        assert_eq!(restored.limit, 256);
+    }
+
+    // -- Enrichment: HostcallEnvelope serde --
+
+    #[test]
+    fn hostcall_envelope_serde_roundtrip() {
+        let envelope = HostcallEnvelope {
+            session_id: "sess-1".into(),
+            extension_id: "ext-1".into(),
+            host_id: "host-1".into(),
+            sequence: 7,
+            payload: ChannelPayload::Inline(vec![0xDE, 0xAD]),
+            mac: AuthenticityHash::compute_keyed(b"key", b"data"),
+            trace_id: "t-1".into(),
+            sent_at_tick: 100,
+        };
+        let json = serde_json::to_string(&envelope).unwrap();
+        let restored: HostcallEnvelope = serde_json::from_str(&json).unwrap();
+        assert_eq!(envelope, restored);
+    }
+
+    // -- Enrichment: HandshakeRequest serde --
+
+    #[test]
+    fn handshake_request_serde_roundtrip() {
+        let sk = SigningKey::from_bytes([0xAA; 32]);
+        let req = HandshakeRequest {
+            session_id: "sess-1".into(),
+            extension_id: "ext-1".into(),
+            host_id: "host-1".into(),
+            extension_nonce: 42,
+            timestamp_ticks: 1000,
+            extension_key: sk.verification_key(),
+            signature: sign_preimage(&sk, b"test-preimage").unwrap(),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let restored: HandshakeRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(req, restored);
+    }
+
+    // -- Enrichment: HandshakeResponse serde --
+
+    #[test]
+    fn handshake_response_serde_roundtrip() {
+        let sk = SigningKey::from_bytes([0xAA; 32]);
+        let resp = HandshakeResponse {
+            session_id: "sess-1".into(),
+            extension_nonce: 42,
+            host_nonce: 99,
+            host_key: sk.verification_key(),
+            signature: sign_preimage(&sk, b"test-preimage").unwrap(),
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let restored: HandshakeResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(resp, restored);
+    }
+
+    // -- Enrichment: SessionHandshake serde --
+
+    #[test]
+    fn session_handshake_serde_all_fields() {
+        let hs = SessionHandshake {
+            session_id: "sess-1".into(),
+            extension_id: "ext-1".into(),
+            host_id: "host-1".into(),
+            extension_nonce: 42,
+            host_nonce: 99,
+            timestamp_ticks: 500,
+            trace_id: "t-1".into(),
+        };
+        let json = serde_json::to_string(&hs).unwrap();
+        let restored: SessionHandshake = serde_json::from_str(&json).unwrap();
+        assert_eq!(hs, restored);
+        assert_eq!(restored.extension_nonce, 42);
+        assert_eq!(restored.host_nonce, 99);
+    }
+
+    // -- Enrichment: SessionChannelEvent serde --
+
+    #[test]
+    fn session_channel_event_serde_roundtrip() {
+        let event = SessionChannelEvent {
+            trace_id: "t-1".into(),
+            decision_id: Some("d-1".into()),
+            policy_id: Some("p-1".into()),
+            component: "session_hostcall_channel".into(),
+            event: "message_sent".into(),
+            outcome: "ok".into(),
+            error_code: None,
+            session_id: "sess-1".into(),
+            extension_id: "ext-1".into(),
+            host_id: "host-1".into(),
+            sequence: Some(1),
+            expected_min_seq: None,
+            received_seq: Some(1),
+            drop_reason: None,
+            source_principal: Some("ext-1".into()),
+            timestamp_ticks: 100,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let restored: SessionChannelEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, restored);
+    }
+
+    // -- Enrichment: ReplayDropReason as_str all variants --
+
+    #[test]
+    fn replay_drop_reason_as_str_all_variants() {
+        assert_eq!(ReplayDropReason::Replay.as_str(), "replay");
+        assert_eq!(ReplayDropReason::Duplicate.as_str(), "duplicate");
+        assert_eq!(ReplayDropReason::OutOfOrder.as_str(), "out_of_order");
+    }
+
+    // -- Enrichment: build_aead_associated_data deterministic --
+
+    #[test]
+    fn build_aead_associated_data_deterministic() {
+        let ad1 = build_aead_associated_data("sess-1", "hostcall", 0);
+        let ad2 = build_aead_associated_data("sess-1", "hostcall", 0);
+        assert_eq!(ad1, ad2);
+        assert!(!ad1.is_empty());
+
+        // Different session_id produces different AD
+        let ad3 = build_aead_associated_data("sess-2", "hostcall", 0);
+        assert_ne!(ad1, ad3);
+
+        // Different flags produce different AD
+        let ad4 = build_aead_associated_data("sess-1", "hostcall", 1);
+        assert_ne!(ad1, ad4);
+    }
+
+    // -- Enrichment: SessionConfig default serde roundtrip --
+
+    #[test]
+    fn session_config_default_serde_preserves_defaults() {
+        let config = SessionConfig::default();
+        let json = serde_json::to_string(&config).unwrap();
+        let restored: SessionConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config, restored);
+        assert_eq!(restored.max_lifetime_ticks, 10_000);
+        assert_eq!(restored.max_messages, 10_000);
+        assert_eq!(restored.sequence_policy, SequencePolicy::Monotonic);
+    }
+
+    // -- Enrichment: DeterministicNonce as_bytes --
+
+    #[test]
+    fn deterministic_nonce_as_bytes_matches_algorithm_len() {
+        let key = [0u8; 32];
+        let nonce = derive_deterministic_aead_nonce(
+            &key,
+            DataPlaneDirection::HostToExtension,
+            0,
+            AeadAlgorithm::ChaCha20Poly1305,
+        )
+        .unwrap();
+        assert_eq!(nonce.as_bytes().len(), 12);
+
+        let nonce_x = derive_deterministic_aead_nonce(
+            &key,
+            DataPlaneDirection::ExtensionToHost,
+            0,
+            AeadAlgorithm::XChaCha20Poly1305,
+        )
+        .unwrap();
+        assert_eq!(nonce_x.as_bytes().len(), 24);
+    }
+
+    // -- Enrichment: SessionChannelError From<SignatureError> --
+
+    #[test]
+    fn session_channel_error_from_signature_error() {
+        let sk = SigningKey::from_bytes([0xBB; 32]);
+        let sig_err = SignatureError::VerificationFailed {
+            signer: sk.verification_key(),
+            reason: "test mismatch".into(),
+        };
+        let ch_err: SessionChannelError = sig_err.into();
+        match &ch_err {
+            SessionChannelError::SignatureFailure(_) => {}
+            other => panic!("expected SignatureFailure, got: {other}"),
+        }
+        assert!(!ch_err.to_string().is_empty());
+    }
+
+    // -- Enrichment: SessionHandle clone and eq --
+
+    #[test]
+    fn session_handle_clone_and_eq() {
+        let h1 = SessionHandle {
+            session_id: "sess-abc".into(),
+        };
+        let h2 = h1.clone();
+        assert_eq!(h1, h2);
+
+        let h3 = SessionHandle {
+            session_id: "sess-xyz".into(),
+        };
+        assert_ne!(h1, h3);
+    }
 }

@@ -2109,4 +2109,100 @@ mod tests {
         assert!(queue.is_empty());
         assert_eq!(queue.total_enqueued(), 0);
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn reaction_kind_serde_roundtrip() {
+        let variants = [ReactionKind::Fulfill, ReactionKind::Reject];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: ReactionKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, v);
+        }
+    }
+
+    #[test]
+    fn macrotask_source_serde_all_variants() {
+        let variants = [
+            MacrotaskSource::MessageChannel,
+            MacrotaskSource::Timer,
+            MacrotaskSource::IoCompletion,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: MacrotaskSource = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, v);
+        }
+    }
+
+    #[test]
+    fn virtual_clock_serde_new_roundtrip() {
+        let clock = VirtualClock::new();
+        let json = serde_json::to_string(&clock).unwrap();
+        let back: VirtualClock = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.now_ms(), 0);
+    }
+
+    #[test]
+    fn promise_state_display_all_distinct() {
+        let states = [
+            PromiseState::Pending,
+            PromiseState::Fulfilled(JsValue::Undefined),
+            PromiseState::Rejected(JsValue::Undefined),
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for s in &states {
+            assert!(seen.insert(s.to_string()), "duplicate display: {s}");
+        }
+        assert_eq!(seen.len(), 3);
+    }
+
+    #[test]
+    fn promise_state_predicates() {
+        let pending = PromiseState::Pending;
+        assert!(!pending.is_settled());
+        assert!(!pending.is_fulfilled());
+        assert!(!pending.is_rejected());
+
+        let fulfilled = PromiseState::Fulfilled(JsValue::Int(42_000_000));
+        assert!(fulfilled.is_settled());
+        assert!(fulfilled.is_fulfilled());
+        assert!(!fulfilled.is_rejected());
+
+        let rejected = PromiseState::Rejected(JsValue::Str("err".into()));
+        assert!(rejected.is_settled());
+        assert!(!rejected.is_fulfilled());
+        assert!(rejected.is_rejected());
+    }
+
+    #[test]
+    fn promise_handle_serde_roundtrip() {
+        let handle = PromiseHandle(99);
+        let json = serde_json::to_string(&handle).unwrap();
+        let back: PromiseHandle = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, handle);
+    }
+
+    #[test]
+    fn promise_error_display_all_distinct() {
+        let variants = [
+            PromiseError::AlreadySettled {
+                handle: PromiseHandle(0),
+            },
+            PromiseError::InvalidHandle {
+                handle: PromiseHandle(1),
+            },
+            PromiseError::LabelViolation {
+                handle: PromiseHandle(2),
+                value_label: Label::Public,
+                context_label: Label::Internal,
+            },
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for v in &variants {
+            assert!(seen.insert(v.to_string()), "duplicate display: {v}");
+        }
+        assert_eq!(seen.len(), 3);
+    }
 }

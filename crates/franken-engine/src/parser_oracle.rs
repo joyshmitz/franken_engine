@@ -1462,4 +1462,46 @@ mod tests {
         let err = load_fixture_catalog(Path::new("/nonexistent/catalog.json")).unwrap_err();
         assert!(err.to_string().contains("failed to read"));
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn oracle_partition_as_str_distinct() {
+        let all = [
+            OraclePartition::Smoke,
+            OraclePartition::Full,
+            OraclePartition::Nightly,
+        ];
+        let set: std::collections::BTreeSet<&str> = all.iter().map(|p| p.as_str()).collect();
+        assert_eq!(set.len(), all.len());
+    }
+
+    #[test]
+    fn gate_mode_as_str_distinct() {
+        let all = [OracleGateMode::ReportOnly, OracleGateMode::FailClosed];
+        let set: std::collections::BTreeSet<&str> = all.iter().map(|m| m.as_str()).collect();
+        assert_eq!(set.len(), all.len());
+    }
+
+    #[test]
+    fn drift_class_debug_distinct() {
+        let all = [
+            DriftClass::Equivalent,
+            DriftClass::SemanticDrift,
+            DriftClass::DiagnosticsDrift,
+            DriftClass::HarnessNondeterminism,
+            DriftClass::ArtifactIntegrityFailure,
+        ];
+        let set: std::collections::BTreeSet<String> =
+            all.iter().map(|d| format!("{d:?}")).collect();
+        assert_eq!(set.len(), all.len());
+    }
+
+    #[test]
+    fn gate_action_debug_distinct() {
+        let all = [GateAction::Promote, GateAction::Hold, GateAction::Reject];
+        let set: std::collections::BTreeSet<String> =
+            all.iter().map(|a| format!("{a:?}")).collect();
+        assert_eq!(set.len(), all.len());
+    }
 }

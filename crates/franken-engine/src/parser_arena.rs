@@ -1397,4 +1397,78 @@ mod tests {
         assert_eq!(arena.budget().max_nodes, 10);
         assert_eq!(arena.budget().max_expressions, 20);
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn arena_budget_kind_serde_all_variants() {
+        let variants = [
+            ArenaBudgetKind::Nodes,
+            ArenaBudgetKind::Expressions,
+            ArenaBudgetKind::Spans,
+            ArenaBudgetKind::Bytes,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: ArenaBudgetKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn arena_budget_default_serde_roundtrip() {
+        let budget = ArenaBudget::default();
+        let json = serde_json::to_string(&budget).unwrap();
+        let back: ArenaBudget = serde_json::from_str(&json).unwrap();
+        assert_eq!(budget, back);
+    }
+
+    #[test]
+    fn arena_error_display_distinct() {
+        let variants: Vec<ArenaError> = vec![
+            ArenaError::BudgetExceeded {
+                kind: ArenaBudgetKind::Nodes,
+                limit: 100,
+                attempted: 200,
+            },
+            ArenaError::InvalidGeneration {
+                handle_kind: "node",
+                expected: 1,
+                actual: 2,
+                index: 0,
+            },
+            ArenaError::MissingNode { index: 0 },
+            ArenaError::MissingExpression { index: 0 },
+            ArenaError::MissingSpan { index: 0 },
+            ArenaError::HandleAuditSerialization,
+        ];
+        let set: std::collections::BTreeSet<String> =
+            variants.iter().map(|e| format!("{e}")).collect();
+        assert_eq!(set.len(), variants.len());
+    }
+
+    #[test]
+    fn arena_error_is_std_error() {
+        let e = ArenaError::HandleAuditSerialization;
+        let _: &dyn std::error::Error = &e;
+    }
+
+    #[test]
+    fn handle_audit_kind_debug_distinct() {
+        let all = [
+            HandleAuditKind::Node,
+            HandleAuditKind::Expression,
+            HandleAuditKind::Span,
+        ];
+        let set: std::collections::BTreeSet<String> =
+            all.iter().map(|k| format!("{k:?}")).collect();
+        assert_eq!(set.len(), all.len());
+    }
+
+    #[test]
+    fn node_handle_generation_preserved() {
+        let h = NodeHandle::from_parts(42, 7);
+        assert_eq!(h.index(), 42);
+        assert_eq!(h.generation(), 7);
+    }
 }

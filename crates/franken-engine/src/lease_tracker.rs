@@ -1418,4 +1418,211 @@ mod tests {
         let events = store.drain_events();
         assert!(!events.is_empty());
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn lease_error_serde_epoch_mismatch_variant() {
+        let err = LeaseError::EpochMismatch {
+            lease_id: 5,
+            lease_epoch: SecurityEpoch::from_raw(1),
+            current_epoch: SecurityEpoch::from_raw(3),
+        };
+        let json = serde_json::to_string(&err).unwrap();
+        let back: LeaseError = serde_json::from_str(&json).unwrap();
+        assert_eq!(err, back);
+    }
+
+    #[test]
+    fn lease_error_display_epoch_mismatch() {
+        let err = LeaseError::EpochMismatch {
+            lease_id: 7,
+            lease_epoch: SecurityEpoch::from_raw(2),
+            current_epoch: SecurityEpoch::from_raw(5),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("7"), "should contain lease_id");
+        assert!(msg.contains("epoch mismatch"), "should describe the error");
+    }
+
+    #[test]
+    fn renewal_due_at_with_ttl_one() {
+        let lease = Lease {
+            lease_id: LeaseId::from_raw(1),
+            holder: "h".to_string(),
+            lease_type: LeaseType::Operation,
+            granted_at: 100,
+            expires_at: 101,
+            ttl: 1,
+            epoch: test_epoch(),
+            renewal_count: 0,
+            status: LeaseStatus::Active,
+        };
+        // ttl/3 = 0, so renewal_due_at = expires_at - ttl + 0 = 100
+        assert_eq!(lease.renewal_due_at(), 100);
+    }
+
+    #[test]
+    fn is_active_at_after_release_returns_false() {
+        let lease = Lease {
+            lease_id: LeaseId::from_raw(1),
+            holder: "h".to_string(),
+            lease_type: LeaseType::Operation,
+            granted_at: 0,
+            expires_at: 1000,
+            ttl: 1000,
+            epoch: test_epoch(),
+            renewal_count: 0,
+            status: LeaseStatus::Released,
+        };
+        // Even though time hasn't expired, status is Released.
+        assert!(!lease.is_active_at(500));
+    }
+
+    #[test]
+    fn scan_expired_with_no_expired_leases() {
+        let mut store = LeaseStore::new(test_epoch());
+        store
+            .grant("node-1", LeaseType::RemoteEndpoint, 1000, 0, "t")
+            .unwrap();
+        let actions = store.scan_expired(500, "trace-scan");
+        assert!(actions.is_empty());
+        assert_eq!(store.active_count(), 1);
+    }
+
+    #[test]
+    fn event_counts_include_expiration() {
+        let mut store = LeaseStore::new(test_epoch());
+        store
+            .grant("node-1", LeaseType::RemoteEndpoint, 100, 0, "t")
+            .unwrap();
+        store.scan_expired(200, "trace-scan");
+        assert_eq!(store.event_counts().get("expiration"), Some(&1));
+    }
+
+    #[test]
+    fn epoch_accessor_returns_current() {
+        let mut store = LeaseStore::new(SecurityEpoch::from_raw(42));
+        assert_eq!(store.epoch(), SecurityEpoch::from_raw(42));
+        store.advance_epoch(SecurityEpoch::from_raw(99), "t");
+        assert_eq!(store.epoch(), SecurityEpoch::from_raw(99));
+    }
+
+    #[test]
+    fn total_count_vs_active_count_after_expiration() {
+        let mut store = LeaseStore::new(test_epoch());
+        store
+            .grant("node-1", LeaseType::RemoteEndpoint, 100, 0, "t1")
+            .unwrap();
+        store
+            .grant("node-2", LeaseType::Operation, 200, 0, "t2")
+            .unwrap();
+        store.scan_expired(150, "t-scan");
+        // node-1 expired (ttl 100), node-2 still active (ttl 200)
+        assert_eq!(store.total_count(), 2);
+        assert_eq!(store.active_count(), 1);
+    }
+
+    #[test]
+    fn advance_epoch_same_epoch_is_noop() {
+        let mut store = LeaseStore::new(test_epoch());
+        store
+            .grant("node-1", LeaseType::RemoteEndpoint, 1000, 0, "t")
+            .unwrap();
+        let actions = store.advance_epoch(test_epoch(), "t-same");
+        assert!(actions.is_empty());
+        assert_eq!(store.active_count(), 1);
+    }
+
+    #[test]
+    fn grant_increments_ids_monotonically() {
+        let mut store = LeaseStore::new(test_epoch());
+        let id1 = store
+            .grant("a", LeaseType::RemoteEndpoint, 100, 0, "t")
+            .unwrap();
+        let id2 = store.grant("b", LeaseType::Operation, 100, 0, "t").unwrap();
+        let id3 = store.grant("c", LeaseType::Session, 100, 0, "t").unwrap();
+        assert_eq!(id1.as_u64(), 1);
+        assert_eq!(id2.as_u64(), 2);
+        assert_eq!(id3.as_u64(), 3);
+    }
+
+    #[test]
+    fn lease_serde_with_expired_status() {
+        let lease = Lease {
+            lease_id: LeaseId::from_raw(1),
+            holder: "h".to_string(),
+            lease_type: LeaseType::Session,
+            granted_at: 0,
+            expires_at: 100,
+            ttl: 100,
+            epoch: test_epoch(),
+            renewal_count: 0,
+            status: LeaseStatus::Expired,
+        };
+        let json = serde_json::to_string(&lease).unwrap();
+        let back: Lease = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.status, LeaseStatus::Expired);
+    }
+
+    #[test]
+    fn lease_serde_with_released_status() {
+        let lease = Lease {
+            lease_id: LeaseId::from_raw(1),
+            holder: "h".to_string(),
+            lease_type: LeaseType::Operation,
+            granted_at: 0,
+            expires_at: 100,
+            ttl: 100,
+            epoch: test_epoch(),
+            renewal_count: 3,
+            status: LeaseStatus::Released,
+        };
+        let json = serde_json::to_string(&lease).unwrap();
+        let back: Lease = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.status, LeaseStatus::Released);
+        assert_eq!(back.renewal_count, 3);
+    }
+
+    #[test]
+    fn lease_type_serde_all_variants() {
+        for lt in [
+            LeaseType::RemoteEndpoint,
+            LeaseType::Operation,
+            LeaseType::Session,
+        ] {
+            let json = serde_json::to_string(&lt).unwrap();
+            let back: LeaseType = serde_json::from_str(&json).unwrap();
+            assert_eq!(lt, back);
+        }
+    }
+
+    #[test]
+    fn lease_status_serde_all_variants() {
+        for status in [
+            LeaseStatus::Active,
+            LeaseStatus::Expired,
+            LeaseStatus::Released,
+        ] {
+            let json = serde_json::to_string(&status).unwrap();
+            let back: LeaseStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(status, back);
+        }
+    }
+
+    #[test]
+    fn escalation_action_display_includes_holder() {
+        let a1 = EscalationAction::MarkEndpointUnreachable {
+            holder: "my-node".to_string(),
+        };
+        assert!(a1.to_string().contains("my-node"));
+        let a2 = EscalationAction::CancelOperation {
+            holder: "my-op".to_string(),
+        };
+        assert!(a2.to_string().contains("my-op"));
+        let a3 = EscalationAction::TerminateSession {
+            holder: "my-sess".to_string(),
+        };
+        assert!(a3.to_string().contains("my-sess"));
+    }
 }

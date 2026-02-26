@@ -2273,4 +2273,255 @@ mod tests {
         let set: BTreeSet<EvidenceCategory> = cats.into_iter().collect();
         assert_eq!(set.len(), 5);
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn synthesis_error_no_safety_spec_display_and_serde() {
+        let err = SynthesisError::NoSafetySpec;
+        assert!(err.to_string().contains("safety"));
+        let json = serde_json::to_string(&err).unwrap();
+        let back: SynthesisError = serde_json::from_str(&json).unwrap();
+        assert_eq!(err, back);
+    }
+
+    #[test]
+    fn synthesis_error_internal_error_display_and_serde() {
+        let err = SynthesisError::InternalError("something broke".into());
+        assert!(err.to_string().contains("something broke"));
+        let json = serde_json::to_string(&err).unwrap();
+        let back: SynthesisError = serde_json::from_str(&json).unwrap();
+        assert_eq!(err, back);
+    }
+
+    #[test]
+    fn cmp_op_serde_roundtrip_all_variants() {
+        for op in [
+            CmpOp::Le,
+            CmpOp::Lt,
+            CmpOp::Ge,
+            CmpOp::Gt,
+            CmpOp::Eq,
+            CmpOp::Ne,
+        ] {
+            let json = serde_json::to_string(&op).unwrap();
+            let back: CmpOp = serde_json::from_str(&json).unwrap();
+            assert_eq!(op, back);
+        }
+    }
+
+    #[test]
+    fn opt_direction_serde_roundtrip() {
+        for dir in [OptDirection::Minimize, OptDirection::Maximize] {
+            let json = serde_json::to_string(&dir).unwrap();
+            let back: OptDirection = serde_json::from_str(&json).unwrap();
+            assert_eq!(dir, back);
+        }
+    }
+
+    #[test]
+    fn linear_term_serde_roundtrip() {
+        let term = LinearTerm {
+            var: "risk".into(),
+            coeff_millionths: 500_000,
+        };
+        let json = serde_json::to_string(&term).unwrap();
+        let back: LinearTerm = serde_json::from_str(&json).unwrap();
+        assert_eq!(term, back);
+    }
+
+    #[test]
+    fn linear_constraint_serde_roundtrip() {
+        let c = LinearConstraint {
+            id: "c1".into(),
+            terms: vec![LinearTerm {
+                var: "x".into(),
+                coeff_millionths: 1_000_000,
+            }],
+            op: CmpOp::Le,
+            rhs_millionths: 800_000,
+            label: "risk cap".into(),
+        };
+        let json = serde_json::to_string(&c).unwrap();
+        let back: LinearConstraint = serde_json::from_str(&json).unwrap();
+        assert_eq!(c, back);
+    }
+
+    #[test]
+    fn optimization_objective_serde_roundtrip() {
+        let obj = OptimizationObjective {
+            id: "obj1".into(),
+            direction: OptDirection::Minimize,
+            terms: vec![LinearTerm {
+                var: "x".into(),
+                coeff_millionths: 1_000_000,
+            }],
+            bound_millionths: Some(500_000),
+        };
+        let json = serde_json::to_string(&obj).unwrap();
+        let back: OptimizationObjective = serde_json::from_str(&json).unwrap();
+        assert_eq!(obj, back);
+    }
+
+    #[test]
+    fn safety_spec_serde_roundtrip() {
+        let ss = SafetySpec {
+            id: "s1".into(),
+            property: "tail_risk".into(),
+            maximin_value_millionths: 200_000,
+            strategy_vars: vec!["x".into()],
+            adversary_vars: vec!["y".into()],
+            cvar_alpha_millionths: 50_000,
+            cvar_bound_millionths: 500_000,
+        };
+        let json = serde_json::to_string(&ss).unwrap();
+        let back: SafetySpec = serde_json::from_str(&json).unwrap();
+        assert_eq!(ss, back);
+    }
+
+    #[test]
+    fn pipeline_budget_serde_roundtrip() {
+        let budget = PipelineBudget {
+            max_iterations: 50_000,
+            max_stage_time_ms: 5_000,
+            max_memory_bytes: 50_000_000,
+        };
+        let json = serde_json::to_string(&budget).unwrap();
+        let back: PipelineBudget = serde_json::from_str(&json).unwrap();
+        assert_eq!(budget, back);
+    }
+
+    #[test]
+    fn automaton_accepting_states() {
+        let p = pipeline();
+        let output = p.synthesize(&simple_spec()).unwrap();
+        let automaton = &output.automata[0];
+        // normal, elevated, degraded should be accepting; critical, recovery should not
+        assert!(automaton.states["normal"].accepting);
+        assert!(automaton.states["elevated"].accepting);
+        assert!(automaton.states["degraded"].accepting);
+        assert!(!automaton.states["critical"].accepting);
+        assert!(!automaton.states["recovery"].accepting);
+    }
+
+    #[test]
+    fn decision_table_rows_sorted_by_state() {
+        let p = pipeline();
+        let output = p.synthesize(&simple_spec()).unwrap();
+        for table in &output.decision_tables {
+            for pair in table.rows.windows(2) {
+                assert!(
+                    pair[0].state <= pair[1].state,
+                    "rows must be sorted by state"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn eq_constraint_tightens_both_bounds() {
+        let p = pipeline();
+        let spec = SynthesisSpec {
+            spec_id: "eq_tight".into(),
+            variables: vec![SpecVar {
+                name: "x".into(),
+                domain: VarDomain::BoundedInt {
+                    lo: 0,
+                    hi: 1_000_000,
+                },
+            }],
+            constraints: vec![LinearConstraint {
+                id: "fix_x".into(),
+                terms: vec![LinearTerm {
+                    var: "x".into(),
+                    coeff_millionths: 1_000_000,
+                }],
+                op: CmpOp::Eq,
+                rhs_millionths: 500_000,
+                label: "x == 0.5".into(),
+            }],
+            objectives: vec![OptimizationObjective {
+                id: "obj".into(),
+                direction: OptDirection::Minimize,
+                terms: vec![LinearTerm {
+                    var: "x".into(),
+                    coeff_millionths: 1_000_000,
+                }],
+                bound_millionths: None,
+            }],
+            safety_specs: Vec::new(),
+            epoch: 1,
+        };
+        let output = p.synthesize(&spec).unwrap();
+        // With x constrained to exactly 500_000, the table should have a single row
+        assert_eq!(output.decision_tables[0].entry_count(), 1);
+    }
+
+    #[test]
+    fn ne_constraint_does_not_tighten_bounds() {
+        let p = pipeline();
+        let spec = SynthesisSpec {
+            spec_id: "ne_no_tight".into(),
+            variables: vec![SpecVar {
+                name: "x".into(),
+                domain: VarDomain::BoundedInt {
+                    lo: 0,
+                    hi: 1_000_000,
+                },
+            }],
+            constraints: vec![LinearConstraint {
+                id: "ne_x".into(),
+                terms: vec![LinearTerm {
+                    var: "x".into(),
+                    coeff_millionths: 1_000_000,
+                }],
+                op: CmpOp::Ne,
+                rhs_millionths: 500_000,
+                label: "x != 0.5".into(),
+            }],
+            objectives: vec![OptimizationObjective {
+                id: "obj".into(),
+                direction: OptDirection::Minimize,
+                terms: vec![LinearTerm {
+                    var: "x".into(),
+                    coeff_millionths: 1_000_000,
+                }],
+                bound_millionths: None,
+            }],
+            safety_specs: Vec::new(),
+            epoch: 1,
+        };
+        let output = p.synthesize(&spec).unwrap();
+        // Ne does not tighten, so grid should have full 5 points (0, 250k, 500k, 750k, 1M)
+        assert!(output.decision_tables[0].entry_count() >= 5);
+    }
+
+    #[test]
+    fn threshold_from_variable_bounds_uses_operator_fixed() {
+        let p = pipeline();
+        let spec = simple_spec();
+        let output = p.synthesize(&spec).unwrap();
+        let bundle = &output.threshold_bundles[0];
+        let fixed = bundle
+            .thresholds
+            .iter()
+            .filter(|t| t.calibration_method == CalibrationMethod::OperatorFixed)
+            .count();
+        // Variable "risk" gets bounded to [0, 800_000] by constraint, should produce OperatorFixed threshold
+        assert!(
+            fixed > 0,
+            "should derive OperatorFixed threshold from variable bounds"
+        );
+    }
+
+    #[test]
+    fn spec_var_serde_roundtrip() {
+        let var = SpecVar {
+            name: "x".into(),
+            domain: VarDomain::Enum { cardinality: 3 },
+        };
+        let json = serde_json::to_string(&var).unwrap();
+        let back: SpecVar = serde_json::from_str(&json).unwrap();
+        assert_eq!(var, back);
+    }
 }

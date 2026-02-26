@@ -2029,4 +2029,749 @@ mod tests {
         let counts = mgr.event_counts();
         assert_eq!(counts["zone_initialized"], 2);
     }
+
+    // -- Enrichment: FrontierEventType serde all 6 variants --
+
+    #[test]
+    fn frontier_event_type_serde_zone_initialized() {
+        let et = FrontierEventType::ZoneInitialized {
+            zone: "z".into(),
+            genesis_seq: 0,
+        };
+        let json = serde_json::to_string(&et).unwrap();
+        let back: FrontierEventType = serde_json::from_str(&json).unwrap();
+        assert_eq!(et, back);
+    }
+
+    #[test]
+    fn frontier_event_type_serde_checkpoint_accepted() {
+        let et = FrontierEventType::CheckpointAccepted {
+            zone: "z".into(),
+            prev_seq: 1,
+            new_seq: 2,
+        };
+        let json = serde_json::to_string(&et).unwrap();
+        let back: FrontierEventType = serde_json::from_str(&json).unwrap();
+        assert_eq!(et, back);
+    }
+
+    #[test]
+    fn frontier_event_type_serde_rollback_rejected() {
+        let et = FrontierEventType::RollbackRejected {
+            zone: "z".into(),
+            frontier_seq: 10,
+            attempted_seq: 3,
+        };
+        let json = serde_json::to_string(&et).unwrap();
+        let back: FrontierEventType = serde_json::from_str(&json).unwrap();
+        assert_eq!(et, back);
+    }
+
+    #[test]
+    fn frontier_event_type_serde_duplicate_rejected() {
+        let et = FrontierEventType::DuplicateRejected {
+            zone: "z".into(),
+            checkpoint_seq: 5,
+        };
+        let json = serde_json::to_string(&et).unwrap();
+        let back: FrontierEventType = serde_json::from_str(&json).unwrap();
+        assert_eq!(et, back);
+    }
+
+    #[test]
+    fn frontier_event_type_serde_epoch_regression_rejected() {
+        let et = FrontierEventType::EpochRegressionRejected {
+            zone: "z".into(),
+            frontier_epoch: SecurityEpoch::from_raw(5),
+            attempted_epoch: SecurityEpoch::from_raw(2),
+        };
+        let json = serde_json::to_string(&et).unwrap();
+        let back: FrontierEventType = serde_json::from_str(&json).unwrap();
+        assert_eq!(et, back);
+    }
+
+    #[test]
+    fn frontier_event_type_serde_frontier_loaded() {
+        let et = FrontierEventType::FrontierLoaded {
+            zone: "z".into(),
+            frontier_seq: 42,
+        };
+        let json = serde_json::to_string(&et).unwrap();
+        let back: FrontierEventType = serde_json::from_str(&json).unwrap();
+        assert_eq!(et, back);
+    }
+
+    // -- Enrichment: non-sequential seq acceptance (skip) --
+
+    #[test]
+    fn non_sequential_seq_accepted_when_monotonic() {
+        let sk = make_sk(1);
+        let vk = sk.verification_key();
+        let genesis = build_genesis(std::slice::from_ref(&sk), "zone-a");
+
+        let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
+        mgr.accept_checkpoint("zone-a", &genesis, 1, std::slice::from_ref(&vk), "t-0")
+            .unwrap();
+
+        // Skip from seq 0 to seq 5 — monotonicity only requires > frontier.
+        let cp5 = build_after(
+            &genesis,
+            5,
+            SecurityEpoch::GENESIS,
+            600,
+            std::slice::from_ref(&sk),
+            "zone-a",
+        );
+        mgr.accept_checkpoint("zone-a", &cp5, 1, std::slice::from_ref(&vk), "t-5")
+            .unwrap();
+
+        let frontier = mgr.get_frontier("zone-a").unwrap();
+        assert_eq!(frontier.frontier_seq, 5);
+        assert_eq!(frontier.accept_count, 2);
+    }
+
+    // -- Enrichment: event trace_id preserved --
+
+    #[test]
+    fn event_trace_id_preserved() {
+        let sk = make_sk(1);
+        let vk = sk.verification_key();
+        let genesis = build_genesis(std::slice::from_ref(&sk), "zone-a");
+
+        let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
+        mgr.accept_checkpoint("zone-a", &genesis, 1, std::slice::from_ref(&vk), "trace-42")
+            .unwrap();
+
+        let events = mgr.drain_events();
+        assert_eq!(events[0].trace_id, "trace-42");
+    }
+
+    // -- Enrichment: zones() returns sorted order --
+
+    #[test]
+    fn zones_returned_in_sorted_order() {
+        let sk = make_sk(1);
+        let vk = sk.verification_key();
+
+        let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
+
+        // Insert in reverse alphabetical order.
+        let genesis_c = build_genesis(std::slice::from_ref(&sk), "zone-c");
+        mgr.accept_checkpoint("zone-c", &genesis_c, 1, std::slice::from_ref(&vk), "t-c")
+            .unwrap();
+
+        let genesis_a = build_genesis(std::slice::from_ref(&sk), "zone-a");
+        mgr.accept_checkpoint("zone-a", &genesis_a, 1, std::slice::from_ref(&vk), "t-a")
+            .unwrap();
+
+        let genesis_b = build_genesis(std::slice::from_ref(&sk), "zone-b");
+        mgr.accept_checkpoint("zone-b", &genesis_b, 1, std::slice::from_ref(&vk), "t-b")
+            .unwrap();
+
+        let zones = mgr.zones();
+        assert_eq!(zones, vec!["zone-a", "zone-b", "zone-c"]);
+    }
+
+    // -- Enrichment: multi-zone recovery --
+
+    #[test]
+    fn recover_multiple_zones() {
+        let sk = make_sk(1);
+        let genesis_a = build_genesis(std::slice::from_ref(&sk), "zone-a");
+        let genesis_b = build_genesis(std::slice::from_ref(&sk), "zone-b");
+
+        let mut backend = InMemoryBackend::new();
+        backend
+            .persist(&FrontierState::from_genesis("zone-a", &genesis_a))
+            .unwrap();
+        backend
+            .persist(&FrontierState::from_genesis("zone-b", &genesis_b))
+            .unwrap();
+
+        let mut mgr = CheckpointFrontierManager::new(backend);
+        let count = mgr.recover("t-recover-multi").unwrap();
+        assert_eq!(count, 2);
+
+        assert!(mgr.get_frontier("zone-a").is_some());
+        assert!(mgr.get_frontier("zone-b").is_some());
+
+        let events = mgr.drain_events();
+        assert_eq!(events.len(), 2);
+        assert!(
+            events
+                .iter()
+                .all(|e| matches!(&e.event_type, FrontierEventType::FrontierLoaded { .. }))
+        );
+    }
+
+    // -- Enrichment: event_counts includes all event types --
+
+    #[test]
+    fn event_counts_includes_duplicate_and_epoch_regression() {
+        let sk = make_sk(1);
+        let vk = sk.verification_key();
+
+        // Create high-epoch genesis.
+        let genesis_e5 = CheckpointBuilder::genesis(
+            SecurityEpoch::from_raw(5),
+            DeterministicTimestamp(100),
+            "zone-a",
+        )
+        .add_policy_head(make_policy_head(PolicyType::RuntimeExecution, 1))
+        .build(std::slice::from_ref(&sk))
+        .unwrap();
+
+        let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
+        mgr.accept_checkpoint("zone-a", &genesis_e5, 1, std::slice::from_ref(&vk), "t-0")
+            .unwrap();
+
+        let cp1 = build_after(
+            &genesis_e5,
+            1,
+            SecurityEpoch::from_raw(5),
+            200,
+            std::slice::from_ref(&sk),
+            "zone-a",
+        );
+        mgr.accept_checkpoint("zone-a", &cp1, 1, std::slice::from_ref(&vk), "t-1")
+            .unwrap();
+
+        // Trigger duplicate (seq=1 again).
+        let _ = mgr.accept_checkpoint("zone-a", &cp1, 1, std::slice::from_ref(&vk), "t-dup");
+
+        // Trigger epoch regression (seq=2 at epoch 3 < frontier epoch 5).
+        let low_epoch_genesis = CheckpointBuilder::genesis(
+            SecurityEpoch::from_raw(3),
+            DeterministicTimestamp(50),
+            "zone-a",
+        )
+        .add_policy_head(make_policy_head(PolicyType::RuntimeExecution, 1))
+        .build(std::slice::from_ref(&sk))
+        .unwrap();
+        let regressed = build_after(
+            &low_epoch_genesis,
+            2,
+            SecurityEpoch::from_raw(3),
+            300,
+            std::slice::from_ref(&sk),
+            "zone-a",
+        );
+        let _ = mgr.accept_checkpoint(
+            "zone-a",
+            &regressed,
+            1,
+            std::slice::from_ref(&vk),
+            "t-regress",
+        );
+
+        let counts = mgr.event_counts();
+        assert_eq!(counts["zone_initialized"], 1);
+        assert_eq!(counts["checkpoint_accepted"], 1);
+        assert_eq!(counts["duplicate_rejected"], 1);
+        assert_eq!(counts["epoch_regression_rejected"], 1);
+    }
+
+    // -- Enrichment: FrontierEvent serde roundtrip --
+
+    #[test]
+    fn frontier_event_serde_all_event_types() {
+        let events = vec![
+            FrontierEvent {
+                event_type: FrontierEventType::ZoneInitialized {
+                    zone: "z".into(),
+                    genesis_seq: 0,
+                },
+                trace_id: "t-0".into(),
+            },
+            FrontierEvent {
+                event_type: FrontierEventType::RollbackRejected {
+                    zone: "z".into(),
+                    frontier_seq: 5,
+                    attempted_seq: 3,
+                },
+                trace_id: "t-1".into(),
+            },
+            FrontierEvent {
+                event_type: FrontierEventType::DuplicateRejected {
+                    zone: "z".into(),
+                    checkpoint_seq: 5,
+                },
+                trace_id: "t-2".into(),
+            },
+            FrontierEvent {
+                event_type: FrontierEventType::EpochRegressionRejected {
+                    zone: "z".into(),
+                    frontier_epoch: SecurityEpoch::from_raw(5),
+                    attempted_epoch: SecurityEpoch::from_raw(2),
+                },
+                trace_id: "t-3".into(),
+            },
+            FrontierEvent {
+                event_type: FrontierEventType::FrontierLoaded {
+                    zone: "z".into(),
+                    frontier_seq: 10,
+                },
+                trace_id: "t-4".into(),
+            },
+        ];
+        for event in &events {
+            let json = serde_json::to_string(event).unwrap();
+            let back: FrontierEvent = serde_json::from_str(&json).unwrap();
+            assert_eq!(*event, back);
+        }
+    }
+
+    // -- Enrichment: backend() accessor --
+
+    #[test]
+    fn backend_accessor_returns_correct_state() {
+        let sk = make_sk(1);
+        let vk = sk.verification_key();
+        let genesis = build_genesis(std::slice::from_ref(&sk), "zone-a");
+
+        let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
+        assert_eq!(mgr.backend().persist_count, 0);
+        assert!(!mgr.backend().fail_on_persist);
+
+        mgr.accept_checkpoint("zone-a", &genesis, 1, std::slice::from_ref(&vk), "t-0")
+            .unwrap();
+        assert_eq!(mgr.backend().persist_count, 1);
+    }
+
+    // -- Enrichment: frontier_epoch updated on epoch transition --
+
+    #[test]
+    fn frontier_epoch_tracks_latest_epoch() {
+        let sk = make_sk(1);
+        let vk = sk.verification_key();
+        let genesis = build_genesis(std::slice::from_ref(&sk), "zone-a");
+
+        let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
+        mgr.accept_checkpoint("zone-a", &genesis, 1, std::slice::from_ref(&vk), "t-0")
+            .unwrap();
+        assert_eq!(
+            mgr.get_frontier("zone-a").unwrap().frontier_epoch,
+            SecurityEpoch::GENESIS
+        );
+
+        // Epoch 0 -> 3.
+        let cp1 = build_after(
+            &genesis,
+            1,
+            SecurityEpoch::from_raw(3),
+            200,
+            std::slice::from_ref(&sk),
+            "zone-a",
+        );
+        mgr.accept_checkpoint("zone-a", &cp1, 1, std::slice::from_ref(&vk), "t-1")
+            .unwrap();
+        assert_eq!(
+            mgr.get_frontier("zone-a").unwrap().frontier_epoch,
+            SecurityEpoch::from_raw(3)
+        );
+
+        // Epoch 3 -> 7.
+        let cp2 = build_after(
+            &cp1,
+            2,
+            SecurityEpoch::from_raw(7),
+            300,
+            std::slice::from_ref(&sk),
+            "zone-a",
+        );
+        mgr.accept_checkpoint("zone-a", &cp2, 1, std::slice::from_ref(&vk), "t-2")
+            .unwrap();
+        assert_eq!(
+            mgr.get_frontier("zone-a").unwrap().frontier_epoch,
+            SecurityEpoch::from_raw(7)
+        );
+    }
+
+    // -- Enrichment: accept_count saturating behavior --
+
+    #[test]
+    fn accept_count_tracks_total_accepted() {
+        let sk = make_sk(1);
+        let vk = sk.verification_key();
+        let genesis = build_genesis(std::slice::from_ref(&sk), "zone-a");
+
+        let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
+        mgr.accept_checkpoint("zone-a", &genesis, 1, std::slice::from_ref(&vk), "t-0")
+            .unwrap();
+        assert_eq!(mgr.get_frontier("zone-a").unwrap().accept_count, 1);
+
+        let mut prev = genesis;
+        for i in 1..=5u64 {
+            let cp = build_after(
+                &prev,
+                i,
+                SecurityEpoch::GENESIS,
+                100 + i * 100,
+                std::slice::from_ref(&sk),
+                "zone-a",
+            );
+            mgr.accept_checkpoint(
+                "zone-a",
+                &cp,
+                1,
+                std::slice::from_ref(&vk),
+                &format!("t-{i}"),
+            )
+            .unwrap();
+            prev = cp;
+        }
+        assert_eq!(mgr.get_frontier("zone-a").unwrap().accept_count, 6);
+    }
+
+    // -- Enrichment: FrontierState clone equality --
+
+    #[test]
+    fn frontier_state_clone_equals_original() {
+        let sk = make_sk(1);
+        let genesis = build_genesis(std::slice::from_ref(&sk), "zone-a");
+        let state = FrontierState::from_genesis("zone-a", &genesis);
+        let cloned = state.clone();
+        assert_eq!(state, cloned);
+    }
+
+    // -- Enrichment: rollback event contains correct seq values --
+
+    #[test]
+    fn rollback_event_contains_correct_sequences() {
+        let sk = make_sk(1);
+        let vk = sk.verification_key();
+        let genesis = build_genesis(std::slice::from_ref(&sk), "zone-a");
+
+        let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
+        mgr.accept_checkpoint("zone-a", &genesis, 1, std::slice::from_ref(&vk), "t-0")
+            .unwrap();
+
+        let cp1 = build_after(
+            &genesis,
+            1,
+            SecurityEpoch::GENESIS,
+            200,
+            std::slice::from_ref(&sk),
+            "zone-a",
+        );
+        mgr.accept_checkpoint("zone-a", &cp1, 1, std::slice::from_ref(&vk), "t-1")
+            .unwrap();
+
+        let cp2 = build_after(
+            &cp1,
+            2,
+            SecurityEpoch::GENESIS,
+            300,
+            std::slice::from_ref(&sk),
+            "zone-a",
+        );
+        mgr.accept_checkpoint("zone-a", &cp2, 1, std::slice::from_ref(&vk), "t-2")
+            .unwrap();
+
+        mgr.drain_events(); // clear
+
+        // Attempt rollback to seq 0.
+        let rollback = build_genesis(std::slice::from_ref(&sk), "zone-a");
+        let _ = mgr.accept_checkpoint(
+            "zone-a",
+            &rollback,
+            1,
+            std::slice::from_ref(&vk),
+            "t-rollback",
+        );
+
+        let events = mgr.drain_events();
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            &events[0].event_type,
+            FrontierEventType::RollbackRejected {
+                frontier_seq: 2,
+                attempted_seq: 0,
+                ..
+            }
+        ));
+    }
+
+    // -- Enrichment: InMemoryBackend persist overwrites --
+
+    #[test]
+    fn in_memory_backend_persist_overwrites() {
+        let sk = make_sk(1);
+        let genesis = build_genesis(std::slice::from_ref(&sk), "zone-a");
+        let state1 = FrontierState::from_genesis("zone-a", &genesis);
+
+        let mut backend = InMemoryBackend::new();
+        backend.persist(&state1).unwrap();
+        assert_eq!(backend.load("zone-a").unwrap().unwrap().accept_count, 1);
+
+        // Overwrite with updated state.
+        let mut state2 = state1;
+        let cp1 = build_after(
+            &genesis,
+            1,
+            SecurityEpoch::GENESIS,
+            200,
+            std::slice::from_ref(&sk),
+            "zone-a",
+        );
+        state2.advance(&cp1);
+        backend.persist(&state2).unwrap();
+
+        let loaded = backend.load("zone-a").unwrap().unwrap();
+        assert_eq!(loaded.accept_count, 2);
+        assert_eq!(loaded.frontier_seq, 1);
+    }
+
+    // -- Enrichment: checkpoint_accepted event contains correct seqs --
+
+    #[test]
+    fn checkpoint_accepted_event_has_correct_prev_and_new_seq() {
+        let sk = make_sk(1);
+        let vk = sk.verification_key();
+        let genesis = build_genesis(std::slice::from_ref(&sk), "zone-a");
+
+        let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
+        mgr.accept_checkpoint("zone-a", &genesis, 1, std::slice::from_ref(&vk), "t-0")
+            .unwrap();
+        mgr.drain_events(); // clear genesis event
+
+        let cp1 = build_after(
+            &genesis,
+            1,
+            SecurityEpoch::GENESIS,
+            200,
+            std::slice::from_ref(&sk),
+            "zone-a",
+        );
+        mgr.accept_checkpoint("zone-a", &cp1, 1, std::slice::from_ref(&vk), "t-1")
+            .unwrap();
+
+        let events = mgr.drain_events();
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            &events[0].event_type,
+            FrontierEventType::CheckpointAccepted {
+                prev_seq: 0,
+                new_seq: 1,
+                ..
+            }
+        ));
+    }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn frontier_error_display_all_unique() {
+        let variants: Vec<FrontierError> = vec![
+            FrontierError::RollbackRejected {
+                zone: "z".into(),
+                frontier_seq: 5,
+                attempted_seq: 3,
+            },
+            FrontierError::DuplicateCheckpoint {
+                zone: "z".into(),
+                checkpoint_seq: 5,
+            },
+            FrontierError::ChainLinkageFailure {
+                zone: "z".into(),
+                detail: "bad".into(),
+            },
+            FrontierError::QuorumFailure {
+                zone: "z".into(),
+                detail: "no".into(),
+            },
+            FrontierError::UnknownZone { zone: "z".into() },
+            FrontierError::EpochRegression {
+                zone: "z".into(),
+                frontier_epoch: SecurityEpoch::from_raw(2),
+                attempted_epoch: SecurityEpoch::from_raw(1),
+            },
+            FrontierError::PersistenceFailed {
+                zone: "z".into(),
+                detail: "err".into(),
+            },
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            displays.insert(format!("{v}"));
+        }
+        assert_eq!(displays.len(), variants.len());
+    }
+
+    #[test]
+    fn frontier_error_is_std_error() {
+        let err: Box<dyn std::error::Error> =
+            Box::new(FrontierError::UnknownZone { zone: "z".into() });
+        assert!(!err.to_string().is_empty());
+    }
+
+    #[test]
+    fn frontier_event_type_display_all_unique() {
+        let variants: Vec<FrontierEventType> = vec![
+            FrontierEventType::ZoneInitialized {
+                zone: "z".into(),
+                genesis_seq: 0,
+            },
+            FrontierEventType::CheckpointAccepted {
+                zone: "z".into(),
+                prev_seq: 0,
+                new_seq: 1,
+            },
+            FrontierEventType::RollbackRejected {
+                zone: "z".into(),
+                frontier_seq: 5,
+                attempted_seq: 2,
+            },
+            FrontierEventType::DuplicateRejected {
+                zone: "z".into(),
+                checkpoint_seq: 5,
+            },
+            FrontierEventType::EpochRegressionRejected {
+                zone: "z".into(),
+                frontier_epoch: SecurityEpoch::from_raw(10),
+                attempted_epoch: SecurityEpoch::from_raw(5),
+            },
+            FrontierEventType::FrontierLoaded {
+                zone: "z".into(),
+                frontier_seq: 42,
+            },
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            displays.insert(format!("{v}"));
+        }
+        assert_eq!(displays.len(), variants.len());
+    }
+
+    #[test]
+    fn frontier_state_with_history_serde() {
+        let state = FrontierState {
+            zone: "zone-x".into(),
+            frontier_seq: 42,
+            frontier_checkpoint_id: EngineObjectId([7u8; 32]),
+            frontier_epoch: SecurityEpoch::from_raw(5),
+            accept_count: 43,
+            recent_ids: vec![
+                FrontierEntry {
+                    checkpoint_seq: 0,
+                    checkpoint_id: EngineObjectId([1u8; 32]),
+                    epoch: SecurityEpoch::GENESIS,
+                },
+                FrontierEntry {
+                    checkpoint_seq: 42,
+                    checkpoint_id: EngineObjectId([7u8; 32]),
+                    epoch: SecurityEpoch::from_raw(5),
+                },
+            ],
+        };
+        let json = serde_json::to_string(&state).unwrap();
+        let back: FrontierState = serde_json::from_str(&json).unwrap();
+        assert_eq!(state, back);
+        assert_eq!(back.recent_ids.len(), 2);
+    }
+
+    #[test]
+    fn frontier_event_trace_id_preserved() {
+        let event = FrontierEvent {
+            event_type: FrontierEventType::FrontierLoaded {
+                zone: "z".into(),
+                frontier_seq: 10,
+            },
+            trace_id: "trace-42".into(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: FrontierEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.trace_id, "trace-42");
+    }
+
+    #[test]
+    fn in_memory_backend_load_nonexistent_returns_none() {
+        let backend = InMemoryBackend::new();
+        assert!(backend.load("does-not-exist").unwrap().is_none());
+    }
+
+    #[test]
+    fn in_memory_backend_fail_on_persist_flag() {
+        let mut backend = InMemoryBackend::new();
+        backend.fail_on_persist = true;
+        let state = FrontierState {
+            zone: "z".into(),
+            frontier_seq: 0,
+            frontier_checkpoint_id: EngineObjectId([0u8; 32]),
+            frontier_epoch: SecurityEpoch::GENESIS,
+            accept_count: 1,
+            recent_ids: Vec::new(),
+        };
+        assert!(backend.persist(&state).is_err());
+    }
+
+    #[test]
+    fn manager_zones_empty_initially() {
+        let mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
+        assert!(mgr.zones().is_empty());
+    }
+
+    #[test]
+    fn manager_get_frontier_unknown_zone() {
+        let mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
+        assert!(mgr.get_frontier("nonexistent").is_none());
+    }
+
+    #[test]
+    fn recover_from_prepopulated_backend() {
+        let mut backend = InMemoryBackend::new();
+        let state = FrontierState {
+            zone: "zone-a".into(),
+            frontier_seq: 5,
+            frontier_checkpoint_id: EngineObjectId([1u8; 32]),
+            frontier_epoch: SecurityEpoch::from_raw(2),
+            accept_count: 6,
+            recent_ids: Vec::new(),
+        };
+        backend.persist(&state).unwrap();
+
+        let mut mgr = CheckpointFrontierManager::new(backend);
+        assert!(mgr.get_frontier("zone-a").is_none());
+
+        let count = mgr.recover("t-recover").unwrap();
+        assert_eq!(count, 1);
+        let loaded = mgr.get_frontier("zone-a").unwrap();
+        assert_eq!(loaded.frontier_seq, 5);
+    }
+
+    #[test]
+    fn in_memory_backend_persist_count_increments() {
+        let mut backend = InMemoryBackend::new();
+        assert_eq!(backend.persist_count, 0);
+        let state = FrontierState {
+            zone: "z".into(),
+            frontier_seq: 0,
+            frontier_checkpoint_id: EngineObjectId([0u8; 32]),
+            frontier_epoch: SecurityEpoch::GENESIS,
+            accept_count: 1,
+            recent_ids: Vec::new(),
+        };
+        backend.persist(&state).unwrap();
+        assert_eq!(backend.persist_count, 1);
+        backend.persist(&state).unwrap();
+        assert_eq!(backend.persist_count, 2);
+    }
+
+    #[test]
+    fn multiple_zones_independent() {
+        let sk = make_sk(1);
+        let vk = sk.verification_key();
+        let genesis_a = build_genesis(std::slice::from_ref(&sk), "zone-a");
+        let genesis_b = build_genesis(std::slice::from_ref(&sk), "zone-b");
+
+        let mut mgr = CheckpointFrontierManager::new(InMemoryBackend::new());
+        mgr.accept_checkpoint("zone-a", &genesis_a, 1, std::slice::from_ref(&vk), "t-0")
+            .unwrap();
+        mgr.accept_checkpoint("zone-b", &genesis_b, 1, std::slice::from_ref(&vk), "t-1")
+            .unwrap();
+
+        let mut zones = mgr.zones();
+        zones.sort();
+        assert_eq!(zones, vec!["zone-a", "zone-b"]);
+    }
 }

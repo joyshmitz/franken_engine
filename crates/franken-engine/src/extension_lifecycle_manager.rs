@@ -1954,4 +1954,145 @@ mod tests {
         assert!(LifecycleTransition::Terminate < LifecycleTransition::Finalize);
         assert!(LifecycleTransition::Finalize < LifecycleTransition::Quarantine);
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn extension_state_serde_roundtrip_all_variants() {
+        let variants = [
+            ExtensionState::Unloaded,
+            ExtensionState::Validating,
+            ExtensionState::Loading,
+            ExtensionState::Starting,
+            ExtensionState::Running,
+            ExtensionState::Suspending,
+            ExtensionState::Suspended,
+            ExtensionState::Resuming,
+            ExtensionState::Terminating,
+            ExtensionState::Terminated,
+            ExtensionState::Quarantined,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: ExtensionState = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, v);
+        }
+        assert_eq!(variants.len(), 11);
+    }
+
+    #[test]
+    fn lifecycle_transition_serde_roundtrip_all_variants() {
+        let variants = [
+            LifecycleTransition::Validate,
+            LifecycleTransition::Load,
+            LifecycleTransition::Start,
+            LifecycleTransition::Activate,
+            LifecycleTransition::Suspend,
+            LifecycleTransition::Freeze,
+            LifecycleTransition::Resume,
+            LifecycleTransition::Reactivate,
+            LifecycleTransition::Terminate,
+            LifecycleTransition::Finalize,
+            LifecycleTransition::Quarantine,
+            LifecycleTransition::RejectManifest,
+            LifecycleTransition::LoadFailed,
+            LifecycleTransition::StartFailed,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: LifecycleTransition = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, v);
+        }
+        assert_eq!(variants.len(), 14);
+    }
+
+    #[test]
+    fn extension_state_as_str_all_distinct() {
+        let variants = [
+            ExtensionState::Unloaded,
+            ExtensionState::Validating,
+            ExtensionState::Loading,
+            ExtensionState::Starting,
+            ExtensionState::Running,
+            ExtensionState::Suspending,
+            ExtensionState::Suspended,
+            ExtensionState::Resuming,
+            ExtensionState::Terminating,
+            ExtensionState::Terminated,
+            ExtensionState::Quarantined,
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for v in &variants {
+            assert!(seen.insert(v.as_str()), "duplicate as_str: {}", v.as_str());
+        }
+        assert_eq!(seen.len(), 11);
+    }
+
+    #[test]
+    fn lifecycle_transition_as_str_all_distinct() {
+        let variants = [
+            LifecycleTransition::Validate,
+            LifecycleTransition::Load,
+            LifecycleTransition::Start,
+            LifecycleTransition::Activate,
+            LifecycleTransition::Suspend,
+            LifecycleTransition::Freeze,
+            LifecycleTransition::Resume,
+            LifecycleTransition::Reactivate,
+            LifecycleTransition::Terminate,
+            LifecycleTransition::Finalize,
+            LifecycleTransition::Quarantine,
+            LifecycleTransition::RejectManifest,
+            LifecycleTransition::LoadFailed,
+            LifecycleTransition::StartFailed,
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for v in &variants {
+            assert!(seen.insert(v.as_str()), "duplicate as_str: {}", v.as_str());
+        }
+        assert_eq!(seen.len(), 14);
+    }
+
+    #[test]
+    fn lifecycle_transition_is_failure_correct() {
+        assert!(LifecycleTransition::RejectManifest.is_failure());
+        assert!(LifecycleTransition::LoadFailed.is_failure());
+        assert!(LifecycleTransition::StartFailed.is_failure());
+        assert!(!LifecycleTransition::Validate.is_failure());
+        assert!(!LifecycleTransition::Activate.is_failure());
+        assert!(!LifecycleTransition::Quarantine.is_failure());
+    }
+
+    #[test]
+    fn lifecycle_error_invalid_transition_serde_stable() {
+        let err = LifecycleError::InvalidTransition {
+            extension_id: "ext-a".to_string(),
+            current_state: ExtensionState::Running,
+            attempted: LifecycleTransition::Validate,
+        };
+        let json = serde_json::to_string(&err).unwrap();
+        let back: LifecycleError = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, err);
+    }
+
+    #[test]
+    fn extension_state_predicates_comprehensive() {
+        // is_alive: Validating, Loading, Starting, Running, Resuming
+        assert!(ExtensionState::Running.is_alive());
+        assert!(ExtensionState::Starting.is_alive());
+        assert!(!ExtensionState::Suspended.is_alive());
+        assert!(!ExtensionState::Terminated.is_alive());
+
+        // is_terminal: Terminated, Quarantined, Unloaded
+        assert!(ExtensionState::Terminated.is_terminal());
+        assert!(ExtensionState::Quarantined.is_terminal());
+        assert!(ExtensionState::Unloaded.is_terminal());
+        assert!(!ExtensionState::Running.is_terminal());
+
+        // is_executing: Running, Starting, Resuming
+        assert!(ExtensionState::Running.is_executing());
+        assert!(ExtensionState::Starting.is_executing());
+        assert!(ExtensionState::Resuming.is_executing());
+        assert!(!ExtensionState::Loading.is_executing());
+    }
 }

@@ -623,4 +623,692 @@ mod tests {
             serde_json::from_str(&encoded).expect("deserialize bundle");
         assert_eq!(decoded, bundle);
     }
+
+    // ── UnitTestClass enum coverage ──────────────────────────────
+
+    #[test]
+    fn unit_test_class_all_has_five_variants() {
+        assert_eq!(UnitTestClass::ALL.len(), 5);
+    }
+
+    #[test]
+    fn unit_test_class_as_str_core() {
+        assert_eq!(UnitTestClass::Core.as_str(), "core");
+    }
+
+    #[test]
+    fn unit_test_class_as_str_edge() {
+        assert_eq!(UnitTestClass::Edge.as_str(), "edge");
+    }
+
+    #[test]
+    fn unit_test_class_as_str_adversarial() {
+        assert_eq!(UnitTestClass::Adversarial.as_str(), "adversarial");
+    }
+
+    #[test]
+    fn unit_test_class_as_str_regression() {
+        assert_eq!(UnitTestClass::Regression.as_str(), "regression");
+    }
+
+    #[test]
+    fn unit_test_class_as_str_fault_injection() {
+        assert_eq!(UnitTestClass::FaultInjection.as_str(), "fault_injection");
+    }
+
+    #[test]
+    fn unit_test_class_serde_roundtrip_all_variants() {
+        for variant in UnitTestClass::ALL {
+            let json = serde_json::to_string(&variant).expect("serialize");
+            let back: UnitTestClass = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(back, variant);
+        }
+    }
+
+    #[test]
+    fn unit_test_class_serde_snake_case() {
+        let json = serde_json::to_string(&UnitTestClass::FaultInjection).expect("serialize");
+        assert_eq!(json, "\"fault_injection\"");
+    }
+
+    #[test]
+    fn unit_test_class_ordering_is_declaration_order() {
+        assert!(UnitTestClass::Core < UnitTestClass::Edge);
+        assert!(UnitTestClass::Edge < UnitTestClass::Adversarial);
+        assert!(UnitTestClass::Adversarial < UnitTestClass::Regression);
+        assert!(UnitTestClass::Regression < UnitTestClass::FaultInjection);
+    }
+
+    // ── LaneId enum coverage ─────────────────────────────────────
+
+    #[test]
+    fn lane_id_all_has_eight_variants() {
+        assert_eq!(LaneId::ALL.len(), 8);
+    }
+
+    #[test]
+    fn lane_id_as_str_all_variants() {
+        let expected = [
+            (LaneId::Compiler, "compiler"),
+            (LaneId::JsRuntime, "js_runtime"),
+            (LaneId::WasmRuntime, "wasm_runtime"),
+            (LaneId::HybridRouter, "hybrid_router"),
+            (LaneId::Verification, "verification"),
+            (LaneId::Toolchain, "toolchain"),
+            (LaneId::GovernanceEvidence, "governance_evidence"),
+            (LaneId::AdoptionRelease, "adoption_release"),
+        ];
+        for (lane, name) in expected {
+            assert_eq!(lane.as_str(), name);
+        }
+    }
+
+    #[test]
+    fn lane_id_serde_roundtrip_all_variants() {
+        for lane in LaneId::ALL {
+            let json = serde_json::to_string(&lane).expect("serialize");
+            let back: LaneId = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(back, lane);
+        }
+    }
+
+    #[test]
+    fn lane_id_ordering_is_declaration_order() {
+        assert!(LaneId::Compiler < LaneId::JsRuntime);
+        assert!(LaneId::JsRuntime < LaneId::WasmRuntime);
+        assert!(LaneId::WasmRuntime < LaneId::HybridRouter);
+        assert!(LaneId::Toolchain < LaneId::GovernanceEvidence);
+        assert!(LaneId::GovernanceEvidence < LaneId::AdoptionRelease);
+    }
+
+    // ── DeterminismContract validation ───────────────────────────
+
+    #[test]
+    fn determinism_contract_default_validates() {
+        let contract = DeterminismContract::default_frx20();
+        assert_eq!(contract.validate(), Ok(()));
+    }
+
+    #[test]
+    fn determinism_contract_default_schema_version() {
+        let contract = DeterminismContract::default_frx20();
+        assert_eq!(contract.schema_version, DETERMINISM_CONTRACT_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn determinism_contract_bad_schema_version() {
+        let mut contract = DeterminismContract::default_frx20();
+        contract.schema_version = "wrong.version".to_string();
+        let err = contract.validate().unwrap_err();
+        assert_eq!(err.error_code(), "FE-FRX-20-1-SCHEMA-0001");
+    }
+
+    #[test]
+    fn determinism_contract_empty_timezone_when_required() {
+        let mut contract = DeterminismContract::default_frx20();
+        contract.timezone = "  ".to_string();
+        let err = contract.validate().unwrap_err();
+        assert_eq!(err.error_code(), "FE-FRX-20-1-REGISTRY-0001");
+        if let TaxonomyValidationError::MissingRequiredField { field } = &err {
+            assert!(field.contains("timezone"));
+        } else {
+            panic!("expected MissingRequiredField");
+        }
+    }
+
+    #[test]
+    fn determinism_contract_empty_timezone_ok_when_not_required() {
+        let mut contract = DeterminismContract::default_frx20();
+        contract.require_fixed_timezone = false;
+        contract.timezone = String::new();
+        assert_eq!(contract.validate(), Ok(()));
+    }
+
+    #[test]
+    fn determinism_contract_empty_lang_when_locale_required() {
+        let mut contract = DeterminismContract::default_frx20();
+        contract.lang = " ".to_string();
+        let err = contract.validate().unwrap_err();
+        assert_eq!(err.error_code(), "FE-FRX-20-1-REGISTRY-0001");
+        if let TaxonomyValidationError::MissingRequiredField { field } = &err {
+            assert!(field.contains("locale"));
+        } else {
+            panic!("expected MissingRequiredField");
+        }
+    }
+
+    #[test]
+    fn determinism_contract_empty_lc_all_when_locale_required() {
+        let mut contract = DeterminismContract::default_frx20();
+        contract.lc_all = String::new();
+        let err = contract.validate().unwrap_err();
+        assert_eq!(err.error_code(), "FE-FRX-20-1-REGISTRY-0001");
+    }
+
+    #[test]
+    fn determinism_contract_empty_locale_ok_when_not_required() {
+        let mut contract = DeterminismContract::default_frx20();
+        contract.require_fixed_locale = false;
+        contract.lang = String::new();
+        contract.lc_all = String::new();
+        assert_eq!(contract.validate(), Ok(()));
+    }
+
+    #[test]
+    fn determinism_contract_serde_roundtrip() {
+        let contract = DeterminismContract::default_frx20();
+        let json = serde_json::to_string(&contract).expect("serialize");
+        let back: DeterminismContract = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, contract);
+    }
+
+    // ── FixtureRegistryEntry validation ──────────────────────────
+
+    fn valid_fixture_entry() -> FixtureRegistryEntry {
+        FixtureRegistryEntry {
+            fixture_id: "test.fixture.v1".to_string(),
+            fixture_path: "path/to/fixtures".to_string(),
+            trace_path: Some("path/to/traces".to_string()),
+            provenance: "docs/provenance.json".to_string(),
+            owner_lane: LaneId::Compiler,
+            required_classes: vec![UnitTestClass::Core],
+            e2e_family: "test_family".to_string(),
+            seed_strategy: "seed_fixed".to_string(),
+            structured_log_fields: REQUIRED_STRUCTURED_LOG_FIELDS
+                .iter()
+                .map(|v| (*v).to_string())
+                .collect(),
+            artifact_retention: "manifest+events".to_string(),
+        }
+    }
+
+    #[test]
+    fn fixture_entry_valid_passes() {
+        let entry = valid_fixture_entry();
+        let mut seen = BTreeSet::new();
+        assert_eq!(entry.validate(&mut seen), Ok(()));
+    }
+
+    #[test]
+    fn fixture_entry_empty_id_fails() {
+        let mut entry = valid_fixture_entry();
+        entry.fixture_id = "  ".to_string();
+        let mut seen = BTreeSet::new();
+        let err = entry.validate(&mut seen).unwrap_err();
+        assert_eq!(err.error_code(), "FE-FRX-20-1-REGISTRY-0001");
+    }
+
+    #[test]
+    fn fixture_entry_duplicate_id_fails() {
+        let entry = valid_fixture_entry();
+        let mut seen = BTreeSet::new();
+        seen.insert("test.fixture.v1".to_string());
+        let err = entry.validate(&mut seen).unwrap_err();
+        assert_eq!(err.error_code(), "FE-FRX-20-1-REGISTRY-0002");
+        if let TaxonomyValidationError::DuplicateFixtureId { fixture_id } = &err {
+            assert_eq!(fixture_id, "test.fixture.v1");
+        } else {
+            panic!("expected DuplicateFixtureId");
+        }
+    }
+
+    #[test]
+    fn fixture_entry_empty_path_fails() {
+        let mut entry = valid_fixture_entry();
+        entry.fixture_path = String::new();
+        let mut seen = BTreeSet::new();
+        let err = entry.validate(&mut seen).unwrap_err();
+        assert_eq!(err.error_code(), "FE-FRX-20-1-REGISTRY-0001");
+        if let TaxonomyValidationError::MissingRequiredField { field } = &err {
+            assert!(field.contains("fixture_path"));
+        } else {
+            panic!("expected MissingRequiredField");
+        }
+    }
+
+    #[test]
+    fn fixture_entry_empty_provenance_fails() {
+        let mut entry = valid_fixture_entry();
+        entry.provenance = " ".to_string();
+        let mut seen = BTreeSet::new();
+        let err = entry.validate(&mut seen).unwrap_err();
+        assert_eq!(err.error_code(), "FE-FRX-20-1-REGISTRY-0001");
+    }
+
+    #[test]
+    fn fixture_entry_empty_required_classes_fails() {
+        let mut entry = valid_fixture_entry();
+        entry.required_classes.clear();
+        let mut seen = BTreeSet::new();
+        let err = entry.validate(&mut seen).unwrap_err();
+        assert_eq!(err.error_code(), "FE-FRX-20-1-REGISTRY-0001");
+    }
+
+    #[test]
+    fn fixture_entry_empty_e2e_family_fails() {
+        let mut entry = valid_fixture_entry();
+        entry.e2e_family = String::new();
+        let mut seen = BTreeSet::new();
+        let err = entry.validate(&mut seen).unwrap_err();
+        if let TaxonomyValidationError::MissingRequiredField { field } = &err {
+            assert!(field.contains("e2e_family"));
+        } else {
+            panic!("expected MissingRequiredField");
+        }
+    }
+
+    #[test]
+    fn fixture_entry_empty_seed_strategy_fails() {
+        let mut entry = valid_fixture_entry();
+        entry.seed_strategy = "  ".to_string();
+        let mut seen = BTreeSet::new();
+        let err = entry.validate(&mut seen).unwrap_err();
+        if let TaxonomyValidationError::MissingRequiredField { field } = &err {
+            assert!(field.contains("seed_strategy"));
+        } else {
+            panic!("expected MissingRequiredField");
+        }
+    }
+
+    #[test]
+    fn fixture_entry_empty_artifact_retention_fails() {
+        let mut entry = valid_fixture_entry();
+        entry.artifact_retention = String::new();
+        let mut seen = BTreeSet::new();
+        let err = entry.validate(&mut seen).unwrap_err();
+        if let TaxonomyValidationError::MissingRequiredField { field } = &err {
+            assert!(field.contains("artifact_retention"));
+        } else {
+            panic!("expected MissingRequiredField");
+        }
+    }
+
+    #[test]
+    fn fixture_entry_missing_one_log_field_fails() {
+        let mut entry = valid_fixture_entry();
+        entry.structured_log_fields.retain(|f| f != "decision_path");
+        let mut seen = BTreeSet::new();
+        let err = entry.validate(&mut seen).unwrap_err();
+        assert_eq!(err.error_code(), "FE-FRX-20-1-LOGGING-0001");
+        if let TaxonomyValidationError::MissingStructuredLogField { fixture_id, field } = &err {
+            assert_eq!(fixture_id, "test.fixture.v1");
+            assert_eq!(field, "decision_path");
+        } else {
+            panic!("expected MissingStructuredLogField");
+        }
+    }
+
+    #[test]
+    fn fixture_entry_serde_roundtrip() {
+        let entry = valid_fixture_entry();
+        let json = serde_json::to_string(&entry).expect("serialize");
+        let back: FixtureRegistryEntry = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, entry);
+    }
+
+    #[test]
+    fn fixture_entry_none_trace_path_serde() {
+        let mut entry = valid_fixture_entry();
+        entry.trace_path = None;
+        let json = serde_json::to_string(&entry).expect("serialize");
+        let back: FixtureRegistryEntry = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.trace_path, None);
+    }
+
+    // ── LaneCoverageContract validation ──────────────────────────
+
+    fn valid_lane_coverage() -> LaneCoverageContract {
+        LaneCoverageContract {
+            lane: LaneId::Compiler,
+            owner: "test-owner".to_string(),
+            required_unit_classes: vec![UnitTestClass::Core],
+            mapped_e2e_families: vec!["family_a".to_string()],
+            coverage_rationale: "Compiler tests are required.".to_string(),
+        }
+    }
+
+    #[test]
+    fn lane_coverage_valid_passes() {
+        assert_eq!(valid_lane_coverage().validate(), Ok(()));
+    }
+
+    #[test]
+    fn lane_coverage_empty_owner_fails() {
+        let mut lc = valid_lane_coverage();
+        lc.owner = "  ".to_string();
+        let err = lc.validate().unwrap_err();
+        assert_eq!(err.error_code(), "FE-FRX-20-1-REGISTRY-0001");
+    }
+
+    #[test]
+    fn lane_coverage_empty_classes_fails() {
+        let mut lc = valid_lane_coverage();
+        lc.required_unit_classes.clear();
+        let err = lc.validate().unwrap_err();
+        if let TaxonomyValidationError::MissingRequiredField { field } = &err {
+            assert!(field.contains("required_unit_classes"));
+        } else {
+            panic!("expected MissingRequiredField");
+        }
+    }
+
+    #[test]
+    fn lane_coverage_empty_families_fails() {
+        let mut lc = valid_lane_coverage();
+        lc.mapped_e2e_families.clear();
+        let err = lc.validate().unwrap_err();
+        if let TaxonomyValidationError::MissingRequiredField { field } = &err {
+            assert!(field.contains("mapped_e2e_families"));
+        } else {
+            panic!("expected MissingRequiredField");
+        }
+    }
+
+    #[test]
+    fn lane_coverage_empty_rationale_fails() {
+        let mut lc = valid_lane_coverage();
+        lc.coverage_rationale = String::new();
+        let err = lc.validate().unwrap_err();
+        if let TaxonomyValidationError::MissingRequiredField { field } = &err {
+            assert!(field.contains("coverage_rationale"));
+        } else {
+            panic!("expected MissingRequiredField");
+        }
+    }
+
+    #[test]
+    fn lane_coverage_serde_roundtrip() {
+        let lc = valid_lane_coverage();
+        let json = serde_json::to_string(&lc).expect("serialize");
+        let back: LaneCoverageContract = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, lc);
+    }
+
+    // ── UnitTestTaxonomyBundle validation ────────────────────────
+
+    #[test]
+    fn bundle_fixture_registry_schema_mismatch() {
+        let mut bundle = default_frx20_bundle();
+        bundle.fixture_registry_schema_version = "wrong".to_string();
+        let err = bundle.validate_for_gate().unwrap_err();
+        assert_eq!(err.error_code(), "FE-FRX-20-1-SCHEMA-0001");
+        if let TaxonomyValidationError::InvalidSchemaVersion {
+            field,
+            expected,
+            actual,
+        } = &err
+        {
+            assert_eq!(field, "fixture_registry_schema_version");
+            assert_eq!(expected, FIXTURE_REGISTRY_SCHEMA_VERSION);
+            assert_eq!(actual, "wrong");
+        } else {
+            panic!("expected InvalidSchemaVersion");
+        }
+    }
+
+    #[test]
+    fn bundle_empty_lane_coverage_fails() {
+        let mut bundle = default_frx20_bundle();
+        bundle.lane_coverage.clear();
+        let err = bundle.validate_for_gate().unwrap_err();
+        assert_eq!(err.error_code(), "FE-FRX-20-1-REGISTRY-0001");
+    }
+
+    #[test]
+    fn bundle_duplicate_lane_coverage_fails() {
+        let mut bundle = default_frx20_bundle();
+        let dup = bundle.lane_coverage[0].clone();
+        bundle.lane_coverage.push(dup);
+        let err = bundle.validate_for_gate().unwrap_err();
+        assert_eq!(err.error_code(), "FE-FRX-20-1-COVERAGE-0001");
+        if let TaxonomyValidationError::DuplicateLaneCoverage { lane } = &err {
+            assert_eq!(lane, "compiler");
+        } else {
+            panic!("expected DuplicateLaneCoverage");
+        }
+    }
+
+    #[test]
+    fn bundle_empty_fixture_registry_fails() {
+        let mut bundle = default_frx20_bundle();
+        bundle.fixture_registry.clear();
+        let err = bundle.validate_for_gate().unwrap_err();
+        assert_eq!(err.error_code(), "FE-FRX-20-1-REGISTRY-0001");
+    }
+
+    #[test]
+    fn bundle_propagates_determinism_contract_error() {
+        let mut bundle = default_frx20_bundle();
+        bundle.determinism_contract.schema_version = "bad".to_string();
+        let err = bundle.validate_for_gate().unwrap_err();
+        assert_eq!(err.error_code(), "FE-FRX-20-1-SCHEMA-0001");
+    }
+
+    #[test]
+    fn bundle_propagates_lane_coverage_error() {
+        let mut bundle = default_frx20_bundle();
+        bundle.lane_coverage[0].owner = String::new();
+        let err = bundle.validate_for_gate().unwrap_err();
+        assert_eq!(err.error_code(), "FE-FRX-20-1-REGISTRY-0001");
+    }
+
+    #[test]
+    fn bundle_propagates_fixture_entry_error() {
+        let mut bundle = default_frx20_bundle();
+        bundle.fixture_registry[0].fixture_id = String::new();
+        let err = bundle.validate_for_gate().unwrap_err();
+        assert_eq!(err.error_code(), "FE-FRX-20-1-REGISTRY-0001");
+    }
+
+    // ── TaxonomyValidationError coverage ─────────────────────────
+
+    #[test]
+    fn error_code_missing_required_field() {
+        let err = TaxonomyValidationError::MissingRequiredField {
+            field: "test".to_string(),
+        };
+        assert_eq!(err.error_code(), "FE-FRX-20-1-REGISTRY-0001");
+    }
+
+    #[test]
+    fn error_code_invalid_schema_version() {
+        let err = TaxonomyValidationError::InvalidSchemaVersion {
+            field: "f".to_string(),
+            expected: "e".to_string(),
+            actual: "a".to_string(),
+        };
+        assert_eq!(err.error_code(), "FE-FRX-20-1-SCHEMA-0001");
+    }
+
+    #[test]
+    fn error_code_missing_structured_log_field() {
+        let err = TaxonomyValidationError::MissingStructuredLogField {
+            fixture_id: "f".to_string(),
+            field: "trace_id".to_string(),
+        };
+        assert_eq!(err.error_code(), "FE-FRX-20-1-LOGGING-0001");
+    }
+
+    #[test]
+    fn error_code_duplicate_fixture_id() {
+        let err = TaxonomyValidationError::DuplicateFixtureId {
+            fixture_id: "dup".to_string(),
+        };
+        assert_eq!(err.error_code(), "FE-FRX-20-1-REGISTRY-0002");
+    }
+
+    #[test]
+    fn error_code_duplicate_lane_coverage() {
+        let err = TaxonomyValidationError::DuplicateLaneCoverage {
+            lane: "compiler".to_string(),
+        };
+        assert_eq!(err.error_code(), "FE-FRX-20-1-COVERAGE-0001");
+    }
+
+    #[test]
+    fn error_code_missing_lane_coverage() {
+        let err = TaxonomyValidationError::MissingLaneCoverage {
+            lane: "wasm_runtime".to_string(),
+        };
+        assert_eq!(err.error_code(), "FE-FRX-20-1-COVERAGE-0002");
+    }
+
+    #[test]
+    fn taxonomy_error_serde_roundtrip_all_variants() {
+        let variants: Vec<TaxonomyValidationError> = vec![
+            TaxonomyValidationError::MissingRequiredField {
+                field: "test".to_string(),
+            },
+            TaxonomyValidationError::InvalidSchemaVersion {
+                field: "sv".to_string(),
+                expected: "v1".to_string(),
+                actual: "v0".to_string(),
+            },
+            TaxonomyValidationError::MissingStructuredLogField {
+                fixture_id: "fix1".to_string(),
+                field: "trace_id".to_string(),
+            },
+            TaxonomyValidationError::DuplicateFixtureId {
+                fixture_id: "dup".to_string(),
+            },
+            TaxonomyValidationError::DuplicateLaneCoverage {
+                lane: "compiler".to_string(),
+            },
+            TaxonomyValidationError::MissingLaneCoverage {
+                lane: "wasm_runtime".to_string(),
+            },
+        ];
+        for variant in &variants {
+            let json = serde_json::to_string(variant).expect("serialize");
+            let back: TaxonomyValidationError = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(&back, variant);
+        }
+    }
+
+    // ── default_frx20_bundle structural assertions ───────────────
+
+    #[test]
+    fn default_bundle_covers_all_eight_lanes() {
+        let bundle = default_frx20_bundle();
+        let covered: BTreeSet<LaneId> = bundle.lane_coverage.iter().map(|lc| lc.lane).collect();
+        for lane in LaneId::ALL {
+            assert!(covered.contains(&lane), "lane {:?} not covered", lane);
+        }
+    }
+
+    #[test]
+    fn default_bundle_has_four_fixtures() {
+        let bundle = default_frx20_bundle();
+        assert_eq!(bundle.fixture_registry.len(), 4);
+    }
+
+    #[test]
+    fn default_bundle_fixture_ids_are_unique() {
+        let bundle = default_frx20_bundle();
+        let ids: BTreeSet<&str> = bundle
+            .fixture_registry
+            .iter()
+            .map(|f| f.fixture_id.as_str())
+            .collect();
+        assert_eq!(ids.len(), bundle.fixture_registry.len());
+    }
+
+    #[test]
+    fn default_bundle_all_fixtures_have_all_required_log_fields() {
+        let bundle = default_frx20_bundle();
+        for fixture in &bundle.fixture_registry {
+            let field_set: BTreeSet<&str> = fixture
+                .structured_log_fields
+                .iter()
+                .map(String::as_str)
+                .collect();
+            for required in REQUIRED_STRUCTURED_LOG_FIELDS {
+                assert!(
+                    field_set.contains(required),
+                    "fixture {} missing log field {}",
+                    fixture.fixture_id,
+                    required
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn default_bundle_lane_coverage_owners_non_empty() {
+        let bundle = default_frx20_bundle();
+        for lc in &bundle.lane_coverage {
+            assert!(
+                !lc.owner.trim().is_empty(),
+                "lane {:?} has empty owner",
+                lc.lane
+            );
+        }
+    }
+
+    #[test]
+    fn default_bundle_determinism_contract_requires_all() {
+        let contract = &default_frx20_bundle().determinism_contract;
+        assert!(contract.require_seed);
+        assert!(contract.require_seed_transcript_checksum);
+        assert!(contract.require_fixed_timezone);
+        assert!(contract.require_fixed_locale);
+        assert!(contract.require_toolchain_fingerprint);
+        assert!(contract.require_replay_command);
+    }
+
+    // ── Constants verification ───────────────────────────────────
+
+    #[test]
+    fn schema_version_constants_contain_frx() {
+        assert!(UNIT_TEST_TAXONOMY_SCHEMA_VERSION.contains("frx"));
+        assert!(FIXTURE_REGISTRY_SCHEMA_VERSION.contains("frx"));
+        assert!(DETERMINISM_CONTRACT_SCHEMA_VERSION.contains("frx"));
+    }
+
+    #[test]
+    fn required_structured_log_fields_has_twelve_entries() {
+        assert_eq!(REQUIRED_STRUCTURED_LOG_FIELDS.len(), 12);
+    }
+
+    #[test]
+    fn required_structured_log_fields_include_critical_fields() {
+        let fields: BTreeSet<&str> = REQUIRED_STRUCTURED_LOG_FIELDS.iter().copied().collect();
+        assert!(fields.contains("trace_id"));
+        assert!(fields.contains("decision_id"));
+        assert!(fields.contains("seed"));
+        assert!(fields.contains("outcome"));
+    }
+
+    // ── Edge case: removing each required log field ──────────────
+
+    #[test]
+    fn fixture_missing_each_required_log_field() {
+        for required in REQUIRED_STRUCTURED_LOG_FIELDS {
+            let mut entry = valid_fixture_entry();
+            entry.structured_log_fields.retain(|f| f != *required);
+            let mut seen = BTreeSet::new();
+            let err = entry.validate(&mut seen).unwrap_err();
+            if let TaxonomyValidationError::MissingStructuredLogField { field, .. } = &err {
+                assert_eq!(field, *required);
+            } else {
+                panic!("expected MissingStructuredLogField for {}", required);
+            }
+        }
+    }
+
+    // ── Edge case: removing each lane from default bundle ────────
+
+    #[test]
+    fn bundle_missing_each_lane_reports_correct_lane() {
+        for lane in LaneId::ALL {
+            let mut bundle = default_frx20_bundle();
+            bundle.lane_coverage.retain(|lc| lc.lane != lane);
+            let err = bundle.validate_for_gate().unwrap_err();
+            if let TaxonomyValidationError::MissingLaneCoverage { lane: name } = &err {
+                assert_eq!(name, lane.as_str());
+            } else {
+                panic!("expected MissingLaneCoverage for {:?}", lane);
+            }
+        }
+    }
 }

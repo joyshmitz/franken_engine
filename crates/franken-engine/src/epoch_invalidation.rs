@@ -2533,4 +2533,180 @@ mod tests {
         }
         assert_eq!(displays.len(), 6);
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn invalidation_reason_display_all_unique() {
+        let variants: Vec<InvalidationReason> = vec![
+            InvalidationReason::EpochTransition {
+                old_epoch: SecurityEpoch::from_raw(1),
+                new_epoch: SecurityEpoch::from_raw(2),
+            },
+            InvalidationReason::PolicyRotation {
+                policy_id: "pol-1".into(),
+            },
+            InvalidationReason::KeyRotation {
+                key_id: "key-1".into(),
+            },
+            InvalidationReason::CapabilityRevocation {
+                capability_id: "cap-1".into(),
+            },
+            InvalidationReason::ProofUpdate {
+                proof_id: make_proof_id("proof-upd"),
+            },
+            InvalidationReason::OperatorInvalidation {
+                reason: "manual".into(),
+            },
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            displays.insert(format!("{v}"));
+        }
+        assert_eq!(displays.len(), variants.len());
+    }
+
+    #[test]
+    fn fallback_state_display_all_unique() {
+        let mut displays = std::collections::BTreeSet::new();
+        for state in [
+            FallbackState::Active,
+            FallbackState::Invalidating,
+            FallbackState::BaselineFallback,
+            FallbackState::ReSpecializing,
+        ] {
+            displays.insert(format!("{state}"));
+        }
+        assert_eq!(displays.len(), 4);
+    }
+
+    #[test]
+    fn epoch_bound_specialization_serde_round_trip() {
+        let spec = make_default_spec();
+        let json = serde_json::to_string(&spec).unwrap();
+        let back: EpochBoundSpecialization = serde_json::from_str(&json).unwrap();
+        assert_eq!(spec, back);
+    }
+
+    #[test]
+    fn invalidation_receipt_via_engine_serde() {
+        let mut engine = test_engine();
+        let spec = make_default_spec();
+        let sid = spec.specialization_id.clone();
+        engine.register_specialization(spec, 1000).unwrap();
+
+        let reason = InvalidationReason::OperatorInvalidation {
+            reason: "test".into(),
+        };
+        let receipt = engine
+            .invalidate_specialization(&sid, reason, 2000)
+            .unwrap();
+        let json = serde_json::to_string(&receipt).unwrap();
+        let back: InvalidationReceipt = serde_json::from_str(&json).unwrap();
+        assert_eq!(receipt, back);
+    }
+
+    #[test]
+    fn invalidation_event_from_registration_serde() {
+        let mut engine = test_engine();
+        let spec = make_default_spec();
+        engine.register_specialization(spec, 1000).unwrap();
+
+        let events = engine.events();
+        assert!(!events.is_empty());
+        let event = &events[0];
+        let json = serde_json::to_string(event).unwrap();
+        let back: InvalidationEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(*event, back);
+    }
+
+    #[test]
+    fn canonical_bytes_differ_with_epoch_window() {
+        let s1 = make_spec(
+            OptimizationClass::TraceSpecialization,
+            90,
+            110,
+            "policy-001",
+            "a",
+        );
+        let s2 = make_spec(
+            OptimizationClass::TraceSpecialization,
+            90,
+            120,
+            "policy-001",
+            "a",
+        );
+        assert_ne!(s1.canonical_bytes(), s2.canonical_bytes());
+    }
+
+    #[test]
+    fn engine_serde_round_trip() {
+        let mut engine = test_engine();
+        let spec = make_default_spec();
+        engine.register_specialization(spec, 1000).unwrap();
+
+        let json = serde_json::to_string(&engine).unwrap();
+        let back: EpochInvalidationEngine = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.current_epoch(), engine.current_epoch());
+        assert_eq!(back.specializations().len(), engine.specializations().len());
+        assert_eq!(back.active_count(), engine.active_count());
+    }
+
+    #[test]
+    fn invalidation_error_display_includes_id() {
+        let id = make_proof_id("disp-test");
+        let err = InvalidationError::SpecializationNotFound { id: id.clone() };
+        let display = format!("{err}");
+        assert!(display.contains("not found"));
+    }
+
+    #[test]
+    fn invalidation_error_invalid_state_display() {
+        let id = make_proof_id("state-test");
+        let err = InvalidationError::InvalidState {
+            id,
+            expected: "Active".into(),
+            actual: "BaselineFallback".into(),
+        };
+        let display = format!("{err}");
+        assert!(display.contains("Active"));
+        assert!(display.contains("BaselineFallback"));
+    }
+
+    #[test]
+    fn is_valid_at_equal_from_epoch() {
+        let spec = make_spec(
+            OptimizationClass::TraceSpecialization,
+            100,
+            200,
+            "p",
+            "eq-from",
+        );
+        assert!(spec.is_valid_at(SecurityEpoch::from_raw(100)));
+    }
+
+    #[test]
+    fn is_valid_at_equal_until_epoch() {
+        let spec = make_spec(
+            OptimizationClass::TraceSpecialization,
+            100,
+            200,
+            "p",
+            "eq-until",
+        );
+        assert!(spec.is_valid_at(SecurityEpoch::from_raw(200)));
+    }
+
+    #[test]
+    fn is_valid_at_just_outside_boundaries() {
+        let spec = make_spec(
+            OptimizationClass::TraceSpecialization,
+            100,
+            200,
+            "p",
+            "outside",
+        );
+        assert!(!spec.is_valid_at(SecurityEpoch::from_raw(99)));
+        assert!(!spec.is_valid_at(SecurityEpoch::from_raw(201)));
+    }
 }

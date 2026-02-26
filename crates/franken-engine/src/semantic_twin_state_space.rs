@@ -1024,6 +1024,8 @@ fn predicate_hash(assumption_id: &str, dependencies: &BTreeSet<String>) -> Strin
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::{
         SEMANTIC_TWIN_SCHEMA_VERSION, SemanticTwinSpecification, TwinMeasurementContract,
         TwinSpecError, TwinStateSnapshot,
@@ -1107,5 +1109,803 @@ mod tests {
         snapshot.upsert_value("risk_belief", 200_000);
         let second = snapshot.deterministic_digest();
         assert_ne!(first, second);
+    }
+
+    // ── Enum serde roundtrips ────────────────────────────────────
+
+    #[test]
+    fn twin_state_domain_serde_roundtrip() {
+        use super::TwinStateDomain;
+        let variants = [
+            TwinStateDomain::Workload,
+            TwinStateDomain::Risk,
+            TwinStateDomain::Policy,
+            TwinStateDomain::Lane,
+            TwinStateDomain::Outcome,
+            TwinStateDomain::Regime,
+            TwinStateDomain::Resource,
+            TwinStateDomain::Replay,
+            TwinStateDomain::Calibration,
+        ];
+        assert_eq!(variants.len(), 9);
+        for variant in variants {
+            let json = serde_json::to_string(&variant).expect("serialize");
+            let back: TwinStateDomain = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(back, variant);
+        }
+    }
+
+    #[test]
+    fn twin_signal_source_serde_roundtrip() {
+        use super::TwinSignalSource;
+        let variants = [
+            TwinSignalSource::RuntimeDecisionCore,
+            TwinSignalSource::RuntimeDecisionTheory,
+            TwinSignalSource::CausalReplay,
+            TwinSignalSource::FrirIr2,
+            TwinSignalSource::FrirIr3,
+            TwinSignalSource::ObservabilityChannel,
+            TwinSignalSource::EvidenceLedger,
+            TwinSignalSource::OperatorInput,
+            TwinSignalSource::EnvironmentTelemetry,
+        ];
+        assert_eq!(variants.len(), 9);
+        for variant in variants {
+            let json = serde_json::to_string(&variant).expect("serialize");
+            let back: TwinSignalSource = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(back, variant);
+        }
+    }
+
+    #[test]
+    fn twin_phase_serde_roundtrip() {
+        use super::TwinPhase;
+        let variants = [
+            TwinPhase::ObserveWorkload,
+            TwinPhase::UpdateRiskBelief,
+            TwinPhase::SelectLane,
+            TwinPhase::ExecuteLane,
+            TwinPhase::RecordOutcome,
+            TwinPhase::EvaluateFallback,
+            TwinPhase::SafeMode,
+        ];
+        assert_eq!(variants.len(), 7);
+        for variant in variants {
+            let json = serde_json::to_string(&variant).expect("serialize");
+            let back: TwinPhase = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(back, variant);
+        }
+    }
+
+    #[test]
+    fn twin_transition_trigger_serde_roundtrip() {
+        use super::TwinTransitionTrigger;
+        let variants = [
+            TwinTransitionTrigger::ObservationCommitted,
+            TwinTransitionTrigger::PosteriorUpdated,
+            TwinTransitionTrigger::DecisionCommitted,
+            TwinTransitionTrigger::ExecutionCompleted,
+            TwinTransitionTrigger::OutcomeRecorded,
+            TwinTransitionTrigger::GuardrailTriggered,
+            TwinTransitionTrigger::OperatorOverride,
+            TwinTransitionTrigger::ReplayCounterfactual,
+        ];
+        assert_eq!(variants.len(), 8);
+        for variant in variants {
+            let json = serde_json::to_string(&variant).expect("serialize");
+            let back: TwinTransitionTrigger = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(back, variant);
+        }
+    }
+
+    // ── Struct serde roundtrips ──────────────────────────────────
+
+    #[test]
+    fn twin_state_variable_spec_serde_roundtrip() {
+        use super::{TwinSignalSource, TwinStateDomain, TwinStateVariableSpec};
+        let spec = TwinStateVariableSpec {
+            id: "test_var".to_string(),
+            label: "Test Variable".to_string(),
+            domain: TwinStateDomain::Risk,
+            source: TwinSignalSource::RuntimeDecisionCore,
+            observable: true,
+            unit: "millionths".to_string(),
+            description: "A test variable".to_string(),
+        };
+        let json = serde_json::to_string(&spec).expect("serialize");
+        let back: TwinStateVariableSpec = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, spec);
+    }
+
+    #[test]
+    fn twin_transition_spec_serde_roundtrip() {
+        use super::{TwinPhase, TwinTransitionSpec, TwinTransitionTrigger};
+        let spec = TwinTransitionSpec {
+            id: "t1".to_string(),
+            from_phase: TwinPhase::ObserveWorkload,
+            to_phase: TwinPhase::UpdateRiskBelief,
+            trigger: TwinTransitionTrigger::ObservationCommitted,
+            deterministic_priority: 10,
+            guard_assumptions: vec!["asm_1".to_string()],
+            description: "test transition".to_string(),
+        };
+        let json = serde_json::to_string(&spec).expect("serialize");
+        let back: TwinTransitionSpec = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, spec);
+    }
+
+    #[test]
+    fn twin_measurement_contract_serde_roundtrip() {
+        let contract = TwinMeasurementContract {
+            variable_id: "risk_belief".to_string(),
+            required: true,
+            min_value_millionths: Some(0),
+            max_value_millionths: Some(1_000_000),
+            max_staleness_ticks: 5,
+            evidence_component: "runtime".to_string(),
+        };
+        let json = serde_json::to_string(&contract).expect("serialize");
+        let back: TwinMeasurementContract = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, contract);
+    }
+
+    #[test]
+    fn twin_assumption_spec_serde_roundtrip() {
+        use super::TwinAssumptionSpec;
+        let spec = TwinAssumptionSpec {
+            id: "asm_1".to_string(),
+            category: crate::assumptions_ledger::AssumptionCategory::Structural,
+            origin: crate::assumptions_ledger::AssumptionOrigin::Runtime,
+            violation_severity: crate::assumptions_ledger::ViolationSeverity::Critical,
+            description: "test assumption".to_string(),
+            dependencies: BTreeSet::from(["regime".to_string()]),
+            predicate_hash: "sha256:abc".to_string(),
+        };
+        let json = serde_json::to_string(&spec).expect("serialize");
+        let back: TwinAssumptionSpec = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, spec);
+    }
+
+    #[test]
+    fn twin_falsification_hook_serde_roundtrip() {
+        use super::TwinFalsificationHook;
+        use crate::assumptions_ledger::{MonitorKind, MonitorOp};
+        let hook = TwinFalsificationHook {
+            monitor_id: "m1".to_string(),
+            assumption_id: "asm_1".to_string(),
+            variable_id: "risk_belief".to_string(),
+            kind: MonitorKind::Threshold,
+            op: MonitorOp::Le,
+            threshold_millionths: 500_000,
+            trigger_count: 2,
+        };
+        let json = serde_json::to_string(&hook).expect("serialize");
+        let back: TwinFalsificationHook = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, hook);
+    }
+
+    #[test]
+    fn twin_state_snapshot_serde_roundtrip() {
+        let mut snapshot = TwinStateSnapshot::new("trace-1", "decision-1", "policy-1", 5, 10);
+        snapshot.upsert_value("risk_belief", 400_000);
+        snapshot.upsert_value("latency_outcome", 200_000);
+        let json = serde_json::to_string(&snapshot).expect("serialize");
+        let back: TwinStateSnapshot = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, snapshot);
+    }
+
+    // ── TwinStateSnapshot ────────────────────────────────────────
+
+    #[test]
+    fn snapshot_new_has_empty_values() {
+        let snapshot = TwinStateSnapshot::new("t", "d", "p", 1, 1);
+        assert!(snapshot.values_millionths.is_empty());
+        assert_eq!(snapshot.trace_id, "t");
+        assert_eq!(snapshot.decision_id, "d");
+        assert_eq!(snapshot.policy_id, "p");
+        assert_eq!(snapshot.epoch, 1);
+        assert_eq!(snapshot.tick, 1);
+    }
+
+    #[test]
+    fn snapshot_upsert_overwrites_existing_value() {
+        let mut snapshot = TwinStateSnapshot::new("t", "d", "p", 1, 1);
+        snapshot.upsert_value("risk_belief", 100_000);
+        snapshot.upsert_value("risk_belief", 200_000);
+        assert_eq!(snapshot.values_millionths["risk_belief"], 200_000);
+    }
+
+    #[test]
+    fn snapshot_digest_is_deterministic_across_calls() {
+        let mut snapshot = TwinStateSnapshot::new("t", "d", "p", 1, 1);
+        snapshot.upsert_value("risk_belief", 500_000);
+        let d1 = snapshot.deterministic_digest();
+        let d2 = snapshot.deterministic_digest();
+        assert_eq!(d1, d2);
+        assert!(d1.starts_with("sha256:"));
+    }
+
+    #[test]
+    fn snapshot_digest_differs_for_different_trace_ids() {
+        let mut s1 = TwinStateSnapshot::new("trace-a", "d", "p", 1, 1);
+        s1.upsert_value("risk_belief", 500_000);
+        let mut s2 = TwinStateSnapshot::new("trace-b", "d", "p", 1, 1);
+        s2.upsert_value("risk_belief", 500_000);
+        assert_ne!(s1.deterministic_digest(), s2.deterministic_digest());
+    }
+
+    // ── TwinSpecError Display ────────────────────────────────────
+
+    #[test]
+    fn spec_error_display_scm() {
+        let err = TwinSpecError::Scm("internal failure".to_string());
+        let msg = format!("{err}");
+        assert!(msg.contains("scm error"));
+        assert!(msg.contains("internal failure"));
+    }
+
+    #[test]
+    fn spec_error_display_invalid_schema_version() {
+        let err = TwinSpecError::InvalidSchemaVersion("v0".to_string());
+        let msg = format!("{err}");
+        assert!(msg.contains("v0"));
+    }
+
+    #[test]
+    fn spec_error_display_duplicate_variable() {
+        let err = TwinSpecError::DuplicateVariable("foo".to_string());
+        let msg = format!("{err}");
+        assert!(msg.contains("duplicate variable"));
+        assert!(msg.contains("foo"));
+    }
+
+    #[test]
+    fn spec_error_display_unknown_variable() {
+        let err = TwinSpecError::UnknownVariable("bar".to_string());
+        let msg = format!("{err}");
+        assert!(msg.contains("unknown variable"));
+    }
+
+    #[test]
+    fn spec_error_display_duplicate_transition() {
+        let err = TwinSpecError::DuplicateTransition("t1".to_string());
+        let msg = format!("{err}");
+        assert!(msg.contains("duplicate transition"));
+    }
+
+    #[test]
+    fn spec_error_display_duplicate_transition_priority() {
+        use super::{TwinPhase, TwinTransitionTrigger};
+        let err = TwinSpecError::DuplicateTransitionPriority {
+            from_phase: TwinPhase::SelectLane,
+            trigger: TwinTransitionTrigger::DecisionCommitted,
+            deterministic_priority: 30,
+        };
+        let msg = format!("{err}");
+        assert!(msg.contains("30"));
+    }
+
+    #[test]
+    fn spec_error_display_unknown_assumption() {
+        let err = TwinSpecError::UnknownAssumption("asm_x".to_string());
+        let msg = format!("{err}");
+        assert!(msg.contains("unknown assumption"));
+    }
+
+    #[test]
+    fn spec_error_display_duplicate_assumption() {
+        let err = TwinSpecError::DuplicateAssumption("asm_dup".to_string());
+        let msg = format!("{err}");
+        assert!(msg.contains("duplicate assumption"));
+    }
+
+    #[test]
+    fn spec_error_display_duplicate_monitor() {
+        let err = TwinSpecError::DuplicateMonitor("mon_dup".to_string());
+        let msg = format!("{err}");
+        assert!(msg.contains("duplicate monitor"));
+    }
+
+    #[test]
+    fn spec_error_display_invalid_monitor_trigger_count() {
+        let err = TwinSpecError::InvalidMonitorTriggerCount {
+            monitor_id: "mon_1".to_string(),
+        };
+        let msg = format!("{err}");
+        assert!(msg.contains("trigger_count"));
+    }
+
+    #[test]
+    fn spec_error_display_invalid_measurement_range() {
+        let err = TwinSpecError::InvalidMeasurementRange {
+            variable_id: "risk_belief".to_string(),
+        };
+        let msg = format!("{err}");
+        assert!(msg.contains("measurement range"));
+    }
+
+    #[test]
+    fn spec_error_display_missing_treatment_variable() {
+        let err = TwinSpecError::MissingTreatmentVariable("treatment_x".to_string());
+        let msg = format!("{err}");
+        assert!(msg.contains("missing treatment"));
+    }
+
+    #[test]
+    fn spec_error_display_missing_outcome_variable() {
+        let err = TwinSpecError::MissingOutcomeVariable("outcome_x".to_string());
+        let msg = format!("{err}");
+        assert!(msg.contains("missing outcome"));
+    }
+
+    #[test]
+    fn spec_error_display_missing_required_variable() {
+        let err = TwinSpecError::MissingRequiredVariable {
+            variable_id: "var_x".to_string(),
+        };
+        let msg = format!("{err}");
+        assert!(msg.contains("missing required"));
+    }
+
+    #[test]
+    fn spec_error_display_missing_snapshot_value() {
+        let err = TwinSpecError::MissingSnapshotValue {
+            variable_id: "v1".to_string(),
+        };
+        let msg = format!("{err}");
+        assert!(msg.contains("missing required snapshot"));
+    }
+
+    #[test]
+    fn spec_error_display_out_of_range() {
+        let err = TwinSpecError::OutOfRangeSnapshotValue {
+            variable_id: "v1".to_string(),
+            value: 999,
+            min: Some(0),
+            max: Some(100),
+        };
+        let msg = format!("{err}");
+        assert!(msg.contains("out of range"));
+        assert!(msg.contains("999"));
+    }
+
+    // ── Validation edge cases ────────────────────────────────────
+
+    #[test]
+    fn validate_rejects_bad_schema_version() {
+        let mut spec = SemanticTwinSpecification::lane_decision_default().expect("spec");
+        spec.schema_version = "wrong.version".to_string();
+        let err = spec.validate().unwrap_err();
+        assert!(matches!(err, TwinSpecError::InvalidSchemaVersion(..)));
+    }
+
+    #[test]
+    fn validate_rejects_duplicate_variable() {
+        let mut spec = SemanticTwinSpecification::lane_decision_default().expect("spec");
+        let dup = spec.variables[0].clone();
+        spec.variables.push(dup);
+        let err = spec.validate().unwrap_err();
+        assert!(matches!(err, TwinSpecError::DuplicateVariable(..)));
+    }
+
+    #[test]
+    fn validate_rejects_missing_treatment_variable() {
+        let mut spec = SemanticTwinSpecification::lane_decision_default().expect("spec");
+        spec.treatment_variable = "nonexistent".to_string();
+        let err = spec.validate().unwrap_err();
+        assert!(matches!(err, TwinSpecError::MissingTreatmentVariable(..)));
+    }
+
+    #[test]
+    fn validate_rejects_missing_outcome_variable() {
+        let mut spec = SemanticTwinSpecification::lane_decision_default().expect("spec");
+        spec.outcome_variable = "nonexistent".to_string();
+        let err = spec.validate().unwrap_err();
+        assert!(matches!(err, TwinSpecError::MissingOutcomeVariable(..)));
+    }
+
+    #[test]
+    fn validate_rejects_duplicate_transition_id() {
+        let mut spec = SemanticTwinSpecification::lane_decision_default().expect("spec");
+        let dup = spec.transitions[0].clone();
+        spec.transitions.push(dup);
+        let err = spec.validate().unwrap_err();
+        assert!(matches!(err, TwinSpecError::DuplicateTransition(..)));
+    }
+
+    #[test]
+    fn validate_rejects_duplicate_transition_priority() {
+        let mut spec = SemanticTwinSpecification::lane_decision_default().expect("spec");
+        let mut dup = spec.transitions[0].clone();
+        dup.id = "transition_dup_priority".to_string();
+        // Same from_phase + trigger + priority as transitions[0]
+        spec.transitions.push(dup);
+        let err = spec.validate().unwrap_err();
+        assert!(matches!(
+            err,
+            TwinSpecError::DuplicateTransitionPriority { .. }
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_unknown_variable_in_measurement_contract() {
+        let mut spec = SemanticTwinSpecification::lane_decision_default().expect("spec");
+        spec.measurement_contracts.push(TwinMeasurementContract {
+            variable_id: "unknown_var".to_string(),
+            required: false,
+            min_value_millionths: None,
+            max_value_millionths: None,
+            max_staleness_ticks: 1,
+            evidence_component: "test".to_string(),
+        });
+        let err = spec.validate().unwrap_err();
+        assert!(matches!(err, TwinSpecError::UnknownVariable(..)));
+    }
+
+    #[test]
+    fn validate_rejects_duplicate_assumption() {
+        let mut spec = SemanticTwinSpecification::lane_decision_default().expect("spec");
+        let dup = spec.assumptions[0].clone();
+        spec.assumptions.push(dup);
+        let err = spec.validate().unwrap_err();
+        assert!(matches!(err, TwinSpecError::DuplicateAssumption(..)));
+    }
+
+    #[test]
+    fn validate_rejects_unknown_variable_in_assumption_deps() {
+        let mut spec = SemanticTwinSpecification::lane_decision_default().expect("spec");
+        spec.assumptions[0]
+            .dependencies
+            .insert("unknown_dep".to_string());
+        let err = spec.validate().unwrap_err();
+        assert!(matches!(err, TwinSpecError::UnknownVariable(..)));
+    }
+
+    #[test]
+    fn validate_rejects_duplicate_monitor() {
+        let mut spec = SemanticTwinSpecification::lane_decision_default().expect("spec");
+        let dup = spec.falsification_hooks[0].clone();
+        spec.falsification_hooks.push(dup);
+        let err = spec.validate().unwrap_err();
+        assert!(matches!(err, TwinSpecError::DuplicateMonitor(..)));
+    }
+
+    #[test]
+    fn validate_rejects_zero_trigger_count_monitor() {
+        let mut spec = SemanticTwinSpecification::lane_decision_default().expect("spec");
+        spec.falsification_hooks[0].trigger_count = 0;
+        let err = spec.validate().unwrap_err();
+        assert!(matches!(
+            err,
+            TwinSpecError::InvalidMonitorTriggerCount { .. }
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_unknown_assumption_in_hook() {
+        let mut spec = SemanticTwinSpecification::lane_decision_default().expect("spec");
+        spec.falsification_hooks[0].assumption_id = "unknown_asm".to_string();
+        let err = spec.validate().unwrap_err();
+        assert!(matches!(err, TwinSpecError::UnknownAssumption(..)));
+    }
+
+    #[test]
+    fn validate_rejects_unknown_variable_in_hook() {
+        let mut spec = SemanticTwinSpecification::lane_decision_default().expect("spec");
+        spec.falsification_hooks[0].variable_id = "unknown_hookvar".to_string();
+        let err = spec.validate().unwrap_err();
+        assert!(matches!(err, TwinSpecError::UnknownVariable(..)));
+    }
+
+    #[test]
+    fn validate_rejects_unknown_assumption_in_transition_guard() {
+        let mut spec = SemanticTwinSpecification::lane_decision_default().expect("spec");
+        spec.transitions[1]
+            .guard_assumptions
+            .push("unknown_guard_asm".to_string());
+        let err = spec.validate().unwrap_err();
+        assert!(matches!(err, TwinSpecError::UnknownAssumption(..)));
+    }
+
+    // ── Snapshot validation edge cases ───────────────────────────
+
+    #[test]
+    fn snapshot_missing_required_value() {
+        let spec = SemanticTwinSpecification::lane_decision_default().expect("spec");
+        let snapshot = TwinStateSnapshot::new("t", "d", "p", 1, 1);
+        // Empty snapshot with required contracts should fail
+        let err = spec.validate_snapshot(&snapshot).unwrap_err();
+        assert!(matches!(err, TwinSpecError::MissingSnapshotValue { .. }));
+    }
+
+    #[test]
+    fn snapshot_unknown_variable_rejected() {
+        let spec = SemanticTwinSpecification::lane_decision_default().expect("spec");
+        let mut snapshot = TwinStateSnapshot::new("t", "d", "p", 1, 1);
+        // Fill all required values
+        for contract in &spec.measurement_contracts {
+            if contract.required {
+                snapshot.upsert_value(
+                    &contract.variable_id,
+                    contract.min_value_millionths.unwrap_or(0),
+                );
+            }
+        }
+        // Add unknown variable
+        snapshot.upsert_value("completely_unknown_variable", 42);
+        let err = spec.validate_snapshot(&snapshot).unwrap_err();
+        assert!(matches!(err, TwinSpecError::UnknownVariable(..)));
+    }
+
+    #[test]
+    fn snapshot_value_below_min_rejected() {
+        let spec = SemanticTwinSpecification::lane_decision_default().expect("spec");
+        let mut snapshot = TwinStateSnapshot::new("t", "d", "p", 1, 1);
+        for contract in &spec.measurement_contracts {
+            if contract.required {
+                snapshot.upsert_value(
+                    &contract.variable_id,
+                    contract.min_value_millionths.unwrap_or(0),
+                );
+            }
+        }
+        // Set one required value below min
+        snapshot.upsert_value("workload_complexity", -1);
+        let err = spec.validate_snapshot(&snapshot).unwrap_err();
+        assert!(matches!(err, TwinSpecError::OutOfRangeSnapshotValue { .. }));
+    }
+
+    // ── Constants verification ───────────────────────────────────
+
+    #[test]
+    fn schema_version_constant_starts_with_franken_engine() {
+        assert!(SEMANTIC_TWIN_SCHEMA_VERSION.starts_with("franken-engine."));
+    }
+
+    #[test]
+    fn component_constant_is_non_empty() {
+        assert!(!super::SEMANTIC_TWIN_COMPONENT.is_empty());
+    }
+
+    // ── Default spec structural assertions ───────────────────────
+
+    #[test]
+    fn default_spec_has_thirteen_variables() {
+        let spec = SemanticTwinSpecification::lane_decision_default().expect("spec");
+        assert_eq!(spec.variables.len(), 13);
+    }
+
+    #[test]
+    fn default_spec_has_seven_transitions() {
+        let spec = SemanticTwinSpecification::lane_decision_default().expect("spec");
+        assert_eq!(spec.transitions.len(), 7);
+    }
+
+    #[test]
+    fn default_spec_has_six_assumptions() {
+        let spec = SemanticTwinSpecification::lane_decision_default().expect("spec");
+        assert_eq!(spec.assumptions.len(), 6);
+    }
+
+    #[test]
+    fn default_spec_has_six_falsification_hooks() {
+        let spec = SemanticTwinSpecification::lane_decision_default().expect("spec");
+        assert_eq!(spec.falsification_hooks.len(), 6);
+    }
+
+    #[test]
+    fn default_spec_has_six_measurement_contracts() {
+        let spec = SemanticTwinSpecification::lane_decision_default().expect("spec");
+        assert_eq!(spec.measurement_contracts.len(), 6);
+    }
+
+    #[test]
+    fn default_spec_has_seven_states() {
+        let spec = SemanticTwinSpecification::lane_decision_default().expect("spec");
+        assert_eq!(spec.states.len(), 7);
+    }
+
+    #[test]
+    fn default_spec_treatment_and_outcome_variables() {
+        let spec = SemanticTwinSpecification::lane_decision_default().expect("spec");
+        assert_eq!(spec.treatment_variable, "lane_choice");
+        assert_eq!(spec.outcome_variable, "latency_outcome");
+    }
+
+    #[test]
+    fn default_spec_variable_ids_unique() {
+        let spec = SemanticTwinSpecification::lane_decision_default().expect("spec");
+        let ids: BTreeSet<&str> = spec.variables.iter().map(|v| v.id.as_str()).collect();
+        assert_eq!(ids.len(), spec.variables.len());
+    }
+
+    #[test]
+    fn default_spec_serde_roundtrip() {
+        let spec = SemanticTwinSpecification::lane_decision_default().expect("spec");
+        let json = serde_json::to_string(&spec).expect("serialize");
+        let back: SemanticTwinSpecification = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, spec);
+    }
+
+    // ── From<ScmError> ──────────────────────────────────────────
+
+    #[test]
+    fn from_scm_error_converts() {
+        use crate::structural_causal_model::ScmError;
+        let scm_err = ScmError::NodeNotFound("test_node".to_string());
+        let twin_err: TwinSpecError = scm_err.into();
+        let msg = format!("{twin_err}");
+        assert!(msg.contains("scm error"));
+    }
+
+    // ── TwinSpecError serde roundtrip ───────────────────────────
+
+    #[test]
+    fn spec_error_serde_roundtrip_all_variants() {
+        use super::TwinPhase;
+        use super::TwinTransitionTrigger;
+        let variants: Vec<TwinSpecError> = vec![
+            TwinSpecError::Scm("err".to_string()),
+            TwinSpecError::InvalidSchemaVersion("v0".to_string()),
+            TwinSpecError::DuplicateVariable("dup_v".to_string()),
+            TwinSpecError::UnknownVariable("unk_v".to_string()),
+            TwinSpecError::DuplicateTransition("dup_t".to_string()),
+            TwinSpecError::DuplicateTransitionPriority {
+                from_phase: TwinPhase::SelectLane,
+                trigger: TwinTransitionTrigger::DecisionCommitted,
+                deterministic_priority: 30,
+            },
+            TwinSpecError::UnknownAssumption("unk_a".to_string()),
+            TwinSpecError::DuplicateAssumption("dup_a".to_string()),
+            TwinSpecError::DuplicateMonitor("dup_m".to_string()),
+            TwinSpecError::InvalidMonitorTriggerCount {
+                monitor_id: "m1".to_string(),
+            },
+            TwinSpecError::InvalidMeasurementRange {
+                variable_id: "v1".to_string(),
+            },
+            TwinSpecError::MissingTreatmentVariable("tv".to_string()),
+            TwinSpecError::MissingOutcomeVariable("ov".to_string()),
+            TwinSpecError::MissingRequiredVariable {
+                variable_id: "rv".to_string(),
+            },
+            TwinSpecError::MissingSnapshotValue {
+                variable_id: "sv".to_string(),
+            },
+            TwinSpecError::OutOfRangeSnapshotValue {
+                variable_id: "orv".to_string(),
+                value: 999,
+                min: Some(0),
+                max: Some(100),
+            },
+        ];
+        for variant in &variants {
+            let json = serde_json::to_string(variant).expect("serialize");
+            let back: TwinSpecError = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(&back, variant);
+        }
+    }
+
+    // ── to_assumption_ledger ─────────────────────────────────────
+
+    #[test]
+    fn to_assumption_ledger_has_correct_counts() {
+        let spec = SemanticTwinSpecification::lane_decision_default().expect("spec");
+        let ledger = spec.to_assumption_ledger("decision-1", 5).expect("ledger");
+        assert_eq!(ledger.assumption_count(), spec.assumptions.len());
+        assert_eq!(ledger.monitors().len(), spec.falsification_hooks.len());
+    }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn twin_state_domain_ordering() {
+        use super::TwinStateDomain;
+        assert!(TwinStateDomain::Workload < TwinStateDomain::Risk);
+        assert!(TwinStateDomain::Risk < TwinStateDomain::Policy);
+    }
+
+    #[test]
+    fn twin_signal_source_ordering() {
+        use super::TwinSignalSource;
+        assert!(TwinSignalSource::RuntimeDecisionCore < TwinSignalSource::RuntimeDecisionTheory);
+        assert!(TwinSignalSource::OperatorInput < TwinSignalSource::EnvironmentTelemetry);
+    }
+
+    #[test]
+    fn twin_phase_ordering() {
+        use super::TwinPhase;
+        assert!(TwinPhase::ObserveWorkload < TwinPhase::UpdateRiskBelief);
+        assert!(TwinPhase::SelectLane < TwinPhase::ExecuteLane);
+    }
+
+    #[test]
+    fn twin_transition_trigger_ordering() {
+        use super::TwinTransitionTrigger;
+        assert!(
+            TwinTransitionTrigger::ObservationCommitted < TwinTransitionTrigger::PosteriorUpdated
+        );
+        assert!(
+            TwinTransitionTrigger::OperatorOverride < TwinTransitionTrigger::ReplayCounterfactual
+        );
+    }
+
+    #[test]
+    fn twin_state_domain_debug_distinct() {
+        use super::TwinStateDomain;
+        let all = [
+            TwinStateDomain::Workload,
+            TwinStateDomain::Risk,
+            TwinStateDomain::Policy,
+            TwinStateDomain::Lane,
+            TwinStateDomain::Outcome,
+            TwinStateDomain::Regime,
+            TwinStateDomain::Resource,
+            TwinStateDomain::Replay,
+            TwinStateDomain::Calibration,
+        ];
+        let set: std::collections::BTreeSet<String> =
+            all.iter().map(|d| format!("{d:?}")).collect();
+        assert_eq!(set.len(), all.len());
+    }
+
+    #[test]
+    fn twin_phase_debug_distinct() {
+        use super::TwinPhase;
+        let all = [
+            TwinPhase::ObserveWorkload,
+            TwinPhase::UpdateRiskBelief,
+            TwinPhase::SelectLane,
+            TwinPhase::ExecuteLane,
+            TwinPhase::RecordOutcome,
+            TwinPhase::EvaluateFallback,
+            TwinPhase::SafeMode,
+        ];
+        let set: std::collections::BTreeSet<String> =
+            all.iter().map(|p| format!("{p:?}")).collect();
+        assert_eq!(set.len(), all.len());
+    }
+
+    #[test]
+    fn twin_spec_error_display_distinct() {
+        use super::{TwinPhase, TwinTransitionTrigger};
+        let variants: Vec<TwinSpecError> = vec![
+            TwinSpecError::Scm("err".into()),
+            TwinSpecError::InvalidSchemaVersion("v".into()),
+            TwinSpecError::DuplicateVariable("x".into()),
+            TwinSpecError::UnknownVariable("x".into()),
+            TwinSpecError::DuplicateTransition("x".into()),
+            TwinSpecError::DuplicateTransitionPriority {
+                from_phase: TwinPhase::ObserveWorkload,
+                trigger: TwinTransitionTrigger::ObservationCommitted,
+                deterministic_priority: 1,
+            },
+            TwinSpecError::UnknownAssumption("x".into()),
+            TwinSpecError::DuplicateAssumption("x".into()),
+            TwinSpecError::DuplicateMonitor("x".into()),
+            TwinSpecError::InvalidMonitorTriggerCount {
+                monitor_id: "x".into(),
+            },
+            TwinSpecError::InvalidMeasurementRange {
+                variable_id: "x".into(),
+            },
+            TwinSpecError::MissingTreatmentVariable("x".into()),
+            TwinSpecError::MissingOutcomeVariable("x".into()),
+            TwinSpecError::MissingRequiredVariable {
+                variable_id: "x".into(),
+            },
+            TwinSpecError::MissingSnapshotValue {
+                variable_id: "x".into(),
+            },
+            TwinSpecError::OutOfRangeSnapshotValue {
+                variable_id: "x".into(),
+                value: 0,
+                min: Some(1),
+                max: Some(100),
+            },
+        ];
+        let set: std::collections::BTreeSet<String> =
+            variants.iter().map(|e| format!("{e}")).collect();
+        assert_eq!(set.len(), variants.len());
     }
 }

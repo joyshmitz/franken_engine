@@ -2264,4 +2264,324 @@ mod tests {
         assert!(a < b);
         assert_eq!(a, a2);
     }
+
+    // -- Enrichment: additional serde roundtrips --
+
+    #[test]
+    fn saga_id_serde_roundtrip() {
+        let id = SagaId::from_trace("trace-99");
+        let json = serde_json::to_string(&id).expect("serialize");
+        let restored: SagaId = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(id, restored);
+    }
+
+    #[test]
+    fn saga_step_serde_roundtrip() {
+        let step = SagaStep {
+            step_name: "validate".to_string(),
+            forward_action: "validate.run".to_string(),
+            compensating_action: "validate.rollback".to_string(),
+            timeout_ticks: 5000,
+        };
+        let json = serde_json::to_string(&step).expect("serialize");
+        let restored: SagaStep = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(step, restored);
+    }
+
+    #[test]
+    fn saga_event_serde_roundtrip() {
+        let event = SagaEvent {
+            saga_id: "s1".to_string(),
+            saga_type: "quarantine".to_string(),
+            step_name: "step_a".to_string(),
+            step_index: 0,
+            action: "forward".to_string(),
+            result: "success(ok)".to_string(),
+            trace_id: "t1".to_string(),
+            epoch_id: 5,
+            event: "step_complete".to_string(),
+        };
+        let json = serde_json::to_string(&event).expect("serialize");
+        let restored: SagaEvent = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(event, restored);
+    }
+
+    #[test]
+    fn step_outcome_serde_all_variants() {
+        let variants = vec![
+            StepOutcome::Success {
+                result: "done".to_string(),
+            },
+            StepOutcome::Failure {
+                diagnostic: "err".to_string(),
+            },
+            StepOutcome::Cancelled {
+                reason: "timeout".to_string(),
+            },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).expect("serialize");
+            let restored: StepOutcome = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*v, restored);
+        }
+    }
+
+    #[test]
+    fn saga_state_serde_all_variants() {
+        let variants = vec![
+            SagaState::Pending,
+            SagaState::InProgress { step_index: 3 },
+            SagaState::Compensating { step_index: 1 },
+            SagaState::Completed,
+            SagaState::Failed {
+                diagnostic: "fatal".to_string(),
+            },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).expect("serialize");
+            let restored: SagaState = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*v, restored);
+        }
+    }
+
+    // -- Enrichment: orchestrator behavior edge cases --
+
+    #[test]
+    fn drain_events_empties_buffer() {
+        let mut orch = SagaOrchestrator::new(test_epoch(), 10);
+        orch.create_saga("s1", SagaType::Publish, simple_steps(), "t1", 0)
+            .unwrap();
+
+        let events = orch.drain_events();
+        assert!(!events.is_empty());
+
+        // Second drain returns empty.
+        let events2 = orch.drain_events();
+        assert!(events2.is_empty());
+    }
+
+    #[test]
+    fn event_counts_track_operations() {
+        let mut orch = SagaOrchestrator::new(test_epoch(), 10);
+        orch.create_saga("s1", SagaType::Publish, simple_steps(), "t1", 0)
+            .unwrap();
+        orch.begin_step("s1").unwrap();
+        orch.complete_step(
+            "s1",
+            0,
+            StepOutcome::Success {
+                result: "ok".to_string(),
+            },
+            "key-0",
+            100,
+        )
+        .unwrap();
+
+        let counts = orch.event_counts();
+        assert_eq!(*counts.get("saga_created").unwrap(), 1);
+        assert_eq!(*counts.get("step_begin").unwrap(), 1);
+        assert_eq!(*counts.get("step_complete").unwrap(), 1);
+    }
+
+    // -- Enrichment: saga step builder helpers --
+
+    #[test]
+    fn quarantine_saga_steps_has_four_steps() {
+        let steps = quarantine_saga_steps("ext-1");
+        assert_eq!(steps.len(), 4);
+        assert!(steps[0].step_name.contains("suspend"));
+        assert!(steps[1].step_name.contains("flush_evidence"));
+        assert!(steps[2].step_name.contains("propagate"));
+        assert!(steps[3].step_name.contains("confirm"));
+    }
+
+    #[test]
+    fn revocation_saga_steps_has_four_steps() {
+        let steps = revocation_saga_steps("cert-1");
+        assert_eq!(steps.len(), 4);
+        assert!(steps[0].step_name.contains("emit_revocation"));
+        assert!(steps[3].step_name.contains("update_frontier"));
+    }
+
+    #[test]
+    fn eviction_saga_steps_has_four_steps() {
+        let steps = eviction_saga_steps("pkg-1");
+        assert_eq!(steps.len(), 4);
+        assert!(steps[0].step_name.contains("mark_eviction"));
+        assert!(steps[2].step_name.contains("delete_artifacts"));
+    }
+
+    #[test]
+    fn publish_saga_steps_has_four_steps() {
+        let steps = publish_saga_steps("artifact-1");
+        assert_eq!(steps.len(), 4);
+        assert!(steps[0].step_name.contains("validate"));
+        assert!(steps[2].step_name.contains("commit"));
+        assert!(steps[3].step_name.contains("notify"));
+    }
+
+    // -- Enrichment: failure edge cases --
+
+    #[test]
+    fn first_step_failure_goes_directly_to_failed() {
+        let mut orch = SagaOrchestrator::new(test_epoch(), 10);
+        orch.create_saga("s1", SagaType::Eviction, simple_steps(), "t1", 0)
+            .unwrap();
+        orch.begin_step("s1").unwrap();
+
+        let state = orch
+            .complete_step(
+                "s1",
+                0,
+                StepOutcome::Failure {
+                    diagnostic: "immediate".to_string(),
+                },
+                "key-0",
+                100,
+            )
+            .unwrap();
+
+        // Step 0 failure means nothing to compensate → direct Failed.
+        assert!(matches!(state, SagaState::Failed { .. }));
+        assert!(orch.get("s1").unwrap().is_terminal());
+    }
+
+    #[test]
+    fn compensation_cancellation_is_terminal() {
+        let mut orch = SagaOrchestrator::new(test_epoch(), 10);
+        orch.create_saga("s1", SagaType::Publish, simple_steps(), "t1", 0)
+            .unwrap();
+
+        // Step 0 success.
+        orch.begin_step("s1").unwrap();
+        orch.complete_step(
+            "s1",
+            0,
+            StepOutcome::Success {
+                result: "ok".to_string(),
+            },
+            "key-0",
+            100,
+        )
+        .unwrap();
+
+        // Step 1 failure → compensating at step 0.
+        orch.begin_step("s1").unwrap();
+        orch.complete_step(
+            "s1",
+            1,
+            StepOutcome::Failure {
+                diagnostic: "boom".to_string(),
+            },
+            "key-1",
+            200,
+        )
+        .unwrap();
+
+        // Compensation at step 0 cancelled.
+        let state = orch
+            .complete_compensation(
+                "s1",
+                0,
+                StepOutcome::Cancelled {
+                    reason: "lease_expired".to_string(),
+                },
+                "comp-key-0",
+                300,
+            )
+            .unwrap();
+
+        assert!(matches!(state, SagaState::Failed { .. }));
+        let saga = orch.get("s1").unwrap();
+        assert!(saga.is_terminal());
+    }
+
+    #[test]
+    fn last_completed_forward_step_none_when_no_records() {
+        let saga = Saga {
+            saga_id: SagaId::from_trace("s1"),
+            saga_type: SagaType::Publish,
+            steps: simple_steps(),
+            state: SagaState::Pending,
+            epoch: test_epoch(),
+            trace_id: "t1".to_string(),
+            step_records: Vec::new(),
+            created_at: 0,
+        };
+        assert!(saga.last_completed_forward_step().is_none());
+    }
+
+    #[test]
+    fn last_completed_forward_step_returns_max_index() {
+        let saga = Saga {
+            saga_id: SagaId::from_trace("s1"),
+            saga_type: SagaType::Publish,
+            steps: simple_steps(),
+            state: SagaState::Completed,
+            epoch: test_epoch(),
+            trace_id: "t1".to_string(),
+            step_records: vec![
+                StepRecord {
+                    step_index: 0,
+                    step_name: "step_a".to_string(),
+                    action_type: ActionType::Forward,
+                    outcome: StepOutcome::Success {
+                        result: "ok".to_string(),
+                    },
+                    completed_at: 100,
+                    idempotency_key_hex: "k0".to_string(),
+                },
+                StepRecord {
+                    step_index: 1,
+                    step_name: "step_b".to_string(),
+                    action_type: ActionType::Forward,
+                    outcome: StepOutcome::Success {
+                        result: "ok".to_string(),
+                    },
+                    completed_at: 200,
+                    idempotency_key_hex: "k1".to_string(),
+                },
+            ],
+            created_at: 0,
+        };
+        assert_eq!(saga.last_completed_forward_step(), Some(1));
+    }
+
+    #[test]
+    fn begin_step_on_completed_saga_fails() {
+        let mut orch = SagaOrchestrator::new(test_epoch(), 10);
+        orch.create_saga("s1", SagaType::Publish, simple_steps(), "t1", 0)
+            .unwrap();
+        for i in 0..3 {
+            orch.begin_step("s1").unwrap();
+            orch.complete_step(
+                "s1",
+                i,
+                StepOutcome::Success {
+                    result: "ok".to_string(),
+                },
+                &format!("key-{i}"),
+                (i as u64 + 1) * 100,
+            )
+            .unwrap();
+        }
+
+        assert!(matches!(
+            orch.begin_step("s1"),
+            Err(SagaError::SagaAlreadyTerminal { .. })
+        ));
+    }
+
+    #[test]
+    fn epoch_mismatch_on_begin_step() {
+        let mut orch = SagaOrchestrator::new(test_epoch(), 10);
+        orch.create_saga("s1", SagaType::Publish, simple_steps(), "t1", 0)
+            .unwrap();
+
+        // Advance epoch without invalidating (manually set).
+        orch.advance_epoch(SecurityEpoch::from_raw(2), "t-adv");
+
+        // s1 was already invalidated by advance_epoch, so begin_step fails.
+        assert!(orch.begin_step("s1").is_err());
+    }
 }

@@ -1882,4 +1882,57 @@ mod tests {
         let result = sample_to_result(&s);
         assert_eq!(result.false_deny_rate_millionths, 0);
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn plas_benchmark_cohort_serde_all_variants() {
+        for v in PlasBenchmarkCohort::all() {
+            let json = serde_json::to_string(&v).unwrap();
+            let back: PlasBenchmarkCohort = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, back);
+        }
+    }
+
+    #[test]
+    fn plas_benchmark_cohort_as_str_distinct() {
+        let set: std::collections::BTreeSet<&str> = PlasBenchmarkCohort::all()
+            .iter()
+            .map(|c| c.as_str())
+            .collect();
+        assert_eq!(set.len(), 4);
+    }
+
+    #[test]
+    fn plas_benchmark_cohort_ordering() {
+        assert!(PlasBenchmarkCohort::Simple < PlasBenchmarkCohort::Complex);
+        assert!(PlasBenchmarkCohort::Complex < PlasBenchmarkCohort::HighRisk);
+        assert!(PlasBenchmarkCohort::HighRisk < PlasBenchmarkCohort::Boundary);
+    }
+
+    #[test]
+    fn plas_benchmark_bundle_error_is_std_error() {
+        let e = PlasBenchmarkBundleError::InvalidInput {
+            field: "f".into(),
+            detail: "d".into(),
+        };
+        let _: &dyn std::error::Error = &e;
+    }
+
+    #[test]
+    fn plas_benchmark_bundle_error_display_distinct() {
+        let variants: Vec<PlasBenchmarkBundleError> = vec![
+            PlasBenchmarkBundleError::InvalidInput {
+                field: "f".into(),
+                detail: "d".into(),
+            },
+            PlasBenchmarkBundleError::DuplicateExtensionId {
+                extension_id: "x".into(),
+            },
+            PlasBenchmarkBundleError::SerializationFailure("err".into()),
+        ];
+        let set: std::collections::BTreeSet<String> =
+            variants.iter().map(|e| format!("{e}")).collect();
+        assert_eq!(set.len(), variants.len());
+    }
 }

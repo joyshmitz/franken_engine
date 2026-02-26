@@ -2007,4 +2007,148 @@ mod tests {
         assert!(RecoveryAction::RecoverContinue < RecoveryAction::PartialRecover);
         assert!(RecoveryAction::PartialRecover < RecoveryAction::FailStrict);
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn recovery_mode_serde_all_variants() {
+        let variants = [
+            RecoveryMode::StrictDefault,
+            RecoveryMode::DiagnosticRecovery,
+            RecoveryMode::ExecutionRecovery,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: RecoveryMode = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn error_state_serde_all_variants() {
+        let variants = [
+            ErrorState::Recoverable,
+            ErrorState::Ambiguous,
+            ErrorState::Unrecoverable,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: ErrorState = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn recovery_action_serde_all_variants() {
+        let variants = [
+            RecoveryAction::RecoverContinue,
+            RecoveryAction::PartialRecover,
+            RecoveryAction::FailStrict,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: RecoveryAction = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn recovery_mode_display_distinct() {
+        let all = [
+            RecoveryMode::StrictDefault,
+            RecoveryMode::DiagnosticRecovery,
+            RecoveryMode::ExecutionRecovery,
+        ];
+        let set: std::collections::BTreeSet<String> = all.iter().map(|m| format!("{m}")).collect();
+        assert_eq!(set.len(), all.len());
+    }
+
+    #[test]
+    fn error_state_display_distinct() {
+        let all = [
+            ErrorState::Recoverable,
+            ErrorState::Ambiguous,
+            ErrorState::Unrecoverable,
+        ];
+        let set: std::collections::BTreeSet<String> = all.iter().map(|s| format!("{s}")).collect();
+        assert_eq!(set.len(), all.len());
+    }
+
+    #[test]
+    fn recovery_action_display_distinct() {
+        let all = [
+            RecoveryAction::RecoverContinue,
+            RecoveryAction::PartialRecover,
+            RecoveryAction::FailStrict,
+        ];
+        let set: std::collections::BTreeSet<String> = all.iter().map(|a| format!("{a}")).collect();
+        assert_eq!(set.len(), all.len());
+    }
+
+    #[test]
+    fn repair_edit_serde_all_variants() {
+        let variants = vec![
+            RepairEdit::Skip {
+                position: 10,
+                count: 3,
+            },
+            RepairEdit::Insert {
+                position: 5,
+                tokens: vec!["let".into(), "x".into()],
+            },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: RepairEdit = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn recovery_error_serde_all_variants() {
+        let variants = vec![
+            RecoveryError::BudgetExhausted {
+                attempts: 5,
+                max: 10,
+            },
+            RecoveryError::InvalidConfig {
+                detail: "bad".into(),
+            },
+            RecoveryError::NoCandidates { error_position: 42 },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: RecoveryError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn recovery_error_display_distinct() {
+        let variants = vec![
+            RecoveryError::BudgetExhausted {
+                attempts: 1,
+                max: 2,
+            },
+            RecoveryError::InvalidConfig { detail: "x".into() },
+            RecoveryError::NoCandidates { error_position: 0 },
+        ];
+        let set: std::collections::BTreeSet<String> =
+            variants.iter().map(|e| format!("{e}")).collect();
+        assert_eq!(set.len(), variants.len());
+    }
+
+    #[test]
+    fn recovery_error_code_distinct() {
+        let variants = vec![
+            RecoveryError::BudgetExhausted {
+                attempts: 1,
+                max: 2,
+            },
+            RecoveryError::InvalidConfig { detail: "x".into() },
+            RecoveryError::NoCandidates { error_position: 0 },
+        ];
+        let set: std::collections::BTreeSet<&str> = variants.iter().map(|e| e.code()).collect();
+        assert_eq!(set.len(), variants.len());
+    }
 }

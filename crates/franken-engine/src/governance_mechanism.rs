@@ -1764,4 +1764,163 @@ mod tests {
         let report = make_report("r0", "pkg-x", 0);
         assert!(mech.submit_report(report).is_ok());
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: PearlTower 2026-02-26
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn active_quarantine_count_reflects_state() {
+        let mut mech = GovernanceMechanism::new(test_epoch());
+        assert_eq!(mech.active_quarantine_count(), 0);
+        let report = make_report("r1", "pkg-a", 500_000);
+        mech.submit_report(report).unwrap();
+        let q = make_quarantine("q1", "pkg-a", "r1");
+        mech.impose_quarantine(q).unwrap();
+        assert_eq!(mech.active_quarantine_count(), 1);
+    }
+
+    #[test]
+    fn epoch_accessor_returns_constructor_epoch() {
+        let mech = GovernanceMechanism::new(test_epoch());
+        assert_eq!(mech.epoch(), test_epoch());
+    }
+
+    #[test]
+    fn reports_accessor_returns_submitted_reports() {
+        let mut mech = GovernanceMechanism::new(test_epoch());
+        assert!(mech.reports().is_empty());
+        mech.submit_report(make_report("r1", "pkg-a", 100_000))
+            .unwrap();
+        assert_eq!(mech.reports().len(), 1);
+        assert_eq!(mech.reports()[0].report_id, "r1");
+    }
+
+    #[test]
+    fn challenges_accessor_returns_submitted_challenges() {
+        let mut mech = GovernanceMechanism::new(test_epoch());
+        mech.submit_report(make_report("r1", "pkg-a", 100_000))
+            .unwrap();
+        let challenge = ChallengeRecord {
+            challenge_id: "c1".into(),
+            report_id: "r1".into(),
+            challenger_id: "challenger-1".into(),
+            outcome: None,
+            rationale: "disagree".into(),
+            game_model_id: "gm-1".into(),
+            minimax_action: None,
+            submitted_at: test_ts(2000),
+            resolved_at: None,
+        };
+        mech.submit_challenge(challenge).unwrap();
+        assert_eq!(mech.challenges().len(), 1);
+        assert_eq!(mech.challenges()[0].challenge_id, "c1");
+    }
+
+    #[test]
+    fn extension_report_serde_roundtrip() {
+        let report = make_report("r1", "pkg-a", 750_000);
+        let json = serde_json::to_string(&report).unwrap();
+        let back: ExtensionReport = serde_json::from_str(&json).unwrap();
+        assert_eq!(report, back);
+    }
+
+    #[test]
+    fn quarantine_record_serde_roundtrip() {
+        let q = make_quarantine("q1", "pkg-a", "r1");
+        let json = serde_json::to_string(&q).unwrap();
+        let back: QuarantineRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(q, back);
+    }
+
+    #[test]
+    fn challenge_record_serde_roundtrip() {
+        let c = ChallengeRecord {
+            challenge_id: "c1".into(),
+            report_id: "r1".into(),
+            challenger_id: "ch-1".into(),
+            outcome: Some(ChallengeOutcome::Upheld),
+            rationale: "evidence supports report".into(),
+            game_model_id: "gm-1".into(),
+            minimax_action: Some("quarantine".into()),
+            submitted_at: test_ts(3000),
+            resolved_at: Some(test_ts(4000)),
+        };
+        let json = serde_json::to_string(&c).unwrap();
+        let back: ChallengeRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(c, back);
+    }
+
+    #[test]
+    fn reinstate_request_serde_roundtrip() {
+        let r = ReinstateRequest {
+            request_id: "req-1".into(),
+            quarantine_id: "q1".into(),
+            justification: "fixed the issue".into(),
+            compliance_evidence_id: Some("ev-1".into()),
+            submitted_at: test_ts(5000),
+            approved: Some(true),
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        let back: ReinstateRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(r, back);
+    }
+
+    #[test]
+    fn mechanism_error_implements_std_error() {
+        let err: Box<dyn std::error::Error> = Box::new(MechanismError::IncentiveViolation {
+            reason: "test".into(),
+        });
+        assert!(!err.to_string().is_empty());
+    }
+
+    #[test]
+    fn report_phase_ordering() {
+        assert!(ReportPhase::Submitted < ReportPhase::UnderReview);
+        assert!(ReportPhase::UnderReview < ReportPhase::Resolved);
+        assert!(ReportPhase::Resolved < ReportPhase::Dismissed);
+    }
+
+    #[test]
+    fn quarantine_status_serde_all_variants() {
+        let variants = [
+            QuarantineStatus::Active,
+            QuarantineStatus::Lifted,
+            QuarantineStatus::Expired,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: QuarantineStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn challenge_outcome_serde_all_variants() {
+        let variants = [
+            ChallengeOutcome::Upheld,
+            ChallengeOutcome::Rejected,
+            ChallengeOutcome::Escalated,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: ChallengeOutcome = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn report_phase_serde_all_variants() {
+        let variants = [
+            ReportPhase::Submitted,
+            ReportPhase::UnderReview,
+            ReportPhase::Resolved,
+            ReportPhase::Dismissed,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: ReportPhase = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
 }

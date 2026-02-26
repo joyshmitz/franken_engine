@@ -1756,4 +1756,176 @@ mod tests {
         let stats = tracker.category_stats();
         assert!(stats.is_empty());
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn leak_policy_serde_all_variants() {
+        for policy in [LeakPolicy::Lab, LeakPolicy::Production] {
+            let json = serde_json::to_string(&policy).unwrap();
+            let back: LeakPolicy = serde_json::from_str(&json).unwrap();
+            assert_eq!(policy, back);
+        }
+    }
+
+    #[test]
+    fn obligation_event_all_phases_serde() {
+        for phase in [
+            OperationPhase::Phase1Active,
+            OperationPhase::Committed,
+            OperationPhase::Aborted,
+            OperationPhase::Leaked,
+        ] {
+            let event = ObligationEvent {
+                trace_id: "t".to_string(),
+                cell_id: "c".to_string(),
+                cell_kind: CellKind::Extension,
+                operation_id: "op".to_string(),
+                category: TwoPhaseCategory::ResourceAlloc,
+                event: "test".to_string(),
+                outcome: "ok".to_string(),
+                component: "obligation_integration".to_string(),
+                phase: phase.clone(),
+            };
+            let json = serde_json::to_string(&event).unwrap();
+            let back: ObligationEvent = serde_json::from_str(&json).unwrap();
+            assert_eq!(event.phase, back.phase);
+        }
+    }
+
+    #[test]
+    fn error_code_all_variants_unique() {
+        let errors = vec![
+            ObligationIntegrationError::CellNotRunning {
+                cell_id: "c".to_string(),
+                current_state: RegionState::Closed,
+            },
+            ObligationIntegrationError::OperationNotFound {
+                operation_id: "op".to_string(),
+            },
+            ObligationIntegrationError::AlreadyResolved {
+                operation_id: "op".to_string(),
+                current_phase: OperationPhase::Committed,
+            },
+            ObligationIntegrationError::DuplicateOperation {
+                operation_id: "op".to_string(),
+            },
+            ObligationIntegrationError::CellError {
+                message: "err".to_string(),
+            },
+        ];
+        let codes: Vec<&str> = errors.iter().map(|e| e.error_code()).collect();
+        let mut deduped = codes.clone();
+        deduped.sort();
+        deduped.dedup();
+        assert_eq!(codes.len(), deduped.len());
+    }
+
+    #[test]
+    fn category_display_all_variants_unique() {
+        let categories = [
+            TwoPhaseCategory::ResourceAlloc,
+            TwoPhaseCategory::PermissionGrant,
+            TwoPhaseCategory::StateMutation,
+            TwoPhaseCategory::EvidenceCommit,
+        ];
+        let mut displays: Vec<String> = categories.iter().map(|c| c.to_string()).collect();
+        let original_len = displays.len();
+        displays.sort();
+        displays.dedup();
+        assert_eq!(displays.len(), original_len);
+    }
+
+    #[test]
+    fn phase_display_all_variants_unique() {
+        let phases = [
+            OperationPhase::Phase1Active,
+            OperationPhase::Committed,
+            OperationPhase::Aborted,
+            OperationPhase::Leaked,
+        ];
+        let mut displays: Vec<String> = phases.iter().map(|p| p.to_string()).collect();
+        let original_len = displays.len();
+        displays.sort();
+        displays.dedup();
+        assert_eq!(displays.len(), original_len);
+    }
+
+    #[test]
+    fn tracker_lab_marks_failure_on_leaks() {
+        let mut cell = ExecutionCell::new("c1", CellKind::Extension, "t");
+        let mut tracker = ObligationTracker::lab();
+        assert_eq!(tracker.leak_policy(), LeakPolicy::Lab);
+        assert!(!tracker.should_fail_run());
+
+        tracker
+            .begin_operation(
+                &mut cell,
+                "op-leak",
+                TwoPhaseCategory::ResourceAlloc,
+                "will leak",
+            )
+            .unwrap();
+        // Close cell without resolving
+        let mut cx = mock_cx(100);
+        cell.close(
+            &mut cx,
+            CancelReason::OperatorShutdown,
+            DrainDeadline::default(),
+        );
+        let leaks = tracker.detect_leaks(&cell);
+        assert_eq!(leaks.len(), 1);
+        assert!(tracker.should_fail_run());
+    }
+
+    #[test]
+    fn active_and_total_count_track_operations() {
+        let mut cell = ExecutionCell::new("c1", CellKind::Extension, "t");
+        let mut tracker = ObligationTracker::default();
+        assert_eq!(tracker.active_count(), 0);
+        assert_eq!(tracker.total_count(), 0);
+
+        tracker
+            .begin_operation(&mut cell, "op1", TwoPhaseCategory::ResourceAlloc, "a")
+            .unwrap();
+        assert_eq!(tracker.active_count(), 1);
+        assert_eq!(tracker.total_count(), 1);
+
+        tracker.commit_operation(&mut cell, "op1").unwrap();
+        assert_eq!(tracker.active_count(), 0);
+        assert_eq!(tracker.total_count(), 1);
+    }
+
+    #[test]
+    fn category_stats_serde_fields_preserved() {
+        let stats = CategoryStats {
+            started: 10,
+            committed: 7,
+            aborted: 2,
+            leaked: 1,
+        };
+        let json = serde_json::to_string(&stats).unwrap();
+        let back: CategoryStats = serde_json::from_str(&json).unwrap();
+        assert_eq!(stats.started, back.started);
+        assert_eq!(stats.committed, back.committed);
+        assert_eq!(stats.aborted, back.aborted);
+        assert_eq!(stats.leaked, back.leaked);
+    }
+
+    #[test]
+    fn get_operation_returns_correct_phase() {
+        let mut cell = ExecutionCell::new("c1", CellKind::Extension, "t");
+        let mut tracker = ObligationTracker::default();
+        tracker
+            .begin_operation(
+                &mut cell,
+                "op-check",
+                TwoPhaseCategory::StateMutation,
+                "test",
+            )
+            .unwrap();
+        let op = tracker.get_operation("op-check").unwrap();
+        assert!(matches!(op.phase, OperationPhase::Phase1Active));
+        assert_eq!(op.category, TwoPhaseCategory::StateMutation);
+    }
 }

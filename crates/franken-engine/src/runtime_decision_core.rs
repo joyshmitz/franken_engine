@@ -2269,4 +2269,127 @@ mod tests {
         let core = make_core();
         assert_eq!(core.current_coverage_millionths(), MILLION);
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn risk_dimension_serde_roundtrip() {
+        for v in &RiskDimension::ALL {
+            let json = serde_json::to_string(v).unwrap();
+            let back: RiskDimension = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn regime_estimate_serde_roundtrip() {
+        let variants = [
+            RegimeEstimate::Normal,
+            RegimeEstimate::Elevated,
+            RegimeEstimate::Attack,
+            RegimeEstimate::Degraded,
+            RegimeEstimate::Recovery,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: RegimeEstimate = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn risk_dimension_display_all_distinct() {
+        let mut set = std::collections::BTreeSet::new();
+        for v in &RiskDimension::ALL {
+            set.insert(v.to_string());
+        }
+        assert_eq!(set.len(), RiskDimension::ALL.len());
+    }
+
+    #[test]
+    fn regime_estimate_display_all_distinct() {
+        let variants = [
+            RegimeEstimate::Normal,
+            RegimeEstimate::Elevated,
+            RegimeEstimate::Attack,
+            RegimeEstimate::Degraded,
+            RegimeEstimate::Recovery,
+        ];
+        let mut set = std::collections::BTreeSet::new();
+        for v in &variants {
+            set.insert(v.to_string());
+        }
+        assert_eq!(set.len(), variants.len());
+    }
+
+    #[test]
+    fn fallback_reason_serde_roundtrip() {
+        let variants = vec![
+            FallbackReason::RegimeChange("attack detected".into()),
+            FallbackReason::CVaRViolation {
+                cvar_us: 1000,
+                max_us: 500,
+            },
+            FallbackReason::CalibrationUndercoverage {
+                coverage_millionths: 300_000,
+            },
+            FallbackReason::BudgetExhausted {
+                compute_ms: 100,
+                memory_mb: 256,
+            },
+            FallbackReason::LowConfidence {
+                confidence_millionths: 200_000,
+            },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: FallbackReason = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn decision_core_error_serde_roundtrip() {
+        let variants = vec![
+            DecisionCoreError::NoLanesConfigured,
+            DecisionCoreError::EmptyActionSet,
+            DecisionCoreError::BudgetExhaustedNoFallback,
+            DecisionCoreError::EpochRegression {
+                current: 5,
+                received: 3,
+            },
+            DecisionCoreError::InvalidConfig("bad".into()),
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: DecisionCoreError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn fallback_reason_display_all_distinct() {
+        let variants = vec![
+            FallbackReason::RegimeChange("x".into()),
+            FallbackReason::CVaRViolation {
+                cvar_us: 1,
+                max_us: 2,
+            },
+            FallbackReason::CalibrationUndercoverage {
+                coverage_millionths: 1,
+            },
+            FallbackReason::BudgetExhausted {
+                compute_ms: 1,
+                memory_mb: 1,
+            },
+            FallbackReason::LowConfidence {
+                confidence_millionths: 1,
+            },
+        ];
+        let mut set = std::collections::BTreeSet::new();
+        for v in &variants {
+            set.insert(v.to_string());
+        }
+        assert_eq!(set.len(), variants.len());
+    }
 }

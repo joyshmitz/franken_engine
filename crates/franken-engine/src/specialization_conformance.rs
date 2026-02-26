@@ -2578,4 +2578,294 @@ mod tests {
         assert!(DivergenceKind::SideEffectTrace < DivergenceKind::ExceptionSequence);
         assert!(DivergenceKind::ExceptionSequence < DivergenceKind::EvidenceEmission);
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn performance_delta_serde_round_trip() {
+        let delta = SpecializationConformanceEngine::compute_performance_delta(80, 100);
+        let json = serde_json::to_string(&delta).unwrap();
+        let back: PerformanceDelta = serde_json::from_str(&json).unwrap();
+        assert_eq!(delta, back);
+    }
+
+    #[test]
+    fn divergence_detail_serde_round_trip() {
+        let detail = DivergenceDetail {
+            divergence_kind: DivergenceKind::SideEffectTrace,
+            specialized_summary: "1 effects".to_string(),
+            unspecialized_summary: "3 effects".to_string(),
+        };
+        let json = serde_json::to_string(&detail).unwrap();
+        let back: DivergenceDetail = serde_json::from_str(&json).unwrap();
+        assert_eq!(detail, back);
+    }
+
+    #[test]
+    fn receipt_validation_result_serde_round_trip() {
+        let r = ReceiptValidationResult {
+            receipt_id: test_id("rcpt-serde"),
+            well_formed: true,
+            equivalence_hash_matches: false,
+            rollback_validated: true,
+            proof_inputs_consistent: false,
+            schema_version: ReceiptSchemaVersion::CURRENT,
+            valid: false,
+            failure_reasons: vec![
+                "hash mismatch".to_string(),
+                "inconsistent proofs".to_string(),
+            ],
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        let back: ReceiptValidationResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(r, back);
+    }
+
+    #[test]
+    fn per_specialization_verdict_serde_round_trip() {
+        let v = PerSpecializationVerdict {
+            specialization_id: test_id("spec-serde"),
+            parity_workloads_run: 30,
+            edge_case_workloads_run: 10,
+            epoch_transition_workloads_run: 5,
+            divergence_count: 1,
+            fallback_failures: 0,
+            receipt_validation: ReceiptValidationResult {
+                receipt_id: test_id("rcpt-serde"),
+                well_formed: true,
+                equivalence_hash_matches: true,
+                rollback_validated: true,
+                proof_inputs_consistent: true,
+                schema_version: ReceiptSchemaVersion::CURRENT,
+                valid: true,
+                failure_reasons: vec![],
+            },
+            passed: false,
+        };
+        let json = serde_json::to_string(&v).unwrap();
+        let back: PerSpecializationVerdict = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+    }
+
+    #[test]
+    fn conformance_error_serde_all_variants() {
+        let variants: Vec<ConformanceError> = vec![
+            ConformanceError::InsufficientCorpus {
+                specialization_id: "spec-1".into(),
+                category: CorpusCategory::SemanticParity,
+                required: 30,
+                found: 5,
+            },
+            ConformanceError::SpecializationNotFound {
+                specialization_id: "spec-x".into(),
+            },
+            ConformanceError::ReceiptInvalid {
+                receipt_id: "rcpt-1".into(),
+                reasons: vec!["bad hash".into()],
+            },
+            ConformanceError::MissingCorpus {
+                specialization_id: "spec-m".into(),
+            },
+            ConformanceError::ExecutionError {
+                message: "timeout".into(),
+            },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: ConformanceError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn side_effect_serde_round_trip() {
+        let effect = SideEffect {
+            effect_type: "hostcall".to_string(),
+            description: "call-logger".to_string(),
+            sequence: 42,
+        };
+        let json = serde_json::to_string(&effect).unwrap();
+        let back: SideEffect = serde_json::from_str(&json).unwrap();
+        assert_eq!(effect, back);
+    }
+
+    #[test]
+    fn specialization_workload_serde_round_trip() {
+        let w = make_workload("w-serde", CorpusCategory::EdgeCase);
+        let json = serde_json::to_string(&w).unwrap();
+        let back: SpecializationWorkload = serde_json::from_str(&json).unwrap();
+        assert_eq!(w, back);
+    }
+
+    #[test]
+    fn workload_outcome_empty_fields() {
+        let outcome = WorkloadOutcome {
+            return_value: String::new(),
+            side_effect_trace: vec![],
+            exceptions: vec![],
+            evidence_entries: vec![],
+        };
+        let json = serde_json::to_string(&outcome).unwrap();
+        let back: WorkloadOutcome = serde_json::from_str(&json).unwrap();
+        assert_eq!(outcome, back);
+        // Empty outcomes still produce a deterministic hash
+        let h1 = outcome.content_hash();
+        let h2 = back.content_hash();
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn compare_outcomes_trace_id_increments() {
+        let mut engine = SpecializationConformanceEngine::new("p", test_epoch());
+        let spec_id = test_id("spec-seq");
+        let outcome = matching_outcome();
+        let r1 = engine.compare_outcomes(&CompareOutcomesInput {
+            specialization_id: &spec_id,
+            workload_id: "w1",
+            category: CorpusCategory::SemanticParity,
+            specialized: &outcome,
+            unspecialized: &outcome,
+            specialized_duration_us: 100,
+            unspecialized_duration_us: 100,
+            epoch_transition_tested: false,
+            fallback_outcome: None,
+            receipt_valid: true,
+        });
+        let r2 = engine.compare_outcomes(&CompareOutcomesInput {
+            specialization_id: &spec_id,
+            workload_id: "w2",
+            category: CorpusCategory::SemanticParity,
+            specialized: &outcome,
+            unspecialized: &outcome,
+            specialized_duration_us: 100,
+            unspecialized_duration_us: 100,
+            epoch_transition_tested: false,
+            fallback_outcome: None,
+            receipt_valid: true,
+        });
+        assert_eq!(r1.trace_id, "conformance-1");
+        assert_eq!(r2.trace_id, "conformance-2");
+    }
+
+    #[test]
+    fn transformation_type_as_str_all_unique() {
+        let mut seen = std::collections::BTreeSet::new();
+        for tt in TransformationType::ALL {
+            assert!(
+                seen.insert(tt.as_str()),
+                "duplicate as_str: {}",
+                tt.as_str()
+            );
+        }
+    }
+
+    #[test]
+    fn evidence_artifact_full_serde_round_trip() {
+        let mut engine = SpecializationConformanceEngine::new("p", test_epoch());
+        let entry = make_inventory_entry("serde-test");
+        let spec_id = entry.specialization_id.clone();
+        engine.register_specialization(entry);
+        let outcome = matching_outcome();
+        engine.compare_outcomes(&CompareOutcomesInput {
+            specialization_id: &spec_id,
+            workload_id: "w1",
+            category: CorpusCategory::SemanticParity,
+            specialized: &outcome,
+            unspecialized: &outcome,
+            specialized_duration_us: 100,
+            unspecialized_duration_us: 150,
+            epoch_transition_tested: false,
+            fallback_outcome: None,
+            receipt_valid: true,
+        });
+        let artifact = engine.produce_evidence(
+            "run-serde",
+            ContentHash::compute(b"reg"),
+            "env-serde",
+            42_000,
+        );
+        let json = serde_json::to_string(&artifact).unwrap();
+        let back: ConformanceEvidenceArtifact = serde_json::from_str(&json).unwrap();
+        assert_eq!(artifact, back);
+    }
+
+    #[test]
+    fn epoch_transition_simulation_empty_ids() {
+        let mut engine = SpecializationConformanceEngine::new("p", test_epoch());
+        let simulation = EpochTransitionSimulation {
+            old_epoch: test_epoch(),
+            new_epoch: SecurityEpoch::from_raw(11),
+            invalidated_specialization_ids: vec![],
+            proof_revoked: false,
+            transition_timestamp_ns: 1_000,
+        };
+        let evidence = engine.simulate_epoch_transition(&simulation);
+        assert!(evidence.is_empty());
+        assert_eq!(engine.current_epoch(), SecurityEpoch::from_raw(11));
+    }
+
+    #[test]
+    fn conformance_log_fallback_status_formats() {
+        let mut engine = SpecializationConformanceEngine::new("p", test_epoch());
+        let spec_id = test_id("spec-fb-log");
+        let outcome = matching_outcome();
+
+        // No fallback
+        engine.compare_outcomes(&CompareOutcomesInput {
+            specialization_id: &spec_id,
+            workload_id: "w-no-fb",
+            category: CorpusCategory::SemanticParity,
+            specialized: &outcome,
+            unspecialized: &outcome,
+            specialized_duration_us: 50,
+            unspecialized_duration_us: 50,
+            epoch_transition_tested: false,
+            fallback_outcome: None,
+            receipt_valid: true,
+        });
+        let log_no_fb = &engine.logs()[0];
+        assert_eq!(log_no_fb.fallback_outcome.as_deref(), Some("not_tested"));
+
+        // Success fallback
+        engine.compare_outcomes(&CompareOutcomesInput {
+            specialization_id: &spec_id,
+            workload_id: "w-fb-ok",
+            category: CorpusCategory::EpochTransition,
+            specialized: &outcome,
+            unspecialized: &outcome,
+            specialized_duration_us: 50,
+            unspecialized_duration_us: 50,
+            epoch_transition_tested: true,
+            fallback_outcome: Some(FallbackOutcome::Success {
+                invalidation_evidence_id: "inv-log".to_string(),
+            }),
+            receipt_valid: true,
+        });
+        let log_ok = &engine.logs()[1];
+        assert_eq!(log_ok.fallback_outcome.as_deref(), Some("success"));
+
+        // Failure fallback
+        engine.compare_outcomes(&CompareOutcomesInput {
+            specialization_id: &spec_id,
+            workload_id: "w-fb-fail",
+            category: CorpusCategory::EpochTransition,
+            specialized: &outcome,
+            unspecialized: &outcome,
+            specialized_duration_us: 50,
+            unspecialized_duration_us: 50,
+            epoch_transition_tested: true,
+            fallback_outcome: Some(FallbackOutcome::Failure {
+                reason: "crash".to_string(),
+            }),
+            receipt_valid: true,
+        });
+        let log_fail = &engine.logs()[2];
+        assert!(
+            log_fail
+                .fallback_outcome
+                .as_deref()
+                .unwrap()
+                .starts_with("failure:")
+        );
+    }
 }

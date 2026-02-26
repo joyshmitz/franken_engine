@@ -2088,4 +2088,100 @@ mod tests {
             ReplayViolationType::SequenceGap < ReplayViolationType::TimestampMonotonicityViolation
         );
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn replay_error_code_serde_all_variants() {
+        let variants = [
+            ReplayErrorCode::HashMismatch,
+            ReplayErrorCode::ChainBroken,
+            ReplayErrorCode::EntryTruncated,
+            ReplayErrorCode::SequenceGap,
+            ReplayErrorCode::TimestampMonotonicityViolation,
+            ReplayErrorCode::OutcomeDivergence,
+            ReplayErrorCode::CalibrationDivergence,
+            ReplayErrorCode::ExpectedLossDivergence,
+            ReplayErrorCode::FallbackDivergence,
+            ReplayErrorCode::SchemaMigrationDetected,
+            ReplayErrorCode::PolicyVersionDiscontinuity,
+            ReplayErrorCode::EpochRegression,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: ReplayErrorCode = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, v);
+        }
+        assert_eq!(variants.len(), 12);
+    }
+
+    #[test]
+    fn replay_violation_type_serde_all_variants() {
+        let variants = [
+            ReplayViolationType::OutcomeDivergence,
+            ReplayViolationType::ArtifactHashMismatch,
+            ReplayViolationType::ChainHashMismatch,
+            ReplayViolationType::SequenceGap,
+            ReplayViolationType::TimestampMonotonicityViolation,
+            ReplayViolationType::EntryTruncated,
+            ReplayViolationType::CalibrationDivergence,
+            ReplayViolationType::ExpectedLossDivergence,
+            ReplayViolationType::FallbackDivergence,
+            ReplayViolationType::SchemaMigration,
+            ReplayViolationType::PolicyVersionChange,
+            ReplayViolationType::EpochRegression,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: ReplayViolationType = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, v);
+        }
+        assert_eq!(variants.len(), 12);
+    }
+
+    #[test]
+    fn replay_error_code_display_all_distinct() {
+        let variants = [
+            ReplayErrorCode::HashMismatch,
+            ReplayErrorCode::ChainBroken,
+            ReplayErrorCode::EntryTruncated,
+            ReplayErrorCode::SequenceGap,
+            ReplayErrorCode::TimestampMonotonicityViolation,
+            ReplayErrorCode::OutcomeDivergence,
+            ReplayErrorCode::CalibrationDivergence,
+            ReplayErrorCode::ExpectedLossDivergence,
+            ReplayErrorCode::FallbackDivergence,
+            ReplayErrorCode::SchemaMigrationDetected,
+            ReplayErrorCode::PolicyVersionDiscontinuity,
+            ReplayErrorCode::EpochRegression,
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for v in &variants {
+            assert!(seen.insert(v.to_string()), "duplicate display: {v}");
+        }
+        assert_eq!(seen.len(), 12);
+    }
+
+    #[test]
+    fn replay_violation_type_display_all_distinct() {
+        let variants = [
+            ReplayViolationType::OutcomeDivergence,
+            ReplayViolationType::ArtifactHashMismatch,
+            ReplayViolationType::ChainHashMismatch,
+            ReplayViolationType::SequenceGap,
+            ReplayViolationType::TimestampMonotonicityViolation,
+            ReplayViolationType::EntryTruncated,
+            ReplayViolationType::CalibrationDivergence,
+            ReplayViolationType::ExpectedLossDivergence,
+            ReplayViolationType::FallbackDivergence,
+            ReplayViolationType::SchemaMigration,
+            ReplayViolationType::PolicyVersionChange,
+            ReplayViolationType::EpochRegression,
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for v in &variants {
+            assert!(seen.insert(v.to_string()), "duplicate display: {v}");
+        }
+        assert_eq!(seen.len(), 12);
+    }
 }

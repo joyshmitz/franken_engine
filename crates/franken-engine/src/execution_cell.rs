@@ -2373,4 +2373,332 @@ mod tests {
         let cell = binding.manager().get("ext-1").unwrap();
         assert_eq!(cell.session_count(), 5);
     }
+
+    // -- Enrichment: CellError error_code exhaustive --
+
+    #[test]
+    fn cell_error_error_code_all_variants() {
+        let cases: Vec<(CellError, &str)> = vec![
+            (
+                CellError::InvalidState {
+                    cell_id: "c".into(),
+                    current: RegionState::Running,
+                    attempted: "op".into(),
+                },
+                "cell_invalid_state",
+            ),
+            (
+                CellError::BudgetExhausted {
+                    cell_id: "c".into(),
+                    requested_ms: 10,
+                    remaining_ms: 0,
+                },
+                "cell_budget_exhausted",
+            ),
+            (
+                CellError::CxThreading {
+                    cell_id: "c".into(),
+                    error_code: "e".into(),
+                    message: "m".into(),
+                },
+                "cell_cx_threading",
+            ),
+            (
+                CellError::CellNotFound {
+                    cell_id: "c".into(),
+                },
+                "cell_not_found",
+            ),
+            (
+                CellError::SessionRejected {
+                    parent_cell_id: "c".into(),
+                    reason: "r".into(),
+                },
+                "cell_session_rejected",
+            ),
+            (
+                CellError::ObligationNotFound {
+                    cell_id: "c".into(),
+                    obligation_id: "ob".into(),
+                },
+                "cell_obligation_not_found",
+            ),
+        ];
+        for (err, expected_code) in &cases {
+            assert_eq!(err.error_code(), *expected_code);
+        }
+    }
+
+    // -- Enrichment: CellError Display format verification --
+
+    #[test]
+    fn cell_error_display_format_contains_cell_id() {
+        let err = CellError::BudgetExhausted {
+            cell_id: "my-cell-42".into(),
+            requested_ms: 50,
+            remaining_ms: 3,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("my-cell-42"));
+        assert!(msg.contains("50"));
+        assert!(msg.contains("3"));
+
+        let err2 = CellError::CxThreading {
+            cell_id: "cx-cell".into(),
+            error_code: "EBUDGET".into(),
+            message: "out of budget".into(),
+        };
+        let msg2 = err2.to_string();
+        assert!(msg2.contains("cx-cell"));
+        assert!(msg2.contains("EBUDGET"));
+        assert!(msg2.contains("out of budget"));
+    }
+
+    // -- Enrichment: CellKind Hash distinct --
+
+    #[test]
+    fn cell_kind_hash_distinct() {
+        use std::collections::BTreeSet;
+        let kinds = [CellKind::Extension, CellKind::Session, CellKind::Delegate];
+        let set: BTreeSet<CellKind> = kinds.iter().copied().collect();
+        assert_eq!(set.len(), 3);
+    }
+
+    // -- Enrichment: CellManager archive_cell --
+
+    #[test]
+    fn manager_archive_cell_moves_to_closed() {
+        let mut mgr = CellManager::new();
+        mgr.create_extension_cell("ext-1", "t1");
+        assert_eq!(mgr.active_count(), 1);
+
+        let result = FinalizeResult {
+            region_id: "ext-1".into(),
+            success: true,
+            obligations_committed: 0,
+            obligations_aborted: 0,
+            drain_timeout_escalated: false,
+        };
+        mgr.archive_cell("ext-1", result);
+        assert_eq!(mgr.active_count(), 0);
+        assert_eq!(mgr.closed_count(), 1);
+        assert!(mgr.get("ext-1").is_none());
+    }
+
+    // -- Enrichment: CellManager insert_cell --
+
+    #[test]
+    fn manager_insert_cell_registers_pre_created() {
+        let mut mgr = CellManager::new();
+        let cell = ExecutionCell::with_context("custom-1", CellKind::Delegate, "t", "d", "p");
+        mgr.insert_cell("custom-1", cell);
+
+        assert_eq!(mgr.active_count(), 1);
+        let retrieved = mgr.get("custom-1").unwrap();
+        assert_eq!(retrieved.kind(), CellKind::Delegate);
+        assert_eq!(retrieved.decision_id(), "d");
+    }
+
+    // -- Enrichment: CellManager create_delegate_cell kind --
+
+    #[test]
+    fn manager_delegate_cell_has_delegate_kind() {
+        let mut mgr = CellManager::new();
+        mgr.create_delegate_cell("del-1", "t1");
+        let cell = mgr.get("del-1").unwrap();
+        assert_eq!(cell.kind(), CellKind::Delegate);
+        assert_eq!(cell.state(), RegionState::Running);
+    }
+
+    // -- Enrichment: CellManager active_cell_ids sorted --
+
+    #[test]
+    fn manager_active_cell_ids_sorted() {
+        let mut mgr = CellManager::new();
+        mgr.create_extension_cell("zz-last", "t1");
+        mgr.create_extension_cell("aa-first", "t2");
+        mgr.create_extension_cell("mm-middle", "t3");
+
+        let ids = mgr.active_cell_ids();
+        assert_eq!(ids, vec!["aa-first", "mm-middle", "zz-last"]);
+    }
+
+    // -- Enrichment: drain_events empties buffer --
+
+    #[test]
+    fn drain_events_empties_cell_event_buffer() {
+        let mut cell = ExecutionCell::new("ext-1", CellKind::Extension, "t");
+        let mut cx = mock_cx(100);
+
+        cell.execute_effect(&mut cx, EffectCategory::Hostcall, "op1")
+            .unwrap();
+        assert_eq!(cell.events().len(), 1);
+
+        let drained = cell.drain_events();
+        assert_eq!(drained.len(), 1);
+        assert!(cell.events().is_empty());
+    }
+
+    // -- Enrichment: session executes effects independently --
+
+    #[test]
+    fn session_cell_executes_effects_independently() {
+        let mut parent =
+            ExecutionCell::with_context("ext-1", CellKind::Extension, "t-parent", "d-1", "p-1");
+        let mut session = parent.create_session("sess-1", "t-sess").unwrap();
+        let mut cx = mock_cx(100);
+
+        let seq = session
+            .execute_effect(&mut cx, EffectCategory::Hostcall, "sess_op")
+            .unwrap();
+        assert_eq!(seq, 1);
+        assert_eq!(session.total_budget_consumed_ms(), 1);
+        assert_eq!(session.effect_log().len(), 1);
+
+        // Parent is unaffected
+        assert_eq!(parent.total_budget_consumed_ms(), 0);
+        assert_eq!(parent.effect_log().len(), 0);
+    }
+
+    // -- Enrichment: LifecycleEvidenceEntry with error_code --
+
+    #[test]
+    fn lifecycle_evidence_entry_serde_with_error_code() {
+        let entry = LifecycleEvidenceEntry {
+            sequence: 5,
+            trace_id: "t".into(),
+            decision_id: "d".into(),
+            policy_id: "p".into(),
+            component: "extension_host_binding".into(),
+            event: "extension_unload".into(),
+            outcome: "unload_with_pending".into(),
+            error_code: Some("drain_timeout_escalated".into()),
+            cell_id: "ext-1".into(),
+            cell_kind: CellKind::Extension,
+            region_state: RegionState::Closed,
+            budget_consumed_ms: 2,
+            metadata: BTreeMap::new(),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let restored: LifecycleEvidenceEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry, restored);
+        assert_eq!(
+            restored.error_code.as_deref(),
+            Some("drain_timeout_escalated")
+        );
+    }
+
+    // -- Enrichment: LifecycleEvidenceEntry with metadata --
+
+    #[test]
+    fn lifecycle_evidence_entry_serde_with_metadata() {
+        let mut metadata = BTreeMap::new();
+        metadata.insert("extension_version".to_string(), "1.2.3".to_string());
+        metadata.insert("publisher".to_string(), "acme-corp".to_string());
+
+        let entry = LifecycleEvidenceEntry {
+            sequence: 0,
+            trace_id: "t".into(),
+            decision_id: "d".into(),
+            policy_id: "p".into(),
+            component: "extension_host_binding".into(),
+            event: "extension_load".into(),
+            outcome: "ok".into(),
+            error_code: None,
+            cell_id: "ext-1".into(),
+            cell_kind: CellKind::Extension,
+            region_state: RegionState::Running,
+            budget_consumed_ms: 2,
+            metadata,
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let restored: LifecycleEvidenceEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry, restored);
+        assert_eq!(restored.metadata.len(), 2);
+        assert_eq!(restored.metadata["publisher"], "acme-corp");
+    }
+
+    // -- Enrichment: binding evidence_count matches log length --
+
+    #[test]
+    fn binding_evidence_count_matches_log_length() {
+        let mut binding = ExtensionHostBinding::new(DrainDeadline::default());
+        let mut cx = mock_cx(500);
+
+        assert_eq!(binding.evidence_count(), 0);
+        assert_eq!(binding.evidence_log().len(), 0);
+
+        binding
+            .load_extension("ext-1", &mut cx, "d-1", "p-1")
+            .unwrap();
+        assert_eq!(binding.evidence_count(), 1);
+        assert_eq!(
+            binding.evidence_log().len() as u64,
+            binding.evidence_count()
+        );
+
+        binding.start_session("ext-1", "sess-1", "t-s1").unwrap();
+        assert_eq!(binding.evidence_count(), 2);
+        assert_eq!(
+            binding.evidence_log().len() as u64,
+            binding.evidence_count()
+        );
+    }
+
+    // -- Enrichment: abort_obligation not found --
+
+    #[test]
+    fn abort_obligation_not_found_error() {
+        let mut cell = ExecutionCell::new("ext-1", CellKind::Extension, "t");
+        let err = cell.abort_obligation("ghost-ob").unwrap_err();
+        assert_eq!(err.error_code(), "cell_obligation_not_found");
+        assert!(err.to_string().contains("ghost-ob"));
+    }
+
+    // -- Enrichment: CellCloseReport field access --
+
+    #[test]
+    fn cell_close_report_timeout_escalation_fields() {
+        let report = CellCloseReport {
+            cell_id: "ext-timeout".into(),
+            cell_kind: CellKind::Extension,
+            close_reason: "BudgetExhausted".into(),
+            success: true,
+            obligations_committed: 3,
+            obligations_aborted: 2,
+            drain_timeout_escalated: true,
+            budget_consumed_ms: 42,
+            evidence_entries_emitted: 1,
+        };
+        assert!(report.drain_timeout_escalated);
+        assert_eq!(report.obligations_aborted, 2);
+        assert_eq!(report.obligations_committed, 3);
+        assert_eq!(report.budget_consumed_ms, 42);
+
+        // Serde preserves all fields
+        let json = serde_json::to_string(&report).unwrap();
+        let restored: CellCloseReport = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.drain_timeout_escalated, true);
+        assert_eq!(restored.close_reason, "BudgetExhausted");
+    }
+
+    // -- Enrichment: session close report via binding --
+
+    #[test]
+    fn binding_load_duplicate_extension_overwrites() {
+        let mut binding = ExtensionHostBinding::new(DrainDeadline::default());
+        let mut cx = mock_cx(500);
+
+        binding
+            .load_extension("ext-1", &mut cx, "d-1", "p-1")
+            .unwrap();
+        // Loading again with same ID overwrites
+        binding
+            .load_extension("ext-1", &mut cx, "d-2", "p-2")
+            .unwrap();
+
+        let cell = binding.manager().get("ext-1").unwrap();
+        assert_eq!(cell.decision_id(), "d-2");
+        assert_eq!(cell.policy_id(), "p-2");
+    }
 }

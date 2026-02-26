@@ -3134,4 +3134,151 @@ mod tests {
             assert_eq!(node, restored);
         }
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn ir_error_is_std_error() {
+        let err = IrError::new(IrErrorCode::SchemaVersionMismatch, "test", IrLevel::Ir0);
+        let dyn_err: &dyn std::error::Error = &err;
+        assert!(!dyn_err.to_string().is_empty());
+    }
+
+    #[test]
+    fn ir_error_code_as_str_all_distinct() {
+        let codes = [
+            IrErrorCode::SchemaVersionMismatch,
+            IrErrorCode::LevelMismatch,
+            IrErrorCode::SourceHashMismatch,
+            IrErrorCode::HashVerificationFailed,
+            IrErrorCode::MissingCapabilityAnnotation,
+            IrErrorCode::InvalidSpecializationLinkage,
+            IrErrorCode::WitnessIntegrityViolation,
+        ];
+        let mut strs = std::collections::BTreeSet::new();
+        for c in &codes {
+            strs.insert(c.as_str());
+        }
+        assert_eq!(strs.len(), codes.len());
+    }
+
+    #[test]
+    fn ir_level_as_str_all_distinct() {
+        let levels = [
+            IrLevel::Ir0,
+            IrLevel::Ir1,
+            IrLevel::Ir2,
+            IrLevel::Ir3,
+            IrLevel::Ir4,
+        ];
+        let mut strs = std::collections::BTreeSet::new();
+        for l in &levels {
+            strs.insert(l.as_str());
+        }
+        assert_eq!(strs.len(), levels.len());
+    }
+
+    #[test]
+    fn scope_kind_as_str_all_distinct() {
+        let kinds = [
+            ScopeKind::Global,
+            ScopeKind::Module,
+            ScopeKind::Function,
+            ScopeKind::Block,
+            ScopeKind::Catch,
+        ];
+        let mut strs = std::collections::BTreeSet::new();
+        for k in &kinds {
+            strs.insert(k.as_str());
+        }
+        assert_eq!(strs.len(), kinds.len());
+    }
+
+    #[test]
+    fn binding_kind_as_str_all_distinct() {
+        let kinds = [
+            BindingKind::Let,
+            BindingKind::Const,
+            BindingKind::Var,
+            BindingKind::Parameter,
+            BindingKind::Import,
+            BindingKind::FunctionDecl,
+        ];
+        let mut strs = std::collections::BTreeSet::new();
+        for k in &kinds {
+            strs.insert(k.as_str());
+        }
+        assert_eq!(strs.len(), kinds.len());
+    }
+
+    #[test]
+    fn effect_boundary_as_str_all_distinct() {
+        let effects = [
+            EffectBoundary::Pure,
+            EffectBoundary::ReadEffect,
+            EffectBoundary::WriteEffect,
+            EffectBoundary::NetworkEffect,
+            EffectBoundary::FsEffect,
+        ];
+        let mut strs = std::collections::BTreeSet::new();
+        for e in &effects {
+            strs.insert(e.as_str());
+        }
+        assert_eq!(strs.len(), effects.len());
+    }
+
+    #[test]
+    fn witness_event_kind_all_distinct_as_str() {
+        let kinds = [
+            WitnessEventKind::HostcallDispatched,
+            WitnessEventKind::CapabilityChecked,
+            WitnessEventKind::ExceptionRaised,
+            WitnessEventKind::GcTriggered,
+            WitnessEventKind::ExecutionCompleted,
+            WitnessEventKind::FlowLabelChecked,
+            WitnessEventKind::DeclassificationRequested,
+        ];
+        let mut strs = std::collections::BTreeSet::new();
+        for k in &kinds {
+            strs.insert(k.as_str());
+        }
+        assert_eq!(strs.len(), kinds.len());
+    }
+
+    #[test]
+    fn execution_outcome_as_str_all_distinct() {
+        let outcomes = [
+            ExecutionOutcome::Completed,
+            ExecutionOutcome::Exception,
+            ExecutionOutcome::Timeout,
+            ExecutionOutcome::Halted,
+        ];
+        let mut strs = std::collections::BTreeSet::new();
+        for o in &outcomes {
+            strs.insert(o.as_str());
+        }
+        assert_eq!(strs.len(), outcomes.len());
+    }
+
+    #[test]
+    fn capability_tag_serde_preserves_value() {
+        let tag = CapabilityTag("net:fetch".to_string());
+        let json = serde_json::to_string(&tag).unwrap();
+        let back: CapabilityTag = serde_json::from_str(&json).unwrap();
+        assert_eq!(tag.0, back.0);
+    }
+
+    #[test]
+    fn witness_event_canonical_value_deterministic() {
+        let event = WitnessEvent {
+            seq: 1,
+            kind: WitnessEventKind::HostcallDispatched,
+            instruction_index: InstrIndex::from(42u32),
+            payload_hash: ContentHash::compute(b"payload"),
+            timestamp_tick: 100,
+        };
+        let cv1 = event.canonical_value();
+        let cv2 = event.canonical_value();
+        assert_eq!(cv1, cv2);
+    }
 }

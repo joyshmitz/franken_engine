@@ -2142,4 +2142,125 @@ mod tests {
         let back: WorkloadLogEntry = serde_json::from_str(&json).unwrap();
         assert_eq!(back.trace_id, "trace-1");
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn workload_category_serde_all_variants() {
+        let variants = [
+            WorkloadCategory::SemanticEquivalence,
+            WorkloadCategory::EdgeCase,
+            WorkloadCategory::Adversarial,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: WorkloadCategory = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn differential_outcome_serde_all_variants() {
+        let variants = [DifferentialOutcome::Match, DifferentialOutcome::Diverge];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: DifferentialOutcome = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn slot_differential_error_serde_all_variants() {
+        let variants: Vec<SlotDifferentialError> = vec![
+            SlotDifferentialError::SlotNotFound {
+                slot_id: "s1".into(),
+            },
+            SlotDifferentialError::EmptyCorpus {
+                slot_id: "s2".into(),
+            },
+            SlotDifferentialError::InvalidConfig {
+                detail: "bad".into(),
+            },
+            SlotDifferentialError::CellExecutionFailed {
+                slot_id: "s3".into(),
+                cell_type: "native".into(),
+                detail: "oops".into(),
+            },
+            SlotDifferentialError::InternalError {
+                detail: "boom".into(),
+            },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: SlotDifferentialError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn divergence_class_as_str_distinct() {
+        let all = [
+            DivergenceClass::SemanticDivergence,
+            DivergenceClass::CapabilityDivergence,
+            DivergenceClass::PerformanceDivergence,
+            DivergenceClass::ResourceDivergence,
+            DivergenceClass::BenignImprovement,
+        ];
+        let set: std::collections::BTreeSet<&str> = all.iter().map(|d| d.as_str()).collect();
+        assert_eq!(set.len(), all.len());
+    }
+
+    #[test]
+    fn workload_category_as_str_distinct() {
+        let all = [
+            WorkloadCategory::SemanticEquivalence,
+            WorkloadCategory::EdgeCase,
+            WorkloadCategory::Adversarial,
+        ];
+        let set: std::collections::BTreeSet<&str> = all.iter().map(|c| c.as_str()).collect();
+        assert_eq!(set.len(), all.len());
+    }
+
+    #[test]
+    fn differential_outcome_as_str_distinct() {
+        let all = [DifferentialOutcome::Match, DifferentialOutcome::Diverge];
+        let set: std::collections::BTreeSet<&str> = all.iter().map(|o| o.as_str()).collect();
+        assert_eq!(set.len(), all.len());
+    }
+
+    #[test]
+    fn slot_differential_error_display_distinct() {
+        let variants: Vec<SlotDifferentialError> = vec![
+            SlotDifferentialError::SlotNotFound {
+                slot_id: "x".into(),
+            },
+            SlotDifferentialError::EmptyCorpus {
+                slot_id: "x".into(),
+            },
+            SlotDifferentialError::InvalidConfig { detail: "x".into() },
+            SlotDifferentialError::CellExecutionFailed {
+                slot_id: "x".into(),
+                cell_type: "x".into(),
+                detail: "x".into(),
+            },
+            SlotDifferentialError::InternalError { detail: "x".into() },
+        ];
+        let set: std::collections::BTreeSet<String> =
+            variants.iter().map(|e| format!("{e}")).collect();
+        assert_eq!(set.len(), variants.len());
+    }
+
+    #[test]
+    fn divergence_class_display_matches_as_str() {
+        let all = [
+            DivergenceClass::SemanticDivergence,
+            DivergenceClass::CapabilityDivergence,
+            DivergenceClass::PerformanceDivergence,
+            DivergenceClass::ResourceDivergence,
+            DivergenceClass::BenignImprovement,
+        ];
+        for d in &all {
+            assert_eq!(format!("{d}"), d.as_str());
+        }
+    }
 }

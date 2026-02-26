@@ -2537,4 +2537,121 @@ mod tests {
         assert!(LexerMode::Swar < LexerMode::Scalar);
         assert!(LexerMode::Scalar < LexerMode::Differential);
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn lexer_schema_version_serde_roundtrip() {
+        let v = LexerSchemaVersion::V1;
+        let json = serde_json::to_string(&v).unwrap();
+        let back: LexerSchemaVersion = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, v);
+    }
+
+    #[test]
+    fn lexer_mode_serde_all_variants() {
+        let variants = [LexerMode::Swar, LexerMode::Scalar, LexerMode::Differential];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: LexerMode = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, v);
+        }
+    }
+
+    #[test]
+    fn swar_feature_gate_serde_all_variants() {
+        let variants = [
+            SwarFeatureGate::Portable,
+            SwarFeatureGate::RequireAvx2,
+            SwarFeatureGate::RequireAvx512F,
+            SwarFeatureGate::RequireNeon,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: SwarFeatureGate = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, v);
+        }
+    }
+
+    #[test]
+    fn arch_family_serde_all_variants() {
+        let variants = [
+            ArchFamily::X86_64,
+            ArchFamily::Aarch64,
+            ArchFamily::Arm,
+            ArchFamily::Other,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: ArchFamily = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, v);
+        }
+    }
+
+    #[test]
+    fn arch_family_display_all_distinct() {
+        let variants = [
+            ArchFamily::X86_64,
+            ArchFamily::Aarch64,
+            ArchFamily::Arm,
+            ArchFamily::Other,
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for v in &variants {
+            assert!(seen.insert(v.to_string()), "duplicate display: {v}");
+        }
+        assert_eq!(seen.len(), 4);
+    }
+
+    #[test]
+    fn swar_disable_reason_serde_all_variants() {
+        let variants: Vec<SwarDisableReason> = vec![
+            SwarDisableReason::OperatorOverride,
+            SwarDisableReason::ParityMismatch { mismatch_index: 42 },
+            SwarDisableReason::InputBelowThreshold {
+                input_len: 4,
+                threshold: 8,
+            },
+            SwarDisableReason::ArchitectureUnsupported {
+                pointer_width: 32,
+                little_endian: false,
+            },
+            SwarDisableReason::FeatureGateUnavailable {
+                required: SwarFeatureGate::RequireAvx2,
+                arch_family: ArchFamily::Aarch64,
+            },
+            SwarDisableReason::TokenBudgetExceeded,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: SwarDisableReason = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, v);
+        }
+        assert_eq!(variants.len(), 6);
+    }
+
+    #[test]
+    fn lexer_error_serde_all_variants() {
+        let variants: Vec<LexerError> = vec![
+            LexerError::SourceTooLarge {
+                size: 1024,
+                max: 512,
+            },
+            LexerError::TokenBudgetExceeded {
+                count: 100,
+                max: 50,
+            },
+            LexerError::InternalError("test error".into()),
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: LexerError = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, v);
+        }
+    }
+
+    #[test]
+    fn lexer_schema_version_display() {
+        assert_eq!(LexerSchemaVersion::V1.to_string(), "v1");
+    }
 }

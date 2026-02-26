@@ -2971,4 +2971,144 @@ mod tests {
         assert_eq!(completeness.linkage_count, result.events.len());
         let _ = fs::remove_dir_all(&dir);
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn replay_input_error_code_serde_roundtrip() {
+        let variants = [
+            ReplayInputErrorCode::MissingModelSnapshot,
+            ReplayInputErrorCode::PartialTrace,
+            ReplayInputErrorCode::CorruptedTranscript,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: ReplayInputErrorCode = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn replay_input_error_serde_roundtrip() {
+        let err = ReplayInputError {
+            code: ReplayInputErrorCode::PartialTrace,
+            message: "trace incomplete".into(),
+        };
+        let json = serde_json::to_string(&err).unwrap();
+        let back: ReplayInputError = serde_json::from_str(&json).unwrap();
+        assert_eq!(err, back);
+    }
+
+    #[test]
+    fn replay_mismatch_kind_serde_roundtrip() {
+        let variants = [
+            ReplayMismatchKind::Digest,
+            ReplayMismatchKind::EventStream,
+            ReplayMismatchKind::RandomTranscript,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: ReplayMismatchKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn counterfactual_divergence_kind_serde_roundtrip() {
+        let variants = [
+            CounterfactualDivergenceKind::EventMismatch,
+            CounterfactualDivergenceKind::MissingBaselineEvent,
+            CounterfactualDivergenceKind::MissingCounterfactualEvent,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: CounterfactualDivergenceKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn scenario_class_serde_roundtrip() {
+        let variants = [
+            ScenarioClass::Stress,
+            ScenarioClass::FaultInjection,
+            ScenarioClass::CrossArch,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: ScenarioClass = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn fixture_validation_error_display_all_distinct() {
+        let variants = vec![
+            FixtureValidationError::MissingFixtureId,
+            FixtureValidationError::MissingPolicyId,
+            FixtureValidationError::MissingSteps,
+            FixtureValidationError::UnsupportedVersion {
+                expected: 1,
+                actual: 2,
+            },
+            FixtureValidationError::InvalidStep {
+                index: 0,
+                reason: "bad".into(),
+            },
+        ];
+        let mut set = std::collections::BTreeSet::new();
+        for v in &variants {
+            set.insert(v.to_string());
+        }
+        assert_eq!(set.len(), variants.len());
+    }
+
+    #[test]
+    fn fixture_migration_error_display_all_distinct() {
+        let variants = vec![
+            FixtureMigrationError::InvalidFixturePayload {
+                message: "bad json".into(),
+            },
+            FixtureMigrationError::UnsupportedVersion {
+                expected: 1,
+                actual: 3,
+            },
+            FixtureMigrationError::InvalidMigratedFixture {
+                message: "schema fail".into(),
+            },
+        ];
+        let mut set = std::collections::BTreeSet::new();
+        for v in &variants {
+            set.insert(v.to_string());
+        }
+        assert_eq!(set.len(), variants.len());
+    }
+
+    #[test]
+    fn replay_input_error_code_as_str_all_distinct() {
+        let variants = [
+            ReplayInputErrorCode::MissingModelSnapshot,
+            ReplayInputErrorCode::PartialTrace,
+            ReplayInputErrorCode::CorruptedTranscript,
+        ];
+        let mut set = std::collections::BTreeSet::new();
+        for v in &variants {
+            set.insert(v.as_str());
+        }
+        assert_eq!(set.len(), variants.len());
+    }
+
+    #[test]
+    fn scenario_matrix_entry_serde_roundtrip() {
+        let entry = ScenarioMatrixEntry {
+            scenario_id: "stress-1".into(),
+            scenario_class: ScenarioClass::Stress,
+            fixture: valid_fixture(),
+            target_arch: Some("x86_64".into()),
+            worker_pool: None,
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let back: ScenarioMatrixEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry, back);
+    }
 }

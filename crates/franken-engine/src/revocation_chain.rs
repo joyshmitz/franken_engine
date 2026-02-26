@@ -2145,4 +2145,194 @@ mod tests {
             assert_eq!(r, back);
         }
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: PearlTower 2026-02-26
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn zone_accessor_returns_constructor_zone() {
+        let chain = RevocationChain::new("my-zone");
+        assert_eq!(chain.zone(), "my-zone");
+    }
+
+    #[test]
+    fn chain_hash_accessor_matches_head_chain_hash() {
+        let mut chain = RevocationChain::new(TEST_ZONE);
+        let sk = test_signing_key();
+        let rev = make_revocation(
+            RevocationTargetType::Key,
+            RevocationReason::Compromised,
+            [77; 32],
+            &test_revocation_key(),
+        );
+        chain.append(rev, &sk, "t-hash").unwrap();
+        assert_eq!(chain.chain_hash(), &chain.head().unwrap().chain_hash);
+    }
+
+    #[test]
+    fn event_counts_tracks_all_types() {
+        let mut chain = RevocationChain::new(TEST_ZONE);
+        let sk = test_signing_key();
+
+        // Append two events — should produce: 2 appended, 1 head_advanced
+        let rev1 = make_revocation(
+            RevocationTargetType::Key,
+            RevocationReason::Compromised,
+            [1; 32],
+            &test_revocation_key(),
+        );
+        chain.append(rev1, &sk, "t-1").unwrap();
+
+        let rev2 = make_revocation(
+            RevocationTargetType::Token,
+            RevocationReason::Expired,
+            [2; 32],
+            &test_revocation_key(),
+        );
+        chain.append(rev2, &sk, "t-2").unwrap();
+
+        // Trigger a rejection with a duplicate
+        let rev_dup = make_revocation(
+            RevocationTargetType::Key,
+            RevocationReason::Administrative,
+            [1; 32],
+            &test_revocation_key(),
+        );
+        let _ = chain.append(rev_dup, &sk, "t-dup");
+
+        // Audited lookup
+        chain.is_revoked_audited(&EngineObjectId([1; 32]), "t-lk");
+
+        // Verify chain
+        chain.verify_chain_mut("t-verify").unwrap();
+
+        let counts = chain.event_counts();
+        assert_eq!(counts.get("revocation_appended"), Some(&2));
+        assert_eq!(counts.get("head_advanced"), Some(&1));
+        assert_eq!(counts.get("append_rejected"), Some(&1));
+        assert_eq!(counts.get("revocation_lookup"), Some(&1));
+        assert_eq!(counts.get("chain_verified"), Some(&1));
+    }
+
+    #[test]
+    fn get_event_out_of_range_returns_none() {
+        let chain = RevocationChain::new(TEST_ZONE);
+        assert!(chain.get_event(0).is_none());
+        assert!(chain.get_event(999).is_none());
+    }
+
+    #[test]
+    fn lookup_revocation_returns_none_for_non_revoked() {
+        let chain = RevocationChain::new(TEST_ZONE);
+        assert!(chain.lookup_revocation(&EngineObjectId([88; 32])).is_none());
+    }
+
+    #[test]
+    fn chain_error_implements_std_error() {
+        let err: Box<dyn std::error::Error> = Box::new(ChainError::EmptyChain);
+        assert!(!err.to_string().is_empty());
+    }
+
+    #[test]
+    fn events_accessor_returns_all_events() {
+        let mut chain = RevocationChain::new(TEST_ZONE);
+        let sk = test_signing_key();
+
+        for i in 0..3u8 {
+            let rev = make_revocation(
+                RevocationTargetType::Token,
+                RevocationReason::Expired,
+                [i + 50; 32],
+                &test_revocation_key(),
+            );
+            chain.append(rev, &sk, &format!("t-{i}")).unwrap();
+        }
+
+        let events = chain.events();
+        assert_eq!(events.len(), 3);
+        for (i, event) in events.iter().enumerate() {
+            assert_eq!(event.event_seq, i as u64);
+        }
+    }
+
+    #[test]
+    fn rebuild_detects_duplicate_target_in_events() {
+        let mut chain = RevocationChain::new(TEST_ZONE);
+        let sk = test_signing_key();
+
+        let rev = make_revocation(
+            RevocationTargetType::Key,
+            RevocationReason::Compromised,
+            [1; 32],
+            &test_revocation_key(),
+        );
+        chain.append(rev, &sk, "t-1").unwrap();
+
+        // Tamper: create a second event with same target_id
+        let mut events = chain.events().to_vec();
+        let mut dup_event = events[0].clone();
+        dup_event.event_seq = 1;
+        dup_event.prev_event = Some(events[0].event_id.clone());
+        events.push(dup_event);
+
+        let err = RevocationChain::rebuild_from_events(TEST_ZONE, events, None).unwrap_err();
+        assert!(matches!(err, ChainError::DuplicateTarget { .. }));
+    }
+
+    #[test]
+    fn schema_ids_are_deterministic() {
+        let s1 = revocation_schema_id();
+        let s2 = revocation_schema_id();
+        assert_eq!(s1, s2);
+
+        let es1 = revocation_event_schema_id();
+        let es2 = revocation_event_schema_id();
+        assert_eq!(es1, es2);
+
+        let hs1 = revocation_head_schema_id();
+        let hs2 = revocation_head_schema_id();
+        assert_eq!(hs1, hs2);
+    }
+
+    #[test]
+    fn revocation_event_canonical_bytes_differ_for_different_events() {
+        let mut chain = RevocationChain::new(TEST_ZONE);
+        let sk = test_signing_key();
+
+        let rev1 = make_revocation(
+            RevocationTargetType::Key,
+            RevocationReason::Compromised,
+            [1; 32],
+            &test_revocation_key(),
+        );
+        chain.append(rev1, &sk, "t-1").unwrap();
+
+        let rev2 = make_revocation(
+            RevocationTargetType::Token,
+            RevocationReason::Expired,
+            [2; 32],
+            &test_revocation_key(),
+        );
+        chain.append(rev2, &sk, "t-2").unwrap();
+
+        let b1 = chain.get_event(0).unwrap().canonical_bytes();
+        let b2 = chain.get_event(1).unwrap().canonical_bytes();
+        assert_ne!(b1, b2);
+    }
+
+    #[test]
+    fn revocation_ordering_all_variants() {
+        let variants = [
+            RevocationTargetType::Key,
+            RevocationTargetType::Token,
+            RevocationTargetType::Attestation,
+            RevocationTargetType::Extension,
+            RevocationTargetType::Checkpoint,
+        ];
+        // Verify Ord is implemented and is consistent
+        let mut sorted = variants;
+        sorted.sort();
+        assert_eq!(sorted.len(), 5);
+    }
 }

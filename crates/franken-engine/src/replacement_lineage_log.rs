@@ -3665,4 +3665,134 @@ mod tests {
         assert!(q.max_timestamp_ns.is_none());
         assert!(q.limit.is_none());
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn replacement_kind_as_str_matches_display() {
+        for kind in [
+            ReplacementKind::DelegateToNative,
+            ReplacementKind::Demotion,
+            ReplacementKind::Rollback,
+            ReplacementKind::RePromotion,
+        ] {
+            assert_eq!(kind.as_str(), &kind.to_string());
+        }
+    }
+
+    #[test]
+    fn replacement_kind_as_str_all_distinct() {
+        let mut strs = std::collections::BTreeSet::new();
+        for kind in [
+            ReplacementKind::DelegateToNative,
+            ReplacementKind::Demotion,
+            ReplacementKind::Rollback,
+            ReplacementKind::RePromotion,
+        ] {
+            strs.insert(kind.as_str());
+        }
+        assert_eq!(strs.len(), 4);
+    }
+
+    #[test]
+    fn lineage_log_error_display_all_nonempty() {
+        let variants: Vec<LineageLogError> = vec![LineageLogError::DuplicateReceipt {
+            receipt_id: "r-001".to_string(),
+        }];
+        for v in &variants {
+            assert!(!v.to_string().is_empty());
+        }
+    }
+
+    #[test]
+    fn evidence_category_as_str_enrichment_all_distinct() {
+        let mut strs = std::collections::BTreeSet::new();
+        for cat in [
+            EvidenceCategory::GateResult,
+            EvidenceCategory::PerformanceBenchmark,
+            EvidenceCategory::SentinelRiskScore,
+            EvidenceCategory::DifferentialExecutionLog,
+            EvidenceCategory::Additional,
+        ] {
+            strs.insert(cat.as_str());
+        }
+        assert_eq!(strs.len(), 5);
+    }
+
+    #[test]
+    fn proof_direction_serde_all_variants_distinct() {
+        let variants = [ProofDirection::Left, ProofDirection::Right];
+        let mut names = std::collections::BTreeSet::new();
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: ProofDirection = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, &back);
+            names.insert(json);
+        }
+        assert_eq!(names.len(), variants.len());
+    }
+
+    #[test]
+    fn lineage_index_error_display_all_nonempty() {
+        let err = LineageIndexError::InvalidInput {
+            detail: "bad".to_string(),
+        };
+        assert!(!err.to_string().is_empty());
+    }
+
+    #[test]
+    fn config_default_checkpoint_interval_nonzero() {
+        let config = LineageLogConfig::default();
+        assert!(config.checkpoint_interval > 0);
+    }
+
+    #[test]
+    fn lineage_log_entry_hash_changes_with_kind() {
+        let receipt = test_receipt("slot-a", "old", "new", 1);
+        let entry1 = LineageLogEntry {
+            sequence: 0,
+            receipt: receipt.clone(),
+            kind: ReplacementKind::DelegateToNative,
+            predecessor_hash: ContentHash::compute(b"genesis"),
+            entry_hash: ContentHash::compute(b"placeholder"),
+        };
+        let entry2 = LineageLogEntry {
+            sequence: 0,
+            receipt,
+            kind: ReplacementKind::Demotion,
+            predecessor_hash: ContentHash::compute(b"genesis"),
+            entry_hash: ContentHash::compute(b"placeholder"),
+        };
+        let json1 = serde_json::to_string(&entry1).unwrap();
+        let json2 = serde_json::to_string(&entry2).unwrap();
+        assert_ne!(
+            json1, json2,
+            "different kinds should produce different JSON"
+        );
+    }
+
+    #[test]
+    fn slot_lineage_query_with_all_filters() {
+        let query = SlotLineageQuery {
+            min_timestamp_ns: Some(100),
+            max_timestamp_ns: Some(999),
+            limit: Some(10),
+        };
+        let json = serde_json::to_string(&query).unwrap();
+        let back: SlotLineageQuery = serde_json::from_str(&json).unwrap();
+        assert_eq!(query, back);
+    }
+
+    #[test]
+    fn replay_join_query_with_all_filters() {
+        let query = ReplayJoinQuery {
+            slot_id: Some(test_slot_id("parser")),
+            min_timestamp_ns: Some(0),
+            max_timestamp_ns: Some(u64::MAX),
+            limit: Some(50),
+        };
+        let json = serde_json::to_string(&query).unwrap();
+        let back: ReplayJoinQuery = serde_json::from_str(&json).unwrap();
+        assert_eq!(query, back);
+    }
 }

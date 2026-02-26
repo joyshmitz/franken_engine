@@ -2128,4 +2128,285 @@ mod tests {
             .unwrap_err();
         assert!(matches!(err, ConvergenceError::AlreadyAtMaxSeverity { .. }));
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn partition_info_serde_roundtrip() {
+        let info = PartitionInfo {
+            detected_at_ns: 42_000_000_000,
+            unreachable_nodes: {
+                let mut s = BTreeSet::new();
+                s.insert(test_node("n1"));
+                s.insert(test_node("n2"));
+                s
+            },
+            local_partition_size: 3,
+            total_fleet_size: 5,
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        let decoded: PartitionInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(info, decoded);
+    }
+
+    #[test]
+    fn healing_info_serde_roundtrip() {
+        let info = HealingInfo {
+            heal_started_ns: 99_000_000_000,
+            reconciling_nodes: {
+                let mut s = BTreeSet::new();
+                s.insert(test_node("n1"));
+                s
+            },
+            conflict_count: 7,
+            merged_evidence_count: 42,
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        let decoded: HealingInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(info, decoded);
+    }
+
+    #[test]
+    fn partition_mode_all_variants_serde_roundtrip() {
+        let normal = PartitionMode::Normal;
+        let degraded = PartitionMode::Degraded(PartitionInfo {
+            detected_at_ns: 1,
+            unreachable_nodes: BTreeSet::new(),
+            local_partition_size: 1,
+            total_fleet_size: 2,
+        });
+        let healing = PartitionMode::Healing(HealingInfo {
+            heal_started_ns: 2,
+            reconciling_nodes: BTreeSet::new(),
+            conflict_count: 0,
+            merged_evidence_count: 0,
+        });
+        for mode in [normal, degraded, healing] {
+            let json = serde_json::to_string(&mode).unwrap();
+            let decoded: PartitionMode = serde_json::from_str(&json).unwrap();
+            assert_eq!(mode, decoded);
+        }
+    }
+
+    #[test]
+    fn convergence_decision_serde_roundtrip() {
+        let decision = ConvergenceDecision {
+            extension_id: "ext-abc".into(),
+            action: ContainmentAction::Terminate,
+            posterior_delta: 850_000,
+            crossed_threshold: Some(800_000),
+            degraded_mode: true,
+            evidence_count: 20,
+        };
+        let json = serde_json::to_string(&decision).unwrap();
+        let decoded: ConvergenceDecision = serde_json::from_str(&json).unwrap();
+        assert_eq!(decision, decoded);
+    }
+
+    #[test]
+    fn action_registry_serde_roundtrip() {
+        let mut reg = ActionRegistry::new();
+        reg.record(ContainmentReceipt {
+            action_id: "a1".into(),
+            extension_id: "ext-1".into(),
+            action_type: ContainmentAction::Suspend,
+            evidence_ids: vec!["e1".into()],
+            posterior_snapshot: 600_000,
+            policy_version: 1,
+            node_id: test_node("local"),
+            epoch: SecurityEpoch::GENESIS,
+            timestamp_ns: 1_000,
+            degraded_mode: false,
+            escalation_depth: 0,
+            signature: AuthenticityHash::compute_keyed(b"k", b"v"),
+        });
+        reg.increment_escalation("ext-1");
+
+        let json = serde_json::to_string(&reg).unwrap();
+        let decoded: ActionRegistry = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.total_actions(), 1);
+        assert!(decoded.is_executed("ext-1", ContainmentAction::Suspend));
+        assert_eq!(decoded.escalation_depth("ext-1"), 1);
+    }
+
+    #[test]
+    fn convergence_event_type_display_all_variants_distinct() {
+        let variants = [
+            ConvergenceEventType::ThresholdCrossed,
+            ConvergenceEventType::ActionExecuted,
+            ConvergenceEventType::PartitionEntered,
+            ConvergenceEventType::PartitionExited,
+            ConvergenceEventType::ReconciliationConflict,
+            ConvergenceEventType::ConvergenceVerified,
+            ConvergenceEventType::ConvergenceDiverged,
+            ConvergenceEventType::EscalationTriggered,
+            ConvergenceEventType::EvidenceLag,
+            ConvergenceEventType::SpectralHealthComputed,
+        ];
+        let mut seen = BTreeSet::new();
+        for v in &variants {
+            let s = v.to_string();
+            assert!(!s.is_empty());
+            assert!(seen.insert(s.clone()), "duplicate Display: {s}");
+        }
+        assert_eq!(seen.len(), variants.len());
+    }
+
+    #[test]
+    fn convergence_error_display_all_variants_distinct() {
+        let variants: Vec<ConvergenceError> = vec![
+            ConvergenceError::MaxEscalationReached {
+                extension_id: "ext-1".into(),
+                depth: 3,
+            },
+            ConvergenceError::AlreadyAtMaxSeverity {
+                extension_id: "ext-1".into(),
+            },
+            ConvergenceError::ActionAlreadyExecuted {
+                extension_id: "ext-1".into(),
+                action: ContainmentAction::Sandbox,
+            },
+            ConvergenceError::InvalidThresholds,
+            ConvergenceError::Protocol(ProtocolError::EmptyIntents),
+        ];
+        let mut seen = BTreeSet::new();
+        for e in &variants {
+            let s = e.to_string();
+            assert!(!s.is_empty());
+            assert!(seen.insert(s.clone()), "duplicate Display: {s}");
+        }
+        assert_eq!(seen.len(), variants.len());
+    }
+
+    #[test]
+    fn receipt_preimage_sensitive_to_action_type() {
+        let base = ContainmentReceipt {
+            action_id: "a1".into(),
+            extension_id: "ext-1".into(),
+            action_type: ContainmentAction::Sandbox,
+            evidence_ids: vec![],
+            posterior_snapshot: 300_000,
+            policy_version: 1,
+            node_id: test_node("local"),
+            epoch: SecurityEpoch::GENESIS,
+            timestamp_ns: 1_000,
+            degraded_mode: false,
+            escalation_depth: 0,
+            signature: AuthenticityHash::compute_keyed(b"k", b"v"),
+        };
+        let mut other = base.clone();
+        other.action_type = ContainmentAction::Terminate;
+        assert_ne!(base.signing_preimage(), other.signing_preimage());
+    }
+
+    #[test]
+    fn receipt_preimage_sensitive_to_extension_id() {
+        let base = ContainmentReceipt {
+            action_id: "a1".into(),
+            extension_id: "ext-1".into(),
+            action_type: ContainmentAction::Sandbox,
+            evidence_ids: vec![],
+            posterior_snapshot: 300_000,
+            policy_version: 1,
+            node_id: test_node("local"),
+            epoch: SecurityEpoch::GENESIS,
+            timestamp_ns: 1_000,
+            degraded_mode: false,
+            escalation_depth: 0,
+            signature: AuthenticityHash::compute_keyed(b"k", b"v"),
+        };
+        let mut other = base.clone();
+        other.extension_id = "ext-2".into();
+        assert_ne!(base.signing_preimage(), other.signing_preimage());
+    }
+
+    #[test]
+    fn tighten_with_zero_factor_zeroes_thresholds() {
+        let t = ContainmentThresholds::default();
+        let zeroed = t.tighten(0);
+        assert_eq!(zeroed.sandbox_threshold, 0);
+        assert_eq!(zeroed.suspend_threshold, 0);
+        assert_eq!(zeroed.terminate_threshold, 0);
+        assert_eq!(zeroed.quarantine_threshold, 0);
+    }
+
+    #[test]
+    fn evaluate_extension_in_healing_mode_sets_degraded() {
+        let mut engine = test_engine("local");
+        engine.partition_mode = PartitionMode::Healing(HealingInfo {
+            heal_started_ns: 1,
+            reconciling_nodes: BTreeSet::new(),
+            conflict_count: 0,
+            merged_evidence_count: 0,
+        });
+        let decision = engine.evaluate_extension("ext-1", 300_000, 5);
+        assert!(decision.degraded_mode);
+        // Healing uses tightened thresholds, so sandbox threshold = 150_000.
+        assert_eq!(decision.action, ContainmentAction::Sandbox);
+    }
+
+    #[test]
+    fn action_registry_get_receipt_returns_recorded() {
+        let mut reg = ActionRegistry::new();
+        assert!(
+            reg.get_receipt("ext-1", ContainmentAction::Sandbox)
+                .is_none()
+        );
+
+        let receipt = ContainmentReceipt {
+            action_id: "a1".into(),
+            extension_id: "ext-1".into(),
+            action_type: ContainmentAction::Sandbox,
+            evidence_ids: vec![],
+            posterior_snapshot: 300_000,
+            policy_version: 1,
+            node_id: test_node("local"),
+            epoch: SecurityEpoch::GENESIS,
+            timestamp_ns: 1_000,
+            degraded_mode: false,
+            escalation_depth: 0,
+            signature: AuthenticityHash::compute_keyed(b"k", b"v"),
+        };
+        reg.record(receipt.clone());
+
+        let got = reg
+            .get_receipt("ext-1", ContainmentAction::Sandbox)
+            .unwrap();
+        assert_eq!(got.action_id, "a1");
+    }
+
+    #[test]
+    fn thresholds_equal_values_are_invalid() {
+        let t = ContainmentThresholds {
+            sandbox_threshold: 500_000,
+            suspend_threshold: 500_000,
+            terminate_threshold: 800_000,
+            quarantine_threshold: 950_000,
+        };
+        assert!(!t.is_valid());
+    }
+
+    #[test]
+    fn partition_info_is_minority_with_full_quorum() {
+        // 100% quorum threshold: everyone must be present.
+        let info = PartitionInfo {
+            detected_at_ns: 0,
+            unreachable_nodes: BTreeSet::new(),
+            local_partition_size: 4,
+            total_fleet_size: 5,
+        };
+        // Need 5 out of 5, have 4 → minority.
+        assert!(info.is_minority(1_000_000));
+    }
+
+    #[test]
+    fn convergence_engine_serde_roundtrip() {
+        let engine = test_engine("local");
+        let json = serde_json::to_string(&engine).unwrap();
+        let decoded: ConvergenceEngine = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.node_id, engine.node_id);
+        assert_eq!(decoded.policy_version, engine.policy_version);
+        assert_eq!(decoded.config.thresholds, engine.config.thresholds);
+        assert!(matches!(decoded.partition_mode, PartitionMode::Normal));
+    }
 }

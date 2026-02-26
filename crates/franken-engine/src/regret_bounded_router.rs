@@ -2120,4 +2120,82 @@ mod tests {
         ve.update(800_000);
         assert_eq!(ve.mean_millionths, 500_000);
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn regime_kind_serde_all_variants() {
+        let variants = [
+            RegimeKind::Unknown,
+            RegimeKind::Stochastic,
+            RegimeKind::Adversarial,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: RegimeKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn regime_kind_ord_unknown_lt_adversarial() {
+        assert!(RegimeKind::Unknown < RegimeKind::Stochastic);
+        assert!(RegimeKind::Stochastic < RegimeKind::Adversarial);
+    }
+
+    #[test]
+    fn router_error_serde_all_variants() {
+        let variants: Vec<RouterError> = vec![
+            RouterError::NoArms,
+            RouterError::TooManyArms { count: 10, max: 5 },
+            RouterError::ArmOutOfBounds { index: 3, count: 2 },
+            RouterError::RewardOutOfRange { reward: -1 },
+            RouterError::InvalidGamma {
+                gamma_millionths: -1,
+            },
+            RouterError::CounterfactualSizeMismatch {
+                got: 3,
+                expected: 5,
+            },
+            RouterError::ZeroWeight,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: RouterError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn router_error_display_all_distinct() {
+        let variants: Vec<RouterError> = vec![
+            RouterError::NoArms,
+            RouterError::TooManyArms { count: 1, max: 1 },
+            RouterError::ArmOutOfBounds { index: 0, count: 0 },
+            RouterError::RewardOutOfRange { reward: 0 },
+            RouterError::InvalidGamma {
+                gamma_millionths: 0,
+            },
+            RouterError::CounterfactualSizeMismatch {
+                got: 0,
+                expected: 0,
+            },
+            RouterError::ZeroWeight,
+        ];
+        let set: std::collections::BTreeSet<String> =
+            variants.iter().map(|e| format!("{e}")).collect();
+        assert_eq!(set.len(), variants.len());
+    }
+
+    #[test]
+    fn regime_kind_debug_distinct() {
+        let all = [
+            RegimeKind::Unknown,
+            RegimeKind::Stochastic,
+            RegimeKind::Adversarial,
+        ];
+        let set: std::collections::BTreeSet<String> =
+            all.iter().map(|r| format!("{r:?}")).collect();
+        assert_eq!(set.len(), all.len());
+    }
 }

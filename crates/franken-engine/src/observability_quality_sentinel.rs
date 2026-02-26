@@ -1447,4 +1447,82 @@ mod tests {
         let (_, receipts) = sentinel.observe(&qobs(QualityDimension::SignalFidelity, 700_000, 300));
         assert!(!receipts.is_empty(), "cooldown should have expired");
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn quality_dimension_serde_all_variants() {
+        for v in &QualityDimension::ALL {
+            let json = serde_json::to_string(v).unwrap();
+            let back: QualityDimension = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn quality_dimension_display_distinct() {
+        let set: std::collections::BTreeSet<String> = QualityDimension::ALL
+            .iter()
+            .map(|d| format!("{d}"))
+            .collect();
+        assert_eq!(set.len(), QualityDimension::ALL.len());
+    }
+
+    #[test]
+    fn degradation_regime_serde_all_variants() {
+        let variants = [
+            DegradationRegime::Nominal,
+            DegradationRegime::Elevated,
+            DegradationRegime::Breached,
+            DegradationRegime::Emergency,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: DegradationRegime = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn degradation_regime_display_distinct() {
+        let all = [
+            DegradationRegime::Nominal,
+            DegradationRegime::Elevated,
+            DegradationRegime::Breached,
+            DegradationRegime::Emergency,
+        ];
+        let set: std::collections::BTreeSet<String> = all.iter().map(|r| format!("{r}")).collect();
+        assert_eq!(set.len(), all.len());
+    }
+
+    #[test]
+    fn demotion_target_serde_all_variants() {
+        let variants = [
+            DemotionTarget::IncreasedSampling,
+            DemotionTarget::UncompressedEvidence,
+            DemotionTarget::FullReplayCapture,
+            DemotionTarget::EmergencyRingBuffer,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: DemotionTarget = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn demotion_target_severity_rank_monotonic() {
+        assert!(
+            DemotionTarget::IncreasedSampling.severity_rank()
+                < DemotionTarget::UncompressedEvidence.severity_rank()
+        );
+        assert!(
+            DemotionTarget::UncompressedEvidence.severity_rank()
+                < DemotionTarget::FullReplayCapture.severity_rank()
+        );
+        assert!(
+            DemotionTarget::FullReplayCapture.severity_rank()
+                < DemotionTarget::EmergencyRingBuffer.severity_rank()
+        );
+    }
 }

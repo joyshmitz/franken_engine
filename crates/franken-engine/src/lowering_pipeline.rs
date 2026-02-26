@@ -2776,4 +2776,96 @@ mod tests {
             }
         ));
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn lowering_pipeline_error_display_distinct() {
+        use crate::ifc_artifacts::Label;
+        use crate::ir_contract::IrLevel;
+        let variants: Vec<LoweringPipelineError> = vec![
+            LoweringPipelineError::EmptyIr0Body,
+            LoweringPipelineError::IrContractValidation {
+                code: "E001".into(),
+                level: IrLevel::Ir1,
+                message: "msg".into(),
+            },
+            LoweringPipelineError::InvariantViolation { detail: "bad" },
+            LoweringPipelineError::FlowLatticeFailure {
+                detail: "fail".into(),
+            },
+            LoweringPipelineError::UnauthorizedFlow {
+                op_index: 0,
+                source_label: Label::Public,
+                sink_clearance: Label::Public,
+                detail: "x".into(),
+            },
+        ];
+        let set: std::collections::BTreeSet<String> =
+            variants.iter().map(|e| format!("{e}")).collect();
+        assert_eq!(set.len(), variants.len());
+    }
+
+    #[test]
+    fn lowering_pipeline_error_is_std_error() {
+        let e = LoweringPipelineError::EmptyIr0Body;
+        let _: &dyn std::error::Error = &e;
+    }
+
+    #[test]
+    fn ir2_flow_proof_artifact_serde_roundtrip() {
+        let artifact = Ir2FlowProofArtifact {
+            schema_version: "1.0".into(),
+            artifact_id: "art-1".into(),
+            trace_id: "t-1".into(),
+            decision_id: "d-1".into(),
+            policy_id: "p-1".into(),
+            module_id: "m-1".into(),
+            proved_flows: vec![],
+            denied_flows: vec![],
+            required_declassifications: vec![],
+            runtime_checkpoints: vec![],
+        };
+        let json = serde_json::to_string(&artifact).unwrap();
+        let back: Ir2FlowProofArtifact = serde_json::from_str(&json).unwrap();
+        assert_eq!(artifact, back);
+    }
+
+    #[test]
+    fn lowering_pipeline_output_serde_roundtrip() {
+        let ctx = LoweringContext::new("t", "d", "p");
+        let ir0 = script_ir0();
+        let output = lower_ir0_to_ir3(&ir0, &ctx).unwrap();
+        let json = serde_json::to_string(&output).unwrap();
+        let back: LoweringPipelineOutput = serde_json::from_str(&json).unwrap();
+        assert_eq!(output, back);
+    }
+
+    #[test]
+    fn lowering_pass_result_serde_roundtrip() {
+        let result = LoweringPassResult {
+            module: "test_module".to_string(),
+            witness: PassWitness {
+                pass_id: "p1".into(),
+                input_hash: "ih".into(),
+                output_hash: "oh".into(),
+                rollback_token: "rt".into(),
+                invariant_checks: vec![InvariantCheck {
+                    name: "check1".into(),
+                    passed: true,
+                    detail: "ok".into(),
+                }],
+            },
+            ledger_entry: IsomorphismLedgerEntry {
+                pass_id: "p1".into(),
+                input_hash: "ih".into(),
+                output_hash: "oh".into(),
+                input_op_count: 5,
+                output_op_count: 4,
+            },
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let back: LoweringPassResult<String> = serde_json::from_str(&json).unwrap();
+        assert_eq!(result, back);
+    }
 }

@@ -2886,4 +2886,681 @@ mod tests {
         let parsed: PolicyGovernanceEvent = serde_json::from_str(&json).unwrap();
         assert_eq!(event, parsed);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: PearlTower 2026-02-26
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn error_implements_std_error() {
+        let err: Box<dyn std::error::Error> = Box::new(TeeAttestationPolicyError::NoActivePolicy);
+        assert!(!err.to_string().is_empty());
+    }
+
+    #[test]
+    fn trust_root_source_serde_all_variants() {
+        let variants = [
+            TrustRootSource::Policy,
+            TrustRootSource::TemporaryOverride {
+                override_id: "ovr-1".to_string(),
+                justification_artifact_id: "art-1".to_string(),
+            },
+        ];
+        for src in variants {
+            let json = serde_json::to_string(&src).unwrap();
+            let parsed: TrustRootSource = serde_json::from_str(&json).unwrap();
+            assert_eq!(src, parsed);
+        }
+    }
+
+    #[test]
+    fn attestation_quote_serde_roundtrip() {
+        let quote = quote_for_sgx();
+        let json = serde_json::to_string(&quote).unwrap();
+        let parsed: AttestationQuote = serde_json::from_str(&json).unwrap();
+        assert_eq!(quote, parsed);
+    }
+
+    #[test]
+    fn measurement_digest_serde_roundtrip() {
+        let digest = MeasurementDigest {
+            algorithm: MeasurementAlgorithm::Sha512,
+            digest_hex: digest_hex(0xbb, 64),
+        };
+        let json = serde_json::to_string(&digest).unwrap();
+        let parsed: MeasurementDigest = serde_json::from_str(&json).unwrap();
+        assert_eq!(digest, parsed);
+    }
+
+    #[test]
+    fn revocation_source_serde_roundtrip() {
+        let source = RevocationSource {
+            source_id: "src-1".to_string(),
+            source_type: RevocationSourceType::Other("custom-provider".to_string()),
+            endpoint: "https://revocation.example".to_string(),
+            on_unavailable: RevocationFallback::TryNextSource,
+        };
+        let json = serde_json::to_string(&source).unwrap();
+        let parsed: RevocationSource = serde_json::from_str(&json).unwrap();
+        assert_eq!(source, parsed);
+    }
+
+    #[test]
+    fn platform_trust_root_serde_roundtrip() {
+        let root = PlatformTrustRoot {
+            root_id: "sev-root-1".to_string(),
+            platform: TeePlatform::AmdSev,
+            trust_anchor_pem: "-----BEGIN CERT-----SEV".to_string(),
+            valid_from_epoch: SecurityEpoch::from_raw(1),
+            valid_until_epoch: Some(SecurityEpoch::from_raw(100)),
+            pinning: TrustRootPinning::Rotating {
+                rotation_group: "sev-group".to_string(),
+            },
+            source: TrustRootSource::TemporaryOverride {
+                override_id: "ovr-x".to_string(),
+                justification_artifact_id: "art-x".to_string(),
+            },
+        };
+        let json = serde_json::to_string(&root).unwrap();
+        let parsed: PlatformTrustRoot = serde_json::from_str(&json).unwrap();
+        assert_eq!(root, parsed);
+    }
+
+    #[test]
+    fn store_serde_roundtrip() {
+        let mut store = TeeAttestationPolicyStore::default();
+        store.load_policy(sample_policy(3), "t-1", "d-1").unwrap();
+        let json = serde_json::to_string(&store).unwrap();
+        let parsed: TeeAttestationPolicyStore = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            store.receipt_emission_halted(),
+            parsed.receipt_emission_halted()
+        );
+        assert_eq!(store.last_error_code(), parsed.last_error_code());
+        assert_eq!(
+            store.governance_ledger().len(),
+            parsed.governance_ledger().len()
+        );
+        assert_eq!(
+            store.active_policy().unwrap().policy_epoch,
+            parsed.active_policy().unwrap().policy_epoch
+        );
+    }
+
+    #[test]
+    fn emitter_serde_roundtrip() {
+        let mut emitter = DecisionReceiptEmitter::new("e-serde");
+        emitter.last_synced_policy_epoch = Some(SecurityEpoch::from_raw(42));
+        let json = serde_json::to_string(&emitter).unwrap();
+        let parsed: DecisionReceiptEmitter = serde_json::from_str(&json).unwrap();
+        assert_eq!(emitter, parsed);
+    }
+
+    #[test]
+    fn emitter_can_emit_when_store_halted_fails() {
+        let mut emitter = DecisionReceiptEmitter::new("e-halt");
+        emitter.last_synced_policy_epoch = Some(SecurityEpoch::from_raw(5));
+        let store = TeeAttestationPolicyStore::default(); // halted by default
+        let err = emitter
+            .can_emit(SecurityEpoch::from_raw(5), &store)
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            TeeAttestationPolicyError::ReceiptEmissionHalted
+        ));
+    }
+
+    #[test]
+    fn store_load_policy_json_success() {
+        let mut store = TeeAttestationPolicyStore::default();
+        let policy = sample_policy(20);
+        let json = policy.to_canonical_json().unwrap();
+        let policy_id = store.load_policy_json(&json, "t-json", "d-json").unwrap();
+        assert!(!store.receipt_emission_halted());
+        assert!(store.last_error_code().is_none());
+        // Policy ID should be deterministic
+        assert_eq!(policy_id, policy.derive_policy_id().unwrap());
+    }
+
+    #[test]
+    fn override_empty_target_root_id_rejected() {
+        let signing_key = SigningKey::from_bytes([7u8; 32]);
+        let err = SignedTrustRootOverrideArtifact::create_signed(
+            &signing_key,
+            TrustRootOverrideArtifactInput {
+                actor: "operator".to_string(),
+                justification: "fix".to_string(),
+                evidence_refs: vec![],
+                target_platform: TeePlatform::IntelSgx,
+                target_root_id: "".to_string(),
+                issued_epoch: SecurityEpoch::from_raw(1),
+                expires_epoch: SecurityEpoch::from_raw(5),
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            TeeAttestationPolicyError::InvalidOverrideArtifact { .. }
+        ));
+    }
+
+    #[test]
+    fn override_target_mismatch_rejected() {
+        let mut store = TeeAttestationPolicyStore::default();
+        store.load_policy(sample_policy(10), "t-1", "d-1").unwrap();
+        let signing_key = SigningKey::from_bytes([9u8; 32]);
+        let verifier = signing_key.verification_key();
+        let artifact = SignedTrustRootOverrideArtifact::create_signed(
+            &signing_key,
+            TrustRootOverrideArtifactInput {
+                actor: "operator".to_string(),
+                justification: "mismatch test".to_string(),
+                evidence_refs: vec![],
+                target_platform: TeePlatform::AmdSev,
+                target_root_id: "sev-root-temp".to_string(),
+                issued_epoch: SecurityEpoch::from_raw(10),
+                expires_epoch: SecurityEpoch::from_raw(15),
+            },
+        )
+        .unwrap();
+        let request = TemporaryTrustRootOverride {
+            override_id: "ovr-mismatch".to_string(),
+            trust_root: PlatformTrustRoot {
+                root_id: "sgx-root-temp".to_string(), // different from artifact target
+                platform: TeePlatform::IntelSgx,      // different from artifact target
+                trust_anchor_pem: "-----BEGIN CERT-----".to_string(),
+                valid_from_epoch: SecurityEpoch::from_raw(10),
+                valid_until_epoch: Some(SecurityEpoch::from_raw(15)),
+                pinning: TrustRootPinning::Pinned,
+                source: TrustRootSource::Policy,
+            },
+            artifact,
+        };
+        let err = store
+            .apply_temporary_trust_root_override(
+                request,
+                &verifier,
+                SecurityEpoch::from_raw(10),
+                "t-mm",
+                "d-mm",
+            )
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            TeeAttestationPolicyError::OverrideTargetMismatch { .. }
+        ));
+    }
+
+    #[test]
+    fn override_no_active_policy_rejected() {
+        let mut store = TeeAttestationPolicyStore::default();
+        // Manually un-halt to get past the halted check, but leave no active policy
+        store.receipt_emission_halted = false;
+        store.last_error_code = None;
+
+        let signing_key = SigningKey::from_bytes([7u8; 32]);
+        let verifier = signing_key.verification_key();
+        let artifact = SignedTrustRootOverrideArtifact::create_signed(
+            &signing_key,
+            TrustRootOverrideArtifactInput {
+                actor: "operator".to_string(),
+                justification: "test".to_string(),
+                evidence_refs: vec![],
+                target_platform: TeePlatform::IntelSgx,
+                target_root_id: "sgx-root-1".to_string(),
+                issued_epoch: SecurityEpoch::from_raw(1),
+                expires_epoch: SecurityEpoch::from_raw(5),
+            },
+        )
+        .unwrap();
+        let request = TemporaryTrustRootOverride {
+            override_id: "ovr-no-policy".to_string(),
+            trust_root: PlatformTrustRoot {
+                root_id: "sgx-root-1".to_string(),
+                platform: TeePlatform::IntelSgx,
+                trust_anchor_pem: "-----BEGIN CERT-----".to_string(),
+                valid_from_epoch: SecurityEpoch::from_raw(1),
+                valid_until_epoch: Some(SecurityEpoch::from_raw(5)),
+                pinning: TrustRootPinning::Pinned,
+                source: TrustRootSource::Policy,
+            },
+            artifact,
+        };
+        let err = store
+            .apply_temporary_trust_root_override(
+                request,
+                &verifier,
+                SecurityEpoch::from_raw(1),
+                "t-nop",
+                "d-nop",
+            )
+            .unwrap_err();
+        assert!(matches!(err, TeeAttestationPolicyError::NoActivePolicy));
+    }
+
+    #[test]
+    fn policy_missing_pinned_trust_root_rejected() {
+        let mut policy = sample_policy(1);
+        // Remove the pinned SGX root and replace with a rotating one
+        policy
+            .platform_trust_roots
+            .retain(|r| r.platform != TeePlatform::IntelSgx);
+        policy.platform_trust_roots.push(PlatformTrustRoot {
+            root_id: "sgx-rotating".to_string(),
+            platform: TeePlatform::IntelSgx,
+            trust_anchor_pem: "-----BEGIN CERT-----SGX-ROT".to_string(),
+            valid_from_epoch: SecurityEpoch::from_raw(0),
+            valid_until_epoch: Some(SecurityEpoch::from_raw(100)),
+            pinning: TrustRootPinning::Rotating {
+                rotation_group: "sgx-grp".to_string(),
+            },
+            source: TrustRootSource::Policy,
+        });
+        let err = policy.validate().unwrap_err();
+        assert!(matches!(
+            err,
+            TeeAttestationPolicyError::MissingPinnedTrustRoot {
+                platform: TeePlatform::IntelSgx
+            }
+        ));
+    }
+
+    #[test]
+    fn emitter_can_emit_runtime_epoch_too_far_ahead() {
+        let mut emitter = DecisionReceiptEmitter::new("e-rt");
+        let mut store = TeeAttestationPolicyStore::default();
+        store.load_policy(sample_policy(5), "t-1", "d-1").unwrap();
+        emitter.sync_policy(&store).unwrap();
+        // Runtime epoch is 2 ahead of synced epoch (5) — should fail
+        let err = emitter
+            .can_emit(SecurityEpoch::from_raw(7), &store)
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            TeeAttestationPolicyError::EmitterPolicyStale { .. }
+        ));
+    }
+
+    #[test]
+    fn canonicalize_lowercases_and_deduplicates_measurements() {
+        let mut policy = sample_policy(1);
+        let upper_digest = MeasurementDigest {
+            algorithm: MeasurementAlgorithm::Sha384,
+            digest_hex: digest_hex(0x11, 48).to_uppercase(),
+        };
+        policy
+            .approved_measurements
+            .get_mut(&TeePlatform::IntelSgx)
+            .unwrap()
+            .push(upper_digest);
+        // Before canonicalize: SGX has 2 entries (one lower, one upper)
+        assert_eq!(
+            policy.approved_measurements[&TeePlatform::IntelSgx].len(),
+            2
+        );
+        policy.canonicalize_in_place();
+        // After canonicalize: both lowercased and deduped to 1
+        assert_eq!(
+            policy.approved_measurements[&TeePlatform::IntelSgx].len(),
+            1
+        );
+    }
+
+    #[test]
+    fn override_artifact_evidence_refs_sorted_and_deduped() {
+        let signing_key = SigningKey::from_bytes([7u8; 32]);
+        let artifact = SignedTrustRootOverrideArtifact::create_signed(
+            &signing_key,
+            TrustRootOverrideArtifactInput {
+                actor: "operator".to_string(),
+                justification: "test dedup".to_string(),
+                evidence_refs: vec![
+                    "z-ref".to_string(),
+                    "a-ref".to_string(),
+                    "z-ref".to_string(),
+                ],
+                target_platform: TeePlatform::IntelSgx,
+                target_root_id: "root-1".to_string(),
+                issued_epoch: SecurityEpoch::from_raw(1),
+                expires_epoch: SecurityEpoch::from_raw(5),
+            },
+        )
+        .unwrap();
+        assert_eq!(artifact.evidence_refs, vec!["a-ref", "z-ref"]);
+    }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn freshness_window_serde_round_trip() {
+        let window = AttestationFreshnessWindow {
+            standard_max_age_secs: 300,
+            high_impact_max_age_secs: 60,
+        };
+        let json = serde_json::to_string(&window).unwrap();
+        let back: AttestationFreshnessWindow = serde_json::from_str(&json).unwrap();
+        assert_eq!(window, back);
+    }
+
+    #[test]
+    fn temporary_trust_root_override_serde_round_trip() {
+        let signing_key = SigningKey::from_bytes([7u8; 32]);
+        let artifact = SignedTrustRootOverrideArtifact::create_signed(
+            &signing_key,
+            TrustRootOverrideArtifactInput {
+                actor: "operator-serde".to_string(),
+                justification: "serde test".to_string(),
+                evidence_refs: vec!["ev-1".to_string()],
+                target_platform: TeePlatform::ArmCca,
+                target_root_id: "cca-temp".to_string(),
+                issued_epoch: SecurityEpoch::from_raw(1),
+                expires_epoch: SecurityEpoch::from_raw(10),
+            },
+        )
+        .unwrap();
+        let override_req = TemporaryTrustRootOverride {
+            override_id: "ovr-serde".to_string(),
+            trust_root: PlatformTrustRoot {
+                root_id: "cca-temp".to_string(),
+                platform: TeePlatform::ArmCca,
+                trust_anchor_pem: "-----BEGIN CERT-----CCA-TEMP".to_string(),
+                valid_from_epoch: SecurityEpoch::from_raw(1),
+                valid_until_epoch: Some(SecurityEpoch::from_raw(10)),
+                pinning: TrustRootPinning::Rotating {
+                    rotation_group: "cca-rollover".to_string(),
+                },
+                source: TrustRootSource::Policy,
+            },
+            artifact,
+        };
+        let json = serde_json::to_string(&override_req).unwrap();
+        let back: TemporaryTrustRootOverride = serde_json::from_str(&json).unwrap();
+        assert_eq!(override_req, back);
+    }
+
+    #[test]
+    fn override_empty_override_id_rejected() {
+        let mut store = TeeAttestationPolicyStore::default();
+        store.load_policy(sample_policy(10), "t-1", "d-1").unwrap();
+        let signing_key = SigningKey::from_bytes([7u8; 32]);
+        let verifier = signing_key.verification_key();
+        let artifact = SignedTrustRootOverrideArtifact::create_signed(
+            &signing_key,
+            TrustRootOverrideArtifactInput {
+                actor: "operator".to_string(),
+                justification: "test".to_string(),
+                evidence_refs: vec![],
+                target_platform: TeePlatform::IntelSgx,
+                target_root_id: "sgx-root-temp-eid".to_string(),
+                issued_epoch: SecurityEpoch::from_raw(10),
+                expires_epoch: SecurityEpoch::from_raw(12),
+            },
+        )
+        .unwrap();
+        let request = TemporaryTrustRootOverride {
+            override_id: "".to_string(),
+            trust_root: PlatformTrustRoot {
+                root_id: "sgx-root-temp-eid".to_string(),
+                platform: TeePlatform::IntelSgx,
+                trust_anchor_pem: "-----BEGIN CERT-----".to_string(),
+                valid_from_epoch: SecurityEpoch::from_raw(10),
+                valid_until_epoch: Some(SecurityEpoch::from_raw(12)),
+                pinning: TrustRootPinning::Rotating {
+                    rotation_group: "sgx-rollover".to_string(),
+                },
+                source: TrustRootSource::Policy,
+            },
+            artifact,
+        };
+        let err = store
+            .apply_temporary_trust_root_override(
+                request,
+                &verifier,
+                SecurityEpoch::from_raw(10),
+                "t-eid",
+                "d-eid",
+            )
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            TeeAttestationPolicyError::InvalidOverrideArtifact { .. }
+        ));
+    }
+
+    #[test]
+    fn verify_artifact_valid_signature_passes() {
+        let signing_key = SigningKey::from_bytes([7u8; 32]);
+        let verifier = signing_key.verification_key();
+        let artifact = SignedTrustRootOverrideArtifact::create_signed(
+            &signing_key,
+            TrustRootOverrideArtifactInput {
+                actor: "operator".to_string(),
+                justification: "test verify pass".to_string(),
+                evidence_refs: vec!["ev-1".to_string()],
+                target_platform: TeePlatform::IntelSgx,
+                target_root_id: "root-verify".to_string(),
+                issued_epoch: SecurityEpoch::from_raw(1),
+                expires_epoch: SecurityEpoch::from_raw(10),
+            },
+        )
+        .unwrap();
+        artifact
+            .verify(&verifier, SecurityEpoch::from_raw(5))
+            .unwrap();
+    }
+
+    #[test]
+    fn error_code_all_variants_unique() {
+        let variants: Vec<TeeAttestationPolicyError> = vec![
+            TeeAttestationPolicyError::ParseFailed {
+                detail: "a".to_string(),
+            },
+            TeeAttestationPolicyError::SerializationFailed {
+                detail: "b".to_string(),
+            },
+            TeeAttestationPolicyError::MissingMeasurementsForPlatform {
+                platform: TeePlatform::IntelSgx,
+            },
+            TeeAttestationPolicyError::InvalidMeasurementDigest {
+                platform: TeePlatform::IntelSgx,
+                digest: "c".to_string(),
+                expected_hex_len: 64,
+            },
+            TeeAttestationPolicyError::DuplicateMeasurementDigest {
+                platform: TeePlatform::IntelSgx,
+                digest: "d".to_string(),
+            },
+            TeeAttestationPolicyError::InvalidFreshnessWindow {
+                standard_max_age_secs: 0,
+                high_impact_max_age_secs: 0,
+            },
+            TeeAttestationPolicyError::EmptyRevocationSources,
+            TeeAttestationPolicyError::InvalidRevocationSource {
+                reason: "e".to_string(),
+            },
+            TeeAttestationPolicyError::DuplicateRevocationSource {
+                source_id: "f".to_string(),
+            },
+            TeeAttestationPolicyError::RevocationFallbackBypass,
+            TeeAttestationPolicyError::MissingTrustRoots,
+            TeeAttestationPolicyError::InvalidTrustRoot {
+                root_id: "g".to_string(),
+                reason: "h".to_string(),
+            },
+            TeeAttestationPolicyError::DuplicateTrustRoot {
+                platform: TeePlatform::IntelSgx,
+                root_id: "i".to_string(),
+            },
+            TeeAttestationPolicyError::MissingPinnedTrustRoot {
+                platform: TeePlatform::IntelSgx,
+            },
+            TeeAttestationPolicyError::PolicyEpochRegression {
+                current: SecurityEpoch::from_raw(5),
+                attempted: SecurityEpoch::from_raw(3),
+            },
+            TeeAttestationPolicyError::IdDerivationFailed {
+                detail: "j".to_string(),
+            },
+            TeeAttestationPolicyError::ReceiptEmissionHalted,
+            TeeAttestationPolicyError::NoActivePolicy,
+            TeeAttestationPolicyError::UnknownMeasurementDigest {
+                platform: TeePlatform::IntelSgx,
+                digest: "k".to_string(),
+            },
+            TeeAttestationPolicyError::AttestationStale {
+                quote_age_secs: 500,
+                max_age_secs: 300,
+            },
+            TeeAttestationPolicyError::UnknownTrustRoot {
+                platform: TeePlatform::IntelSgx,
+                root_id: "l".to_string(),
+            },
+            TeeAttestationPolicyError::ExpiredTrustRoot {
+                root_id: "m".to_string(),
+                runtime_epoch: SecurityEpoch::from_raw(10),
+                valid_until_epoch: Some(SecurityEpoch::from_raw(5)),
+            },
+            TeeAttestationPolicyError::RevokedBySource {
+                source_id: "n".to_string(),
+            },
+            TeeAttestationPolicyError::RevocationSourceUnavailable {
+                source_id: "o".to_string(),
+            },
+            TeeAttestationPolicyError::RevocationEvidenceUnavailable,
+            TeeAttestationPolicyError::InvalidOverrideArtifact {
+                reason: "p".to_string(),
+            },
+            TeeAttestationPolicyError::OverrideJustificationMissing,
+            TeeAttestationPolicyError::OverrideExpired {
+                current_epoch: SecurityEpoch::from_raw(10),
+                expires_epoch: SecurityEpoch::from_raw(5),
+            },
+            TeeAttestationPolicyError::OverrideSignatureInvalid {
+                detail: "q".to_string(),
+            },
+            TeeAttestationPolicyError::OverrideTargetMismatch {
+                expected_platform: TeePlatform::IntelSgx,
+                expected_root_id: "r1".to_string(),
+                actual_platform: TeePlatform::AmdSev,
+                actual_root_id: "r2".to_string(),
+            },
+            TeeAttestationPolicyError::EmitterNotSynced {
+                emitter_id: "s".to_string(),
+            },
+            TeeAttestationPolicyError::EmitterPolicyStale {
+                emitter_id: "t".to_string(),
+                synced_epoch: SecurityEpoch::from_raw(3),
+                required_epoch: SecurityEpoch::from_raw(5),
+            },
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for v in &variants {
+            let code = v.error_code();
+            assert!(seen.insert(code), "duplicate error_code: {code}");
+        }
+    }
+
+    #[test]
+    fn canonicalize_trims_trust_root_ids() {
+        let mut policy = sample_policy(1);
+        policy.platform_trust_roots[0].root_id = "  sgx-root-a  ".to_string();
+        policy.canonicalize_in_place();
+        assert_eq!(policy.platform_trust_roots[0].root_id, "sgx-root-a");
+    }
+
+    #[test]
+    fn store_evaluate_quote_no_policy_not_halted() {
+        let mut store = TeeAttestationPolicyStore::default();
+        store.receipt_emission_halted = false;
+        store.last_error_code = None;
+        let quote = quote_for_sgx();
+        let err = store
+            .evaluate_quote(
+                &quote,
+                DecisionImpact::Standard,
+                SecurityEpoch::from_raw(1),
+                "t-no-pol",
+                "d-no-pol",
+            )
+            .unwrap_err();
+        assert!(matches!(err, TeeAttestationPolicyError::NoActivePolicy));
+        let last = store.governance_ledger().last().unwrap();
+        assert_eq!(last.event, "quote_evaluation_failed");
+        assert_eq!(last.outcome, "deny");
+    }
+
+    #[test]
+    fn policy_governance_event_metadata_preserved() {
+        let mut store = TeeAttestationPolicyStore::default();
+        store
+            .load_policy(sample_policy(5), "t-meta", "d-meta")
+            .unwrap();
+        let load_event = &store.governance_ledger()[0];
+        assert_eq!(load_event.event, "policy_loaded");
+        assert!(load_event.metadata.contains_key("policy_epoch"));
+        assert!(load_event.metadata.contains_key("schema_version"));
+    }
+
+    #[test]
+    fn emitter_serde_no_synced_epoch() {
+        let emitter = DecisionReceiptEmitter::new("e-no-sync");
+        let json = serde_json::to_string(&emitter).unwrap();
+        let back: DecisionReceiptEmitter = serde_json::from_str(&json).unwrap();
+        assert_eq!(emitter, back);
+        assert!(back.last_synced_policy_epoch.is_none());
+    }
+
+    #[test]
+    fn freshness_window_zero_high_impact_only_rejected() {
+        let window = AttestationFreshnessWindow {
+            standard_max_age_secs: 300,
+            high_impact_max_age_secs: 0,
+        };
+        let err = window.validate().unwrap_err();
+        assert!(matches!(
+            err,
+            TeeAttestationPolicyError::InvalidFreshnessWindow { .. }
+        ));
+    }
+
+    #[test]
+    fn signed_artifact_deterministic_id() {
+        let signing_key = SigningKey::from_bytes([7u8; 32]);
+        let input = TrustRootOverrideArtifactInput {
+            actor: "op".to_string(),
+            justification: "determ test".to_string(),
+            evidence_refs: vec!["ev".to_string()],
+            target_platform: TeePlatform::AmdSev,
+            target_root_id: "sev-det".to_string(),
+            issued_epoch: SecurityEpoch::from_raw(1),
+            expires_epoch: SecurityEpoch::from_raw(5),
+        };
+        let a1 =
+            SignedTrustRootOverrideArtifact::create_signed(&signing_key, input.clone()).unwrap();
+        let a2 = SignedTrustRootOverrideArtifact::create_signed(&signing_key, input).unwrap();
+        assert_eq!(a1.artifact_id, a2.artifact_id);
+    }
+
+    #[test]
+    fn error_display_all_variants_non_empty() {
+        let variants: Vec<TeeAttestationPolicyError> = vec![
+            TeeAttestationPolicyError::ParseFailed {
+                detail: "a".to_string(),
+            },
+            TeeAttestationPolicyError::EmptyRevocationSources,
+            TeeAttestationPolicyError::RevocationFallbackBypass,
+            TeeAttestationPolicyError::MissingTrustRoots,
+            TeeAttestationPolicyError::ReceiptEmissionHalted,
+            TeeAttestationPolicyError::NoActivePolicy,
+            TeeAttestationPolicyError::RevocationEvidenceUnavailable,
+            TeeAttestationPolicyError::OverrideJustificationMissing,
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            let s = v.to_string();
+            assert!(!s.is_empty());
+            displays.insert(s);
+        }
+        assert_eq!(displays.len(), variants.len(), "duplicate Display outputs");
+    }
 }

@@ -2650,4 +2650,229 @@ mod tests {
             assert_eq!(*v, back);
         }
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn nondeterminism_log_content_hash_sensitive_to_extension_id() {
+        let mut log_a = NondeterminismLog::new();
+        log_a.append(NondeterminismSource::RandomValue, vec![1], 100, None);
+
+        let mut log_b = NondeterminismLog::new();
+        log_b.append(
+            NondeterminismSource::RandomValue,
+            vec![1],
+            100,
+            Some("ext-1".into()),
+        );
+
+        assert_ne!(log_a.content_hash(), log_b.content_hash());
+    }
+
+    #[test]
+    fn decision_snapshot_content_hash_sensitive_to_loss_matrix() {
+        let mut s1 = make_snapshot(0, "allow", 0);
+        let mut s2 = make_snapshot(0, "allow", 0);
+        s2.loss_matrix.insert("quarantine".into(), 1_000_000);
+        assert_ne!(s1.content_hash(), s2.content_hash());
+
+        // Also sensitive to threshold.
+        s1.threshold_millionths = 100_000;
+        let h1 = s1.content_hash();
+        s1.threshold_millionths = 900_000;
+        assert_ne!(h1, s1.content_hash());
+    }
+
+    #[test]
+    fn recording_mode_all_variants_serde() {
+        let modes = [
+            RecordingMode::Full,
+            RecordingMode::SecurityCritical,
+            RecordingMode::Sampled {
+                rate_millionths: 500_000,
+            },
+        ];
+        for mode in &modes {
+            let json = serde_json::to_string(mode).unwrap();
+            let back: RecordingMode = serde_json::from_str(&json).unwrap();
+            assert_eq!(*mode, back);
+        }
+    }
+
+    #[test]
+    fn trace_retention_policy_default_values() {
+        let p = TraceRetentionPolicy::default();
+        assert_eq!(p.default_ttl_ticks, 1_000_000);
+        assert_eq!(p.incident_ttl_ticks, 10_000_000);
+        assert_eq!(p.security_critical_ttl_ticks, 5_000_000);
+        assert_eq!(p.max_traces, 10_000);
+        assert_eq!(p.max_storage_bytes, 1_073_741_824);
+    }
+
+    #[test]
+    fn action_delta_report_is_improvement_and_divergence_count() {
+        let trace = make_trace(&[("allow", 100_000), ("sandbox", 300_000)]);
+        let engine = CausalReplayEngine::new();
+        let config = CounterfactualConfig {
+            branch_id: "b1".into(),
+            threshold_override_millionths: Some(1_000_000),
+            loss_matrix_overrides: {
+                let mut m = BTreeMap::new();
+                m.insert("allow".into(), 50_000);
+                m
+            },
+            containment_overrides: BTreeMap::new(),
+            evidence_weight_overrides: BTreeMap::new(),
+            policy_version_override: None,
+            branch_from_index: 0,
+        };
+        let report = engine.counterfactual_branch(&trace, config).unwrap();
+        // If counterfactual chose lower-cost action, is_improvement() should be true
+        // when harm_prevented_delta_millionths > 0.
+        assert_eq!(
+            report.is_improvement(),
+            report.harm_prevented_delta_millionths > 0
+        );
+        assert_eq!(report.divergence_count(), report.divergence_points.len());
+    }
+
+    #[test]
+    fn trace_record_verify_signature_wrong_key() {
+        let trace = make_trace(&[("allow", 0)]);
+        assert!(trace.verify_signature(&test_key()));
+        assert!(!trace.verify_signature(&[99u8; 32]));
+    }
+
+    #[test]
+    fn causal_replay_engine_default() {
+        let engine = CausalReplayEngine::default();
+        // Default max_branch_depth is 16.
+        let trace = make_trace(&[("allow", 0)]);
+        let configs: Vec<CounterfactualConfig> = (0..17)
+            .map(|i| CounterfactualConfig {
+                branch_id: format!("b{i}"),
+                threshold_override_millionths: None,
+                loss_matrix_overrides: BTreeMap::new(),
+                containment_overrides: BTreeMap::new(),
+                evidence_weight_overrides: BTreeMap::new(),
+                policy_version_override: None,
+                branch_from_index: 0,
+            })
+            .collect();
+        let err = engine.multi_branch_comparison(&trace, configs).unwrap_err();
+        assert!(matches!(
+            err,
+            ReplayError::BranchDepthExceeded { max: 16, .. }
+        ));
+    }
+
+    #[test]
+    fn causal_replay_engine_with_max_branch_depth() {
+        let engine = CausalReplayEngine::new().with_max_branch_depth(2);
+        let trace = make_trace(&[("allow", 0)]);
+        let configs: Vec<CounterfactualConfig> = (0..3)
+            .map(|i| CounterfactualConfig {
+                branch_id: format!("b{i}"),
+                threshold_override_millionths: None,
+                loss_matrix_overrides: BTreeMap::new(),
+                containment_overrides: BTreeMap::new(),
+                evidence_weight_overrides: BTreeMap::new(),
+                policy_version_override: None,
+                branch_from_index: 0,
+            })
+            .collect();
+        let err = engine.multi_branch_comparison(&trace, configs).unwrap_err();
+        assert!(matches!(
+            err,
+            ReplayError::BranchDepthExceeded {
+                requested: 3,
+                max: 2
+            }
+        ));
+    }
+
+    #[test]
+    fn replay_verdict_divergence_count_tampered() {
+        let v = ReplayVerdict::Tampered {
+            detail: "bad".into(),
+        };
+        assert_eq!(v.divergence_count(), 0);
+        assert!(!v.is_identical());
+    }
+
+    #[test]
+    fn trace_query_default_is_empty() {
+        let q = TraceQuery::default();
+        assert!(q.trace_id.is_none());
+        assert!(q.extension_id.is_none());
+        assert!(q.policy_version.is_none());
+        assert!(q.epoch_range.is_none());
+        assert!(q.tick_range.is_none());
+        assert!(q.incident_id.is_none());
+        assert!(q.has_divergence.is_none());
+    }
+
+    #[test]
+    fn trace_index_is_empty_check() {
+        let idx = TraceIndex::new(TraceRetentionPolicy::default());
+        assert!(idx.is_empty());
+        assert_eq!(idx.len(), 0);
+    }
+
+    #[test]
+    fn nondeterminism_log_default_is_empty() {
+        let log = NondeterminismLog::default();
+        assert!(log.is_empty());
+        assert_eq!(log.len(), 0);
+    }
+
+    #[test]
+    fn replay_error_display_all_variants_distinct() {
+        let variants = vec![
+            ReplayError::ChainIntegrity {
+                entry_index: 0,
+                detail: "bad".into(),
+            },
+            ReplayError::NondeterminismMismatch {
+                expected_sequence: 1,
+                actual_sequence: 2,
+            },
+            ReplayError::BranchDepthExceeded {
+                requested: 10,
+                max: 5,
+            },
+            ReplayError::StorageExhausted,
+            ReplayError::TraceNotFound {
+                trace_id: "t1".into(),
+            },
+            ReplayError::SignatureInvalid,
+        ];
+        let mut seen = BTreeSet::new();
+        for v in &variants {
+            let s = v.to_string();
+            assert!(!s.is_empty());
+            assert!(seen.insert(s.clone()), "duplicate Display: {s}");
+        }
+        assert_eq!(seen.len(), variants.len());
+    }
+
+    #[test]
+    fn decision_snapshot_content_hash_sensitive_to_evidence_hashes() {
+        let mut s1 = make_snapshot(0, "allow", 0);
+        let s2 = make_snapshot(0, "allow", 0);
+        s1.evidence_hashes
+            .push(ContentHash::compute(b"extra-evidence"));
+        assert_ne!(s1.content_hash(), s2.content_hash());
+    }
+
+    #[test]
+    fn nondeterminism_source_tag_values_are_sequential() {
+        assert_eq!(NondeterminismSource::RandomValue.tag(), 0);
+        assert_eq!(NondeterminismSource::Timestamp.tag(), 1);
+        assert_eq!(NondeterminismSource::HostcallResult.tag(), 2);
+        assert_eq!(NondeterminismSource::IoResult.tag(), 3);
+        assert_eq!(NondeterminismSource::SchedulingDecision.tag(), 4);
+        assert_eq!(NondeterminismSource::OsEntropy.tag(), 5);
+        assert_eq!(NondeterminismSource::FleetEvidenceArrival.tag(), 6);
+    }
 }

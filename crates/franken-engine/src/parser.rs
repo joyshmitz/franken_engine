@@ -4503,4 +4503,121 @@ mod tests {
         assert!(!is_identifier_continue('-'));
         assert!(!is_identifier_continue(' '));
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn parse_diagnostic_category_serde_roundtrip() {
+        for cat in [
+            ParseDiagnosticCategory::Input,
+            ParseDiagnosticCategory::Goal,
+            ParseDiagnosticCategory::Syntax,
+            ParseDiagnosticCategory::Encoding,
+            ParseDiagnosticCategory::Resource,
+            ParseDiagnosticCategory::System,
+        ] {
+            let json = serde_json::to_string(&cat).unwrap();
+            let back: ParseDiagnosticCategory = serde_json::from_str(&json).unwrap();
+            assert_eq!(cat, back);
+        }
+    }
+
+    #[test]
+    fn parse_diagnostic_severity_serde_roundtrip() {
+        for sev in [
+            ParseDiagnosticSeverity::Error,
+            ParseDiagnosticSeverity::Fatal,
+        ] {
+            let json = serde_json::to_string(&sev).unwrap();
+            let back: ParseDiagnosticSeverity = serde_json::from_str(&json).unwrap();
+            assert_eq!(sev, back);
+        }
+    }
+
+    #[test]
+    fn parse_diagnostic_severity_as_str_all_distinct() {
+        let strs: std::collections::BTreeSet<_> = [
+            ParseDiagnosticSeverity::Error.as_str(),
+            ParseDiagnosticSeverity::Fatal.as_str(),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(strs.len(), 2);
+    }
+
+    #[test]
+    fn parse_error_is_std_error() {
+        let err = ParseError::new(ParseErrorCode::EmptySource, "empty", "test.js", None);
+        let dyn_err: &dyn std::error::Error = &err;
+        assert!(!dyn_err.to_string().is_empty());
+    }
+
+    #[test]
+    fn taxonomy_rule_for_finds_matching_code() {
+        let taxonomy = ParseDiagnosticTaxonomy::v1();
+        for code in &ParseErrorCode::ALL {
+            let rule = taxonomy.rule_for(*code);
+            assert!(rule.is_some(), "rule_for({:?}) returned None", code);
+            assert_eq!(rule.unwrap().parse_error_code, *code);
+        }
+    }
+
+    #[test]
+    fn taxonomy_rule_for_severity_matches_code_method() {
+        let taxonomy = ParseDiagnosticTaxonomy::v1();
+        for code in &ParseErrorCode::ALL {
+            let rule = taxonomy.rule_for(*code).unwrap();
+            assert_eq!(rule.severity, code.diagnostic_severity());
+            assert_eq!(rule.category, code.diagnostic_category());
+        }
+    }
+
+    #[test]
+    fn grammar_coverage_status_serde_all_variants_distinct() {
+        let variants = [
+            GrammarCoverageStatus::Supported,
+            GrammarCoverageStatus::Partial,
+            GrammarCoverageStatus::Unsupported,
+            GrammarCoverageStatus::NotApplicable,
+        ];
+        let mut names = std::collections::BTreeSet::new();
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: GrammarCoverageStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, &back);
+            names.insert(json);
+        }
+        assert_eq!(names.len(), variants.len());
+    }
+
+    #[test]
+    fn grammar_family_coverage_partial_roundtrip() {
+        let fam = GrammarFamilyCoverage {
+            family_id: "expressions".to_string(),
+            es2020_clause: "12.2".to_string(),
+            script_goal: GrammarCoverageStatus::Partial,
+            module_goal: GrammarCoverageStatus::Unsupported,
+            notes: "WIP".to_string(),
+        };
+        let json = serde_json::to_string(&fam).unwrap();
+        let back: GrammarFamilyCoverage = serde_json::from_str(&json).unwrap();
+        assert_eq!(fam, back);
+    }
+
+    #[test]
+    fn parse_error_display_includes_source_label() {
+        let err = ParseError::new(
+            ParseErrorCode::InvalidUtf8,
+            "bad encoding",
+            "input.js",
+            None,
+        );
+        let display = err.to_string();
+        assert!(display.contains("input.js"), "display: {display}");
+    }
+
+    #[test]
+    fn canonicalize_whitespace_tabs_and_newlines() {
+        assert_eq!(canonicalize_whitespace("a\t\nb"), "a b");
+    }
 }

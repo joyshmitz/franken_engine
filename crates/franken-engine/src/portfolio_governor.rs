@@ -1979,4 +1979,304 @@ mod tests {
             assert_eq!(*k, restored);
         }
     }
+
+    // -- Enrichment: Scorecard risk_adjusted_ev computation --
+
+    #[test]
+    fn scorecard_risk_adjusted_ev_positive() {
+        let sc = Scorecard {
+            moonshot_id: "m".into(),
+            ev_millionths: 2_000_000,
+            confidence_millionths: 800_000,
+            risk_of_harm_millionths: 100_000,
+            implementation_friction_millionths: 50_000,
+            cross_initiative_interference_millionths: 30_000,
+            operational_burden_millionths: 20_000,
+            computed_at_ns: 0,
+            epoch: SecurityEpoch::GENESIS,
+        };
+        // ev * conf / 1M - risk*2 - interference - friction - burden
+        // 2M * 0.8 - 200k - 30k - 50k - 20k = 1.6M - 300k = 1_300_000
+        assert_eq!(sc.risk_adjusted_ev(), 1_300_000);
+    }
+
+    #[test]
+    fn scorecard_risk_adjusted_ev_negative() {
+        let sc = Scorecard {
+            moonshot_id: "m".into(),
+            ev_millionths: 100_000,
+            confidence_millionths: 100_000,
+            risk_of_harm_millionths: 500_000,
+            implementation_friction_millionths: 200_000,
+            cross_initiative_interference_millionths: 100_000,
+            operational_burden_millionths: 100_000,
+            computed_at_ns: 0,
+            epoch: SecurityEpoch::GENESIS,
+        };
+        // 100k * 100k / 1M - 1M - 100k - 200k - 100k = 10k - 1.4M < 0
+        assert!(sc.risk_adjusted_ev() < 0);
+    }
+
+    #[test]
+    fn scorecard_risk_adjusted_ev_zero_confidence() {
+        let sc = Scorecard {
+            moonshot_id: "m".into(),
+            ev_millionths: 5_000_000,
+            confidence_millionths: 0,
+            risk_of_harm_millionths: 0,
+            implementation_friction_millionths: 0,
+            cross_initiative_interference_millionths: 0,
+            operational_burden_millionths: 0,
+            computed_at_ns: 0,
+            epoch: SecurityEpoch::GENESIS,
+        };
+        assert_eq!(sc.risk_adjusted_ev(), 0);
+    }
+
+    // -- Enrichment: MoonshotState helpers --
+
+    #[test]
+    fn moonshot_state_completed_obligation_ids() {
+        let mut gov = test_governor();
+        register_test_moonshot(&mut gov);
+        gov.submit_artifact(
+            "mc-test-001",
+            ArtifactEvidence {
+                artifact_id: "art-1".into(),
+                obligation_id: "proof-research".into(),
+                artifact_type: ArtifactType::Proof,
+                submitted_at_ns: 1_000,
+                content_hash: "h".into(),
+            },
+        )
+        .unwrap();
+        let ids = gov.moonshots["mc-test-001"].completed_obligation_ids();
+        assert_eq!(ids, vec!["proof-research".to_string()]);
+    }
+
+    #[test]
+    fn moonshot_state_metric_snapshot() {
+        let mut gov = test_governor();
+        register_test_moonshot(&mut gov);
+        gov.record_metric(
+            "mc-test-001",
+            MetricObservation {
+                metric_id: "latency_p50".into(),
+                value_millionths: 200_000_000,
+                observed_at_ns: 1_000,
+            },
+        )
+        .unwrap();
+        gov.record_metric(
+            "mc-test-001",
+            MetricObservation {
+                metric_id: "throughput".into(),
+                value_millionths: 500_000,
+                observed_at_ns: 2_000,
+            },
+        )
+        .unwrap();
+        let snapshot = gov.moonshots["mc-test-001"].metric_snapshot();
+        assert_eq!(snapshot.len(), 2);
+        assert_eq!(snapshot["throughput"], 500_000);
+    }
+
+    #[test]
+    fn moonshot_state_is_active_variants() {
+        let mut gov = test_governor();
+        register_test_moonshot(&mut gov);
+        assert!(gov.moonshots["mc-test-001"].is_active());
+
+        gov.moonshots.get_mut("mc-test-001").unwrap().status = MoonshotStatus::Paused {
+            reason: "test".into(),
+            paused_at_ns: 0,
+        };
+        assert!(!gov.moonshots["mc-test-001"].is_active());
+
+        gov.moonshots.get_mut("mc-test-001").unwrap().status = MoonshotStatus::Killed {
+            reason: "test".into(),
+            killed_at_ns: 0,
+        };
+        assert!(!gov.moonshots["mc-test-001"].is_active());
+
+        gov.moonshots.get_mut("mc-test-001").unwrap().status =
+            MoonshotStatus::Completed { completed_at_ns: 0 };
+        assert!(!gov.moonshots["mc-test-001"].is_active());
+    }
+
+    // -- Enrichment: GovernorError serde all variants --
+
+    #[test]
+    fn governor_error_serde_all_variants() {
+        let errors = vec![
+            GovernorError::MoonshotNotFound { id: "m".into() },
+            GovernorError::MoonshotNotActive { id: "m".into() },
+            GovernorError::InvalidContract { reason: "r".into() },
+            GovernorError::InvalidTransition {
+                from: MoonshotStage::Research,
+                to: MoonshotStage::Research,
+            },
+            GovernorError::AlreadyRegistered { id: "m".into() },
+            GovernorError::NotPaused { id: "m".into() },
+            GovernorError::LedgerConfig { reason: "r".into() },
+            GovernorError::LedgerWriteFailed {
+                decision_id: "d".into(),
+                reason: "r".into(),
+            },
+            GovernorError::InvalidGovernanceActor {
+                actor_id: "a".into(),
+            },
+        ];
+        for err in &errors {
+            let json = serde_json::to_string(err).unwrap();
+            let back: GovernorError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*err, back);
+        }
+    }
+
+    // -- Enrichment: GovernorError Display all variants distinct --
+
+    #[test]
+    fn governor_error_display_all_distinct() {
+        let errors = vec![
+            GovernorError::MoonshotNotFound { id: "m1".into() },
+            GovernorError::MoonshotNotActive { id: "m2".into() },
+            GovernorError::InvalidContract {
+                reason: "r1".into(),
+            },
+            GovernorError::InvalidTransition {
+                from: MoonshotStage::Research,
+                to: MoonshotStage::Shadow,
+            },
+            GovernorError::AlreadyRegistered { id: "m3".into() },
+            GovernorError::NotPaused { id: "m4".into() },
+            GovernorError::LedgerConfig {
+                reason: "r2".into(),
+            },
+            GovernorError::LedgerWriteFailed {
+                decision_id: "d1".into(),
+                reason: "r3".into(),
+            },
+            GovernorError::InvalidGovernanceActor {
+                actor_id: "a1".into(),
+            },
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for err in &errors {
+            displays.insert(err.to_string());
+        }
+        assert_eq!(displays.len(), errors.len());
+    }
+
+    // -- Enrichment: GovernorDecisionKind Display all variants --
+
+    #[test]
+    fn decision_kind_display_hold_and_pause() {
+        assert_eq!(
+            GovernorDecisionKind::Hold {
+                reason: "low signal".into()
+            }
+            .to_string(),
+            "hold(low signal)"
+        );
+        assert_eq!(
+            GovernorDecisionKind::Pause {
+                reason: "resources".into()
+            }
+            .to_string(),
+            "pause(resources)"
+        );
+    }
+
+    // -- Enrichment: submit_artifact / record_metric on non-active --
+
+    #[test]
+    fn submit_artifact_not_active_fails() {
+        let mut gov = test_governor();
+        register_test_moonshot(&mut gov);
+        gov.moonshots.get_mut("mc-test-001").unwrap().status = MoonshotStatus::Killed {
+            reason: "test".into(),
+            killed_at_ns: 0,
+        };
+        let err = gov
+            .submit_artifact(
+                "mc-test-001",
+                ArtifactEvidence {
+                    artifact_id: "a".into(),
+                    obligation_id: "o".into(),
+                    artifact_type: ArtifactType::Proof,
+                    submitted_at_ns: 0,
+                    content_hash: "h".into(),
+                },
+            )
+            .unwrap_err();
+        assert!(matches!(err, GovernorError::MoonshotNotActive { .. }));
+    }
+
+    #[test]
+    fn record_metric_not_active_fails() {
+        let mut gov = test_governor();
+        register_test_moonshot(&mut gov);
+        gov.moonshots.get_mut("mc-test-001").unwrap().status = MoonshotStatus::Killed {
+            reason: "test".into(),
+            killed_at_ns: 0,
+        };
+        let err = gov
+            .record_metric(
+                "mc-test-001",
+                MetricObservation {
+                    metric_id: "m".into(),
+                    value_millionths: 0,
+                    observed_at_ns: 0,
+                },
+            )
+            .unwrap_err();
+        assert!(matches!(err, GovernorError::MoonshotNotActive { .. }));
+    }
+
+    // -- Enrichment: update_budget not active --
+
+    #[test]
+    fn update_budget_not_active_fails() {
+        let mut gov = test_governor();
+        register_test_moonshot(&mut gov);
+        gov.moonshots.get_mut("mc-test-001").unwrap().status = MoonshotStatus::Killed {
+            reason: "test".into(),
+            killed_at_ns: 0,
+        };
+        let err = gov.update_budget("mc-test-001", 0).unwrap_err();
+        assert!(matches!(err, GovernorError::MoonshotNotActive { .. }));
+    }
+
+    // -- Enrichment: register_moonshot duplicate --
+
+    #[test]
+    fn register_duplicate_moonshot_fails() {
+        let mut gov = test_governor();
+        register_test_moonshot(&mut gov);
+        let err = gov
+            .register_moonshot(test_contract(), 2_000_000_000)
+            .unwrap_err();
+        assert!(matches!(err, GovernorError::AlreadyRegistered { .. }));
+    }
+
+    // -- Enrichment: governance_audit_ledger accessor --
+
+    #[test]
+    fn governance_audit_ledger_none_by_default() {
+        let gov = test_governor();
+        assert!(gov.governance_audit_ledger().is_none());
+    }
+
+    // -- Enrichment: MoonshotState serde roundtrip --
+
+    #[test]
+    fn moonshot_state_serde_roundtrip() {
+        let mut gov = test_governor();
+        register_test_moonshot(&mut gov);
+        let state = &gov.moonshots["mc-test-001"];
+        let json = serde_json::to_string(state).unwrap();
+        let back: MoonshotState = serde_json::from_str(&json).unwrap();
+        assert_eq!(*state, back);
+    }
 }

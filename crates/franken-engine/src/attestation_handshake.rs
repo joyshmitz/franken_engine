@@ -1846,4 +1846,355 @@ mod tests {
             assert_eq!(event, restored);
         }
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: PearlTower 2026-02-26
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn challenge_is_valid_at_exact_boundary() {
+        let verifier = test_verifier();
+        let challenge = verifier.generate_challenge([1u8; 32], 1000, 500).unwrap();
+        // At exactly timestamp + deadline, should still be valid.
+        assert!(challenge.is_valid_at(1500));
+        // One past the deadline, invalid.
+        assert!(!challenge.is_valid_at(1501));
+    }
+
+    #[test]
+    fn authorization_is_valid_at_exact_boundary() {
+        let root = test_trust_root();
+        let measurement = test_measurement(&root);
+        let mut verifier = test_verifier();
+        verifier.approve_measurement(measurement.composite_hash());
+        let client = test_client();
+        let auth = do_full_handshake(&mut verifier, &client, &root, &measurement, 1000).unwrap();
+        // At exactly issued_at + validity_window, should still be valid.
+        let boundary = auth.issued_at_ns + auth.validity_window_ns;
+        assert!(auth.is_valid_at(boundary));
+        assert!(!auth.is_valid_at(boundary + 1));
+    }
+
+    #[test]
+    fn set_reattestation_interval_takes_effect() {
+        let root = test_trust_root();
+        let measurement = test_measurement(&root);
+        let mut verifier = test_verifier();
+        verifier.approve_measurement(measurement.composite_hash());
+        verifier.set_reattestation_interval(1000);
+        let client = test_client();
+        let _auth = do_full_handshake(&mut verifier, &client, &root, &measurement, 100).unwrap();
+        // At t=1099, age is 999 < 1000 interval, no reattestation needed.
+        assert!(verifier.cells_needing_reattestation(1099).is_empty());
+        // At t=1100, age is 1000 >= 1000 interval, reattestation needed.
+        assert_eq!(verifier.cells_needing_reattestation(1100).len(), 1);
+    }
+
+    #[test]
+    fn set_authorization_window_takes_effect() {
+        let root = test_trust_root();
+        let measurement = test_measurement(&root);
+        let mut verifier = test_verifier();
+        verifier.approve_measurement(measurement.composite_hash());
+        verifier.set_authorization_window(2000);
+        let client = test_client();
+        let auth = do_full_handshake(&mut verifier, &client, &root, &measurement, 100).unwrap();
+        assert_eq!(auth.validity_window_ns, 2000);
+    }
+
+    #[test]
+    fn policy_version_accessor_matches_initial() {
+        let verifier = test_verifier();
+        assert_eq!(verifier.policy_version(), 1);
+    }
+
+    #[test]
+    fn policy_version_bumps_sequentially() {
+        let mut verifier = test_verifier();
+        assert_eq!(verifier.bump_policy_version(), 2);
+        assert_eq!(verifier.bump_policy_version(), 3);
+        assert_eq!(verifier.policy_version(), 3);
+    }
+
+    #[test]
+    fn cell_handshake_client_respond_structure() {
+        let root = test_trust_root();
+        let measurement = test_measurement(&root);
+        let client = test_client();
+        let verifier = test_verifier();
+        let challenge = verifier
+            .generate_challenge([99u8; 32], 5000, 10000)
+            .unwrap();
+        let response = client.respond(&challenge, &measurement, &root, 10000, 5000);
+        assert_eq!(response.cell_id, "cell-001");
+        assert_eq!(response.cell_function, CellFunction::DecisionReceiptSigner);
+        assert!(!response.signer_public_key.is_empty());
+        assert!(!response.key_binding_proof.is_empty());
+        assert!(!response.response_signature.is_empty());
+        assert_eq!(response.response_timestamp_ns, 5000);
+        assert!(response.claimed_capabilities.contains("sign_receipts"));
+        assert!(response.claimed_capabilities.contains("emit_evidence"));
+    }
+
+    #[test]
+    fn challenge_canonical_bytes_changes_with_nonce() {
+        let verifier = test_verifier();
+        let c1 = verifier.generate_challenge([1u8; 32], 1000, 500).unwrap();
+        let c2 = verifier.generate_challenge([2u8; 32], 1000, 500).unwrap();
+        assert_ne!(c1.canonical_bytes(), c2.canonical_bytes());
+    }
+
+    #[test]
+    fn authorization_authorizes_present_capability() {
+        let root = test_trust_root();
+        let measurement = test_measurement(&root);
+        let mut verifier = test_verifier();
+        verifier.approve_measurement(measurement.composite_hash());
+        let client = test_client();
+        let auth = do_full_handshake(&mut verifier, &client, &root, &measurement, 1000).unwrap();
+        assert!(auth.authorizes("sign_receipts"));
+        assert!(auth.authorizes("emit_evidence"));
+        assert!(!auth.authorizes("delete_data"));
+    }
+
+    #[test]
+    fn handshake_error_implements_std_error() {
+        let err: Box<dyn std::error::Error> = Box::new(HandshakeError::NonceMismatch);
+        assert!(!err.to_string().is_empty());
+    }
+
+    #[test]
+    fn handshake_event_with_all_optional_fields() {
+        let event = HandshakeEvent {
+            seq: 5,
+            timestamp_ns: 9000,
+            epoch: test_epoch(),
+            cell_id: "cell-x".to_string(),
+            outcome: HandshakeOutcome::MeasurementRejected,
+            measurement_hash: Some(ContentHash::compute(b"test")),
+            policy_version: 3,
+            trust_level: Some(TrustLevel::SoftwareOnly),
+            failure_reason: Some("measurement not approved".to_string()),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: HandshakeEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, back);
+        assert!(back.measurement_hash.is_some());
+        assert!(back.trust_level.is_some());
+        assert!(back.failure_reason.is_some());
+    }
+
+    #[test]
+    fn cell_authorization_serde_with_operations() {
+        let root = test_trust_root();
+        let measurement = test_measurement(&root);
+        let mut verifier = test_verifier();
+        verifier.approve_measurement(measurement.composite_hash());
+        let client = test_client();
+        let auth = do_full_handshake(&mut verifier, &client, &root, &measurement, 1000).unwrap();
+        let json = serde_json::to_string(&auth).unwrap();
+        let back: CellAuthorization = serde_json::from_str(&json).unwrap();
+        assert_eq!(auth.cell_id, back.cell_id);
+        assert_eq!(auth.authorized_operations, back.authorized_operations);
+        assert_eq!(auth.epoch, back.epoch);
+    }
+
+    #[test]
+    fn verifier_serde_roundtrip() {
+        let verifier = test_verifier();
+        let json = serde_json::to_string(&verifier).unwrap();
+        let back: PolicyPlaneVerifier = serde_json::from_str(&json).unwrap();
+        assert_eq!(verifier.policy_version(), back.policy_version());
+        assert_eq!(verifier.authorization_count(), back.authorization_count());
+    }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn challenge_canonical_bytes_sensitive_to_policy_version() {
+        let mut verifier = test_verifier();
+        let c1 = verifier.generate_challenge([1u8; 32], 1000, 500).unwrap();
+        verifier.bump_policy_version();
+        let c2 = verifier.generate_challenge([1u8; 32], 1000, 500).unwrap();
+        assert_ne!(c1.canonical_bytes(), c2.canonical_bytes());
+    }
+
+    #[test]
+    fn challenge_canonical_bytes_sensitive_to_timestamp() {
+        let verifier = test_verifier();
+        let c1 = verifier.generate_challenge([1u8; 32], 1000, 500).unwrap();
+        let c2 = verifier.generate_challenge([1u8; 32], 2000, 500).unwrap();
+        assert_ne!(c1.canonical_bytes(), c2.canonical_bytes());
+    }
+
+    #[test]
+    fn challenge_canonical_bytes_sensitive_to_epoch() {
+        let verifier = test_verifier();
+        let c1 = verifier.generate_challenge([1u8; 32], 1000, 500).unwrap();
+        // Epoch is baked into canonical_bytes via the verifier's epoch field.
+        // Create a new verifier with different epoch.
+        let verifier2 = PolicyPlaneVerifier::new(
+            test_signing_key(),
+            1,
+            SecurityEpoch::from_raw(99),
+            "production",
+        );
+        let c2 = verifier2.generate_challenge([1u8; 32], 1000, 500).unwrap();
+        assert_ne!(c1.canonical_bytes(), c2.canonical_bytes());
+    }
+
+    #[test]
+    fn response_canonical_bytes_sensitive_to_cell_id() {
+        let root = test_trust_root();
+        let measurement = test_measurement(&root);
+        let verifier = test_verifier();
+        let challenge = verifier
+            .generate_challenge([1u8; 32], 1000, 10_000)
+            .unwrap();
+        let client1 = test_client();
+        let mut client2 = test_client();
+        client2.cell_id = "cell-999".to_string();
+        let r1 = client1.respond(&challenge, &measurement, &root, 10_000, 1000);
+        let r2 = client2.respond(&challenge, &measurement, &root, 10_000, 1000);
+        assert_ne!(r1.canonical_bytes(), r2.canonical_bytes());
+    }
+
+    #[test]
+    fn re_handshake_same_cell_replaces_authorization() {
+        let mut verifier = test_verifier();
+        let root = test_trust_root();
+        let measurement = test_measurement(&root);
+        verifier.approve_measurement(measurement.composite_hash());
+        let client = test_client();
+        let auth1 = do_full_handshake(&mut verifier, &client, &root, &measurement, 1000).unwrap();
+        let auth2 = do_full_handshake(&mut verifier, &client, &root, &measurement, 2000).unwrap();
+        // Still only one authorization (replaced, not accumulated).
+        assert_eq!(verifier.authorization_count(), 1);
+        // The new one has the later timestamp.
+        assert_ne!(auth1.issued_at_ns, auth2.issued_at_ns);
+        assert_eq!(auth2.issued_at_ns, 2000);
+    }
+
+    #[test]
+    fn approve_multiple_measurements() {
+        let mut verifier = test_verifier();
+        let m1 = ContentHash::compute(b"measurement-1");
+        let m2 = ContentHash::compute(b"measurement-2");
+        verifier.approve_measurement(m1.clone());
+        verifier.approve_measurement(m2.clone());
+        // Both should appear in challenges.
+        let challenge = verifier.generate_challenge([1u8; 32], 1000, 500).unwrap();
+        assert!(challenge.approved_measurements.contains(&m1));
+        assert!(challenge.approved_measurements.contains(&m2));
+    }
+
+    #[test]
+    fn multiple_cells_needing_reattestation() {
+        let mut verifier = test_verifier();
+        verifier.set_reattestation_interval(500);
+        let root = test_trust_root();
+        let measurement = test_measurement(&root);
+        verifier.approve_measurement(measurement.composite_hash());
+
+        let c1 = test_client();
+        do_full_handshake(&mut verifier, &c1, &root, &measurement, 100).unwrap();
+        let mut c2 = test_client();
+        c2.cell_id = "cell-002".to_string();
+        do_full_handshake(&mut verifier, &c2, &root, &measurement, 200).unwrap();
+
+        // At t=600, cell-001 age=500 (needs reattest), cell-002 age=400 (doesn't).
+        let needing = verifier.cells_needing_reattestation(600);
+        assert_eq!(needing.len(), 1);
+        assert_eq!(needing[0], "cell-001");
+
+        // At t=700, both need reattestation.
+        let needing = verifier.cells_needing_reattestation(700);
+        assert_eq!(needing.len(), 2);
+    }
+
+    #[test]
+    fn valid_authorizations_at_mixed_valid_expired() {
+        let mut verifier = test_verifier();
+        verifier.set_authorization_window(500);
+        let root = test_trust_root();
+        let measurement = test_measurement(&root);
+        verifier.approve_measurement(measurement.composite_hash());
+
+        let c1 = test_client();
+        do_full_handshake(&mut verifier, &c1, &root, &measurement, 100).unwrap();
+        let mut c2 = test_client();
+        c2.cell_id = "cell-002".to_string();
+        do_full_handshake(&mut verifier, &c2, &root, &measurement, 400).unwrap();
+
+        // At t=601, cell-001 (issued 100, window 500) expired, cell-002 still valid.
+        assert_eq!(verifier.valid_authorizations_at(601).len(), 1);
+        assert_eq!(verifier.valid_authorizations_at(601)[0].cell_id, "cell-002");
+    }
+
+    #[test]
+    fn events_accumulate_across_multiple_failures() {
+        let mut verifier = test_verifier();
+        let root = test_trust_root();
+        let measurement = test_measurement(&root);
+        // Don't approve measurement → each handshake fails.
+        let client = test_client();
+        let _ = do_full_handshake(&mut verifier, &client, &root, &measurement, 1000);
+        let _ = do_full_handshake(&mut verifier, &client, &root, &measurement, 2000);
+        let _ = do_full_handshake(&mut verifier, &client, &root, &measurement, 3000);
+
+        assert_eq!(verifier.events().len(), 3);
+        for (i, event) in verifier.events().iter().enumerate() {
+            assert_eq!(event.seq, i as u64);
+            assert_eq!(event.outcome, HandshakeOutcome::MeasurementRejected);
+        }
+    }
+
+    #[test]
+    fn challenge_validity_with_zero_deadline() {
+        let verifier = test_verifier();
+        let challenge = verifier.generate_challenge([1u8; 32], 1000, 0).unwrap();
+        // With zero deadline, only valid at exact timestamp.
+        assert!(challenge.is_valid_at(1000));
+        assert!(!challenge.is_valid_at(1001));
+    }
+
+    #[test]
+    fn challenge_signature_is_non_empty() {
+        let verifier = test_verifier();
+        let challenge = verifier.generate_challenge([1u8; 32], 1000, 500).unwrap();
+        assert!(
+            !challenge.policy_plane_signature.is_empty(),
+            "signature should be populated"
+        );
+    }
+
+    #[test]
+    fn authorization_canonical_bytes_sensitive_to_cell_id() {
+        let root = test_trust_root();
+        let measurement = test_measurement(&root);
+        let mut verifier = test_verifier();
+        verifier.approve_measurement(measurement.composite_hash());
+
+        let c1 = test_client();
+        let auth1 = do_full_handshake(&mut verifier, &c1, &root, &measurement, 1000).unwrap();
+        let mut c2 = test_client();
+        c2.cell_id = "cell-other".to_string();
+        let auth2 = do_full_handshake(&mut verifier, &c2, &root, &measurement, 2000).unwrap();
+
+        assert_ne!(auth1.canonical_bytes(), auth2.canonical_bytes());
+    }
+
+    #[test]
+    fn advance_epoch_then_challenge_uses_new_epoch() {
+        let mut verifier = test_verifier();
+        let c1 = verifier.generate_challenge([1u8; 32], 1000, 500).unwrap();
+        assert_eq!(c1.epoch, SecurityEpoch::from_raw(42));
+
+        verifier.advance_epoch(SecurityEpoch::from_raw(100));
+        let c2 = verifier.generate_challenge([1u8; 32], 2000, 500).unwrap();
+        assert_eq!(c2.epoch, SecurityEpoch::from_raw(100));
+
+        // Canonical bytes differ because epoch differs.
+        assert_ne!(c1.canonical_bytes(), c2.canonical_bytes());
+    }
 }

@@ -2513,4 +2513,132 @@ mod tests {
         assert_eq!(outcome.action, LaneAction::SuspendAdaptive);
         assert_eq!(outcome.demotion, Some(DemotionReason::BudgetExhausted));
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn cvar_check_result_serde_roundtrip() {
+        let variants: Vec<CvarCheckResult> = vec![
+            CvarCheckResult::InsufficientData {
+                observations: 5,
+                required: 30,
+            },
+            CvarCheckResult::WithinBounds {
+                cvar_millionths: 10_000_000,
+                threshold_millionths: 50_000_000,
+                headroom_millionths: 40_000_000,
+            },
+            CvarCheckResult::Exceeded {
+                cvar_millionths: 60_000_000,
+                threshold_millionths: 50_000_000,
+                epoch: epoch(3),
+            },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: CvarCheckResult = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, v);
+        }
+    }
+
+    #[test]
+    fn drift_check_result_serde_roundtrip() {
+        let variants: Vec<DriftCheckResult> = vec![
+            DriftCheckResult::InsufficientData {
+                observations: 3,
+                required: 20,
+            },
+            DriftCheckResult::NoDrift {
+                kl_millionths: 10_000,
+                threshold_millionths: 100_000,
+            },
+            DriftCheckResult::DriftDetected {
+                kl_millionths: 200_000,
+                threshold_millionths: 100_000,
+                epoch: epoch(7),
+            },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: DriftCheckResult = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, v);
+        }
+    }
+
+    #[test]
+    fn budget_status_serde_roundtrip() {
+        let variants: Vec<BudgetStatus> = vec![
+            BudgetStatus::Normal {
+                compute_fraction_millionths: 200_000,
+                memory_fraction_millionths: 100_000,
+            },
+            BudgetStatus::Warning {
+                compute_fraction_millionths: 850_000,
+                memory_fraction_millionths: 500_000,
+            },
+            BudgetStatus::Exhausted {
+                compute_fraction_millionths: MILLION,
+                memory_fraction_millionths: MILLION,
+            },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: BudgetStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, v);
+        }
+    }
+
+    #[test]
+    fn budget_event_kind_serde_all_variants() {
+        let variants = [
+            BudgetEventKind::Warning,
+            BudgetEventKind::Exhausted,
+            BudgetEventKind::EpochReset,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: BudgetEventKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, v);
+        }
+    }
+
+    #[test]
+    fn demotion_reason_serde_all_variants() {
+        let variants = [
+            DemotionReason::CvarExceeded,
+            DemotionReason::DriftDetected,
+            DemotionReason::BudgetExhausted,
+            DemotionReason::GuardrailTriggered,
+            DemotionReason::CoverageViolation,
+            DemotionReason::OperatorOverride,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: DemotionReason = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, v);
+        }
+        assert_eq!(variants.len(), 6);
+    }
+
+    #[test]
+    fn budget_event_serde_roundtrip() {
+        let event = BudgetEvent {
+            epoch: epoch(5),
+            kind: BudgetEventKind::Exhausted,
+            compute_consumed_us: 9999,
+            memory_consumed_bytes: 512_000,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: BudgetEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, event);
+    }
+
+    #[test]
+    fn decision_context_config_default_serde_roundtrip() {
+        let config = DecisionContextConfig::default();
+        let json = serde_json::to_string(&config).unwrap();
+        let back: DecisionContextConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.lanes.len(), config.lanes.len());
+        assert_eq!(back.risk_weights.len(), config.risk_weights.len());
+    }
 }

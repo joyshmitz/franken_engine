@@ -1720,4 +1720,115 @@ mod tests {
             }
         }
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn generator_config_serde_stable_roundtrip() {
+        let config = default_config();
+        let json = serde_json::to_string(&config).unwrap();
+        let back: GeneratorConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config, back);
+    }
+
+    #[test]
+    fn generation_result_full_serde_roundtrip() {
+        let catalog = test_catalog();
+        let result = generate_vectors(&catalog, &default_config());
+        let json = serde_json::to_string(&result).unwrap();
+        let back: GenerationResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(result, back);
+    }
+
+    #[test]
+    fn vector_category_as_str_all_distinct() {
+        let variants = [
+            VectorCategory::Positive,
+            VectorCategory::Negative,
+            VectorCategory::Degraded,
+            VectorCategory::Fault,
+        ];
+        let mut set = std::collections::BTreeSet::new();
+        for v in &variants {
+            set.insert(v.as_str());
+        }
+        assert_eq!(set.len(), variants.len());
+    }
+
+    #[test]
+    fn degraded_scenario_display_all_distinct() {
+        let variants = vec![
+            DegradedScenario::StaleRevocationHead { epochs_behind: 3 },
+            DegradedScenario::PartialAvailability {
+                available_fraction_millionths: 500_000,
+            },
+            DegradedScenario::Timeout { timeout_ms: 5000 },
+            DegradedScenario::SchemaDrift {
+                local_version: SemanticVersion::new(1, 0, 0),
+                remote_version: SemanticVersion::new(1, 1, 0),
+            },
+        ];
+        let mut set = std::collections::BTreeSet::new();
+        for v in &variants {
+            set.insert(v.to_string());
+        }
+        assert_eq!(set.len(), variants.len());
+    }
+
+    #[test]
+    fn fault_scenario_display_all_distinct() {
+        let variants = vec![
+            FaultScenario::CorruptedPayload {
+                corruption_offset: 10,
+            },
+            FaultScenario::TruncatedMessage {
+                retain_fraction_millionths: 500_000,
+            },
+            FaultScenario::OutOfOrderSequence {
+                expected_seq: 1,
+                actual_seq: 3,
+            },
+            FaultScenario::ReplayAttack { original_nonce: 42 },
+            FaultScenario::MalformedJson,
+        ];
+        let mut set = std::collections::BTreeSet::new();
+        for v in &variants {
+            set.insert(v.to_string());
+        }
+        assert_eq!(set.len(), variants.len());
+    }
+
+    #[test]
+    fn generated_vector_first_entry_serde_roundtrip() {
+        let catalog = test_catalog();
+        let result = generate_vectors(&catalog, &default_config());
+        assert!(!result.vectors.is_empty());
+        let v = &result.vectors[0];
+        let json = serde_json::to_string(v).unwrap();
+        let back: GeneratedVector = serde_json::from_str(&json).unwrap();
+        assert_eq!(*v, back);
+    }
+
+    #[test]
+    fn generation_result_count_by_boundary_matches_map() {
+        let catalog = test_catalog();
+        let result = generate_vectors(&catalog, &default_config());
+        for (key, &count) in &result.boundary_counts {
+            let manual_count = result
+                .vectors
+                .iter()
+                .filter(|v| v.boundary.as_str() == key)
+                .count();
+            assert_eq!(manual_count, count);
+        }
+    }
+
+    #[test]
+    fn generation_result_vector_ids_all_unique() {
+        let catalog = test_catalog();
+        let result = generate_vectors(&catalog, &default_config());
+        let ids = result.vector_ids();
+        let unique: std::collections::BTreeSet<_> = ids.iter().collect();
+        assert_eq!(ids.len(), unique.len());
+    }
 }

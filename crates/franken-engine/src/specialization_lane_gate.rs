@@ -1889,4 +1889,108 @@ mod tests {
     fn gate_outcome_ord() {
         assert!(GateOutcome::Pass < GateOutcome::Fail);
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn lane_type_serde_all_variants() {
+        let variants = [
+            LaneType::ProofSpecialized,
+            LaneType::AmbientAuthority,
+            LaneType::Fallback,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: LaneType = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, v);
+        }
+    }
+
+    #[test]
+    fn injection_kind_serde_all_variants() {
+        let variants = [
+            InjectionKind::ProofFailure,
+            InjectionKind::CapabilityRevocation,
+            InjectionKind::EpochTransition,
+            InjectionKind::ProofExpiry,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: InjectionKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, v);
+        }
+    }
+
+    #[test]
+    fn gate_outcome_serde_roundtrip() {
+        let variants = [GateOutcome::Pass, GateOutcome::Fail];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: GateOutcome = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, v);
+        }
+    }
+
+    #[test]
+    fn gate_error_serde_all_variants() {
+        let variants: Vec<GateError> = vec![
+            GateError::EmptyWorkloads,
+            GateError::WorkloadSetMismatch {
+                detail: "mismatch".into(),
+            },
+            GateError::EmptyReceipts,
+            GateError::InvalidMetric {
+                workload_id: "w1".into(),
+                detail: "bad value".into(),
+            },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: GateError = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, v);
+        }
+        assert_eq!(variants.len(), 4);
+    }
+
+    #[test]
+    fn lane_type_display_all_distinct() {
+        let variants = [
+            LaneType::ProofSpecialized,
+            LaneType::AmbientAuthority,
+            LaneType::Fallback,
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for v in &variants {
+            assert!(seen.insert(v.to_string()), "duplicate display: {v}");
+        }
+        assert_eq!(seen.len(), 3);
+    }
+
+    #[test]
+    fn injection_kind_as_str_all_distinct() {
+        let all = InjectionKind::all();
+        let mut seen = std::collections::BTreeSet::new();
+        for v in all {
+            assert!(seen.insert(v.as_str()), "duplicate as_str: {}", v.as_str());
+        }
+        assert_eq!(seen.len(), 4);
+    }
+
+    #[test]
+    fn gate_error_display_all_distinct() {
+        let variants: Vec<GateError> = vec![
+            GateError::EmptyWorkloads,
+            GateError::WorkloadSetMismatch { detail: "x".into() },
+            GateError::EmptyReceipts,
+            GateError::InvalidMetric {
+                workload_id: "w".into(),
+                detail: "d".into(),
+            },
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for v in &variants {
+            assert!(seen.insert(v.to_string()), "duplicate display: {v}");
+        }
+        assert_eq!(seen.len(), 4);
+    }
 }

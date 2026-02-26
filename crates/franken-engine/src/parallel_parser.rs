@@ -3286,4 +3286,143 @@ mod tests {
         let output = parse(&input).unwrap();
         assert!(output.token_count > 0);
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn parser_mode_serde_roundtrip() {
+        for v in &[ParserMode::Serial, ParserMode::Parallel] {
+            let json = serde_json::to_string(v).unwrap();
+            let back: ParserMode = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn serial_reason_serde_roundtrip() {
+        let variants = vec![
+            SerialReason::InputBelowThreshold {
+                input_bytes: 10,
+                threshold: 100,
+            },
+            SerialReason::SingleWorker,
+            SerialReason::NoDeterministicSplitPoints,
+            SerialReason::BudgetExhausted { budget_us: 500 },
+            SerialReason::ParityMismatch { mismatch_index: 7 },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: SerialReason = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn failover_trigger_class_serde_roundtrip() {
+        let variants = [
+            FailoverTriggerClass::Timeout,
+            FailoverTriggerClass::TranscriptDivergence,
+            FailoverTriggerClass::WitnessMismatch,
+            FailoverTriggerClass::SafetyPolicyViolation,
+            FailoverTriggerClass::ParityMismatch,
+            FailoverTriggerClass::ResourceLimit,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: FailoverTriggerClass = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn failover_state_serde_roundtrip() {
+        let variants = [
+            FailoverState::ParallelAttempted,
+            FailoverState::TriggerClassified,
+            FailoverState::SerialFallbackRequested,
+            FailoverState::SerialFallbackCompleted,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: FailoverState = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn backpressure_level_serde_roundtrip() {
+        let variants = [
+            BackpressureLevel::Normal,
+            BackpressureLevel::Elevated,
+            BackpressureLevel::Critical,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: BackpressureLevel = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn fallback_cause_serde_roundtrip() {
+        let variants = vec![
+            FallbackCause::Routing(SerialReason::SingleWorker),
+            FallbackCause::ParityFailure { mismatch_index: 5 },
+            FallbackCause::ResourceLimit(SerialReason::BudgetExhausted { budget_us: 100 }),
+            FallbackCause::TranscriptDivergence {
+                detail: "chunk mismatch".into(),
+            },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: FallbackCause = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn failover_trigger_class_display_all_distinct() {
+        let variants = [
+            FailoverTriggerClass::Timeout,
+            FailoverTriggerClass::TranscriptDivergence,
+            FailoverTriggerClass::WitnessMismatch,
+            FailoverTriggerClass::SafetyPolicyViolation,
+            FailoverTriggerClass::ParityMismatch,
+            FailoverTriggerClass::ResourceLimit,
+        ];
+        let mut set = std::collections::BTreeSet::new();
+        for v in &variants {
+            set.insert(v.to_string());
+        }
+        assert_eq!(set.len(), variants.len());
+    }
+
+    #[test]
+    fn failover_state_display_all_distinct() {
+        let variants = [
+            FailoverState::ParallelAttempted,
+            FailoverState::TriggerClassified,
+            FailoverState::SerialFallbackRequested,
+            FailoverState::SerialFallbackCompleted,
+        ];
+        let mut set = std::collections::BTreeSet::new();
+        for v in &variants {
+            set.insert(v.to_string());
+        }
+        assert_eq!(set.len(), variants.len());
+    }
+
+    #[test]
+    fn backpressure_level_display_all_distinct() {
+        let variants = [
+            BackpressureLevel::Normal,
+            BackpressureLevel::Elevated,
+            BackpressureLevel::Critical,
+        ];
+        let mut set = std::collections::BTreeSet::new();
+        for v in &variants {
+            set.insert(v.to_string());
+        }
+        assert_eq!(set.len(), variants.len());
+    }
 }

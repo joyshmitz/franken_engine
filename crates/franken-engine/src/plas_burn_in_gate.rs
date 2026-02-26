@@ -1753,4 +1753,69 @@ mod tests {
         assert!(artifact.failure_codes.len() >= 3);
         assert_eq!(artifact.lifecycle_state, BurnInLifecycleState::Rejection);
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn risk_class_as_str_distinct() {
+        let all = [
+            ExtensionRiskClass::Low,
+            ExtensionRiskClass::Standard,
+            ExtensionRiskClass::High,
+        ];
+        let set: std::collections::BTreeSet<&str> = all.iter().map(|r| r.as_str()).collect();
+        assert_eq!(set.len(), all.len());
+    }
+
+    #[test]
+    fn lifecycle_as_str_distinct() {
+        let all = [
+            BurnInLifecycleState::ShadowStart,
+            BurnInLifecycleState::ShadowEvaluation,
+            BurnInLifecycleState::PromotionGate,
+            BurnInLifecycleState::AutoEnforcement,
+            BurnInLifecycleState::Rejection,
+        ];
+        let set: std::collections::BTreeSet<&str> = all.iter().map(|s| s.as_str()).collect();
+        assert_eq!(set.len(), all.len());
+    }
+
+    #[test]
+    fn failure_code_error_code_distinct() {
+        let all = [
+            BurnInFailureCode::EarlyTerminationFalseDeny,
+            BurnInFailureCode::InsufficientShadowDuration,
+            BurnInFailureCode::InsufficientShadowObservations,
+            BurnInFailureCode::ShadowSuccessRateBelowThreshold,
+            BurnInFailureCode::FalseDenyEnvelopeExceeded,
+            BurnInFailureCode::RollbackProofArtifactsMissing,
+        ];
+        let set: std::collections::BTreeSet<&str> = all.iter().map(|c| c.error_code()).collect();
+        assert_eq!(set.len(), all.len());
+    }
+
+    #[test]
+    fn burn_in_error_serde_all_variants() {
+        let variants: Vec<BurnInError> = vec![
+            BurnInError::InvalidConfig {
+                detail: "bad".into(),
+            },
+            BurnInError::InvalidObservation {
+                detail: "obs".into(),
+            },
+            BurnInError::InvalidTransition {
+                from: BurnInLifecycleState::ShadowStart,
+                to: BurnInLifecycleState::AutoEnforcement,
+            },
+            BurnInError::NonMonotonicTimestamp {
+                previous_ns: 100,
+                observed_ns: 50,
+            },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: BurnInError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
 }

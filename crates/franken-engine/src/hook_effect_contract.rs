@@ -2076,4 +2076,97 @@ mod tests {
         assert!(!diagnostic.hardening_guidance.is_empty());
         assert_eq!(diagnostic.derive_id(), diagnostic.derive_id());
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn hook_kind_serde_all_variants() {
+        for kind in HookKind::ALL {
+            let json = serde_json::to_string(kind).unwrap();
+            let back: HookKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(*kind, back);
+        }
+    }
+
+    #[test]
+    fn hook_kind_all_has_fifteen_entries() {
+        assert_eq!(HookKind::ALL.len(), 15);
+    }
+
+    #[test]
+    fn render_phase_serde_all_variants() {
+        let variants = [
+            RenderPhase::Rendering,
+            RenderPhase::InsertionEffectsPending,
+            RenderPhase::LayoutEffectsPending,
+            RenderPhase::PaintPending,
+            RenderPhase::PassiveEffectsPending,
+            RenderPhase::Idle,
+            RenderPhase::Unmounting,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: RenderPhase = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn effect_timing_serde_all_variants() {
+        let variants = [
+            EffectTiming::Insertion,
+            EffectTiming::Layout,
+            EffectTiming::Passive,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: EffectTiming = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn unsupported_semantics_trigger_serde_all_variants() {
+        let variants = [
+            UnsupportedSemanticsTrigger::HookTopologyDrift,
+            UnsupportedSemanticsTrigger::DependencyShapeDrift,
+            UnsupportedSemanticsTrigger::OutOfRenderHookExecution,
+            UnsupportedSemanticsTrigger::SchedulerOrderingAmbiguity,
+            UnsupportedSemanticsTrigger::UnsupportedHookPrimitive,
+            UnsupportedSemanticsTrigger::TransformationProofMissing,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: UnsupportedSemanticsTrigger = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn unsupported_semantics_trigger_error_code_distinct() {
+        let variants = [
+            UnsupportedSemanticsTrigger::HookTopologyDrift,
+            UnsupportedSemanticsTrigger::DependencyShapeDrift,
+            UnsupportedSemanticsTrigger::OutOfRenderHookExecution,
+            UnsupportedSemanticsTrigger::SchedulerOrderingAmbiguity,
+            UnsupportedSemanticsTrigger::UnsupportedHookPrimitive,
+            UnsupportedSemanticsTrigger::TransformationProofMissing,
+        ];
+        let set: std::collections::BTreeSet<&str> =
+            variants.iter().map(|t| t.stable_error_code()).collect();
+        assert_eq!(set.len(), variants.len());
+    }
+
+    #[test]
+    fn effect_timing_scheduling_order_monotonic() {
+        assert!(
+            EffectTiming::Insertion.scheduling_order() < EffectTiming::Layout.scheduling_order()
+        );
+        assert!(EffectTiming::Layout.scheduling_order() < EffectTiming::Passive.scheduling_order());
+    }
+
+    #[test]
+    fn render_phase_unmounting_has_no_successors() {
+        assert!(RenderPhase::Unmounting.legal_successors().is_empty());
+    }
 }

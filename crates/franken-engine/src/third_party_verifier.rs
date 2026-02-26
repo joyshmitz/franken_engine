@@ -2053,4 +2053,229 @@ mod tests {
             DEFAULT_CONTAINMENT_LATENCY_SLA_NS
         );
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn claimed_benchmark_outcome_serde_defaults() {
+        // blockers defaults to empty vec via #[serde(default)]
+        let json = r#"{"score_vs_node": 0.95, "score_vs_bun": 0.92, "publish_allowed": true}"#;
+        let outcome: ClaimedBenchmarkOutcome = serde_json::from_str(json).unwrap();
+        assert!(outcome.blockers.is_empty());
+        assert!(outcome.publish_allowed);
+        assert!((outcome.score_vs_node - 0.95).abs() < 1e-12);
+    }
+
+    #[test]
+    fn claimed_benchmark_outcome_with_blockers_serde() {
+        let outcome = ClaimedBenchmarkOutcome {
+            score_vs_node: 0.88,
+            score_vs_bun: 0.85,
+            publish_allowed: false,
+            blockers: vec![
+                "perf-regression".to_string(),
+                "behavior-mismatch".to_string(),
+            ],
+        };
+        let json = serde_json::to_string(&outcome).unwrap();
+        let back: ClaimedBenchmarkOutcome = serde_json::from_str(&json).unwrap();
+        assert_eq!(outcome.blockers, back.blockers);
+        assert_eq!(outcome.publish_allowed, back.publish_allowed);
+    }
+
+    #[test]
+    fn verification_check_result_failed_with_error_code() {
+        let check = VerificationCheckResult {
+            name: "latency_sla_met".to_string(),
+            passed: false,
+            error_code: Some("LATENCY_SLA_EXCEEDED".to_string()),
+            detail: "400ms > 100ms sla".to_string(),
+        };
+        let json = serde_json::to_string(&check).unwrap();
+        assert!(json.contains("LATENCY_SLA_EXCEEDED"));
+        let back: VerificationCheckResult = serde_json::from_str(&json).unwrap();
+        assert!(!back.passed);
+        assert_eq!(back.error_code, Some("LATENCY_SLA_EXCEEDED".to_string()));
+    }
+
+    #[test]
+    fn verification_check_result_passed_no_error_code() {
+        let check = VerificationCheckResult {
+            name: "integrity_check".to_string(),
+            passed: true,
+            error_code: None,
+            detail: "all hashes match".to_string(),
+        };
+        let json = serde_json::to_string(&check).unwrap();
+        let back: VerificationCheckResult = serde_json::from_str(&json).unwrap();
+        assert!(back.passed);
+        assert!(back.error_code.is_none());
+    }
+
+    #[test]
+    fn verifier_event_with_error_code_serde() {
+        let event = VerifierEvent {
+            trace_id: "t1".to_string(),
+            decision_id: "d1".to_string(),
+            policy_id: "p1".to_string(),
+            component: THIRD_PARTY_VERIFIER_COMPONENT.to_string(),
+            event: "check_failed:latency_sla_met".to_string(),
+            outcome: "fail".to_string(),
+            error_code: Some("CONTAINMENT_SLA".to_string()),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: VerifierEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, back);
+    }
+
+    #[test]
+    fn report_with_mixed_checks_has_correct_exit_code() {
+        let report = ThirdPartyVerificationReport {
+            claim_type: "containment".to_string(),
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            component: THIRD_PARTY_VERIFIER_COMPONENT.to_string(),
+            verdict: VerificationVerdict::PartiallyVerified,
+            checks: vec![
+                VerificationCheckResult {
+                    name: "a".to_string(),
+                    passed: true,
+                    error_code: None,
+                    detail: "ok".to_string(),
+                },
+                VerificationCheckResult {
+                    name: "b".to_string(),
+                    passed: false,
+                    error_code: Some("ERR".to_string()),
+                    detail: "not ok".to_string(),
+                },
+            ],
+            events: Vec::new(),
+        };
+        assert_eq!(report.exit_code(), EXIT_CODE_PARTIALLY_VERIFIED);
+    }
+
+    #[test]
+    fn render_report_summary_includes_failed_count() {
+        let report = ThirdPartyVerificationReport {
+            claim_type: "test".to_string(),
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            component: THIRD_PARTY_VERIFIER_COMPONENT.to_string(),
+            verdict: VerificationVerdict::Failed,
+            checks: vec![
+                VerificationCheckResult {
+                    name: "a".to_string(),
+                    passed: true,
+                    error_code: None,
+                    detail: "ok".to_string(),
+                },
+                VerificationCheckResult {
+                    name: "b".to_string(),
+                    passed: false,
+                    error_code: Some("ERR".to_string()),
+                    detail: "not ok".to_string(),
+                },
+                VerificationCheckResult {
+                    name: "c".to_string(),
+                    passed: false,
+                    error_code: Some("ERR2".to_string()),
+                    detail: "also not ok".to_string(),
+                },
+            ],
+            events: Vec::new(),
+        };
+        let summary = render_report_summary(&report);
+        assert!(summary.contains("failed=2"), "summary: {summary}");
+        assert!(summary.contains("checks=3"), "summary: {summary}");
+    }
+
+    #[test]
+    fn generate_attestation_empty_verifier_version_error() {
+        let report = make_report(VerificationVerdict::Verified);
+        let mut input = make_attestation_input(report, None);
+        input.verifier_version = String::new();
+        let err = generate_attestation(&input).unwrap_err();
+        assert!(err.contains("verifier_version"), "err: {err}");
+    }
+
+    #[test]
+    fn generate_attestation_empty_environment_error() {
+        let report = make_report(VerificationVerdict::Verified);
+        let mut input = make_attestation_input(report, None);
+        input.verifier_environment = String::new();
+        let err = generate_attestation(&input).unwrap_err();
+        assert!(err.contains("verifier_environment"), "err: {err}");
+    }
+
+    #[test]
+    fn attestation_scope_limitations_in_statement() {
+        let report = make_report(VerificationVerdict::Verified);
+        let mut input = make_attestation_input(report, None);
+        input.scope_limitations = vec!["no-network".to_string(), "synthetic-data".to_string()];
+        let attestation = generate_attestation(&input).unwrap();
+        assert_eq!(attestation.scope_limitations.len(), 2);
+        assert!(
+            attestation.statement.contains("no-network")
+                || attestation.statement.contains("synthetic-data")
+        );
+    }
+
+    #[test]
+    fn exit_code_constants_are_distinct() {
+        let codes = [
+            EXIT_CODE_VERIFIED,
+            EXIT_CODE_PARTIALLY_VERIFIED,
+            EXIT_CODE_FAILED,
+            EXIT_CODE_INCONCLUSIVE,
+        ];
+        let mut sorted = codes.to_vec();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted.len(), codes.len());
+    }
+
+    #[test]
+    fn verdict_serde_all_variants_distinct() {
+        let variants = [
+            VerificationVerdict::Verified,
+            VerificationVerdict::PartiallyVerified,
+            VerificationVerdict::Failed,
+            VerificationVerdict::Inconclusive,
+        ];
+        let jsons: Vec<String> = variants
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
+        let mut deduped = jsons.clone();
+        deduped.sort();
+        deduped.dedup();
+        assert_eq!(jsons.len(), deduped.len());
+    }
+
+    #[test]
+    fn containment_claim_bundle_custom_sla_serde() {
+        let result = make_gate_result(vec![make_scenario("s1", true, 100_000)]);
+        let mut bundle = make_containment_bundle(result);
+        bundle.detection_latency_sla_ns = 250_000_000;
+        let json = serde_json::to_string(&bundle).unwrap();
+        let back: ContainmentClaimBundle = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.detection_latency_sla_ns, 250_000_000);
+    }
+
+    #[test]
+    fn verification_attestation_serde_with_scope_limitations() {
+        let report = make_report(VerificationVerdict::Verified);
+        let mut input = make_attestation_input(report, None);
+        input.scope_limitations = vec!["limited-to-unit-tests".to_string()];
+        let attestation = generate_attestation(&input).unwrap();
+        let json = serde_json::to_string(&attestation).unwrap();
+        let back: VerificationAttestation = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            back.scope_limitations,
+            vec!["limited-to-unit-tests".to_string()]
+        );
+    }
 }

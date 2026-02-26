@@ -1465,4 +1465,110 @@ mod tests {
         assert!(a < b);
         assert!(a == a.clone());
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn correlation_key_serde_roundtrip() {
+        let key = CorrelationKey {
+            component: "parser".into(),
+            event: "parse_error".into(),
+            scenario_id: Some("sc-1".into()),
+            error_code: Some("E001".into()),
+            outcome: "fail".into(),
+        };
+        let json = serde_json::to_string(&key).unwrap();
+        let back: CorrelationKey = serde_json::from_str(&json).unwrap();
+        assert_eq!(key, back);
+    }
+
+    #[test]
+    fn schema_migration_boundary_serde_roundtrip() {
+        let boundary = SchemaMigrationBoundary {
+            run_id: "run-1".into(),
+            sequence: 42,
+            from_schema: "parser_event.v1".into(),
+            to_schema: "parser_event.v2".into(),
+        };
+        let json = serde_json::to_string(&boundary).unwrap();
+        let back: SchemaMigrationBoundary = serde_json::from_str(&json).unwrap();
+        assert_eq!(boundary, back);
+    }
+
+    #[test]
+    fn schema_migration_step_serde_roundtrip() {
+        let step = SchemaMigrationStep {
+            migration_id: "mig-1".into(),
+            from_schema: "parser_event.v1".into(),
+            to_schema: "parser_event.v2".into(),
+        };
+        let json = serde_json::to_string(&step).unwrap();
+        let back: SchemaMigrationStep = serde_json::from_str(&json).unwrap();
+        assert_eq!(step, back);
+    }
+
+    #[test]
+    fn indexed_parser_event_serde_roundtrip() {
+        let event = IndexedParserEvent {
+            run_id: "run-1".into(),
+            sequence: 1,
+            schema_version: "parser_event.v1".into(),
+            trace_id: "t-1".into(),
+            decision_id: "d-1".into(),
+            policy_id: "pol-1".into(),
+            component: "parser".into(),
+            event: "parse_complete".into(),
+            outcome: "ok".into(),
+            error_code: None,
+            replay_command: Some("replay --run run-1".into()),
+            scenario_id: None,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: IndexedParserEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, back);
+    }
+
+    #[test]
+    fn parser_run_artifact_ref_serde_roundtrip() {
+        let artifact = ParserRunArtifactRef {
+            run_id: "run-1".into(),
+            manifest_schema_version: "v1".into(),
+            manifest_path: "path/manifest.json".into(),
+            events_path: "path/events.jsonl".into(),
+            commands_path: "path/commands.sh".into(),
+            replay_command: "replay --run run-1".into(),
+            generated_at_utc: Some("2026-02-26T00:00:00Z".into()),
+            outcome: Some("pass".into()),
+        };
+        let json = serde_json::to_string(&artifact).unwrap();
+        let back: ParserRunArtifactRef = serde_json::from_str(&json).unwrap();
+        assert_eq!(artifact, back);
+    }
+
+    #[test]
+    fn schema_version_tag_ordering_by_major() {
+        let a = SchemaVersionTag {
+            family: "parser_event".into(),
+            major: 1,
+        };
+        let b = SchemaVersionTag {
+            family: "parser_event".into(),
+            major: 2,
+        };
+        assert!(a < b);
+    }
+
+    #[test]
+    fn correlation_key_none_fields_serde_roundtrip() {
+        let key = CorrelationKey {
+            component: "c".into(),
+            event: "e".into(),
+            scenario_id: None,
+            error_code: None,
+            outcome: "ok".into(),
+        };
+        let json = serde_json::to_string(&key).unwrap();
+        let back: CorrelationKey = serde_json::from_str(&json).unwrap();
+        assert_eq!(key, back);
+    }
 }

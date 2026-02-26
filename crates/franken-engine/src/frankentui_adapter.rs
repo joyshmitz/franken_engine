@@ -6293,4 +6293,187 @@ mod tests {
         let back: ReplacementOpportunityView = serde_json::from_str(&json).unwrap();
         assert_eq!(rov, back);
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn safe_mode_activation_view_serde_roundtrip() {
+        let view = SafeModeActivationView {
+            activation_id: "act-001".into(),
+            activation_type: "emergency".into(),
+            extension_id: "ext-001".into(),
+            region_id: "region-001".into(),
+            severity: DashboardSeverity::Critical,
+            recovery_status: RecoveryStatus::Recovered,
+            activated_at_unix_ms: 1000,
+            recovered_at_unix_ms: Some(2000),
+        };
+        let json = serde_json::to_string(&view).unwrap();
+        let back: SafeModeActivationView = serde_json::from_str(&json).unwrap();
+        assert_eq!(view, back);
+    }
+
+    #[test]
+    fn replay_health_panel_view_serde_roundtrip() {
+        let view = ReplayHealthPanelView {
+            last_run_status: ReplayHealthStatus::Pass,
+            divergence_count: 3,
+            last_replay_timestamp_unix_ms: Some(9000),
+        };
+        let json = serde_json::to_string(&view).unwrap();
+        let back: ReplayHealthPanelView = serde_json::from_str(&json).unwrap();
+        assert_eq!(view, back);
+    }
+
+    #[test]
+    fn benchmark_trends_panel_view_serde_roundtrip() {
+        let view = BenchmarkTrendsPanelView {
+            points: vec![BenchmarkTrendPointView {
+                timestamp_unix_ms: 100,
+                throughput_tps: 5000,
+                latency_p95_ms: 12,
+                memory_peak_mb: 256,
+            }],
+            throughput_floor_tps: 1000,
+            latency_p95_ceiling_ms: 50,
+            memory_peak_ceiling_mb: 512,
+        };
+        let json = serde_json::to_string(&view).unwrap();
+        let back: BenchmarkTrendsPanelView = serde_json::from_str(&json).unwrap();
+        assert_eq!(view, back);
+    }
+
+    #[test]
+    fn region_lifecycle_row_view_serde_roundtrip() {
+        let view = RegionLifecycleRowView {
+            region_id: "region-001".into(),
+            is_active: true,
+            active_extensions: 5,
+            created_at_unix_ms: 1000,
+            closed_at_unix_ms: None,
+            quiescent_close_time_ms: None,
+        };
+        let json = serde_json::to_string(&view).unwrap();
+        let back: RegionLifecycleRowView = serde_json::from_str(&json).unwrap();
+        assert_eq!(view, back);
+    }
+
+    #[test]
+    fn region_lifecycle_panel_view_default_all_zero() {
+        let panel = RegionLifecyclePanelView::default();
+        assert_eq!(panel.active_region_count, 0);
+        assert_eq!(panel.region_creations_in_window, 0);
+        assert_eq!(panel.region_destructions_in_window, 0);
+        assert_eq!(panel.average_quiescent_close_time_ms, 0);
+    }
+
+    #[test]
+    fn region_lifecycle_panel_view_serde_roundtrip() {
+        let panel = RegionLifecyclePanelView {
+            active_region_count: 3,
+            region_creations_in_window: 5,
+            region_destructions_in_window: 2,
+            average_quiescent_close_time_ms: 150,
+        };
+        let json = serde_json::to_string(&panel).unwrap();
+        let back: RegionLifecyclePanelView = serde_json::from_str(&json).unwrap();
+        assert_eq!(panel, back);
+    }
+
+    #[test]
+    fn replay_health_panel_view_default_divergence_zero() {
+        let panel = ReplayHealthPanelView::default();
+        assert_eq!(panel.divergence_count, 0);
+        assert_eq!(panel.last_replay_timestamp_unix_ms, None);
+    }
+
+    #[test]
+    fn safe_mode_activation_view_none_recovered_at() {
+        let view = SafeModeActivationView {
+            activation_id: "act-002".into(),
+            activation_type: "graceful".into(),
+            extension_id: "ext-002".into(),
+            region_id: "region-002".into(),
+            severity: DashboardSeverity::Warning,
+            recovery_status: RecoveryStatus::Recovering,
+            activated_at_unix_ms: 5000,
+            recovered_at_unix_ms: None,
+        };
+        let json = serde_json::to_string(&view).unwrap();
+        assert!(json.contains("\"recovered_at_unix_ms\":null"));
+        let back: SafeModeActivationView = serde_json::from_str(&json).unwrap();
+        assert_eq!(view, back);
+    }
+
+    #[test]
+    fn policy_explanation_card_from_partial_none_defaults_zero() {
+        let partial = PolicyExplanationPartial {
+            decision_id: "d-1".into(),
+            policy_id: "p-1".into(),
+            selected_action: "allow".into(),
+            confidence_millionths: None,
+            expected_loss_millionths: None,
+            action_candidates: Vec::new(),
+            key_drivers: Vec::new(),
+        };
+        let card = PolicyExplanationCardView::from_partial(partial);
+        assert_eq!(card.confidence_millionths, 0);
+        assert_eq!(card.expected_loss_millionths, 0);
+    }
+
+    #[test]
+    fn control_dashboard_from_partial_blank_zone_becomes_unknown() {
+        let partial = ControlDashboardPartial {
+            cluster: "   ".into(),
+            zone: "".into(),
+            security_epoch: None,
+            runtime_mode: " ".into(),
+            metrics: Vec::new(),
+            extension_rows: Vec::new(),
+            incident_counts: BTreeMap::new(),
+        };
+        let view = ControlDashboardView::from_partial(partial);
+        assert_eq!(view.cluster, "unknown");
+        assert_eq!(view.zone, "unknown");
+        assert_eq!(view.runtime_mode, "unknown");
+        assert_eq!(view.security_epoch, 0);
+    }
+
+    #[test]
+    fn dashboard_alert_metric_serde_all_variants() {
+        let variants = [
+            DashboardAlertMetric::ObligationFailureRateMillionths,
+            DashboardAlertMetric::ReplayDivergenceCount,
+            DashboardAlertMetric::SafeModeActivationCount,
+            DashboardAlertMetric::CancellationEventCount,
+            DashboardAlertMetric::FallbackActivationCount,
+        ];
+        let mut names = std::collections::BTreeSet::new();
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: DashboardAlertMetric = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, &back);
+            names.insert(json);
+        }
+        assert_eq!(names.len(), variants.len());
+    }
+
+    #[test]
+    fn threshold_comparator_serde_all_variants() {
+        let variants = [
+            ThresholdComparator::GreaterThan,
+            ThresholdComparator::GreaterOrEqual,
+            ThresholdComparator::LessThan,
+            ThresholdComparator::LessOrEqual,
+            ThresholdComparator::Equal,
+        ];
+        let mut names = std::collections::BTreeSet::new();
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: ThresholdComparator = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, &back);
+            names.insert(json);
+        }
+        assert_eq!(names.len(), variants.len());
+    }
 }

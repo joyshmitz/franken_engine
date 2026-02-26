@@ -3297,4 +3297,295 @@ mod tests {
         assert!(runner.active_migration_id().is_none());
         assert!(runner.transition_windows().is_empty());
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn golden_ledger_freeze_empty_entries() {
+        let ledger = GoldenLedger::freeze("empty", "v1", Vec::new(), 0);
+        assert!(ledger.is_empty());
+        assert_eq!(ledger.len(), 0);
+        assert!(ledger.verify_integrity());
+    }
+
+    #[test]
+    fn golden_ledger_metadata_does_not_affect_integrity() {
+        let mut ledger = build_golden_ledger("test", "evidence-v1", 3);
+        assert!(ledger.verify_integrity());
+        ledger
+            .metadata
+            .insert("extra".to_string(), "info".to_string());
+        // Metadata is not part of corpus_hash
+        assert!(ledger.verify_integrity());
+    }
+
+    #[test]
+    fn manifest_overwrite_same_name() {
+        let mut manifest = GoldenLedgerManifest::new();
+        let ledger_a = build_golden_ledger("shared-name", "v1", 3);
+        let ledger_b = build_golden_ledger("shared-name", "v2", 5);
+        manifest.add(&ledger_a);
+        assert_eq!(manifest.len(), 1);
+        assert!(manifest.verify(&ledger_a));
+        // Adding same name overwrites
+        manifest.add(&ledger_b);
+        assert_eq!(manifest.len(), 1);
+        assert!(manifest.verify(&ledger_b));
+        assert!(!manifest.verify(&ledger_a));
+    }
+
+    #[test]
+    fn manifest_multiple_distinct_ledgers() {
+        let mut manifest = GoldenLedgerManifest::new();
+        assert!(manifest.is_empty());
+        let l1 = build_golden_ledger("alpha", "v1", 2);
+        let l2 = build_golden_ledger("beta", "v1", 4);
+        manifest.add(&l1);
+        manifest.add(&l2);
+        assert_eq!(manifest.len(), 2);
+        assert!(!manifest.is_empty());
+        assert!(manifest.verify(&l1));
+        assert!(manifest.verify(&l2));
+    }
+
+    #[test]
+    fn migration_test_result_passed_all_conditions() {
+        let result = MigrationTestResult {
+            golden_ledger_name: "test".to_string(),
+            from_version: "v1".to_string(),
+            to_version: "v2".to_string(),
+            outcome: MigrationOutcome::MigratedSuccessfully,
+            entries_processed: 5,
+            entries_replayed_ok: 5,
+            errors: Vec::new(),
+            replay_violations: 0,
+            schema_migrations_detected: Vec::new(),
+            determinism_verified: true,
+        };
+        assert!(result.passed());
+    }
+
+    #[test]
+    fn migration_test_result_failed_when_outcome_is_failed() {
+        let result = MigrationTestResult {
+            golden_ledger_name: "test".to_string(),
+            from_version: "v1".to_string(),
+            to_version: "v2".to_string(),
+            outcome: MigrationOutcome::Failed,
+            entries_processed: 5,
+            entries_replayed_ok: 3,
+            errors: Vec::new(),
+            replay_violations: 0,
+            schema_migrations_detected: Vec::new(),
+            determinism_verified: true,
+        };
+        assert!(!result.passed());
+    }
+
+    #[test]
+    fn declare_validation_empty_affected_objects_detail() {
+        let mut runner = CutoverMigrationRunner::new();
+        let mut decl = test_declaration("m1", CutoverType::HardCutover);
+        decl.affected_objects.clear();
+        let err = runner.declare(decl, "t").unwrap_err();
+        if let CutoverError::InvalidDeclaration { detail } = &err {
+            assert!(detail.contains("affected_objects"), "detail: {detail}");
+        } else {
+            panic!("expected InvalidDeclaration, got {err:?}");
+        }
+    }
+
+    #[test]
+    fn declare_validation_same_versions_detail() {
+        let mut runner = CutoverMigrationRunner::new();
+        let mut decl = test_declaration("m1", CutoverType::HardCutover);
+        decl.from_version = "v1".to_string();
+        decl.to_version = "v1".to_string();
+        let err = runner.declare(decl, "t").unwrap_err();
+        if let CutoverError::InvalidDeclaration { detail } = &err {
+            assert!(detail.contains("from_version"), "detail: {detail}");
+        } else {
+            panic!("expected InvalidDeclaration, got {err:?}");
+        }
+    }
+
+    #[test]
+    fn begin_unknown_migration_id_fails() {
+        let mut runner = CutoverMigrationRunner::new();
+        runner
+            .declare(test_declaration("m1", CutoverType::HardCutover), "t")
+            .unwrap();
+        assert!(matches!(
+            runner.begin("nonexistent", 50, "t"),
+            Err(CutoverError::MigrationNotFound { .. })
+        ));
+    }
+
+    #[test]
+    fn parallel_run_accepts_old_format_after_commit() {
+        let mut runner = CutoverMigrationRunner::new();
+        let decl = test_declaration("m-par", CutoverType::ParallelRun);
+        runner.declare(decl, "t").unwrap();
+        let _entry = run_full_migration(&mut runner, "m-par");
+        // ParallelRun always accepts both formats
+        runner
+            .check_format_acceptance(ObjectClass::SerializationSchema)
+            .unwrap();
+    }
+
+    #[test]
+    fn check_format_acceptance_unaffected_class_always_ok() {
+        let mut runner = CutoverMigrationRunner::new();
+        let decl = test_declaration("m-hard", CutoverType::HardCutover);
+        runner.declare(decl, "t").unwrap();
+        let _entry = run_full_migration(&mut runner, "m-hard");
+        // KeyFormat is not in affected_objects, so should pass
+        runner
+            .check_format_acceptance(ObjectClass::KeyFormat)
+            .unwrap();
+    }
+
+    #[test]
+    fn active_state_tracks_through_lifecycle() {
+        let mut runner = CutoverMigrationRunner::new();
+        let decl = test_declaration("m-track", CutoverType::HardCutover);
+        runner.declare(decl, "t").unwrap();
+        assert!(runner.active_state().is_none());
+        runner.begin("m-track", 50, "t").unwrap();
+        assert_eq!(runner.active_state(), Some(CutoverState::PreMigrated));
+        assert_eq!(runner.active_migration_id(), Some("m-track"));
+    }
+
+    #[test]
+    fn cutover_error_code_all_variants_stable() {
+        // Verify that cutover_error_code returns non-empty string for all variants
+        let errors = vec![
+            CutoverError::InvalidDeclaration {
+                detail: String::new(),
+            },
+            CutoverError::DryRunFailed {
+                unconvertible_count: 0,
+            },
+            CutoverError::VerificationFailed { violations: 0 },
+            CutoverError::ParallelRunDiscrepancy {
+                discrepancy_count: 0,
+            },
+            CutoverError::OldFormatRejected {
+                object_class: ObjectClass::KeyFormat,
+            },
+            CutoverError::TransitionWindowExpired {
+                migration_id: String::new(),
+            },
+            CutoverError::PhaseFailed {
+                phase: MigrationPhase::Execute,
+                detail: String::new(),
+            },
+            CutoverError::AlreadyCommitted {
+                migration_id: String::new(),
+            },
+            CutoverError::NoMigrationInProgress,
+            CutoverError::MigrationNotFound {
+                migration_id: String::new(),
+            },
+        ];
+        for err in &errors {
+            let code = cutover_error_code(err);
+            assert!(!code.is_empty(), "empty code for {err:?}");
+        }
+    }
+
+    #[test]
+    fn phase_outcome_display_all_variants() {
+        assert_eq!(PhaseOutcome::Success.to_string(), "success");
+        assert_eq!(PhaseOutcome::Failed.to_string(), "failed");
+        assert_eq!(PhaseOutcome::Skipped.to_string(), "skipped");
+    }
+
+    #[test]
+    fn cutover_state_display_all_variants() {
+        let variants = [
+            CutoverState::Declared,
+            CutoverState::PreMigrated,
+            CutoverState::Checkpointed,
+            CutoverState::Executed,
+            CutoverState::Verified,
+            CutoverState::Committed,
+            CutoverState::RolledBack,
+        ];
+        let mut displays: Vec<String> = variants.iter().map(|v| v.to_string()).collect();
+        let original = displays.clone();
+        displays.sort();
+        displays.dedup();
+        assert_eq!(
+            displays.len(),
+            original.len(),
+            "Display values must be unique"
+        );
+    }
+
+    #[test]
+    fn phase_execution_record_serde_preserves_phase() {
+        let record = PhaseExecutionRecord {
+            migration_id: "m1".to_string(),
+            phase: MigrationPhase::Rollback,
+            outcome: PhaseOutcome::Failed,
+            affected_count: 42,
+            detail: "processed all objects".to_string(),
+            timestamp: DeterministicTimestamp(1000),
+        };
+        let json = serde_json::to_string(&record).unwrap();
+        let back: PhaseExecutionRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(record.phase, back.phase);
+        assert_eq!(record.outcome, back.outcome);
+    }
+
+    #[test]
+    fn applied_entry_committed_at_present_after_commit() {
+        let mut runner = CutoverMigrationRunner::new();
+        let decl = test_declaration("m-ts", CutoverType::HardCutover);
+        runner.declare(decl, "t").unwrap();
+        let entry = run_full_migration(&mut runner, "m-ts");
+        assert_eq!(entry.state, CutoverState::Committed);
+        assert!(entry.committed_at.is_some());
+    }
+
+    #[test]
+    fn audit_event_optional_fields_populated() {
+        let event = CutoverAuditEvent {
+            trace_id: "t1".to_string(),
+            component: "migration_compatibility".to_string(),
+            migration_id: "m1".to_string(),
+            event: "migration_declared".to_string(),
+            outcome: "ok".to_string(),
+            error_code: Some("PHASE_FAILED".to_string()),
+            phase: Some("Execute".to_string()),
+            affected_count: Some(50),
+            timestamp: DeterministicTimestamp(2000),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("PHASE_FAILED"));
+        assert!(json.contains("Execute"));
+        let back: CutoverAuditEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event.error_code, back.error_code);
+        assert_eq!(event.phase, back.phase);
+        assert_eq!(event.affected_count, back.affected_count);
+    }
+
+    #[test]
+    fn migration_compatibility_event_fields_populated() {
+        let event = MigrationCompatibilityEvent {
+            trace_id: "t1".to_string(),
+            decision_id: "d1".to_string(),
+            policy_id: "p1".to_string(),
+            component: "migration_compatibility".to_string(),
+            event: "test_golden_ledger".to_string(),
+            outcome: "ok".to_string(),
+            error_code: None,
+            from_version: "v1".to_string(),
+            to_version: "v2".to_string(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: MigrationCompatibilityEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, back);
+    }
 }

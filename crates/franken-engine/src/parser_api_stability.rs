@@ -1607,4 +1607,51 @@ mod tests {
         let restored: ParseDiagnosticTaxonomy = serde_json::from_str(&json).unwrap();
         assert_eq!(t, restored);
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn evolution_rule_debug_distinct() {
+        let all = [
+            EvolutionRule::AdditiveOnly,
+            EvolutionRule::Frozen,
+            EvolutionRule::Internal,
+        ];
+        let set: std::collections::BTreeSet<String> =
+            all.iter().map(|r| format!("{r:?}")).collect();
+        assert_eq!(set.len(), all.len());
+    }
+
+    #[test]
+    fn check_verdict_debug_distinct() {
+        let all = [
+            CheckVerdict::Pass,
+            CheckVerdict::Fail,
+            CheckVerdict::Skipped,
+        ];
+        let set: std::collections::BTreeSet<String> =
+            all.iter().map(|v| format!("{v:?}")).collect();
+        assert_eq!(set.len(), all.len());
+    }
+
+    #[test]
+    fn integration_outcome_debug_distinct() {
+        let all = [
+            IntegrationOutcome::Success,
+            IntegrationOutcome::ParseFailure,
+            IntegrationOutcome::MaterializationFailure,
+            IntegrationOutcome::VersionMismatch,
+        ];
+        let set: std::collections::BTreeSet<String> =
+            all.iter().map(|o| format!("{o:?}")).collect();
+        assert_eq!(set.len(), all.len());
+    }
+
+    #[test]
+    fn api_stability_manifest_serde_roundtrip() {
+        let manifest = ApiStabilityManifest::current();
+        let json = serde_json::to_string(&manifest).unwrap();
+        let back: ApiStabilityManifest = serde_json::from_str(&json).unwrap();
+        assert_eq!(manifest, back);
+    }
 }

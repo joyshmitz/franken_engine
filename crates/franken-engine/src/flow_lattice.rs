@@ -1299,4 +1299,86 @@ mod tests {
         }
         assert_eq!(displays.len(), 4);
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn data_source_serde_basic_variants() {
+        let variants: Vec<DataSource> = vec![
+            DataSource::Literal,
+            DataSource::EnvironmentVariable,
+            DataSource::CredentialFileRead,
+            DataSource::GeneralFileRead,
+            DataSource::KeyMaterial,
+            DataSource::PolicyProtectedArtifact,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: DataSource = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn data_source_serde_complex_variants() {
+        let variants: Vec<DataSource> = vec![
+            DataSource::HostcallReturn {
+                clearance: Clearance::OpenSink,
+            },
+            DataSource::Computed {
+                input_labels: vec![LabelClass::Public, LabelClass::Secret],
+            },
+            DataSource::Declassified {
+                original: LabelClass::Confidential,
+            },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: DataSource = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn sink_kind_serde_all_variants() {
+        let variants = [
+            SinkKind::NetworkEgress,
+            SinkKind::SubprocessIpc,
+            SinkKind::PersistenceExport,
+            SinkKind::DeclassificationEndpoint,
+            SinkKind::LoggingRedacted,
+            SinkKind::MetricsExport,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: SinkKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn clearance_display_distinct() {
+        let all = [
+            Clearance::OpenSink,
+            Clearance::RestrictedSink,
+            Clearance::AuditedSink,
+            Clearance::SealedSink,
+            Clearance::NeverSink,
+        ];
+        let set: std::collections::BTreeSet<String> = all.iter().map(|c| format!("{c}")).collect();
+        assert_eq!(set.len(), all.len());
+    }
+
+    #[test]
+    fn label_class_display_distinct() {
+        let all = [
+            LabelClass::Public,
+            LabelClass::Internal,
+            LabelClass::Confidential,
+            LabelClass::Secret,
+            LabelClass::TopSecret,
+        ];
+        let set: std::collections::BTreeSet<String> = all.iter().map(|l| format!("{l}")).collect();
+        assert_eq!(set.len(), all.len());
+    }
 }

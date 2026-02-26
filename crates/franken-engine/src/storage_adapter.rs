@@ -2165,4 +2165,289 @@ mod tests {
         assert_eq!(events[0].outcome, "ok");
         assert_eq!(events[1].outcome, "error");
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn store_query_default_has_no_filters() {
+        let query = StoreQuery::default();
+        assert!(query.key_prefix.is_none());
+        assert!(query.metadata_filters.is_empty());
+        assert!(query.limit.is_none());
+    }
+
+    #[test]
+    fn store_query_serde_roundtrip_with_filters() {
+        let mut filters = BTreeMap::new();
+        filters.insert("env".to_string(), "prod".to_string());
+        let query = StoreQuery {
+            key_prefix: Some("replay/".to_string()),
+            metadata_filters: filters,
+            limit: Some(10),
+        };
+        let json = serde_json::to_string(&query).unwrap();
+        let back: StoreQuery = serde_json::from_str(&json).unwrap();
+        assert_eq!(query, back);
+    }
+
+    #[test]
+    fn event_context_serde_roundtrip() {
+        let context = ctx();
+        let json = serde_json::to_string(&context).unwrap();
+        let back: EventContext = serde_json::from_str(&json).unwrap();
+        assert_eq!(context, back);
+    }
+
+    #[test]
+    fn storage_error_serde_roundtrip_all_variants() {
+        let errors = vec![
+            StorageError::InvalidContext {
+                field: "trace_id".to_string(),
+            },
+            StorageError::InvalidKey {
+                key: "".to_string(),
+            },
+            StorageError::InvalidQuery {
+                detail: "limit=0".to_string(),
+            },
+            StorageError::NotFound {
+                store: StoreKind::ReplayIndex,
+                key: "k".to_string(),
+            },
+            StorageError::SchemaVersionMismatch {
+                expected: 1,
+                actual: 2,
+            },
+            StorageError::MigrationFailed {
+                from: 1,
+                to: 2,
+                reason: "err".to_string(),
+            },
+            StorageError::IntegrityViolation {
+                store: StoreKind::PlasWitness,
+                detail: "bad".to_string(),
+            },
+            StorageError::BackendUnavailable {
+                backend: "test".to_string(),
+                detail: "down".to_string(),
+            },
+            StorageError::WriteRejected {
+                detail: "injection".to_string(),
+            },
+        ];
+        for error in &errors {
+            let json = serde_json::to_string(error).unwrap();
+            let back: StorageError = serde_json::from_str(&json).unwrap();
+            assert_eq!(error, &back);
+        }
+    }
+
+    #[test]
+    fn in_memory_revision_increments_on_overwrite() {
+        let context = ctx();
+        let mut adapter = InMemoryStorageAdapter::new();
+        let r1 = adapter
+            .put(
+                StoreKind::PolicyCache,
+                "key-a".into(),
+                vec![1],
+                BTreeMap::new(),
+                &context,
+            )
+            .unwrap();
+        let r2 = adapter
+            .put(
+                StoreKind::PolicyCache,
+                "key-a".into(),
+                vec![2],
+                BTreeMap::new(),
+                &context,
+            )
+            .unwrap();
+        assert!(r2.revision > r1.revision);
+        // Get should return latest value
+        let got = adapter
+            .get(StoreKind::PolicyCache, "key-a", &context)
+            .unwrap()
+            .unwrap();
+        assert_eq!(got.value, vec![2]);
+    }
+
+    #[test]
+    fn in_memory_query_both_prefix_and_metadata() {
+        let context = ctx();
+        let mut adapter = InMemoryStorageAdapter::new();
+        let mut meta_a = BTreeMap::new();
+        meta_a.insert("env".to_string(), "prod".to_string());
+        let mut meta_b = BTreeMap::new();
+        meta_b.insert("env".to_string(), "staging".to_string());
+        adapter
+            .put(
+                StoreKind::EvidenceIndex,
+                "replay/001".into(),
+                vec![1],
+                meta_a.clone(),
+                &context,
+            )
+            .unwrap();
+        adapter
+            .put(
+                StoreKind::EvidenceIndex,
+                "replay/002".into(),
+                vec![2],
+                meta_b,
+                &context,
+            )
+            .unwrap();
+        adapter
+            .put(
+                StoreKind::EvidenceIndex,
+                "bench/001".into(),
+                vec![3],
+                meta_a,
+                &context,
+            )
+            .unwrap();
+        // Prefix + metadata filter
+        let mut filters = BTreeMap::new();
+        filters.insert("env".to_string(), "prod".to_string());
+        let query = StoreQuery {
+            key_prefix: Some("replay/".to_string()),
+            metadata_filters: filters,
+            limit: None,
+        };
+        let results = adapter
+            .query(StoreKind::EvidenceIndex, &query, &context)
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].key, "replay/001");
+    }
+
+    #[test]
+    fn in_memory_query_limit_one() {
+        let context = ctx();
+        let mut adapter = InMemoryStorageAdapter::new();
+        for i in 0..5 {
+            adapter
+                .put(
+                    StoreKind::ReplayIndex,
+                    format!("key-{i}"),
+                    vec![i as u8],
+                    BTreeMap::new(),
+                    &context,
+                )
+                .unwrap();
+        }
+        let query = StoreQuery {
+            limit: Some(1),
+            ..Default::default()
+        };
+        let results = adapter
+            .query(StoreKind::ReplayIndex, &query, &context)
+            .unwrap();
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn migration_receipt_serde_with_empty_stores() {
+        let receipt = MigrationReceipt {
+            backend: "in_memory".to_string(),
+            from_version: 1,
+            to_version: 2,
+            stores_touched: Vec::new(),
+            records_touched: 0,
+            state_hash_before: "0000000000000000".to_string(),
+            state_hash_after: "0000000000000000".to_string(),
+        };
+        let json = serde_json::to_string(&receipt).unwrap();
+        let back: MigrationReceipt = serde_json::from_str(&json).unwrap();
+        assert_eq!(receipt, back);
+        assert!(back.stores_touched.is_empty());
+    }
+
+    #[test]
+    fn storage_event_error_code_none_serde() {
+        let event = StorageEvent {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            component: "storage_adapter".to_string(),
+            event: "put".to_string(),
+            outcome: "ok".to_string(),
+            error_code: None,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: StorageEvent = serde_json::from_str(&json).unwrap();
+        assert!(back.error_code.is_none());
+    }
+
+    #[test]
+    fn in_memory_default_matches_new() {
+        let a = InMemoryStorageAdapter::new();
+        let b = InMemoryStorageAdapter::default();
+        assert_eq!(a.current_schema_version(), b.current_schema_version());
+        assert!(a.events().is_empty());
+        assert!(b.events().is_empty());
+    }
+
+    #[test]
+    fn store_kind_display_all_variants_unique() {
+        let kinds = [
+            StoreKind::ReplayIndex,
+            StoreKind::EvidenceIndex,
+            StoreKind::BenchmarkLedger,
+            StoreKind::PolicyCache,
+            StoreKind::PlasWitness,
+            StoreKind::ReplacementLineage,
+            StoreKind::IfcProvenance,
+            StoreKind::SpecializationIndex,
+        ];
+        let displays: Vec<String> = kinds.iter().map(|k| k.to_string()).collect();
+        let mut deduped = displays.clone();
+        deduped.sort();
+        deduped.dedup();
+        assert_eq!(displays.len(), deduped.len());
+    }
+
+    #[test]
+    fn storage_error_code_all_unique() {
+        let errors = vec![
+            StorageError::InvalidContext {
+                field: String::new(),
+            },
+            StorageError::InvalidKey { key: String::new() },
+            StorageError::InvalidQuery {
+                detail: String::new(),
+            },
+            StorageError::NotFound {
+                store: StoreKind::ReplayIndex,
+                key: String::new(),
+            },
+            StorageError::SchemaVersionMismatch {
+                expected: 0,
+                actual: 0,
+            },
+            StorageError::MigrationFailed {
+                from: 0,
+                to: 0,
+                reason: String::new(),
+            },
+            StorageError::IntegrityViolation {
+                store: StoreKind::ReplayIndex,
+                detail: String::new(),
+            },
+            StorageError::BackendUnavailable {
+                backend: String::new(),
+                detail: String::new(),
+            },
+            StorageError::WriteRejected {
+                detail: String::new(),
+            },
+        ];
+        let codes: Vec<&str> = errors.iter().map(|e| e.code()).collect();
+        let mut deduped = codes.clone();
+        deduped.sort();
+        deduped.dedup();
+        assert_eq!(codes.len(), deduped.len());
+    }
 }

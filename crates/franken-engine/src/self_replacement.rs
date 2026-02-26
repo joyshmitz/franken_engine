@@ -2288,4 +2288,256 @@ mod tests {
         }
         assert_eq!(displays.len(), 6);
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn schema_version_as_bytes_not_empty() {
+        assert!(!SchemaVersion::V1.as_bytes().is_empty());
+    }
+
+    #[test]
+    fn schema_hash_functions_produce_distinct_values() {
+        let m = manifest_schema_hash();
+        let r = receipt_schema_hash();
+        let d = decision_schema_hash();
+        assert_ne!(m, r);
+        assert_ne!(r, d);
+        assert_ne!(m, d);
+    }
+
+    #[test]
+    fn manifest_id_differs_by_delegate_type() {
+        let hash = [0x11; 32];
+        let id_quickjs = DelegateCellManifest::derive_manifest_id(
+            &test_slot_id(),
+            DelegateType::QuickJsBacked,
+            &hash,
+            "zone",
+        )
+        .unwrap();
+        let id_wasm = DelegateCellManifest::derive_manifest_id(
+            &test_slot_id(),
+            DelegateType::WasmBacked,
+            &hash,
+            "zone",
+        )
+        .unwrap();
+        assert_ne!(id_quickjs, id_wasm);
+    }
+
+    #[test]
+    fn receipt_all_validations_passed_when_mixed() {
+        let artifacts = vec![
+            ValidationArtifactRef {
+                kind: ValidationArtifactKind::EquivalenceResult,
+                artifact_digest: "d-1".to_string(),
+                passed: true,
+                summary: "ok".to_string(),
+            },
+            ValidationArtifactRef {
+                kind: ValidationArtifactKind::PerformanceBenchmark,
+                artifact_digest: "d-2".to_string(),
+                passed: false,
+                summary: "too slow".to_string(),
+            },
+        ];
+        let receipt = ReplacementReceipt::create_unsigned(CreateReceiptInput {
+            slot_id: &test_slot_id(),
+            old_cell_digest: "old",
+            new_cell_digest: "new",
+            validation_artifacts: &artifacts,
+            rollback_token: "rb",
+            promotion_rationale: "test",
+            timestamp_ns: 1000,
+            epoch: SecurityEpoch::from_raw(1),
+            zone: "zone",
+            required_signatures: 1,
+        })
+        .unwrap();
+        assert!(!receipt.all_validations_passed());
+    }
+
+    #[test]
+    fn decision_empty_gates_yields_inconclusive() {
+        let decision = PromotionDecision::create_unsigned(CreateDecisionInput {
+            slot_id: &test_slot_id(),
+            candidate_cell_digest: "cand",
+            gate_results: &[],
+            risk_level: RiskLevel::Low,
+            approver: &ApproverKind::System {
+                component: "auto".to_string(),
+            },
+            timestamp_ns: 1000,
+            epoch: SecurityEpoch::from_raw(1),
+            zone: "zone",
+            required_signatures: 1,
+        })
+        .unwrap();
+        assert_eq!(decision.verdict, GateVerdict::Inconclusive);
+        assert!(!decision.is_approved());
+    }
+
+    #[test]
+    fn decision_is_approved_false_when_denied() {
+        let gates = vec![GateResult {
+            gate_name: "eq".to_string(),
+            passed: false,
+            evidence_refs: vec![],
+            summary: "failed".to_string(),
+        }];
+        let decision = PromotionDecision::create_unsigned(CreateDecisionInput {
+            slot_id: &test_slot_id(),
+            candidate_cell_digest: "cand",
+            gate_results: &gates,
+            risk_level: RiskLevel::High,
+            approver: &ApproverKind::Human {
+                operator_id: "op".to_string(),
+            },
+            timestamp_ns: 2000,
+            epoch: SecurityEpoch::from_raw(2),
+            zone: "zone",
+            required_signatures: 1,
+        })
+        .unwrap();
+        assert_eq!(decision.verdict, GateVerdict::Denied);
+        assert!(!decision.is_approved());
+    }
+
+    #[test]
+    fn receipt_id_differs_by_zone() {
+        let id_a =
+            ReplacementReceipt::derive_receipt_id(&test_slot_id(), "old", "new", 1000, "zone-a")
+                .unwrap();
+        let id_b =
+            ReplacementReceipt::derive_receipt_id(&test_slot_id(), "old", "new", 1000, "zone-b")
+                .unwrap();
+        assert_ne!(id_a, id_b);
+    }
+
+    #[test]
+    fn decision_id_differs_by_zone() {
+        let id_a =
+            PromotionDecision::derive_decision_id(&test_slot_id(), "cand", 1000, "zone-a").unwrap();
+        let id_b =
+            PromotionDecision::derive_decision_id(&test_slot_id(), "cand", 1000, "zone-b").unwrap();
+        assert_ne!(id_a, id_b);
+    }
+
+    #[test]
+    fn lifecycle_production_stays_at_production() {
+        let manifest = create_test_manifest();
+        let mut lifecycle = ReplacementLifecycle::new(test_slot_id(), manifest);
+        // Advance to production: Research -> Shadow -> Canary -> Production
+        let artifacts = test_validation_artifacts();
+        for _ in 0..3 {
+            let mut receipt = ReplacementReceipt::create_unsigned(CreateReceiptInput {
+                slot_id: &test_slot_id(),
+                old_cell_digest: "old",
+                new_cell_digest: "new",
+                validation_artifacts: &artifacts,
+                rollback_token: "rb",
+                promotion_rationale: "advance",
+                timestamp_ns: 1000,
+                epoch: SecurityEpoch::from_raw(1),
+                zone: "zone",
+                required_signatures: 1,
+            })
+            .unwrap();
+            receipt
+                .add_signature(&test_signing_key(), "gate-runner")
+                .unwrap();
+            lifecycle.record_receipt(receipt).unwrap();
+        }
+        assert!(lifecycle.is_production());
+        assert_eq!(lifecycle.completed_stages(), 3);
+
+        // Recording another receipt at Production stays at Production
+        let mut receipt = ReplacementReceipt::create_unsigned(CreateReceiptInput {
+            slot_id: &test_slot_id(),
+            old_cell_digest: "old",
+            new_cell_digest: "new",
+            validation_artifacts: &artifacts,
+            rollback_token: "rb",
+            promotion_rationale: "post-production",
+            timestamp_ns: 2000,
+            epoch: SecurityEpoch::from_raw(1),
+            zone: "zone",
+            required_signatures: 1,
+        })
+        .unwrap();
+        receipt
+            .add_signature(&test_signing_key(), "gate-runner")
+            .unwrap();
+        lifecycle.record_receipt(receipt).unwrap();
+        assert!(lifecycle.is_production());
+        assert_eq!(lifecycle.completed_stages(), 4);
+    }
+
+    #[test]
+    fn sandbox_defaults_are_restrictive() {
+        let sandbox = SandboxConfiguration::default();
+        assert!(!sandbox.network_egress_allowed);
+        assert!(!sandbox.filesystem_access_allowed);
+        assert!(sandbox.max_heap_bytes > 0);
+        assert!(sandbox.max_execution_ns > 0);
+        assert!(sandbox.max_hostcalls > 0);
+    }
+
+    #[test]
+    fn error_display_all_variants_distinct() {
+        let variants = vec![
+            SelfReplacementError::EmptyValidationArtifacts,
+            SelfReplacementError::InsufficientSignatures {
+                required: 2,
+                present: 0,
+            },
+            SelfReplacementError::SignatureInvalid {
+                signer_index: 0,
+                role: "test".into(),
+            },
+            SelfReplacementError::SlotMismatch {
+                expected: "x".into(),
+                got: "y".into(),
+            },
+            SelfReplacementError::ValidationFailed {
+                slot_id: "s".into(),
+            },
+            SelfReplacementError::UnsupportedSchemaVersion {
+                version: "v99".into(),
+            },
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            displays.insert(v.to_string());
+        }
+        assert_eq!(displays.len(), variants.len());
+    }
+
+    #[test]
+    fn signature_bundle_zero_threshold_meets_with_empty() {
+        let bundle = SignatureBundle::new(0);
+        assert!(bundle.meets_threshold());
+    }
+
+    #[test]
+    fn lifecycle_completed_stages_matches_receipts() {
+        let manifest = create_test_manifest();
+        let lifecycle = ReplacementLifecycle::new(test_slot_id(), manifest);
+        assert_eq!(lifecycle.completed_stages(), 0);
+        assert_eq!(lifecycle.completed_stages(), lifecycle.receipts.len());
+    }
+
+    #[test]
+    fn monitoring_hook_non_blocking_serde_roundtrip() {
+        let hook = MonitoringHook {
+            hook_id: "h-nb".to_string(),
+            trigger_event: "invocation_start".to_string(),
+            blocking: false,
+        };
+        let json = serde_json::to_string(&hook).unwrap();
+        let restored: MonitoringHook = serde_json::from_str(&json).unwrap();
+        assert_eq!(hook, restored);
+        assert!(!restored.blocking);
+    }
 }

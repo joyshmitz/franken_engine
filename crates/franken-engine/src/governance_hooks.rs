@@ -3210,4 +3210,307 @@ mod tests {
             assert_eq!(*sev, decoded);
         }
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn governance_error_serde_all_variants() {
+        let errors = vec![
+            GovernanceError::EmptyPolicyDefinition,
+            GovernanceError::InvalidPolicySyntax {
+                expected_format: "toml".to_string(),
+                reason: "parse error".to_string(),
+            },
+            GovernanceError::PolicySchemaViolation {
+                constraint: "c".to_string(),
+            },
+            GovernanceError::IdDerivationFailed {
+                detail: "d".to_string(),
+            },
+            GovernanceError::InvalidTimeRange {
+                start: ts(100),
+                end: ts(50),
+            },
+            GovernanceError::NoEvidenceInRange {
+                start: ts(0),
+                end: ts(100),
+            },
+            GovernanceError::UnknownFramework {
+                framework: "mystery".to_string(),
+            },
+            GovernanceError::MissingControl {
+                control_id: "CC6.1".to_string(),
+            },
+            GovernanceError::HookFailed {
+                hook_type: GovernanceHookType::PreDeploy,
+                reason: "timeout".to_string(),
+            },
+            GovernanceError::SerialisationFailed {
+                reason: "io".to_string(),
+            },
+        ];
+        for e in &errors {
+            let json = serde_json::to_string(e).unwrap();
+            let decoded: GovernanceError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*e, decoded);
+        }
+        assert_eq!(errors.len(), 10);
+    }
+
+    #[test]
+    fn policy_diagnostic_serde_roundtrip() {
+        let diag = PolicyDiagnostic {
+            severity: DiagnosticSeverity::Warning,
+            code: "W0001".to_string(),
+            message: "deprecated field".to_string(),
+            span: Some((10, 20)),
+        };
+        let json = serde_json::to_string(&diag).unwrap();
+        let decoded: PolicyDiagnostic = serde_json::from_str(&json).unwrap();
+        assert_eq!(diag, decoded);
+
+        // Also test with None span.
+        let diag2 = PolicyDiagnostic {
+            severity: DiagnosticSeverity::Info,
+            code: "I0001".to_string(),
+            message: "hint".to_string(),
+            span: None,
+        };
+        let json2 = serde_json::to_string(&diag2).unwrap();
+        let decoded2: PolicyDiagnostic = serde_json::from_str(&json2).unwrap();
+        assert_eq!(diag2, decoded2);
+    }
+
+    #[test]
+    fn policy_compilation_result_serde_success_variant() {
+        let result = compile_policy(
+            PolicySource::InlineToml {
+                label: "t".to_string(),
+            },
+            toml_policy(),
+            "p",
+            1,
+            ts(1),
+            BTreeSet::new(),
+        );
+        assert!(result.is_success());
+        let json = serde_json::to_string(&result).unwrap();
+        let decoded: PolicyCompilationResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(result, decoded);
+    }
+
+    #[test]
+    fn policy_compilation_result_serde_failure_variant() {
+        let result = compile_policy(
+            PolicySource::InlineToml {
+                label: "t".to_string(),
+            },
+            b"",
+            "p",
+            1,
+            ts(1),
+            BTreeSet::new(),
+        );
+        assert!(!result.is_success());
+        let json = serde_json::to_string(&result).unwrap();
+        let decoded: PolicyCompilationResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(result, decoded);
+    }
+
+    #[test]
+    fn governance_pipeline_config_serde_roundtrip() {
+        let config = GovernancePipelineConfig {
+            hooks: vec![
+                GovernanceHookType::PreDeploy,
+                GovernanceHookType::AuditExport,
+            ],
+            halt_on_failure: false,
+            max_export_entries: 42,
+            frameworks: vec![ComplianceFramework::Soc2],
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let decoded: GovernancePipelineConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config, decoded);
+    }
+
+    #[test]
+    fn audit_export_request_serde_roundtrip() {
+        let mut kinds = BTreeSet::new();
+        kinds.insert("policy_update".to_string());
+        let req = AuditExportRequest {
+            format: AuditExportFormat::Csv,
+            start_tick: ts(10),
+            end_tick: ts(90),
+            evidence_kinds: Some(kinds),
+            max_entries: Some(50),
+            requester: "auditor".to_string(),
+            correlation_id: Some("CORR-001".to_string()),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let decoded: AuditExportRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(req, decoded);
+    }
+
+    #[test]
+    fn compliance_control_serde_roundtrip() {
+        let schema = SchemaId::from_definition(b"TestControl.v1");
+        let eid = engine_object_id::derive_id(
+            ObjectDomain::EvidenceRecord,
+            "test",
+            &schema,
+            b"evidence_1",
+        )
+        .unwrap();
+        let ctrl = ComplianceControl {
+            control_id: "CC6.1".to_string(),
+            description: "Access controls".to_string(),
+            satisfied: true,
+            evidence_entry_ids: vec![eid],
+            gaps: vec![],
+        };
+        let json = serde_json::to_string(&ctrl).unwrap();
+        let decoded: ComplianceControl = serde_json::from_str(&json).unwrap();
+        assert_eq!(ctrl, decoded);
+    }
+
+    #[test]
+    fn evidence_entry_serde_roundtrip() {
+        let mut attrs = BTreeMap::new();
+        attrs.insert("key".to_string(), "value".to_string());
+        let entry = make_entry("policy_update", 42);
+        let json = serde_json::to_string(&entry).unwrap();
+        let decoded: EvidenceEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry, decoded);
+    }
+
+    #[test]
+    fn compliance_evidence_entry_count_method() {
+        let entries = full_evidence_set();
+        let expected_count = entries.len();
+        let (bundle, _) = generate_compliance_bundle(
+            ComplianceFramework::Custom("f".to_string()),
+            ts(0),
+            ts(1000),
+            entries,
+            ts(2000),
+        )
+        .unwrap();
+        assert_eq!(bundle.entry_count(), expected_count);
+    }
+
+    #[test]
+    fn pipeline_config_accessor_returns_correct_values() {
+        let config = GovernancePipelineConfig {
+            hooks: vec![GovernanceHookType::PreDeploy],
+            halt_on_failure: false,
+            max_export_entries: 77,
+            frameworks: vec![ComplianceFramework::Gdpr],
+        };
+        let pipeline = GovernancePipeline::new(config.clone());
+        assert_eq!(pipeline.config().hooks, config.hooks);
+        assert_eq!(pipeline.config().halt_on_failure, false);
+        assert_eq!(pipeline.config().max_export_entries, 77);
+        assert_eq!(pipeline.config().frameworks.len(), 1);
+    }
+
+    #[test]
+    fn compliance_bundle_hash_differs_for_different_entries() {
+        let (b1, _) = generate_compliance_bundle(
+            ComplianceFramework::Custom("f".to_string()),
+            ts(0),
+            ts(100),
+            vec![make_entry("policy_update", 10)],
+            ts(200),
+        )
+        .unwrap();
+        let (b2, _) = generate_compliance_bundle(
+            ComplianceFramework::Custom("f".to_string()),
+            ts(0),
+            ts(100),
+            vec![make_entry("security_action", 10)],
+            ts(200),
+        )
+        .unwrap();
+        assert_ne!(
+            b1.bundle_hash, b2.bundle_hash,
+            "different evidence should produce different bundle hashes"
+        );
+    }
+
+    #[test]
+    fn post_deploy_hash_check_failure_halts_pipeline() {
+        let mut pipeline = GovernancePipeline::new(GovernancePipelineConfig {
+            hooks: vec![GovernanceHookType::PostDeploy],
+            halt_on_failure: true,
+            ..Default::default()
+        });
+        let mut art = compile_ok(
+            PolicySource::InlineToml {
+                label: "t".to_string(),
+            },
+            toml_policy(),
+        );
+        // Corrupt the compiled_hash so PostDeploy fails.
+        art.compiled_hash = ContentHash::compute(b"corrupted");
+        let err = run_governance_pipeline(&mut pipeline, &[art], vec![], ts(100)).unwrap_err();
+        assert!(matches!(err, GovernanceError::HookFailed { .. }));
+        assert_eq!(pipeline.events().len(), 1);
+    }
+
+    #[test]
+    fn policy_source_display_uniqueness_btreeset() {
+        let sources = [
+            PolicySource::GitRepo {
+                repo_url: "https://r".to_string(),
+                commit_sha: "a".repeat(40),
+                file_path: "p.toml".to_string(),
+            },
+            PolicySource::FileSystem {
+                absolute_path: "/p".to_string(),
+            },
+            PolicySource::InlineToml {
+                label: "t".to_string(),
+            },
+            PolicySource::InlineJson {
+                label: "j".to_string(),
+            },
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for s in &sources {
+            displays.insert(format!("{s}"));
+        }
+        assert_eq!(
+            displays.len(),
+            4,
+            "all 4 PolicySource variants produce distinct Display strings"
+        );
+    }
+
+    #[test]
+    fn compliance_bundle_id_sensitive_to_framework() {
+        let entries = vec![make_entry("policy_update", 10)];
+        let (b1, _) = generate_compliance_bundle(
+            ComplianceFramework::Soc2,
+            ts(0),
+            ts(100),
+            entries.clone(),
+            ts(200),
+        )
+        .unwrap();
+        let (b2, _) =
+            generate_compliance_bundle(ComplianceFramework::Gdpr, ts(0), ts(100), entries, ts(200))
+                .unwrap();
+        assert_ne!(
+            b1.bundle_id, b2.bundle_id,
+            "different frameworks should produce different bundle IDs"
+        );
+    }
+
+    #[test]
+    fn governance_pipeline_config_default_serde_roundtrip() {
+        let config = GovernancePipelineConfig::default();
+        let json = serde_json::to_string(&config).unwrap();
+        let decoded: GovernancePipelineConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config, decoded);
+    }
 }

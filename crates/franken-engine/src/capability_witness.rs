@@ -5662,4 +5662,180 @@ mod tests {
         assert!(json.contains("\"outcome\":\"pass\""));
         assert!(json.contains("\"error_code\":null"));
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn witness_index_page_serde_roundtrip() {
+        let page = WitnessIndexPage {
+            records: Vec::new(),
+            next_cursor: Some("cursor-abc".to_string()),
+        };
+        let json = serde_json::to_string(&page).unwrap();
+        let back: WitnessIndexPage = serde_json::from_str(&json).unwrap();
+        assert_eq!(page, back);
+    }
+
+    #[test]
+    fn witness_index_page_empty_no_cursor() {
+        let page = WitnessIndexPage {
+            records: Vec::new(),
+            next_cursor: None,
+        };
+        let json = serde_json::to_string(&page).unwrap();
+        assert!(json.contains("\"next_cursor\":null"));
+        let back: WitnessIndexPage = serde_json::from_str(&json).unwrap();
+        assert_eq!(page, back);
+    }
+
+    #[test]
+    fn witness_replay_join_query_with_timestamps_serde() {
+        let query = WitnessReplayJoinQuery {
+            extension_id: test_extension_id(),
+            start_timestamp_ns: Some(100),
+            end_timestamp_ns: Some(999),
+            include_revoked: false,
+        };
+        let json = serde_json::to_string(&query).unwrap();
+        let back: WitnessReplayJoinQuery = serde_json::from_str(&json).unwrap();
+        assert_eq!(query, back);
+    }
+
+    #[test]
+    fn witness_replay_join_query_none_timestamps() {
+        let query = WitnessReplayJoinQuery {
+            extension_id: test_extension_id(),
+            start_timestamp_ns: None,
+            end_timestamp_ns: None,
+            include_revoked: true,
+        };
+        let json = serde_json::to_string(&query).unwrap();
+        assert!(json.contains("\"start_timestamp_ns\":null"));
+        assert!(json.contains("\"end_timestamp_ns\":null"));
+    }
+
+    #[test]
+    fn witness_index_event_fields_preserved() {
+        let event = WitnessIndexEvent {
+            trace_id: "tr-001".to_string(),
+            decision_id: "dec-001".to_string(),
+            policy_id: "pol-001".to_string(),
+            component: "index".to_string(),
+            event: "witness_indexed".to_string(),
+            outcome: "ok".to_string(),
+            error_code: Some("FE-0001".to_string()),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: WitnessIndexEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, back);
+        assert_eq!(back.error_code.as_deref(), Some("FE-0001"));
+    }
+
+    #[test]
+    fn capability_escrow_receipt_record_sort_key_format() {
+        let record = CapabilityEscrowReceiptRecord {
+            receipt_id: "r-001".to_string(),
+            extension_id: test_extension_id(),
+            capability: Some(Capability::new("read")),
+            decision_kind: "grant".to_string(),
+            outcome: "approved".to_string(),
+            timestamp_ns: 42,
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            error_code: None,
+        };
+        let key = record.sort_key();
+        assert!(key.starts_with("00000000000000000042:"));
+        assert!(key.ends_with("r-001"));
+    }
+
+    #[test]
+    fn witness_index_error_code_values_distinct() {
+        let storage_err = WitnessIndexError::Storage(StorageError::NotFound {
+            store: StoreKind::PlasWitness,
+            key: "k".to_string(),
+        });
+        let serial_err = WitnessIndexError::Serialization {
+            operation: "op".to_string(),
+            detail: "d".to_string(),
+        };
+        let corrupt_err = WitnessIndexError::CorruptRecord {
+            key: "k".to_string(),
+            detail: "d".to_string(),
+        };
+        let input_err = WitnessIndexError::InvalidInput {
+            detail: "d".to_string(),
+        };
+        let codes: std::collections::BTreeSet<_> = [
+            storage_err.code(),
+            serial_err.code(),
+            corrupt_err.code(),
+            input_err.code(),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(codes.len(), 4);
+    }
+
+    #[test]
+    fn witness_index_error_from_storage_error() {
+        let se = StorageError::NotFound {
+            store: StoreKind::PlasWitness,
+            key: "some-key".to_string(),
+        };
+        let wie: WitnessIndexError = se.into();
+        assert_eq!(wie.code(), "FE-WITIDX-0001");
+        assert!(wie.to_string().contains("storage error"));
+    }
+
+    #[test]
+    fn publication_entry_kind_as_str_roundtrip() {
+        assert_eq!(PublicationEntryKind::Publish.as_str(), "publish");
+        assert_eq!(PublicationEntryKind::Revoke.as_str(), "revoke");
+        assert_eq!(
+            PublicationEntryKind::Publish.to_string(),
+            PublicationEntryKind::Publish.as_str()
+        );
+        assert_eq!(
+            PublicationEntryKind::Revoke.to_string(),
+            PublicationEntryKind::Revoke.as_str()
+        );
+    }
+
+    #[test]
+    fn witness_tree_head_serde_roundtrip() {
+        let head = WitnessTreeHead {
+            checkpoint_seq: 1,
+            log_length: 10,
+            mmr_root: ContentHash::compute(b"root"),
+            timestamp_ns: 5000,
+            epoch: SecurityEpoch::from_raw(7),
+            head_hash: ContentHash::compute(b"head"),
+            signature: vec![0xab, 0xcd],
+        };
+        let json = serde_json::to_string(&head).unwrap();
+        let back: WitnessTreeHead = serde_json::from_str(&json).unwrap();
+        assert_eq!(head, back);
+    }
+
+    #[test]
+    fn publication_log_entry_serde_roundtrip() {
+        let entry = PublicationLogEntry {
+            sequence: 0,
+            kind: PublicationEntryKind::Publish,
+            witness_id: test_extension_id(),
+            extension_id: test_extension_id(),
+            policy_id: test_policy_id(),
+            witness_epoch: SecurityEpoch::from_raw(1),
+            witness_content_hash: ContentHash::compute(b"w"),
+            timestamp_ns: 1000,
+            revocation_reason: None,
+            predecessor_leaf_hash: ContentHash::compute(b"pred"),
+            leaf_hash: ContentHash::compute(b"leaf"),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let back: PublicationLogEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry, back);
+    }
 }

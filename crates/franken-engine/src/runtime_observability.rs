@@ -1511,4 +1511,84 @@ mod tests {
             assert_eq!(back, o);
         }
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn auth_failure_type_as_label_distinct() {
+        let set: std::collections::BTreeSet<&str> =
+            AuthFailureType::ALL.iter().map(|a| a.as_label()).collect();
+        assert_eq!(set.len(), AuthFailureType::ALL.len());
+    }
+
+    #[test]
+    fn capability_denial_reason_as_label_distinct() {
+        let set: std::collections::BTreeSet<&str> = CapabilityDenialReason::ALL
+            .iter()
+            .map(|c| c.as_label())
+            .collect();
+        assert_eq!(set.len(), CapabilityDenialReason::ALL.len());
+    }
+
+    #[test]
+    fn replay_drop_reason_as_label_distinct() {
+        let set: std::collections::BTreeSet<&str> =
+            ReplayDropReason::ALL.iter().map(|r| r.as_label()).collect();
+        assert_eq!(set.len(), ReplayDropReason::ALL.len());
+    }
+
+    #[test]
+    fn checkpoint_violation_as_label_distinct() {
+        let set: std::collections::BTreeSet<&str> = CheckpointViolationType::ALL
+            .iter()
+            .map(|c| c.as_label())
+            .collect();
+        assert_eq!(set.len(), CheckpointViolationType::ALL.len());
+    }
+
+    #[test]
+    fn revocation_check_outcome_as_label_distinct() {
+        let set: std::collections::BTreeSet<&str> = RevocationCheckOutcome::ALL
+            .iter()
+            .map(|r| r.as_label())
+            .collect();
+        assert_eq!(set.len(), RevocationCheckOutcome::ALL.len());
+    }
+
+    #[test]
+    fn cross_zone_reference_type_as_label_distinct() {
+        let set: std::collections::BTreeSet<&str> = CrossZoneReferenceType::ALL
+            .iter()
+            .map(|c| c.as_label())
+            .collect();
+        assert_eq!(set.len(), CrossZoneReferenceType::ALL.len());
+    }
+
+    #[test]
+    fn security_event_type_as_str_distinct() {
+        let all = [
+            SecurityEventType::AuthFailure,
+            SecurityEventType::CapabilityDenial,
+            SecurityEventType::ReplayDrop,
+            SecurityEventType::CheckpointViolation,
+            SecurityEventType::RevocationCheck,
+            SecurityEventType::CrossZoneReference,
+        ];
+        let set: std::collections::BTreeSet<&str> = all.iter().map(|s| s.as_str()).collect();
+        assert_eq!(set.len(), all.len());
+    }
+
+    #[test]
+    fn security_outcome_as_str_distinct() {
+        let all = [
+            SecurityOutcome::Pass,
+            SecurityOutcome::Allowed,
+            SecurityOutcome::Denied,
+            SecurityOutcome::Dropped,
+            SecurityOutcome::Rejected,
+            SecurityOutcome::Degraded,
+        ];
+        let set: std::collections::BTreeSet<&str> = all.iter().map(|o| o.as_str()).collect();
+        assert_eq!(set.len(), all.len());
+    }
 }

@@ -1734,4 +1734,101 @@ mod tests {
         let apsp = m.floyd_warshall().unwrap();
         assert_eq!(apsp.get(0, 0), TropicalWeight::ZERO);
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn tropical_error_serde_all_variants() {
+        let variants: Vec<TropicalError> = vec![
+            TropicalError::DimensionExceeded {
+                dim: 5000,
+                max: 4096,
+            },
+            TropicalError::DimensionMismatch { left: 3, right: 4 },
+            TropicalError::NegativeCycle { node: 2 },
+            TropicalError::EmptyGraph,
+            TropicalError::CycleInDag {
+                nodes_in_cycle: vec![0, 1, 2],
+            },
+            TropicalError::NodeOutOfBounds { index: 10, size: 5 },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: TropicalError = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, v);
+        }
+        assert_eq!(variants.len(), 6);
+    }
+
+    #[test]
+    fn schedule_quality_serde_roundtrip() {
+        let variants = [
+            ScheduleQuality::Optimal,
+            ScheduleQuality::BoundedSuboptimal,
+            ScheduleQuality::Heuristic,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: ScheduleQuality = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, v);
+        }
+    }
+
+    #[test]
+    fn schedule_optimizer_default_serde_roundtrip() {
+        let opt = ScheduleOptimizer::default();
+        let json = serde_json::to_string(&opt).unwrap();
+        let back: ScheduleOptimizer = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.max_approximation_ratio_millionths, 1_000_000);
+    }
+
+    #[test]
+    fn instruction_node_serde_roundtrip() {
+        let node = InstructionNode {
+            index: 0,
+            cost: TropicalWeight::finite(7),
+            predecessors: vec![],
+            successors: vec![1, 2],
+            register_pressure: 3,
+            mnemonic: "load".into(),
+        };
+        let json = serde_json::to_string(&node).unwrap();
+        let back: InstructionNode = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, node);
+    }
+
+    #[test]
+    fn critical_path_result_serde_roundtrip() {
+        let result = CriticalPathResult {
+            makespan: TropicalWeight::finite(42),
+            critical_source: 0,
+            critical_sink: 5,
+            apsp_hash: ContentHash::compute(b"test-apsp"),
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let back: CriticalPathResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, result);
+    }
+
+    #[test]
+    fn register_pressure_report_serde_roundtrip() {
+        let report = RegisterPressureReport {
+            peak_pressure: 16,
+            total_pressure: 128,
+            pressure_limit: 32,
+            exceeds_limit: false,
+            estimated_spills: 0,
+            node_count: 10,
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        let back: RegisterPressureReport = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, report);
+    }
+
+    #[test]
+    fn tropical_error_is_std_error() {
+        let err = TropicalError::EmptyGraph;
+        let dyn_err: &dyn std::error::Error = &err;
+        assert!(!dyn_err.to_string().is_empty());
+    }
 }

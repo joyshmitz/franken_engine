@@ -2020,4 +2020,89 @@ mod tests {
         assert!(FlamegraphKind::Allocation < FlamegraphKind::DiffCpu);
         assert!(FlamegraphKind::DiffCpu < FlamegraphKind::DiffAllocation);
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn flamegraph_kind_serde_all_variants() {
+        let variants = [
+            FlamegraphKind::Cpu,
+            FlamegraphKind::Allocation,
+            FlamegraphKind::DiffCpu,
+            FlamegraphKind::DiffAllocation,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: FlamegraphKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, v);
+        }
+    }
+
+    #[test]
+    fn flamegraph_kind_as_str_all_distinct() {
+        let variants = [
+            FlamegraphKind::Cpu,
+            FlamegraphKind::Allocation,
+            FlamegraphKind::DiffCpu,
+            FlamegraphKind::DiffAllocation,
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for v in &variants {
+            assert!(seen.insert(v.as_str()), "duplicate as_str: {}", v.as_str());
+        }
+        assert_eq!(seen.len(), 4);
+    }
+
+    #[test]
+    fn flamegraph_kind_is_diff_correct() {
+        assert!(!FlamegraphKind::Cpu.is_diff());
+        assert!(!FlamegraphKind::Allocation.is_diff());
+        assert!(FlamegraphKind::DiffCpu.is_diff());
+        assert!(FlamegraphKind::DiffAllocation.is_diff());
+    }
+
+    #[test]
+    fn folded_stack_sample_serde_roundtrip() {
+        let sample = FoldedStackSample {
+            stack: "main;foo;bar".to_string(),
+            sample_count: 42,
+        };
+        let json = serde_json::to_string(&sample).unwrap();
+        let back: FoldedStackSample = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, sample);
+    }
+
+    #[test]
+    fn flamegraph_diff_entry_serde_roundtrip() {
+        let entry = FlamegraphDiffEntry {
+            stack: "main;alloc".to_string(),
+            baseline_samples: 100,
+            candidate_samples: 120,
+            delta_samples: 20,
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let back: FlamegraphDiffEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, entry);
+    }
+
+    #[test]
+    fn flamegraph_query_default_serde_roundtrip() {
+        let query = FlamegraphQuery::default();
+        let json = serde_json::to_string(&query).unwrap();
+        let back: FlamegraphQuery = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, query);
+        assert!(back.benchmark_run_id.is_none());
+        assert!(back.limit.is_none());
+    }
+
+    #[test]
+    fn flamegraph_pipeline_error_display() {
+        let err = FlamegraphPipelineError::InvalidRequest {
+            field: "trace_id".to_string(),
+            detail: "cannot be empty".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("trace_id"));
+        assert!(msg.contains("cannot be empty"));
+    }
 }

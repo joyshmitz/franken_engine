@@ -4457,4 +4457,230 @@ mod tests {
         let err = record.validate().unwrap_err();
         assert!(err.to_string().contains("latency"));
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn campaign_generator_config_serde_roundtrip() {
+        let config = CampaignGeneratorConfig {
+            policy_id: "policy-test".to_string(),
+            campaigns_per_hour: 24,
+            max_backpressure_queue: 48,
+            promotion_threshold_millionths: 800_000,
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let back: CampaignGeneratorConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config, back);
+    }
+
+    #[test]
+    fn campaign_generator_config_default_serde_stable() {
+        let config = CampaignGeneratorConfig::default();
+        let json = serde_json::to_string(&config).unwrap();
+        let back: CampaignGeneratorConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config, back);
+    }
+
+    #[test]
+    fn plan_campaign_count_at_capacity_returns_zero() {
+        let grammar = AttackGrammar::default();
+        let config = CampaignGeneratorConfig {
+            policy_id: "pol".to_string(),
+            campaigns_per_hour: 12,
+            max_backpressure_queue: 24,
+            promotion_threshold_millionths: 700_000,
+        };
+        let generator = CampaignGenerator::new(grammar, config, 42).unwrap();
+        assert_eq!(generator.plan_campaign_count(24), 0);
+        assert_eq!(generator.plan_campaign_count(100), 0);
+    }
+
+    #[test]
+    fn plan_campaign_count_partial_capacity() {
+        let grammar = AttackGrammar::default();
+        let config = CampaignGeneratorConfig {
+            policy_id: "pol".to_string(),
+            campaigns_per_hour: 12,
+            max_backpressure_queue: 24,
+            promotion_threshold_millionths: 700_000,
+        };
+        let generator = CampaignGenerator::new(grammar, config, 42).unwrap();
+        // capacity = 24 - 20 = 4, min(12, 4) = 4
+        assert_eq!(generator.plan_campaign_count(20), 4);
+    }
+
+    #[test]
+    fn plan_campaign_count_empty_backlog() {
+        let grammar = AttackGrammar::default();
+        let config = CampaignGeneratorConfig {
+            policy_id: "pol".to_string(),
+            campaigns_per_hour: 12,
+            max_backpressure_queue: 24,
+            promotion_threshold_millionths: 700_000,
+        };
+        let generator = CampaignGenerator::new(grammar, config, 42).unwrap();
+        // capacity = 24 - 0 = 24, min(12, 24) = 12
+        assert_eq!(generator.plan_campaign_count(0), 12);
+    }
+
+    #[test]
+    fn campaign_generator_rejects_empty_policy_id() {
+        let grammar = AttackGrammar::default();
+        let config = CampaignGeneratorConfig {
+            policy_id: "  ".to_string(),
+            campaigns_per_hour: 12,
+            max_backpressure_queue: 24,
+            promotion_threshold_millionths: 700_000,
+        };
+        let err = CampaignGenerator::new(grammar, config, 42).err().unwrap();
+        assert!(err.to_string().contains("policy_id"));
+    }
+
+    #[test]
+    fn campaign_generator_rejects_zero_campaigns_per_hour() {
+        let grammar = AttackGrammar::default();
+        let config = CampaignGeneratorConfig {
+            policy_id: "pol".to_string(),
+            campaigns_per_hour: 0,
+            max_backpressure_queue: 24,
+            promotion_threshold_millionths: 700_000,
+        };
+        let err = CampaignGenerator::new(grammar, config, 42).err().unwrap();
+        assert!(err.to_string().contains("campaigns_per_hour"));
+    }
+
+    #[test]
+    fn policy_regression_suite_empty_serde_roundtrip() {
+        let suite = PolicyRegressionSuite::default();
+        let json = serde_json::to_string(&suite).unwrap();
+        let back: PolicyRegressionSuite = serde_json::from_str(&json).unwrap();
+        assert_eq!(suite, back);
+    }
+
+    #[test]
+    fn campaign_outcome_record_valid_passes() {
+        let campaign = sample_campaign(CampaignComplexity::Probe, 99);
+        let result = sample_result();
+        let score = ExploitObjectiveScore::from_result(&result).unwrap();
+        let record = CampaignOutcomeRecord {
+            campaign,
+            result,
+            score,
+            benign_control: true,
+            false_positive: false,
+            timestamp_ns: 5000,
+        };
+        assert!(record.validate().is_ok());
+    }
+
+    #[test]
+    fn auto_minimizer_build_fixture_fields() {
+        let campaign = sample_campaign(CampaignComplexity::Probe, 77);
+        let proof = MinimizationProof {
+            rounds: 3,
+            removed_steps: 1,
+            is_fixed_point: true,
+        };
+        let fixture = AutoMinimizer::build_fixture(&campaign, "expected", "actual", proof.clone());
+        assert_eq!(fixture.campaign_id, campaign.campaign_id);
+        assert_eq!(fixture.seed, campaign.seed);
+        assert_eq!(fixture.expected_defense_response, "expected");
+        assert_eq!(fixture.actual_defense_response, "actual");
+        assert_eq!(fixture.minimality_proof, proof);
+    }
+
+    #[test]
+    fn regression_corpus_promote_and_retrieve() {
+        let campaign = sample_campaign(CampaignComplexity::Probe, 88);
+        let proof = MinimizationProof {
+            rounds: 1,
+            removed_steps: 0,
+            is_fixed_point: true,
+        };
+        let fixture = AutoMinimizer::build_fixture(&campaign, "exp", "act", proof);
+        let mut corpus = RegressionCorpus::default();
+        assert!(corpus.is_empty());
+        corpus.promote(fixture.clone());
+        assert!(!corpus.is_empty());
+        assert_eq!(corpus.len(), 1);
+        let retrieved = corpus.fixture(&campaign.campaign_id).unwrap();
+        assert_eq!(retrieved.campaign_id, fixture.campaign_id);
+    }
+
+    #[test]
+    fn containment_difficulty_display_unique_values() {
+        let variants = [
+            ContainmentDifficulty::Easy,
+            ContainmentDifficulty::Moderate,
+            ContainmentDifficulty::Hard,
+            ContainmentDifficulty::Critical,
+        ];
+        let mut names = std::collections::BTreeSet::new();
+        for v in &variants {
+            names.insert(v.to_string());
+        }
+        assert_eq!(names.len(), variants.len());
+    }
+
+    #[test]
+    fn mutation_operator_display_unique_values() {
+        let variants = [
+            MutationOperator::PointMutation,
+            MutationOperator::Crossover,
+            MutationOperator::Insertion,
+            MutationOperator::Deletion,
+            MutationOperator::TemporalShift,
+        ];
+        let mut names = std::collections::BTreeSet::new();
+        for v in &variants {
+            names.insert(v.to_string());
+        }
+        assert_eq!(names.len(), variants.len());
+    }
+
+    #[test]
+    fn defense_subsystem_display_unique_values() {
+        let variants = [
+            DefenseSubsystem::Sentinel,
+            DefenseSubsystem::Containment,
+            DefenseSubsystem::EvidenceAccumulation,
+            DefenseSubsystem::FleetConvergence,
+        ];
+        let mut names = std::collections::BTreeSet::new();
+        for v in &variants {
+            names.insert(v.to_string());
+        }
+        assert_eq!(names.len(), variants.len());
+    }
+
+    #[test]
+    fn threat_category_display_unique_values() {
+        let variants = [
+            ThreatCategory::CredentialTheft,
+            ThreatCategory::PrivilegeEscalation,
+            ThreatCategory::Persistence,
+            ThreatCategory::Exfiltration,
+            ThreatCategory::PolicyEvasion,
+        ];
+        let mut names = std::collections::BTreeSet::new();
+        for v in &variants {
+            names.insert(v.to_string());
+        }
+        assert_eq!(names.len(), variants.len());
+    }
+
+    #[test]
+    fn campaign_severity_display_unique_values() {
+        let variants = [
+            CampaignSeverity::Advisory,
+            CampaignSeverity::Moderate,
+            CampaignSeverity::Critical,
+            CampaignSeverity::Blocking,
+        ];
+        let mut names = std::collections::BTreeSet::new();
+        for v in &variants {
+            names.insert(v.to_string());
+        }
+        assert_eq!(names.len(), variants.len());
+    }
 }

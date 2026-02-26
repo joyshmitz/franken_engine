@@ -2210,4 +2210,400 @@ mod tests {
             assert_eq!(card.extension_id, format!("ext-{i}"));
         }
     }
+
+    // -- Enrichment: struct serde roundtrips --
+
+    #[test]
+    fn risk_driver_serde_roundtrip() {
+        let driver = RiskDriver {
+            description: "unverified publisher identity".into(),
+            contribution: 20,
+        };
+        let json = serde_json::to_string(&driver).unwrap();
+        let back: RiskDriver = serde_json::from_str(&json).unwrap();
+        assert_eq!(driver, back);
+    }
+
+    #[test]
+    fn evidence_summary_serde_roundtrip() {
+        let summary = EvidenceSummary {
+            positive_count: 5,
+            negative_count: 2,
+            neutral_count: 3,
+            most_recent_ns: Some(9_000_000_000),
+            most_recent_description: Some("behavioral observation".into()),
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        let back: EvidenceSummary = serde_json::from_str(&json).unwrap();
+        assert_eq!(summary, back);
+    }
+
+    #[test]
+    fn evidence_summary_serde_roundtrip_none_fields() {
+        let summary = EvidenceSummary {
+            positive_count: 0,
+            negative_count: 0,
+            neutral_count: 0,
+            most_recent_ns: None,
+            most_recent_description: None,
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        let back: EvidenceSummary = serde_json::from_str(&json).unwrap();
+        assert_eq!(summary, back);
+    }
+
+    #[test]
+    fn provenance_summary_serde_roundtrip() {
+        let prov = ProvenanceSummary {
+            publisher_verified: true,
+            build_attested: true,
+            dependency_risk: 500_000,
+            has_provenance_gap: false,
+        };
+        let json = serde_json::to_string(&prov).unwrap();
+        let back: ProvenanceSummary = serde_json::from_str(&json).unwrap();
+        assert_eq!(prov, back);
+    }
+
+    #[test]
+    fn trust_history_entry_serde_roundtrip() {
+        let entry = TrustHistoryEntry {
+            old_level: TrustLevel::Unknown,
+            new_level: TrustLevel::Provisional,
+            reason: "evidence: ev-1".into(),
+            timestamp_ns: 5_000_000_000,
+            operator_override: false,
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let back: TrustHistoryEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry, back);
+    }
+
+    #[test]
+    fn recommendation_serde_roundtrip() {
+        let rec = Recommendation {
+            action: RecommendedAction::Review,
+            confidence: 700_000,
+            rationale: "anomalous behavior detected".into(),
+        };
+        let json = serde_json::to_string(&rec).unwrap();
+        let back: Recommendation = serde_json::from_str(&json).unwrap();
+        assert_eq!(rec, back);
+    }
+
+    // -- Enrichment: TrustCardError std::error::Error --
+
+    #[test]
+    fn trust_card_error_implements_std_error() {
+        let err: Box<dyn std::error::Error> = Box::new(TrustCardError::ExtensionNotFound {
+            extension_id: "ext-1".into(),
+        });
+        assert!(!err.to_string().is_empty());
+    }
+
+    // -- Enrichment: TrustCardError Display uniqueness --
+
+    #[test]
+    fn trust_card_error_display_all_distinct() {
+        let errors = vec![
+            TrustCardError::ExtensionNotFound {
+                extension_id: "ext-1".into(),
+            },
+            TrustCardError::GenerationFailed {
+                extension_id: "ext-2".into(),
+                reason: "bad".into(),
+            },
+            TrustCardError::GraphError {
+                message: "graph".into(),
+            },
+        ];
+        let mut displays = BTreeSet::new();
+        for err in &errors {
+            displays.insert(err.to_string());
+        }
+        assert_eq!(displays.len(), 3);
+    }
+
+    // -- Enrichment: enum ordering --
+
+    #[test]
+    fn risk_trend_ordering() {
+        assert!(RiskTrend::Improving < RiskTrend::Stable);
+        assert!(RiskTrend::Stable < RiskTrend::Degrading);
+    }
+
+    #[test]
+    fn recommended_action_ordering() {
+        assert!(RecommendedAction::Monitor < RecommendedAction::Review);
+        assert!(RecommendedAction::Review < RecommendedAction::Restrict);
+        assert!(RecommendedAction::Restrict < RecommendedAction::Remove);
+    }
+
+    #[test]
+    fn card_format_ordering() {
+        assert!(CardFormat::Json < CardFormat::Text);
+        assert!(CardFormat::Text < CardFormat::Compact);
+    }
+
+    // -- Enrichment: TrustCardGenerator with_config --
+
+    #[test]
+    fn generator_with_custom_config() {
+        let config = GeneratorConfig {
+            max_history_entries: 5,
+            max_risk_drivers: 2,
+            trend_window_ns: 3_600_000_000_000,
+        };
+        let generator = TrustCardGenerator::with_config(config.clone());
+        let graph = test_graph_with_extension();
+        let card = generator
+            .generate(&graph, "ext-1", SecurityEpoch::from_raw(1), 10_000_000_000)
+            .unwrap();
+        assert!(card.risk_drivers.len() <= 2);
+    }
+
+    // -- Enrichment: Default impls --
+
+    #[test]
+    fn trust_card_generator_default() {
+        let gen1 = TrustCardGenerator::new();
+        let gen2 = TrustCardGenerator::default();
+        assert_eq!(gen1.config, gen2.config);
+    }
+
+    #[test]
+    fn trust_card_cache_default() {
+        let cache = TrustCardCache::default();
+        assert_eq!(cache.cached_count(), 0);
+    }
+
+    #[test]
+    fn update_pipeline_default() {
+        let pipeline = UpdatePipeline::default();
+        assert_eq!(pipeline.pending_count(), 0);
+        assert_eq!(pipeline.subscription_count(), 0);
+    }
+
+    // -- Enrichment: pipeline no subscription = all --
+
+    #[test]
+    fn pipeline_no_subscription_notifies_all() {
+        let mut pipeline = UpdatePipeline::new();
+        // No subscriptions -> should notify for all extensions.
+        let tt1 = crate::reputation::TrustTransition {
+            transition_id: "tt-1".into(),
+            extension_id: "ext-1".into(),
+            old_level: TrustLevel::Unknown,
+            new_level: TrustLevel::Suspicious,
+            triggering_evidence_ids: vec![],
+            policy_version: 1,
+            operator_override: false,
+            operator_justification: None,
+            timestamp_ns: 5_000_000_000,
+            epoch: SecurityEpoch::from_raw(1),
+        };
+        let tt2 = crate::reputation::TrustTransition {
+            transition_id: "tt-2".into(),
+            extension_id: "ext-2".into(),
+            old_level: TrustLevel::Unknown,
+            new_level: TrustLevel::Provisional,
+            triggering_evidence_ids: vec![],
+            policy_version: 1,
+            operator_override: false,
+            operator_justification: None,
+            timestamp_ns: 6_000_000_000,
+            epoch: SecurityEpoch::from_raw(1),
+        };
+        pipeline.on_trust_transition(&tt1);
+        pipeline.on_trust_transition(&tt2);
+        assert_eq!(pipeline.pending_count(), 2);
+    }
+
+    // -- Enrichment: pipeline drain empties buffer --
+
+    #[test]
+    fn pipeline_drain_empties_buffer() {
+        let mut pipeline = UpdatePipeline::new();
+        let tt = crate::reputation::TrustTransition {
+            transition_id: "tt-1".into(),
+            extension_id: "ext-1".into(),
+            old_level: TrustLevel::Unknown,
+            new_level: TrustLevel::Suspicious,
+            triggering_evidence_ids: vec!["ev-1".into()],
+            policy_version: 1,
+            operator_override: false,
+            operator_justification: None,
+            timestamp_ns: 5_000_000_000,
+            epoch: SecurityEpoch::from_raw(1),
+        };
+        pipeline.on_trust_transition(&tt);
+        assert_eq!(pipeline.pending_count(), 1);
+        let _ = pipeline.drain_notifications();
+        assert_eq!(pipeline.pending_count(), 0);
+    }
+
+    // -- Enrichment: TrustHistoryEntry from operator override without justification --
+
+    #[test]
+    fn history_entry_from_operator_override_no_justification() {
+        let tt = crate::reputation::TrustTransition {
+            transition_id: "tt-3".into(),
+            extension_id: "ext-1".into(),
+            old_level: TrustLevel::Suspicious,
+            new_level: TrustLevel::Provisional,
+            triggering_evidence_ids: vec![],
+            policy_version: 1,
+            operator_override: true,
+            operator_justification: None,
+            timestamp_ns: 7_000_000_000,
+            epoch: SecurityEpoch::from_raw(1),
+        };
+        let entry = TrustHistoryEntry::from(&tt);
+        assert!(entry.operator_override);
+        assert_eq!(entry.reason, "operator override");
+    }
+
+    // -- Enrichment: TrustCard Display output structure --
+
+    #[test]
+    fn trust_card_display_contains_all_sections() {
+        let graph = test_graph_with_extension();
+        let generator = TrustCardGenerator::new();
+        let card = generator
+            .generate(&graph, "ext-1", SecurityEpoch::from_raw(1), 10_000_000_000)
+            .unwrap();
+
+        let display = card.to_string();
+        assert!(display.contains("ext-1"));
+        assert!(display.contains("pkg-ext-1"));
+        assert!(display.contains("risk:"));
+        assert!(display.contains("evidence:"));
+        assert!(display.contains("provenance:"));
+        assert!(display.contains("recommendation:"));
+        assert!(display.contains("rationale:"));
+    }
+
+    // -- Enrichment: recommendation for established with negative evidence --
+
+    #[test]
+    fn recommendation_review_for_established_with_negatives() {
+        let mut graph = test_graph_with_provenance();
+        graph
+            .transition_trust(
+                "ext-1",
+                TrustLevel::Established,
+                vec![],
+                1,
+                SecurityEpoch::from_raw(1),
+                5_000_000_000,
+            )
+            .unwrap();
+        graph
+            .add_evidence(
+                "ext-1",
+                test_evidence("ev-neg", EvidenceType::IncidentRecord),
+            )
+            .unwrap();
+
+        let generator = TrustCardGenerator::new();
+        let card = generator
+            .generate(&graph, "ext-1", SecurityEpoch::from_raw(1), 10_000_000_000)
+            .unwrap();
+
+        assert_eq!(card.recommendation.action, RecommendedAction::Review);
+    }
+
+    // -- Enrichment: diff with recommendation change --
+
+    #[test]
+    fn diff_detects_recommendation_change() {
+        let mut graph = test_graph_with_provenance();
+        let generator = TrustCardGenerator::new();
+
+        // Start as trusted (Monitor recommendation).
+        graph
+            .transition_trust(
+                "ext-1",
+                TrustLevel::Trusted,
+                vec![],
+                1,
+                SecurityEpoch::from_raw(1),
+                5_000_000_000,
+            )
+            .unwrap();
+        let card_before = generator
+            .generate(&graph, "ext-1", SecurityEpoch::from_raw(1), 10_000_000_000)
+            .unwrap();
+        assert_eq!(
+            card_before.recommendation.action,
+            RecommendedAction::Monitor
+        );
+
+        // Transition to suspicious (Review/Restrict recommendation).
+        graph
+            .transition_trust(
+                "ext-1",
+                TrustLevel::Suspicious,
+                vec!["ev-bad".into()],
+                1,
+                SecurityEpoch::from_raw(1),
+                11_000_000_000,
+            )
+            .unwrap();
+        let card_after = generator
+            .generate(&graph, "ext-1", SecurityEpoch::from_raw(1), 12_000_000_000)
+            .unwrap();
+
+        let diff = TrustCardDiff::compute(&card_before, &card_after);
+        assert!(diff.change_summary.contains("recommendation:"));
+        assert_ne!(diff.old_recommendation, diff.new_recommendation);
+    }
+
+    // -- Enrichment: UpdatePipeline notification evidence summary --
+
+    #[test]
+    fn pipeline_notification_no_evidence_summary() {
+        let mut pipeline = UpdatePipeline::new();
+        let tt = crate::reputation::TrustTransition {
+            transition_id: "tt-1".into(),
+            extension_id: "ext-1".into(),
+            old_level: TrustLevel::Unknown,
+            new_level: TrustLevel::Suspicious,
+            triggering_evidence_ids: vec![],
+            policy_version: 1,
+            operator_override: false,
+            operator_justification: None,
+            timestamp_ns: 5_000_000_000,
+            epoch: SecurityEpoch::from_raw(1),
+        };
+        pipeline.on_trust_transition(&tt);
+        let notifications = pipeline.drain_notifications();
+        assert_eq!(
+            notifications[0].triggering_evidence_summary,
+            "no linked evidence"
+        );
+    }
+
+    // -- Enrichment: TrustCardCache get_or_generate returns same card --
+
+    #[test]
+    fn cache_get_or_generate_returns_cached() {
+        let mut cache = TrustCardCache::new();
+        let graph = test_graph_with_extension();
+        let generator = TrustCardGenerator::new();
+        let epoch = SecurityEpoch::from_raw(1);
+        let now = 10_000_000_000u64;
+
+        let card1 = cache
+            .get_or_generate(&generator, &graph, "ext-1", epoch, now)
+            .unwrap()
+            .clone();
+        let card2 = cache
+            .get_or_generate(&generator, &graph, "ext-1", epoch, now + 1_000)
+            .unwrap()
+            .clone();
+
+        // Should be the same card (cached), same generated_at_ns.
+        assert_eq!(card1.generated_at_ns, card2.generated_at_ns);
+    }
 }

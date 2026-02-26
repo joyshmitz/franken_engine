@@ -2915,4 +2915,365 @@ mod tests {
         let c = cap("network.http");
         assert_eq!(c.as_str(), "network.http");
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn fallback_for_non_helpful_dimensions_no_multiplier() {
+        // When exceeded_dimensions are not Time/Compute/Depth,
+        // increase_likely_helpful should be false and recommended_multiplier None.
+        let reason = ExhaustionReason {
+            exceeded_dimensions: vec![], // empty => no helpful dimension
+            phase: SynthesisPhase::Ablation,
+            global_limit_hit: true,
+            consumption: PhaseConsumption {
+                time_ns: 0,
+                compute: 0,
+                depth: 0,
+            },
+            limit_value: 50,
+        };
+        let initial = BTreeSet::from([cap("a"), cap("b")]);
+        let current = BTreeSet::from([cap("a")]); // partial
+        let result = fallback_for(&reason, &initial, &current);
+        assert_eq!(result.quality, FallbackQuality::PartialAblation);
+        assert!(!result.increase_likely_helpful);
+        assert_eq!(result.recommended_multiplier, None);
+    }
+
+    #[test]
+    fn fallback_for_time_dimension_recommends_multiplier() {
+        let reason = ExhaustionReason {
+            exceeded_dimensions: vec![BudgetDimension::Time],
+            phase: SynthesisPhase::Ablation,
+            global_limit_hit: false,
+            consumption: PhaseConsumption {
+                time_ns: 1000,
+                compute: 0,
+                depth: 0,
+            },
+            limit_value: 500,
+        };
+        let initial = BTreeSet::from([cap("x")]);
+        let result = fallback_for(&reason, &initial, &initial);
+        assert!(result.increase_likely_helpful);
+        assert_eq!(result.recommended_multiplier, Some(1_500_000));
+    }
+
+    #[test]
+    fn candidate_id_deterministic_for_same_inputs() {
+        let config = config_with_seed(42);
+        let removed = BTreeSet::from([cap("a")]);
+        let candidate = BTreeSet::from([cap("b"), cap("c")]);
+        let id1 = candidate_id(
+            &config,
+            AblationSearchStage::SingleCapability,
+            1,
+            &removed,
+            &candidate,
+        );
+        let id2 = candidate_id(
+            &config,
+            AblationSearchStage::SingleCapability,
+            1,
+            &removed,
+            &candidate,
+        );
+        assert_eq!(id1, id2);
+        assert!(id1.starts_with("ablate-"));
+    }
+
+    #[test]
+    fn candidate_id_differs_for_different_stage() {
+        let config = config_with_seed(42);
+        let removed = BTreeSet::from([cap("a")]);
+        let candidate = BTreeSet::from([cap("b")]);
+        let id_single = candidate_id(
+            &config,
+            AblationSearchStage::SingleCapability,
+            1,
+            &removed,
+            &candidate,
+        );
+        let id_pair = candidate_id(
+            &config,
+            AblationSearchStage::CorrelatedPair,
+            1,
+            &removed,
+            &candidate,
+        );
+        assert_ne!(id_single, id_pair);
+    }
+
+    #[test]
+    fn candidate_id_differs_for_different_sequence() {
+        let config = config_with_seed(42);
+        let removed = BTreeSet::from([cap("a")]);
+        let candidate = BTreeSet::from([cap("b")]);
+        let id1 = candidate_id(
+            &config,
+            AblationSearchStage::SingleCapability,
+            1,
+            &removed,
+            &candidate,
+        );
+        let id2 = candidate_id(
+            &config,
+            AblationSearchStage::SingleCapability,
+            2,
+            &removed,
+            &candidate,
+        );
+        assert_ne!(id1, id2);
+    }
+
+    #[test]
+    fn log_event_helper_populates_fields() {
+        let config = config_with_seed(7);
+        let removed = BTreeSet::from([cap("net")]);
+        let event = log_event(
+            &config,
+            "test_event",
+            "pass",
+            Some("code-1".to_string()),
+            Some(AblationSearchStage::BinaryBlock),
+            Some("cand-99".to_string()),
+            &removed,
+            Some(5),
+        );
+        assert_eq!(event.trace_id, config.trace_id);
+        assert_eq!(event.decision_id, config.decision_id);
+        assert_eq!(event.policy_id, config.policy_id);
+        assert_eq!(event.component, SHADOW_ABLATION_COMPONENT);
+        assert_eq!(event.event, "test_event");
+        assert_eq!(event.outcome, "pass");
+        assert_eq!(event.error_code, Some("code-1".to_string()));
+        assert_eq!(event.search_stage, Some("binary_block".to_string()));
+        assert_eq!(event.candidate_id, Some("cand-99".to_string()));
+        assert_eq!(event.removed_capabilities, vec!["net".to_string()]);
+        assert_eq!(event.remaining_capability_count, Some(5));
+    }
+
+    #[test]
+    fn evaluation_record_canonical_value_contains_all_keys() {
+        let record = sample_evaluation("canonical-test");
+        let val = record.canonical_value();
+        if let CanonicalValue::Map(map) = &val {
+            let expected_keys = [
+                "sequence",
+                "candidate_id",
+                "search_stage",
+                "removed_capabilities",
+                "candidate_capabilities",
+                "pass",
+                "correctness_score_millionths",
+                "correctness_threshold_millionths",
+                "invariants",
+                "invariant_failures",
+                "risk_score_millionths",
+                "risk_threshold_millionths",
+                "consumed",
+                "replay_pointer",
+                "evidence_pointer",
+                "execution_trace_hash",
+                "failure_class",
+                "failure_detail",
+            ];
+            for key in expected_keys {
+                assert!(map.contains_key(key), "missing key: {key}");
+            }
+            assert_eq!(map.len(), expected_keys.len());
+        } else {
+            panic!("expected Map from canonical_value");
+        }
+    }
+
+    #[test]
+    fn run_invariant_violation_retains_capability() {
+        let mut config = config_with_seed(1);
+        config.required_invariants = BTreeSet::from(["must_hold".to_string()]);
+        let engine =
+            ShadowAblationEngine::new(config.clone(), SynthesisBudgetContract::default()).unwrap();
+        let report = test_static_report(&config.extension_id, BTreeSet::from([cap("only")]));
+        let signing_key = SigningKey::from_bytes([0x04; 32]);
+        let result = engine
+            .run(&report, &signing_key, |_| {
+                Ok(ShadowAblationObservation {
+                    correctness_score_millionths: 999_000,
+                    correctness_threshold_millionths: 900_000,
+                    invariants: BTreeMap::from([("must_hold".to_string(), false)]),
+                    risk_score_millionths: 0,
+                    risk_threshold_millionths: 500_000,
+                    consumed: PhaseConsumption::zero(),
+                    replay_pointer: "replay://inv".to_string(),
+                    evidence_pointer: "evidence://inv".to_string(),
+                    execution_trace_hash: ContentHash::compute(b"inv"),
+                    failure_detail: None,
+                })
+            })
+            .unwrap();
+        assert_eq!(result.minimal_capabilities.len(), 1);
+        assert!(
+            result
+                .evaluations
+                .iter()
+                .any(|e| e.failure_class == Some(AblationFailureClass::InvariantViolation))
+        );
+    }
+
+    #[test]
+    fn run_execution_failure_retains_capability() {
+        let config = config_with_seed(1);
+        let engine =
+            ShadowAblationEngine::new(config.clone(), SynthesisBudgetContract::default()).unwrap();
+        let report = test_static_report(&config.extension_id, BTreeSet::from([cap("only")]));
+        let signing_key = SigningKey::from_bytes([0x05; 32]);
+        let result = engine
+            .run(&report, &signing_key, |_| {
+                Ok(ShadowAblationObservation {
+                    correctness_score_millionths: 999_000,
+                    correctness_threshold_millionths: 900_000,
+                    invariants: BTreeMap::new(),
+                    risk_score_millionths: 0,
+                    risk_threshold_millionths: 500_000,
+                    consumed: PhaseConsumption::zero(),
+                    replay_pointer: "replay://exec".to_string(),
+                    evidence_pointer: "evidence://exec".to_string(),
+                    execution_trace_hash: ContentHash::compute(b"exec"),
+                    failure_detail: Some("runtime crash".to_string()),
+                })
+            })
+            .unwrap();
+        assert_eq!(result.minimal_capabilities.len(), 1);
+        assert!(
+            result
+                .evaluations
+                .iter()
+                .any(|e| e.failure_class == Some(AblationFailureClass::ExecutionFailure))
+        );
+    }
+
+    #[test]
+    fn run_successful_single_removal_reduces_capabilities() {
+        let config = config_with_seed(1);
+        let engine =
+            ShadowAblationEngine::new(config.clone(), SynthesisBudgetContract::default()).unwrap();
+        let report = test_static_report(
+            &config.extension_id,
+            BTreeSet::from([cap("essential"), cap("removable")]),
+        );
+        let signing_key = SigningKey::from_bytes([0x06; 32]);
+        // Oracle: accept removal of "removable", reject removal of "essential"
+        let result = engine
+            .run(&report, &signing_key, |req| {
+                let pass = !req.removed_capabilities.contains(&cap("essential"));
+                let score = if pass { 999_000 } else { 100_000 };
+                Ok(ShadowAblationObservation {
+                    correctness_score_millionths: score,
+                    correctness_threshold_millionths: 500_000,
+                    invariants: BTreeMap::new(),
+                    risk_score_millionths: 0,
+                    risk_threshold_millionths: 500_000,
+                    consumed: PhaseConsumption::zero(),
+                    replay_pointer: "replay://ok".to_string(),
+                    evidence_pointer: "evidence://ok".to_string(),
+                    execution_trace_hash: ContentHash::compute(b"ok"),
+                    failure_detail: None,
+                })
+            })
+            .unwrap();
+        assert!(
+            result.minimal_capabilities.len() < result.initial_capabilities.len(),
+            "should have removed at least one capability"
+        );
+        assert!(result.minimal_capabilities.contains(&cap("essential")));
+        assert!(!result.budget_exhausted);
+    }
+
+    #[test]
+    fn config_validation_rejects_whitespace_only_trace_id() {
+        let mut config = config_with_seed(1);
+        config.trace_id = "   ".to_string();
+        let err = ShadowAblationEngine::new(config, SynthesisBudgetContract::default())
+            .expect_err("whitespace-only trace_id must be rejected");
+        assert!(err.to_string().contains("trace_id"));
+    }
+
+    #[test]
+    fn config_with_required_invariants_serde_roundtrip() {
+        let mut config = config_with_seed(99);
+        config.required_invariants = BTreeSet::from([
+            "no_exfiltration".to_string(),
+            "no_side_channels".to_string(),
+        ]);
+        let json = serde_json::to_string(&config).unwrap();
+        let restored: ShadowAblationConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config, restored);
+        assert_eq!(restored.required_invariants.len(), 2);
+    }
+
+    #[test]
+    fn transcript_hash_sensitive_to_trace_id() {
+        let key = SigningKey::from_bytes([0x60; 32]);
+        let make_input = |trace: &str| ShadowAblationTranscriptInput {
+            trace_id: trace.to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            extension_id: "e".to_string(),
+            static_report_id: EngineObjectId([0x11; 32]),
+            replay_corpus_id: "c".to_string(),
+            randomness_snapshot_id: "r".to_string(),
+            deterministic_seed: 1,
+            search_strategy: AblationSearchStrategy::LatticeGreedy,
+            initial_capabilities: BTreeSet::from([cap("a")]),
+            final_capabilities: BTreeSet::from([cap("a")]),
+            evaluations: Vec::new(),
+            fallback: None,
+            budget_utilization: BTreeMap::new(),
+        };
+        let t1 =
+            SignedShadowAblationTranscript::create_signed(make_input("trace-A"), &key).unwrap();
+        let t2 =
+            SignedShadowAblationTranscript::create_signed(make_input("trace-B"), &key).unwrap();
+        assert_ne!(t1.transcript_hash, t2.transcript_hash);
+    }
+
+    #[test]
+    fn transcript_hash_sensitive_to_seed() {
+        let key = SigningKey::from_bytes([0x61; 32]);
+        let make_input = |seed: u64| ShadowAblationTranscriptInput {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            extension_id: "e".to_string(),
+            static_report_id: EngineObjectId([0x22; 32]),
+            replay_corpus_id: "c".to_string(),
+            randomness_snapshot_id: "r".to_string(),
+            deterministic_seed: seed,
+            search_strategy: AblationSearchStrategy::LatticeGreedy,
+            initial_capabilities: BTreeSet::from([cap("x")]),
+            final_capabilities: BTreeSet::from([cap("x")]),
+            evaluations: Vec::new(),
+            fallback: None,
+            budget_utilization: BTreeMap::new(),
+        };
+        let t1 = SignedShadowAblationTranscript::create_signed(make_input(1), &key).unwrap();
+        let t2 = SignedShadowAblationTranscript::create_signed(make_input(2), &key).unwrap();
+        assert_ne!(t1.transcript_hash, t2.transcript_hash);
+    }
+
+    #[test]
+    fn seeded_capability_order_single_element() {
+        let caps = BTreeSet::from([cap("singleton")]);
+        let order = seeded_capability_order(&caps, 0);
+        assert_eq!(order.len(), 1);
+        assert_eq!(order[0], cap("singleton"));
+    }
+
+    #[test]
+    fn highest_power_of_two_leq_large_values() {
+        assert_eq!(highest_power_of_two_leq(1023), 512);
+        assert_eq!(highest_power_of_two_leq(1024), 1024);
+        assert_eq!(highest_power_of_two_leq(1025), 1024);
+    }
 }

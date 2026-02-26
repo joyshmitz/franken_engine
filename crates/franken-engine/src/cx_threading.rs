@@ -1870,4 +1870,164 @@ mod tests {
         assert!(TelemetryLevel::Info < TelemetryLevel::Warn);
         assert!(TelemetryLevel::Warn < TelemetryLevel::Error);
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn effect_category_serde_roundtrip_all_variants() {
+        let variants = [
+            EffectCategory::Hostcall,
+            EffectCategory::PolicyCheck,
+            EffectCategory::LifecycleTransition,
+            EffectCategory::TelemetryEmit,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: EffectCategory = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn lifecycle_phase_serde_roundtrip_all_variants() {
+        let variants = [
+            LifecyclePhase::Unloaded,
+            LifecyclePhase::Loaded,
+            LifecyclePhase::Running,
+            LifecyclePhase::Suspended,
+            LifecyclePhase::Quarantined,
+            LifecyclePhase::Unloading,
+            LifecyclePhase::Terminated,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: LifecyclePhase = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn telemetry_level_serde_roundtrip_all_variants() {
+        let variants = [
+            TelemetryLevel::Debug,
+            TelemetryLevel::Info,
+            TelemetryLevel::Warn,
+            TelemetryLevel::Error,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: TelemetryLevel = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn policy_verdict_serde_roundtrip_all_variants() {
+        let variants = vec![
+            PolicyVerdict::Allow,
+            PolicyVerdict::Deny {
+                reason: "blocked".into(),
+            },
+            PolicyVerdict::Escalate {
+                reason: "review".into(),
+            },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: PolicyVerdict = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn lifecycle_phase_as_str_all_distinct() {
+        let variants = [
+            LifecyclePhase::Unloaded,
+            LifecyclePhase::Loaded,
+            LifecyclePhase::Running,
+            LifecyclePhase::Suspended,
+            LifecyclePhase::Quarantined,
+            LifecyclePhase::Unloading,
+            LifecyclePhase::Terminated,
+        ];
+        let mut set = std::collections::BTreeSet::new();
+        for v in &variants {
+            set.insert(v.to_string());
+        }
+        assert_eq!(set.len(), variants.len());
+    }
+
+    #[test]
+    fn telemetry_level_as_str_all_distinct() {
+        let variants = [
+            TelemetryLevel::Debug,
+            TelemetryLevel::Info,
+            TelemetryLevel::Warn,
+            TelemetryLevel::Error,
+        ];
+        let mut set = std::collections::BTreeSet::new();
+        for v in &variants {
+            set.insert(v.to_string());
+        }
+        assert_eq!(set.len(), variants.len());
+    }
+
+    #[test]
+    fn policy_check_result_serde_roundtrip() {
+        let result = PolicyCheckResult {
+            check_name: "pre_hostcall".into(),
+            policy_id: "pol-1".into(),
+            verdict: PolicyVerdict::Allow,
+            trace_id: "t-1".into(),
+            budget_consumed_ms: 5,
+            sequence_number: 1,
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let back: PolicyCheckResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(result, back);
+    }
+
+    #[test]
+    fn telemetry_receipt_serde_roundtrip() {
+        let receipt = TelemetryReceipt {
+            emitter: "span".into(),
+            event_name: "metric".into(),
+            level: TelemetryLevel::Info,
+            payload_len: 42,
+            trace_id: "t-2".into(),
+            budget_consumed_ms: 1,
+            sequence_number: 3,
+        };
+        let json = serde_json::to_string(&receipt).unwrap();
+        let back: TelemetryReceipt = serde_json::from_str(&json).unwrap();
+        assert_eq!(receipt, back);
+    }
+
+    #[test]
+    fn hostcall_descriptor_serde_roundtrip() {
+        let desc = HostcallDescriptor {
+            name: "fs_read".into(),
+            extension_id: "ext-1".into(),
+            budget_cost_override_ms: Some(10),
+        };
+        let json = serde_json::to_string(&desc).unwrap();
+        let back: HostcallDescriptor = serde_json::from_str(&json).unwrap();
+        assert_eq!(desc, back);
+    }
+
+    #[test]
+    fn policy_check_descriptor_serde_roundtrip() {
+        let desc = PolicyCheckDescriptor::new("pre_hostcall", "pol-1", "ext-1");
+        let json = serde_json::to_string(&desc).unwrap();
+        let back: PolicyCheckDescriptor = serde_json::from_str(&json).unwrap();
+        assert_eq!(desc, back);
+    }
+
+    #[test]
+    fn telemetry_descriptor_serde_roundtrip() {
+        let desc = TelemetryDescriptor::new("span", "metric_emit", TelemetryLevel::Warn);
+        let json = serde_json::to_string(&desc).unwrap();
+        let back: TelemetryDescriptor = serde_json::from_str(&json).unwrap();
+        assert_eq!(desc, back);
+    }
 }

@@ -1575,4 +1575,47 @@ mod tests {
             assert_ne!(val, first, "xorshift64 repeated initial value at step {i}");
         }
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn xorshift64_seed_zero_becomes_one() {
+        let mut rng = Xorshift64::new(0);
+        assert_eq!(rng.state, 1, "seed 0 must be normalized to 1");
+        let val = rng.next_u64();
+        assert_ne!(val, 0);
+    }
+
+    #[test]
+    fn constants_values_are_stable() {
+        assert_eq!(SECURITY_E2E_COMPONENT, "security_e2e");
+        assert!(SECURITY_E2E_SCHEMA_VERSION.starts_with("franken-engine"));
+        assert_eq!(MIN_BUDGET_MILLIONTHS, 1_000);
+    }
+
+    #[test]
+    fn attack_category_as_str_all_contain_hyphen() {
+        for cat in AttackCategory::all() {
+            let s = cat.as_str();
+            assert!(!s.is_empty());
+            assert!(s.contains('-'), "as_str should be hyphenated: {s}");
+        }
+    }
+
+    #[test]
+    fn capability_escalation_many_extensions_all_blocked() {
+        let results = run_capability_escalation(10, 99);
+        assert_eq!(results.len(), 2);
+        for r in &results {
+            assert!(r.attack_blocked);
+        }
+    }
+
+    #[test]
+    fn resource_exhaustion_many_extensions_produces_events() {
+        let results = run_resource_exhaustion(10, 99);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].attack_blocked);
+        assert!(results[0].security_events > 0);
+    }
 }

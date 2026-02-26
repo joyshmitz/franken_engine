@@ -1578,4 +1578,139 @@ mod tests {
         let history = vec![300_000, 300_000];
         assert_eq!(compute_trend(&history), EffectivenessTrend::Stable);
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn trend_single_data_point_stable() {
+        let history = vec![500_000];
+        assert_eq!(compute_trend(&history), EffectivenessTrend::Stable);
+    }
+
+    #[test]
+    fn trend_empty_history_stable() {
+        let history: Vec<u64> = Vec::new();
+        assert_eq!(compute_trend(&history), EffectivenessTrend::Stable);
+    }
+
+    #[test]
+    fn effectiveness_zero_detection_rate() {
+        let ctx = test_ctx();
+        let mut engine = GuardplaneCalibrationEngine::new();
+        // All campaigns evade detection
+        let outcomes = vec![
+            make_outcome(AttackDimension::PolicyEvasion, 10, 10, false),
+            make_outcome(AttackDimension::PrivilegeEscalation, 5, 5, false),
+        ];
+        engine.run_calibration_cycle(&outcomes, &ctx).unwrap();
+        let eff = engine.defense_effectiveness();
+        // Evasions are counted per-campaign (not per-step)
+        assert_eq!(eff.total_evasions, 2);
+        assert_eq!(eff.overall_detection_rate_millionths, 0);
+    }
+
+    #[test]
+    fn alert_threshold_zero_always_alerts() {
+        let ctx = test_ctx();
+        let mut engine = GuardplaneCalibrationEngine::new();
+        engine.set_evasion_alert_threshold(0);
+        let outcomes = vec![make_outcome(AttackDimension::PolicyEvasion, 1, 10, false)];
+        engine.run_calibration_cycle(&outcomes, &ctx).unwrap();
+        // With threshold 0, any evasion should trigger alert
+        assert!(!engine.alerts().is_empty());
+    }
+
+    #[test]
+    fn alert_threshold_max_never_alerts() {
+        let ctx = test_ctx();
+        let mut engine = GuardplaneCalibrationEngine::new();
+        engine.set_evasion_alert_threshold(1_000_001);
+        let outcomes = vec![make_outcome(AttackDimension::PolicyEvasion, 10, 10, false)];
+        engine.run_calibration_cycle(&outcomes, &ctx).unwrap();
+        // Even 100% evasion rate shouldn't alert
+        assert!(engine.alerts().is_empty());
+    }
+
+    #[test]
+    fn cycle_count_increments() {
+        let ctx = test_ctx();
+        let mut engine = GuardplaneCalibrationEngine::new();
+        assert_eq!(engine.cycle_count(), 0);
+        let outcomes = vec![make_outcome(AttackDimension::PolicyEvasion, 0, 5, false)];
+        engine.run_calibration_cycle(&outcomes, &ctx).unwrap();
+        assert_eq!(engine.cycle_count(), 1);
+        engine.run_calibration_cycle(&outcomes, &ctx).unwrap();
+        assert_eq!(engine.cycle_count(), 2);
+    }
+
+    #[test]
+    fn calibration_error_is_std_error() {
+        let err = CalibrationError::EmptyCampaignBatch;
+        let _e: &dyn std::error::Error = &err;
+    }
+
+    #[test]
+    fn dimension_effectiveness_default_fields() {
+        let de = DimensionEffectiveness {
+            dimension: "test".to_string(),
+            detection_rate_millionths: 750_000,
+            evasion_rate_millionths: 250_000,
+            trend: EffectivenessTrend::Stable,
+            sample_count: 10,
+        };
+        let json = serde_json::to_string(&de).unwrap();
+        let back: DimensionEffectiveness = serde_json::from_str(&json).unwrap();
+        assert_eq!(de.detection_rate_millionths, back.detection_rate_millionths);
+        assert_eq!(de.evasion_rate_millionths, back.evasion_rate_millionths);
+    }
+
+    #[test]
+    fn calibration_event_error_code_none_serde() {
+        let event = CalibrationEvent {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            component: "guardplane_calibration".to_string(),
+            event: "test".to_string(),
+            outcome: "ok".to_string(),
+            error_code: None,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: CalibrationEvent = serde_json::from_str(&json).unwrap();
+        assert!(back.error_code.is_none());
+    }
+
+    #[test]
+    fn calibration_cycle_result_empty_counts() {
+        let result = CalibrationCycleResult {
+            cycle_id: "c1".to_string(),
+            campaigns_ingested: 0,
+            severity_counts: BTreeMap::new(),
+            subsystem_counts: BTreeMap::new(),
+            threat_counts: BTreeMap::new(),
+            thresholds_adjusted: false,
+            detection_threshold_millionths: 500_000,
+            evidence_weights_millionths: BTreeMap::new(),
+            regression_fixtures_added: 0,
+            calibration_epoch: 0,
+            state_digest: "test".to_string(),
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let back: CalibrationCycleResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(result, back);
+    }
+
+    #[test]
+    fn weakest_dimension_populated_after_cycle() {
+        let ctx = test_ctx();
+        let mut engine = GuardplaneCalibrationEngine::new();
+        let outcomes = vec![
+            make_outcome(AttackDimension::PolicyEvasion, 5, 10, false),
+            make_outcome(AttackDimension::PrivilegeEscalation, 0, 10, false),
+        ];
+        engine.run_calibration_cycle(&outcomes, &ctx).unwrap();
+        let eff = engine.defense_effectiveness();
+        // Weakest dimension should be the one with higher evasion rate
+        assert!(eff.weakest_dimension.is_some());
+    }
 }

@@ -1268,4 +1268,137 @@ mod tests {
             assert_eq!(*action, back);
         }
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn assumption_category_serde_all_variants() {
+        let variants = [
+            AssumptionCategory::Statistical,
+            AssumptionCategory::Behavioral,
+            AssumptionCategory::Resource,
+            AssumptionCategory::Safety,
+            AssumptionCategory::Structural,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: AssumptionCategory = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn assumption_origin_serde_all_variants() {
+        let variants = [
+            AssumptionOrigin::CompileTime,
+            AssumptionOrigin::Runtime,
+            AssumptionOrigin::PolicyInherited,
+            AssumptionOrigin::Inferred,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: AssumptionOrigin = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn assumption_status_serde_all_variants() {
+        let variants = [
+            AssumptionStatus::Active,
+            AssumptionStatus::Violated,
+            AssumptionStatus::Retired,
+            AssumptionStatus::Suspended,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: AssumptionStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn violation_severity_serde_all_variants() {
+        let variants = [
+            ViolationSeverity::Advisory,
+            ViolationSeverity::Warning,
+            ViolationSeverity::Critical,
+            ViolationSeverity::Fatal,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: ViolationSeverity = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn monitor_kind_serde_all_variants() {
+        let variants = [
+            MonitorKind::Threshold,
+            MonitorKind::Drift,
+            MonitorKind::Coverage,
+            MonitorKind::Invariant,
+            MonitorKind::Budget,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: MonitorKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn monitor_op_serde_all_variants() {
+        let variants = [MonitorOp::Le, MonitorOp::Ge, MonitorOp::Eq];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: MonitorOp = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn ledger_error_serde_all_variants() {
+        let variants: Vec<LedgerError> = vec![
+            LedgerError::DuplicateAssumption("a1".into()),
+            LedgerError::AssumptionNotFound("a2".into()),
+            LedgerError::MonitorNotFound("m1".into()),
+            LedgerError::DuplicateMonitor("m2".into()),
+            LedgerError::InvalidTransition {
+                assumption_id: "a3".into(),
+                from: AssumptionStatus::Active,
+                to: AssumptionStatus::Violated,
+            },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: LedgerError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn ledger_error_display_distinct() {
+        let variants: Vec<LedgerError> = vec![
+            LedgerError::DuplicateAssumption("x".into()),
+            LedgerError::AssumptionNotFound("x".into()),
+            LedgerError::MonitorNotFound("x".into()),
+            LedgerError::DuplicateMonitor("x".into()),
+            LedgerError::InvalidTransition {
+                assumption_id: "x".into(),
+                from: AssumptionStatus::Active,
+                to: AssumptionStatus::Violated,
+            },
+        ];
+        let set: std::collections::BTreeSet<String> =
+            variants.iter().map(|e| format!("{e}")).collect();
+        assert_eq!(set.len(), variants.len());
+    }
+
+    #[test]
+    fn ledger_error_is_std_error() {
+        let e = LedgerError::DuplicateAssumption("test".into());
+        let _: &dyn std::error::Error = &e;
+    }
 }

@@ -1793,4 +1793,233 @@ mod tests {
         let back: CompilerPolicyEvent = serde_json::from_str(&json).unwrap();
         assert_eq!(event, back);
     }
+
+    // -- Enrichment: SecurityProof proof_type all variants --
+
+    #[test]
+    fn security_proof_proof_type_all_variants() {
+        let pid = make_proof_id("proof-type-test");
+        let epoch = SecurityEpoch::from_raw(1);
+
+        let cap = SecurityProof::CapabilityWitness {
+            proof_id: pid.clone(),
+            capability_name: "net".into(),
+            epoch,
+            validity_window_ticks: 100,
+        };
+        assert_eq!(cap.proof_type(), ProofType::CapabilityWitness);
+        assert_eq!(cap.epoch(), epoch);
+        assert_eq!(cap.validity_window_ticks(), 100);
+
+        let flow = SecurityProof::FlowProof {
+            proof_id: pid.clone(),
+            source_label: Label::Public,
+            sink_clearance: Label::Public,
+            epoch,
+            validity_window_ticks: 200,
+        };
+        assert_eq!(flow.proof_type(), ProofType::FlowProof);
+        assert_eq!(flow.validity_window_ticks(), 200);
+
+        let motif = SecurityProof::ReplayMotif {
+            proof_id: pid,
+            motif_hash: "abc".into(),
+            epoch,
+            validity_window_ticks: 300,
+        };
+        assert_eq!(motif.proof_type(), ProofType::ReplayMotif);
+        assert_eq!(motif.validity_window_ticks(), 300);
+    }
+
+    // -- Enrichment: ProofStore serde roundtrip --
+
+    #[test]
+    fn proof_store_insert_and_get_back() {
+        let mut store = ProofStore::new();
+        let pid = make_proof_id("store-get");
+        store.insert(SecurityProof::CapabilityWitness {
+            proof_id: pid.clone(),
+            capability_name: "fs".into(),
+            epoch: SecurityEpoch::from_raw(1),
+            validity_window_ticks: 100,
+        });
+        assert_eq!(store.len(), 1);
+
+        let retrieved = store.get(&pid).unwrap();
+        assert_eq!(retrieved.proof_id(), &pid);
+        assert_eq!(retrieved.proof_type(), ProofType::CapabilityWitness);
+    }
+
+    // -- Enrichment: ProofStore len and is_empty --
+
+    #[test]
+    fn proof_store_len_and_is_empty() {
+        let mut store = ProofStore::new();
+        assert!(store.is_empty());
+        assert_eq!(store.len(), 0);
+
+        let pid = make_proof_id("len-test");
+        store.insert(SecurityProof::ReplayMotif {
+            proof_id: pid.clone(),
+            motif_hash: "xyz".into(),
+            epoch: SecurityEpoch::from_raw(1),
+            validity_window_ticks: 100,
+        });
+        assert!(!store.is_empty());
+        assert_eq!(store.len(), 1);
+
+        store.remove(&pid);
+        assert!(store.is_empty());
+    }
+
+    // -- Enrichment: CompilerPolicyEngine applied_count and rejected_count --
+
+    #[test]
+    fn engine_applied_and_rejected_counts() {
+        let epoch = SecurityEpoch::from_raw(1);
+        let config = CompilerPolicyConfig::new("policy-count", epoch);
+        let mut engine = CompilerPolicyEngine::new(config);
+
+        let pid = make_proof_id("count-proof");
+        engine.register_proof(SecurityProof::CapabilityWitness {
+            proof_id: pid.clone(),
+            capability_name: "net".into(),
+            epoch,
+            validity_window_ticks: 100,
+        });
+
+        // Applied
+        let region = MarkedRegion {
+            region_id: "r1".into(),
+            optimization_class: OptimizationClass::IfcCheckElision,
+            proof_refs: vec![pid],
+            elided_check_description: "cap check".into(),
+        };
+        engine.evaluate(&region, "t1", 0);
+        assert_eq!(engine.applied_count(), 1);
+        assert_eq!(engine.rejected_count(), 0);
+
+        // Rejected (no proofs)
+        let region2 = MarkedRegion {
+            region_id: "r2".into(),
+            optimization_class: OptimizationClass::IfcCheckElision,
+            proof_refs: vec![],
+            elided_check_description: "cap check".into(),
+        };
+        engine.evaluate(&region2, "t2", 0);
+        assert_eq!(engine.applied_count(), 1);
+        assert_eq!(engine.rejected_count(), 1);
+    }
+
+    // -- Enrichment: MarkedRegion serde roundtrip --
+
+    #[test]
+    fn marked_region_serde_roundtrip() {
+        let pid = make_proof_id("region-serde");
+        let region = MarkedRegion {
+            region_id: "r-42".into(),
+            optimization_class: OptimizationClass::PathElimination,
+            proof_refs: vec![pid],
+            elided_check_description: "flow label check".into(),
+        };
+        let json = serde_json::to_string(&region).unwrap();
+        let back: MarkedRegion = serde_json::from_str(&json).unwrap();
+        assert_eq!(region, back);
+    }
+
+    // -- Enrichment: OptimizationClassPolicy default values --
+
+    #[test]
+    fn optimization_class_policy_default() {
+        let policy = OptimizationClassPolicy::default();
+        assert!(policy.enabled);
+        assert_eq!(policy.min_proof_count, 1);
+        assert!(policy.required_proof_types.is_empty());
+        assert!(!policy.governance_approved);
+    }
+
+    // -- Enrichment: CompilerPolicyEvent with error_code set --
+
+    #[test]
+    fn policy_event_serde_with_error_code() {
+        let event = CompilerPolicyEvent {
+            trace_id: "t".into(),
+            decision_id: "d".into(),
+            policy_id: "p".into(),
+            component: "compiler_policy".into(),
+            event: "specialization_rejected".into(),
+            outcome: "GLOBAL_DISABLE".into(),
+            error_code: Some("GLOBAL_DISABLE".into()),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: CompilerPolicyEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, back);
+        assert_eq!(back.error_code.as_deref(), Some("GLOBAL_DISABLE"));
+    }
+
+    // -- Enrichment: SpecializationOutcome is_applied for all variants --
+
+    #[test]
+    fn specialization_outcome_is_applied_exhaustive() {
+        assert!(SpecializationOutcome::Applied.is_applied());
+        let non_applied = [
+            SpecializationOutcome::RejectedGlobalDisable,
+            SpecializationOutcome::RejectedClassDisabled,
+            SpecializationOutcome::RejectedNoProofs,
+            SpecializationOutcome::RejectedInsufficientProofs,
+            SpecializationOutcome::RejectedMissingRequiredProofTypes,
+            SpecializationOutcome::RejectedProofExpired,
+            SpecializationOutcome::RejectedEpochMismatch,
+            SpecializationOutcome::RejectedProofNotFound,
+            SpecializationOutcome::InvalidatedByEpochChange,
+        ];
+        for outcome in &non_applied {
+            assert!(!outcome.is_applied(), "{:?} should not be applied", outcome);
+        }
+    }
+
+    // -- Enrichment: engine decisions_for_region returns empty for unknown region --
+
+    #[test]
+    fn decisions_for_region_empty_when_no_decisions() {
+        let epoch = SecurityEpoch::from_raw(1);
+        let config = CompilerPolicyConfig::new("policy-empty", epoch);
+        let engine = CompilerPolicyEngine::new(config);
+        assert!(engine.decisions_for_region("nonexistent").is_empty());
+    }
+
+    // -- Enrichment: engine accessors --
+
+    #[test]
+    fn engine_config_and_events_accessors() {
+        let epoch = SecurityEpoch::from_raw(5);
+        let config = CompilerPolicyConfig::new("policy-access", epoch);
+        let engine = CompilerPolicyEngine::new(config);
+
+        assert_eq!(engine.config().current_epoch, epoch);
+        assert_eq!(engine.config().policy_id, "policy-access");
+        assert!(!engine.config().global_disable);
+        assert!(engine.proof_store().is_empty());
+        assert!(engine.decisions().is_empty());
+        assert!(engine.events().is_empty());
+    }
+
+    // -- Enrichment: OptimizationClassPolicy serde roundtrip --
+
+    #[test]
+    fn optimization_class_policy_serde_roundtrip() {
+        let mut required = BTreeSet::new();
+        required.insert(ProofType::CapabilityWitness);
+        required.insert(ProofType::FlowProof);
+
+        let policy = OptimizationClassPolicy {
+            enabled: true,
+            min_proof_count: 2,
+            required_proof_types: required,
+            governance_approved: true,
+        };
+        let json = serde_json::to_string(&policy).unwrap();
+        let back: OptimizationClassPolicy = serde_json::from_str(&json).unwrap();
+        assert_eq!(policy, back);
+    }
 }

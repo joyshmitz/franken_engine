@@ -1441,4 +1441,70 @@ mod tests {
         let d = run_opportunity_matrix_scoring(&req);
         assert_eq!(d.outcome, "fail");
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn opportunity_status_serde_all_variants() {
+        let variants = [
+            OpportunityStatus::Selected,
+            OpportunityStatus::RejectedLowScore,
+            OpportunityStatus::RejectedSecurityClearance,
+            OpportunityStatus::RejectedMissingHotspot,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: OpportunityStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn opportunity_matrix_error_is_std_error() {
+        let e = OpportunityMatrixError::InvalidRequest {
+            field: "f".into(),
+            detail: "d".into(),
+        };
+        let _: &dyn std::error::Error = &e;
+    }
+
+    #[test]
+    fn opportunity_matrix_error_stable_code_distinct() {
+        let codes = [
+            OpportunityMatrixError::InvalidRequest {
+                field: "f".into(),
+                detail: "d".into(),
+            }
+            .stable_code(),
+            OpportunityMatrixError::DuplicateOpportunityId {
+                opportunity_id: "x".into(),
+            }
+            .stable_code(),
+            OpportunityMatrixError::InvalidTimestamp {
+                value: "bad".into(),
+            }
+            .stable_code(),
+        ];
+        let set: std::collections::BTreeSet<&str> = codes.iter().copied().collect();
+        assert_eq!(set.len(), codes.len());
+    }
+
+    #[test]
+    fn opportunity_matrix_error_display_distinct() {
+        let variants: Vec<OpportunityMatrixError> = vec![
+            OpportunityMatrixError::InvalidRequest {
+                field: "x".into(),
+                detail: "y".into(),
+            },
+            OpportunityMatrixError::DuplicateOpportunityId {
+                opportunity_id: "z".into(),
+            },
+            OpportunityMatrixError::InvalidTimestamp {
+                value: "bad".into(),
+            },
+        ];
+        let set: std::collections::BTreeSet<String> =
+            variants.iter().map(|e| format!("{e}")).collect();
+        assert_eq!(set.len(), variants.len());
+    }
 }

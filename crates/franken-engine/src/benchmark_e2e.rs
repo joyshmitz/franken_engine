@@ -1883,4 +1883,62 @@ mod tests {
     }
 
     use std::collections::BTreeSet;
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn scale_profile_as_str_distinct() {
+        let all = [
+            ScaleProfile::Small,
+            ScaleProfile::Medium,
+            ScaleProfile::Large,
+        ];
+        let set: BTreeSet<&str> = all.iter().map(|s| s.as_str()).collect();
+        assert_eq!(set.len(), all.len());
+    }
+
+    #[test]
+    fn scale_profile_extension_count_ordered() {
+        assert!(ScaleProfile::Small.extension_count() < ScaleProfile::Medium.extension_count());
+        assert!(ScaleProfile::Medium.extension_count() < ScaleProfile::Large.extension_count());
+    }
+
+    #[test]
+    fn scale_profile_iterations_ordered() {
+        assert!(ScaleProfile::Small.iterations() < ScaleProfile::Medium.iterations());
+        assert!(ScaleProfile::Medium.iterations() < ScaleProfile::Large.iterations());
+    }
+
+    #[test]
+    fn benchmark_family_as_str_distinct() {
+        let set: BTreeSet<&str> = BenchmarkFamily::all().iter().map(|f| f.as_str()).collect();
+        assert_eq!(set.len(), BenchmarkFamily::all().len());
+    }
+
+    #[test]
+    fn benchmark_family_default_weight_all_positive() {
+        for f in BenchmarkFamily::all() {
+            assert!(f.default_weight() > 0.0, "{:?} has non-positive weight", f);
+        }
+    }
+
+    #[test]
+    fn benchmark_family_debug_distinct() {
+        let set: BTreeSet<String> = BenchmarkFamily::all()
+            .iter()
+            .map(|f| format!("{f:?}"))
+            .collect();
+        assert_eq!(set.len(), BenchmarkFamily::all().len());
+    }
+
+    #[test]
+    fn scale_profile_debug_distinct() {
+        let all = [
+            ScaleProfile::Small,
+            ScaleProfile::Medium,
+            ScaleProfile::Large,
+        ];
+        let set: BTreeSet<String> = all.iter().map(|s| format!("{s:?}")).collect();
+        assert_eq!(set.len(), all.len());
+    }
 }

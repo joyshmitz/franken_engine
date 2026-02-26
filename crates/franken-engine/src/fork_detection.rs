@@ -2961,4 +2961,548 @@ mod tests {
             );
         }
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn duplicate_checkpoint_same_seq_same_id_is_not_fork() {
+        let sk = make_sk(1);
+        let genesis = build_genesis(std::slice::from_ref(&sk), "zone-a");
+        let cp1 = build_after(
+            &genesis,
+            1,
+            SecurityEpoch::GENESIS,
+            200,
+            std::slice::from_ref(&sk),
+            "zone-a",
+        );
+
+        let mut detector = ForkDetector::with_defaults();
+        detector
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-a",
+                checkpoint: &genesis,
+                accepted: true,
+                frontier_seq: 0,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 100,
+                trace_id: "t-0",
+            })
+            .unwrap();
+        detector
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-a",
+                checkpoint: &cp1,
+                accepted: true,
+                frontier_seq: 1,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 200,
+                trace_id: "t-1",
+            })
+            .unwrap();
+
+        // Re-record the same checkpoint — should succeed (duplicate, not fork).
+        detector
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-a",
+                checkpoint: &cp1,
+                accepted: true,
+                frontier_seq: 1,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 250,
+                trace_id: "t-1-dup",
+            })
+            .unwrap();
+
+        assert!(!detector.is_safe_mode("zone-a"));
+    }
+
+    #[test]
+    fn multiple_fork_incidents_in_same_zone() {
+        let sk = make_sk(1);
+        let genesis = build_genesis(std::slice::from_ref(&sk), "zone-a");
+        let cp1 = build_after(
+            &genesis,
+            1,
+            SecurityEpoch::GENESIS,
+            200,
+            std::slice::from_ref(&sk),
+            "zone-a",
+        );
+        let cp2 = build_after(
+            &cp1,
+            2,
+            SecurityEpoch::GENESIS,
+            300,
+            std::slice::from_ref(&sk),
+            "zone-a",
+        );
+        let cp1_fork = build_divergent_at_seq(
+            &genesis,
+            1,
+            SecurityEpoch::GENESIS,
+            250,
+            std::slice::from_ref(&sk),
+            "zone-a",
+            100,
+        );
+        let cp2_fork = build_divergent_at_seq(
+            &cp1,
+            2,
+            SecurityEpoch::GENESIS,
+            350,
+            std::slice::from_ref(&sk),
+            "zone-a",
+            200,
+        );
+
+        let mut detector = ForkDetector::with_defaults();
+        detector
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-a",
+                checkpoint: &genesis,
+                accepted: true,
+                frontier_seq: 0,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 100,
+                trace_id: "t-0",
+            })
+            .unwrap();
+        detector
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-a",
+                checkpoint: &cp1,
+                accepted: true,
+                frontier_seq: 1,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 200,
+                trace_id: "t-1",
+            })
+            .unwrap();
+        detector
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-a",
+                checkpoint: &cp2,
+                accepted: true,
+                frontier_seq: 2,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 300,
+                trace_id: "t-2",
+            })
+            .unwrap();
+
+        // First fork at seq=1.
+        let r1 = detector
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-a",
+                checkpoint: &cp1_fork,
+                accepted: false,
+                frontier_seq: 1,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 350,
+                trace_id: "t-fork1",
+            })
+            .unwrap_err();
+        assert_eq!(r1.fork_seq, 1);
+
+        // Second fork at seq=2.
+        let r2 = detector
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-a",
+                checkpoint: &cp2_fork,
+                accepted: false,
+                frontier_seq: 2,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 400,
+                trace_id: "t-fork2",
+            })
+            .unwrap_err();
+        assert_eq!(r2.fork_seq, 2);
+
+        assert_eq!(detector.incidents("zone-a").len(), 2);
+        assert_eq!(detector.unacknowledged_incidents("zone-a").len(), 2);
+        let sm = detector.safe_mode_state("zone-a").unwrap();
+        assert_eq!(sm.unacknowledged_count, 2);
+    }
+
+    #[test]
+    fn acknowledge_already_acknowledged_incident_returns_false() {
+        let sk = make_sk(1);
+        let genesis = build_genesis(std::slice::from_ref(&sk), "zone-a");
+        let cp1 = build_after(
+            &genesis,
+            1,
+            SecurityEpoch::GENESIS,
+            200,
+            std::slice::from_ref(&sk),
+            "zone-a",
+        );
+        let cp1_fork = build_divergent_at_seq(
+            &genesis,
+            1,
+            SecurityEpoch::GENESIS,
+            250,
+            &[sk],
+            "zone-a",
+            100,
+        );
+
+        let mut detector = ForkDetector::with_defaults();
+        detector
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-a",
+                checkpoint: &genesis,
+                accepted: true,
+                frontier_seq: 0,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 100,
+                trace_id: "t-0",
+            })
+            .unwrap();
+        detector
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-a",
+                checkpoint: &cp1,
+                accepted: true,
+                frontier_seq: 1,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 200,
+                trace_id: "t-1",
+            })
+            .unwrap();
+        let report = detector
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-a",
+                checkpoint: &cp1_fork,
+                accepted: false,
+                frontier_seq: 1,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 250,
+                trace_id: "t-fork",
+            })
+            .unwrap_err();
+
+        // First acknowledgment succeeds.
+        assert!(detector.acknowledge_incident("zone-a", &report.incident_id));
+        // Second acknowledgment fails (already acknowledged).
+        assert!(!detector.acknowledge_incident("zone-a", &report.incident_id));
+    }
+
+    #[test]
+    fn drain_events_clears_event_buffer() {
+        let sk = make_sk(1);
+        let genesis = build_genesis(std::slice::from_ref(&sk), "zone-a");
+
+        let mut detector = ForkDetector::with_defaults();
+        detector
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-a",
+                checkpoint: &genesis,
+                accepted: true,
+                frontier_seq: 0,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 100,
+                trace_id: "t-0",
+            })
+            .unwrap();
+
+        let events = detector.drain_events();
+        assert!(!events.is_empty());
+        // After drain, should be empty.
+        assert!(detector.drain_events().is_empty());
+    }
+
+    #[test]
+    fn exit_safe_mode_emits_safe_mode_exited_event() {
+        let sk = make_sk(1);
+        let genesis = build_genesis(std::slice::from_ref(&sk), "zone-a");
+        let cp1 = build_after(
+            &genesis,
+            1,
+            SecurityEpoch::GENESIS,
+            200,
+            std::slice::from_ref(&sk),
+            "zone-a",
+        );
+        let cp1_fork = build_divergent_at_seq(
+            &genesis,
+            1,
+            SecurityEpoch::GENESIS,
+            250,
+            &[sk],
+            "zone-a",
+            100,
+        );
+
+        let mut detector = ForkDetector::with_defaults();
+        detector
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-a",
+                checkpoint: &genesis,
+                accepted: true,
+                frontier_seq: 0,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 100,
+                trace_id: "t-0",
+            })
+            .unwrap();
+        detector
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-a",
+                checkpoint: &cp1,
+                accepted: true,
+                frontier_seq: 1,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 200,
+                trace_id: "t-1",
+            })
+            .unwrap();
+        let report = detector
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-a",
+                checkpoint: &cp1_fork,
+                accepted: false,
+                frontier_seq: 1,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 250,
+                trace_id: "t-fork",
+            })
+            .unwrap_err();
+
+        // Clear prior events, acknowledge, and exit.
+        detector.drain_events();
+        detector.acknowledge_incident("zone-a", &report.incident_id);
+        detector.exit_safe_mode("zone-a", "t-exit").unwrap();
+
+        let counts = detector.event_counts();
+        assert_eq!(counts.get("safe_mode_exited"), Some(&1));
+    }
+
+    #[test]
+    fn history_returns_populated_map_after_checkpoints() {
+        let sk = make_sk(1);
+        let genesis = build_genesis(std::slice::from_ref(&sk), "zone-a");
+        let cp1 = build_after(
+            &genesis,
+            1,
+            SecurityEpoch::GENESIS,
+            200,
+            std::slice::from_ref(&sk),
+            "zone-a",
+        );
+
+        let mut detector = ForkDetector::with_defaults();
+        detector
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-a",
+                checkpoint: &genesis,
+                accepted: true,
+                frontier_seq: 0,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 100,
+                trace_id: "t-0",
+            })
+            .unwrap();
+        detector
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-a",
+                checkpoint: &cp1,
+                accepted: true,
+                frontier_seq: 1,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 200,
+                trace_id: "t-1",
+            })
+            .unwrap();
+
+        let hist = detector.history("zone-a").unwrap();
+        assert_eq!(hist.len(), 2);
+        assert!(hist.contains_key(&0));
+        assert!(hist.contains_key(&1));
+        assert!(hist[&0].accepted);
+        assert!(hist[&1].accepted);
+        assert_eq!(hist[&1].checkpoint_id, cp1.checkpoint_id);
+    }
+
+    #[test]
+    fn startup_rejects_empty_policy_id() {
+        let input = SafeModeStartupInput {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: String::new(),
+            cli_safe_mode: false,
+            environment: BTreeMap::new(),
+        };
+        let err = evaluate_safe_mode_startup(&input).unwrap_err();
+        assert!(matches!(
+            err,
+            SafeModeStartupError::MissingField { ref field } if field == "policy_id"
+        ));
+    }
+
+    #[test]
+    fn safe_mode_startup_artifact_serde_roundtrip() {
+        let input = SafeModeStartupInput {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            cli_safe_mode: true,
+            environment: BTreeMap::new(),
+        };
+        let artifact = evaluate_safe_mode_startup(&input).unwrap();
+        let json = serde_json::to_string(&artifact).unwrap();
+        let back: SafeModeStartupArtifact = serde_json::from_str(&json).unwrap();
+        assert_eq!(artifact, back);
+    }
+
+    #[test]
+    fn safe_mode_exit_check_artifact_serde_roundtrip() {
+        let input = SafeModeExitCheckInput {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            active_incidents: 1,
+            pending_quarantines: 0,
+            evidence_ledger_flushed: false,
+        };
+        let artifact = evaluate_safe_mode_exit(&input).unwrap();
+        let json = serde_json::to_string(&artifact).unwrap();
+        let back: SafeModeExitCheckArtifact = serde_json::from_str(&json).unwrap();
+        assert_eq!(artifact, back);
+    }
+
+    #[test]
+    fn safe_mode_startup_event_serde_roundtrip() {
+        let event = SafeModeStartupEvent {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            component: "safe_mode_startup".to_string(),
+            event: "test_event".to_string(),
+            outcome: "pass".to_string(),
+            error_code: Some("FE-TEST".to_string()),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: SafeModeStartupEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, back);
+    }
+
+    #[test]
+    fn safe_mode_startup_input_serde_roundtrip() {
+        let mut env = BTreeMap::new();
+        env.insert("FRANKEN_SAFE_MODE".to_string(), "1".to_string());
+        let input = SafeModeStartupInput {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            cli_safe_mode: true,
+            environment: env,
+        };
+        let json = serde_json::to_string(&input).unwrap();
+        let back: SafeModeStartupInput = serde_json::from_str(&json).unwrap();
+        assert_eq!(input, back);
+    }
+
+    #[test]
+    fn safe_mode_exit_check_input_serde_roundtrip() {
+        let input = SafeModeExitCheckInput {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            active_incidents: 3,
+            pending_quarantines: 1,
+            evidence_ledger_flushed: false,
+        };
+        let json = serde_json::to_string(&input).unwrap();
+        let back: SafeModeExitCheckInput = serde_json::from_str(&json).unwrap();
+        assert_eq!(input, back);
+    }
+
+    #[test]
+    fn safe_mode_startup_artifact_normal_mode_has_expected_fields() {
+        let input = SafeModeStartupInput {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            cli_safe_mode: false,
+            environment: BTreeMap::new(),
+        };
+        let artifact = evaluate_safe_mode_startup(&input).unwrap();
+        assert!(artifact.evidence_preserved);
+        assert!(artifact.logs_preserved);
+        assert!(artifact.state_preserved);
+        assert!(!artifact.exit_procedure.is_empty());
+        assert_eq!(artifact.events.len(), 2);
+        assert!(artifact.events[1].error_code.is_none());
+    }
+
+    #[test]
+    fn history_trimming_emits_event() {
+        let sk = make_sk(1);
+        let genesis = build_genesis(std::slice::from_ref(&sk), "zone-a");
+
+        let mut detector = ForkDetector::new(3);
+        detector
+            .record_checkpoint(&RecordCheckpointInput {
+                zone: "zone-a",
+                checkpoint: &genesis,
+                accepted: true,
+                frontier_seq: 0,
+                frontier_epoch: SecurityEpoch::GENESIS,
+                tick: 100,
+                trace_id: "t-0",
+            })
+            .unwrap();
+
+        let mut prev = genesis;
+        for i in 1..=5u64 {
+            let cp = build_after(
+                &prev,
+                i,
+                SecurityEpoch::GENESIS,
+                100 + i * 100,
+                std::slice::from_ref(&sk),
+                "zone-a",
+            );
+            detector
+                .record_checkpoint(&RecordCheckpointInput {
+                    zone: "zone-a",
+                    checkpoint: &cp,
+                    accepted: true,
+                    frontier_seq: i,
+                    frontier_epoch: SecurityEpoch::GENESIS,
+                    tick: 100 + i * 100,
+                    trace_id: &format!("t-{i}"),
+                })
+                .unwrap();
+            prev = cp;
+        }
+
+        let counts = detector.event_counts();
+        assert!(
+            counts.get("history_trimmed").unwrap_or(&0) > &0,
+            "should have trimmed history events"
+        );
+        assert!(detector.history_size("zone-a") <= 3);
+    }
+
+    #[test]
+    fn exit_blocked_by_quarantines() {
+        let input = SafeModeExitCheckInput {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            active_incidents: 0,
+            pending_quarantines: 5,
+            evidence_ledger_flushed: true,
+        };
+        let artifact = evaluate_safe_mode_exit(&input).unwrap();
+        assert!(!artifact.can_exit);
+        assert!(
+            artifact
+                .blocking_reasons
+                .iter()
+                .any(|r| r.contains("quarantine"))
+        );
+    }
 }

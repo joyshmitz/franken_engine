@@ -1714,4 +1714,158 @@ mod tests {
             assert_eq!(entry.sequence, i);
         }
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn governance_decision_type_display_all_distinct() {
+        let variants = [
+            GovernanceDecisionType::Promote,
+            GovernanceDecisionType::Hold,
+            GovernanceDecisionType::Kill,
+            GovernanceDecisionType::Pause,
+            GovernanceDecisionType::Resume,
+            GovernanceDecisionType::Override,
+        ];
+        let mut set = std::collections::BTreeSet::new();
+        for v in &variants {
+            set.insert(v.to_string());
+        }
+        assert_eq!(set.len(), variants.len());
+    }
+
+    #[test]
+    fn scorecard_snapshot_serde_roundtrip() {
+        let snap = ScorecardSnapshot {
+            ev_millionths: -500_000,
+            confidence_millionths: 800_000,
+            risk_of_harm_millionths: 100_000,
+            implementation_friction_millionths: 200_000,
+            cross_initiative_interference_millionths: 50_000,
+            operational_burden_millionths: 75_000,
+        };
+        let json = serde_json::to_string(&snap).unwrap();
+        let back: ScorecardSnapshot = serde_json::from_str(&json).unwrap();
+        assert_eq!(snap, back);
+    }
+
+    #[test]
+    fn governance_ledger_config_default_serde_stable() {
+        let config = GovernanceLedgerConfig::default();
+        let json = serde_json::to_string(&config).unwrap();
+        let back: GovernanceLedgerConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config, back);
+    }
+
+    #[test]
+    fn governance_ledger_query_serde_roundtrip() {
+        let mut types = BTreeSet::new();
+        types.insert(GovernanceDecisionType::Kill);
+        types.insert(GovernanceDecisionType::Override);
+        let query = GovernanceLedgerQuery {
+            moonshot_id: Some("moon-1".into()),
+            decision_types: Some(types),
+            actor_id: Some("admin".into()),
+            start_time_ns: Some(100),
+            end_time_ns: Some(900),
+            override_only: Some(true),
+        };
+        let json = serde_json::to_string(&query).unwrap();
+        let back: GovernanceLedgerQuery = serde_json::from_str(&json).unwrap();
+        assert_eq!(query, back);
+    }
+
+    #[test]
+    fn governance_report_serde_roundtrip() {
+        let report = GovernanceReport {
+            total_decisions: 10,
+            override_count: 2,
+            kill_count: 1,
+            override_frequency_millionths: 200_000,
+            kill_rate_millionths: 100_000,
+            mean_time_to_decision_ns: Some(5_000_000),
+            portfolio_health_trend: vec![PortfolioHealthPoint {
+                window_start_ns: 0,
+                window_end_ns: 1000,
+                decision_count: 3,
+                promote_count: 2,
+                hold_count: 0,
+                kill_count: 1,
+                override_count: 0,
+                avg_confidence_millionths: 750_000,
+                avg_risk_millionths: 150_000,
+            }],
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        let back: GovernanceReport = serde_json::from_str(&json).unwrap();
+        assert_eq!(report, back);
+    }
+
+    #[test]
+    fn portfolio_health_point_serde_roundtrip() {
+        let point = PortfolioHealthPoint {
+            window_start_ns: 100,
+            window_end_ns: 200,
+            decision_count: 5,
+            promote_count: 3,
+            hold_count: 1,
+            kill_count: 1,
+            override_count: 0,
+            avg_confidence_millionths: 900_000,
+            avg_risk_millionths: 50_000,
+        };
+        let json = serde_json::to_string(&point).unwrap();
+        let back: PortfolioHealthPoint = serde_json::from_str(&json).unwrap();
+        assert_eq!(point, back);
+    }
+
+    #[test]
+    fn governance_ledger_checkpoint_serde_roundtrip() {
+        let cp = GovernanceLedgerCheckpoint {
+            checkpoint_id: "cp-1".into(),
+            sequence: 64,
+            entry_count: 64,
+            head_hash: "abc123".into(),
+            timestamp_ns: 9999,
+            signature: "sig".into(),
+        };
+        let json = serde_json::to_string(&cp).unwrap();
+        let back: GovernanceLedgerCheckpoint = serde_json::from_str(&json).unwrap();
+        assert_eq!(cp, back);
+    }
+
+    #[test]
+    fn governance_log_event_serde_roundtrip() {
+        let event = GovernanceLogEvent {
+            trace_id: "t-1".into(),
+            decision_id: "d-1".into(),
+            policy_id: "pol".into(),
+            component: "ledger".into(),
+            event: "append".into(),
+            outcome: "ok".into(),
+            error_code: None,
+            timestamp_ns: 42,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: GovernanceLogEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, back);
+    }
+
+    #[test]
+    fn governance_ledger_error_is_std_error() {
+        let err = GovernanceLedgerError::EmptyLedger;
+        let boxed: Box<dyn std::error::Error> = Box::new(err);
+        assert!(!boxed.to_string().is_empty());
+    }
+
+    #[test]
+    fn governance_ledger_query_all_returns_none_filters() {
+        let q = GovernanceLedgerQuery::all();
+        assert!(q.moonshot_id.is_none());
+        assert!(q.decision_types.is_none());
+        assert!(q.actor_id.is_none());
+        assert!(q.start_time_ns.is_none());
+        assert!(q.end_time_ns.is_none());
+        assert!(q.override_only.is_none());
+    }
 }

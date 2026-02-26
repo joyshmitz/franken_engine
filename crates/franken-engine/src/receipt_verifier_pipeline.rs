@@ -1973,4 +1973,222 @@ mod tests {
             Some(VerificationFailureClass::Signature)
         );
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn signer_revocation_cache_serde_roundtrip() {
+        let cache = SignerRevocationCache {
+            signer_key_id: EngineObjectId([0xAA; 32]),
+            source: "offline-ledger".to_string(),
+            is_revoked: false,
+            cache_stale: true,
+        };
+        let json = serde_json::to_string(&cache).unwrap();
+        let back: SignerRevocationCache = serde_json::from_str(&json).unwrap();
+        assert_eq!(cache, back);
+    }
+
+    #[test]
+    fn log_operator_key_serde_roundtrip() {
+        let key = LogOperatorKey {
+            key_id: "op-key-1".to_string(),
+            verification_key: SigningKey::from_bytes([3u8; 32]).verification_key(),
+            revoked: false,
+        };
+        let json = serde_json::to_string(&key).unwrap();
+        let back: LogOperatorKey = serde_json::from_str(&json).unwrap();
+        assert_eq!(key, back);
+    }
+
+    #[test]
+    fn signed_log_checkpoint_serde_roundtrip() {
+        let checkpoint = SignedLogCheckpoint {
+            checkpoint_seq: 42,
+            log_length: 100,
+            root_hash: ContentHash::compute(b"root"),
+            timestamp_ns: 5_000_000_000,
+            operator_key_id: "op-1".to_string(),
+            signature: Signature::from_bytes([0u8; 64]),
+        };
+        let json = serde_json::to_string(&checkpoint).unwrap();
+        let back: SignedLogCheckpoint = serde_json::from_str(&json).unwrap();
+        assert_eq!(checkpoint, back);
+    }
+
+    #[test]
+    fn consistency_proof_input_serde_roundtrip() {
+        let mut mmr = MerkleMountainRange::new(5);
+        mmr.append(ContentHash::compute(b"a"));
+        mmr.append(ContentHash::compute(b"b"));
+        let proof = mmr.consistency_proof(1).expect("consistency proof");
+        let input = ConsistencyProofInput {
+            from_root: ContentHash::compute(b"old-root"),
+            proof,
+        };
+        let json = serde_json::to_string(&input).unwrap();
+        let back: ConsistencyProofInput = serde_json::from_str(&json).unwrap();
+        assert_eq!(input, back);
+    }
+
+    #[test]
+    fn signature_layer_input_serde_roundtrip() {
+        let input = SignatureLayerInput {
+            expected_preimage_hash: ContentHash::compute(b"preimage"),
+            signing_key_bytes: vec![0x55; 32],
+            signer_revocation: SignerRevocationCache {
+                signer_key_id: EngineObjectId([0x44; 32]),
+                source: "offline".to_string(),
+                is_revoked: false,
+                cache_stale: false,
+            },
+        };
+        let json = serde_json::to_string(&input).unwrap();
+        let back: SignatureLayerInput = serde_json::from_str(&json).unwrap();
+        assert_eq!(input, back);
+    }
+
+    #[test]
+    fn receipt_verifier_cli_input_default_is_empty() {
+        let input = ReceiptVerifierCliInput::default();
+        assert!(input.receipts.is_empty());
+    }
+
+    #[test]
+    fn transparency_failure_takes_priority_over_attestation() {
+        let (receipt_id, mut request) = build_valid_fixture();
+        // Break transparency
+        request.transparency.leaf_hash = ContentHash::compute(b"tampered");
+        // Break attestation
+        request.attestation.policy_quote.quote_age_secs = 999_999;
+        let verdict = verify_receipt_request(&receipt_id, &request);
+        assert_eq!(
+            verdict.failure_class,
+            Some(VerificationFailureClass::Transparency)
+        );
+    }
+
+    #[test]
+    fn attestation_failure_takes_priority_over_stale() {
+        let (receipt_id, mut request) = build_valid_fixture();
+        // Break attestation
+        request.attestation.policy_quote.quote_age_secs = 999_999;
+        // Set stale caches
+        request.signature.signer_revocation.cache_stale = true;
+        request.transparency.cache_stale = true;
+        let verdict = verify_receipt_request(&receipt_id, &request);
+        assert_eq!(
+            verdict.failure_class,
+            Some(VerificationFailureClass::Attestation)
+        );
+    }
+
+    #[test]
+    fn layer_result_fail_then_pass_remains_failed() {
+        let mut r = LayerResult::pass();
+        r.record_fail("c1", "err-1", "failed first");
+        r.record_pass("c2", "passed second");
+        assert!(!r.passed);
+        assert_eq!(r.error_code.as_deref(), Some("err-1"));
+        assert_eq!(r.checks.len(), 2);
+        assert_eq!(r.checks[1].outcome, "pass");
+    }
+
+    #[test]
+    fn checkpoint_preimage_includes_domain_separator() {
+        let checkpoint = SignedLogCheckpoint {
+            checkpoint_seq: 1,
+            log_length: 10,
+            root_hash: ContentHash::compute(b"root"),
+            timestamp_ns: 1000,
+            operator_key_id: "op-1".to_string(),
+            signature: Signature::from_bytes([0u8; 64]),
+        };
+        let preimage = checkpoint_preimage(&checkpoint);
+        assert!(preimage.starts_with(CHECKPOINT_SIGNATURE_DOMAIN));
+    }
+
+    #[test]
+    fn render_verdict_summary_stale_data() {
+        let (receipt_id, mut request) = build_valid_fixture();
+        request.attestation.revocation_cache_stale = true;
+        let verdict = verify_receipt_request(&receipt_id, &request);
+        let summary = render_verdict_summary(&verdict);
+        assert!(summary.contains("passed=false"));
+        assert!(summary.contains("failure_class=stale_data"));
+        assert!(summary.contains("warnings=1"));
+    }
+
+    #[test]
+    fn verification_failure_class_display_matches_serde_key() {
+        let variants = [
+            VerificationFailureClass::Signature,
+            VerificationFailureClass::Transparency,
+            VerificationFailureClass::Attestation,
+            VerificationFailureClass::StaleData,
+        ];
+        for variant in &variants {
+            let display = variant.to_string();
+            let json = serde_json::to_string(variant).unwrap();
+            // serde JSON wraps in quotes: "signature"
+            let serde_key = json.trim_matches('"');
+            assert_eq!(display, serde_key);
+        }
+    }
+
+    #[test]
+    fn verdict_always_has_four_log_entries() {
+        // Passing case: 3 layer logs + 1 completion
+        let (receipt_id, request) = build_valid_fixture();
+        let verdict = verify_receipt_request(&receipt_id, &request);
+        assert_eq!(verdict.logs.len(), 4);
+
+        // Failing case: still 4 log entries
+        let (receipt_id, mut request) = build_valid_fixture();
+        request.signature.signing_key_bytes = vec![1u8; 32];
+        let verdict = verify_receipt_request(&receipt_id, &request);
+        assert_eq!(verdict.logs.len(), 4);
+    }
+
+    #[test]
+    fn layer_check_with_error_code_serde_roundtrip() {
+        let check = LayerCheck {
+            check: "some_check".to_string(),
+            outcome: "fail".to_string(),
+            error_code: Some("some_error_code".to_string()),
+            detail: "a detail message".to_string(),
+        };
+        let json = serde_json::to_string(&check).unwrap();
+        let back: LayerCheck = serde_json::from_str(&json).unwrap();
+        assert_eq!(check, back);
+    }
+
+    #[test]
+    fn checkpoint_preimage_sensitive_to_all_fields() {
+        let base = SignedLogCheckpoint {
+            checkpoint_seq: 1,
+            log_length: 10,
+            root_hash: ContentHash::compute(b"root"),
+            timestamp_ns: 1000,
+            operator_key_id: "op-1".to_string(),
+            signature: Signature::from_bytes([0u8; 64]),
+        };
+        let base_preimage = checkpoint_preimage(&base);
+
+        let mut m = base.clone();
+        m.log_length = 11;
+        assert_ne!(checkpoint_preimage(&m), base_preimage);
+
+        let mut m = base.clone();
+        m.root_hash = ContentHash::compute(b"other");
+        assert_ne!(checkpoint_preimage(&m), base_preimage);
+
+        let mut m = base.clone();
+        m.timestamp_ns = 2000;
+        assert_ne!(checkpoint_preimage(&m), base_preimage);
+
+        let mut m = base.clone();
+        m.operator_key_id = "op-2".to_string();
+        assert_ne!(checkpoint_preimage(&m), base_preimage);
+    }
 }

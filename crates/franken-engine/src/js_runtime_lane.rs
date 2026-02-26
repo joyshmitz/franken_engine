@@ -1813,4 +1813,115 @@ mod tests {
         // Source should have no dependents
         assert!(lane.signal_graph.get(s).unwrap().dependents.is_empty());
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn signal_kind_serde_roundtrip() {
+        let variants = [SignalKind::Source, SignalKind::Derived, SignalKind::Effect];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: SignalKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn signal_status_serde_roundtrip() {
+        let variants = [
+            SignalStatus::Clean,
+            SignalStatus::Dirty,
+            SignalStatus::Evaluating,
+            SignalStatus::Disposed,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: SignalStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn update_priority_serde_roundtrip() {
+        let variants = [
+            UpdatePriority::Sync,
+            UpdatePriority::UserBlocking,
+            UpdatePriority::Normal,
+            UpdatePriority::Low,
+            UpdatePriority::Idle,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: UpdatePriority = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn event_type_serde_roundtrip() {
+        let variants = [
+            EventType::Click,
+            EventType::Input,
+            EventType::Change,
+            EventType::Submit,
+            EventType::Focus,
+            EventType::Blur,
+            EventType::KeyDown,
+            EventType::KeyUp,
+            EventType::MouseEnter,
+            EventType::MouseLeave,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: EventType = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn lane_state_serde_roundtrip() {
+        let variants = [
+            LaneState::Ready,
+            LaneState::Processing,
+            LaneState::Suspended,
+            LaneState::Shutdown,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: LaneState = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn signal_graph_error_serde_roundtrip() {
+        let variants = vec![
+            SignalGraphError::NotFound(SignalId(99)),
+            SignalGraphError::CycleDetected {
+                signal: SignalId(1),
+                path: vec![SignalId(1), SignalId(2)],
+            },
+            SignalGraphError::Disposed(SignalId(3)),
+            SignalGraphError::DuplicateSignal(SignalId(4)),
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: SignalGraphError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn dom_patch_error_serde_roundtrip() {
+        let variants = vec![
+            DomPatchError::ElementNotFound(DomElementId(1)),
+            DomPatchError::ElementAlreadyExists(DomElementId(2)),
+            DomPatchError::ParentNotFound(DomElementId(3)),
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: DomPatchError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
 }

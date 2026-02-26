@@ -3462,4 +3462,205 @@ mod tests {
             back.get(&SlotId::new("parser").unwrap()).unwrap().kind,
         );
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn slot_id_rejects_underscore_chars() {
+        assert!(matches!(
+            SlotId::new("my_parser"),
+            Err(SlotRegistryError::InvalidSlotId { .. })
+        ));
+    }
+
+    #[test]
+    fn slot_id_rejects_space_chars() {
+        assert!(matches!(
+            SlotId::new("my parser"),
+            Err(SlotRegistryError::InvalidSlotId { .. })
+        ));
+    }
+
+    #[test]
+    fn native_coverage_empty_registry_returns_zero() {
+        let reg = SlotRegistry::new();
+        assert_eq!(reg.native_coverage(), 0.0);
+    }
+
+    #[test]
+    fn native_coverage_all_delegates_returns_zero() {
+        let mut reg = SlotRegistry::new();
+        register_slot(&mut reg, "parser", SlotKind::Parser, "d1");
+        register_slot(&mut reg, "interpreter", SlotKind::Interpreter, "d2");
+        assert_eq!(reg.native_coverage(), 0.0);
+        assert_eq!(reg.native_count(), 0);
+        assert_eq!(reg.delegate_count(), 2);
+    }
+
+    #[test]
+    fn native_coverage_all_native_returns_one() {
+        let mut reg = SlotRegistry::new();
+        let id = SlotId::new("parser").unwrap();
+        reg.register_delegate(
+            id.clone(),
+            SlotKind::Parser,
+            test_authority(),
+            "sha256:d1".into(),
+            "t0".into(),
+        )
+        .unwrap();
+        reg.begin_candidacy(&id, "sha256:candidate-1".into(), "t1".into())
+            .unwrap();
+        reg.promote(
+            &id,
+            "sha256:native-1".into(),
+            &test_authority(),
+            "receipt-1".into(),
+            "t2".into(),
+        )
+        .unwrap();
+        assert_eq!(reg.native_coverage(), 1.0);
+    }
+
+    #[test]
+    fn authority_subsumes_partial_overlap_fails() {
+        let broad = AuthorityEnvelope {
+            required: vec![SlotCapability::ReadSource],
+            permitted: vec![SlotCapability::ReadSource, SlotCapability::EmitIr],
+        };
+        let mixed = AuthorityEnvelope {
+            required: vec![SlotCapability::ReadSource],
+            permitted: vec![
+                SlotCapability::ReadSource,
+                SlotCapability::EmitIr,
+                SlotCapability::HeapAlloc,
+            ],
+        };
+        // broad does not subsume mixed because HeapAlloc not in broad.permitted
+        assert!(!broad.subsumes(&mixed));
+    }
+
+    #[test]
+    fn ga_release_guard_input_serde_roundtrip() {
+        let input = GaReleaseGuardInput {
+            trace_id: "trace-ga-1".to_string(),
+            decision_id: "decision-ga-1".to_string(),
+            policy_id: "policy-ga-1".to_string(),
+            current_epoch: SecurityEpoch::from_raw(5),
+            config: GaReleaseGuardConfig::default(),
+            exemptions: Vec::new(),
+            lineage_artifacts: Vec::new(),
+            remediation_estimates: BTreeMap::new(),
+        };
+        let json = serde_json::to_string(&input).unwrap();
+        let back: GaReleaseGuardInput = serde_json::from_str(&json).unwrap();
+        assert_eq!(input.trace_id, back.trace_id);
+        assert_eq!(input.decision_id, back.decision_id);
+        assert_eq!(input.current_epoch, back.current_epoch);
+    }
+
+    #[test]
+    fn slot_kind_variants_are_distinct() {
+        assert_ne!(SlotKind::Parser, SlotKind::Interpreter);
+        assert_ne!(SlotKind::Interpreter, SlotKind::Builtins);
+        assert_ne!(SlotKind::Parser, SlotKind::GarbageCollector);
+    }
+
+    #[test]
+    fn slot_capability_variants_are_distinct() {
+        assert_ne!(SlotCapability::ReadSource, SlotCapability::EmitIr);
+        assert_ne!(SlotCapability::EmitIr, SlotCapability::HeapAlloc);
+        assert_ne!(SlotCapability::TriggerGc, SlotCapability::EmitEvidence);
+    }
+
+    #[test]
+    fn slot_entry_serde_preserves_lineage() {
+        let mut reg = SlotRegistry::new();
+        let id = SlotId::new("parser").unwrap();
+        reg.register_delegate(
+            id.clone(),
+            SlotKind::Parser,
+            test_authority(),
+            "sha256:d1".into(),
+            "t0".into(),
+        )
+        .unwrap();
+        reg.begin_candidacy(&id, "sha256:c1".into(), "t1".into())
+            .unwrap();
+        let entry = reg.get(&id).unwrap();
+        assert_eq!(entry.promotion_lineage.len(), 2);
+        let json = serde_json::to_string(entry).unwrap();
+        let back: SlotEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.promotion_lineage.len(), 2);
+        assert_eq!(
+            back.promotion_lineage[0].transition,
+            PromotionTransition::RegisteredDelegate
+        );
+        assert_eq!(
+            back.promotion_lineage[1].transition,
+            PromotionTransition::EnteredCandidacy
+        );
+    }
+
+    #[test]
+    fn registry_len_and_is_empty() {
+        let mut reg = SlotRegistry::new();
+        assert!(reg.is_empty());
+        assert_eq!(reg.len(), 0);
+        register_slot(&mut reg, "parser", SlotKind::Parser, "d1");
+        assert!(!reg.is_empty());
+        assert_eq!(reg.len(), 1);
+    }
+
+    #[test]
+    fn replacement_signal_validate_rejects_zero_weight() {
+        let signal = SlotReplacementSignal {
+            invocation_weight_millionths: 0,
+            throughput_uplift_millionths: 100_000,
+            security_risk_reduction_millionths: 50_000,
+        };
+        let slot_id = SlotId::new("parser").unwrap();
+        let err = signal.validate(&slot_id).unwrap_err();
+        assert!(matches!(
+            err,
+            ReplacementProgressError::InvalidSignal { .. }
+        ));
+    }
+
+    #[test]
+    fn slot_registry_default_is_empty() {
+        let reg = SlotRegistry::default();
+        assert!(reg.is_empty());
+        assert_eq!(reg.len(), 0);
+    }
+
+    #[test]
+    fn slot_id_serde_preserves_value() {
+        let id = SlotId::new("ir-lowering").unwrap();
+        let json = serde_json::to_string(&id).unwrap();
+        assert_eq!(json, "\"ir-lowering\"");
+        let back: SlotId = serde_json::from_str(&json).unwrap();
+        assert_eq!(id, back);
+    }
+
+    #[test]
+    fn promotion_status_display_promoted_includes_receipt() {
+        let status = PromotionStatus::Promoted {
+            native_digest: "sha256:abc".to_string(),
+            receipt_id: "receipt-42".to_string(),
+        };
+        let display = status.to_string();
+        assert!(display.contains("sha256:abc"));
+        assert!(display.contains("receipt-42"));
+    }
+
+    #[test]
+    fn promotion_status_display_demoted_includes_reason() {
+        let status = PromotionStatus::Demoted {
+            reason: "regression detected".to_string(),
+            rollback_digest: "sha256:rollback".to_string(),
+        };
+        let display = status.to_string();
+        assert!(display.contains("regression detected"));
+    }
 }

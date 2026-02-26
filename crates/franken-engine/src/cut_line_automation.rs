@@ -1873,4 +1873,204 @@ mod tests {
         assert!(history.records.is_empty());
         assert!(history.verify());
     }
+
+    // -- Enrichment: InputValidity serde all variants --
+
+    #[test]
+    fn input_validity_serde_all_variants() {
+        let variants = vec![
+            InputValidity::Valid,
+            InputValidity::Stale {
+                age_ns: 100,
+                max_age_ns: 50,
+            },
+            InputValidity::Missing {
+                field: "evidence_hash".into(),
+            },
+            InputValidity::Incompatible {
+                reason: "schema mismatch".into(),
+            },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let restored: InputValidity = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, restored);
+        }
+    }
+
+    // -- Enrichment: InputValidity::is_valid for non-valid variants --
+
+    #[test]
+    fn input_validity_is_valid_false_for_all_non_valid() {
+        assert!(
+            !InputValidity::Stale {
+                age_ns: 1,
+                max_age_ns: 0,
+            }
+            .is_valid()
+        );
+        assert!(!InputValidity::Missing { field: "x".into() }.is_valid());
+        assert!(!InputValidity::Incompatible { reason: "y".into() }.is_valid());
+    }
+
+    // -- Enrichment: GateRequirement serde roundtrip --
+
+    #[test]
+    fn gate_requirement_serde_roundtrip() {
+        let req = GateRequirement {
+            category: GateCategory::SecuritySurvival,
+            mandatory: true,
+            description: "adversarial tests pass".into(),
+            min_score_millionths: Some(950_000),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let restored: GateRequirement = serde_json::from_str(&json).unwrap();
+        assert_eq!(req, restored);
+    }
+
+    // -- Enrichment: CutLineSpec::mandatory_count --
+
+    #[test]
+    fn cut_line_spec_mandatory_count() {
+        let spec = CutLineSpec::default_c0();
+        // C0 has 2 mandatory requirements
+        assert_eq!(spec.mandatory_count(), 2);
+
+        let c1 = CutLineSpec::default_c1();
+        assert_eq!(c1.mandatory_count(), 3);
+    }
+
+    // -- Enrichment: CutLineSpec default_c0 field checks --
+
+    #[test]
+    fn default_c0_spec_fields() {
+        let c0 = CutLineSpec::default_c0();
+        assert_eq!(c0.cut_line, CutLine::C0);
+        assert!(!c0.requires_predecessor);
+        assert_eq!(c0.min_schema_major, 1);
+        assert_eq!(c0.max_input_staleness_ns, 86_400_000_000_000);
+    }
+
+    // -- Enrichment: CutLineSpec default_c1 requires predecessor --
+
+    #[test]
+    fn default_c1_spec_requires_predecessor() {
+        let c1 = CutLineSpec::default_c1();
+        assert_eq!(c1.cut_line, CutLine::C1);
+        assert!(c1.requires_predecessor);
+        assert_eq!(c1.max_input_staleness_ns, 3_600_000_000_000);
+    }
+
+    // -- Enrichment: PromotionSummary serde roundtrip --
+
+    #[test]
+    fn promotion_summary_serde_roundtrip() {
+        let summary = PromotionSummary {
+            promoted_lines: vec![CutLine::C0],
+            next_line: Some(CutLine::C1),
+            total_evaluations: 3,
+            approved_count: 1,
+            denied_count: 2,
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        let restored: PromotionSummary = serde_json::from_str(&json).unwrap();
+        assert_eq!(summary, restored);
+    }
+
+    // -- Enrichment: PromotionSummary::all_promoted --
+
+    #[test]
+    fn promotion_summary_all_promoted_false_partial() {
+        let summary = PromotionSummary {
+            promoted_lines: vec![CutLine::C0, CutLine::C1],
+            next_line: Some(CutLine::C2),
+            total_evaluations: 2,
+            approved_count: 2,
+            denied_count: 0,
+        };
+        assert!(!summary.all_promoted());
+    }
+
+    #[test]
+    fn promotion_summary_all_promoted_true() {
+        let summary = PromotionSummary {
+            promoted_lines: CutLine::all().to_vec(),
+            next_line: None,
+            total_evaluations: 6,
+            approved_count: 6,
+            denied_count: 0,
+        };
+        assert!(summary.all_promoted());
+    }
+
+    // -- Enrichment: CutLineEvaluator::history_len --
+
+    #[test]
+    fn evaluator_history_len_matches_history() {
+        let mut evaluator = CutLineEvaluator::with_defaults();
+        assert_eq!(evaluator.history_len(), 0);
+
+        let input = GateEvaluationInput {
+            cut_line: CutLine::C0,
+            now_ns: 1000,
+            epoch: test_epoch(),
+            inputs: vec![
+                make_passing_input(GateCategory::SemanticContract, 1000),
+                make_passing_input(GateCategory::GovernanceCompliance, 1000),
+            ],
+            predecessor_promoted: false,
+            zone: "zone-a".into(),
+        };
+        evaluator.evaluate(input);
+        assert_eq!(evaluator.history_len(), 1);
+        assert_eq!(evaluator.history().len(), 1);
+    }
+
+    // -- Enrichment: GateEvaluation serde roundtrip --
+
+    #[test]
+    fn gate_evaluation_serde_roundtrip() {
+        let eval = GateEvaluation {
+            category: GateCategory::CompilerCorrectness,
+            mandatory: true,
+            passed: true,
+            score_millionths: Some(1_000_000),
+            evidence_refs: vec!["ref-1".into()],
+            summary: "compiler gate passed".into(),
+            input_validity: InputValidity::Valid,
+        };
+        let json = serde_json::to_string(&eval).unwrap();
+        let restored: GateEvaluation = serde_json::from_str(&json).unwrap();
+        assert_eq!(eval, restored);
+    }
+
+    // -- Enrichment: GateCategory ordering (PartialOrd) --
+
+    #[test]
+    fn gate_category_ordering() {
+        assert!(GateCategory::SemanticContract < GateCategory::CompilerCorrectness);
+        assert!(GateCategory::CompilerCorrectness < GateCategory::RuntimeParity);
+    }
+
+    // -- Enrichment: CutLine as_str all variants --
+
+    #[test]
+    fn cut_line_as_str_all_variants() {
+        let expected = ["C0", "C1", "C2", "C3", "C4", "C5"];
+        for (i, cl) in CutLine::all().iter().enumerate() {
+            assert_eq!(cl.as_str(), expected[i]);
+        }
+    }
+
+    // -- Enrichment: CutLine predecessor exhaustive --
+
+    #[test]
+    fn cut_line_predecessor_exhaustive() {
+        assert_eq!(CutLine::C0.predecessor(), None);
+        assert_eq!(CutLine::C1.predecessor(), Some(CutLine::C0));
+        assert_eq!(CutLine::C2.predecessor(), Some(CutLine::C1));
+        assert_eq!(CutLine::C3.predecessor(), Some(CutLine::C2));
+        assert_eq!(CutLine::C4.predecessor(), Some(CutLine::C3));
+        assert_eq!(CutLine::C5.predecessor(), Some(CutLine::C4));
+    }
 }

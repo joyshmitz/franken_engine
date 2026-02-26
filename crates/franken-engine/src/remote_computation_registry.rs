@@ -1324,4 +1324,70 @@ mod tests {
         let events = reg.drain_events();
         assert!(!events.is_empty());
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn idempotency_class_serde_all_variants() {
+        let variants = [
+            IdempotencyClass::NaturallyIdempotent,
+            IdempotencyClass::RequiresKey,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: IdempotencyClass = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn idempotency_class_display_distinct() {
+        let all = [
+            IdempotencyClass::NaturallyIdempotent,
+            IdempotencyClass::RequiresKey,
+        ];
+        let set: std::collections::BTreeSet<String> = all.iter().map(|c| format!("{c}")).collect();
+        assert_eq!(set.len(), all.len());
+    }
+
+    #[test]
+    fn idempotency_class_ordering() {
+        assert!(IdempotencyClass::NaturallyIdempotent < IdempotencyClass::RequiresKey);
+    }
+
+    #[test]
+    fn registry_error_display_distinct() {
+        use crate::capability::ProfileKind;
+        let variants: Vec<RegistryError> = vec![
+            RegistryError::InvalidComputationName {
+                name: "x".into(),
+                reason: "bad".into(),
+            },
+            RegistryError::DuplicateRegistration { name: "x".into() },
+            RegistryError::ComputationNotFound { name: "x".into() },
+            RegistryError::SchemaValidationFailed {
+                computation_name: "x".into(),
+                reason: "bad".into(),
+            },
+            RegistryError::CapabilityDenied {
+                computation_name: "x".into(),
+                required: ProfileKind::Full,
+                held: ProfileKind::ComputeOnly,
+            },
+            RegistryError::VersionIncompatible {
+                computation_name: "x".into(),
+                registered: SchemaVersion::new(1, 0, 0),
+                requested: SchemaVersion::new(2, 0, 0),
+            },
+            RegistryError::ClosureRejected {
+                reason: "no".into(),
+            },
+            RegistryError::HotRegistrationDenied {
+                reason: "no".into(),
+            },
+        ];
+        let set: std::collections::BTreeSet<String> =
+            variants.iter().map(|e| format!("{e}")).collect();
+        assert_eq!(set.len(), variants.len());
+    }
 }

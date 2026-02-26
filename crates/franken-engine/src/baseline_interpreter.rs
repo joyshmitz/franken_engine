@@ -1985,4 +1985,238 @@ mod tests {
         let result = quickjs_execute(&m).unwrap();
         assert_eq!(result.value, Value::Int(-7));
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: PearlTower 2026-02-26
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn value_type_name_all_variants() {
+        assert_eq!(Value::Undefined.type_name(), "undefined");
+        assert_eq!(Value::Null.type_name(), "null");
+        assert_eq!(Value::Bool(true).type_name(), "boolean");
+        assert_eq!(Value::Int(0).type_name(), "number");
+        assert_eq!(Value::Str(String::new()).type_name(), "string");
+        assert_eq!(Value::Object(ObjectId(0)).type_name(), "object");
+        assert_eq!(Value::Function(0).type_name(), "function");
+    }
+
+    #[test]
+    fn value_is_truthy_exhaustive() {
+        assert!(!Value::Undefined.is_truthy());
+        assert!(!Value::Null.is_truthy());
+        assert!(!Value::Bool(false).is_truthy());
+        assert!(Value::Bool(true).is_truthy());
+        assert!(!Value::Int(0).is_truthy());
+        assert!(Value::Int(1).is_truthy());
+        assert!(Value::Int(-1).is_truthy());
+        assert!(!Value::Str(String::new()).is_truthy());
+        assert!(Value::Str("x".to_string()).is_truthy());
+        assert!(Value::Object(ObjectId(0)).is_truthy());
+        assert!(Value::Function(0).is_truthy());
+    }
+
+    #[test]
+    fn object_id_serde_roundtrip() {
+        let id = ObjectId(42);
+        let json = serde_json::to_string(&id).unwrap();
+        let back: ObjectId = serde_json::from_str(&json).unwrap();
+        assert_eq!(id, back);
+    }
+
+    #[test]
+    fn heap_object_new_is_empty() {
+        let obj = HeapObject::new();
+        assert!(obj.properties.is_empty());
+    }
+
+    #[test]
+    fn lane_reason_serde_all_variants() {
+        let variants = [
+            LaneReason::SecuritySensitive,
+            LaneReason::ThroughputOptimized,
+            LaneReason::PolicyDirective,
+            LaneReason::DefaultFallback,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: LaneReason = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn interpreter_event_serde_roundtrip() {
+        let ev = InterpreterEvent {
+            trace_id: "t-1".to_string(),
+            component: "baseline_interpreter".to_string(),
+            event: "execution_started".to_string(),
+            outcome: "ok".to_string(),
+            error_code: None,
+        };
+        let json = serde_json::to_string(&ev).unwrap();
+        let back: InterpreterEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(ev, back);
+    }
+
+    #[test]
+    fn interpreter_event_serde_with_error_code() {
+        let ev = InterpreterEvent {
+            trace_id: "t-2".to_string(),
+            component: "baseline_interpreter".to_string(),
+            event: "execution_failed".to_string(),
+            outcome: "fail".to_string(),
+            error_code: Some("BUDGET_EXHAUSTED".to_string()),
+        };
+        let json = serde_json::to_string(&ev).unwrap();
+        let back: InterpreterEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(ev.error_code, back.error_code);
+    }
+
+    #[test]
+    fn interpreter_config_quickjs_defaults_fields() {
+        let c = InterpreterConfig::quickjs_defaults();
+        assert_eq!(c.instruction_budget, 100_000);
+        assert_eq!(c.max_registers, 256);
+        assert_eq!(c.max_call_depth, 256);
+        assert!(c.granted_capabilities.is_empty());
+    }
+
+    #[test]
+    fn interpreter_config_v8_defaults_fields() {
+        let c = InterpreterConfig::v8_defaults();
+        assert_eq!(c.instruction_budget, 1_000_000);
+        assert_eq!(c.max_registers, 4096);
+        assert_eq!(c.max_call_depth, 256);
+        assert!(c.granted_capabilities.is_empty());
+    }
+
+    #[test]
+    fn router_throughput_optimized_for_large_module() {
+        let mut instrs = Vec::new();
+        for _ in 0..1001 {
+            instrs.push(Ir3Instruction::LoadInt { dst: 0, value: 0 });
+        }
+        instrs.push(Ir3Instruction::Halt);
+        let m = test_module(instrs);
+        let router = LaneRouter::new();
+        let result = router.execute(&m, "test", None).unwrap();
+        assert_eq!(result.lane, LaneChoice::V8);
+        assert_eq!(result.reason, LaneReason::ThroughputOptimized);
+    }
+
+    #[test]
+    fn alloc_object_and_heap_size() {
+        let config = InterpreterConfig::quickjs_defaults();
+        let mut core = InterpreterCore::new(config, "test");
+        assert_eq!(core.heap_size(), 0);
+        let id = core.alloc_object();
+        assert_eq!(id, ObjectId(0));
+        assert_eq!(core.heap_size(), 1);
+        let id2 = core.alloc_object();
+        assert_eq!(id2, ObjectId(1));
+        assert_eq!(core.heap_size(), 2);
+    }
+
+    #[test]
+    fn load_bool_false() {
+        let m = test_module(vec![
+            Ir3Instruction::LoadBool {
+                dst: 0,
+                value: false,
+            },
+            Ir3Instruction::Halt,
+        ]);
+        let result = quickjs_execute(&m).unwrap();
+        assert_eq!(result.value, Value::Bool(false));
+    }
+
+    #[test]
+    fn v8_lane_execute_produces_result() {
+        let m = test_module(vec![
+            Ir3Instruction::LoadInt { dst: 0, value: 99 },
+            Ir3Instruction::Halt,
+        ]);
+        let result = v8_execute(&m).unwrap();
+        assert_eq!(result.value, Value::Int(99));
+    }
+
+    #[test]
+    fn interpreter_error_serde_all_variants() {
+        let variants: Vec<InterpreterError> = vec![
+            InterpreterError::BudgetExhausted {
+                executed: 100,
+                budget: 50,
+            },
+            InterpreterError::RegisterOutOfBounds {
+                register: 999,
+                max: 256,
+            },
+            InterpreterError::InstructionOutOfBounds { ip: 10, count: 5 },
+            InterpreterError::StackOverflow { depth: 10, max: 5 },
+            InterpreterError::TypeError {
+                expected: "number".to_string(),
+                got: "object".to_string(),
+            },
+            InterpreterError::DivisionByZero,
+            InterpreterError::UndefinedRegister { register: 42 },
+            InterpreterError::ObjectNotFound { id: 7 },
+            InterpreterError::PropertyNotFound {
+                object_id: 3,
+                key: "x".to_string(),
+            },
+            InterpreterError::FunctionNotFound {
+                index: 5,
+                table_size: 3,
+            },
+            InterpreterError::StringPoolOutOfBounds {
+                index: 10,
+                pool_size: 5,
+            },
+            InterpreterError::CapabilityDenied {
+                capability: "net".to_string(),
+            },
+            InterpreterError::Halted,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: InterpreterError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+        assert_eq!(
+            variants.len(),
+            13,
+            "all 13 InterpreterError variants covered"
+        );
+    }
+
+    #[test]
+    fn value_serde_all_variants() {
+        let variants = vec![
+            Value::Undefined,
+            Value::Null,
+            Value::Bool(true),
+            Value::Bool(false),
+            Value::Int(42),
+            Value::Str("hello".to_string()),
+            Value::Object(ObjectId(3)),
+            Value::Function(7),
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: Value = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+        assert_eq!(variants.len(), 8, "all 8 Value variants covered");
+    }
+
+    #[test]
+    fn interpreter_config_serde_with_capabilities() {
+        let mut c = InterpreterConfig::quickjs_defaults();
+        c.granted_capabilities = vec!["net".to_string(), "fs".to_string()];
+        let json = serde_json::to_string(&c).unwrap();
+        let back: InterpreterConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(c, back);
+        assert_eq!(back.granted_capabilities.len(), 2);
+    }
 }

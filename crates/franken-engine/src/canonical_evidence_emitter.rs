@@ -1552,4 +1552,187 @@ mod tests {
             .unwrap_err();
         assert!(matches!(err, EmissionError::MissingField { field } if field == "decision_id"));
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: PearlTower 2026-02-26
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn high_impact_action_decision_type_all_variants() {
+        for action in &HighImpactAction::ALL {
+            let dt = action.decision_type();
+            let name = dt.to_string();
+            assert!(
+                !name.is_empty(),
+                "decision_type() for {action} should have a non-empty Display"
+            );
+        }
+        // Spot-check specific mappings.
+        assert_eq!(
+            HighImpactAction::Sandbox.decision_type(),
+            DecisionType::SecurityAction
+        );
+        assert_eq!(
+            HighImpactAction::ExtensionLoad.decision_type(),
+            DecisionType::ExtensionLifecycle
+        );
+        assert_eq!(
+            HighImpactAction::PolicyUpdate.decision_type(),
+            DecisionType::PolicyUpdate
+        );
+        assert_eq!(
+            HighImpactAction::EpochTransition.decision_type(),
+            DecisionType::EpochTransition
+        );
+        assert_eq!(
+            HighImpactAction::CapabilityGrant.decision_type(),
+            DecisionType::CapabilityDecision
+        );
+        assert_eq!(
+            HighImpactAction::Revocation.decision_type(),
+            DecisionType::Revocation
+        );
+        assert_eq!(
+            HighImpactAction::RemoteAuthorization.decision_type(),
+            DecisionType::RemoteAuthorization
+        );
+    }
+
+    #[test]
+    fn high_impact_action_component_all_non_empty() {
+        let mut components = std::collections::BTreeSet::new();
+        for action in &HighImpactAction::ALL {
+            let comp = action.component();
+            assert!(
+                !comp.is_empty(),
+                "component() for {action} should not be empty"
+            );
+            components.insert(comp);
+        }
+        // There should be multiple distinct components.
+        assert!(
+            components.len() >= 5,
+            "at least 5 distinct components expected"
+        );
+    }
+
+    #[test]
+    fn set_failed_causes_ledger_write_failure() {
+        let mut emitter = CanonicalEvidenceEmitter::with_defaults();
+        emitter.set_failed(true);
+        let ctx = test_context(HighImpactAction::Sandbox);
+        let err = emitter
+            .emit(
+                &ctx,
+                test_candidates(),
+                test_constraints(),
+                test_chosen(),
+                test_witnesses(),
+                BTreeMap::new(),
+            )
+            .unwrap_err();
+        assert!(matches!(err, EmissionError::LedgerWriteFailure { .. }));
+    }
+
+    #[test]
+    fn set_failed_false_restores_normal_operation() {
+        let mut emitter = CanonicalEvidenceEmitter::with_defaults();
+        emitter.set_failed(true);
+        emitter.set_failed(false);
+        let ctx = test_context(HighImpactAction::Sandbox);
+        assert!(
+            emitter
+                .emit(
+                    &ctx,
+                    test_candidates(),
+                    test_constraints(),
+                    test_chosen(),
+                    test_witnesses(),
+                    BTreeMap::new(),
+                )
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn ledger_len_tracks_emissions() {
+        let mut emitter = CanonicalEvidenceEmitter::with_defaults();
+        assert_eq!(emitter.ledger_len(), 0);
+        let ctx = test_context(HighImpactAction::Sandbox);
+        emitter
+            .emit(
+                &ctx,
+                test_candidates(),
+                test_constraints(),
+                test_chosen(),
+                test_witnesses(),
+                BTreeMap::new(),
+            )
+            .unwrap();
+        assert_eq!(emitter.ledger_len(), 1);
+    }
+
+    #[test]
+    fn entries_by_type_empty_for_unmatched_type() {
+        let mut emitter = CanonicalEvidenceEmitter::with_defaults();
+        let ctx = test_context(HighImpactAction::Sandbox);
+        emitter
+            .emit(
+                &ctx,
+                test_candidates(),
+                test_constraints(),
+                test_chosen(),
+                test_witnesses(),
+                BTreeMap::new(),
+            )
+            .unwrap();
+        // Sandbox maps to SecurityAction; RemoteAuthorization entries should be empty.
+        let filtered = emitter.entries_by_type(DecisionType::RemoteAuthorization);
+        assert!(filtered.is_empty());
+    }
+
+    #[test]
+    fn entries_by_trace_empty_for_unknown_trace() {
+        let mut emitter = CanonicalEvidenceEmitter::with_defaults();
+        let ctx = test_context(HighImpactAction::Sandbox);
+        emitter
+            .emit(
+                &ctx,
+                test_candidates(),
+                test_constraints(),
+                test_chosen(),
+                test_witnesses(),
+                BTreeMap::new(),
+            )
+            .unwrap();
+        let filtered = emitter.entries_by_trace("nonexistent-trace");
+        assert!(filtered.is_empty());
+    }
+
+    #[test]
+    fn policy_requires_evidence_custom_subset() {
+        let policy = EmissionPolicy {
+            mandatory_actions: vec![HighImpactAction::Sandbox, HighImpactAction::Terminate],
+            max_witnesses: 256,
+            max_candidates: 64,
+            include_metadata: true,
+            buffer_capacity: 1024,
+        };
+        assert!(policy.requires_evidence(HighImpactAction::Sandbox));
+        assert!(policy.requires_evidence(HighImpactAction::Terminate));
+        assert!(!policy.requires_evidence(HighImpactAction::ExtensionLoad));
+    }
+
+    #[test]
+    fn high_impact_action_all_has_twenty_variants() {
+        assert_eq!(HighImpactAction::ALL.len(), 20);
+    }
+
+    #[test]
+    fn policy_accessor_returns_configured_policy() {
+        let emitter = CanonicalEvidenceEmitter::with_defaults();
+        let policy = emitter.policy();
+        assert_eq!(policy.mandatory_actions.len(), 20);
+        assert!(policy.include_metadata);
+    }
 }

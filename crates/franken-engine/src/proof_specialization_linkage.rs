@@ -1535,4 +1535,94 @@ mod tests {
         let hash2 = ContentHash::compute(SCHEMA_DEF);
         assert_eq!(hash, hash2);
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn invalidation_cause_display_all_distinct() {
+        let variants = vec![
+            InvalidationCause::EpochChange {
+                old_epoch: SecurityEpoch::from_raw(1),
+                new_epoch: SecurityEpoch::from_raw(2),
+            },
+            InvalidationCause::ProofRevoked {
+                proof_id: "p1".into(),
+            },
+            InvalidationCause::PolicyChange {
+                reason: "update".into(),
+            },
+            InvalidationCause::ManualInvalidation {
+                operator_id: "admin".into(),
+            },
+        ];
+        let mut set = std::collections::BTreeSet::new();
+        for v in &variants {
+            set.insert(v.to_string());
+        }
+        assert_eq!(set.len(), variants.len());
+    }
+
+    #[test]
+    fn linkage_error_serde_roundtrip() {
+        let variants = vec![
+            LinkageError::DuplicateLinkage { id: "l1".into() },
+            LinkageError::LinkageNotFound { id: "l2".into() },
+            LinkageError::AlreadyInactive { id: "l3".into() },
+            LinkageError::EmptyProofInputs,
+            LinkageError::EpochMismatch {
+                linkage_epoch: SecurityEpoch::from_raw(5),
+                current_epoch: SecurityEpoch::from_raw(3),
+            },
+            LinkageError::Ir3AlreadySpecialized,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: LinkageError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn linkage_error_display_all_distinct() {
+        let variants = vec![
+            LinkageError::DuplicateLinkage { id: "l1".into() },
+            LinkageError::LinkageNotFound { id: "l2".into() },
+            LinkageError::AlreadyInactive { id: "l3".into() },
+            LinkageError::EmptyProofInputs,
+            LinkageError::EpochMismatch {
+                linkage_epoch: SecurityEpoch::from_raw(5),
+                current_epoch: SecurityEpoch::from_raw(3),
+            },
+            LinkageError::Ir3AlreadySpecialized,
+        ];
+        let mut set = std::collections::BTreeSet::new();
+        for v in &variants {
+            set.insert(v.to_string());
+        }
+        assert_eq!(set.len(), variants.len());
+    }
+
+    #[test]
+    fn performance_delta_default_equals_neutral() {
+        let d = PerformanceDelta::default();
+        assert_eq!(d, PerformanceDelta::NEUTRAL);
+        assert_eq!(d.speedup_millionths, 1_000_000);
+        assert_eq!(d.instruction_ratio_millionths, 1_000_000);
+    }
+
+    #[test]
+    fn linkage_record_proofs_valid_at_epoch() {
+        let linkage = make_linkage("link-1", 5, &["proof-a"]);
+        assert!(linkage.proofs_valid_at(test_epoch(5)));
+        assert!(linkage.proofs_valid_at(test_epoch(10)));
+    }
+
+    #[test]
+    fn linkage_record_to_ir3_linkage_fields() {
+        let linkage = make_linkage("link-1", 5, &["proof-a", "proof-b"]);
+        let ir3 = linkage.to_ir3_linkage();
+        assert_eq!(ir3.proof_input_ids.len(), 2);
+        assert_eq!(ir3.proof_input_ids[0], "proof-a");
+        assert_eq!(ir3.proof_input_ids[1], "proof-b");
+    }
 }

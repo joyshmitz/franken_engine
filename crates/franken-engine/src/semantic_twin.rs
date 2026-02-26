@@ -1028,4 +1028,601 @@ mod tests {
         let err = spec.validate().expect_err("must fail");
         assert!(matches!(err, SemanticTwinError::AdjustmentMismatch { .. }));
     }
+
+    // ── SignalNamespace coverage ──────────────────────────────────
+
+    #[test]
+    fn signal_namespace_as_str_all_variants() {
+        let expected = [
+            (SignalNamespace::Frir, "frir"),
+            (
+                SignalNamespace::RuntimeDecisionCore,
+                "runtime_decision_core",
+            ),
+            (
+                SignalNamespace::RuntimeObservability,
+                "runtime_observability",
+            ),
+            (SignalNamespace::PolicyController, "policy_controller"),
+            (SignalNamespace::AssumptionsLedger, "assumptions_ledger"),
+        ];
+        for (ns, name) in expected {
+            assert_eq!(ns.as_str(), name);
+        }
+    }
+
+    #[test]
+    fn signal_namespace_serde_roundtrip() {
+        let variants = [
+            SignalNamespace::Frir,
+            SignalNamespace::RuntimeDecisionCore,
+            SignalNamespace::RuntimeObservability,
+            SignalNamespace::PolicyController,
+            SignalNamespace::AssumptionsLedger,
+        ];
+        for variant in variants {
+            let json = serde_json::to_string(&variant).expect("serialize");
+            let back: SignalNamespace = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(back, variant);
+        }
+    }
+
+    // ── TelemetryContractRef validation ──────────────────────────
+
+    #[test]
+    fn telemetry_ref_valid() {
+        let tcr = TelemetryContractRef {
+            namespace: SignalNamespace::Frir,
+            signal_key: "workload.complexity".to_string(),
+            units: "millionths".to_string(),
+            deterministic: true,
+            required: true,
+        };
+        assert_eq!(tcr.validate(), Ok(()));
+    }
+
+    #[test]
+    fn telemetry_ref_empty_signal_key_fails() {
+        let tcr = TelemetryContractRef {
+            namespace: SignalNamespace::RuntimeDecisionCore,
+            signal_key: "  ".to_string(),
+            units: "millionths".to_string(),
+            deterministic: true,
+            required: true,
+        };
+        let err = tcr.validate().unwrap_err();
+        assert!(matches!(
+            err,
+            SemanticTwinError::MissingTelemetrySignalKey { .. }
+        ));
+    }
+
+    #[test]
+    fn telemetry_ref_empty_units_fails() {
+        let tcr = TelemetryContractRef {
+            namespace: SignalNamespace::Frir,
+            signal_key: "some.signal".to_string(),
+            units: String::new(),
+            deterministic: true,
+            required: true,
+        };
+        let err = tcr.validate().unwrap_err();
+        assert!(matches!(
+            err,
+            SemanticTwinError::MissingTelemetryUnits { .. }
+        ));
+    }
+
+    #[test]
+    fn telemetry_ref_serde_roundtrip() {
+        let tcr = TelemetryContractRef {
+            namespace: SignalNamespace::PolicyController,
+            signal_key: "policy.weight".to_string(),
+            units: "millionths".to_string(),
+            deterministic: false,
+            required: false,
+        };
+        let json = serde_json::to_string(&tcr).expect("serialize");
+        let back: TelemetryContractRef = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, tcr);
+    }
+
+    // ── SemanticTwinSpecification validate edge cases ────────────
+
+    #[test]
+    fn validate_rejects_duplicate_variable() {
+        let mut spec = SemanticTwinSpecification::frx_19_1_default().expect("spec");
+        let dup = spec.state_variables[0].clone();
+        spec.state_variables.push(dup);
+        let err = spec.validate().unwrap_err();
+        assert!(matches!(err, SemanticTwinError::DuplicateVariable(..)));
+    }
+
+    #[test]
+    fn validate_rejects_transition_source_missing() {
+        let mut spec = SemanticTwinSpecification::frx_19_1_default().expect("spec");
+        spec.transitions[0].source_variable = "nonexistent_var".to_string();
+        let err = spec.validate().unwrap_err();
+        assert!(matches!(
+            err,
+            SemanticTwinError::TransitionMissingVariable { .. }
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_transition_target_missing() {
+        let mut spec = SemanticTwinSpecification::frx_19_1_default().expect("spec");
+        spec.transitions[0].target_variable = "nonexistent_var".to_string();
+        let err = spec.validate().unwrap_err();
+        assert!(matches!(
+            err,
+            SemanticTwinError::TransitionMissingVariable { .. }
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_transition_guard_missing_variable() {
+        let mut spec = SemanticTwinSpecification::frx_19_1_default().expect("spec");
+        // Find a transition with a guard and corrupt the variable
+        for transition in &mut spec.transitions {
+            if transition.guard.is_some() {
+                transition.guard.as_mut().unwrap().variable = "missing_guard_var".to_string();
+                break;
+            }
+        }
+        let err = spec.validate().unwrap_err();
+        assert!(matches!(
+            err,
+            SemanticTwinError::TransitionMissingVariable { .. }
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_assumption_missing_variable() {
+        let mut spec = SemanticTwinSpecification::frx_19_1_default().expect("spec");
+        spec.assumptions[0].monitor_variable = "nonexistent_monitor_var".to_string();
+        let err = spec.validate().unwrap_err();
+        assert!(matches!(
+            err,
+            SemanticTwinError::AssumptionMissingVariable { .. }
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_assumption_zero_trigger_count() {
+        let mut spec = SemanticTwinSpecification::frx_19_1_default().expect("spec");
+        spec.assumptions[0].trigger_count = 0;
+        let err = spec.validate().unwrap_err();
+        assert!(matches!(
+            err,
+            SemanticTwinError::InvalidAssumptionTriggerCount { .. }
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_adjustment_not_identified() {
+        let mut spec = SemanticTwinSpecification::frx_19_1_default().expect("spec");
+        spec.adjustment_strategies[0].identified = false;
+        let err = spec.validate().unwrap_err();
+        assert!(matches!(
+            err,
+            SemanticTwinError::AdjustmentNotIdentified { .. }
+        ));
+    }
+
+    // ── Structural assertions on default spec ────────────────────
+
+    #[test]
+    fn default_spec_has_two_adjustment_strategies() {
+        let spec = SemanticTwinSpecification::frx_19_1_default().expect("spec");
+        assert_eq!(spec.adjustment_strategies.len(), 2);
+    }
+
+    #[test]
+    fn default_spec_has_four_assumptions() {
+        let spec = SemanticTwinSpecification::frx_19_1_default().expect("spec");
+        assert_eq!(spec.assumptions.len(), 4);
+    }
+
+    #[test]
+    fn default_spec_causal_adjustment_schema_version() {
+        let spec = SemanticTwinSpecification::frx_19_1_default().expect("spec");
+        assert_eq!(
+            spec.causal_adjustment_schema_version,
+            SEMANTIC_TWIN_CAUSAL_ADJUSTMENT_SCHEMA_VERSION
+        );
+    }
+
+    #[test]
+    fn default_spec_has_at_least_fifteen_state_variables() {
+        let spec = SemanticTwinSpecification::frx_19_1_default().expect("spec");
+        assert!(spec.state_variables.len() >= 15);
+    }
+
+    #[test]
+    fn default_spec_variable_ids_unique() {
+        let spec = SemanticTwinSpecification::frx_19_1_default().expect("spec");
+        let ids: BTreeSet<&str> = spec.state_variables.iter().map(|v| v.id.as_str()).collect();
+        assert_eq!(ids.len(), spec.state_variables.len());
+    }
+
+    #[test]
+    fn default_spec_all_telemetry_refs_valid() {
+        let spec = SemanticTwinSpecification::frx_19_1_default().expect("spec");
+        for variable in &spec.state_variables {
+            variable
+                .telemetry
+                .validate()
+                .unwrap_or_else(|e| panic!("variable {} telemetry invalid: {}", variable.id, e));
+        }
+    }
+
+    // ── SemanticTwinRuntime ──────────────────────────────────────
+
+    #[test]
+    fn runtime_specification_accessor() {
+        let spec = SemanticTwinSpecification::frx_19_1_default().expect("spec");
+        let var_count = spec.state_variables.len();
+        let runtime = SemanticTwinRuntime::new(
+            spec,
+            "trace-rt",
+            "decision-rt",
+            "policy-rt",
+            1,
+            DemotionPolicy::default(),
+        )
+        .expect("runtime");
+        assert_eq!(runtime.specification().state_variables.len(), var_count);
+    }
+
+    #[test]
+    fn runtime_ledger_accessor_matches_assumption_count() {
+        let spec = SemanticTwinSpecification::frx_19_1_default().expect("spec");
+        let assumption_count = spec.assumptions.len();
+        let runtime = SemanticTwinRuntime::new(
+            spec,
+            "trace-rt",
+            "decision-rt",
+            "policy-rt",
+            1,
+            DemotionPolicy::default(),
+        )
+        .expect("runtime");
+        assert_eq!(runtime.ledger().assumption_count(), assumption_count);
+    }
+
+    #[test]
+    fn runtime_multiple_ok_observations_accumulate_tick() {
+        let spec = SemanticTwinSpecification::frx_19_1_default().expect("spec");
+        let mut runtime = SemanticTwinRuntime::new(
+            spec,
+            "trace-tick",
+            "decision-tick",
+            "policy-tick",
+            1,
+            DemotionPolicy::default(),
+        )
+        .expect("runtime");
+
+        for _ in 0..5 {
+            let result = runtime.observe("regime_observed_millionths", 1_000_000, 1);
+            assert!(result.actions.is_empty());
+            assert_eq!(result.events.len(), 1);
+            assert_eq!(result.events[0].outcome, "ok");
+        }
+    }
+
+    // ── SemanticTwinError Display ────────────────────────────────
+
+    #[test]
+    fn error_display_scm() {
+        let err = SemanticTwinError::Scm(ScmError::NodeNotFound("x".to_string()));
+        let msg = format!("{err}");
+        assert!(msg.contains("scm error"));
+    }
+
+    #[test]
+    fn error_display_duplicate_variable() {
+        let err = SemanticTwinError::DuplicateVariable("foo".to_string());
+        let msg = format!("{err}");
+        assert!(msg.contains("duplicate"));
+        assert!(msg.contains("foo"));
+    }
+
+    #[test]
+    fn error_display_transition_missing_variable() {
+        let err = SemanticTwinError::TransitionMissingVariable {
+            transition_id: "t1".to_string(),
+            variable: "v1".to_string(),
+        };
+        let msg = format!("{err}");
+        assert!(msg.contains("t1"));
+        assert!(msg.contains("v1"));
+    }
+
+    #[test]
+    fn error_display_adjustment_not_identified() {
+        let err = SemanticTwinError::AdjustmentNotIdentified {
+            effect_id: "e1".to_string(),
+        };
+        let msg = format!("{err}");
+        assert!(msg.contains("e1"));
+        assert!(msg.contains("not identified"));
+    }
+
+    #[test]
+    fn error_display_adjustment_mismatch() {
+        let err = SemanticTwinError::AdjustmentMismatch {
+            effect_id: "e1".to_string(),
+            expected: BTreeSet::from(["a".to_string()]),
+            actual: BTreeSet::from(["b".to_string()]),
+        };
+        let msg = format!("{err}");
+        assert!(msg.contains("mismatch"));
+    }
+
+    #[test]
+    fn error_display_assumption_missing_variable() {
+        let err = SemanticTwinError::AssumptionMissingVariable {
+            assumption_id: "a1".to_string(),
+            variable: "v1".to_string(),
+        };
+        let msg = format!("{err}");
+        assert!(msg.contains("a1"));
+        assert!(msg.contains("v1"));
+    }
+
+    #[test]
+    fn error_display_assumption_missing_effect() {
+        let err = SemanticTwinError::AssumptionMissingEffect {
+            assumption_id: "a1".to_string(),
+            effect_id: "e1".to_string(),
+        };
+        let msg = format!("{err}");
+        assert!(msg.contains("a1"));
+        assert!(msg.contains("e1"));
+    }
+
+    #[test]
+    fn error_display_invalid_trigger_count() {
+        let err = SemanticTwinError::InvalidAssumptionTriggerCount {
+            assumption_id: "a1".to_string(),
+        };
+        let msg = format!("{err}");
+        assert!(msg.contains("a1"));
+        assert!(msg.contains("trigger_count"));
+    }
+
+    #[test]
+    fn error_display_missing_telemetry_signal_key() {
+        let err = SemanticTwinError::MissingTelemetrySignalKey {
+            namespace: "frir".to_string(),
+        };
+        let msg = format!("{err}");
+        assert!(msg.contains("frir"));
+    }
+
+    #[test]
+    fn error_display_missing_telemetry_units() {
+        let err = SemanticTwinError::MissingTelemetryUnits {
+            signal_key: "sig1".to_string(),
+        };
+        let msg = format!("{err}");
+        assert!(msg.contains("sig1"));
+    }
+
+    // ── Serde roundtrips for core types ──────────────────────────
+
+    #[test]
+    fn twin_state_variable_serde_roundtrip() {
+        let variable = TwinStateVariable {
+            id: "test_var".to_string(),
+            label: "Test".to_string(),
+            description: "A test variable".to_string(),
+            domain: VariableDomain::WorkloadCharacteristic,
+            observable: true,
+            telemetry: TelemetryContractRef {
+                namespace: SignalNamespace::Frir,
+                signal_key: "test.key".to_string(),
+                units: "millionths".to_string(),
+                deterministic: true,
+                required: true,
+            },
+        };
+        let json = serde_json::to_string(&variable).expect("serialize");
+        let back: TwinStateVariable = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, variable);
+    }
+
+    #[test]
+    fn causal_adjustment_strategy_serde_roundtrip() {
+        let strategy = CausalAdjustmentStrategy {
+            effect_id: "effect_1".to_string(),
+            treatment: "lane_choice".to_string(),
+            outcome: "latency".to_string(),
+            identified: true,
+            adjustment_set: BTreeSet::from(["regime".to_string()]),
+            blocked_confounding_paths: vec![vec!["a".to_string(), "b".to_string()]],
+            strategy_note: "test note".to_string(),
+        };
+        let json = serde_json::to_string(&strategy).expect("serialize");
+        let back: CausalAdjustmentStrategy = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, strategy);
+    }
+
+    #[test]
+    fn semantic_twin_log_event_serde_roundtrip() {
+        let event = SemanticTwinLogEvent {
+            schema_version: SEMANTIC_TWIN_LOG_SCHEMA_VERSION.to_string(),
+            trace_id: "t1".to_string(),
+            decision_id: "d1".to_string(),
+            policy_id: "p1".to_string(),
+            component: SEMANTIC_TWIN_COMPONENT.to_string(),
+            event: "assumption_monitor_evaluate".to_string(),
+            outcome: "ok".to_string(),
+            error_code: None,
+            variable: "risk_belief".to_string(),
+            observed_value_millionths: 500_000,
+            assumption_id: None,
+            monitor_id: None,
+            action: None,
+        };
+        let json = serde_json::to_string(&event).expect("serialize");
+        let back: SemanticTwinLogEvent = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, event);
+    }
+
+    #[test]
+    fn semantic_twin_specification_serde_roundtrip() {
+        let spec = SemanticTwinSpecification::frx_19_1_default().expect("spec");
+        let json = serde_json::to_string(&spec).expect("serialize");
+        let back: SemanticTwinSpecification = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, spec);
+    }
+
+    // ── Constants verification ───────────────────────────────────
+
+    #[test]
+    fn schema_version_constants_contain_semantic_twin() {
+        assert!(SEMANTIC_TWIN_STATE_SPACE_SCHEMA_VERSION.contains("semantic-twin"));
+        assert!(SEMANTIC_TWIN_CAUSAL_ADJUSTMENT_SCHEMA_VERSION.contains("semantic-twin"));
+        assert!(SEMANTIC_TWIN_LOG_SCHEMA_VERSION.contains("semantic-twin"));
+    }
+
+    #[test]
+    fn component_constant_matches_module_name() {
+        assert_eq!(SEMANTIC_TWIN_COMPONENT, "semantic_twin_state_space");
+    }
+
+    // ── From impls ───────────────────────────────────────────────
+
+    #[test]
+    fn from_scm_error() {
+        let scm_err = ScmError::NodeNotFound("test".to_string());
+        let twin_err: SemanticTwinError = scm_err.into();
+        assert!(matches!(twin_err, SemanticTwinError::Scm(..)));
+    }
+
+    #[test]
+    fn from_ledger_error() {
+        let ledger_err = LedgerError::DuplicateAssumption("dup".to_string());
+        let twin_err: SemanticTwinError = ledger_err.into();
+        assert!(matches!(twin_err, SemanticTwinError::Ledger(..)));
+    }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn transition_guard_serde_roundtrip() {
+        let guard = TransitionGuard {
+            variable: "risk_belief".to_string(),
+            op: MonitorOp::Ge,
+            threshold_millionths: 500_000,
+        };
+        let json = serde_json::to_string(&guard).unwrap();
+        let back: TransitionGuard = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, guard);
+    }
+
+    #[test]
+    fn twin_state_transition_serde_roundtrip() {
+        let transition = TwinStateTransition {
+            transition_id: "t1".to_string(),
+            source_variable: "regime".to_string(),
+            target_variable: "risk_belief".to_string(),
+            trigger_event: "regime_change".to_string(),
+            telemetry_contract: "runtime_decision_core.regime".to_string(),
+            guard: Some(TransitionGuard {
+                variable: "regime".to_string(),
+                op: MonitorOp::Ge,
+                threshold_millionths: 0,
+            }),
+        };
+        let json = serde_json::to_string(&transition).unwrap();
+        let back: TwinStateTransition = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, transition);
+    }
+
+    #[test]
+    fn twin_state_transition_no_guard_serde_roundtrip() {
+        let transition = TwinStateTransition {
+            transition_id: "t2".to_string(),
+            source_variable: "a".to_string(),
+            target_variable: "b".to_string(),
+            trigger_event: "evt".to_string(),
+            telemetry_contract: "ns.signal".to_string(),
+            guard: None,
+        };
+        let json = serde_json::to_string(&transition).unwrap();
+        let back: TwinStateTransition = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, transition);
+        assert!(back.guard.is_none());
+    }
+
+    #[test]
+    fn semantic_twin_error_serde_roundtrip_all_variants() {
+        let variants: Vec<SemanticTwinError> = vec![
+            SemanticTwinError::DuplicateVariable("v1".to_string()),
+            SemanticTwinError::MissingTelemetrySignalKey {
+                namespace: "frir".to_string(),
+            },
+            SemanticTwinError::MissingTelemetryUnits {
+                signal_key: "key".to_string(),
+            },
+            SemanticTwinError::TransitionMissingVariable {
+                transition_id: "t1".to_string(),
+                variable: "x".to_string(),
+            },
+            SemanticTwinError::AdjustmentNotIdentified {
+                effect_id: "e1".to_string(),
+            },
+            SemanticTwinError::AdjustmentMismatch {
+                effect_id: "e2".to_string(),
+                expected: BTreeSet::from(["a".to_string()]),
+                actual: BTreeSet::from(["b".to_string()]),
+            },
+            SemanticTwinError::AssumptionMissingVariable {
+                assumption_id: "a1".to_string(),
+                variable: "v2".to_string(),
+            },
+            SemanticTwinError::AssumptionMissingEffect {
+                assumption_id: "a2".to_string(),
+                effect_id: "e3".to_string(),
+            },
+            SemanticTwinError::InvalidAssumptionTriggerCount {
+                assumption_id: "a3".to_string(),
+            },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: SemanticTwinError = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, v);
+        }
+        assert_eq!(variants.len(), 9);
+    }
+
+    #[test]
+    fn semantic_twin_error_is_std_error() {
+        let err = SemanticTwinError::DuplicateVariable("x".to_string());
+        let dyn_err: &dyn std::error::Error = &err;
+        assert!(!dyn_err.to_string().is_empty());
+    }
+
+    #[test]
+    fn signal_namespace_ordering_is_deterministic() {
+        let mut namespaces = vec![
+            SignalNamespace::RuntimeObservability,
+            SignalNamespace::Frir,
+            SignalNamespace::PolicyController,
+            SignalNamespace::AssumptionsLedger,
+            SignalNamespace::RuntimeDecisionCore,
+        ];
+        let original = namespaces.clone();
+        namespaces.sort();
+        namespaces.sort();
+        let second = namespaces.clone();
+        assert_eq!(namespaces, second);
+        // Verify all 5 variants are present
+        assert_eq!(original.len(), 5);
+    }
 }

@@ -2778,4 +2778,154 @@ mod tests {
             "franken-engine.semantic_contract_baseline.v1"
         );
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn fixture_category_serde_roundtrip_all_variants() {
+        let variants = [
+            FixtureCategory::HookState,
+            FixtureCategory::HookEffect,
+            FixtureCategory::HookMemo,
+            FixtureCategory::HookRef,
+            FixtureCategory::HookReducer,
+            FixtureCategory::HookContext,
+            FixtureCategory::ConcurrentRendering,
+            FixtureCategory::Suspense,
+            FixtureCategory::ErrorBoundary,
+            FixtureCategory::Hydration,
+            FixtureCategory::Portal,
+            FixtureCategory::RefEdgeCase,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: FixtureCategory = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, v);
+        }
+        assert_eq!(variants.len(), 12);
+    }
+
+    #[test]
+    fn hook_kind_serde_roundtrip_all_variants() {
+        let variants = [
+            HookKind::UseState,
+            HookKind::UseEffect,
+            HookKind::UseMemo,
+            HookKind::UseRef,
+            HookKind::UseReducer,
+            HookKind::UseContext,
+            HookKind::UseCallback,
+            HookKind::UseLayoutEffect,
+            HookKind::UseImperativeHandle,
+            HookKind::UseDebugValue,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: HookKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, v);
+        }
+        assert_eq!(variants.len(), 10);
+    }
+
+    #[test]
+    fn invocation_rule_serde_roundtrip_all_variants() {
+        let variants = [
+            InvocationRule::MustBeTopLevel,
+            InvocationRule::MustNotBeConditional,
+            InvocationRule::MustNotBeInLoop,
+            InvocationRule::MustBeInFunctionComponent,
+            InvocationRule::OrderPreservedAcrossRenders,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: InvocationRule = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, v);
+        }
+        assert_eq!(variants.len(), 5);
+    }
+
+    #[test]
+    fn cleanup_policy_serde_roundtrip_all_variants() {
+        let variants = [
+            CleanupPolicy::RunOnUnmount,
+            CleanupPolicy::RunBeforeRerun,
+            CleanupPolicy::NoCleanup,
+            CleanupPolicy::ConditionalCleanup,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: CleanupPolicy = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, v);
+        }
+    }
+
+    #[test]
+    fn effect_kind_serde_roundtrip_all_variants() {
+        let variants = [
+            EffectKind::DomMutation,
+            EffectKind::NetworkIo,
+            EffectKind::TimerSetup,
+            EffectKind::StateUpdate,
+            EffectKind::Subscription,
+            EffectKind::CustomEffect,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: EffectKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, v);
+        }
+        assert_eq!(variants.len(), 6);
+    }
+
+    #[test]
+    fn effect_timing_serde_roundtrip_all_variants() {
+        let variants = [
+            EffectTiming::AfterRender,
+            EffectTiming::BeforePaint,
+            EffectTiming::Synchronous,
+            EffectTiming::Deferred,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: EffectTiming = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, v);
+        }
+    }
+
+    #[test]
+    fn consumer_lane_serde_roundtrip_all_variants() {
+        let variants = [
+            ConsumerLane::Compiler,
+            ConsumerLane::Runtime,
+            ConsumerLane::Verification,
+            ConsumerLane::Optimization,
+            ConsumerLane::Governance,
+            ConsumerLane::Adoption,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: ConsumerLane = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, v);
+        }
+        assert_eq!(variants.len(), 6);
+    }
+
+    #[test]
+    fn drift_kind_serde_roundtrip_all_variants() {
+        let variants = [
+            DriftKind::SemanticRegression,
+            DriftKind::OrderingViolation,
+            DriftKind::EffectBoundaryLeak,
+            DriftKind::HookContractBreach,
+            DriftKind::AdjudicationOverride,
+            DriftKind::CorpusCoverageDrop,
+            DriftKind::VersionIncompatibility,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: DriftKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, v);
+        }
+        assert_eq!(variants.len(), 7);
+    }
 }

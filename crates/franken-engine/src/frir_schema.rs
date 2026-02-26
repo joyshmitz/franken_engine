@@ -2077,4 +2077,148 @@ mod tests {
         let back: InvariantCheck = serde_json::from_str(&json).unwrap();
         assert_eq!(ic, back);
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn witness_verdict_serde_roundtrip() {
+        let variants = [
+            WitnessVerdict::Valid,
+            WitnessVerdict::Invalid,
+            WitnessVerdict::Missing,
+            WitnessVerdict::Stale,
+            WitnessVerdict::TimedOut,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: WitnessVerdict = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn invariant_kind_serde_roundtrip() {
+        let variants = [
+            InvariantKind::SemanticEquivalence,
+            InvariantKind::TypeSafety,
+            InvariantKind::EffectContainment,
+            InvariantKind::HookOrdering,
+            InvariantKind::CapabilityMonotonicity,
+            InvariantKind::Determinism,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: InvariantKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn equivalence_kind_serde_roundtrip() {
+        let variants = [
+            EquivalenceKind::Observational,
+            EquivalenceKind::Trace,
+            EquivalenceKind::Effect,
+            EquivalenceKind::Output,
+            EquivalenceKind::Approximate,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: EquivalenceKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn frir_pipeline_event_kind_serde_roundtrip() {
+        let variants = [
+            FrirPipelineEventKind::PipelineStarted,
+            FrirPipelineEventKind::PassExecuted,
+            FrirPipelineEventKind::WitnessProduced,
+            FrirPipelineEventKind::WitnessVerified,
+            FrirPipelineEventKind::FallbackTriggered,
+            FrirPipelineEventKind::EquivalenceWitnessProduced,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: FrirPipelineEventKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn witness_verdict_display_all_distinct() {
+        let variants = [
+            WitnessVerdict::Valid,
+            WitnessVerdict::Invalid,
+            WitnessVerdict::Missing,
+            WitnessVerdict::Stale,
+            WitnessVerdict::TimedOut,
+        ];
+        let mut set = std::collections::BTreeSet::new();
+        for v in &variants {
+            set.insert(v.to_string());
+        }
+        assert_eq!(set.len(), variants.len());
+    }
+
+    #[test]
+    fn invariant_kind_display_all_distinct() {
+        let variants = [
+            InvariantKind::SemanticEquivalence,
+            InvariantKind::TypeSafety,
+            InvariantKind::EffectContainment,
+            InvariantKind::HookOrdering,
+            InvariantKind::CapabilityMonotonicity,
+            InvariantKind::Determinism,
+        ];
+        let mut set = std::collections::BTreeSet::new();
+        for v in &variants {
+            set.insert(v.to_string());
+        }
+        assert_eq!(set.len(), variants.len());
+    }
+
+    #[test]
+    fn equivalence_kind_display_all_distinct() {
+        let variants = [
+            EquivalenceKind::Observational,
+            EquivalenceKind::Trace,
+            EquivalenceKind::Effect,
+            EquivalenceKind::Output,
+            EquivalenceKind::Approximate,
+        ];
+        let mut set = std::collections::BTreeSet::new();
+        for v in &variants {
+            set.insert(v.to_string());
+        }
+        assert_eq!(set.len(), variants.len());
+    }
+
+    #[test]
+    fn lane_target_display_all_distinct() {
+        let variants = [LaneTarget::Js, LaneTarget::Wasm, LaneTarget::Baseline];
+        let mut set = std::collections::BTreeSet::new();
+        for v in &variants {
+            set.insert(v.to_string());
+        }
+        assert_eq!(set.len(), variants.len());
+    }
+
+    #[test]
+    fn pass_kind_display_all_distinct() {
+        let variants = [
+            PassKind::Parse,
+            PassKind::ScopeResolve,
+            PassKind::CapabilityAnnotate,
+            PassKind::EffectAnalysis,
+            PassKind::HookSlotValidation,
+            PassKind::DependencyGraph,
+        ];
+        let mut set = std::collections::BTreeSet::new();
+        for v in &variants {
+            set.insert(v.to_string());
+        }
+        assert_eq!(set.len(), variants.len());
+    }
 }

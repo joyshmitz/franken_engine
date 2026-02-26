@@ -2532,4 +2532,368 @@ mod tests {
         assert!(report.contains("latency_outcome"));
         assert!(report.contains("regime"));
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 --
+
+    #[test]
+    fn test_default_scm_is_empty() {
+        let scm = StructuralCausalModel::default();
+        assert!(scm.nodes().is_empty());
+        assert!(scm.edges().is_empty());
+        assert_eq!(scm.observation_count(), 0);
+        assert!(scm.confounders().is_empty());
+        assert!(scm.intervention_surfaces().is_empty());
+    }
+
+    #[test]
+    fn test_self_loop_detected_as_cycle() {
+        let mut scm = StructuralCausalModel::new();
+        scm.add_node(CausalNode {
+            id: "A".to_string(),
+            label: "A".to_string(),
+            role: NodeRole::Endogenous,
+            domain: VariableDomain::ObservedOutcome,
+            observable: true,
+            fixed_value_millionths: None,
+        })
+        .unwrap();
+        let err = scm
+            .add_edge(CausalEdge {
+                source: "A".to_string(),
+                target: "A".to_string(),
+                sign: EdgeSign::Positive,
+                strength_millionths: 500_000,
+                mechanism: "self".to_string(),
+            })
+            .unwrap_err();
+        assert!(matches!(err, ScmError::CycleDetected { .. }));
+    }
+
+    #[test]
+    fn test_all_directed_paths_self_returns_trivial() {
+        let mut scm = StructuralCausalModel::new();
+        scm.add_node(CausalNode {
+            id: "A".to_string(),
+            label: "A".to_string(),
+            role: NodeRole::Endogenous,
+            domain: VariableDomain::ObservedOutcome,
+            observable: true,
+            fixed_value_millionths: None,
+        })
+        .unwrap();
+        let paths = scm.all_directed_paths("A", "A");
+        assert_eq!(paths.len(), 1);
+        assert_eq!(paths[0], vec!["A".to_string()]);
+    }
+
+    #[test]
+    fn test_do_intervention_preserves_original() {
+        let mut scm = StructuralCausalModel::new();
+        let nodes = ["T", "Y"];
+        for id in &nodes {
+            scm.add_node(CausalNode {
+                id: id.to_string(),
+                label: id.to_string(),
+                role: if *id == "T" {
+                    NodeRole::Treatment
+                } else {
+                    NodeRole::Outcome
+                },
+                domain: VariableDomain::LaneChoice,
+                observable: true,
+                fixed_value_millionths: None,
+            })
+            .unwrap();
+        }
+        scm.add_edge(CausalEdge {
+            source: "T".to_string(),
+            target: "Y".to_string(),
+            sign: EdgeSign::Positive,
+            strength_millionths: 800_000,
+            mechanism: "direct".to_string(),
+        })
+        .unwrap();
+        let intervention = Intervention {
+            node_id: "T".to_string(),
+            value_millionths: 1_000_000,
+            description: "set T=1".to_string(),
+        };
+        let mutated = scm.do_intervention(&intervention).unwrap();
+        // Original is unchanged
+        assert!(scm.node("T").unwrap().fixed_value_millionths.is_none());
+        assert_eq!(scm.edges().len(), 1);
+        // Mutated has fixed value and no incoming edges
+        assert_eq!(
+            mutated.node("T").unwrap().fixed_value_millionths,
+            Some(1_000_000)
+        );
+        assert!(mutated.parents_of("T").is_empty());
+    }
+
+    #[test]
+    fn test_confounders_persist_after_classify() {
+        let mut scm = StructuralCausalModel::new();
+        for (id, role) in [
+            ("C", NodeRole::Confounder),
+            ("T", NodeRole::Treatment),
+            ("Y", NodeRole::Outcome),
+        ] {
+            scm.add_node(CausalNode {
+                id: id.to_string(),
+                label: id.to_string(),
+                role,
+                domain: VariableDomain::ObservedOutcome,
+                observable: true,
+                fixed_value_millionths: None,
+            })
+            .unwrap();
+        }
+        scm.add_edge(CausalEdge {
+            source: "C".to_string(),
+            target: "T".to_string(),
+            sign: EdgeSign::Positive,
+            strength_millionths: 500_000,
+            mechanism: "confound->treat".to_string(),
+        })
+        .unwrap();
+        scm.add_edge(CausalEdge {
+            source: "C".to_string(),
+            target: "Y".to_string(),
+            sign: EdgeSign::Positive,
+            strength_millionths: 500_000,
+            mechanism: "confound->outcome".to_string(),
+        })
+        .unwrap();
+        scm.add_edge(CausalEdge {
+            source: "T".to_string(),
+            target: "Y".to_string(),
+            sign: EdgeSign::Positive,
+            strength_millionths: 800_000,
+            mechanism: "direct".to_string(),
+        })
+        .unwrap();
+        assert!(scm.confounders().is_empty());
+        let classified = scm.classify_confounders("T", "Y").unwrap();
+        assert!(!classified.is_empty());
+        // After classify, accessor returns persisted confounders
+        assert_eq!(scm.confounders().len(), classified.len());
+    }
+
+    #[test]
+    fn test_cycle_detection_error_contains_path() {
+        let mut scm = StructuralCausalModel::new();
+        for id in ["A", "B", "C"] {
+            scm.add_node(CausalNode {
+                id: id.to_string(),
+                label: id.to_string(),
+                role: NodeRole::Endogenous,
+                domain: VariableDomain::ObservedOutcome,
+                observable: true,
+                fixed_value_millionths: None,
+            })
+            .unwrap();
+        }
+        scm.add_edge(CausalEdge {
+            source: "A".to_string(),
+            target: "B".to_string(),
+            sign: EdgeSign::Positive,
+            strength_millionths: 1_000_000,
+            mechanism: "A->B".to_string(),
+        })
+        .unwrap();
+        scm.add_edge(CausalEdge {
+            source: "B".to_string(),
+            target: "C".to_string(),
+            sign: EdgeSign::Positive,
+            strength_millionths: 1_000_000,
+            mechanism: "B->C".to_string(),
+        })
+        .unwrap();
+        let err = scm
+            .add_edge(CausalEdge {
+                source: "C".to_string(),
+                target: "A".to_string(),
+                sign: EdgeSign::Positive,
+                strength_millionths: 1_000_000,
+                mechanism: "C->A".to_string(),
+            })
+            .unwrap_err();
+        if let ScmError::CycleDetected { path } = &err {
+            assert!(path.len() >= 3, "cycle path should have ≥3 nodes");
+        } else {
+            panic!("expected CycleDetected, got {err:?}");
+        }
+    }
+
+    #[test]
+    fn test_scm_error_display_cycle_shows_arrow() {
+        let err = ScmError::CycleDetected {
+            path: vec![
+                "A".to_string(),
+                "B".to_string(),
+                "C".to_string(),
+                "A".to_string(),
+            ],
+        };
+        let display = err.to_string();
+        assert!(
+            display.contains("→") || display.contains("->"),
+            "display: {display}"
+        );
+    }
+
+    #[test]
+    fn test_decompose_attribution_negative_strength() {
+        let mut scm = StructuralCausalModel::new();
+        for (id, role) in [("T", NodeRole::Treatment), ("Y", NodeRole::Outcome)] {
+            scm.add_node(CausalNode {
+                id: id.to_string(),
+                label: id.to_string(),
+                role,
+                domain: VariableDomain::LaneChoice,
+                observable: true,
+                fixed_value_millionths: None,
+            })
+            .unwrap();
+        }
+        scm.add_edge(CausalEdge {
+            source: "T".to_string(),
+            target: "Y".to_string(),
+            sign: EdgeSign::Negative,
+            strength_millionths: -500_000, // negative strength
+            mechanism: "inhibitory".to_string(),
+        })
+        .unwrap();
+        let attr = scm.decompose_attribution("T", "Y", 1_000_000).unwrap();
+        assert_eq!(attr.pathways.len(), 1);
+        // Decomposition uses abs(strength) for fractions, so negative edge
+        // still gets full attribution weight — effect equals total_delta
+        assert_eq!(attr.pathways[0].fraction_millionths, 1_000_000);
+        assert_eq!(attr.pathways[0].effect_millionths, 1_000_000);
+    }
+
+    #[test]
+    fn test_observation_serde_with_multiple_values() {
+        let mut values = BTreeMap::new();
+        values.insert("T".to_string(), 1_000_000i64);
+        values.insert("Y".to_string(), 500_000);
+        values.insert("C".to_string(), 750_000);
+        let obs = Observation {
+            epoch: 5,
+            tick: 100,
+            values,
+        };
+        let json = serde_json::to_string(&obs).unwrap();
+        let back: Observation = serde_json::from_str(&json).unwrap();
+        assert_eq!(obs.epoch, back.epoch);
+        assert_eq!(obs.tick, back.tick);
+        assert_eq!(obs.values.len(), 3);
+        assert_eq!(obs.values, back.values);
+    }
+
+    #[test]
+    fn test_causal_node_fixed_value_serde_roundtrip() {
+        let node = CausalNode {
+            id: "T".to_string(),
+            label: "Treatment".to_string(),
+            role: NodeRole::Treatment,
+            domain: VariableDomain::LaneChoice,
+            observable: true,
+            fixed_value_millionths: Some(750_000),
+        };
+        let json = serde_json::to_string(&node).unwrap();
+        let back: CausalNode = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.fixed_value_millionths, Some(750_000));
+    }
+
+    #[test]
+    fn test_has_path_disconnected_nodes() {
+        let mut scm = StructuralCausalModel::new();
+        for id in ["A", "B"] {
+            scm.add_node(CausalNode {
+                id: id.to_string(),
+                label: id.to_string(),
+                role: NodeRole::Endogenous,
+                domain: VariableDomain::ObservedOutcome,
+                observable: true,
+                fixed_value_millionths: None,
+            })
+            .unwrap();
+        }
+        // No edges — no path
+        assert!(!scm.has_path(&"A".to_string(), &"B".to_string()));
+        assert!(!scm.has_path(&"B".to_string(), &"A".to_string()));
+    }
+
+    #[test]
+    fn test_report_includes_edge_info() {
+        let mut scm = StructuralCausalModel::new();
+        for (id, role) in [("T", NodeRole::Treatment), ("Y", NodeRole::Outcome)] {
+            scm.add_node(CausalNode {
+                id: id.to_string(),
+                label: id.to_string(),
+                role,
+                domain: VariableDomain::LaneChoice,
+                observable: true,
+                fixed_value_millionths: None,
+            })
+            .unwrap();
+        }
+        scm.add_edge(CausalEdge {
+            source: "T".to_string(),
+            target: "Y".to_string(),
+            sign: EdgeSign::Positive,
+            strength_millionths: 800_000,
+            mechanism: "direct-effect".to_string(),
+        })
+        .unwrap();
+        let report = scm.report();
+        assert!(report.contains("T"), "report should mention T");
+        assert!(report.contains("Y"), "report should mention Y");
+    }
+
+    #[test]
+    fn test_scm_error_serde_all_variants_distinct() {
+        let errors = vec![
+            ScmError::NodeNotFound("x".to_string()),
+            ScmError::EdgeAlreadyExists {
+                source: "a".to_string(),
+                target: "b".to_string(),
+            },
+            ScmError::CycleDetected {
+                path: vec!["a".to_string(), "b".to_string()],
+            },
+            ScmError::DuplicateNode("d".to_string()),
+            ScmError::NoTreatmentNode,
+            ScmError::NoOutcomeNode,
+            ScmError::InsufficientObservations {
+                required: 10,
+                available: 5,
+            },
+            ScmError::NotIdentified {
+                reason: "test".to_string(),
+            },
+        ];
+        let jsons: Vec<String> = errors
+            .iter()
+            .map(|e| serde_json::to_string(e).unwrap())
+            .collect();
+        // All should be distinct
+        let mut deduped = jsons.clone();
+        deduped.sort();
+        deduped.dedup();
+        assert_eq!(jsons.len(), deduped.len());
+    }
+
+    #[test]
+    fn test_intervention_surfaces_persist_after_compute() {
+        let dag = build_lane_decision_dag().unwrap();
+        assert!(dag.intervention_surfaces().is_empty());
+        let mut dag = dag;
+        let surfaces = dag
+            .compute_intervention_surfaces("lane_choice", "latency_outcome")
+            .unwrap();
+        assert!(!surfaces.is_empty());
+        assert_eq!(dag.intervention_surfaces().len(), surfaces.len());
+    }
 }
