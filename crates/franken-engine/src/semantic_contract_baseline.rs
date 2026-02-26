@@ -9,13 +9,14 @@
 
 #![forbid(unsafe_code)]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
 use crate::engine_object_id::{EngineObjectId, ObjectDomain, SchemaId, derive_id};
 use crate::hash_tiers::ContentHash;
+use crate::static_analysis_graph::ComponentDescriptor;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -650,6 +651,302 @@ pub struct PackageValidation {
 }
 
 // ---------------------------------------------------------------------------
+// Local Semantic Atlas (FRX-14.1)
+// ---------------------------------------------------------------------------
+
+pub const LOCAL_SEMANTIC_ATLAS_SCHEMA_VERSION: &str = "franken-engine.local-semantic-atlas.v1";
+pub const LOCAL_SEMANTIC_ATLAS_BEAD_ID: &str = "bd-mjh3.14.1";
+pub const LOCAL_SEMANTIC_ATLAS_DEBT_MISSING_FIXTURE_LINK: &str = "FE-FRX-14-1-LOCAL-0001";
+pub const LOCAL_SEMANTIC_ATLAS_DEBT_MISSING_TRACE_LINK: &str = "FE-FRX-14-1-LOCAL-0002";
+pub const LOCAL_SEMANTIC_ATLAS_DEBT_MISSING_CONTEXT_ASSUMPTIONS: &str =
+    "FE-FRX-14-1-LOCAL-0003";
+pub const LOCAL_SEMANTIC_ATLAS_DEBT_EMPTY_LOCAL_CONTRACT: &str = "FE-FRX-14-1-LOCAL-0004";
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LocalSemanticAtlasInput {
+    pub component: ComponentDescriptor,
+    pub fixture_refs: Vec<String>,
+    pub trace_refs: Vec<String>,
+    pub assumption_keys: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LocalSemanticAtlasEntry {
+    pub component_id: String,
+    pub module_path: String,
+    pub export_name: Option<String>,
+    pub hook_signature: Vec<String>,
+    pub effect_signature: Vec<String>,
+    pub required_contexts: Vec<String>,
+    pub provided_contexts: Vec<String>,
+    pub capability_requirements: Vec<String>,
+    pub assumption_keys: Vec<String>,
+    pub fixture_refs: Vec<String>,
+    pub trace_refs: Vec<String>,
+    pub content_hash: ContentHash,
+}
+
+impl LocalSemanticAtlasEntry {
+    pub fn from_input(input: LocalSemanticAtlasInput) -> Self {
+        let hook_signature = input
+            .component
+            .hook_slots
+            .iter()
+            .map(|slot| {
+                let dep_count = slot
+                    .dependency_count
+                    .map(|count| count.to_string())
+                    .unwrap_or_else(|| "none".to_string());
+                format!(
+                    "slot={};kind={};label={};deps={};cleanup={}",
+                    slot.slot_index, slot.kind, slot.label, dep_count, slot.has_cleanup
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let effect_signature = input
+            .component
+            .capability_boundary
+            .hook_effects
+            .iter()
+            .map(|effect| {
+                let capabilities = effect
+                    .required_capabilities
+                    .iter()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join("+");
+                format!(
+                    "boundary={:?};caps={};idempotent={};commutative={};cost_millionths={}",
+                    effect.boundary,
+                    capabilities,
+                    effect.idempotent,
+                    effect.commutative,
+                    effect.estimated_cost_millionths
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let required_contexts = sorted_unique(input.component.consumed_contexts.clone());
+        let provided_contexts = sorted_unique(input.component.provided_contexts.clone());
+        let capability_requirements = input
+            .component
+            .capability_boundary
+            .all_capabilities()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let assumption_keys = sorted_unique(input.assumption_keys);
+        let fixture_refs = sorted_unique(input.fixture_refs);
+        let trace_refs = sorted_unique(input.trace_refs);
+
+        let mut entry = Self {
+            component_id: input.component.id.0,
+            module_path: input.component.module_path,
+            export_name: input.component.export_name,
+            hook_signature,
+            effect_signature,
+            required_contexts,
+            provided_contexts,
+            capability_requirements,
+            assumption_keys,
+            fixture_refs,
+            trace_refs,
+            content_hash: ContentHash::compute(b"local_semantic_atlas_entry"),
+        };
+        entry.recompute_hash();
+        entry
+    }
+
+    fn recompute_hash(&mut self) {
+        let mut data = Vec::new();
+        data.extend_from_slice(self.component_id.as_bytes());
+        data.extend_from_slice(self.module_path.as_bytes());
+        if let Some(export_name) = &self.export_name {
+            data.extend_from_slice(export_name.as_bytes());
+        }
+        for value in &self.hook_signature {
+            data.extend_from_slice(value.as_bytes());
+        }
+        for value in &self.effect_signature {
+            data.extend_from_slice(value.as_bytes());
+        }
+        for value in &self.required_contexts {
+            data.extend_from_slice(value.as_bytes());
+        }
+        for value in &self.provided_contexts {
+            data.extend_from_slice(value.as_bytes());
+        }
+        for value in &self.capability_requirements {
+            data.extend_from_slice(value.as_bytes());
+        }
+        for value in &self.assumption_keys {
+            data.extend_from_slice(value.as_bytes());
+        }
+        for value in &self.fixture_refs {
+            data.extend_from_slice(value.as_bytes());
+        }
+        for value in &self.trace_refs {
+            data.extend_from_slice(value.as_bytes());
+        }
+        self.content_hash = ContentHash::compute(&data);
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LocalSemanticContractDebt {
+    pub component_id: String,
+    pub debt_code: String,
+    pub description: String,
+    pub blocking: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LocalSemanticAtlas {
+    pub schema_version: String,
+    pub bead_id: String,
+    pub version: SemanticContractVersion,
+    pub generated_epoch: u64,
+    pub entries: Vec<LocalSemanticAtlasEntry>,
+    pub quality_debt: Vec<LocalSemanticContractDebt>,
+    pub atlas_hash: ContentHash,
+}
+
+impl LocalSemanticAtlas {
+    pub fn from_inputs(
+        version: SemanticContractVersion,
+        generated_epoch: u64,
+        inputs: Vec<LocalSemanticAtlasInput>,
+    ) -> Self {
+        let mut entries = inputs
+            .into_iter()
+            .map(LocalSemanticAtlasEntry::from_input)
+            .collect::<Vec<_>>();
+        entries.sort_by(|lhs, rhs| lhs.component_id.cmp(&rhs.component_id));
+
+        let mut quality_debt = entries
+            .iter()
+            .flat_map(Self::debt_for_entry)
+            .collect::<Vec<_>>();
+        quality_debt.sort_by(|lhs, rhs| {
+            lhs.component_id
+                .cmp(&rhs.component_id)
+                .then_with(|| lhs.debt_code.cmp(&rhs.debt_code))
+        });
+
+        let mut atlas = Self {
+            schema_version: LOCAL_SEMANTIC_ATLAS_SCHEMA_VERSION.to_string(),
+            bead_id: LOCAL_SEMANTIC_ATLAS_BEAD_ID.to_string(),
+            version,
+            generated_epoch,
+            entries,
+            quality_debt,
+            atlas_hash: ContentHash::compute(b"local_semantic_atlas"),
+        };
+        atlas.recompute_hash();
+        atlas
+    }
+
+    pub fn entry(&self, component_id: &str) -> Option<&LocalSemanticAtlasEntry> {
+        self.entries.iter().find(|entry| entry.component_id == component_id)
+    }
+
+    pub fn blocking_debt_count(&self) -> usize {
+        self.quality_debt.iter().filter(|debt| debt.blocking).count()
+    }
+
+    pub fn validate(&self) -> LocalSemanticAtlasValidation {
+        let mut warnings = Vec::new();
+        if self.entries.is_empty() {
+            warnings.push("atlas has no component entries".to_string());
+        }
+
+        let mut seen_component_ids = BTreeSet::new();
+        for entry in &self.entries {
+            if !seen_component_ids.insert(entry.component_id.clone()) {
+                warnings.push(format!("duplicate component entry: {}", entry.component_id));
+            }
+        }
+
+        let blocking_debt_count = self.blocking_debt_count();
+        let is_valid = warnings.is_empty() && blocking_debt_count == 0;
+        LocalSemanticAtlasValidation {
+            is_valid,
+            entry_count: self.entries.len(),
+            total_debt_count: self.quality_debt.len(),
+            blocking_debt_count,
+            warnings,
+        }
+    }
+
+    fn debt_for_entry(entry: &LocalSemanticAtlasEntry) -> Vec<LocalSemanticContractDebt> {
+        let mut debt = Vec::new();
+        if entry.fixture_refs.is_empty() {
+            debt.push(LocalSemanticContractDebt {
+                component_id: entry.component_id.clone(),
+                debt_code: LOCAL_SEMANTIC_ATLAS_DEBT_MISSING_FIXTURE_LINK.to_string(),
+                description:
+                    "missing compatibility fixture linkage for local semantic contract".to_string(),
+                blocking: true,
+            });
+        }
+        if entry.trace_refs.is_empty() {
+            debt.push(LocalSemanticContractDebt {
+                component_id: entry.component_id.clone(),
+                debt_code: LOCAL_SEMANTIC_ATLAS_DEBT_MISSING_TRACE_LINK.to_string(),
+                description: "missing observable trace linkage for local semantic contract"
+                    .to_string(),
+                blocking: true,
+            });
+        }
+        if !entry.required_contexts.is_empty() && entry.assumption_keys.is_empty() {
+            debt.push(LocalSemanticContractDebt {
+                component_id: entry.component_id.clone(),
+                debt_code: LOCAL_SEMANTIC_ATLAS_DEBT_MISSING_CONTEXT_ASSUMPTIONS.to_string(),
+                description:
+                    "consumed contexts require explicit local assumption keys".to_string(),
+                blocking: true,
+            });
+        }
+        if entry.hook_signature.is_empty() && entry.effect_signature.is_empty() {
+            debt.push(LocalSemanticContractDebt {
+                component_id: entry.component_id.clone(),
+                debt_code: LOCAL_SEMANTIC_ATLAS_DEBT_EMPTY_LOCAL_CONTRACT.to_string(),
+                description: "component has no hook/effect local contract surface".to_string(),
+                blocking: true,
+            });
+        }
+        debt
+    }
+
+    fn recompute_hash(&mut self) {
+        let mut data = Vec::new();
+        data.extend_from_slice(self.schema_version.as_bytes());
+        data.extend_from_slice(self.bead_id.as_bytes());
+        data.extend_from_slice(self.version.to_string().as_bytes());
+        data.extend_from_slice(&self.generated_epoch.to_le_bytes());
+        for entry in &self.entries {
+            data.extend_from_slice(entry.content_hash.as_bytes());
+        }
+        for debt in &self.quality_debt {
+            data.extend_from_slice(debt.component_id.as_bytes());
+            data.extend_from_slice(debt.debt_code.as_bytes());
+            data.extend_from_slice(debt.description.as_bytes());
+            data.push(u8::from(debt.blocking));
+        }
+        self.atlas_hash = ContentHash::compute(&data);
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LocalSemanticAtlasValidation {
+    pub is_valid: bool,
+    pub entry_count: usize,
+    pub total_debt_count: usize,
+    pub blocking_debt_count: usize,
+    pub warnings: Vec<String>,
+}
+
+// ---------------------------------------------------------------------------
 // Frozen Baseline
 // ---------------------------------------------------------------------------
 
@@ -1138,6 +1435,12 @@ impl std::error::Error for FoundationError {}
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+fn sorted_unique(mut values: Vec<String>) -> Vec<String> {
+    values.sort();
+    values.dedup();
+    values
+}
 
 fn hex_prefix(hash: &ContentHash) -> String {
     let bytes = hash.as_bytes();
@@ -2331,6 +2634,138 @@ mod tests {
 
         assert_eq!(foundation.frozen_baselines.len(), 2);
         assert_eq!(foundation.latest_baseline().unwrap().cut_line_id, "C1");
+    }
+
+    fn make_local_semantic_component(component_id: &str) -> ComponentDescriptor {
+        use crate::ir_contract::EffectBoundary;
+        use crate::static_analysis_graph::{
+            CapabilityBoundary, ComponentId, EffectClassification, HookKind as GraphHookKind,
+            HookSlot,
+        };
+
+        let mut direct_capabilities = BTreeSet::new();
+        direct_capabilities.insert("dom.mutate".to_string());
+
+        ComponentDescriptor {
+            id: ComponentId::new(component_id),
+            is_function_component: true,
+            module_path: format!("src/{component_id}.tsx"),
+            export_name: Some(component_id.to_string()),
+            hook_slots: vec![HookSlot {
+                slot_index: 0,
+                kind: GraphHookKind::Effect,
+                label: "useEffect(fetchUser)".to_string(),
+                dependency_count: Some(1),
+                has_cleanup: true,
+                source_offset: 12,
+                dependency_hash: None,
+            }],
+            props: BTreeMap::new(),
+            consumed_contexts: vec!["AuthContext".to_string()],
+            provided_contexts: vec!["FeatureFlags".to_string()],
+            capability_boundary: CapabilityBoundary {
+                direct_capabilities,
+                transitive_capabilities: BTreeSet::new(),
+                render_effect: EffectBoundary::Pure,
+                hook_effects: vec![EffectClassification {
+                    boundary: EffectBoundary::WriteEffect,
+                    required_capabilities: {
+                        let mut caps = BTreeSet::new();
+                        caps.insert("dom.mutate".to_string());
+                        caps
+                    },
+                    idempotent: true,
+                    commutative: false,
+                    estimated_cost_millionths: 25_000,
+                }],
+                is_boundary: true,
+                boundary_tags: Vec::new(),
+            },
+            is_pure: false,
+            content_hash: ContentHash::compute(component_id.as_bytes()),
+            children: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn local_semantic_atlas_entry_normalizes_and_hashes_deterministically() {
+        let component = make_local_semantic_component("UserPanel");
+        let input_a = LocalSemanticAtlasInput {
+            component: component.clone(),
+            fixture_refs: vec!["compat.hooks.order.user_panel".to_string()],
+            trace_refs: vec!["trace.user_panel.hooks_order".to_string()],
+            assumption_keys: vec![
+                "ctx.auth.stable_identity".to_string(),
+                "scheduler.effect_order.passive".to_string(),
+            ],
+        };
+        let input_b = LocalSemanticAtlasInput {
+            component,
+            fixture_refs: vec!["compat.hooks.order.user_panel".to_string()],
+            trace_refs: vec!["trace.user_panel.hooks_order".to_string()],
+            assumption_keys: vec![
+                "scheduler.effect_order.passive".to_string(),
+                "ctx.auth.stable_identity".to_string(),
+            ],
+        };
+
+        let entry_a = LocalSemanticAtlasEntry::from_input(input_a);
+        let entry_b = LocalSemanticAtlasEntry::from_input(input_b);
+        assert_eq!(entry_a.content_hash, entry_b.content_hash);
+        assert_eq!(
+            entry_a.assumption_keys,
+            vec![
+                "ctx.auth.stable_identity".to_string(),
+                "scheduler.effect_order.passive".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn local_semantic_atlas_reports_blocking_quality_debt_for_missing_links() {
+        let atlas = LocalSemanticAtlas::from_inputs(
+            SemanticContractVersion::CURRENT,
+            42,
+            vec![LocalSemanticAtlasInput {
+                component: make_local_semantic_component("MissingLinks"),
+                fixture_refs: Vec::new(),
+                trace_refs: Vec::new(),
+                assumption_keys: Vec::new(),
+            }],
+        );
+
+        assert_eq!(atlas.blocking_debt_count(), 3);
+        let debt_codes = atlas
+            .quality_debt
+            .iter()
+            .map(|debt| debt.debt_code.as_str())
+            .collect::<Vec<_>>();
+        assert!(debt_codes.contains(&LOCAL_SEMANTIC_ATLAS_DEBT_MISSING_FIXTURE_LINK));
+        assert!(debt_codes.contains(&LOCAL_SEMANTIC_ATLAS_DEBT_MISSING_TRACE_LINK));
+        assert!(debt_codes.contains(&LOCAL_SEMANTIC_ATLAS_DEBT_MISSING_CONTEXT_ASSUMPTIONS));
+
+        let validation = atlas.validate();
+        assert!(!validation.is_valid);
+        assert_eq!(validation.blocking_debt_count, 3);
+    }
+
+    #[test]
+    fn local_semantic_atlas_passes_when_links_and_assumptions_exist() {
+        let atlas = LocalSemanticAtlas::from_inputs(
+            SemanticContractVersion::CURRENT,
+            99,
+            vec![LocalSemanticAtlasInput {
+                component: make_local_semantic_component("ReadyComponent"),
+                fixture_refs: vec!["compat.hooks.order.ready_component".to_string()],
+                trace_refs: vec!["trace.ready_component.effects".to_string()],
+                assumption_keys: vec!["ctx.auth.stable_identity".to_string()],
+            }],
+        );
+
+        let validation = atlas.validate();
+        assert!(validation.is_valid);
+        assert_eq!(validation.blocking_debt_count, 0);
+        assert!(atlas.entry("ReadyComponent").is_some());
     }
 
     #[test]
