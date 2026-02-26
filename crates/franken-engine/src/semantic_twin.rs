@@ -799,6 +799,7 @@ fn default_state_variables() -> Vec<TwinStateVariable> {
     ]
 }
 
+#[allow(clippy::too_many_arguments)]
 fn state_variable(
     id: &str,
     label: &str,
@@ -932,7 +933,8 @@ mod tests {
                 strategy.effect_id
             );
             assert!(
-                !strategy.adjustment_set.is_empty() || strategy.blocked_confounding_paths.is_empty(),
+                !strategy.adjustment_set.is_empty()
+                    || strategy.blocked_confounding_paths.is_empty(),
                 "effect {} must either expose an adjustment set or have no confounding paths",
                 strategy.effect_id
             );

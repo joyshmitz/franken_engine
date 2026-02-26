@@ -304,55 +304,56 @@ impl SemanticTwinSpecification {
         let backdoor = causal_model.backdoor_criterion("lane_choice", "latency_outcome")?;
         causal_model.compute_intervention_surfaces("lane_choice", "latency_outcome")?;
 
-        let mut assumptions = Vec::new();
-        assumptions.push(assumption(
-            "assumption_regime_observable",
-            AssumptionCategory::Structural,
-            AssumptionOrigin::Runtime,
-            ViolationSeverity::Critical,
-            "Operating regime signal is observable for confounder adjustment.",
-            &["regime"],
-        ));
-        assumptions.push(assumption(
-            "assumption_confounder_adjustment_set_valid",
-            AssumptionCategory::Statistical,
-            AssumptionOrigin::Runtime,
-            ViolationSeverity::Warning,
-            "Backdoor adjustment set remains measurable and non-empty.",
-            &["regime", "lane_choice", "latency_outcome"],
-        ));
-        assumptions.push(assumption(
-            "assumption_latency_measurement_fresh",
-            AssumptionCategory::Resource,
-            AssumptionOrigin::Runtime,
-            ViolationSeverity::Warning,
-            "Latency signal remains fresh and bounded by SLO envelope.",
-            &["latency_outcome"],
-        ));
-        assumptions.push(assumption(
-            "assumption_nondeterminism_log_complete",
-            AssumptionCategory::Safety,
-            AssumptionOrigin::Runtime,
-            ViolationSeverity::Critical,
-            "Causal replay nondeterminism transcript remains complete.",
-            &["nondeterminism_log_completeness"],
-        ));
-        assumptions.push(assumption(
-            "assumption_policy_weights_bounded",
-            AssumptionCategory::Structural,
-            AssumptionOrigin::PolicyInherited,
-            ViolationSeverity::Warning,
-            "Loss matrix weights remain within deterministic bounded range.",
-            &["loss_matrix_weight"],
-        ));
-        assumptions.push(assumption(
-            "assumption_workload_measurement_fresh",
-            AssumptionCategory::Resource,
-            AssumptionOrigin::Runtime,
-            ViolationSeverity::Advisory,
-            "Workload complexity telemetry is available for every routed decision.",
-            &["workload_complexity"],
-        ));
+        let assumptions = vec![
+            assumption(
+                "assumption_regime_observable",
+                AssumptionCategory::Structural,
+                AssumptionOrigin::Runtime,
+                ViolationSeverity::Critical,
+                "Operating regime signal is observable for confounder adjustment.",
+                &["regime"],
+            ),
+            assumption(
+                "assumption_confounder_adjustment_set_valid",
+                AssumptionCategory::Statistical,
+                AssumptionOrigin::Runtime,
+                ViolationSeverity::Warning,
+                "Backdoor adjustment set remains measurable and non-empty.",
+                &["regime", "lane_choice", "latency_outcome"],
+            ),
+            assumption(
+                "assumption_latency_measurement_fresh",
+                AssumptionCategory::Resource,
+                AssumptionOrigin::Runtime,
+                ViolationSeverity::Warning,
+                "Latency signal remains fresh and bounded by SLO envelope.",
+                &["latency_outcome"],
+            ),
+            assumption(
+                "assumption_nondeterminism_log_complete",
+                AssumptionCategory::Safety,
+                AssumptionOrigin::Runtime,
+                ViolationSeverity::Critical,
+                "Causal replay nondeterminism transcript remains complete.",
+                &["nondeterminism_log_completeness"],
+            ),
+            assumption(
+                "assumption_policy_weights_bounded",
+                AssumptionCategory::Structural,
+                AssumptionOrigin::PolicyInherited,
+                ViolationSeverity::Warning,
+                "Loss matrix weights remain within deterministic bounded range.",
+                &["loss_matrix_weight"],
+            ),
+            assumption(
+                "assumption_workload_measurement_fresh",
+                AssumptionCategory::Resource,
+                AssumptionOrigin::Runtime,
+                ViolationSeverity::Advisory,
+                "Workload complexity telemetry is available for every routed decision.",
+                &["workload_complexity"],
+            ),
+        ];
 
         let spec = Self {
             schema_version: SEMANTIC_TWIN_SCHEMA_VERSION.to_string(),
