@@ -200,8 +200,7 @@ fn parser_operator_runbook_incident_matrix_triage_is_stable() {
     for scenario in &fixture.incident_matrix {
         let derived = triage_action(scenario);
         assert_eq!(
-            derived,
-            scenario.expected_triage,
+            derived, scenario.expected_triage,
             "triage mismatch for scenario `{}`",
             scenario.scenario_id
         );

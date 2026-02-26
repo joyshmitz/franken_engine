@@ -2125,7 +2125,7 @@ mod tests {
 
     #[test]
     fn recovery_error_display_distinct() {
-        let variants = vec![
+        let variants = [
             RecoveryError::BudgetExhausted {
                 attempts: 1,
                 max: 2,
@@ -2140,7 +2140,7 @@ mod tests {
 
     #[test]
     fn recovery_error_code_distinct() {
-        let variants = vec![
+        let variants = [
             RecoveryError::BudgetExhausted {
                 attempts: 1,
                 max: 2,

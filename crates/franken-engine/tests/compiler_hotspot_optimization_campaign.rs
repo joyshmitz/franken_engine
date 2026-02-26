@@ -315,7 +315,12 @@ fn compiler_hotspot_campaigns_are_profile_justified_and_single_lever() {
         assert!(run.ev_inputs.effort > 0);
         assert!(run.ev_inputs.friction > 0);
         assert!(!run.isomorphism_proof.proof_method.trim().is_empty());
-        assert!(!run.isomorphism_proof.verification_contract_ref.trim().is_empty());
+        assert!(
+            !run.isomorphism_proof
+                .verification_contract_ref
+                .trim()
+                .is_empty()
+        );
         assert_eq!(run.isomorphism_proof.drift_status, "no_drift");
 
         let mut categories = BTreeSet::new();
@@ -348,7 +353,10 @@ fn compiler_hotspot_ev_and_gain_rankings_match_fixture() {
 
     assert_eq!(rank_by_ev(&results), fixture.expected_ev_ranking);
     assert_eq!(rank_by_gain(&results), fixture.expected_gain_ranking);
-    assert_eq!(selected_campaign(&results), fixture.expected_selected_campaign);
+    assert_eq!(
+        selected_campaign(&results),
+        fixture.expected_selected_campaign
+    );
 }
 
 #[test]

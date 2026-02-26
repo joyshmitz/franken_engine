@@ -3093,10 +3093,11 @@ mod tests {
 
     #[test]
     fn override_no_active_policy_rejected() {
-        let mut store = TeeAttestationPolicyStore::default();
-        // Manually un-halt to get past the halted check, but leave no active policy
-        store.receipt_emission_halted = false;
-        store.last_error_code = None;
+        let mut store = TeeAttestationPolicyStore {
+            receipt_emission_halted: false,
+            last_error_code: None,
+            ..TeeAttestationPolicyStore::default()
+        };
 
         let signing_key = SigningKey::from_bytes([7u8; 32]);
         let verifier = signing_key.verification_key();
@@ -3470,9 +3471,11 @@ mod tests {
 
     #[test]
     fn store_evaluate_quote_no_policy_not_halted() {
-        let mut store = TeeAttestationPolicyStore::default();
-        store.receipt_emission_halted = false;
-        store.last_error_code = None;
+        let mut store = TeeAttestationPolicyStore {
+            receipt_emission_halted: false,
+            last_error_code: None,
+            ..TeeAttestationPolicyStore::default()
+        };
         let quote = quote_for_sgx();
         let err = store
             .evaluate_quote(

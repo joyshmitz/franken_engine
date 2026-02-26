@@ -1165,8 +1165,8 @@ mod tests {
         let mut spec = SemanticTwinSpecification::frx_19_1_default().expect("spec");
         // Find a transition with a guard and corrupt the variable
         for transition in &mut spec.transitions {
-            if transition.guard.is_some() {
-                transition.guard.as_mut().unwrap().variable = "missing_guard_var".to_string();
+            if let Some(guard) = transition.guard.as_mut() {
+                guard.variable = "missing_guard_var".to_string();
                 break;
             }
         }

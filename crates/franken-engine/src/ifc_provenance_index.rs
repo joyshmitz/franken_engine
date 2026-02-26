@@ -2578,7 +2578,7 @@ mod tests {
             }],
         };
         assert!(path_a < path_b);
-        let mut sorted = vec![path_b.clone(), path_a.clone()];
+        let mut sorted = [path_b.clone(), path_a.clone()];
         sorted.sort();
         assert_eq!(sorted[0], path_a);
         assert_eq!(sorted[1], path_b);

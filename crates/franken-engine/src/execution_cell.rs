@@ -2678,7 +2678,7 @@ mod tests {
         // Serde preserves all fields
         let json = serde_json::to_string(&report).unwrap();
         let restored: CellCloseReport = serde_json::from_str(&json).unwrap();
-        assert_eq!(restored.drain_timeout_escalated, true);
+        assert!(restored.drain_timeout_escalated);
         assert_eq!(restored.close_reason, "BudgetExhausted");
     }
 

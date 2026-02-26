@@ -1785,7 +1785,7 @@ mod tests {
                 event: "test".to_string(),
                 outcome: "ok".to_string(),
                 component: "obligation_integration".to_string(),
-                phase: phase.clone(),
+                phase,
             };
             let json = serde_json::to_string(&event).unwrap();
             let back: ObligationEvent = serde_json::from_str(&json).unwrap();
@@ -1795,7 +1795,7 @@ mod tests {
 
     #[test]
     fn error_code_all_variants_unique() {
-        let errors = vec![
+        let errors = [
             ObligationIntegrationError::CellNotRunning {
                 cell_id: "c".to_string(),
                 current_state: RegionState::Closed,
@@ -1868,7 +1868,7 @@ mod tests {
             .unwrap();
         // Close cell without resolving
         let mut cx = mock_cx(100);
-        cell.close(
+        let _ = cell.close(
             &mut cx,
             CancelReason::OperatorShutdown,
             DrainDeadline::default(),

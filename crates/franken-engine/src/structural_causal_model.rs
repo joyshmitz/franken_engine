@@ -2854,7 +2854,7 @@ mod tests {
 
     #[test]
     fn test_scm_error_serde_all_variants_distinct() {
-        let errors = vec![
+        let errors = [
             ScmError::NodeNotFound("x".to_string()),
             ScmError::EdgeAlreadyExists {
                 source: "a".to_string(),

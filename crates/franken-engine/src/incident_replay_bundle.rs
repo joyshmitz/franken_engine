@@ -2707,9 +2707,11 @@ mod tests {
 
     #[test]
     fn redaction_policy_serde_with_custom_keys() {
-        let mut policy = RedactionPolicy::default();
-        policy.redact_extension_ids = true;
-        policy.redact_node_ids = true;
+        let mut policy = RedactionPolicy {
+            redact_extension_ids: true,
+            redact_node_ids: true,
+            ..RedactionPolicy::default()
+        };
         policy.custom_redaction_keys.insert("api-key".to_string());
         let json = serde_json::to_string(&policy).expect("serialize");
         let restored: RedactionPolicy = serde_json::from_str(&json).expect("deserialize");
@@ -2752,7 +2754,7 @@ mod tests {
     #[test]
     fn merkle_root_single_leaf_is_leaf() {
         let leaf = ContentHash::compute(b"only-one");
-        let root = compute_merkle_root(&[leaf.clone()]);
+        let root = compute_merkle_root(std::slice::from_ref(&leaf));
         assert_eq!(root, leaf);
     }
 
@@ -2785,7 +2787,7 @@ mod tests {
     #[test]
     fn merkle_proof_empty_for_single_leaf() {
         let leaf = ContentHash::compute(b"alone");
-        let proof = build_merkle_proof(&[leaf.clone()], 0);
+        let proof = build_merkle_proof(std::slice::from_ref(&leaf), 0);
         assert!(proof.is_empty());
     }
 

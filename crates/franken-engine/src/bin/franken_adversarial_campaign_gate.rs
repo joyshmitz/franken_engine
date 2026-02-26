@@ -79,20 +79,18 @@ fn run() -> Result<i32, Box<dyn Error>> {
         );
         println!(
             "suppression_gate.passed={}",
-            if report.result.passed { "true" } else { "false" }
+            if report.result.passed {
+                "true"
+            } else {
+                "false"
+            }
         );
-        println!(
-            "suppression_gate.failures={}",
-            report.result.failures.len()
-        );
+        println!("suppression_gate.failures={}", report.result.failures.len());
         println!(
             "suppression_gate.comparisons={}",
             report.result.comparisons.len()
         );
-        println!(
-            "suppression_gate.events={}",
-            report.result.events.len()
-        );
+        println!("suppression_gate.events={}", report.result.events.len());
     } else {
         println!("{json}");
     }

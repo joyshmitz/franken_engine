@@ -3408,7 +3408,7 @@ mod tests {
         };
         let pipeline = GovernancePipeline::new(config.clone());
         assert_eq!(pipeline.config().hooks, config.hooks);
-        assert_eq!(pipeline.config().halt_on_failure, false);
+        assert!(!pipeline.config().halt_on_failure);
         assert_eq!(pipeline.config().max_export_entries, 77);
         assert_eq!(pipeline.config().frameworks.len(), 1);
     }
