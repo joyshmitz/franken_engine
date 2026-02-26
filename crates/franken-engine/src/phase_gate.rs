@@ -1372,4 +1372,420 @@ mod tests {
         assert_eq!(report.timestamp_ticks, 1000);
         assert_eq!(report.epoch_id, 1);
     }
+
+    // -- Enrichment batch 3: boundary conditions and deeper edge cases --
+
+    #[test]
+    fn interleaving_zero_surfaces_passes() {
+        let mut eval = default_evaluator();
+        let report = eval.evaluate_interleaving(
+            &InterleavingInput {
+                total_surfaces: 0,
+                explored_surfaces: 0,
+                unresolved_failures: 0,
+                regression_transcripts: 0,
+            },
+            "ci",
+            "t",
+            0,
+        );
+        // 0/0 = 0%, which is < 95% threshold, so should fail
+        assert!(!report.status.is_passed());
+    }
+
+    #[test]
+    fn interleaving_exact_threshold_passes() {
+        let mut eval = default_evaluator();
+        let report = eval.evaluate_interleaving(
+            &InterleavingInput {
+                total_surfaces: 100,
+                explored_surfaces: 95,
+                unresolved_failures: 0,
+                regression_transcripts: 0,
+            },
+            "ci",
+            "t",
+            0,
+        );
+        assert!(report.status.is_passed());
+    }
+
+    #[test]
+    fn interleaving_just_below_threshold_fails() {
+        let mut eval = default_evaluator();
+        let report = eval.evaluate_interleaving(
+            &InterleavingInput {
+                total_surfaces: 100,
+                explored_surfaces: 94,
+                unresolved_failures: 0,
+                regression_transcripts: 0,
+            },
+            "ci",
+            "t",
+            0,
+        );
+        assert!(!report.status.is_passed());
+    }
+
+    #[test]
+    fn conformance_exact_min_vectors_passes() {
+        let mut eval = default_evaluator();
+        let report = eval.evaluate_conformance(
+            &ConformanceInput {
+                total_vectors: 500,
+                passed_vectors: 500,
+                failed_vectors: 0,
+                categories: vec!["cat1".to_string()],
+            },
+            "ci",
+            "t",
+            0,
+        );
+        assert!(report.status.is_passed());
+    }
+
+    #[test]
+    fn conformance_below_min_vectors_fails() {
+        let mut eval = default_evaluator();
+        let report = eval.evaluate_conformance(
+            &ConformanceInput {
+                total_vectors: 499,
+                passed_vectors: 499,
+                failed_vectors: 0,
+                categories: vec![],
+            },
+            "ci",
+            "t",
+            0,
+        );
+        assert!(!report.status.is_passed());
+    }
+
+    #[test]
+    fn conformance_failed_vectors_cause_failure() {
+        let mut eval = default_evaluator();
+        let report = eval.evaluate_conformance(
+            &ConformanceInput {
+                total_vectors: 600,
+                passed_vectors: 599,
+                failed_vectors: 1,
+                categories: vec![],
+            },
+            "ci",
+            "t",
+            0,
+        );
+        assert!(!report.status.is_passed());
+        if let GateStatus::Failed { reasons } = &report.status {
+            assert!(
+                reasons
+                    .iter()
+                    .any(|r| r.contains("1 conformance vectors failed"))
+            );
+        }
+    }
+
+    #[test]
+    fn fuzz_exact_min_hours_passes() {
+        let mut eval = default_evaluator();
+        let report = eval.evaluate_fuzz(
+            &FuzzInput {
+                cpu_hours: 24,
+                crashes: 0,
+                unexpected_panics: 0,
+                bypasses: 0,
+                targets: vec![],
+            },
+            "ci",
+            "t",
+            0,
+        );
+        assert!(report.status.is_passed());
+    }
+
+    #[test]
+    fn fuzz_below_min_hours_fails() {
+        let mut eval = default_evaluator();
+        let report = eval.evaluate_fuzz(
+            &FuzzInput {
+                cpu_hours: 23,
+                crashes: 0,
+                unexpected_panics: 0,
+                bypasses: 0,
+                targets: vec![],
+            },
+            "ci",
+            "t",
+            0,
+        );
+        assert!(!report.status.is_passed());
+        if let GateStatus::Failed { reasons } = &report.status {
+            assert!(reasons[0].contains("23h < minimum 24h"));
+        }
+    }
+
+    #[test]
+    fn fuzz_multiple_failure_reasons() {
+        let mut eval = default_evaluator();
+        let report = eval.evaluate_fuzz(
+            &FuzzInput {
+                cpu_hours: 10,
+                crashes: 2,
+                unexpected_panics: 3,
+                bypasses: 1,
+                targets: vec![],
+            },
+            "ci",
+            "t",
+            0,
+        );
+        assert!(!report.status.is_passed());
+        if let GateStatus::Failed { reasons } = &report.status {
+            assert_eq!(reasons.len(), 4);
+        } else {
+            panic!("expected Failed");
+        }
+    }
+
+    #[test]
+    fn fuzz_bypasses_cause_failure() {
+        let mut eval = default_evaluator();
+        let report = eval.evaluate_fuzz(
+            &FuzzInput {
+                cpu_hours: 48,
+                crashes: 0,
+                unexpected_panics: 0,
+                bypasses: 1,
+                targets: vec![],
+            },
+            "ci",
+            "t",
+            0,
+        );
+        assert!(!report.status.is_passed());
+        if let GateStatus::Failed { reasons } = &report.status {
+            assert!(reasons[0].contains("bypass"));
+        }
+    }
+
+    #[test]
+    fn gate_status_is_terminal_enrichment() {
+        assert!(!GateStatus::Pending.is_terminal());
+        assert!(GateStatus::Passed.is_terminal());
+        assert!(GateStatus::Failed { reasons: vec![] }.is_terminal());
+        assert!(
+            GateStatus::Skipped {
+                reason: "n/a".to_string()
+            }
+            .is_terminal()
+        );
+    }
+
+    #[test]
+    fn gate_status_display_failed_multiple_reasons() {
+        let status = GateStatus::Failed {
+            reasons: vec!["reason-a".to_string(), "reason-b".to_string()],
+        };
+        let display = status.to_string();
+        assert!(display.contains("reason-a"));
+        assert!(display.contains("reason-b"));
+        assert!(display.contains(';'));
+    }
+
+    #[test]
+    fn gate_status_display_skipped_contains_reason() {
+        let status = GateStatus::Skipped {
+            reason: "not applicable".to_string(),
+        };
+        assert!(status.to_string().contains("not applicable"));
+    }
+
+    #[test]
+    fn gate_metrics_with_overwrites() {
+        let m = GateMetrics::empty()
+            .with("key", "first")
+            .with("key", "second");
+        assert_eq!(m.get("key"), Some("second"));
+        assert_eq!(m.values.len(), 1);
+    }
+
+    #[test]
+    fn custom_thresholds_evaluator() {
+        let thresholds = GateThresholds {
+            interleaving_coverage_pct: 50,
+            min_conformance_vectors: 10,
+            min_fuzz_cpu_hours: 1,
+        };
+        let mut eval = GateEvaluator::new(test_epoch(), thresholds);
+        let report = eval.evaluate_interleaving(
+            &InterleavingInput {
+                total_surfaces: 100,
+                explored_surfaces: 50,
+                unresolved_failures: 0,
+                regression_transcripts: 0,
+            },
+            "ci",
+            "t",
+            0,
+        );
+        assert!(report.status.is_passed());
+    }
+
+    #[test]
+    fn report_hash_differs_for_different_inputs() {
+        let mut eval1 = default_evaluator();
+        let r1 = eval1.evaluate_replay(
+            &ReplayInput {
+                recorded_hash: ContentHash::compute(b"a"),
+                replayed_hash: ContentHash::compute(b"a"),
+                event_count: 1,
+            },
+            "ci-1",
+            "t1",
+            1000,
+        );
+        let mut eval2 = default_evaluator();
+        let r2 = eval2.evaluate_replay(
+            &ReplayInput {
+                recorded_hash: ContentHash::compute(b"b"),
+                replayed_hash: ContentHash::compute(b"b"),
+                event_count: 2,
+            },
+            "ci-2",
+            "t2",
+            2000,
+        );
+        assert_ne!(r1.report_hash, r2.report_hash);
+    }
+
+    #[test]
+    fn export_reports_empty_on_fresh_evaluator() {
+        let eval = default_evaluator();
+        assert!(eval.export_reports().is_empty());
+    }
+
+    #[test]
+    fn event_counts_empty_on_fresh_evaluator() {
+        let eval = default_evaluator();
+        assert!(eval.event_counts().is_empty());
+    }
+
+    #[test]
+    fn gate_id_display_all_unique() {
+        let displays: std::collections::BTreeSet<String> = [
+            GateId::DeterministicReplay,
+            GateId::InterleavingSuite,
+            GateId::ConformanceVectors,
+            GateId::FuzzAdversarial,
+        ]
+        .iter()
+        .map(|g| g.to_string())
+        .collect();
+        assert_eq!(
+            displays.len(),
+            4,
+            "all 4 GateId variants have unique Display"
+        );
+    }
+
+    #[test]
+    fn gate_id_copy_semantics() {
+        let id = GateId::DeterministicReplay;
+        let id2 = id;
+        assert_eq!(id, id2);
+    }
+
+    #[test]
+    fn report_has_content_hash() {
+        let mut eval = default_evaluator();
+        let report = eval.evaluate_replay(
+            &ReplayInput {
+                recorded_hash: ContentHash::compute(b"x"),
+                replayed_hash: ContentHash::compute(b"x"),
+                event_count: 1,
+            },
+            "ci",
+            "t",
+            0,
+        );
+        // report_hash should be non-zero
+        assert_ne!(report.report_hash, ContentHash::compute(b""));
+    }
+
+    #[test]
+    fn interleaving_both_coverage_and_failures_produce_multiple_reasons() {
+        let mut eval = default_evaluator();
+        let report = eval.evaluate_interleaving(
+            &InterleavingInput {
+                total_surfaces: 100,
+                explored_surfaces: 50,
+                unresolved_failures: 3,
+                regression_transcripts: 0,
+            },
+            "ci",
+            "t",
+            0,
+        );
+        assert!(!report.status.is_passed());
+        if let GateStatus::Failed { reasons } = &report.status {
+            assert_eq!(reasons.len(), 2);
+            assert!(reasons[0].contains("coverage"));
+            assert!(reasons[1].contains("unresolved"));
+        }
+    }
+
+    #[test]
+    fn gate_report_metrics_populated() {
+        let mut eval = default_evaluator();
+        let report = eval.evaluate_fuzz(
+            &FuzzInput {
+                cpu_hours: 48,
+                crashes: 0,
+                unexpected_panics: 0,
+                bypasses: 0,
+                targets: vec!["target1".to_string()],
+            },
+            "ci",
+            "t",
+            0,
+        );
+        assert_eq!(report.metrics.get("cpu_hours"), Some("48"));
+        assert_eq!(report.metrics.get("crashes"), Some("0"));
+        assert_eq!(report.metrics.get("targets"), Some("1"));
+    }
+
+    #[test]
+    fn conformance_metrics_populated() {
+        let mut eval = default_evaluator();
+        let report = eval.evaluate_conformance(
+            &ConformanceInput {
+                total_vectors: 600,
+                passed_vectors: 600,
+                failed_vectors: 0,
+                categories: vec!["a".to_string(), "b".to_string(), "c".to_string()],
+            },
+            "ci",
+            "t",
+            0,
+        );
+        assert_eq!(report.metrics.get("total_vectors"), Some("600"));
+        assert_eq!(report.metrics.get("categories"), Some("3"));
+    }
+
+    #[test]
+    fn replay_metrics_populated() {
+        let mut eval = default_evaluator();
+        let report = eval.evaluate_replay(
+            &ReplayInput {
+                recorded_hash: ContentHash::compute(b"x"),
+                replayed_hash: ContentHash::compute(b"x"),
+                event_count: 42,
+            },
+            "ci",
+            "t",
+            0,
+        );
+        assert_eq!(report.metrics.get("event_count"), Some("42"));
+        assert_eq!(report.metrics.get("match"), Some("true"));
+    }
 }

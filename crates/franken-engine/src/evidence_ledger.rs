@@ -1172,4 +1172,682 @@ mod tests {
         // v1.5 is NOT compatible with reader v1.3
         assert!(!v1_5.is_compatible_with(&v1_3));
     }
+
+    // -- Enrichment batch 3: hash sensitivity and edge cases --
+
+    #[test]
+    fn hash_sensitive_to_trace_id_change() {
+        let base = |trace: &str| {
+            EvidenceEntryBuilder::new(
+                trace,
+                "d",
+                "p",
+                SecurityEpoch::from_raw(1),
+                DecisionType::SecurityAction,
+            )
+            .chosen(ChosenAction {
+                action_name: "a".to_string(),
+                expected_loss_millionths: 0,
+                rationale: "r".to_string(),
+            })
+            .build()
+            .unwrap()
+        };
+        let e1 = base("trace-A");
+        let e2 = base("trace-B");
+        assert_ne!(e1.evidence_hash, e2.evidence_hash);
+    }
+
+    #[test]
+    fn hash_sensitive_to_policy_id_change() {
+        let base = |policy: &str| {
+            EvidenceEntryBuilder::new(
+                "t",
+                "d",
+                policy,
+                SecurityEpoch::from_raw(1),
+                DecisionType::SecurityAction,
+            )
+            .chosen(ChosenAction {
+                action_name: "a".to_string(),
+                expected_loss_millionths: 0,
+                rationale: "r".to_string(),
+            })
+            .build()
+            .unwrap()
+        };
+        assert_ne!(
+            base("policy-v1").evidence_hash,
+            base("policy-v2").evidence_hash
+        );
+    }
+
+    #[test]
+    fn hash_sensitive_to_epoch_change() {
+        let base = |epoch: u64| {
+            EvidenceEntryBuilder::new(
+                "t",
+                "d",
+                "p",
+                SecurityEpoch::from_raw(epoch),
+                DecisionType::SecurityAction,
+            )
+            .chosen(ChosenAction {
+                action_name: "a".to_string(),
+                expected_loss_millionths: 0,
+                rationale: "r".to_string(),
+            })
+            .build()
+            .unwrap()
+        };
+        assert_ne!(base(1).evidence_hash, base(2).evidence_hash);
+    }
+
+    #[test]
+    fn hash_sensitive_to_timestamp_change() {
+        let base = |ts: u64| {
+            EvidenceEntryBuilder::new(
+                "t",
+                "d",
+                "p",
+                SecurityEpoch::from_raw(1),
+                DecisionType::SecurityAction,
+            )
+            .timestamp_ns(ts)
+            .chosen(ChosenAction {
+                action_name: "a".to_string(),
+                expected_loss_millionths: 0,
+                rationale: "r".to_string(),
+            })
+            .build()
+            .unwrap()
+        };
+        assert_ne!(base(1000).evidence_hash, base(2000).evidence_hash);
+    }
+
+    #[test]
+    fn hash_sensitive_to_metadata_change() {
+        let base = |val: &str| {
+            EvidenceEntryBuilder::new(
+                "t",
+                "d",
+                "p",
+                SecurityEpoch::from_raw(1),
+                DecisionType::SecurityAction,
+            )
+            .meta("key", val)
+            .chosen(ChosenAction {
+                action_name: "a".to_string(),
+                expected_loss_millionths: 0,
+                rationale: "r".to_string(),
+            })
+            .build()
+            .unwrap()
+        };
+        assert_ne!(base("alpha").evidence_hash, base("beta").evidence_hash);
+    }
+
+    #[test]
+    fn hash_sensitive_to_candidate_addition() {
+        let without = EvidenceEntryBuilder::new(
+            "t",
+            "d",
+            "p",
+            SecurityEpoch::from_raw(1),
+            DecisionType::SecurityAction,
+        )
+        .chosen(ChosenAction {
+            action_name: "a".to_string(),
+            expected_loss_millionths: 0,
+            rationale: "r".to_string(),
+        })
+        .build()
+        .unwrap();
+
+        let with = EvidenceEntryBuilder::new(
+            "t",
+            "d",
+            "p",
+            SecurityEpoch::from_raw(1),
+            DecisionType::SecurityAction,
+        )
+        .candidate(CandidateAction::new("extra", 50_000))
+        .chosen(ChosenAction {
+            action_name: "a".to_string(),
+            expected_loss_millionths: 0,
+            rationale: "r".to_string(),
+        })
+        .build()
+        .unwrap();
+
+        assert_ne!(without.evidence_hash, with.evidence_hash);
+    }
+
+    #[test]
+    fn hash_sensitive_to_witness_addition() {
+        let without = EvidenceEntryBuilder::new(
+            "t",
+            "d",
+            "p",
+            SecurityEpoch::from_raw(1),
+            DecisionType::SecurityAction,
+        )
+        .chosen(ChosenAction {
+            action_name: "a".to_string(),
+            expected_loss_millionths: 0,
+            rationale: "r".to_string(),
+        })
+        .build()
+        .unwrap();
+
+        let with = EvidenceEntryBuilder::new(
+            "t",
+            "d",
+            "p",
+            SecurityEpoch::from_raw(1),
+            DecisionType::SecurityAction,
+        )
+        .witness(Witness {
+            witness_id: "w".to_string(),
+            witness_type: "t".to_string(),
+            value: "v".to_string(),
+        })
+        .chosen(ChosenAction {
+            action_name: "a".to_string(),
+            expected_loss_millionths: 0,
+            rationale: "r".to_string(),
+        })
+        .build()
+        .unwrap();
+
+        assert_ne!(without.evidence_hash, with.evidence_hash);
+    }
+
+    #[test]
+    fn hash_sensitive_to_constraint_addition() {
+        let without = EvidenceEntryBuilder::new(
+            "t",
+            "d",
+            "p",
+            SecurityEpoch::from_raw(1),
+            DecisionType::SecurityAction,
+        )
+        .chosen(ChosenAction {
+            action_name: "a".to_string(),
+            expected_loss_millionths: 0,
+            rationale: "r".to_string(),
+        })
+        .build()
+        .unwrap();
+
+        let with = EvidenceEntryBuilder::new(
+            "t",
+            "d",
+            "p",
+            SecurityEpoch::from_raw(1),
+            DecisionType::SecurityAction,
+        )
+        .constraint(Constraint {
+            constraint_id: "c".to_string(),
+            description: "d".to_string(),
+            active: true,
+        })
+        .chosen(ChosenAction {
+            action_name: "a".to_string(),
+            expected_loss_millionths: 0,
+            rationale: "r".to_string(),
+        })
+        .build()
+        .unwrap();
+
+        assert_ne!(without.evidence_hash, with.evidence_hash);
+    }
+
+    #[test]
+    fn genesis_epoch_entry_builds_ok() {
+        let entry = EvidenceEntryBuilder::new(
+            "t",
+            "d",
+            "p",
+            SecurityEpoch::GENESIS,
+            DecisionType::EpochTransition,
+        )
+        .chosen(ChosenAction {
+            action_name: "transition".to_string(),
+            expected_loss_millionths: 0,
+            rationale: "genesis".to_string(),
+        })
+        .build()
+        .unwrap();
+        assert_eq!(entry.epoch_id, SecurityEpoch::GENESIS);
+    }
+
+    #[test]
+    fn entry_clone_preserves_all_fields() {
+        let entry = sample_entry();
+        let cloned = entry.clone();
+        assert_eq!(entry, cloned);
+        assert_eq!(entry.entry_id, cloned.entry_id);
+        assert_eq!(entry.evidence_hash, cloned.evidence_hash);
+        assert_eq!(entry.metadata, cloned.metadata);
+    }
+
+    #[test]
+    fn candidate_zero_expected_loss() {
+        let c = CandidateAction::new("noop", 0);
+        assert_eq!(c.expected_loss_millionths, 0);
+        assert_eq!(c.action_name, "noop");
+    }
+
+    #[test]
+    fn candidate_max_expected_loss() {
+        let c = CandidateAction::new("extreme", i64::MAX);
+        assert_eq!(c.expected_loss_millionths, i64::MAX);
+    }
+
+    #[test]
+    fn witness_empty_value_round_trips() {
+        let w = Witness {
+            witness_id: "w-empty".to_string(),
+            witness_type: "void".to_string(),
+            value: String::new(),
+        };
+        let json = serde_json::to_string(&w).unwrap();
+        let restored: Witness = serde_json::from_str(&json).unwrap();
+        assert_eq!(w, restored);
+        assert!(restored.value.is_empty());
+    }
+
+    #[test]
+    fn constraint_inactive_round_trips() {
+        let c = Constraint {
+            constraint_id: "c-inactive".to_string(),
+            description: "disabled rule".to_string(),
+            active: false,
+        };
+        let json = serde_json::to_string(&c).unwrap();
+        let restored: Constraint = serde_json::from_str(&json).unwrap();
+        assert_eq!(c, restored);
+        assert!(!restored.active);
+    }
+
+    #[test]
+    fn multiple_filtered_candidates_different_reasons() {
+        let entry = EvidenceEntryBuilder::new(
+            "t",
+            "d",
+            "p",
+            SecurityEpoch::from_raw(1),
+            DecisionType::SecurityAction,
+        )
+        .candidate(CandidateAction::filtered("a", 100, "reason-1"))
+        .candidate(CandidateAction::filtered("b", 200, "reason-2"))
+        .candidate(CandidateAction::filtered("c", 300, "reason-3"))
+        .chosen(ChosenAction {
+            action_name: "d".to_string(),
+            expected_loss_millionths: 0,
+            rationale: "only option".to_string(),
+        })
+        .build()
+        .unwrap();
+        assert_eq!(entry.candidates.len(), 3);
+        assert!(entry.candidates.iter().all(|c| c.filtered));
+        let reasons: Vec<_> = entry
+            .candidates
+            .iter()
+            .map(|c| c.filter_reason.as_deref().unwrap())
+            .collect();
+        assert_eq!(reasons, vec!["reason-1", "reason-2", "reason-3"]);
+    }
+
+    #[test]
+    fn ledger_insertion_order_preserved() {
+        let mut ledger = InMemoryLedger::new();
+        let traces = ["trace-z", "trace-a", "trace-m"];
+        for (i, trace) in traces.iter().enumerate() {
+            let entry = EvidenceEntryBuilder::new(
+                *trace,
+                format!("d-{i}"),
+                "p",
+                SecurityEpoch::from_raw(1),
+                DecisionType::SecurityAction,
+            )
+            .chosen(ChosenAction {
+                action_name: "a".to_string(),
+                expected_loss_millionths: 0,
+                rationale: "r".to_string(),
+            })
+            .build()
+            .unwrap();
+            ledger.emit(entry).unwrap();
+        }
+        let stored_traces: Vec<&str> = ledger
+            .entries()
+            .iter()
+            .map(|e| e.trace_id.as_str())
+            .collect();
+        assert_eq!(stored_traces, vec!["trace-z", "trace-a", "trace-m"]);
+    }
+
+    #[test]
+    fn ledger_by_epoch_returns_correct_references() {
+        let mut ledger = InMemoryLedger::new();
+        let entry = EvidenceEntryBuilder::new(
+            "t-ref",
+            "d-ref",
+            "p",
+            SecurityEpoch::from_raw(42),
+            DecisionType::Revocation,
+        )
+        .chosen(ChosenAction {
+            action_name: "revoke".to_string(),
+            expected_loss_millionths: 0,
+            rationale: "r".to_string(),
+        })
+        .build()
+        .unwrap();
+        let expected_id = entry.entry_id.clone();
+        ledger.emit(entry).unwrap();
+
+        let results = ledger.by_epoch(SecurityEpoch::from_raw(42));
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].entry_id, expected_id);
+        assert_eq!(results[0].trace_id, "t-ref");
+    }
+
+    #[test]
+    fn empty_string_fields_produce_valid_entry() {
+        let entry = EvidenceEntryBuilder::new(
+            "",
+            "",
+            "",
+            SecurityEpoch::from_raw(0),
+            DecisionType::SecurityAction,
+        )
+        .chosen(ChosenAction {
+            action_name: String::new(),
+            expected_loss_millionths: 0,
+            rationale: String::new(),
+        })
+        .build()
+        .unwrap();
+        assert!(entry.entry_id.starts_with("ev-"));
+        assert!(!entry.evidence_hash.is_empty());
+    }
+
+    #[test]
+    fn large_metadata_map_deterministic() {
+        let build = || {
+            let mut builder = EvidenceEntryBuilder::new(
+                "t",
+                "d",
+                "p",
+                SecurityEpoch::from_raw(1),
+                DecisionType::SecurityAction,
+            );
+            for i in 0..50 {
+                builder = builder.meta(format!("key-{i:03}"), format!("val-{i}"));
+            }
+            builder
+                .chosen(ChosenAction {
+                    action_name: "a".to_string(),
+                    expected_loss_millionths: 0,
+                    rationale: "r".to_string(),
+                })
+                .build()
+                .unwrap()
+        };
+        let e1 = build();
+        let e2 = build();
+        assert_eq!(e1.evidence_hash, e2.evidence_hash);
+        assert_eq!(e1.metadata.len(), 50);
+    }
+
+    #[test]
+    fn decision_type_copy_semantics() {
+        let dt = DecisionType::SecurityAction;
+        let dt2 = dt;
+        assert_eq!(dt, dt2);
+    }
+
+    #[test]
+    fn decision_type_hash_consistency() {
+        use std::collections::BTreeSet;
+        let mut set = BTreeSet::new();
+        set.insert(DecisionType::SecurityAction);
+        set.insert(DecisionType::SecurityAction);
+        assert_eq!(set.len(), 1);
+        set.insert(DecisionType::PolicyUpdate);
+        assert_eq!(set.len(), 2);
+    }
+
+    #[test]
+    fn ledger_many_entries_no_collisions() {
+        let mut ledger = InMemoryLedger::new();
+        for i in 0..100 {
+            let entry = EvidenceEntryBuilder::new(
+                format!("t-{i}"),
+                format!("d-{i}"),
+                "p",
+                SecurityEpoch::from_raw(i),
+                DecisionType::SecurityAction,
+            )
+            .timestamp_ns(i)
+            .chosen(ChosenAction {
+                action_name: format!("action-{i}"),
+                expected_loss_millionths: i as i64,
+                rationale: "r".to_string(),
+            })
+            .build()
+            .unwrap();
+            ledger.emit(entry).unwrap();
+        }
+        assert_eq!(ledger.len(), 100);
+    }
+
+    #[test]
+    fn entry_json_contains_all_top_level_fields() {
+        let entry = sample_entry();
+        let json = serde_json::to_string(&entry).unwrap();
+        for field in [
+            "schema_version",
+            "entry_id",
+            "trace_id",
+            "decision_id",
+            "policy_id",
+            "epoch_id",
+            "timestamp_ns",
+            "decision_type",
+            "candidates",
+            "constraints",
+            "chosen_action",
+            "witnesses",
+            "evidence_hash",
+            "metadata",
+        ] {
+            assert!(json.contains(field), "JSON missing field: {field}");
+        }
+    }
+
+    #[test]
+    fn chosen_action_negative_loss() {
+        let ca = ChosenAction {
+            action_name: "reward".to_string(),
+            expected_loss_millionths: -500_000,
+            rationale: "net gain".to_string(),
+        };
+        let json = serde_json::to_string(&ca).unwrap();
+        let restored: ChosenAction = serde_json::from_str(&json).unwrap();
+        assert_eq!(ca, restored);
+        assert_eq!(restored.expected_loss_millionths, -500_000);
+    }
+
+    #[test]
+    fn schema_version_patch_ignored_in_compatibility() {
+        let v1_0_0 = SchemaVersion::new(1, 0, 0);
+        let v1_0_5 = SchemaVersion::new(1, 0, 5);
+        // Compatibility only checks major and minor, patch is irrelevant
+        assert!(v1_0_0.is_compatible_with(&v1_0_5));
+        assert!(v1_0_5.is_compatible_with(&v1_0_0));
+    }
+
+    #[test]
+    fn builder_overwrites_metadata_key() {
+        let entry = EvidenceEntryBuilder::new(
+            "t",
+            "d",
+            "p",
+            SecurityEpoch::from_raw(1),
+            DecisionType::SecurityAction,
+        )
+        .meta("key", "first")
+        .meta("key", "second")
+        .chosen(ChosenAction {
+            action_name: "a".to_string(),
+            expected_loss_millionths: 0,
+            rationale: "r".to_string(),
+        })
+        .build()
+        .unwrap();
+        assert_eq!(entry.metadata.len(), 1);
+        assert_eq!(entry.metadata["key"], "second");
+    }
+
+    #[test]
+    fn all_decision_types_produce_valid_entries() {
+        let types = [
+            DecisionType::SecurityAction,
+            DecisionType::PolicyUpdate,
+            DecisionType::EpochTransition,
+            DecisionType::Revocation,
+            DecisionType::ExtensionLifecycle,
+            DecisionType::CapabilityDecision,
+            DecisionType::ContractEvaluation,
+            DecisionType::RemoteAuthorization,
+        ];
+        for (i, dt) in types.iter().enumerate() {
+            let entry = EvidenceEntryBuilder::new(
+                format!("t-{i}"),
+                format!("d-{i}"),
+                "p",
+                SecurityEpoch::from_raw(1),
+                *dt,
+            )
+            .chosen(ChosenAction {
+                action_name: "a".to_string(),
+                expected_loss_millionths: 0,
+                rationale: "r".to_string(),
+            })
+            .build()
+            .unwrap();
+            assert!(entry.entry_id.starts_with("ev-"));
+            assert_eq!(entry.decision_type, *dt);
+        }
+    }
+
+    #[test]
+    fn ledger_duplicate_error_contains_entry_id() {
+        let mut ledger = InMemoryLedger::new();
+        let entry = sample_entry();
+        let entry_id = entry.entry_id.clone();
+        ledger.emit(entry.clone()).unwrap();
+
+        let err = ledger.emit(entry).unwrap_err();
+        match err {
+            LedgerError::DuplicateEntryId { entry_id: eid } => {
+                assert_eq!(eid, entry_id);
+            }
+            other => panic!("expected DuplicateEntryId, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn deterministic_hash_long_input() {
+        let long_input: String = "x".repeat(10_000);
+        let h1 = deterministic_hash(&long_input);
+        let h2 = deterministic_hash(&long_input);
+        assert_eq!(h1, h2);
+        assert_eq!(h1.len(), 16);
+    }
+
+    #[test]
+    fn deterministic_hash_single_byte_difference() {
+        let h1 = deterministic_hash("abc");
+        let h2 = deterministic_hash("abd");
+        assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn mixed_active_inactive_constraints() {
+        let entry = EvidenceEntryBuilder::new(
+            "t",
+            "d",
+            "p",
+            SecurityEpoch::from_raw(1),
+            DecisionType::SecurityAction,
+        )
+        .constraint(Constraint {
+            constraint_id: "c-active".to_string(),
+            description: "blocks action".to_string(),
+            active: true,
+        })
+        .constraint(Constraint {
+            constraint_id: "c-passive".to_string(),
+            description: "monitored only".to_string(),
+            active: false,
+        })
+        .chosen(ChosenAction {
+            action_name: "a".to_string(),
+            expected_loss_millionths: 0,
+            rationale: "r".to_string(),
+        })
+        .build()
+        .unwrap();
+        assert_eq!(entry.constraints.len(), 2);
+        assert!(entry.constraints[0].active);
+        assert!(!entry.constraints[1].active);
+    }
+
+    #[test]
+    fn candidate_order_preserved_in_entry() {
+        let entry = EvidenceEntryBuilder::new(
+            "t",
+            "d",
+            "p",
+            SecurityEpoch::from_raw(1),
+            DecisionType::SecurityAction,
+        )
+        .candidate(CandidateAction::new("c", 300))
+        .candidate(CandidateAction::new("a", 100))
+        .candidate(CandidateAction::new("b", 200))
+        .chosen(ChosenAction {
+            action_name: "a".to_string(),
+            expected_loss_millionths: 100,
+            rationale: "r".to_string(),
+        })
+        .build()
+        .unwrap();
+        let names: Vec<&str> = entry
+            .candidates
+            .iter()
+            .map(|c| c.action_name.as_str())
+            .collect();
+        assert_eq!(names, vec!["c", "a", "b"]);
+    }
+
+    #[test]
+    fn ledger_by_decision_type_empty_result() {
+        let ledger = InMemoryLedger::new();
+        assert!(
+            ledger
+                .by_decision_type(DecisionType::SecurityAction)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn ledger_by_epoch_empty_result() {
+        let ledger = InMemoryLedger::new();
+        assert!(ledger.by_epoch(SecurityEpoch::from_raw(1)).is_empty());
+    }
 }

@@ -2447,4 +2447,472 @@ mod tests {
         };
         assert!(!m.is_complete());
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 2 — PearlTower 2026-02-26
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn validate_missing_decision_id() {
+        let mut selector = ExpectedLossSelector::balanced();
+        let mut input = sample_runtime_input(uncertain_posterior());
+        input.decision_id = "   ".to_string();
+        let err = selector.score_runtime_decision(&input).unwrap_err();
+        assert_eq!(
+            err,
+            RuntimeDecisionScoringError::MissingField {
+                field: "decision_id".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn validate_missing_policy_id() {
+        let mut selector = ExpectedLossSelector::balanced();
+        let mut input = sample_runtime_input(uncertain_posterior());
+        input.policy_id = String::new();
+        let err = selector.score_runtime_decision(&input).unwrap_err();
+        assert_eq!(
+            err,
+            RuntimeDecisionScoringError::MissingField {
+                field: "policy_id".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn validate_missing_extension_id() {
+        let mut selector = ExpectedLossSelector::balanced();
+        let mut input = sample_runtime_input(uncertain_posterior());
+        input.extension_id = "  \t  ".to_string();
+        let err = selector.score_runtime_decision(&input).unwrap_err();
+        assert_eq!(
+            err,
+            RuntimeDecisionScoringError::MissingField {
+                field: "extension_id".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn validate_missing_policy_version() {
+        let mut selector = ExpectedLossSelector::balanced();
+        let mut input = sample_runtime_input(uncertain_posterior());
+        input.policy_version = String::new();
+        let err = selector.score_runtime_decision(&input).unwrap_err();
+        assert_eq!(
+            err,
+            RuntimeDecisionScoringError::MissingField {
+                field: "policy_version".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn zero_attacker_cost_rejected() {
+        let mut selector = ExpectedLossSelector::balanced();
+        let mut input = sample_runtime_input(uncertain_posterior());
+        input.attacker_cost_model.expected_gain = 0;
+        input.attacker_cost_model.discovery_cost = 0;
+        input.attacker_cost_model.development_cost = 0;
+        input.attacker_cost_model.deployment_cost = 0;
+        input.attacker_cost_model.persistence_cost = 0;
+        input.attacker_cost_model.evasion_cost = 0;
+        input.attacker_cost_model.strategy_adjustments.clear();
+        let err = selector.score_runtime_decision(&input).unwrap_err();
+        assert_eq!(err, RuntimeDecisionScoringError::ZeroAttackerCost);
+    }
+
+    #[test]
+    fn conservative_matrix_selects_more_aggressive() {
+        let mut balanced_sel = ExpectedLossSelector::new(LossMatrix::balanced());
+        let mut conservative_sel = ExpectedLossSelector::new(LossMatrix::conservative());
+        let posterior = Posterior::from_millionths(400_000, 200_000, 300_000, 100_000);
+        let balanced_decision = balanced_sel.select(&posterior);
+        let conservative_decision = conservative_sel.select(&posterior);
+        assert!(
+            conservative_decision.action.severity() >= balanced_decision.action.severity(),
+            "conservative should be at least as severe as balanced: {} vs {}",
+            conservative_decision.action,
+            balanced_decision.action
+        );
+    }
+
+    #[test]
+    fn permissive_matrix_selects_less_aggressive() {
+        let mut balanced_sel = ExpectedLossSelector::new(LossMatrix::balanced());
+        let mut permissive_sel = ExpectedLossSelector::new(LossMatrix::permissive());
+        let posterior = Posterior::from_millionths(400_000, 200_000, 300_000, 100_000);
+        let balanced_decision = balanced_sel.select(&posterior);
+        let permissive_decision = permissive_sel.select(&posterior);
+        assert!(
+            permissive_decision.action.severity() <= balanced_decision.action.severity(),
+            "permissive should be at most as severe as balanced: {} vs {}",
+            permissive_decision.action,
+            balanced_decision.action
+        );
+    }
+
+    #[test]
+    fn empty_roi_history_produces_valid_score() {
+        let mut selector = ExpectedLossSelector::balanced();
+        let mut input = sample_runtime_input(uncertain_posterior());
+        input.extension_roi_history_millionths.clear();
+        let score = selector.score_runtime_decision(&input).unwrap();
+        assert!((1..=MILLION).contains(&score.alien_risk_envelope.conformal_p_value_millionths));
+        assert!(score.alien_risk_envelope.e_value_millionths >= MILLION);
+        assert_eq!(score.alien_risk_envelope.regime_shift_score_millionths, 0);
+    }
+
+    #[test]
+    fn large_stable_roi_history_zero_regime_shift() {
+        let mut selector = ExpectedLossSelector::balanced();
+        let mut input = sample_runtime_input(uncertain_posterior());
+        // Set history to match computed ROI exactly → regime shift should be 0
+        let roi = input.attacker_cost_model.expected_roi().unwrap();
+        input.extension_roi_history_millionths = vec![roi; 50];
+        let score = selector.score_runtime_decision(&input).unwrap();
+        assert_eq!(
+            score.alien_risk_envelope.regime_shift_score_millionths, 0,
+            "stable history matching current ROI should have zero regime shift"
+        );
+        assert_eq!(
+            score.alien_risk_envelope.conformal_p_value_millionths, MILLION,
+            "all-matching history should have p-value = 1.0"
+        );
+    }
+
+    #[test]
+    fn confidence_interval_well_ordered_for_all_posteriors() {
+        let posteriors = [
+            certain_benign(),
+            certain_malicious(),
+            uncertain_posterior(),
+            high_anomalous(),
+            Posterior::from_millionths(999_900, 50, 25, 25),
+        ];
+        let mut selector = ExpectedLossSelector::balanced();
+        for posterior in posteriors {
+            let input = sample_runtime_input(posterior);
+            let score = selector.score_runtime_decision(&input).unwrap();
+            assert!(
+                score.confidence_interval.lower_millionths
+                    <= score.selected_expected_loss_millionths,
+                "lower CI must be <= selected EL"
+            );
+            assert!(
+                score.confidence_interval.upper_millionths
+                    >= score.selected_expected_loss_millionths,
+                "upper CI must be >= selected EL"
+            );
+            assert!(
+                score.confidence_interval.lower_millionths
+                    <= score.confidence_interval.upper_millionths,
+                "lower CI must be <= upper CI"
+            );
+        }
+    }
+
+    #[test]
+    fn state_contributions_sum_equals_expected_loss() {
+        let mut selector = ExpectedLossSelector::balanced();
+        let input = sample_runtime_input(uncertain_posterior());
+        let score = selector.score_runtime_decision(&input).unwrap();
+        for candidate in &score.candidate_actions {
+            let sum: i64 = candidate.state_contributions_millionths.values().sum();
+            assert_eq!(
+                sum, candidate.expected_loss_millionths,
+                "state contributions should sum to expected loss for action {:?}",
+                candidate.action
+            );
+        }
+    }
+
+    #[test]
+    fn runtime_decision_scoring_input_serde_roundtrip() {
+        let input = sample_runtime_input(uncertain_posterior());
+        let json = serde_json::to_string(&input).unwrap();
+        let back: RuntimeDecisionScoringInput = serde_json::from_str(&json).unwrap();
+        assert_eq!(input, back);
+    }
+
+    #[test]
+    fn runtime_decision_score_full_serde_roundtrip() {
+        let mut selector = ExpectedLossSelector::balanced();
+        let input = sample_runtime_input(uncertain_posterior());
+        let score = selector.score_runtime_decision(&input).unwrap();
+        let json = serde_json::to_string(&score).unwrap();
+        let back: RuntimeDecisionScore = serde_json::from_str(&json).unwrap();
+        assert_eq!(score, back);
+    }
+
+    #[test]
+    fn floor_gap_zero_when_selected_exceeds_floor() {
+        let mut selector = ExpectedLossSelector::balanced();
+        let mut input = sample_runtime_input(certain_malicious());
+        input.extension_roi_history_millionths = vec![100_000; 30];
+        let score = selector.score_runtime_decision(&input).unwrap();
+        // Malicious posterior → severe action; if alien recommends Suspend,
+        // Quarantine or Terminate already meet/exceed that.
+        if score.selected_action.severity()
+            >= score
+                .alien_risk_envelope
+                .recommended_floor_action
+                .map_or(0, |a| a.severity())
+        {
+            assert_eq!(
+                score.alien_floor_gap_steps, 0,
+                "floor gap should be 0 when selected action meets or exceeds floor"
+            );
+        }
+    }
+
+    #[test]
+    fn alien_envelope_elevated_on_moderate_outlier() {
+        let mut selector = ExpectedLossSelector::balanced();
+        let mut input = sample_runtime_input(certain_benign());
+        // History with values around 100k, current ROI much higher → elevated
+        input.extension_roi_history_millionths = vec![100_000, 110_000, 105_000, 95_000, 100_000];
+        input.attacker_cost_model.expected_gain = 10_000_000;
+        let score = selector.score_runtime_decision(&input).unwrap();
+        assert!(
+            score.alien_risk_envelope.alert_level != AlienRiskAlertLevel::Nominal
+                || score.alien_risk_envelope.regime_shift_score_millionths > 0,
+            "outlier ROI should produce non-zero regime shift or non-nominal alert"
+        );
+    }
+
+    #[test]
+    fn loss_matrix_accessor_returns_current_matrix() {
+        let mut selector = ExpectedLossSelector::new(LossMatrix::balanced());
+        assert_eq!(selector.loss_matrix().matrix_id, "balanced-v1");
+        selector.set_loss_matrix(LossMatrix::conservative());
+        assert_eq!(selector.loss_matrix().matrix_id, "conservative-v1");
+        selector.set_loss_matrix(LossMatrix::permissive());
+        assert_eq!(selector.loss_matrix().matrix_id, "permissive-v1");
+    }
+
+    #[test]
+    fn decisions_made_increments_with_scoring() {
+        let mut selector = ExpectedLossSelector::balanced();
+        assert_eq!(selector.decisions_made(), 0);
+        let input = sample_runtime_input(uncertain_posterior());
+        selector.score_runtime_decision(&input).unwrap();
+        assert_eq!(selector.decisions_made(), 1);
+        selector.score_runtime_decision(&input).unwrap();
+        assert_eq!(selector.decisions_made(), 2);
+    }
+
+    #[test]
+    fn epoch_propagates_to_score() {
+        let mut selector = ExpectedLossSelector::balanced();
+        selector.set_epoch(SecurityEpoch::from_raw(99));
+        let input = sample_runtime_input(uncertain_posterior());
+        let score = selector.score_runtime_decision(&input).unwrap();
+        assert_eq!(score.epoch, SecurityEpoch::from_raw(99));
+    }
+
+    #[test]
+    fn containment_action_ord_matches_severity() {
+        let mut actions = ContainmentAction::ALL.to_vec();
+        actions.sort();
+        for window in actions.windows(2) {
+            assert!(
+                window[0].severity() <= window[1].severity(),
+                "Ord should be consistent with severity"
+            );
+        }
+    }
+
+    #[test]
+    fn expected_loss_allow_increases_with_malicious() {
+        let selector = ExpectedLossSelector::balanced();
+        let low =
+            selector.expected_losses(&Posterior::from_millionths(900_000, 50_000, 25_000, 25_000));
+        let high = selector.expected_losses(&Posterior::from_millionths(
+            100_000, 50_000, 825_000, 25_000,
+        ));
+        assert!(
+            high[&ContainmentAction::Allow] > low[&ContainmentAction::Allow],
+            "Allow expected loss should increase with P(Malicious)"
+        );
+    }
+
+    #[test]
+    fn expected_loss_quarantine_decreases_with_malicious() {
+        let selector = ExpectedLossSelector::balanced();
+        let low =
+            selector.expected_losses(&Posterior::from_millionths(900_000, 50_000, 25_000, 25_000));
+        let high = selector.expected_losses(&Posterior::from_millionths(
+            100_000, 50_000, 825_000, 25_000,
+        ));
+        assert!(
+            high[&ContainmentAction::Quarantine] < low[&ContainmentAction::Quarantine],
+            "Quarantine expected loss should decrease with P(Malicious)"
+        );
+    }
+
+    #[test]
+    fn receipt_preimage_hash_deterministic() {
+        let mut s1 = ExpectedLossSelector::balanced();
+        let mut s2 = ExpectedLossSelector::balanced();
+        let input = sample_runtime_input(uncertain_posterior());
+        let score1 = s1.score_runtime_decision(&input).unwrap();
+        let score2 = s2.score_runtime_decision(&input).unwrap();
+        assert_eq!(score1.receipt_preimage_hash, score2.receipt_preimage_hash);
+    }
+
+    #[test]
+    fn receipt_preimage_hash_changes_with_input() {
+        let mut selector = ExpectedLossSelector::balanced();
+        let input1 = sample_runtime_input(certain_benign());
+        let mut input2 = sample_runtime_input(certain_benign());
+        input2.trace_id = "different-trace-id".to_string();
+        let score1 = selector.score_runtime_decision(&input1).unwrap();
+        let score2 = selector.score_runtime_decision(&input2).unwrap();
+        assert_ne!(score1.receipt_preimage_hash, score2.receipt_preimage_hash);
+    }
+
+    #[test]
+    fn conservative_matrix_has_higher_allow_malicious_cost() {
+        let balanced = LossMatrix::balanced();
+        let conservative = LossMatrix::conservative();
+        assert!(
+            conservative.loss(ContainmentAction::Allow, RiskState::Malicious)
+                > balanced.loss(ContainmentAction::Allow, RiskState::Malicious),
+            "conservative should penalize Allow+Malicious more than balanced"
+        );
+    }
+
+    #[test]
+    fn permissive_matrix_has_higher_quarantine_benign_cost() {
+        let balanced = LossMatrix::balanced();
+        let permissive = LossMatrix::permissive();
+        assert!(
+            permissive.loss(ContainmentAction::Quarantine, RiskState::Benign)
+                > balanced.loss(ContainmentAction::Quarantine, RiskState::Benign),
+            "permissive should penalize Quarantine+Benign more than balanced"
+        );
+    }
+
+    #[test]
+    fn all_three_matrices_have_zero_allow_benign() {
+        for matrix in [
+            LossMatrix::balanced(),
+            LossMatrix::conservative(),
+            LossMatrix::permissive(),
+        ] {
+            assert_eq!(
+                matrix.loss(ContainmentAction::Allow, RiskState::Benign),
+                0,
+                "Allow+Benign should be 0 for all matrices (matrix={})",
+                matrix.matrix_id
+            );
+        }
+    }
+
+    #[test]
+    fn scoring_with_fleet_baseline_produces_summary() {
+        let mut selector = ExpectedLossSelector::balanced();
+        let mut input = sample_runtime_input(uncertain_posterior());
+        input
+            .fleet_roi_baseline_millionths
+            .insert("ext-a".to_string(), 500_000);
+        input
+            .fleet_roi_baseline_millionths
+            .insert("ext-b".to_string(), 200_000);
+        let score = selector.score_runtime_decision(&input).unwrap();
+        // 3 fleet entries (ext-a, ext-b, ext-other) + current extension = 4
+        assert_eq!(
+            score.fleet_roi_summary.extension_count, 4,
+            "fleet summary should include all baseline extensions + current"
+        );
+    }
+
+    #[test]
+    fn blocked_single_optimal_falls_through_to_next() {
+        let mut selector = ExpectedLossSelector::balanced();
+        let input_unblocked = sample_runtime_input(certain_benign());
+        let score_unblocked = selector.score_runtime_decision(&input_unblocked).unwrap();
+        let optimal = score_unblocked.selected_action;
+
+        let mut input_blocked = sample_runtime_input(certain_benign());
+        input_blocked.blocked_actions.insert(optimal);
+        let score_blocked = selector.score_runtime_decision(&input_blocked).unwrap();
+        assert_ne!(score_blocked.selected_action, optimal);
+        assert!(
+            score_blocked.selected_expected_loss_millionths
+                >= score_unblocked.selected_expected_loss_millionths,
+            "blocking optimal action should not reduce expected loss"
+        );
+    }
+
+    #[test]
+    fn guardrail_blocked_flag_set_on_candidates() {
+        let mut selector = ExpectedLossSelector::balanced();
+        let mut input = sample_runtime_input(uncertain_posterior());
+        input.blocked_actions.insert(ContainmentAction::Allow);
+        input.blocked_actions.insert(ContainmentAction::Quarantine);
+        let score = selector.score_runtime_decision(&input).unwrap();
+        for candidate in &score.candidate_actions {
+            if input.blocked_actions.contains(&candidate.action) {
+                assert!(
+                    candidate.guardrail_blocked,
+                    "blocked action {:?} should have guardrail_blocked=true",
+                    candidate.action
+                );
+            } else {
+                assert!(
+                    !candidate.guardrail_blocked,
+                    "unblocked action {:?} should have guardrail_blocked=false",
+                    candidate.action
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn loss_matrix_content_hash_changes_with_entries() {
+        let m1 = LossMatrix::balanced();
+        let mut entries = m1.entries.clone();
+        entries[0].loss_millionths += 1;
+        let m2 = LossMatrix {
+            matrix_id: m1.matrix_id.clone(),
+            entries,
+        };
+        assert_ne!(
+            m1.content_hash(),
+            m2.content_hash(),
+            "changing an entry should change the content hash"
+        );
+    }
+
+    #[test]
+    fn selection_rationale_contains_selected_action_name() {
+        let mut selector = ExpectedLossSelector::balanced();
+        let input = sample_runtime_input(certain_benign());
+        let score = selector.score_runtime_decision(&input).unwrap();
+        assert!(
+            score
+                .selection_rationale
+                .contains(&score.selected_action.to_string()),
+            "rationale should mention selected action"
+        );
+    }
+
+    #[test]
+    fn alien_envelope_nominal_has_none_floor() {
+        let mut selector = ExpectedLossSelector::balanced();
+        let mut input = sample_runtime_input(certain_benign());
+        // Stable history near current ROI → nominal
+        let roi = input.attacker_cost_model.expected_roi().unwrap_or(MILLION);
+        input.extension_roi_history_millionths = vec![roi, roi, roi, roi, roi];
+        let score = selector.score_runtime_decision(&input).unwrap();
+        if score.alien_risk_envelope.alert_level == AlienRiskAlertLevel::Nominal {
+            assert!(
+                score.alien_risk_envelope.recommended_floor_action.is_none(),
+                "nominal alert should have no recommended floor action"
+            );
+        }
+    }
 }

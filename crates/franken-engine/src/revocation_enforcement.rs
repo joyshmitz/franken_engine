@@ -1499,4 +1499,484 @@ mod tests {
         assert_eq!(stats.denied, 0);
         assert_eq!(stats.transitive_denials, 0);
     }
+
+    // ---------------------------------------------------------------
+    // Enrichment: high-risk audit event counts
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn high_risk_denied_attestation_emits_one_audit_event() {
+        let mut enforcer = make_enforcer();
+        revoke_target(&mut enforcer, RevocationTargetType::Attestation, [50; 32]);
+        enforcer.drain_audit_log();
+
+        enforcer.check_high_risk_operation(
+            &EngineObjectId([50; 32]),
+            &VerificationKey::from_bytes([51; 32]),
+            HighRiskCategory::KeyOperation,
+            "t-hr-audit-1",
+        );
+        let events = enforcer.drain_audit_log();
+        // Direct attestation revocation short-circuits before key check
+        assert_eq!(events.len(), 1);
+        assert!(events[0].is_revoked);
+        assert!(!events[0].transitive);
+        assert_eq!(events[0].target_type, RevocationTargetType::Attestation);
+    }
+
+    #[test]
+    fn high_risk_transitive_emits_two_audit_events() {
+        let mut enforcer = make_enforcer();
+        let principal_key = VerificationKey::from_bytes([60; 32]);
+        let key_id = key_id_from_verification_key(&principal_key);
+        revoke_target(&mut enforcer, RevocationTargetType::Key, *key_id.as_bytes());
+        enforcer.drain_audit_log();
+
+        enforcer.check_high_risk_operation(
+            &EngineObjectId([61; 32]),
+            &principal_key,
+            HighRiskCategory::DataExport,
+            "t-hr-audit-2",
+        );
+        let events = enforcer.drain_audit_log();
+        assert_eq!(events.len(), 2);
+        assert!(!events[0].is_revoked); // attestation check passes
+        assert!(events[1].is_revoked); // key check fails
+        assert!(events[1].transitive);
+    }
+
+    // ---------------------------------------------------------------
+    // Enrichment: extension audit event counts
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn extension_denied_emits_one_audit_event() {
+        let mut enforcer = make_enforcer();
+        revoke_target(&mut enforcer, RevocationTargetType::Extension, [80; 32]);
+        enforcer.drain_audit_log();
+
+        enforcer.check_extension_activation(
+            &EngineObjectId([80; 32]),
+            &VerificationKey::from_bytes([81; 32]),
+            "t-ext-audit-1",
+        );
+        let events = enforcer.drain_audit_log();
+        assert_eq!(events.len(), 1);
+        assert!(events[0].is_revoked);
+        assert!(!events[0].transitive);
+        assert_eq!(events[0].target_type, RevocationTargetType::Extension);
+    }
+
+    #[test]
+    fn extension_transitive_emits_two_audit_events() {
+        let mut enforcer = make_enforcer();
+        let signing_key = VerificationKey::from_bytes([90; 32]);
+        let key_id = key_id_from_verification_key(&signing_key);
+        revoke_target(&mut enforcer, RevocationTargetType::Key, *key_id.as_bytes());
+        enforcer.drain_audit_log();
+
+        enforcer.check_extension_activation(
+            &EngineObjectId([91; 32]),
+            &signing_key,
+            "t-ext-audit-2",
+        );
+        let events = enforcer.drain_audit_log();
+        assert_eq!(events.len(), 2);
+        assert!(!events[0].is_revoked); // extension check passes
+        assert!(events[1].is_revoked); // key check fails
+        assert!(events[1].transitive);
+    }
+
+    // ---------------------------------------------------------------
+    // Enrichment: batch edge cases
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn batch_single_token_cleared() {
+        let mut enforcer = make_enforcer();
+        let tokens = vec![(
+            EngineObjectId([1; 32]),
+            VerificationKey::from_bytes([2; 32]),
+        )];
+        let result = enforcer.check_token_batch(&tokens, "t-batch-single");
+        assert!(result.is_cleared());
+        if let EnforcementResult::Cleared {
+            checks_performed, ..
+        } = result
+        {
+            assert_eq!(checks_performed, 2);
+        }
+    }
+
+    #[test]
+    fn batch_first_token_revoked_stops_immediately() {
+        let mut enforcer = make_enforcer();
+        revoke_target(&mut enforcer, RevocationTargetType::Token, [1; 32]);
+        enforcer.drain_audit_log();
+
+        let tokens = vec![
+            (
+                EngineObjectId([1; 32]),
+                VerificationKey::from_bytes([2; 32]),
+            ), // revoked
+            (
+                EngineObjectId([3; 32]),
+                VerificationKey::from_bytes([4; 32]),
+            ),
+        ];
+
+        let result = enforcer.check_token_batch(&tokens, "t-batch-first");
+        match result {
+            EnforcementResult::Denied(denial) => {
+                assert_eq!(denial.target_id, EngineObjectId([1; 32]));
+                assert!(!denial.transitive);
+            }
+            _ => panic!("expected denial on first token"),
+        }
+        // Only 1 audit event for the direct token check (short-circuits)
+        let events = enforcer.drain_audit_log();
+        assert_eq!(events.len(), 1);
+    }
+
+    #[test]
+    fn batch_last_token_revoked() {
+        let mut enforcer = make_enforcer();
+        revoke_target(&mut enforcer, RevocationTargetType::Token, [5; 32]);
+        enforcer.drain_audit_log();
+
+        let tokens = vec![
+            (
+                EngineObjectId([1; 32]),
+                VerificationKey::from_bytes([2; 32]),
+            ),
+            (
+                EngineObjectId([3; 32]),
+                VerificationKey::from_bytes([4; 32]),
+            ),
+            (
+                EngineObjectId([5; 32]),
+                VerificationKey::from_bytes([6; 32]),
+            ), // revoked
+        ];
+
+        let result = enforcer.check_token_batch(&tokens, "t-batch-last");
+        match result {
+            EnforcementResult::Denied(denial) => {
+                assert_eq!(denial.target_id, EngineObjectId([5; 32]));
+            }
+            _ => panic!("expected denial on last token"),
+        }
+        // 2 events per cleared token (2 tokens cleared) + 1 for the revoked token = 5
+        let events = enforcer.drain_audit_log();
+        assert_eq!(events.len(), 5);
+    }
+
+    #[test]
+    fn batch_transitive_key_denial() {
+        let mut enforcer = make_enforcer();
+        let issuer_key = VerificationKey::from_bytes([42; 32]);
+        let key_id = key_id_from_verification_key(&issuer_key);
+        revoke_target(&mut enforcer, RevocationTargetType::Key, *key_id.as_bytes());
+        enforcer.drain_audit_log();
+
+        let tokens = vec![
+            (EngineObjectId([1; 32]), issuer_key.clone()),
+            (EngineObjectId([2; 32]), issuer_key),
+        ];
+
+        let result = enforcer.check_token_batch(&tokens, "t-batch-trans");
+        match result {
+            EnforcementResult::Denied(denial) => {
+                assert!(denial.transitive);
+                assert_eq!(denial.transitive_root, Some(key_id));
+                assert_eq!(denial.target_id, EngineObjectId([1; 32]));
+            }
+            _ => panic!("expected transitive denial in batch"),
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // Enrichment: drain/log edge cases
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn drain_audit_log_returns_empty_on_second_call() {
+        let mut enforcer = make_enforcer();
+        enforcer.check_token_acceptance(
+            &EngineObjectId([1; 32]),
+            &VerificationKey::from_bytes([2; 32]),
+            "t-drain",
+        );
+        let first = enforcer.drain_audit_log();
+        assert_eq!(first.len(), 2);
+        let second = enforcer.drain_audit_log();
+        assert!(second.is_empty());
+    }
+
+    #[test]
+    fn audit_log_ordering_matches_call_order() {
+        let mut enforcer = make_enforcer();
+        enforcer.check_token_acceptance(
+            &EngineObjectId([1; 32]),
+            &VerificationKey::from_bytes([2; 32]),
+            "trace-A",
+        );
+        enforcer.check_high_risk_operation(
+            &EngineObjectId([3; 32]),
+            &VerificationKey::from_bytes([4; 32]),
+            HighRiskCategory::PolicyChange,
+            "trace-B",
+        );
+
+        let events = enforcer.drain_audit_log();
+        assert_eq!(events.len(), 4);
+        assert_eq!(events[0].trace_id, "trace-A");
+        assert_eq!(events[1].trace_id, "trace-A");
+        assert_eq!(events[2].trace_id, "trace-B");
+        assert_eq!(events[3].trace_id, "trace-B");
+    }
+
+    #[test]
+    fn trace_id_preserved_in_audit_events() {
+        let mut enforcer = make_enforcer();
+        enforcer.check_extension_activation(
+            &EngineObjectId([5; 32]),
+            &VerificationKey::from_bytes([6; 32]),
+            "unique-trace-xyz",
+        );
+        let events = enforcer.drain_audit_log();
+        for ev in &events {
+            assert_eq!(ev.trace_id, "unique-trace-xyz");
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // Enrichment: enforcement result is_cleared / into_result
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn enforcement_result_is_cleared_returns_false_for_denied() {
+        let denial = RevocationDenial {
+            target_type: RevocationTargetType::Token,
+            target_id: EngineObjectId([1; 32]),
+            transitive: false,
+            transitive_root: None,
+            enforcement_point: EnforcementPoint::TokenAcceptance,
+        };
+        let result = EnforcementResult::Denied(denial);
+        assert!(!result.is_cleared());
+    }
+
+    // ---------------------------------------------------------------
+    // Enrichment: RevocationDenial as Error trait
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn revocation_denial_implements_error_trait() {
+        let denial = RevocationDenial {
+            target_type: RevocationTargetType::Token,
+            target_id: EngineObjectId([1; 32]),
+            transitive: false,
+            transitive_root: None,
+            enforcement_point: EnforcementPoint::TokenAcceptance,
+        };
+        let err: &dyn std::error::Error = &denial;
+        // Error::source defaults to None
+        assert!(err.source().is_none());
+        // to_string should work via Display
+        let msg = err.to_string();
+        assert!(msg.contains("directly revoked"));
+    }
+
+    // ---------------------------------------------------------------
+    // Enrichment: stats across multiple enforcement points
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn stats_across_all_enforcement_points() {
+        let mut enforcer = make_enforcer();
+
+        // Token acceptance: 1 cleared
+        enforcer.check_token_acceptance(
+            &EngineObjectId([1; 32]),
+            &VerificationKey::from_bytes([2; 32]),
+            "t-multi-stats-1",
+        );
+
+        // High-risk: 1 cleared
+        enforcer.check_high_risk_operation(
+            &EngineObjectId([3; 32]),
+            &VerificationKey::from_bytes([4; 32]),
+            HighRiskCategory::PolicyChange,
+            "t-multi-stats-2",
+        );
+
+        // Extension: 1 cleared
+        enforcer.check_extension_activation(
+            &EngineObjectId([5; 32]),
+            &VerificationKey::from_bytes([6; 32]),
+            "t-multi-stats-3",
+        );
+
+        let stats = enforcer.stats();
+        assert_eq!(stats.len(), 3);
+        for (_, s) in stats {
+            assert_eq!(s.checks, 1);
+            assert_eq!(s.cleared, 1);
+            assert_eq!(s.denied, 0);
+        }
+    }
+
+    #[test]
+    fn stats_empty_before_any_checks() {
+        let enforcer = make_enforcer();
+        assert!(enforcer.stats().is_empty());
+    }
+
+    // ---------------------------------------------------------------
+    // Enrichment: set_tick progression
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn set_tick_progression_reflected_in_audit() {
+        let mut enforcer = make_enforcer();
+
+        enforcer.set_tick(100);
+        enforcer.check_token_acceptance(
+            &EngineObjectId([1; 32]),
+            &VerificationKey::from_bytes([2; 32]),
+            "t-tick-a",
+        );
+
+        enforcer.set_tick(200);
+        enforcer.check_token_acceptance(
+            &EngineObjectId([3; 32]),
+            &VerificationKey::from_bytes([4; 32]),
+            "t-tick-b",
+        );
+
+        enforcer.set_tick(300);
+        enforcer.check_token_acceptance(
+            &EngineObjectId([5; 32]),
+            &VerificationKey::from_bytes([6; 32]),
+            "t-tick-c",
+        );
+
+        let events = enforcer.drain_audit_log();
+        assert_eq!(events.len(), 6);
+        assert_eq!(events[0].checked_at, DeterministicTimestamp(100));
+        assert_eq!(events[1].checked_at, DeterministicTimestamp(100));
+        assert_eq!(events[2].checked_at, DeterministicTimestamp(200));
+        assert_eq!(events[3].checked_at, DeterministicTimestamp(200));
+        assert_eq!(events[4].checked_at, DeterministicTimestamp(300));
+        assert_eq!(events[5].checked_at, DeterministicTimestamp(300));
+    }
+
+    // ---------------------------------------------------------------
+    // Enrichment: direct beats transitive (both revoked)
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn direct_denial_takes_precedence_when_both_token_and_key_revoked() {
+        let mut enforcer = make_enforcer();
+        let issuer_key = VerificationKey::from_bytes([20; 32]);
+        let key_id = key_id_from_verification_key(&issuer_key);
+
+        // Revoke both the token and its issuer key
+        revoke_target(&mut enforcer, RevocationTargetType::Token, [10; 32]);
+        revoke_target(&mut enforcer, RevocationTargetType::Key, *key_id.as_bytes());
+        enforcer.drain_audit_log();
+
+        let result =
+            enforcer.check_token_acceptance(&EngineObjectId([10; 32]), &issuer_key, "t-both");
+        match result {
+            EnforcementResult::Denied(denial) => {
+                // Direct token denial takes precedence (checked first)
+                assert!(!denial.transitive);
+                assert!(denial.transitive_root.is_none());
+                assert_eq!(denial.target_type, RevocationTargetType::Token);
+            }
+            _ => panic!("expected direct denial"),
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // Enrichment: Cleared checks_performed values
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn cleared_checks_performed_is_two_for_each_enforcement_point() {
+        let mut enforcer = make_enforcer();
+
+        let r1 = enforcer.check_token_acceptance(
+            &EngineObjectId([1; 32]),
+            &VerificationKey::from_bytes([2; 32]),
+            "t-cp-1",
+        );
+        let r2 = enforcer.check_high_risk_operation(
+            &EngineObjectId([3; 32]),
+            &VerificationKey::from_bytes([4; 32]),
+            HighRiskCategory::PolicyChange,
+            "t-cp-2",
+        );
+        let r3 = enforcer.check_extension_activation(
+            &EngineObjectId([5; 32]),
+            &VerificationKey::from_bytes([6; 32]),
+            "t-cp-3",
+        );
+
+        for (r, point) in [
+            (r1, EnforcementPoint::TokenAcceptance),
+            (r2, EnforcementPoint::HighRiskOperation),
+            (r3, EnforcementPoint::ExtensionActivation),
+        ] {
+            if let EnforcementResult::Cleared {
+                enforcement_point,
+                checks_performed,
+            } = r
+            {
+                assert_eq!(enforcement_point, point);
+                assert_eq!(checks_performed, 2);
+            } else {
+                panic!("expected cleared");
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // Enrichment: RevocationDenial Display for Attestation type
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn revocation_denial_display_attestation_type() {
+        let denial = RevocationDenial {
+            target_type: RevocationTargetType::Attestation,
+            target_id: EngineObjectId([44; 32]),
+            transitive: false,
+            transitive_root: None,
+            enforcement_point: EnforcementPoint::HighRiskOperation,
+        };
+        let display = denial.to_string();
+        assert!(display.contains("directly revoked"));
+        assert!(display.contains("high_risk_operation"));
+    }
+
+    // ---------------------------------------------------------------
+    // Enrichment: RevocationTargetType serde round-trip
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn revocation_target_type_serialization() {
+        let types = [
+            RevocationTargetType::Token,
+            RevocationTargetType::Key,
+            RevocationTargetType::Attestation,
+            RevocationTargetType::Extension,
+        ];
+        for t in &types {
+            let json = serde_json::to_string(t).unwrap();
+            let restored: RevocationTargetType = serde_json::from_str(&json).unwrap();
+            assert_eq!(*t, restored);
+        }
+    }
 }

@@ -806,4 +806,312 @@ mod tests {
         assert_eq!(back.held_profile, ProfileKind::Remote);
         assert_eq!(back.component, "fs-writer");
     }
+
+    // -- Enrichment batch 3: deeper edge cases --
+
+    #[test]
+    fn profile_clone_preserves_equality() {
+        let full = CapabilityProfile::full();
+        let cloned = full.clone();
+        assert_eq!(full, cloned);
+        assert_eq!(full.kind, cloned.kind);
+        assert_eq!(full.capabilities, cloned.capabilities);
+    }
+
+    #[test]
+    fn same_profile_created_twice_is_equal() {
+        assert_eq!(CapabilityProfile::full(), CapabilityProfile::full());
+        assert_eq!(
+            CapabilityProfile::engine_core(),
+            CapabilityProfile::engine_core()
+        );
+        assert_eq!(CapabilityProfile::policy(), CapabilityProfile::policy());
+        assert_eq!(CapabilityProfile::remote(), CapabilityProfile::remote());
+        assert_eq!(
+            CapabilityProfile::compute_only(),
+            CapabilityProfile::compute_only()
+        );
+    }
+
+    #[test]
+    fn different_profiles_are_not_equal() {
+        assert_ne!(CapabilityProfile::full(), CapabilityProfile::engine_core());
+        assert_ne!(
+            CapabilityProfile::engine_core(),
+            CapabilityProfile::policy()
+        );
+        assert_ne!(CapabilityProfile::policy(), CapabilityProfile::remote());
+        assert_ne!(
+            CapabilityProfile::remote(),
+            CapabilityProfile::compute_only()
+        );
+    }
+
+    #[test]
+    fn require_all_partial_denials() {
+        let ec = CapabilityProfile::engine_core();
+        // VmDispatch is granted, NetworkEgress is not
+        let denials = require_all(
+            &ec,
+            &[
+                RuntimeCapability::VmDispatch,
+                RuntimeCapability::NetworkEgress,
+            ],
+            "partial-test",
+        )
+        .unwrap_err();
+        assert_eq!(denials.len(), 1);
+        assert_eq!(denials[0].required, RuntimeCapability::NetworkEgress);
+    }
+
+    #[test]
+    fn intersection_associativity() {
+        let full = CapabilityProfile::full();
+        let ec = CapabilityProfile::engine_core();
+        let pol = CapabilityProfile::policy();
+        let ab_c = full.intersect(&ec).intersect(&pol);
+        let a_bc = full.intersect(&ec.intersect(&pol));
+        assert_eq!(ab_c.capabilities, a_bc.capabilities);
+    }
+
+    #[test]
+    fn full_profile_is_not_empty() {
+        let full = CapabilityProfile::full();
+        assert!(!full.is_empty());
+        assert!(full.len() > 0);
+    }
+
+    #[test]
+    fn require_capability_on_full_always_succeeds() {
+        let full = CapabilityProfile::full();
+        let all_caps = [
+            RuntimeCapability::VmDispatch,
+            RuntimeCapability::GcInvoke,
+            RuntimeCapability::IrLowering,
+            RuntimeCapability::PolicyRead,
+            RuntimeCapability::PolicyWrite,
+            RuntimeCapability::EvidenceEmit,
+            RuntimeCapability::DecisionInvoke,
+            RuntimeCapability::NetworkEgress,
+            RuntimeCapability::LeaseManagement,
+            RuntimeCapability::IdempotencyDerive,
+            RuntimeCapability::ExtensionLifecycle,
+            RuntimeCapability::HeapAllocate,
+            RuntimeCapability::EnvRead,
+            RuntimeCapability::ProcessSpawn,
+            RuntimeCapability::FsRead,
+            RuntimeCapability::FsWrite,
+        ];
+        for cap in &all_caps {
+            assert!(
+                require_capability(&full, *cap, "full-test").is_ok(),
+                "full should grant {:?}",
+                cap
+            );
+        }
+    }
+
+    #[test]
+    fn require_all_on_full_with_all_caps() {
+        let full = CapabilityProfile::full();
+        let all_caps = [
+            RuntimeCapability::VmDispatch,
+            RuntimeCapability::GcInvoke,
+            RuntimeCapability::IrLowering,
+            RuntimeCapability::PolicyRead,
+            RuntimeCapability::PolicyWrite,
+            RuntimeCapability::EvidenceEmit,
+            RuntimeCapability::DecisionInvoke,
+            RuntimeCapability::NetworkEgress,
+            RuntimeCapability::LeaseManagement,
+            RuntimeCapability::IdempotencyDerive,
+            RuntimeCapability::ExtensionLifecycle,
+            RuntimeCapability::HeapAllocate,
+            RuntimeCapability::EnvRead,
+            RuntimeCapability::ProcessSpawn,
+            RuntimeCapability::FsRead,
+            RuntimeCapability::FsWrite,
+        ];
+        assert!(require_all(&full, &all_caps, "all-caps-test").is_ok());
+    }
+
+    #[test]
+    fn capability_denied_display_contains_all_fields() {
+        let denied = CapabilityDenied {
+            required: RuntimeCapability::ProcessSpawn,
+            held_profile: ProfileKind::Policy,
+            component: "task-runner".to_string(),
+        };
+        let display = denied.to_string();
+        assert!(display.contains("task-runner"));
+        assert!(display.contains("process_spawn"));
+        assert!(display.contains("PolicyCaps"));
+    }
+
+    #[test]
+    fn runtime_capability_copy_semantics() {
+        let cap = RuntimeCapability::VmDispatch;
+        let cap2 = cap;
+        assert_eq!(cap, cap2);
+    }
+
+    #[test]
+    fn profile_kind_copy_semantics() {
+        let kind = ProfileKind::Full;
+        let kind2 = kind;
+        assert_eq!(kind, kind2);
+    }
+
+    #[test]
+    fn capability_profile_json_contains_expected_fields() {
+        let ec = CapabilityProfile::engine_core();
+        let json = serde_json::to_string(&ec).unwrap();
+        assert!(json.contains("\"kind\""));
+        assert!(json.contains("\"capabilities\""));
+        assert!(json.contains("EngineCore"));
+    }
+
+    #[test]
+    fn intersect_full_with_full_equals_full_caps() {
+        let full1 = CapabilityProfile::full();
+        let full2 = CapabilityProfile::full();
+        let inter = full1.intersect(&full2);
+        assert_eq!(inter.capabilities, full1.capabilities);
+    }
+
+    #[test]
+    fn profile_kind_display_all_unique() {
+        let displays: BTreeSet<String> = [
+            ProfileKind::Full,
+            ProfileKind::EngineCore,
+            ProfileKind::Policy,
+            ProfileKind::Remote,
+            ProfileKind::ComputeOnly,
+        ]
+        .iter()
+        .map(|k| k.to_string())
+        .collect();
+        assert_eq!(
+            displays.len(),
+            5,
+            "all 5 ProfileKind variants have unique Display"
+        );
+    }
+
+    #[test]
+    fn runtime_capability_display_all_16_unique() {
+        let displays: BTreeSet<String> = [
+            RuntimeCapability::VmDispatch,
+            RuntimeCapability::GcInvoke,
+            RuntimeCapability::IrLowering,
+            RuntimeCapability::PolicyRead,
+            RuntimeCapability::PolicyWrite,
+            RuntimeCapability::EvidenceEmit,
+            RuntimeCapability::DecisionInvoke,
+            RuntimeCapability::NetworkEgress,
+            RuntimeCapability::LeaseManagement,
+            RuntimeCapability::IdempotencyDerive,
+            RuntimeCapability::ExtensionLifecycle,
+            RuntimeCapability::HeapAllocate,
+            RuntimeCapability::EnvRead,
+            RuntimeCapability::ProcessSpawn,
+            RuntimeCapability::FsRead,
+            RuntimeCapability::FsWrite,
+        ]
+        .iter()
+        .map(|c| c.to_string())
+        .collect();
+        assert_eq!(
+            displays.len(),
+            16,
+            "all 16 RuntimeCapability variants have unique Display"
+        );
+    }
+
+    #[test]
+    fn engine_core_has_no_remote_caps() {
+        let ec = CapabilityProfile::engine_core();
+        assert!(!ec.has(RuntimeCapability::NetworkEgress));
+        assert!(!ec.has(RuntimeCapability::LeaseManagement));
+        assert!(!ec.has(RuntimeCapability::IdempotencyDerive));
+    }
+
+    #[test]
+    fn remote_has_no_policy_caps() {
+        let rem = CapabilityProfile::remote();
+        assert!(!rem.has(RuntimeCapability::PolicyRead));
+        assert!(!rem.has(RuntimeCapability::PolicyWrite));
+        assert!(!rem.has(RuntimeCapability::EvidenceEmit));
+        assert!(!rem.has(RuntimeCapability::DecisionInvoke));
+    }
+
+    #[test]
+    fn require_all_with_single_requirement() {
+        let ec = CapabilityProfile::engine_core();
+        assert!(require_all(&ec, &[RuntimeCapability::VmDispatch], "single").is_ok());
+        let denied = require_all(&ec, &[RuntimeCapability::PolicyWrite], "single").unwrap_err();
+        assert_eq!(denied.len(), 1);
+    }
+
+    #[test]
+    fn capability_denied_for_compute_only_contains_profile_name() {
+        let denied = CapabilityDenied {
+            required: RuntimeCapability::VmDispatch,
+            held_profile: ProfileKind::ComputeOnly,
+            component: "vm".to_string(),
+        };
+        assert!(denied.to_string().contains("ComputeOnlyCaps"));
+    }
+
+    #[test]
+    fn subsumption_reflexive_for_all_profiles() {
+        let profiles = [
+            CapabilityProfile::full(),
+            CapabilityProfile::engine_core(),
+            CapabilityProfile::policy(),
+            CapabilityProfile::remote(),
+            CapabilityProfile::compute_only(),
+        ];
+        for p in &profiles {
+            assert!(p.subsumes(p), "{} should subsume itself", p.kind);
+        }
+    }
+
+    #[test]
+    fn compute_only_subsumes_compute_only() {
+        let co1 = CapabilityProfile::compute_only();
+        let co2 = CapabilityProfile::compute_only();
+        assert!(co1.subsumes(&co2));
+    }
+
+    #[test]
+    fn all_profiles_serde_roundtrip() {
+        let profiles = [
+            CapabilityProfile::full(),
+            CapabilityProfile::engine_core(),
+            CapabilityProfile::policy(),
+            CapabilityProfile::remote(),
+            CapabilityProfile::compute_only(),
+        ];
+        for p in &profiles {
+            let json = serde_json::to_string(p).unwrap();
+            let restored: CapabilityProfile = serde_json::from_str(&json).unwrap();
+            assert_eq!(*p, restored, "serde roundtrip failed for {}", p.kind);
+        }
+    }
+
+    #[test]
+    fn full_profile_display_shows_count_16() {
+        assert_eq!(CapabilityProfile::full().to_string(), "FullCaps[16]");
+    }
+
+    #[test]
+    fn remote_profile_display_shows_count_3() {
+        assert_eq!(CapabilityProfile::remote().to_string(), "RemoteCaps[3]");
+    }
+
+    #[test]
+    fn policy_profile_display_shows_count_4() {
+        assert_eq!(CapabilityProfile::policy().to_string(), "PolicyCaps[4]");
+    }
 }

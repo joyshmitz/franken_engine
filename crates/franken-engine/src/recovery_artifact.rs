@@ -1452,4 +1452,546 @@ mod tests {
         let store = RecoveryArtifactStore::new(test_epoch(), &test_key());
         assert!(store.export().is_empty());
     }
+
+    // -- Enrichment batch 3: sensitivity, edge cases, deeper coverage --
+
+    #[test]
+    fn artifact_id_sensitive_to_artifact_type() {
+        let base = |at: ArtifactType| {
+            ArtifactBuilder::new(
+                at,
+                RecoveryTrigger::AutomaticFallback {
+                    fallback_id: "fb".to_string(),
+                },
+                sample_before_state(),
+                "t",
+                1,
+                1000,
+                &test_key(),
+            )
+            .proof(ProofElement::MmrConsistency {
+                root_hash: ContentHash::compute(b"r"),
+                leaf_count: 1,
+                proof_hashes: vec![],
+            })
+            .build()
+        };
+        let a1 = base(ArtifactType::GapFill);
+        let a2 = base(ArtifactType::StateRepair);
+        assert_ne!(a1.artifact_id, a2.artifact_id);
+    }
+
+    #[test]
+    fn artifact_id_sensitive_to_trigger() {
+        let base = |trigger: RecoveryTrigger| {
+            ArtifactBuilder::new(
+                ArtifactType::GapFill,
+                trigger,
+                sample_before_state(),
+                "t",
+                1,
+                1000,
+                &test_key(),
+            )
+            .proof(ProofElement::MmrConsistency {
+                root_hash: ContentHash::compute(b"r"),
+                leaf_count: 1,
+                proof_hashes: vec![],
+            })
+            .build()
+        };
+        let a1 = base(RecoveryTrigger::AutomaticFallback {
+            fallback_id: "fb-1".to_string(),
+        });
+        let a2 = base(RecoveryTrigger::AutomaticFallback {
+            fallback_id: "fb-2".to_string(),
+        });
+        assert_ne!(a1.artifact_id, a2.artifact_id);
+    }
+
+    #[test]
+    fn artifact_id_sensitive_to_epoch_id() {
+        let base = |epoch: u64| {
+            ArtifactBuilder::new(
+                ArtifactType::GapFill,
+                RecoveryTrigger::AutomaticFallback {
+                    fallback_id: "fb".to_string(),
+                },
+                sample_before_state(),
+                "t",
+                epoch,
+                1000,
+                &test_key(),
+            )
+            .proof(ProofElement::MmrConsistency {
+                root_hash: ContentHash::compute(b"r"),
+                leaf_count: 1,
+                proof_hashes: vec![],
+            })
+            .build()
+        };
+        assert_ne!(base(1).artifact_id, base(2).artifact_id);
+    }
+
+    #[test]
+    fn artifact_id_sensitive_to_timestamp() {
+        let base = |ts: u64| {
+            ArtifactBuilder::new(
+                ArtifactType::GapFill,
+                RecoveryTrigger::AutomaticFallback {
+                    fallback_id: "fb".to_string(),
+                },
+                sample_before_state(),
+                "t",
+                1,
+                ts,
+                &test_key(),
+            )
+            .proof(ProofElement::MmrConsistency {
+                root_hash: ContentHash::compute(b"r"),
+                leaf_count: 1,
+                proof_hashes: vec![],
+            })
+            .build()
+        };
+        assert_ne!(base(1000).artifact_id, base(2000).artifact_id);
+    }
+
+    #[test]
+    fn artifact_id_sensitive_to_trace_id() {
+        let base = |trace: &str| {
+            ArtifactBuilder::new(
+                ArtifactType::GapFill,
+                RecoveryTrigger::AutomaticFallback {
+                    fallback_id: "fb".to_string(),
+                },
+                sample_before_state(),
+                trace,
+                1,
+                1000,
+                &test_key(),
+            )
+            .proof(ProofElement::MmrConsistency {
+                root_hash: ContentHash::compute(b"r"),
+                leaf_count: 1,
+                proof_hashes: vec![],
+            })
+            .build()
+        };
+        assert_ne!(base("t-a").artifact_id, base("t-b").artifact_id);
+    }
+
+    #[test]
+    fn artifact_id_sensitive_to_before_state() {
+        let base = |bs: ContentHash| {
+            ArtifactBuilder::new(
+                ArtifactType::GapFill,
+                RecoveryTrigger::AutomaticFallback {
+                    fallback_id: "fb".to_string(),
+                },
+                bs,
+                "t",
+                1,
+                1000,
+                &test_key(),
+            )
+            .proof(ProofElement::MmrConsistency {
+                root_hash: ContentHash::compute(b"r"),
+                leaf_count: 1,
+                proof_hashes: vec![],
+            })
+            .build()
+        };
+        assert_ne!(
+            base(ContentHash::compute(b"state-A")).artifact_id,
+            base(ContentHash::compute(b"state-B")).artifact_id
+        );
+    }
+
+    #[test]
+    fn drain_events_idempotent() {
+        let mut store = RecoveryArtifactStore::new(test_epoch(), &test_key());
+        store.record(build_valid_artifact(), "t1");
+        let events1 = store.drain_events();
+        assert_eq!(events1.len(), 1);
+        let events2 = store.drain_events();
+        assert!(events2.is_empty());
+    }
+
+    #[test]
+    fn store_epoch_accessor() {
+        let store = RecoveryArtifactStore::new(SecurityEpoch::from_raw(42), &test_key());
+        assert_eq!(store.epoch(), SecurityEpoch::from_raw(42));
+    }
+
+    #[test]
+    fn multiple_operator_actions_preserved_in_order() {
+        let artifact = ArtifactBuilder::new(
+            ArtifactType::TrustRestoration,
+            RecoveryTrigger::OperatorIntervention {
+                operator: "admin".to_string(),
+                reason: "restore".to_string(),
+            },
+            sample_before_state(),
+            "t1",
+            1,
+            1000,
+            &test_key(),
+        )
+        .after_state(sample_after_state())
+        .proof(ProofElement::EpochValidityCheck {
+            epoch: test_epoch(),
+            is_valid: true,
+            reason: "ok".to_string(),
+        })
+        .operator_action(OperatorAction {
+            operator: "admin-1".to_string(),
+            action: "approve".to_string(),
+            authorization_hash: AuthenticityHash::compute_keyed(b"k1", b"approve"),
+            timestamp_ticks: 1000,
+        })
+        .operator_action(OperatorAction {
+            operator: "admin-2".to_string(),
+            action: "confirm".to_string(),
+            authorization_hash: AuthenticityHash::compute_keyed(b"k2", b"confirm"),
+            timestamp_ticks: 1001,
+        })
+        .build();
+        assert_eq!(artifact.operator_actions.len(), 2);
+        assert_eq!(artifact.operator_actions[0].operator, "admin-1");
+        assert_eq!(artifact.operator_actions[1].operator, "admin-2");
+    }
+
+    #[test]
+    fn verify_multiple_failures_collects_all_reasons() {
+        let mut store = RecoveryArtifactStore::new(test_epoch(), &test_key());
+        let artifact = ArtifactBuilder::new(
+            ArtifactType::StateRepair,
+            RecoveryTrigger::IntegrityCheckFailure {
+                check_id: "c1".to_string(),
+                details: "corrupt".to_string(),
+            },
+            sample_before_state(),
+            "t1",
+            1,
+            1000,
+            &test_key(),
+        )
+        .proof(ProofElement::HashChainVerification {
+            start_marker_id: 0,
+            end_marker_id: 5,
+            chain_hash: ContentHash::compute(b"chain"),
+            verified: false,
+        })
+        .proof(ProofElement::EpochValidityCheck {
+            epoch: test_epoch(),
+            is_valid: false,
+            reason: "expired".to_string(),
+        })
+        .build();
+
+        let verdict = store.verify(&artifact, "t1").unwrap();
+        assert!(!verdict.is_valid());
+        if let RecoveryVerdict::Invalid { reasons } = &verdict {
+            assert_eq!(reasons.len(), 2);
+            assert!(reasons[0].contains("hash chain"));
+            assert!(reasons[1].contains("expired"));
+        } else {
+            panic!("expected Invalid verdict");
+        }
+    }
+
+    #[test]
+    fn recovery_verdict_invalid_multiple_reasons_display() {
+        let verdict = RecoveryVerdict::Invalid {
+            reasons: vec!["reason-a".to_string(), "reason-b".to_string()],
+        };
+        let display = verdict.to_string();
+        assert!(display.contains("reason-a"));
+        assert!(display.contains("reason-b"));
+        assert!(display.contains(';'));
+    }
+
+    #[test]
+    fn recovery_verdict_invalid_empty_reasons() {
+        let verdict = RecoveryVerdict::Invalid { reasons: vec![] };
+        assert!(!verdict.is_valid());
+        let display = verdict.to_string();
+        assert!(display.contains("invalid"));
+    }
+
+    #[test]
+    fn artifact_clone_preserves_all_fields() {
+        let artifact = build_valid_artifact();
+        let cloned = artifact.clone();
+        assert_eq!(artifact, cloned);
+        assert_eq!(artifact.artifact_id, cloned.artifact_id);
+        assert_eq!(artifact.signature, cloned.signature);
+        assert_eq!(artifact.proof_bundle.len(), cloned.proof_bundle.len());
+    }
+
+    #[test]
+    fn all_artifact_types_build_ok() {
+        let types = [
+            ArtifactType::GapFill,
+            ArtifactType::StateRepair,
+            ArtifactType::ForcedReconciliation,
+            ArtifactType::TrustRestoration,
+            ArtifactType::RejectedEpochPromotion,
+            ArtifactType::RejectedRevocation,
+            ArtifactType::FailedAttestation,
+        ];
+        for (i, at) in types.iter().enumerate() {
+            let artifact = ArtifactBuilder::new(
+                at.clone(),
+                RecoveryTrigger::AutomaticFallback {
+                    fallback_id: format!("fb-{i}"),
+                },
+                sample_before_state(),
+                &format!("t-{i}"),
+                i as u64,
+                1000,
+                &test_key(),
+            )
+            .proof(ProofElement::MmrConsistency {
+                root_hash: ContentHash::compute(b"r"),
+                leaf_count: 1,
+                proof_hashes: vec![],
+            })
+            .build();
+            assert_eq!(artifact.artifact_type, *at);
+        }
+    }
+
+    #[test]
+    fn all_trigger_types_build_ok() {
+        let triggers = vec![
+            RecoveryTrigger::ReconciliationFailure {
+                reconciliation_id: "r1".to_string(),
+            },
+            RecoveryTrigger::IntegrityCheckFailure {
+                check_id: "c1".to_string(),
+                details: "bad".to_string(),
+            },
+            RecoveryTrigger::OperatorIntervention {
+                operator: "admin".to_string(),
+                reason: "manual".to_string(),
+            },
+            RecoveryTrigger::AutomaticFallback {
+                fallback_id: "fb".to_string(),
+            },
+            RecoveryTrigger::EpochValidationFailure {
+                from_epoch: 1,
+                to_epoch: 2,
+            },
+            RecoveryTrigger::StaleAttestation {
+                attestation_age_ticks: 5000,
+            },
+        ];
+        for (i, trigger) in triggers.into_iter().enumerate() {
+            let artifact = ArtifactBuilder::new(
+                ArtifactType::GapFill,
+                trigger,
+                sample_before_state(),
+                &format!("t-{i}"),
+                1,
+                1000,
+                &test_key(),
+            )
+            .proof(ProofElement::MmrConsistency {
+                root_hash: ContentHash::compute(b"r"),
+                leaf_count: 1,
+                proof_hashes: vec![],
+            })
+            .build();
+            assert!(!artifact.artifact_id.to_hex().is_empty());
+        }
+    }
+
+    #[test]
+    fn store_event_counts_empty_on_fresh_store() {
+        let store = RecoveryArtifactStore::new(test_epoch(), &test_key());
+        assert!(store.event_counts().is_empty());
+    }
+
+    #[test]
+    fn verification_error_display_all_unique() {
+        let errors = [
+            VerificationError::EmptyProofBundle,
+            VerificationError::SignatureInvalid {
+                details: "sig".to_string(),
+            },
+            VerificationError::MissingProofElement {
+                element_type: "mmr".to_string(),
+            },
+            VerificationError::ArtifactIdMismatch {
+                expected: ContentHash::compute(b"a"),
+                computed: ContentHash::compute(b"b"),
+            },
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for e in &errors {
+            displays.insert(e.to_string());
+        }
+        assert_eq!(
+            displays.len(),
+            4,
+            "all 4 VerificationError variants have distinct Display"
+        );
+    }
+
+    #[test]
+    fn trigger_display_contains_expected_substrings() {
+        let cases = [
+            (
+                RecoveryTrigger::IntegrityCheckFailure {
+                    check_id: "chk-99".to_string(),
+                    details: "ignored in display".to_string(),
+                },
+                "chk-99",
+            ),
+            (
+                RecoveryTrigger::OperatorIntervention {
+                    operator: "ops-admin".to_string(),
+                    reason: "ignored".to_string(),
+                },
+                "ops-admin",
+            ),
+            (
+                RecoveryTrigger::EpochValidationFailure {
+                    from_epoch: 5,
+                    to_epoch: 6,
+                },
+                "5->6",
+            ),
+            (
+                RecoveryTrigger::StaleAttestation {
+                    attestation_age_ticks: 12345,
+                },
+                "12345",
+            ),
+        ];
+        for (trigger, expected_substr) in &cases {
+            assert!(
+                trigger.to_string().contains(expected_substr),
+                "trigger display '{}' should contain '{}'",
+                trigger,
+                expected_substr
+            );
+        }
+    }
+
+    #[test]
+    fn proof_element_mmr_zero_leaves() {
+        let pe = ProofElement::MmrConsistency {
+            root_hash: ContentHash::compute(b"empty"),
+            leaf_count: 0,
+            proof_hashes: vec![],
+        };
+        assert!(pe.to_string().contains("leaves=0"));
+    }
+
+    #[test]
+    fn proof_element_chain_large_marker_ids() {
+        let pe = ProofElement::HashChainVerification {
+            start_marker_id: u64::MAX - 1,
+            end_marker_id: u64::MAX,
+            chain_hash: ContentHash::compute(b"c"),
+            verified: false,
+        };
+        let display = pe.to_string();
+        assert!(display.contains("ok=false"));
+    }
+
+    #[test]
+    fn before_and_after_state_differ() {
+        let artifact = ArtifactBuilder::new(
+            ArtifactType::StateRepair,
+            RecoveryTrigger::IntegrityCheckFailure {
+                check_id: "c1".to_string(),
+                details: "corrupt".to_string(),
+            },
+            ContentHash::compute(b"old"),
+            "t1",
+            1,
+            1000,
+            &test_key(),
+        )
+        .after_state(ContentHash::compute(b"new"))
+        .proof(ProofElement::MmrConsistency {
+            root_hash: ContentHash::compute(b"r"),
+            leaf_count: 1,
+            proof_hashes: vec![],
+        })
+        .build();
+        assert_ne!(artifact.before_state, artifact.after_state);
+    }
+
+    #[test]
+    fn store_record_overwrites_same_artifact_id() {
+        let mut store = RecoveryArtifactStore::new(test_epoch(), &test_key());
+        let artifact = build_valid_artifact();
+        store.record(artifact.clone(), "t1");
+        store.record(artifact, "t2");
+        // BTreeMap insert overwrites; store should still have 1 entry
+        assert_eq!(store.len(), 1);
+    }
+
+    #[test]
+    fn store_verify_emits_event_with_verdict() {
+        let mut store = RecoveryArtifactStore::new(test_epoch(), &test_key());
+        let artifact = build_valid_artifact();
+        store.verify(&artifact, "trace-v").unwrap();
+        let events = store.drain_events();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event, "artifact_verified");
+        assert_eq!(events[0].trace_id, "trace-v");
+        assert_eq!(events[0].verification_verdict, "valid");
+    }
+
+    #[test]
+    fn store_record_emits_event_with_empty_verdict() {
+        let mut store = RecoveryArtifactStore::new(test_epoch(), &test_key());
+        store.record(build_valid_artifact(), "trace-r");
+        let events = store.drain_events();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event, "artifact_recorded");
+        assert!(events[0].verification_verdict.is_empty());
+    }
+
+    #[test]
+    fn recovery_event_all_fields_populated_after_verify() {
+        let mut store = RecoveryArtifactStore::new(test_epoch(), &test_key());
+        let artifact = build_valid_artifact();
+        store.verify(&artifact, "t-full").unwrap();
+        let events = store.drain_events();
+        let ev = &events[0];
+        assert!(!ev.artifact_id.is_empty());
+        assert!(!ev.artifact_type.is_empty());
+        assert!(!ev.trigger.is_empty());
+        assert!(!ev.verification_verdict.is_empty());
+        assert_eq!(ev.trace_id, "t-full");
+        assert_eq!(ev.epoch_id, 1);
+        assert_eq!(ev.event, "artifact_verified");
+    }
+
+    #[test]
+    fn proof_element_evidence_link_display() {
+        let pe = ProofElement::EvidenceEntryLink {
+            evidence_hash: ContentHash::compute(b"ev"),
+            decision_id: "dec-42".to_string(),
+        };
+        assert!(pe.to_string().contains("dec-42"));
+    }
+
+    #[test]
+    fn proof_element_epoch_check_display() {
+        let pe = ProofElement::EpochValidityCheck {
+            epoch: SecurityEpoch::from_raw(7),
+            is_valid: false,
+            reason: "stale".to_string(),
+        };
+        let display = pe.to_string();
+        assert!(display.contains("valid=false"));
+    }
 }
