@@ -9,10 +9,11 @@ parser_frontier_bootstrap_env
 
 mode="${1:-ci}"
 toolchain="${RUSTUP_TOOLCHAIN:-nightly}"
-target_dir="${CARGO_TARGET_DIR:-/tmp/rch_target_franken_engine_parser_operator_developer_runbook}"
 artifact_root="${PARSER_OPERATOR_DEVELOPER_RUNBOOK_ARTIFACT_ROOT:-artifacts/parser_operator_developer_runbook}"
 rch_timeout_seconds="${RCH_EXEC_TIMEOUT_SECONDS:-900}"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+# Default to a per-run target dir to avoid cross-agent cargo lock contention.
+target_dir="${CARGO_TARGET_DIR:-/tmp/rch_target_franken_engine_parser_operator_developer_runbook_${timestamp}}"
 run_dir="${artifact_root}/${timestamp}"
 manifest_path="${run_dir}/run_manifest.json"
 events_path="${run_dir}/events.jsonl"
@@ -42,6 +43,23 @@ run_rch() {
     "$@"
 }
 
+rch_remote_exit_code() {
+  local log_path="$1"
+  local remote_exit_line remote_exit_code
+
+  remote_exit_line="$(rg -o 'Remote command finished: exit=[0-9]+' "$log_path" | tail -n 1 || true)"
+  if [[ -z "$remote_exit_line" ]]; then
+    return 1
+  fi
+
+  remote_exit_code="${remote_exit_line##*=}"
+  if [[ -z "$remote_exit_code" ]]; then
+    return 1
+  fi
+
+  printf '%s\n' "$remote_exit_code"
+}
+
 rch_reject_local_fallback() {
   local log_path="$1"
   if grep -Eiq 'Remote toolchain failure, falling back to local|falling back to local|fallback to local|local fallback|\[RCH\] local \(' "$log_path"; then
@@ -56,7 +74,7 @@ manifest_written=false
 
 run_step() {
   local command_text="$1"
-  local log_path
+  local log_path remote_exit_code
   shift
 
   commands_run+=("$command_text")
@@ -77,6 +95,14 @@ run_step() {
   if ! rch_reject_local_fallback "$log_path"; then
     rm -f "$log_path"
     failed_command="${command_text} (rch-local-fallback-detected)"
+    return 1
+  fi
+
+  # rch may occasionally return a success status while remote reported a non-zero exit.
+  remote_exit_code="$(rch_remote_exit_code "$log_path" || true)"
+  if [[ -n "$remote_exit_code" && "$remote_exit_code" != "0" ]]; then
+    rm -f "$log_path"
+    failed_command="${command_text} (remote-exit=${remote_exit_code})"
     return 1
   fi
 
