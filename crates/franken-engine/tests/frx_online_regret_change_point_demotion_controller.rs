@@ -229,7 +229,8 @@ fn frx_15_3_hybrid_router_regret_budget_breach_demotes_deterministically() {
     config.risk_budget = RiskBudget {
         tail_latency_budget_us: u64::MAX,
         compatibility_error_budget: u64::MAX,
-        regret_budget_millionths: 5,
+        // Force deterministic regret gate activation on first observation.
+        regret_budget_millionths: -1,
     };
     config.change_point = ChangePointConfig {
         threshold_millionths: i64::MAX,
@@ -246,8 +247,6 @@ fn frx_15_3_hybrid_router_regret_budget_breach_demotes_deterministically() {
     router
         .promote_to_adaptive()
         .expect("router should promote to adaptive");
-
-    router.risk.cumulative_regret_millionths = 10;
 
     let trace = router.observe(
         LaneChoice::Js,
@@ -271,7 +270,8 @@ fn frx_15_3_hybrid_router_change_point_breach_demotes_deterministically() {
         regret_budget_millionths: i64::MAX,
     };
     config.change_point = ChangePointConfig {
-        threshold_millionths: 100,
+        // Threshold below zero makes the first observation deterministically trigger.
+        threshold_millionths: -1,
         drift_millionths: 0,
         min_observations: 1,
     };
@@ -286,19 +286,20 @@ fn frx_15_3_hybrid_router_change_point_breach_demotes_deterministically() {
         .promote_to_adaptive()
         .expect("router should promote to adaptive");
 
-    router.change_point.observation_count = 1;
-    router.change_point.cusum_upper_millionths = 101;
-
     let trace = router.observe(
         LaneChoice::Wasm,
         &neutral_observation(LaneChoice::Wasm),
         Some(99_000),
     );
 
-    assert!(matches!(
-        trace.demotion_reason,
-        Some(DemotionReason::ChangePointDetected { .. })
-    ));
+    assert!(
+        matches!(
+            trace.demotion_reason,
+            Some(DemotionReason::ChangePointDetected { .. })
+        ),
+        "expected change-point demotion, got {:?}",
+        trace.demotion_reason
+    );
     assert_eq!(router.policy, RoutingPolicy::Conservative);
 }
 
