@@ -1,0 +1,60 @@
+{
+  "schema_version": "franken-engine.parser-cross-arch-repro-matrix.fixture.v1",
+  "contract_version": "1.0.0",
+  "bead_id": "bd-2mds.1.7.2",
+  "policy_id": "policy-parser-cross-arch-repro-matrix-v1",
+  "required_log_keys": [
+    "schema_version",
+    "trace_id",
+    "decision_id",
+    "policy_id",
+    "component",
+    "event",
+    "outcome",
+    "error_code"
+  ],
+  "architecture_targets": [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu"
+  ],
+  "required_lanes": [
+    {
+      "lane_id": "parser_event_ast_equivalence",
+      "manifest_schema_version": "franken-engine.parser-event-ast-equivalence.run-manifest.v1",
+      "replay_command": "./scripts/e2e/parser_event_ast_equivalence_replay.sh"
+    },
+    {
+      "lane_id": "parser_parallel_interference",
+      "manifest_schema_version": "franken-engine.parser-parallel-interference.run-manifest.v1",
+      "replay_command": "./scripts/run_parser_parallel_interference_gate.sh ci"
+    }
+  ],
+  "delta_classes": [
+    {
+      "class_id": "none",
+      "severity": "info",
+      "description": "Outcome, error code, and witness digest are identical across architectures."
+    },
+    {
+      "class_id": "toolchain_fingerprint_delta",
+      "severity": "warning",
+      "description": "Outcome and error code match, digest differs, and toolchain fingerprints differ."
+    },
+    {
+      "class_id": "digest_delta_unexplained",
+      "severity": "critical",
+      "description": "Outcome and error code match but digest differs without a toolchain-fingerprint explanation."
+    },
+    {
+      "class_id": "upstream_lane_regression",
+      "severity": "critical",
+      "description": "Outcome or error code differs across architectures."
+    },
+    {
+      "class_id": "missing_input",
+      "severity": "critical",
+      "description": "Required architecture-lane manifest input is missing."
+    }
+  ],
+  "replay_command": "./scripts/e2e/parser_cross_arch_repro_matrix_replay.sh"
+}
