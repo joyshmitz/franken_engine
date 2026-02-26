@@ -1,0 +1,117 @@
+{
+  "schema_version": "franken-engine.parser-correctness-promotion-gate.v1",
+  "gate_version": "1.0.0",
+  "high_severity_levels": [
+    "critical",
+    "high"
+  ],
+  "required_evidence_lanes": [
+    "parser_oracle",
+    "event_ast_equivalence",
+    "parallel_fallback_parity",
+    "differential_harness"
+  ],
+  "structured_log_required_keys": [
+    "trace_id",
+    "decision_id",
+    "policy_id",
+    "component",
+    "event",
+    "outcome",
+    "error_code",
+    "drift_inventory",
+    "waiver_inventory",
+    "failing_fixture_ids",
+    "replay_pointers"
+  ],
+  "drift_records": [
+    {
+      "drift_id": "D-001",
+      "fixture_id": "parser_oracle::metamorphic_seed_77",
+      "severity": "high",
+      "status": "open",
+      "owner": "CrimsonStone",
+      "detected_at_utc": "2026-02-26T09:00:00Z",
+      "replay_command": "./scripts/e2e/parser_oracle_full.sh"
+    },
+    {
+      "drift_id": "D-002",
+      "fixture_id": "parallel_parser::seed_99",
+      "severity": "high",
+      "status": "waived",
+      "owner": "RedHeron",
+      "detected_at_utc": "2026-02-26T09:05:00Z",
+      "replay_command": "./scripts/e2e/parser_parallel_interference_gate_replay.sh",
+      "waiver": {
+        "waiver_id": "W-2026-02-26-01",
+        "approved_by": "HazyGate",
+        "remediation_due_utc": "2026-03-05T00:00:00Z",
+        "rationale": "Known nondeterminism from shared workers; bounded to legacy corpora and tracked for fix in PSRP-05.4.2."
+      }
+    },
+    {
+      "drift_id": "D-003",
+      "fixture_id": "event_ast::legacy_fixture_10",
+      "severity": "medium",
+      "status": "open",
+      "owner": "MaroonGlen",
+      "detected_at_utc": "2026-02-26T09:10:00Z",
+      "replay_command": "./scripts/e2e/parser_event_ast_equivalence_replay.sh"
+    },
+    {
+      "drift_id": "D-004",
+      "fixture_id": "differential::shadow_run_12",
+      "severity": "critical",
+      "status": "resolved",
+      "owner": "MaroonGlen",
+      "detected_at_utc": "2026-02-25T18:10:00Z",
+      "replay_command": "./scripts/e2e/parser_differential_nightly_governance_replay.sh"
+    }
+  ],
+  "evidence_vectors": [
+    {
+      "lane_id": "parser_oracle",
+      "status": "pass",
+      "artifact_manifest": "artifacts/parser_oracle/20260226T080000Z/run_manifest.json",
+      "replay_command": "./scripts/e2e/parser_oracle_full.sh"
+    },
+    {
+      "lane_id": "event_ast_equivalence",
+      "status": "fail",
+      "artifact_manifest": "artifacts/parser_event_ast_equivalence/20260226T080500Z/run_manifest.json",
+      "replay_command": "./scripts/e2e/parser_event_ast_equivalence_replay.sh"
+    },
+    {
+      "lane_id": "parallel_fallback_parity",
+      "status": "pass",
+      "artifact_manifest": "artifacts/parser_parallel_interference/20260226T081000Z/run_manifest.json",
+      "replay_command": "./scripts/e2e/parser_parallel_interference_gate_replay.sh"
+    },
+    {
+      "lane_id": "differential_harness",
+      "status": "pass",
+      "artifact_manifest": "artifacts/parser_differential_nightly_governance/20260226T081500Z/run_manifest.json",
+      "replay_command": "./scripts/e2e/parser_differential_nightly_governance_replay.sh"
+    }
+  ],
+  "expected_gate": {
+    "expected_outcome": "hold",
+    "expected_unresolved_high_count": 1,
+    "expected_waiver_count": 1,
+    "expected_blockers": [
+      "evidence_not_green:event_ast_equivalence:fail",
+      "unresolved_high_drift:D-001"
+    ],
+    "expected_failing_fixture_ids": [
+      "parser_oracle::metamorphic_seed_77"
+    ]
+  },
+  "replay_scenarios": [
+    {
+      "scenario_id": "correctness-promotion-replay",
+      "replay_command": "./scripts/e2e/parser_correctness_promotion_gate_replay.sh",
+      "expected_pass": true,
+      "expected_outcome": "hold"
+    }
+  ]
+}
