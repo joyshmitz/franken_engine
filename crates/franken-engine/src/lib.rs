@@ -36,6 +36,7 @@ pub mod constrained_ambient_benchmark_lane;
 pub mod containment_executor;
 pub mod control_plane;
 pub mod control_plane_benchmark_split_gate;
+pub mod controller_composition_matrix;
 pub mod controller_interference_guard;
 pub mod counterexample_synthesizer;
 pub mod cross_repo_contract;
