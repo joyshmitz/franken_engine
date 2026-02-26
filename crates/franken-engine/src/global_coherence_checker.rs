@@ -2662,4 +2662,470 @@ mod tests {
         assert_eq!(result.component_count, 2);
         assert_eq!(result.edge_count, 1);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: CompositionEdgeKind display — remaining variants
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn edge_kind_display_suspense_boundary() {
+        assert_eq!(
+            CompositionEdgeKind::SuspenseBoundary.to_string(),
+            "suspense-boundary"
+        );
+    }
+
+    #[test]
+    fn edge_kind_display_hydration_boundary() {
+        assert_eq!(
+            CompositionEdgeKind::HydrationBoundary.to_string(),
+            "hydration-boundary"
+        );
+    }
+
+    #[test]
+    fn edge_kind_display_effect_dependency() {
+        assert_eq!(
+            CompositionEdgeKind::EffectDependency.to_string(),
+            "effect-dependency"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: CoherenceError display — remaining variants
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn error_display_budget_exhausted() {
+        let err = CoherenceError::BudgetExhausted {
+            resource: "violations".to_string(),
+            limit: 100,
+        };
+        let s = err.to_string();
+        assert!(s.contains("violations"));
+        assert!(s.contains("100"));
+    }
+
+    #[test]
+    fn error_display_empty_graph() {
+        let err = CoherenceError::EmptyGraph;
+        assert_eq!(err.to_string(), "composition graph is empty");
+    }
+
+    #[test]
+    fn error_display_atlas_graph_mismatch() {
+        let err = CoherenceError::AtlasGraphMismatch {
+            atlas_components: 5,
+            graph_components: 3,
+        };
+        let s = err.to_string();
+        assert!(s.contains("5"));
+        assert!(s.contains("3"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: CoherenceViolationKind display — remaining variants
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn violation_kind_display_orphaned_provider() {
+        let kind = CoherenceViolationKind::OrphanedProvider {
+            provider: "ThemeProvider".to_string(),
+            context_key: "theme".to_string(),
+        };
+        let s = kind.to_string();
+        assert!(s.contains("ThemeProvider"));
+        assert!(s.contains("theme"));
+        assert!(s.contains("orphaned"));
+    }
+
+    #[test]
+    fn violation_kind_display_layout_after_passive() {
+        let kind = CoherenceViolationKind::LayoutAfterPassive {
+            layout_component: "Child".to_string(),
+            passive_component: "Parent".to_string(),
+        };
+        let s = kind.to_string();
+        assert!(s.contains("Child"));
+        assert!(s.contains("Parent"));
+        assert!(s.contains("layout"));
+        assert!(s.contains("passive"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: SeverityScore exact values and serde
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn severity_exact_values() {
+        assert_eq!(SeverityScore::critical().0, 1_000_000);
+        assert_eq!(SeverityScore::high().0, 750_000);
+        assert_eq!(SeverityScore::medium().0, 500_000);
+        assert_eq!(SeverityScore::low().0, 250_000);
+        assert_eq!(SeverityScore::info().0, 100_000);
+    }
+
+    #[test]
+    fn severity_blocking_boundary() {
+        assert!(SeverityScore(500_000).is_blocking());
+        assert!(!SeverityScore(499_999).is_blocking());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: CoherenceOutcome is_coherent for all variants
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn is_coherent_true_for_warnings() {
+        let checker = GlobalCoherenceChecker::new();
+        // Orphaned provider → low severity (non-blocking) → CoherentWithWarnings
+        let input = make_input(
+            vec![test_entry_with_contexts(
+                "Provider",
+                vec![],
+                vec!["unused"],
+            )],
+            vec!["Provider"],
+            vec![],
+        );
+        let result = checker.check(&input).unwrap();
+        assert_eq!(result.outcome, CoherenceOutcome::CoherentWithWarnings);
+        assert!(result.is_coherent());
+    }
+
+    #[test]
+    fn is_coherent_false_for_incoherent() {
+        let checker = GlobalCoherenceChecker::new();
+        let input = make_input(
+            vec![test_entry_with_contexts("C", vec!["missing"], vec![])],
+            vec!["C"],
+            vec![],
+        );
+        let result = checker.check(&input).unwrap();
+        assert_eq!(result.outcome, CoherenceOutcome::Incoherent);
+        assert!(!result.is_coherent());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: summary_line for non-coherent results
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn summary_line_incoherent() {
+        let checker = GlobalCoherenceChecker::new();
+        let input = make_input(
+            vec![test_entry_with_contexts("C", vec!["missing"], vec![])],
+            vec!["C"],
+            vec![],
+        );
+        let result = checker.check(&input).unwrap();
+        let line = result.summary_line();
+        assert!(line.contains("incoherent"));
+        assert!(line.contains("1 violations"));
+        assert!(line.contains("1 blocking"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: schema_version and bead_id propagated in result
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn result_schema_version_propagated() {
+        let checker = GlobalCoherenceChecker::new();
+        let input = make_input(vec![test_entry("A")], vec!["A"], vec![]);
+        let result = checker.check(&input).unwrap();
+        assert_eq!(result.schema_version, GLOBAL_COHERENCE_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn result_bead_id_propagated() {
+        let checker = GlobalCoherenceChecker::new();
+        let input = make_input(vec![test_entry("A")], vec!["A"], vec![]);
+        let result = checker.check(&input).unwrap();
+        assert_eq!(result.bead_id, GLOBAL_COHERENCE_BEAD_ID);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: total_severity accumulation
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn total_severity_accumulates() {
+        let checker = GlobalCoherenceChecker::new();
+        // Two unresolved contexts (each critical = 1_000_000)
+        let input = make_input(
+            vec![test_entry_with_contexts(
+                "C",
+                vec!["missing1", "missing2"],
+                vec![],
+            )],
+            vec!["C"],
+            vec![],
+        );
+        let result = checker.check(&input).unwrap();
+        assert!(result.total_severity_millionths >= 2_000_000);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: hydration with commutative=false
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn hydration_non_commutative_child_detected() {
+        let checker = GlobalCoherenceChecker::new();
+        let entries = vec![
+            test_entry("HB"),
+            test_entry_with_effects(
+                "NonComm",
+                vec!["boundary=Effect;caps=;idempotent=true;commutative=false;cost_millionths=0"],
+            ),
+        ];
+        let mut input = make_input(
+            entries,
+            vec!["HB", "NonComm"],
+            vec![("HB", "NonComm", CompositionEdgeKind::ParentChild)],
+        );
+        input.hydration_components.insert("HB".to_string());
+        let result = checker.check(&input).unwrap();
+        assert!(result.violations.iter().any(|v| matches!(
+            &v.kind,
+            CoherenceViolationKind::HydrationBoundaryConflict { .. }
+        )));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: CoherenceCheckInput serde roundtrip
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn coherence_check_input_serde_roundtrip() {
+        let mut input = make_input(
+            vec![test_entry("A"), test_entry("B")],
+            vec!["A", "B"],
+            vec![("A", "B", CompositionEdgeKind::ParentChild)],
+        );
+        input.suspense_components.insert("A".to_string());
+        input.hydration_components.insert("B".to_string());
+        input
+            .capability_boundary_components
+            .insert("A".to_string());
+        let json = serde_json::to_string(&input).unwrap();
+        let back: CoherenceCheckInput = serde_json::from_str(&json).unwrap();
+        assert_eq!(input, back);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: CoherenceError serde roundtrip for all variants
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn coherence_error_serde_all_variants() {
+        let variants: Vec<CoherenceError> = vec![
+            CoherenceError::BudgetExhausted {
+                resource: "nodes".to_string(),
+                limit: 50_000,
+            },
+            CoherenceError::UnknownComponent("X".to_string()),
+            CoherenceError::EmptyAtlas,
+            CoherenceError::EmptyGraph,
+            CoherenceError::AtlasGraphMismatch {
+                atlas_components: 10,
+                graph_components: 5,
+            },
+        ];
+        for err in &variants {
+            let json = serde_json::to_string(err).unwrap();
+            let back: CoherenceError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*err, back);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: CompositionEdgeKind serde all variants
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn edge_kind_serde_all_variants() {
+        let variants = [
+            CompositionEdgeKind::ParentChild,
+            CompositionEdgeKind::ContextFlow,
+            CompositionEdgeKind::CapabilityBoundary,
+            CompositionEdgeKind::SuspenseBoundary,
+            CompositionEdgeKind::HydrationBoundary,
+            CompositionEdgeKind::EffectDependency,
+        ];
+        for kind in &variants {
+            let json = serde_json::to_string(kind).unwrap();
+            let back: CompositionEdgeKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(*kind, back);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: display uniqueness for all enum variants
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn edge_kind_display_all_unique() {
+        let variants = [
+            CompositionEdgeKind::ParentChild,
+            CompositionEdgeKind::ContextFlow,
+            CompositionEdgeKind::CapabilityBoundary,
+            CompositionEdgeKind::SuspenseBoundary,
+            CompositionEdgeKind::HydrationBoundary,
+            CompositionEdgeKind::EffectDependency,
+        ];
+        let set: BTreeSet<String> = variants.iter().map(|v| v.to_string()).collect();
+        assert_eq!(set.len(), variants.len());
+    }
+
+    #[test]
+    fn outcome_display_all_unique() {
+        let variants = [
+            CoherenceOutcome::Coherent,
+            CoherenceOutcome::CoherentWithWarnings,
+            CoherenceOutcome::Incoherent,
+            CoherenceOutcome::BudgetExhausted,
+        ];
+        let set: BTreeSet<String> = variants.iter().map(|v| v.to_string()).collect();
+        assert_eq!(set.len(), variants.len());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: CompositionGraph edge_from unknown source
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn edge_from_unknown_source_fails() {
+        let mut g = CompositionGraph::new();
+        g.add_component("B".to_string()).unwrap();
+        let result = g.add_edge(CompositionEdge {
+            from_component: "Z".to_string(),
+            to_component: "B".to_string(),
+            kind: CompositionEdgeKind::ParentChild,
+            label: "bad".to_string(),
+        });
+        assert_eq!(
+            result,
+            Err(CoherenceError::UnknownComponent("Z".to_string()))
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: children_of / parents_of for leaf and isolated nodes
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn children_of_leaf_is_empty() {
+        let g = make_graph(
+            vec!["root", "leaf"],
+            vec![("root", "leaf", CompositionEdgeKind::ParentChild)],
+        );
+        assert!(g.children_of("leaf").is_empty());
+    }
+
+    #[test]
+    fn parents_of_multiple_parents() {
+        let g = make_graph(
+            vec!["P1", "P2", "child"],
+            vec![
+                ("P1", "child", CompositionEdgeKind::ParentChild),
+                ("P2", "child", CompositionEdgeKind::ParentChild),
+            ],
+        );
+        let parents = g.parents_of("child");
+        assert_eq!(parents.len(), 2);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: hook signature with multiple hooks per component
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn hook_cleanup_mismatch_different_labels_no_violation() {
+        let checker = GlobalCoherenceChecker::new();
+        let entries = vec![
+            test_entry_with_hooks(
+                "CompA",
+                vec!["slot=0;kind=Effect;label=fetch;deps=1;cleanup=true"],
+            ),
+            test_entry_with_hooks(
+                "CompB",
+                vec!["slot=0;kind=Effect;label=subscribe;deps=1;cleanup=false"],
+            ),
+        ];
+        let input = make_input(entries, vec!["CompA", "CompB"], vec![]);
+        let result = checker.check(&input).unwrap();
+        // Different labels → no mismatch
+        assert!(
+            result
+                .violations
+                .iter()
+                .all(|v| !matches!(&v.kind, CoherenceViolationKind::HookCleanupMismatch { .. }))
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: suspense with multiple async children context mismatch
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn suspense_async_siblings_context_mismatch() {
+        let checker = GlobalCoherenceChecker::new();
+        let mut c1 = test_entry_with_effects(
+            "Async1",
+            vec!["boundary=Suspense;caps=;idempotent=true;commutative=true;cost_millionths=0"],
+        );
+        c1.required_contexts = vec!["theme".to_string(), "auth".to_string()];
+        let mut c2 = test_entry_with_effects(
+            "Async2",
+            vec!["boundary=Suspense;caps=;idempotent=true;commutative=true;cost_millionths=0"],
+        );
+        c2.required_contexts = vec!["theme".to_string()]; // missing "auth"
+        let entries = vec![test_entry("SB"), c1, c2];
+        let mut input = make_input(
+            entries,
+            vec!["SB", "Async1", "Async2"],
+            vec![
+                ("SB", "Async1", CompositionEdgeKind::ParentChild),
+                ("SB", "Async2", CompositionEdgeKind::ParentChild),
+            ],
+        );
+        input.suspense_components.insert("SB".to_string());
+        let result = checker.check(&input).unwrap();
+        // Async2 is missing "auth" that Async1 has → info-level violation
+        assert!(result.violations.iter().any(|v| matches!(
+            &v.kind,
+            CoherenceViolationKind::SuspenseBoundaryConflict { reason, .. }
+                if reason.contains("missing contexts")
+        )));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: result_hash changes with different violations
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn result_hash_differs_for_different_violations() {
+        let checker = GlobalCoherenceChecker::new();
+        let input1 = make_input(vec![test_entry("A")], vec!["A"], vec![]);
+        let input2 = make_input(
+            vec![test_entry_with_contexts("A", vec!["missing"], vec![])],
+            vec!["A"],
+            vec![],
+        );
+        let r1 = checker.check(&input1).unwrap();
+        let r2 = checker.check(&input2).unwrap();
+        assert_ne!(r1.result_hash, r2.result_hash);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: with_violation_budget builder
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn with_violation_budget_builder() {
+        let checker = GlobalCoherenceChecker::new().with_violation_budget(5);
+        assert_eq!(checker.violation_budget, 5);
+    }
 }
