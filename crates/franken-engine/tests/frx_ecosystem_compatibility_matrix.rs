@@ -1,0 +1,295 @@
+#![forbid(unsafe_code)]
+
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    path::PathBuf,
+};
+
+use serde::Deserialize;
+
+const MATRIX_SCHEMA_VERSION: &str = "frx.ecosystem-compatibility-matrix.v1";
+const MATRIX_JSON: &str = include_str!("../../../docs/frx_ecosystem_compatibility_matrix_v1.json");
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct EcosystemMatrix {
+    schema_version: String,
+    bead_id: String,
+    generated_by: String,
+    generated_at_utc: String,
+    track: MatrixTrack,
+    required_structured_log_fields: Vec<String>,
+    entries: Vec<CompatibilityEntry>,
+    known_gaps: Vec<KnownGap>,
+    operator_verification: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct MatrixTrack {
+    id: String,
+    name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct CompatibilityEntry {
+    stack_id: String,
+    category: String,
+    surface: String,
+    compatibility_status: String,
+    integration_test_id: String,
+    evidence_bundle_ref: String,
+    fallback_route: String,
+    roadmap_status: String,
+    notes: String,
+    structured_log_template: StructuredLogTemplate,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct StructuredLogTemplate {
+    scenario_id: String,
+    component: String,
+    decision_path: String,
+    outcome: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct KnownGap {
+    stack_id: String,
+    surface: String,
+    fallback_route: String,
+    roadmap_status: String,
+    owner_lane: String,
+    target_milestone: String,
+    blocking_issue: String,
+    error_code: String,
+}
+
+fn repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+fn parse_matrix() -> EcosystemMatrix {
+    serde_json::from_str(MATRIX_JSON).expect("ecosystem compatibility matrix json must parse")
+}
+
+fn entry_index(matrix: &EcosystemMatrix) -> BTreeMap<&str, &CompatibilityEntry> {
+    matrix
+        .entries
+        .iter()
+        .map(|entry| (entry.stack_id.as_str(), entry))
+        .collect()
+}
+
+#[test]
+fn frx_07_3_doc_contains_required_sections() {
+    let path = repo_root().join("docs/FRX_ECOSYSTEM_COMPATIBILITY_MATRIX_V1.md");
+    let doc =
+        fs::read_to_string(&path).unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
+
+    let required_sections = [
+        "# FRX Ecosystem Compatibility Matrix V1",
+        "## Scope",
+        "## Coverage Dimensions",
+        "## High-Impact Stack Coverage",
+        "## Legacy API Surface Coverage",
+        "## Known Gaps and Fallback/Roadmap Status",
+        "## Deterministic Logging and Evidence Contract",
+        "## Operator Verification",
+    ];
+
+    for section in required_sections {
+        assert!(
+            doc.contains(section),
+            "missing required section in {}: {section}",
+            path.display()
+        );
+    }
+}
+
+#[test]
+fn frx_07_3_matrix_is_versioned_and_track_bound() {
+    let matrix = parse_matrix();
+
+    assert_eq!(matrix.schema_version, MATRIX_SCHEMA_VERSION);
+    assert_eq!(matrix.bead_id, "bd-mjh3.7.3");
+    assert_eq!(matrix.generated_by, "bd-mjh3.7.3");
+    assert_eq!(matrix.track.id, "FRX-07.3");
+    assert_eq!(matrix.track.name, "Ecosystem Compatibility Matrix");
+    assert!(matrix.generated_at_utc.ends_with('Z'));
+    assert!(!matrix.entries.is_empty());
+}
+
+#[test]
+fn frx_07_3_covers_required_high_impact_stacks_and_legacy_apis() {
+    let matrix = parse_matrix();
+    let entries = entry_index(&matrix);
+
+    for stack in [
+        "redux-toolkit",
+        "zustand",
+        "recoil",
+        "react-router",
+        "react-hook-form",
+        "formik",
+        "tanstack-query",
+        "apollo-client",
+        "legacy-class-components",
+        "portals-refs",
+        "context-error-boundaries",
+    ] {
+        assert!(entries.contains_key(stack), "missing required stack: {stack}");
+    }
+
+    let categories: BTreeSet<_> = matrix
+        .entries
+        .iter()
+        .map(|entry| entry.category.as_str())
+        .collect();
+    for required in ["state_lib", "routing", "forms", "data_lib", "legacy_api"] {
+        assert!(categories.contains(required), "missing category: {required}");
+    }
+}
+
+#[test]
+fn frx_07_3_entries_have_integration_test_refs_and_deterministic_templates() {
+    let matrix = parse_matrix();
+
+    let allowed_statuses: BTreeSet<&str> =
+        ["native", "compatibility_fallback"].into_iter().collect();
+    let allowed_roadmap: BTreeSet<&str> =
+        ["released", "investigating", "targeted_patch", "planned"]
+            .into_iter()
+            .collect();
+
+    for entry in &matrix.entries {
+        assert!(
+            allowed_statuses.contains(entry.compatibility_status.as_str()),
+            "invalid compatibility_status for {}: {}",
+            entry.stack_id,
+            entry.compatibility_status
+        );
+        assert!(
+            !entry.integration_test_id.trim().is_empty(),
+            "missing integration_test_id for {}",
+            entry.stack_id
+        );
+        assert!(
+            entry.evidence_bundle_ref.starts_with("artifacts/"),
+            "evidence bundle must point under artifacts/ for {}",
+            entry.stack_id
+        );
+        assert!(
+            allowed_roadmap.contains(entry.roadmap_status.as_str()),
+            "invalid roadmap_status for {}: {}",
+            entry.stack_id,
+            entry.roadmap_status
+        );
+        assert!(!entry.surface.trim().is_empty());
+        assert!(!entry.notes.trim().is_empty());
+
+        let template = &entry.structured_log_template;
+        assert!(template.scenario_id.starts_with("frx-07.3-"));
+        assert_eq!(template.component, "frx_ecosystem_compatibility_matrix");
+        assert!(!template.decision_path.trim().is_empty());
+        assert!(["pass", "fallback"].contains(&template.outcome.as_str()));
+
+        if entry.compatibility_status != "native" {
+            assert_ne!(entry.fallback_route, "none");
+        }
+    }
+}
+
+#[test]
+fn frx_07_3_known_gaps_are_fail_closed_and_traceable() {
+    let matrix = parse_matrix();
+    let entries = entry_index(&matrix);
+
+    let allowed_fallbacks: BTreeSet<&str> =
+        ["compatibility_fallback", "deterministic_safe_mode"]
+            .into_iter()
+            .collect();
+    let allowed_roadmap: BTreeSet<&str> =
+        ["investigating", "targeted_patch", "planned", "released"]
+            .into_iter()
+            .collect();
+
+    assert!(!matrix.known_gaps.is_empty(), "expected at least one known gap");
+
+    for gap in &matrix.known_gaps {
+        let entry = entries
+            .get(gap.stack_id.as_str())
+            .unwrap_or_else(|| panic!("known gap references unknown stack: {}", gap.stack_id));
+
+        assert!(
+            entry.compatibility_status != "native",
+            "known gap stack must not be native-only: {}",
+            gap.stack_id
+        );
+        assert!(
+            allowed_fallbacks.contains(gap.fallback_route.as_str()),
+            "invalid gap fallback route for {}: {}",
+            gap.stack_id,
+            gap.fallback_route
+        );
+        assert!(
+            allowed_roadmap.contains(gap.roadmap_status.as_str()),
+            "invalid roadmap status for {}: {}",
+            gap.stack_id,
+            gap.roadmap_status
+        );
+        assert!(gap.target_milestone.starts_with("FRX-07."));
+        assert!(gap.blocking_issue.starts_with("bd-mjh3.7."));
+        assert!(gap.error_code.starts_with("FE-FRX-07-3-GAP-"));
+        assert!(!gap.owner_lane.trim().is_empty());
+        assert_eq!(gap.surface, entry.surface);
+    }
+}
+
+#[test]
+fn frx_07_3_structured_log_fields_and_operator_commands_are_present() {
+    let matrix = parse_matrix();
+
+    let required_fields: BTreeSet<&str> = [
+        "schema_version",
+        "scenario_id",
+        "trace_id",
+        "decision_id",
+        "policy_id",
+        "component",
+        "event",
+        "decision_path",
+        "seed",
+        "timing_us",
+        "outcome",
+        "error_code",
+    ]
+    .into_iter()
+    .collect();
+    let actual_fields: BTreeSet<&str> = matrix
+        .required_structured_log_fields
+        .iter()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(actual_fields, required_fields);
+
+    assert!(
+        matrix.operator_verification.iter().any(|line| {
+            line.contains("run_frx_ecosystem_compatibility_matrix_suite.sh ci")
+        }),
+        "operator verification must include CI gate command"
+    );
+    assert!(
+        matrix
+            .operator_verification
+            .iter()
+            .any(|line| line.contains("frx_ecosystem_compatibility_matrix_replay.sh")),
+        "operator verification must include replay command"
+    );
+    assert!(
+        matrix
+            .operator_verification
+            .iter()
+            .any(|line| line.contains("jq empty docs/frx_ecosystem_compatibility_matrix_v1.json")),
+        "operator verification must include JSON validation command"
+    );
+}
