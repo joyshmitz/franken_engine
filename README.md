@@ -592,6 +592,34 @@ Artifacts are written under:
 - `artifacts/parser_api_compatibility/<timestamp>/events.jsonl`
 - `artifacts/parser_api_compatibility/<timestamp>/commands.txt`
 
+## Parser Operator/Developer Runbook Gate
+
+`bd-2mds.1.10.4` adds replay-first troubleshooting runbooks and deterministic
+operator drills for parser diagnostics/recovery/API/user-impact incidents.
+
+```bash
+# parser operator/developer runbook gate (rch-backed check + test + clippy)
+./scripts/run_parser_operator_developer_runbook.sh ci
+
+# run scriptable drill mode (includes replay-path validation)
+./scripts/run_parser_operator_developer_runbook.sh drill
+
+# one-command replay wrapper
+./scripts/e2e/parser_operator_developer_runbook_replay.sh
+```
+
+Contract and vectors:
+
+- [`docs/PARSER_OPERATOR_DEVELOPER_RUNBOOK.md`](./docs/PARSER_OPERATOR_DEVELOPER_RUNBOOK.md)
+- `crates/franken-engine/tests/fixtures/parser_operator_developer_runbook_v1.json`
+- `crates/franken-engine/tests/parser_operator_developer_runbook.rs`
+
+Artifacts are written under:
+
+- `artifacts/parser_operator_developer_runbook/<timestamp>/run_manifest.json`
+- `artifacts/parser_operator_developer_runbook/<timestamp>/events.jsonl`
+- `artifacts/parser_operator_developer_runbook/<timestamp>/commands.txt`
+
 ## Parser Differential Nightly Governance Gate
 
 `bd-2mds.1.2.4.2` defines nightly differential scheduling, waiver-aware severity
@@ -735,6 +763,29 @@ Artifacts are written under:
 - `artifacts/frx_optimization_lane_charter/<timestamp>/run_manifest.json`
 - `artifacts/frx_optimization_lane_charter/<timestamp>/events.jsonl`
 - `artifacts/frx_optimization_lane_charter/<timestamp>/commands.txt`
+
+## Compiler Hotspot Optimization Campaign Gate
+
+`bd-mjh3.6.2` ships a deterministic compiler hotspot campaign gate for
+one-lever optimization ranking across analysis-graph construction, lowering
+throughput, optimization-pass cost, and codegen size/latency signals.
+
+```bash
+# compiler hotspot optimization campaign gate (rch-backed check + test + clippy)
+./scripts/run_compiler_hotspot_optimization_campaign.sh ci
+```
+
+Deterministic replay wrapper:
+
+```bash
+./scripts/e2e/compiler_hotspot_optimization_campaign_replay.sh
+```
+
+Artifacts are written under:
+
+- `artifacts/compiler_hotspot_optimization_campaign/<timestamp>/run_manifest.json`
+- `artifacts/compiler_hotspot_optimization_campaign/<timestamp>/events.jsonl`
+- `artifacts/compiler_hotspot_optimization_campaign/<timestamp>/commands.txt`
 
 ## FRX Toolchain Lane Charter Gate
 

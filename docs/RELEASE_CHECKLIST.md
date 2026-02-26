@@ -54,9 +54,27 @@ Machine-readable required item IDs:
 ## Adversarial Suppression Gate (`bd-3rd`)
 
 - [ ] `./scripts/run_adversarial_campaign_gate.sh ci`
+- [ ] `rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_franken_engine_adversarial_gate cargo run -p frankenengine-engine --bin franken_adversarial_campaign_gate -- --input crates/franken-engine/tests/fixtures/adversarial_campaign_gate_input_v1.json --out artifacts/adversarial_campaign_gate/<timestamp>/gate_result.json`
 - [ ] Per-attack-category compromise rate suppression versus `node_lts` and `bun_stable` with `p <= 0.05`.
 - [ ] Continuous-run evidence present (minimum two trend points and current release-candidate run).
 - [ ] Successful FrankenEngine exploit findings trigger escalation workflow inside configured SLA.
+
+Deterministic gate thresholds:
+
+| Metric | Threshold |
+| --- | --- |
+| Required baseline runtimes | `>= 2` (`node_lts`, `bun_stable`) |
+| Statistical significance | `p_value_millionths <= 50000` (`p <= 0.05`) |
+| Continuous-run requirement | `continuous_run = true` |
+| Trend coverage | `trend_points >= 2` |
+| Escalation SLA | `escalation_latency_seconds <= 3600` |
+
+Operator verification commands:
+
+```bash
+cat artifacts/adversarial_campaign_gate/<timestamp>/run_manifest.json
+cat artifacts/adversarial_campaign_gate/<timestamp>/gate_result.json
+```
 
 ## Reuse Vs Reimplement Decisions
 
