@@ -681,11 +681,7 @@ fn canonicalize_token(value: &str) -> String {
         if next == '_' && previous_underscore {
             continue;
         }
-        if next == '_' {
-            previous_underscore = true;
-        } else {
-            previous_underscore = false;
-        }
+        previous_underscore = next == '_';
         normalized.push(next);
     }
     normalized.trim_matches('_').to_string()
