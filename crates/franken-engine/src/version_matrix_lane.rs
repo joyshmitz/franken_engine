@@ -1156,4 +1156,182 @@ mod tests {
         assert_eq!(health.passed_cells, 1);
         assert_eq!(health.failed_cells, plan.cells.len() - 1);
     }
+
+    // ── Enrichment: clone equality ──────────────────────────────
+
+    #[test]
+    fn enrichment_version_source_clone_eq() {
+        let vs = VersionSource {
+            tags: vec!["v1.0.0".into(), "v2.0.0".into()],
+            branch_names: vec!["main".into()],
+            current_override: Some("1.0.0".into()),
+            previous_override: None,
+            next_override: Some("3.0.0-next".into()),
+        };
+        let cloned = vs.clone();
+        assert_eq!(vs, cloned);
+    }
+
+    #[test]
+    fn enrichment_pinned_version_combination_clone_eq() {
+        let pvc = PinnedVersionCombination {
+            local_version: "1.0.0".into(),
+            remote_version: "2.0.0".into(),
+            reason: "legacy support".into(),
+        };
+        let cloned = pvc.clone();
+        assert_eq!(pvc, cloned);
+    }
+
+    #[test]
+    fn enrichment_version_matrix_cell_clone_eq() {
+        let cell = build_cell(&test_spec(), MatrixLaneKind::Pinned, "0.8.0", "1.5.0", true);
+        let cloned = cell.clone();
+        assert_eq!(cell, cloned);
+    }
+
+    #[test]
+    fn enrichment_matrix_failure_scope_clone_eq() {
+        let scope = MatrixFailureScope {
+            boundary_surface: "ifc".into(),
+            failure_fingerprint: "fp-42".into(),
+            scope: FailureScopeKind::Universal,
+            failing_cells: vec!["cell-a".into(), "cell-b".into()],
+        };
+        let cloned = scope.clone();
+        assert_eq!(scope, cloned);
+    }
+
+    #[test]
+    fn enrichment_matrix_health_summary_clone_eq() {
+        let summary = MatrixHealthSummary {
+            total_cells: 10,
+            passed_cells: 7,
+            failed_cells: 3,
+            universal_failures: 1,
+            version_specific_failures: 2,
+        };
+        let cloned = summary.clone();
+        assert_eq!(summary, cloned);
+    }
+
+    // ── Enrichment: JSON field presence ─────────────────────────
+
+    #[test]
+    fn enrichment_matrix_cell_result_json_fields() {
+        let result = MatrixCellResult {
+            trace_id: "trace-1".into(),
+            decision_id: "dec-1".into(),
+            policy_id: "pol-1".into(),
+            cell_id: "cell-1".into(),
+            boundary_surface: "ifc".into(),
+            lane_kind: MatrixLaneKind::Next,
+            outcome: MatrixOutcome::Fail,
+            error_code: Some("E42".into()),
+            failure_fingerprint: Some("fp-xyz".into()),
+            failure_class: Some("timeout".into()),
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("\"trace_id\""));
+        assert!(json.contains("\"decision_id\""));
+        assert!(json.contains("\"policy_id\""));
+        assert!(json.contains("\"error_code\""));
+        assert!(json.contains("\"failure_fingerprint\""));
+        assert!(json.contains("\"failure_class\""));
+        assert!(json.contains("\"lane_kind\""));
+        assert!(json.contains("\"outcome\""));
+    }
+
+    #[test]
+    fn enrichment_boundary_matrix_spec_json_fields() {
+        let spec = test_spec();
+        let json = serde_json::to_string(&spec).unwrap();
+        assert!(json.contains("\"boundary_surface\""));
+        assert!(json.contains("\"local_repo\""));
+        assert!(json.contains("\"remote_repo\""));
+        assert!(json.contains("\"local_versions\""));
+        assert!(json.contains("\"remote_versions\""));
+        assert!(json.contains("\"pinned_combinations\""));
+    }
+
+    #[test]
+    fn enrichment_version_matrix_plan_json_fields() {
+        let plan = derive_version_matrix(&[test_spec()]).unwrap();
+        let json = serde_json::to_string(&plan).unwrap();
+        assert!(json.contains("\"schema_version\""));
+        assert!(json.contains("\"generated_at_utc\""));
+        assert!(json.contains("\"cells\""));
+        assert!(json.contains("\"cell_id\""));
+        assert!(json.contains("\"expected_conformance_command\""));
+    }
+
+    // ── Enrichment: serde roundtrip ─────────────────────────────
+
+    #[test]
+    fn enrichment_matrix_failure_scope_serde_roundtrip() {
+        let scope = MatrixFailureScope {
+            boundary_surface: "ifc".into(),
+            failure_fingerprint: "fp-round".into(),
+            scope: FailureScopeKind::VersionSpecific,
+            failing_cells: vec!["c1".into(), "c2".into(), "c3".into()],
+        };
+        let json = serde_json::to_string(&scope).unwrap();
+        let back: MatrixFailureScope = serde_json::from_str(&json).unwrap();
+        assert_eq!(scope, back);
+    }
+
+    // ── Enrichment: Display uniqueness ──────────────────────────
+
+    #[test]
+    fn enrichment_error_display_variants_all_unique() {
+        let errors = vec![
+            VersionMatrixError::MissingCurrentVersion {
+                repo: "alpha".into(),
+            },
+            VersionMatrixError::MissingCurrentVersion {
+                repo: "bravo".into(),
+            },
+            VersionMatrixError::InvalidPinnedCombination {
+                boundary_surface: "ifc".into(),
+                reason: "bad local".into(),
+            },
+            VersionMatrixError::InvalidPinnedCombination {
+                boundary_surface: "ifc".into(),
+                reason: "bad remote".into(),
+            },
+        ];
+        let displays: BTreeSet<String> = errors.iter().map(|e| e.to_string()).collect();
+        assert_eq!(
+            displays.len(),
+            errors.len(),
+            "all error messages must be unique"
+        );
+    }
+
+    // ── Enrichment: boundary condition ──────────────────────────
+
+    #[test]
+    fn enrichment_derive_matrix_empty_specs_returns_empty_plan() {
+        let plan = derive_version_matrix(&[]).unwrap();
+        assert!(plan.cells.is_empty());
+        assert_eq!(plan.schema_version, VERSION_MATRIX_SCHEMA);
+        assert_eq!(plan.generated_at_utc, "1970-01-01T00:00:00Z");
+    }
+
+    // ── Enrichment: Ord / Error source ──────────────────────────
+
+    #[test]
+    fn enrichment_parsed_version_ord_same_major_minor_patch_prerelease_matters() {
+        let rc1 = ParsedVersion::parse("2.1.0-rc.1").unwrap();
+        let rc2 = ParsedVersion::parse("2.1.0-rc.2").unwrap();
+        let stable = ParsedVersion::parse("2.1.0").unwrap();
+        // rc.1 < rc.2 < stable
+        assert!(rc1 < rc2);
+        assert!(rc2 < stable);
+        // error source is None (blanket impl)
+        let err = VersionMatrixError::MissingCurrentVersion {
+            repo: "test".into(),
+        };
+        assert!(err.source().is_none());
+    }
 }

@@ -1618,4 +1618,170 @@ mod tests {
         assert!(results[0].attack_blocked);
         assert!(results[0].security_events > 0);
     }
+
+    // -- Enrichment: PearlTower 2026-02-27 --
+
+    #[test]
+    fn attack_category_clone_eq() {
+        let a = AttackCategory::CapabilityEscalation;
+        let b = a;
+        assert_eq!(a, b);
+        let c = AttackCategory::ForkDetection;
+        let d = c;
+        assert_eq!(c, d);
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn attack_scenario_result_clone_preserves_fields() {
+        let mut r = AttackScenarioResult::new(AttackCategory::EvidenceIntegrity, "clone-test");
+        r.attack_blocked = true;
+        r.containment_action_taken = true;
+        r.evidence_produced = true;
+        r.invariant_violations = 3;
+        r.security_events = 7;
+        r.details
+            .insert("key1".to_string(), "value1".to_string());
+        let cloned = r.clone();
+        assert_eq!(cloned.category, r.category);
+        assert_eq!(cloned.scenario_name, r.scenario_name);
+        assert_eq!(cloned.attack_blocked, r.attack_blocked);
+        assert_eq!(cloned.containment_action_taken, r.containment_action_taken);
+        assert_eq!(cloned.evidence_produced, r.evidence_produced);
+        assert_eq!(cloned.invariant_violations, r.invariant_violations);
+        assert_eq!(cloned.security_events, r.security_events);
+        assert_eq!(cloned.details, r.details);
+    }
+
+    #[test]
+    fn security_suite_event_clone_preserves_fields() {
+        let evt = SecuritySuiteEvent {
+            trace_id: "tr-clone".to_string(),
+            decision_id: "d-clone".to_string(),
+            policy_id: "pol-clone".to_string(),
+            component: "comp".to_string(),
+            event: "evt".to_string(),
+            outcome: "pass".to_string(),
+            error_code: Some("FE-999".to_string()),
+            category: "test-cat".to_string(),
+            scenario: "test-sc".to_string(),
+        };
+        let cloned = evt.clone();
+        assert_eq!(cloned.trace_id, evt.trace_id);
+        assert_eq!(cloned.decision_id, evt.decision_id);
+        assert_eq!(cloned.policy_id, evt.policy_id);
+        assert_eq!(cloned.error_code, evt.error_code);
+    }
+
+    #[test]
+    fn xorshift64_next_usize_bound_one_always_zero() {
+        let mut rng = Xorshift64::new(42);
+        for _ in 0..100 {
+            assert_eq!(rng.next_usize(1), 0);
+        }
+    }
+
+    #[test]
+    fn xorshift64_next_bool_fifty_pct_produces_mix() {
+        let mut rng = Xorshift64::new(42);
+        let mut trues = 0u64;
+        let mut falses = 0u64;
+        for _ in 0..1000 {
+            if rng.next_bool(50) {
+                trues += 1;
+            } else {
+                falses += 1;
+            }
+        }
+        // With 1000 trials at 50%, both should be > 0
+        assert!(trues > 0, "expected some true values");
+        assert!(falses > 0, "expected some false values");
+    }
+
+    #[test]
+    fn attack_scenario_result_details_insertion_order() {
+        let mut r = AttackScenarioResult::new(AttackCategory::BayesianPosterior, "order-test");
+        r.details.insert("z_key".to_string(), "z".to_string());
+        r.details.insert("a_key".to_string(), "a".to_string());
+        r.details.insert("m_key".to_string(), "m".to_string());
+        // BTreeMap should maintain sorted order
+        let keys: Vec<&String> = r.details.keys().collect();
+        assert_eq!(keys, vec!["a_key", "m_key", "z_key"]);
+    }
+
+    #[test]
+    fn quarantine_cascade_single_extension_single_quarantine() {
+        let results = run_quarantine_cascade(1, 1, 42);
+        assert_eq!(results.len(), 1);
+        let r = &results[0];
+        assert_eq!(r.details["quarantined"], "1");
+        assert_eq!(r.details["running"], "0");
+        assert_eq!(r.invariant_violations, 0);
+    }
+
+    #[test]
+    fn suite_different_seeds_may_differ_in_events() {
+        let config_a = SecuritySuiteConfig {
+            seed: 1,
+            n_extensions: 3,
+            n_evidence_updates: 10,
+            run_id: "seed-1".to_string(),
+        };
+        let config_b = SecuritySuiteConfig {
+            seed: 9999,
+            n_extensions: 3,
+            n_evidence_updates: 10,
+            run_id: "seed-9999".to_string(),
+        };
+        let r1 = run_security_suite(&config_a);
+        let r2 = run_security_suite(&config_b);
+        // Scenario count should be the same (same n_extensions)
+        assert_eq!(r1.scenarios.len(), r2.scenarios.len());
+    }
+
+    #[test]
+    fn containment_verification_many_extensions_no_violations() {
+        let results = run_containment_verification(10, 42);
+        assert_eq!(results.len(), 2);
+        for r in &results {
+            assert_eq!(
+                r.invariant_violations, 0,
+                "scenario {} should have 0 violations at scale",
+                r.scenario_name
+            );
+            assert!(r.evidence_produced);
+        }
+    }
+
+    #[test]
+    fn safe_mode_fallback_deterministic_across_runs() {
+        let r1 = run_safe_mode_fallback(42);
+        let r2 = run_safe_mode_fallback(42);
+        assert_eq!(r1.len(), r2.len());
+        for (a, b) in r1.iter().zip(r2.iter()) {
+            assert_eq!(a.scenario_name, b.scenario_name);
+            assert_eq!(a.attack_blocked, b.attack_blocked);
+            assert_eq!(a.invariant_violations, b.invariant_violations);
+            assert_eq!(a.security_events, b.security_events);
+        }
+    }
+
+    #[test]
+    fn attack_category_copy_does_not_move() {
+        let a = AttackCategory::QuarantineCascade;
+        let b = a; // Copy, not move
+        let c = a; // still valid because Copy
+        assert_eq!(b, c);
+        assert_eq!(a.as_str(), "quarantine-cascade");
+    }
+
+    #[test]
+    fn capability_escalation_zero_extensions() {
+        let results = run_capability_escalation(0, 42);
+        assert_eq!(results.len(), 2);
+        // With 0 extensions, CPU scenario should still exist but with no events
+        let cpu = &results[0];
+        assert_eq!(cpu.scenario_name, "cpu-budget-escalation");
+        assert_eq!(cpu.security_events, 0);
+    }
 }

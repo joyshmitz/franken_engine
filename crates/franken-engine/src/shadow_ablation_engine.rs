@@ -3276,4 +3276,225 @@ mod tests {
         assert_eq!(highest_power_of_two_leq(1024), 1024);
         assert_eq!(highest_power_of_two_leq(1025), 1024);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: PearlTower 2026-02-26 session 2
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn shadow_ablation_component_constant() {
+        assert_eq!(SHADOW_ABLATION_COMPONENT, "shadow_ablation_engine");
+    }
+
+    #[test]
+    fn shadow_ablation_transcript_domain_constant() {
+        assert_eq!(
+            SHADOW_ABLATION_TRANSCRIPT_DOMAIN,
+            b"FrankenEngine.ShadowAblationTranscript.v1"
+        );
+    }
+
+    #[test]
+    fn config_default_all_fields() {
+        let config = ShadowAblationConfig::default();
+        assert_eq!(config.trace_id, "trace-shadow-ablation-default");
+        assert_eq!(config.decision_id, "decision-shadow-ablation-default");
+        assert_eq!(config.policy_id, "policy-shadow-ablation-default");
+        assert_eq!(config.extension_id, "extension-shadow-ablation-default");
+        assert_eq!(config.replay_corpus_id, "replay-corpus-default");
+        assert_eq!(config.randomness_snapshot_id, "rng-snapshot-default");
+        assert_eq!(config.deterministic_seed, 0x5EED_AB1A_7100u64);
+        assert_eq!(config.strategy, AblationSearchStrategy::LatticeGreedy);
+        assert!(config.required_invariants.is_empty());
+        assert_eq!(config.max_pair_trials, 256);
+        assert_eq!(config.max_block_trials, 128);
+        assert_eq!(config.zone, "default");
+    }
+
+    #[test]
+    fn failure_class_error_codes_all_variants() {
+        let codes = [
+            (
+                AblationFailureClass::CorrectnessRegression,
+                "ablation_correctness_regression",
+            ),
+            (
+                AblationFailureClass::InvariantViolation,
+                "ablation_invariant_violation",
+            ),
+            (
+                AblationFailureClass::RiskBudgetExceeded,
+                "ablation_risk_budget_exceeded",
+            ),
+            (
+                AblationFailureClass::ExecutionFailure,
+                "ablation_execution_failure",
+            ),
+            (AblationFailureClass::OracleError, "ablation_oracle_error"),
+            (
+                AblationFailureClass::InvalidOracleResult,
+                "ablation_invalid_oracle_result",
+            ),
+            (
+                AblationFailureClass::BudgetExhausted,
+                "ablation_budget_exhausted",
+            ),
+        ];
+        let mut seen = BTreeSet::new();
+        for (class, expected) in &codes {
+            assert_eq!(class.error_code(), *expected);
+            seen.insert(class.error_code());
+        }
+        assert_eq!(seen.len(), codes.len(), "all error codes must be distinct");
+    }
+
+    #[test]
+    fn seeded_capability_order_empty_set() {
+        let caps = BTreeSet::new();
+        let order = seeded_capability_order(&caps, 42);
+        assert!(order.is_empty());
+    }
+
+    #[test]
+    fn capability_set_digest_empty_set() {
+        let a = BTreeSet::new();
+        let digest = capability_set_digest(&a);
+        assert!(!digest.is_empty());
+    }
+
+    #[test]
+    fn transcript_id_format_starts_with_prefix() {
+        let signing_key = SigningKey::from_bytes([0x70; 32]);
+        let input = ShadowAblationTranscriptInput {
+            trace_id: "t-prefix".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            extension_id: "e".to_string(),
+            static_report_id: EngineObjectId([0x33; 32]),
+            replay_corpus_id: "c".to_string(),
+            randomness_snapshot_id: "r".to_string(),
+            deterministic_seed: 1,
+            search_strategy: AblationSearchStrategy::LatticeGreedy,
+            initial_capabilities: BTreeSet::from([cap("x")]),
+            final_capabilities: BTreeSet::from([cap("x")]),
+            evaluations: Vec::new(),
+            fallback: None,
+            budget_utilization: BTreeMap::new(),
+        };
+        let transcript =
+            SignedShadowAblationTranscript::create_signed(input, &signing_key).unwrap();
+        assert!(
+            transcript.transcript_id.starts_with("shadow-ablation-"),
+            "transcript_id should start with 'shadow-ablation-', got: {}",
+            transcript.transcript_id,
+        );
+    }
+
+    #[test]
+    fn evaluation_record_canonical_value_with_failure() {
+        let mut record = sample_evaluation("fail-record");
+        record.pass = false;
+        record.failure_class = Some(AblationFailureClass::CorrectnessRegression);
+        record.failure_detail = Some("score below threshold".to_string());
+        let val = record.canonical_value();
+        if let CanonicalValue::Map(map) = &val {
+            assert_eq!(
+                map.get("failure_class"),
+                Some(&CanonicalValue::String(
+                    "ablation_correctness_regression".to_string()
+                ))
+            );
+            assert_eq!(
+                map.get("failure_detail"),
+                Some(&CanonicalValue::String("score below threshold".to_string()))
+            );
+            assert_eq!(map.get("pass"), Some(&CanonicalValue::Bool(false)));
+        } else {
+            panic!("expected Map from canonical_value");
+        }
+    }
+
+    #[test]
+    fn observation_with_failure_detail_serde() {
+        let obs = ShadowAblationObservation {
+            correctness_score_millionths: 500_000,
+            correctness_threshold_millionths: 800_000,
+            invariants: BTreeMap::from([("inv".to_string(), false)]),
+            risk_score_millionths: 200_000,
+            risk_threshold_millionths: 300_000,
+            consumed: PhaseConsumption {
+                time_ns: 10,
+                compute: 5,
+                depth: 2,
+            },
+            replay_pointer: "replay://detail".to_string(),
+            evidence_pointer: "evidence://detail".to_string(),
+            execution_trace_hash: ContentHash::compute(b"detail"),
+            failure_detail: Some("bad things happened".to_string()),
+        };
+        let json = serde_json::to_string(&obs).unwrap();
+        let back: ShadowAblationObservation = serde_json::from_str(&json).unwrap();
+        assert_eq!(obs, back);
+        assert_eq!(back.failure_detail.as_deref(), Some("bad things happened"));
+    }
+
+    #[test]
+    fn candidate_id_differs_for_different_removed_capabilities() {
+        let config = config_with_seed(42);
+        let candidate = BTreeSet::from([cap("b")]);
+        let id1 = candidate_id(
+            &config,
+            AblationSearchStage::SingleCapability,
+            1,
+            &BTreeSet::from([cap("a")]),
+            &candidate,
+        );
+        let id2 = candidate_id(
+            &config,
+            AblationSearchStage::SingleCapability,
+            1,
+            &BTreeSet::from([cap("c")]),
+            &candidate,
+        );
+        assert_ne!(id1, id2);
+    }
+
+    #[test]
+    fn run_result_logs_contain_start_and_complete() {
+        let config = config_with_seed(1);
+        let engine =
+            ShadowAblationEngine::new(config.clone(), SynthesisBudgetContract::default()).unwrap();
+        let report = test_static_report(&config.extension_id, BTreeSet::from([cap("only")]));
+        let signing_key = SigningKey::from_bytes([0x07; 32]);
+        let result = engine
+            .run(&report, &signing_key, |_| {
+                Ok(ShadowAblationObservation {
+                    correctness_score_millionths: 999_000,
+                    correctness_threshold_millionths: 500_000,
+                    invariants: BTreeMap::new(),
+                    risk_score_millionths: 0,
+                    risk_threshold_millionths: 500_000,
+                    consumed: PhaseConsumption::zero(),
+                    replay_pointer: "replay://ok".to_string(),
+                    evidence_pointer: "evidence://ok".to_string(),
+                    execution_trace_hash: ContentHash::compute(b"ok"),
+                    failure_detail: None,
+                })
+            })
+            .unwrap();
+        assert!(
+            result
+                .logs
+                .iter()
+                .any(|l| l.event == "shadow_ablation_started"),
+            "must have start log"
+        );
+        assert!(
+            result
+                .logs
+                .iter()
+                .any(|l| l.event == "shadow_ablation_completed"),
+            "must have completion log"
+        );
+    }
 }

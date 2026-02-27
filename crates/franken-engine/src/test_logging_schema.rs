@@ -1045,4 +1045,143 @@ mod tests {
             );
         }
     }
+
+    // -- Enrichment: clone equality --
+
+    #[test]
+    fn clone_eq_redaction_rule() {
+        let rule = RedactionRule {
+            field_path: "payload.token".to_string(),
+            sensitivity: DataSensitivity::Secret,
+            action: RedactionAction::Drop,
+            rationale: "never retain".to_string(),
+        };
+        let cloned = rule.clone();
+        assert_eq!(rule, cloned);
+    }
+
+    #[test]
+    fn clone_eq_retention_policy() {
+        let policy = RetentionPolicy {
+            retention_days: 7,
+            require_redaction_for_sensitive: false,
+            permit_raw_seed_storage: true,
+        };
+        let cloned = policy.clone();
+        assert_eq!(policy, cloned);
+    }
+
+    #[test]
+    fn clone_eq_validation_report() {
+        let report = validate_events(&[baseline_event()]);
+        let cloned = report.clone();
+        assert_eq!(report, cloned);
+    }
+
+    #[test]
+    fn clone_eq_test_logging_schema_spec() {
+        let spec = TestLoggingSchemaSpec::default();
+        let cloned = spec.clone();
+        assert_eq!(spec, cloned);
+    }
+
+    #[test]
+    fn clone_eq_validation_failure() {
+        let failure = ValidationFailure::redaction_violation("payload.ip");
+        let cloned = failure.clone();
+        assert_eq!(failure, cloned);
+    }
+
+    // -- Enrichment: JSON field presence --
+
+    #[test]
+    fn json_field_presence_test_log_event() {
+        let event = baseline_event();
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"scenario_id\""));
+        assert!(json.contains("\"fixture_id\""));
+        assert!(json.contains("\"trace_id\""));
+        assert!(json.contains("\"decision_id\""));
+        assert!(json.contains("\"lane\""));
+        assert!(json.contains("\"seed\""));
+        assert!(json.contains("\"timing_us\""));
+        assert!(json.contains("\"timestamp_unix_ms\""));
+    }
+
+    #[test]
+    fn json_field_presence_validation_report() {
+        let report = validate_events(&[baseline_event()]);
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("\"schema_version\""));
+        assert!(json.contains("\"trace_id\""));
+        assert!(json.contains("\"valid\""));
+        assert!(json.contains("\"failures\""));
+        assert!(json.contains("\"error_code\""));
+    }
+
+    #[test]
+    fn json_field_presence_redaction_rule() {
+        let rule = RedactionRule {
+            field_path: "p.x".to_string(),
+            sensitivity: DataSensitivity::Internal,
+            action: RedactionAction::Redact,
+            rationale: "reason".to_string(),
+        };
+        let json = serde_json::to_string(&rule).unwrap();
+        assert!(json.contains("\"field_path\""));
+        assert!(json.contains("\"sensitivity\""));
+        assert!(json.contains("\"action\""));
+        assert!(json.contains("\"rationale\""));
+    }
+
+    // -- Enrichment: boundary conditions --
+
+    #[test]
+    fn validate_event_max_seed_and_timing_accepted() {
+        let mut event = baseline_event();
+        event.seed = u64::MAX;
+        event.timing_us = u64::MAX;
+        event.timestamp_unix_ms = u64::MAX;
+        let failures = validate_event(&event);
+        assert!(failures.is_empty(), "max u64 values should be accepted");
+    }
+
+    #[test]
+    fn correlation_key_includes_all_five_fields() {
+        let event = baseline_event();
+        let key = event.correlation_key();
+        assert!(key.contains(&event.scenario_id));
+        assert!(key.contains(&event.trace_id));
+        assert!(key.contains(&event.decision_id));
+        assert!(key.contains(&event.policy_id));
+        assert!(key.contains(&event.seed.to_string()));
+        // Exactly 4 pipe separators for 5 fields
+        assert_eq!(key.matches('|').count(), 4);
+    }
+
+    #[test]
+    fn validate_correlation_three_events_second_and_third_mismatch() {
+        let a = baseline_event();
+        let mut b = baseline_event();
+        b.trace_id = "trace-b".to_string();
+        let mut c = baseline_event();
+        c.policy_id = "policy-c".to_string();
+        let failures = validate_correlation(&[a, b, c]);
+        assert!(failures.iter().any(|f| f.message.contains("trace_id")));
+        assert!(failures.iter().any(|f| f.message.contains("policy_id")));
+        assert!(failures.len() >= 2);
+    }
+
+    #[test]
+    fn retention_policy_zero_days_roundtrip() {
+        let policy = RetentionPolicy {
+            retention_days: 0,
+            require_redaction_for_sensitive: false,
+            permit_raw_seed_storage: false,
+        };
+        let json = serde_json::to_string(&policy).unwrap();
+        let back: RetentionPolicy = serde_json::from_str(&json).unwrap();
+        assert_eq!(policy, back);
+        assert_eq!(back.retention_days, 0);
+    }
 }
