@@ -1239,4 +1239,138 @@ mod tests {
         let arm = gc.select_arm();
         assert!(arm < 2);
     }
+
+    // ── Enrichment: clone equality ──────────────────────────────────────
+
+    #[test]
+    fn enrichment_clone_eq_observation() {
+        let a = make_observation(123_456, 789_012, 42);
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn enrichment_clone_eq_cusum_chart() {
+        let a = CusumChart::with_defaults();
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn enrichment_clone_eq_snell_envelope() {
+        let a = SnellEnvelope::compute(vec![1_000_000, 3_000_000, 2_000_000], MILLION).unwrap();
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn enrichment_clone_eq_secretary_selector() {
+        let a = SecretarySelector::new(50);
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn enrichment_clone_eq_escalation_policy() {
+        let a = EscalationPolicy::new(5_000_000, 500_000, 100).unwrap();
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    // ── Enrichment: JSON field presence ─────────────────────────────────
+
+    #[test]
+    fn enrichment_json_fields_cusum_chart() {
+        let chart = CusumChart::with_defaults();
+        let json = serde_json::to_string(&chart).unwrap();
+        assert!(json.contains("statistic_millionths"));
+        assert!(json.contains("threshold_millionths"));
+        assert!(json.contains("reference_millionths"));
+        assert!(json.contains("high_water_mark_millionths"));
+        assert!(json.contains("signaled"));
+        assert!(json.contains("signal_round"));
+    }
+
+    #[test]
+    fn enrichment_json_fields_gittins_arm() {
+        let gc = GittinsIndexComputer::new(vec!["hyp_x".into()], 900_000, 100).unwrap();
+        let json = serde_json::to_string(&gc.arms[0]).unwrap();
+        assert!(json.contains("arm_id"));
+        assert!(json.contains("successes"));
+        assert!(json.contains("failures"));
+        assert!(json.contains("gittins_index_millionths"));
+        assert!(json.contains("discount_millionths"));
+    }
+
+    #[test]
+    fn enrichment_json_fields_certificate() {
+        let cert = OptimalStoppingCertificate {
+            schema: STOPPING_SCHEMA_VERSION.to_string(),
+            algorithm: "snell".to_string(),
+            observations_before_stop: 10,
+            cusum_statistic_millionths: None,
+            arl0_lower_bound: None,
+            snell_optimal_value_millionths: Some(3_000_000),
+            gittins_index_millionths: None,
+            epoch: SecurityEpoch::from_raw(1),
+            certificate_hash: ContentHash::compute(b"field_check"),
+        };
+        let json = serde_json::to_string(&cert).unwrap();
+        assert!(json.contains("algorithm"));
+        assert!(json.contains("observations_before_stop"));
+        assert!(json.contains("snell_optimal_value_millionths"));
+        assert!(json.contains("epoch"));
+        assert!(json.contains("certificate_hash"));
+    }
+
+    // ── Enrichment: serde roundtrip (GittinsArm individually) ───────────
+
+    #[test]
+    fn enrichment_serde_roundtrip_gittins_arm() {
+        let gc = GittinsIndexComputer::new(vec!["arm0".into()], 800_000, 50).unwrap();
+        let arm = &gc.arms[0];
+        let json = serde_json::to_string(arm).unwrap();
+        let restored: GittinsArm = serde_json::from_str(&json).unwrap();
+        assert_eq!(*arm, restored);
+    }
+
+    // ── Enrichment: Display uniqueness (StoppingError all variants) ─────
+
+    #[test]
+    fn enrichment_stopping_error_display_unique_with_distinct_params() {
+        let errors = vec![
+            StoppingError::HorizonTooLarge {
+                horizon: 99,
+                max: 50,
+            },
+            StoppingError::InvalidThreshold { threshold: -5 },
+            StoppingError::InvalidDiscount {
+                discount: 2_000_000,
+            },
+            StoppingError::EmptyObservations,
+            StoppingError::DegenerateKL,
+            StoppingError::IndexOutOfBounds { index: 7, size: 3 },
+        ];
+        let displays: std::collections::BTreeSet<String> =
+            errors.iter().map(|e| e.to_string()).collect();
+        assert_eq!(displays.len(), 6);
+    }
+
+    // ── Enrichment: boundary condition ──────────────────────────────────
+
+    #[test]
+    fn enrichment_secretary_zero_items() {
+        let sel = SecretarySelector::new(0);
+        assert_eq!(sel.exploration_length, 0);
+        assert_eq!(sel.total_items, 0);
+        assert!(!sel.exploration_complete);
+    }
+
+    // ── Enrichment: Error source returns None ───────────────────────────
+
+    #[test]
+    fn enrichment_stopping_error_source_is_none() {
+        let err = StoppingError::DegenerateKL;
+        assert!(std::error::Error::source(&err).is_none());
+    }
 }

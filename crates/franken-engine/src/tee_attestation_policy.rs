@@ -3566,4 +3566,155 @@ mod tests {
         }
         assert_eq!(displays.len(), variants.len(), "duplicate Display outputs");
     }
+
+    // ── Enrichment: Display tests ────────────────────────────────────
+
+    #[test]
+    fn tee_platform_display_all_variants() {
+        let all = [
+            (TeePlatform::IntelSgx, "intel_sgx"),
+            (TeePlatform::ArmTrustZone, "arm_trustzone"),
+            (TeePlatform::ArmCca, "arm_cca"),
+            (TeePlatform::AmdSev, "amd_sev"),
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for (p, expected) in &all {
+            assert_eq!(&p.to_string(), expected);
+            assert!(seen.insert(p.to_string()));
+        }
+        assert_eq!(seen.len(), 4);
+    }
+
+    #[test]
+    fn measurement_algorithm_display_all_variants() {
+        let all = [
+            (MeasurementAlgorithm::Sha256, "sha256"),
+            (MeasurementAlgorithm::Sha384, "sha384"),
+            (MeasurementAlgorithm::Sha512, "sha512"),
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for (a, expected) in &all {
+            assert_eq!(&a.to_string(), expected);
+            assert!(seen.insert(a.to_string()));
+        }
+        assert_eq!(seen.len(), 3);
+    }
+
+    // ── Enrichment: Serde roundtrip tests ────────────────────────────
+
+    #[test]
+    fn tee_platform_serde_roundtrip_all_snake_case() {
+        for p in TeePlatform::ALL {
+            let json = serde_json::to_string(&p).unwrap();
+            // Verify snake_case encoding
+            let expected = format!("\"{}\"", p);
+            assert_eq!(json, expected);
+            let back: TeePlatform = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, p);
+        }
+    }
+
+    #[test]
+    fn measurement_algorithm_serde_roundtrip_all() {
+        for a in [
+            MeasurementAlgorithm::Sha256,
+            MeasurementAlgorithm::Sha384,
+            MeasurementAlgorithm::Sha512,
+        ] {
+            let json = serde_json::to_string(&a).unwrap();
+            let back: MeasurementAlgorithm = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, a);
+        }
+    }
+
+    #[test]
+    fn revocation_source_type_serde_roundtrip_all() {
+        let variants = [
+            RevocationSourceType::IntelPcs,
+            RevocationSourceType::ManufacturerCrl,
+            RevocationSourceType::InternalLedger,
+            RevocationSourceType::Other("custom-source".to_string()),
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: RevocationSourceType = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, v);
+        }
+    }
+
+    #[test]
+    fn revocation_fallback_serde_roundtrip() {
+        for f in [
+            RevocationFallback::TryNextSource,
+            RevocationFallback::FailClosed,
+        ] {
+            let json = serde_json::to_string(&f).unwrap();
+            let back: RevocationFallback = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, f);
+        }
+    }
+
+    #[test]
+    fn trust_root_pinning_serde_roundtrip_all() {
+        let variants = [
+            TrustRootPinning::Pinned,
+            TrustRootPinning::Rotating {
+                rotation_group: "group-alpha".to_string(),
+            },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: TrustRootPinning = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, v);
+        }
+    }
+
+    #[test]
+    fn trust_root_source_serde_roundtrip_all() {
+        let variants = [
+            TrustRootSource::Policy,
+            TrustRootSource::TemporaryOverride {
+                override_id: "ov-001".to_string(),
+                justification_artifact_id: "just-001".to_string(),
+            },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: TrustRootSource = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, v);
+        }
+    }
+
+    #[test]
+    fn decision_impact_serde_roundtrip() {
+        for d in [DecisionImpact::Standard, DecisionImpact::HighImpact] {
+            let json = serde_json::to_string(&d).unwrap();
+            let back: DecisionImpact = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, d);
+        }
+    }
+
+    #[test]
+    fn revocation_probe_status_serde_roundtrip_all() {
+        for s in [
+            RevocationProbeStatus::Good,
+            RevocationProbeStatus::Revoked,
+            RevocationProbeStatus::Unavailable,
+        ] {
+            let json = serde_json::to_string(&s).unwrap();
+            let back: RevocationProbeStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, s);
+        }
+    }
+
+    #[test]
+    fn measurement_digest_serde_roundtrip_alt() {
+        let digest = MeasurementDigest {
+            algorithm: MeasurementAlgorithm::Sha256,
+            digest_hex: "a".repeat(64),
+        };
+        let json = serde_json::to_string(&digest).unwrap();
+        let back: MeasurementDigest = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, digest);
+    }
 }

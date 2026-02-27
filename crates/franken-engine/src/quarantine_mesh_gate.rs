@@ -1350,4 +1350,229 @@ mod tests {
         let final_ev = result.events.last().unwrap();
         assert!(final_ev.error_code.is_none());
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: clone equality (5 tests)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn enrichment_clone_eq_fault_type() {
+        let a = FaultType::ByzantineBehavior;
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn enrichment_clone_eq_fault_scenario() {
+        let a = FaultScenario {
+            scenario_id: "clone-test".to_string(),
+            fault_type: FaultType::CascadingFailure,
+            target_extension: "ext-clone-001".to_string(),
+            detection_latency_ns: 123_456_789,
+            expect_quarantine: true,
+            seed: 7777,
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn enrichment_clone_eq_fault_scenario_result() {
+        let a = FaultScenarioResult {
+            scenario_id: "clone-res".to_string(),
+            fault_type: FaultType::ResourceExhaustion,
+            passed: true,
+            criteria: vec![CriterionResult {
+                name: "crit".to_string(),
+                passed: true,
+                detail: "ok".to_string(),
+            }],
+            receipts_emitted: 2,
+            final_state: Some(ContainmentState::Quarantined),
+            detection_latency_ns: 200_000_000,
+            isolation_verified: true,
+            recovery_verified: true,
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn enrichment_clone_eq_criterion_result() {
+        let a = CriterionResult {
+            name: "sla_check".to_string(),
+            passed: false,
+            detail: "latency exceeded".to_string(),
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn enrichment_clone_eq_gate_validation_event() {
+        let a = GateValidationEvent {
+            trace_id: "tr-clone".to_string(),
+            decision_id: "dec-clone".to_string(),
+            policy_id: "pol-clone".to_string(),
+            component: "quarantine_mesh_gate".to_string(),
+            event: "clone_test".to_string(),
+            outcome: "pass".to_string(),
+            error_code: Some("E999".to_string()),
+            fault_type: Some(FaultType::ClockSkew),
+            target_component: Some("ext-drift".to_string()),
+            quarantine_action: Some("isolate".to_string()),
+            latency_ns: Some(50_000_000),
+            isolation_verified: Some(false),
+            receipt_hash: Some("deadbeef".to_string()),
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: JSON field presence (3 tests)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn enrichment_json_field_presence_fault_scenario() {
+        let scenario = FaultScenario {
+            scenario_id: "json-check".to_string(),
+            fault_type: FaultType::NetworkPartition,
+            target_extension: "ext-json-001".to_string(),
+            detection_latency_ns: 999,
+            expect_quarantine: true,
+            seed: 12345,
+        };
+        let json = serde_json::to_string(&scenario).unwrap();
+        assert!(
+            json.contains("\"scenario_id\""),
+            "missing scenario_id field"
+        );
+        assert!(json.contains("\"fault_type\""), "missing fault_type field");
+        assert!(
+            json.contains("\"target_extension\""),
+            "missing target_extension field"
+        );
+        assert!(
+            json.contains("\"detection_latency_ns\""),
+            "missing detection_latency_ns field"
+        );
+        assert!(
+            json.contains("\"expect_quarantine\""),
+            "missing expect_quarantine field"
+        );
+        assert!(json.contains("\"seed\""), "missing seed field");
+    }
+
+    #[test]
+    fn enrichment_json_field_presence_gate_validation_result() {
+        let mut runner = QuarantineMeshGateRunner::new(42);
+        let result = runner.run_all();
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("\"seed\""), "missing seed field");
+        assert!(json.contains("\"scenarios\""), "missing scenarios field");
+        assert!(json.contains("\"passed\""), "missing passed field");
+        assert!(
+            json.contains("\"total_scenarios\""),
+            "missing total_scenarios field"
+        );
+        assert!(
+            json.contains("\"passed_scenarios\""),
+            "missing passed_scenarios field"
+        );
+        assert!(json.contains("\"events\""), "missing events field");
+        assert!(
+            json.contains("\"result_digest\""),
+            "missing result_digest field"
+        );
+    }
+
+    #[test]
+    fn enrichment_json_field_presence_criterion_result() {
+        let cr = CriterionResult {
+            name: "field_check".to_string(),
+            passed: true,
+            detail: "all good".to_string(),
+        };
+        let json = serde_json::to_string(&cr).unwrap();
+        assert!(json.contains("\"name\""), "missing name field");
+        assert!(json.contains("\"passed\""), "missing passed field");
+        assert!(json.contains("\"detail\""), "missing detail field");
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: serde roundtrip (1 test)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn enrichment_serde_roundtrip_gate_validation_result_max_seed() {
+        let mut runner = QuarantineMeshGateRunner::new(u64::MAX);
+        let result = runner.run_all();
+        let json = serde_json::to_string(&result).unwrap();
+        let back: GateValidationResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(result, back);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: Display uniqueness (1 test)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn enrichment_fault_type_display_all_contain_underscore() {
+        let variants = [
+            FaultType::NetworkPartition,
+            FaultType::ByzantineBehavior,
+            FaultType::CascadingFailure,
+            FaultType::ResourceExhaustion,
+            FaultType::ClockSkew,
+        ];
+        for ft in &variants {
+            let display = ft.to_string();
+            assert!(
+                display.contains('_'),
+                "Display for {:?} should contain underscore: {}",
+                ft,
+                display
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: boundary condition (1 test)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn enrichment_boundary_seed_zero_still_passes() {
+        let mut runner = QuarantineMeshGateRunner::new(0);
+        let result = runner.run_all();
+        assert!(
+            result.passed,
+            "seed 0 should still pass: {}",
+            result.summary()
+        );
+        assert_eq!(result.seed, 0);
+        assert_eq!(result.total_scenarios, 7);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: Ord determinism (1 test)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn enrichment_fault_type_ord_deterministic() {
+        let mut variants = vec![
+            FaultType::ClockSkew,
+            FaultType::NetworkPartition,
+            FaultType::ResourceExhaustion,
+            FaultType::ByzantineBehavior,
+            FaultType::CascadingFailure,
+        ];
+        let mut variants2 = variants.clone();
+        variants.sort();
+        variants2.sort();
+        assert_eq!(variants, variants2);
+        // Verify sorted order is stable and matches declaration order.
+        assert_eq!(variants[0], FaultType::NetworkPartition);
+        assert_eq!(variants[4], FaultType::ClockSkew);
+    }
 }
