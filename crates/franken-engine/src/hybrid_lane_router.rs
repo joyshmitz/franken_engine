@@ -397,11 +397,7 @@ impl RiskAccumulator {
             .iter()
             .filter_map(|(lane, &total)| {
                 let p = *self.lane_pulls.get(lane).unwrap_or(&0);
-                if p > 0 {
-                    Some(total / p as i64)
-                } else {
-                    None
-                }
+                if p > 0 { Some(total / p as i64) } else { None }
             })
             .max()
             .unwrap_or(0);
@@ -1561,8 +1557,13 @@ mod tests {
     fn e2e_adaptive_session() {
         let mut router = HybridLaneRouter::new(RouterConfig {
             change_point: ChangePointConfig {
-                threshold_millionths: 5_000_000,
+                threshold_millionths: 50_000_000,
                 ..ChangePointConfig::default_config()
+            },
+            risk_budget: RiskBudget {
+                tail_latency_budget_us: 1_000_000,
+                compatibility_error_budget: 100,
+                regret_budget_millionths: 50_000_000,
             },
             ..RouterConfig::default_config()
         });

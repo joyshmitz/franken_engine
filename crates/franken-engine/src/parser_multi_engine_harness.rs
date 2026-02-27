@@ -1701,6 +1701,16 @@ fn estimate_statement_allocation_count(statement: &Statement) -> u64 {
         Statement::Expression(expression) => {
             1_u64.saturating_add(estimate_expression_allocation_count(&expression.expression))
         }
+        Statement::VariableDeclaration(variable_declaration) => {
+            let mut total = 2_u64;
+            for declarator in &variable_declaration.declarations {
+                total = total.saturating_add(2);
+                if let Some(initializer) = &declarator.initializer {
+                    total = total.saturating_add(estimate_expression_allocation_count(initializer));
+                }
+            }
+            total
+        }
     }
 }
 

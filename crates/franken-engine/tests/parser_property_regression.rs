@@ -126,6 +126,7 @@ fn semantic_signature(tree: &SyntaxTree) -> Vec<String> {
                 }
                 ExportKind::NamedClause(clause) => format!("export_named:{clause}"),
             },
+            Statement::VariableDeclaration(_) => format!("variable_decl"),
         })
         .collect()
 }

@@ -88,7 +88,7 @@ fn valid_clipping(schema: &FeatureSchema) -> ClippingStrategy {
         .map(|k| (k.clone(), 1_000_000))
         .collect();
     ClippingStrategy {
-        method: ClippingMethod::L2Norm,
+        method: ClippingMethod::PerCoordinate,
         global_bound_millionths: 1_000_000,
         per_field_bounds: per_field,
     }
@@ -366,7 +366,7 @@ fn verify_governance_signature() {
 #[test]
 fn verify_signature_wrong_key_fails() {
     let sk1 = test_signing_key();
-    let sk2 = test_signing_key();
+    let sk2 = SigningKey::from_bytes([43u8; 32]);
     let vk2 = sk2.verification_key();
     let contract = create_contract(&sk1);
     assert!(contract.verify_governance_signature(&vk2).is_err());

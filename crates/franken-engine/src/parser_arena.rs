@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::ast::{
     ExportDeclaration, ExportKind, Expression, ExpressionStatement, ImportDeclaration, ParseGoal,
-    SourceSpan, Statement, SyntaxTree,
+    SourceSpan, Statement, SyntaxTree, VariableDeclaration, VariableDeclarationKind,
+    VariableDeclarator,
 };
 
 const HANDLE_GENERATION: u32 = 1;
@@ -205,6 +206,18 @@ pub enum ArenaNode {
         expression: ExpressionHandle,
         span: SpanHandle,
     },
+    VariableDeclaration {
+        kind: VariableDeclarationKind,
+        declarations: Vec<ArenaVariableDeclarator>,
+        span: SpanHandle,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArenaVariableDeclarator {
+    pub name: String,
+    pub initializer: Option<ExpressionHandle>,
+    pub span: SpanHandle,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -416,6 +429,7 @@ impl ParserArena {
                 let expression = self.alloc_expression(&expression_stmt.expression)?;
                 ArenaNode::ExpressionStatement { expression, span }
             }
+            Statement::VariableDeclaration(_) => unimplemented!(),
         };
 
         self.nodes.push(node);
@@ -566,6 +580,29 @@ impl ParserArena {
                     span: self.span(span)?.clone(),
                 }))
             }
+            ArenaNode::VariableDeclaration {
+                kind,
+                declarations,
+                span,
+            } => {
+                let mut materialized = Vec::with_capacity(declarations.len());
+                for declarator in declarations {
+                    let initializer = match declarator.initializer {
+                        Some(expression) => Some(self.materialize_expression(expression)?),
+                        None => None,
+                    };
+                    materialized.push(VariableDeclarator {
+                        name: declarator.name,
+                        initializer,
+                        span: self.span(declarator.span)?.clone(),
+                    });
+                }
+                Ok(Statement::VariableDeclaration(VariableDeclaration {
+                    kind,
+                    declarations: materialized,
+                    span: self.span(span)?.clone(),
+                }))
+            }
         }
     }
 
@@ -631,6 +668,16 @@ fn node_audit_descriptor(node: &ArenaNode) -> String {
                 span.index()
             )
         }
+        ArenaNode::VariableDeclaration {
+            kind,
+            declarations,
+            span,
+        } => format!(
+            "variable_declaration kind={} count={} span={}",
+            kind.as_str(),
+            declarations.len(),
+            span.index()
+        ),
     }
 }
 
