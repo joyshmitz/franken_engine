@@ -1534,4 +1534,140 @@ mod tests {
         // Same key → equal ordering regardless of signature.
         assert_eq!(ss_a.cmp(&ss_b), std::cmp::Ordering::Equal);
     }
+
+    #[test]
+    fn signer_signature_clone_equality() {
+        let (sk, vk) = make_sig_pair(1);
+        let obj = test_obj();
+        let ss = SignerSignature::new(vk, sign_with(&sk, &obj));
+        let cloned = ss.clone();
+        assert_eq!(ss, cloned);
+    }
+
+    #[test]
+    fn sorted_signature_array_clone_equality() {
+        let (sk1, vk1) = make_sig_pair(1);
+        let (sk2, vk2) = make_sig_pair(2);
+        let obj = test_obj();
+        let entries = vec![
+            SignerSignature::new(vk1, sign_with(&sk1, &obj)),
+            SignerSignature::new(vk2, sign_with(&sk2, &obj)),
+        ];
+        let arr = SortedSignatureArray::from_unsorted(entries).unwrap();
+        let cloned = arr.clone();
+        assert_eq!(arr, cloned);
+    }
+
+    #[test]
+    fn multisig_error_clone_equality() {
+        let err = MultiSigError::QuorumNotMet {
+            required: 3,
+            valid: 1,
+            total: 5,
+        };
+        let cloned = err.clone();
+        assert_eq!(err, cloned);
+    }
+
+    #[test]
+    fn quorum_result_clone_equality() {
+        let result = QuorumResult {
+            quorum_met: true,
+            valid_count: 2,
+            invalid_count: 1,
+            unauthorized_count: 0,
+            total: 3,
+            threshold: 2,
+            invalid_signers: vec![],
+            unauthorized_signers: vec![],
+        };
+        let cloned = result.clone();
+        assert_eq!(result, cloned);
+    }
+
+    #[test]
+    fn multisig_event_clone_equality() {
+        let event = MultiSigEvent {
+            event_type: MultiSigEventType::ArrayCreated { signer_count: 5 },
+            trace_id: "t-clone".into(),
+        };
+        let cloned = event.clone();
+        assert_eq!(event, cloned);
+    }
+
+    #[test]
+    fn quorum_result_json_field_presence() {
+        let result = QuorumResult {
+            quorum_met: false,
+            valid_count: 1,
+            invalid_count: 2,
+            unauthorized_count: 3,
+            total: 6,
+            threshold: 4,
+            invalid_signers: vec![],
+            unauthorized_signers: vec![],
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("\"quorum_met\""));
+        assert!(json.contains("\"valid_count\""));
+        assert!(json.contains("\"invalid_count\""));
+        assert!(json.contains("\"unauthorized_count\""));
+        assert!(json.contains("\"threshold\""));
+    }
+
+    #[test]
+    fn multisig_event_json_field_presence() {
+        let event = MultiSigEvent {
+            event_type: MultiSigEventType::ArrayCreated { signer_count: 2 },
+            trace_id: "t-json".into(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"event_type\""));
+        assert!(json.contains("\"trace_id\""));
+    }
+
+    #[test]
+    fn signer_signature_json_field_presence() {
+        let (sk, vk) = make_sig_pair(1);
+        let obj = test_obj();
+        let ss = SignerSignature::new(vk, sign_with(&sk, &obj));
+        let json = serde_json::to_string(&ss).unwrap();
+        assert!(json.contains("\"signer\""));
+        assert!(json.contains("\"signature\""));
+    }
+
+    #[test]
+    fn multisig_error_source_is_none() {
+        let err = MultiSigError::EmptyArray;
+        assert!(std::error::Error::source(&err).is_none());
+    }
+
+    #[test]
+    fn signer_signature_ord_different_keys_deterministic() {
+        let (sk1, vk1) = make_sig_pair(1);
+        let (sk2, vk2) = make_sig_pair(2);
+        let obj = test_obj();
+        let ss1 = SignerSignature::new(vk1, sign_with(&sk1, &obj));
+        let ss2 = SignerSignature::new(vk2, sign_with(&sk2, &obj));
+        let cmp1 = ss1.cmp(&ss2);
+        let cmp2 = ss1.cmp(&ss2);
+        assert_eq!(cmp1, cmp2);
+        assert_ne!(ss1, ss2);
+    }
+
+    #[test]
+    fn context_initial_event_counts_empty() {
+        let ctx = MultiSigContext::new();
+        assert!(ctx.event_counts().is_empty());
+    }
+
+    #[test]
+    fn contains_signer_absent_after_construction() {
+        let (sk1, vk1) = make_sig_pair(1);
+        let (_, vk_absent) = make_sig_pair(99);
+        let obj = test_obj();
+        let entries = vec![SignerSignature::new(vk1, sign_with(&sk1, &obj))];
+        let arr = SortedSignatureArray::new(entries).unwrap();
+        assert!(!arr.contains_signer(&vk_absent));
+    }
 }

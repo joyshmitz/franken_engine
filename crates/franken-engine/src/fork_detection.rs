@@ -2660,7 +2660,7 @@ mod tests {
     // -- Enrichment: ForkEvent serde roundtrip --
 
     #[test]
-    fn fork_event_serde_roundtrip() {
+    fn fork_event_serde_roundtrip_enrichment() {
         let evt = ForkEvent {
             event_type: ForkEventType::SafeModeEntered {
                 zone: "zone-b".to_string(),
@@ -3504,5 +3504,78 @@ mod tests {
                 .iter()
                 .any(|r| r.contains("quarantine"))
         );
+    }
+
+    // ── Enrichment: serde roundtrip tests ────────────────────────────
+
+    #[test]
+    fn safe_mode_state_serde_roundtrip_default() {
+        let state = SafeModeState::default();
+        let json = serde_json::to_string(&state).unwrap();
+        let back: SafeModeState = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, state);
+        assert!(!back.active);
+        assert!(back.trigger_seq.is_none());
+    }
+
+    #[test]
+    fn safe_mode_state_serde_roundtrip_active() {
+        let state = SafeModeState {
+            active: true,
+            trigger_seq: Some(42),
+            unacknowledged_count: 3,
+        };
+        let json = serde_json::to_string(&state).unwrap();
+        let back: SafeModeState = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, state);
+    }
+
+    #[test]
+    fn fork_event_type_serde_roundtrip_all_variants() {
+        let variants = [
+            ForkEventType::ForkDetected {
+                zone: "z1".to_string(),
+                checkpoint_seq: 10,
+            },
+            ForkEventType::SafeModeEntered {
+                zone: "z2".to_string(),
+                trigger_seq: 5,
+            },
+            ForkEventType::SafeModeExited {
+                zone: "z3".to_string(),
+                acknowledged_incidents: 2,
+            },
+            ForkEventType::CheckpointRecorded {
+                zone: "z4".to_string(),
+                checkpoint_seq: 20,
+            },
+            ForkEventType::OperationDenied {
+                zone: "z5".to_string(),
+                operation: "write".to_string(),
+            },
+            ForkEventType::HistoryTrimmed {
+                zone: "z6".to_string(),
+                removed_count: 100,
+            },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: ForkEventType = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, v);
+        }
+    }
+
+    #[test]
+    fn fork_event_serde_roundtrip() {
+        let event = ForkEvent {
+            event_type: ForkEventType::ForkDetected {
+                zone: "main".to_string(),
+                checkpoint_seq: 7,
+            },
+            trace_id: "trace-abc".to_string(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: ForkEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, event);
     }
 }

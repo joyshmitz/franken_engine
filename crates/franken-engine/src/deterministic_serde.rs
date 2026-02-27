@@ -1047,4 +1047,177 @@ mod tests {
         let bytes = encode_value(&val);
         assert_eq!(decode_value(&bytes).unwrap(), val);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 3: clone equality, JSON field presence, serde roundtrip,
+    // Display uniqueness, boundary conditions, Ord determinism, Error::source
+    // -----------------------------------------------------------------------
+
+    // -- Clone equality tests (5) --
+
+    #[test]
+    fn clone_eq_schema_hash() {
+        let original = SchemaHash::from_definition(b"clone-test-schema");
+        let cloned = original.clone();
+        assert_eq!(original, cloned);
+    }
+
+    #[test]
+    fn clone_eq_schema_definition() {
+        let original = SchemaDefinition {
+            name: "CloneTest".to_string(),
+            version: 7,
+            schema_hash: SchemaHash::from_definition(b"clone-def"),
+        };
+        let cloned = original.clone();
+        assert_eq!(original, cloned);
+    }
+
+    #[test]
+    fn clone_eq_canonical_value_u64() {
+        let original = CanonicalValue::U64(123_456_789);
+        let cloned = original.clone();
+        assert_eq!(original, cloned);
+    }
+
+    #[test]
+    fn clone_eq_canonical_value_map() {
+        let mut map = BTreeMap::new();
+        map.insert("alpha".to_string(), CanonicalValue::I64(-42));
+        map.insert("beta".to_string(), CanonicalValue::Bytes(vec![0xCA, 0xFE]));
+        let original = CanonicalValue::Map(map);
+        let cloned = original.clone();
+        assert_eq!(original, cloned);
+    }
+
+    #[test]
+    fn clone_eq_serde_error() {
+        let original = SerdeError::NonLexicographicKeys {
+            prev_key: "z".to_string(),
+            current_key: "a".to_string(),
+        };
+        let cloned = original.clone();
+        assert_eq!(original, cloned);
+    }
+
+    // -- JSON field presence tests (3) --
+
+    #[test]
+    fn json_field_presence_schema_definition() {
+        let def = SchemaDefinition {
+            name: "FieldTest".to_string(),
+            version: 5,
+            schema_hash: SchemaHash([0xAA; 32]),
+        };
+        let json = serde_json::to_string(&def).unwrap();
+        assert!(json.contains("\"name\""));
+        assert!(json.contains("\"version\""));
+        assert!(json.contains("\"schema_hash\""));
+    }
+
+    #[test]
+    fn json_field_presence_serde_error_buffer_too_short() {
+        let err = SerdeError::BufferTooShort {
+            expected: 64,
+            actual: 12,
+        };
+        let json = serde_json::to_string(&err).unwrap();
+        assert!(json.contains("\"expected\""));
+        assert!(json.contains("\"actual\""));
+        assert!(json.contains("BufferTooShort"));
+    }
+
+    #[test]
+    fn json_field_presence_serde_error_non_lexicographic() {
+        let err = SerdeError::NonLexicographicKeys {
+            prev_key: "beta".to_string(),
+            current_key: "alpha".to_string(),
+        };
+        let json = serde_json::to_string(&err).unwrap();
+        assert!(json.contains("\"prev_key\""));
+        assert!(json.contains("\"current_key\""));
+        assert!(json.contains("NonLexicographicKeys"));
+    }
+
+    // -- Serde roundtrip for deeply nested structure --
+
+    #[test]
+    fn serde_roundtrip_deeply_nested_array() {
+        // Build a 10-deep nested array: Array([Array([Array([...U64(1)...])])])
+        let mut val = CanonicalValue::U64(1);
+        for _ in 0..10 {
+            val = CanonicalValue::Array(vec![val]);
+        }
+        let bytes = encode_value(&val);
+        let decoded = decode_value(&bytes).unwrap();
+        assert_eq!(decoded, val);
+    }
+
+    // -- Display uniqueness across all SerdeError variants --
+
+    #[test]
+    fn display_uniqueness_all_serde_error_variants() {
+        let variants = vec![
+            SerdeError::SchemaMismatch {
+                expected: SchemaHash([0; 32]),
+                actual: SchemaHash([1; 32]),
+            },
+            SerdeError::UnknownSchema {
+                schema_hash: SchemaHash([2; 32]),
+            },
+            SerdeError::BufferTooShort {
+                expected: 100,
+                actual: 50,
+            },
+            SerdeError::InvalidTag {
+                tag: 0xAA,
+                offset: 10,
+            },
+            SerdeError::InvalidUtf8 { offset: 20 },
+            SerdeError::DuplicateKey {
+                key: "dup".to_string(),
+            },
+            SerdeError::NonLexicographicKeys {
+                prev_key: "z".to_string(),
+                current_key: "a".to_string(),
+            },
+            SerdeError::RecursionLimitExceeded { offset: 500 },
+            SerdeError::TrailingBytes { count: 7 },
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            let s = v.to_string();
+            assert!(!s.is_empty());
+            displays.insert(s);
+        }
+        // All 9 variants produce distinct Display output.
+        assert_eq!(displays.len(), variants.len());
+    }
+
+    // -- Ord determinism for SchemaHash --
+
+    #[test]
+    fn schema_hash_ord_determinism() {
+        let h_low = SchemaHash([0x00; 32]);
+        let h_mid = SchemaHash([0x80; 32]);
+        let h_high = SchemaHash([0xFF; 32]);
+        assert!(h_low < h_mid);
+        assert!(h_mid < h_high);
+        // Sorting a vec should be stable and deterministic.
+        let mut v = vec![h_high.clone(), h_low.clone(), h_mid.clone()];
+        v.sort();
+        assert_eq!(v, vec![h_low, h_mid, h_high]);
+    }
+
+    // -- std::error::Error::source returns None for all variants --
+
+    #[test]
+    fn serde_error_source_is_none() {
+        let err = SerdeError::InvalidTag {
+            tag: 0x99,
+            offset: 0,
+        };
+        // SerdeError has no source (no #[from] or source field).
+        assert!(std::error::Error::source(&err).is_none());
+    }
 }

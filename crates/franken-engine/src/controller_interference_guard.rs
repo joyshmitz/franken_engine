@@ -1921,7 +1921,7 @@ mod tests {
     // ── Serde roundtrips (enrichment) ─────────────────────────────
 
     #[test]
-    fn timescale_separation_statement_serde_roundtrip() {
+    fn timescale_separation_statement_serde_roundtrip_enrichment() {
         let ts = TimescaleSeparationStatement {
             observation_interval_millionths: 500_000,
             write_interval_millionths: 1_000_000,
@@ -1933,7 +1933,7 @@ mod tests {
     }
 
     #[test]
-    fn metric_read_request_serde_roundtrip() {
+    fn metric_read_request_serde_roundtrip_enrichment() {
         let req = MetricReadRequest {
             controller_id: "ctrl-a".into(),
             metric: "cpu".into(),
@@ -1944,7 +1944,7 @@ mod tests {
     }
 
     #[test]
-    fn metric_write_request_serde_roundtrip() {
+    fn metric_write_request_serde_roundtrip_enrichment() {
         let req = MetricWriteRequest {
             controller_id: "ctrl-a".into(),
             metric: "cpu".into(),
@@ -1956,7 +1956,7 @@ mod tests {
     }
 
     #[test]
-    fn metric_subscription_serde_roundtrip() {
+    fn metric_subscription_serde_roundtrip_enrichment() {
         let sub = MetricSubscription {
             controller_id: "ctrl-a".into(),
             metric: "cpu".into(),
@@ -3110,5 +3110,150 @@ mod tests {
         );
         assert_eq!(conflict_log.metric.as_deref(), Some("cpu"));
         assert_eq!(conflict_log.controller_ids.len(), 2);
+    }
+
+    // ── Enrichment: serde roundtrip tests ────────────────────────────
+
+    #[test]
+    fn timescale_separation_statement_serde_roundtrip() {
+        let tss = TimescaleSeparationStatement {
+            observation_interval_millionths: 1_000_000,
+            write_interval_millionths: 5_000_000,
+            statement: "slow controller".to_string(),
+        };
+        let json = serde_json::to_string(&tss).unwrap();
+        let back: TimescaleSeparationStatement = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, tss);
+    }
+
+    #[test]
+    fn controller_registration_serde_roundtrip() {
+        let reg = registration("ctrl-a", &["cpu", "mem"], &["throttle"], 1_000_000, 5_000_000, "fast reader");
+        let json = serde_json::to_string(&reg).unwrap();
+        let back: ControllerRegistration = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, reg);
+    }
+
+    #[test]
+    fn metric_read_request_serde_roundtrip() {
+        let req = MetricReadRequest {
+            controller_id: "ctrl-a".to_string(),
+            metric: "cpu".to_string(),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let back: MetricReadRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, req);
+    }
+
+    #[test]
+    fn metric_write_request_serde_roundtrip() {
+        let req = MetricWriteRequest {
+            controller_id: "ctrl-a".to_string(),
+            metric: "throttle".to_string(),
+            value: 500_000,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let back: MetricWriteRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, req);
+    }
+
+    #[test]
+    fn metric_subscription_serde_roundtrip() {
+        let sub = MetricSubscription {
+            controller_id: "ctrl-b".to_string(),
+            metric: "latency".to_string(),
+        };
+        let json = serde_json::to_string(&sub).unwrap();
+        let back: MetricSubscription = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, sub);
+    }
+
+    #[test]
+    fn metric_update_serde_roundtrip_enrichment() {
+        let upd = MetricUpdate {
+            sequence: 42,
+            metric: "cpu".to_string(),
+            value: 750_000,
+        };
+        let json = serde_json::to_string(&upd).unwrap();
+        let back: MetricUpdate = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, upd);
+    }
+
+    #[test]
+    fn interference_finding_serde_roundtrip() {
+        let finding = InterferenceFinding {
+            code: InterferenceFailureCode::DuplicateController,
+            metric: Some("cpu".to_string()),
+            controller_ids: vec!["ctrl-a".to_string(), "ctrl-b".to_string()],
+            detail: "duplicate detected".to_string(),
+        };
+        let json = serde_json::to_string(&finding).unwrap();
+        let back: InterferenceFinding = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, finding);
+    }
+
+    #[test]
+    fn interference_resolution_serde_roundtrip_enrichment() {
+        let res = InterferenceResolution {
+            metric: "cpu".to_string(),
+            controller_ids: vec!["ctrl-a".to_string()],
+            mode: ConflictResolutionMode::Serialize,
+            detail: "serialized access".to_string(),
+        };
+        let json = serde_json::to_string(&res).unwrap();
+        let back: InterferenceResolution = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, res);
+    }
+
+    #[test]
+    fn interference_log_event_serde_roundtrip() {
+        let log = InterferenceLogEvent {
+            trace_id: "trace-1".to_string(),
+            decision_id: "dec-1".to_string(),
+            policy_id: "pol-1".to_string(),
+            component: "guard".to_string(),
+            event: "check_pass".to_string(),
+            outcome: "pass".to_string(),
+            error_code: None,
+            metric: Some("cpu".to_string()),
+            controller_ids: vec!["ctrl-a".to_string()],
+        };
+        let json = serde_json::to_string(&log).unwrap();
+        let back: InterferenceLogEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, log);
+    }
+
+    #[test]
+    fn interference_evaluation_serde_roundtrip() {
+        let eval = InterferenceEvaluation {
+            decision_id: "dec-1".to_string(),
+            pass: true,
+            rollback_required: false,
+            read_snapshots: {
+                let mut m = std::collections::BTreeMap::new();
+                m.insert("cpu".to_string(), 500_000);
+                m
+            },
+            applied_writes: vec![MetricWriteRequest {
+                controller_id: "ctrl-a".to_string(),
+                metric: "throttle".to_string(),
+                value: 100_000,
+            }],
+            rejected_writes: vec![],
+            resolutions: vec![],
+            subscription_streams: std::collections::BTreeMap::new(),
+            final_metrics: {
+                let mut m = std::collections::BTreeMap::new();
+                m.insert("cpu".to_string(), 500_000);
+                m.insert("throttle".to_string(), 100_000);
+                m
+            },
+            findings: vec![],
+            logs: vec![],
+        };
+        let json = serde_json::to_string(&eval).unwrap();
+        let back: InterferenceEvaluation = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, eval);
     }
 }

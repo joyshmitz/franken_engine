@@ -874,4 +874,150 @@ mod tests {
         let h = AuthenticityHash::compute_keyed(b"key", b"data");
         assert!(h.constant_time_eq(&h));
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 3: clone equality, JSON fields, serde, Ord, boundary
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn integrity_hash_clone_equality() {
+        let h = IntegrityHash::compute(b"clone-test-integrity");
+        let cloned = h;
+        assert_eq!(h, cloned);
+    }
+
+    #[test]
+    fn content_hash_clone_equality() {
+        let h = ContentHash::compute(b"clone-test-content");
+        let cloned = h.clone();
+        assert_eq!(h, cloned);
+    }
+
+    #[test]
+    fn authenticity_hash_clone_equality() {
+        let h = AuthenticityHash::compute_keyed(b"key", b"clone-test-auth");
+        let cloned = h.clone();
+        assert_eq!(h, cloned);
+    }
+
+    #[test]
+    fn hash_tier_clone_equality() {
+        let tier = HashTier::Authenticity;
+        let cloned = tier;
+        assert_eq!(tier, cloned);
+    }
+
+    #[test]
+    fn hash_algorithm_clone_equality() {
+        let alg = HashAlgorithm::SipInspiredKeyed;
+        let cloned = alg;
+        assert_eq!(alg, cloned);
+    }
+
+    #[test]
+    fn hash_event_json_field_tier_present() {
+        let event = HashEvent {
+            tier: HashTier::Integrity,
+            algorithm: HashAlgorithm::WyhashInspired,
+            input_len: 10,
+            component: "test_comp".to_string(),
+            trace_id: "t-001".to_string(),
+        };
+        let json = serde_json::to_string(&event).expect("serialize");
+        assert!(json.contains("\"tier\""), "JSON must contain 'tier' field");
+    }
+
+    #[test]
+    fn hash_event_json_field_algorithm_present() {
+        let event = HashEvent {
+            tier: HashTier::Content,
+            algorithm: HashAlgorithm::SipInspiredCr,
+            input_len: 20,
+            component: "algo_check".to_string(),
+            trace_id: "t-002".to_string(),
+        };
+        let json = serde_json::to_string(&event).expect("serialize");
+        assert!(
+            json.contains("\"algorithm\""),
+            "JSON must contain 'algorithm' field"
+        );
+    }
+
+    #[test]
+    fn hash_event_json_field_trace_id_and_component_present() {
+        let event = HashEvent {
+            tier: HashTier::Authenticity,
+            algorithm: HashAlgorithm::SipInspiredKeyed,
+            input_len: 30,
+            component: "my_component".to_string(),
+            trace_id: "trace-xyz".to_string(),
+        };
+        let json = serde_json::to_string(&event).expect("serialize");
+        assert!(
+            json.contains("\"trace_id\""),
+            "JSON must contain 'trace_id' field"
+        );
+        assert!(
+            json.contains("\"component\""),
+            "JSON must contain 'component' field"
+        );
+    }
+
+    #[test]
+    fn hash_event_serde_roundtrip_all_tiers() {
+        let tiers = [
+            (HashTier::Integrity, HashAlgorithm::WyhashInspired),
+            (HashTier::Content, HashAlgorithm::SipInspiredCr),
+            (HashTier::Authenticity, HashAlgorithm::SipInspiredKeyed),
+        ];
+        for (tier, alg) in tiers {
+            let event = HashEvent {
+                tier,
+                algorithm: alg,
+                input_len: 99,
+                component: format!("roundtrip_{tier}"),
+                trace_id: "rt-000".to_string(),
+            };
+            let json = serde_json::to_string(&event).expect("serialize");
+            let restored: HashEvent = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(event, restored);
+        }
+    }
+
+    #[test]
+    fn display_uniqueness_across_tiers_same_input() {
+        let data = b"cross-tier-display-check";
+        let d1 = IntegrityHash::compute(data).to_string();
+        let d2 = ContentHash::compute(data).to_string();
+        let d3 = AuthenticityHash::compute(data).to_string();
+        let mut seen = std::collections::BTreeSet::new();
+        seen.insert(d1);
+        seen.insert(d2);
+        seen.insert(d3);
+        assert_eq!(seen.len(), 3, "Display strings across tiers must be unique");
+    }
+
+    #[test]
+    fn integrity_hash_boundary_max_u64() {
+        let h = IntegrityHash(u64::MAX);
+        assert_eq!(h.as_u64(), u64::MAX);
+        let display = h.to_string();
+        assert_eq!(display, "integrity:ffffffffffffffff");
+    }
+
+    #[test]
+    fn hash_tier_ord_determinism() {
+        let mut tiers_a = vec![
+            HashTier::Authenticity,
+            HashTier::Integrity,
+            HashTier::Content,
+        ];
+        let mut tiers_b = tiers_a.clone();
+        tiers_a.sort();
+        tiers_b.sort();
+        assert_eq!(tiers_a, tiers_b);
+        assert_eq!(tiers_a[0], HashTier::Integrity);
+        assert_eq!(tiers_a[1], HashTier::Content);
+        assert_eq!(tiers_a[2], HashTier::Authenticity);
+    }
 }

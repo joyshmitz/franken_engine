@@ -2584,4 +2584,481 @@ mod tests {
         // s1 was already invalidated by advance_epoch, so begin_step fails.
         assert!(orch.begin_step("s1").is_err());
     }
+
+    // -- Enrichment: complete_step boundary conditions --
+
+    #[test]
+    fn complete_step_out_of_bounds() {
+        let mut orch = SagaOrchestrator::new(test_epoch(), 10);
+        orch.create_saga("s1", SagaType::Publish, simple_steps(), "t1", 0)
+            .unwrap();
+        orch.begin_step("s1").unwrap();
+        let err = orch
+            .complete_step(
+                "s1",
+                99,
+                StepOutcome::Success {
+                    result: "ok".into(),
+                },
+                "k",
+                100,
+            )
+            .unwrap_err();
+        assert!(matches!(err, SagaError::StepIndexOutOfBounds { .. }));
+    }
+
+    #[test]
+    fn complete_step_wrong_state_index() {
+        let mut orch = SagaOrchestrator::new(test_epoch(), 10);
+        orch.create_saga("s1", SagaType::Publish, simple_steps(), "t1", 0)
+            .unwrap();
+        orch.begin_step("s1").unwrap();
+        // Saga is InProgress { step_index: 0 }; trying to complete step 1 should fail.
+        let err = orch
+            .complete_step(
+                "s1",
+                1,
+                StepOutcome::Success {
+                    result: "ok".into(),
+                },
+                "k",
+                100,
+            )
+            .unwrap_err();
+        assert!(matches!(err, SagaError::SagaAlreadyTerminal { .. }));
+    }
+
+    // -- Enrichment: compensation boundary conditions --
+
+    #[test]
+    fn complete_compensation_out_of_bounds() {
+        let mut orch = SagaOrchestrator::new(test_epoch(), 10);
+        orch.create_saga("s1", SagaType::Publish, simple_steps(), "t1", 0)
+            .unwrap();
+        orch.begin_step("s1").unwrap();
+        orch.complete_step(
+            "s1",
+            0,
+            StepOutcome::Success {
+                result: "ok".into(),
+            },
+            "k0",
+            100,
+        )
+        .unwrap();
+        orch.begin_step("s1").unwrap();
+        orch.complete_step(
+            "s1",
+            1,
+            StepOutcome::Failure {
+                diagnostic: "err".into(),
+            },
+            "k1",
+            200,
+        )
+        .unwrap();
+        let err = orch
+            .complete_compensation(
+                "s1",
+                99,
+                StepOutcome::Success {
+                    result: "ok".into(),
+                },
+                "ck",
+                300,
+            )
+            .unwrap_err();
+        assert!(matches!(err, SagaError::StepIndexOutOfBounds { .. }));
+    }
+
+    #[test]
+    fn idempotent_compensation_completion() {
+        let mut orch = SagaOrchestrator::new(test_epoch(), 10);
+        orch.create_saga("s1", SagaType::Publish, simple_steps(), "t1", 0)
+            .unwrap();
+        // Step 0 success, step 1 failure → compensating at 0.
+        orch.begin_step("s1").unwrap();
+        orch.complete_step(
+            "s1",
+            0,
+            StepOutcome::Success {
+                result: "ok".into(),
+            },
+            "k0",
+            100,
+        )
+        .unwrap();
+        orch.begin_step("s1").unwrap();
+        orch.complete_step(
+            "s1",
+            1,
+            StepOutcome::Failure {
+                diagnostic: "err".into(),
+            },
+            "k1",
+            200,
+        )
+        .unwrap();
+
+        // First compensation.
+        orch.complete_compensation(
+            "s1",
+            0,
+            StepOutcome::Success {
+                result: "undone".into(),
+            },
+            "comp-k0",
+            300,
+        )
+        .unwrap();
+
+        // Duplicate with same idempotency key — returns current state, no duplicate record.
+        let state = orch
+            .complete_compensation(
+                "s1",
+                0,
+                StepOutcome::Success {
+                    result: "undone".into(),
+                },
+                "comp-k0",
+                400,
+            )
+            .unwrap();
+        assert!(matches!(state, SagaState::Failed { .. }));
+    }
+
+    #[test]
+    fn complete_compensation_on_non_compensating_state() {
+        let mut orch = SagaOrchestrator::new(test_epoch(), 10);
+        orch.create_saga("s1", SagaType::Publish, simple_steps(), "t1", 0)
+            .unwrap();
+        orch.begin_step("s1").unwrap();
+        // Saga is InProgress — not compensating.
+        let err = orch
+            .complete_compensation(
+                "s1",
+                0,
+                StepOutcome::Success {
+                    result: "ok".into(),
+                },
+                "ck",
+                100,
+            )
+            .unwrap_err();
+        assert!(matches!(err, SagaError::SagaAlreadyTerminal { .. }));
+    }
+
+    // -- Enrichment: get / lookup --
+
+    #[test]
+    fn get_nonexistent_returns_none() {
+        let orch = SagaOrchestrator::new(test_epoch(), 10);
+        assert!(orch.get("ghost").is_none());
+    }
+
+    // -- Enrichment: last_completed ignores failed and compensate records --
+
+    #[test]
+    fn last_completed_forward_step_ignores_failed_forward() {
+        let saga = Saga {
+            saga_id: SagaId::from_trace("s1"),
+            saga_type: SagaType::Publish,
+            steps: simple_steps(),
+            state: SagaState::Compensating { step_index: 0 },
+            epoch: test_epoch(),
+            trace_id: "t1".into(),
+            step_records: vec![
+                StepRecord {
+                    step_index: 0,
+                    step_name: "step_a".into(),
+                    action_type: ActionType::Forward,
+                    outcome: StepOutcome::Success {
+                        result: "ok".into(),
+                    },
+                    completed_at: 100,
+                    idempotency_key_hex: "k0".into(),
+                },
+                StepRecord {
+                    step_index: 1,
+                    step_name: "step_b".into(),
+                    action_type: ActionType::Forward,
+                    outcome: StepOutcome::Failure {
+                        diagnostic: "err".into(),
+                    },
+                    completed_at: 200,
+                    idempotency_key_hex: "k1".into(),
+                },
+            ],
+            created_at: 0,
+        };
+        // Only step 0 succeeded; step 1 failed.
+        assert_eq!(saga.last_completed_forward_step(), Some(0));
+    }
+
+    #[test]
+    fn last_completed_forward_step_ignores_compensate_records() {
+        let saga = Saga {
+            saga_id: SagaId::from_trace("s1"),
+            saga_type: SagaType::Publish,
+            steps: simple_steps(),
+            state: SagaState::Failed {
+                diagnostic: "compensated".into(),
+            },
+            epoch: test_epoch(),
+            trace_id: "t1".into(),
+            step_records: vec![
+                StepRecord {
+                    step_index: 0,
+                    step_name: "step_a".into(),
+                    action_type: ActionType::Forward,
+                    outcome: StepOutcome::Success {
+                        result: "ok".into(),
+                    },
+                    completed_at: 100,
+                    idempotency_key_hex: "k0".into(),
+                },
+                StepRecord {
+                    step_index: 0,
+                    step_name: "step_a".into(),
+                    action_type: ActionType::Compensate,
+                    outcome: StepOutcome::Success {
+                        result: "undone".into(),
+                    },
+                    completed_at: 300,
+                    idempotency_key_hex: "ck0".into(),
+                },
+            ],
+            created_at: 0,
+        };
+        // Compensate records don't count.
+        assert_eq!(saga.last_completed_forward_step(), Some(0));
+    }
+
+    // -- Enrichment: is_terminal for all states --
+
+    #[test]
+    fn is_terminal_for_all_states() {
+        let pending = Saga {
+            saga_id: SagaId::from_trace("s"),
+            saga_type: SagaType::Publish,
+            steps: simple_steps(),
+            state: SagaState::Pending,
+            epoch: test_epoch(),
+            trace_id: "t".into(),
+            step_records: vec![],
+            created_at: 0,
+        };
+        assert!(!pending.is_terminal());
+
+        let in_progress = Saga {
+            state: SagaState::InProgress { step_index: 0 },
+            ..pending.clone()
+        };
+        assert!(!in_progress.is_terminal());
+
+        let compensating = Saga {
+            state: SagaState::Compensating { step_index: 0 },
+            ..pending.clone()
+        };
+        assert!(!compensating.is_terminal());
+
+        let completed = Saga {
+            state: SagaState::Completed,
+            ..pending.clone()
+        };
+        assert!(completed.is_terminal());
+
+        let failed = Saga {
+            state: SagaState::Failed {
+                diagnostic: "err".into(),
+            },
+            ..pending.clone()
+        };
+        assert!(failed.is_terminal());
+    }
+
+    // -- Enrichment: advance_epoch events and counts --
+
+    #[test]
+    fn advance_epoch_emits_invalidation_events() {
+        let mut orch = SagaOrchestrator::new(test_epoch(), 10);
+        orch.create_saga("s1", SagaType::Quarantine, simple_steps(), "t1", 0)
+            .unwrap();
+        orch.create_saga("s2", SagaType::Revocation, simple_steps(), "t2", 0)
+            .unwrap();
+        orch.drain_events(); // clear create events
+
+        let invalidated = orch.advance_epoch(SecurityEpoch::from_raw(2), "t-epoch");
+        assert_eq!(invalidated.len(), 2);
+
+        let events = orch.drain_events();
+        assert_eq!(events.len(), 2);
+        for event in &events {
+            assert_eq!(event.event, "saga_epoch_invalidated");
+            assert_eq!(event.epoch_id, 2);
+        }
+
+        assert_eq!(
+            *orch.event_counts().get("saga_epoch_invalidated").unwrap(),
+            2
+        );
+    }
+
+    #[test]
+    fn advance_epoch_updates_current_epoch() {
+        let mut orch = SagaOrchestrator::new(test_epoch(), 10);
+        assert_eq!(orch.epoch(), SecurityEpoch::from_raw(1));
+        orch.advance_epoch(SecurityEpoch::from_raw(5), "t-adv");
+        assert_eq!(orch.epoch(), SecurityEpoch::from_raw(5));
+    }
+
+    // -- Enrichment: concurrency limit display --
+
+    #[test]
+    fn concurrency_limit_error_display() {
+        let s = SagaError::ConcurrencyLimitReached {
+            active_count: 10,
+            max_concurrent: 10,
+        }
+        .to_string();
+        assert!(s.contains("10"));
+        assert!(s.contains("concurrency"));
+    }
+
+    // -- Enrichment: builder helpers forward/compensating action content --
+
+    #[test]
+    fn quarantine_steps_actions_correct() {
+        let steps = quarantine_saga_steps("ext-x");
+        assert_eq!(steps[0].forward_action, "extension.suspend");
+        assert_eq!(steps[0].compensating_action, "extension.resume");
+        assert_eq!(steps[1].forward_action, "evidence.flush");
+        assert_eq!(steps[2].forward_action, "quarantine.propagate");
+        assert_eq!(steps[3].forward_action, "quarantine.confirm");
+    }
+
+    #[test]
+    fn revocation_steps_actions_correct() {
+        let steps = revocation_saga_steps("cert-x");
+        assert_eq!(steps[0].forward_action, "revocation.emit");
+        assert_eq!(steps[1].forward_action, "revocation.propagate");
+        assert_eq!(steps[2].forward_action, "revocation.confirm_convergence");
+        assert_eq!(steps[3].forward_action, "revocation.update_frontier");
+    }
+
+    #[test]
+    fn eviction_steps_actions_correct() {
+        let steps = eviction_saga_steps("pkg-x");
+        assert_eq!(steps[0].forward_action, "eviction.mark");
+        assert_eq!(steps[1].forward_action, "eviction.drain");
+        assert_eq!(steps[2].forward_action, "eviction.delete");
+        assert_eq!(steps[3].forward_action, "eviction.confirm");
+    }
+
+    #[test]
+    fn publish_steps_actions_correct() {
+        let steps = publish_saga_steps("art-x");
+        assert_eq!(steps[0].forward_action, "publish.validate");
+        assert_eq!(steps[1].forward_action, "publish.stage");
+        assert_eq!(steps[2].forward_action, "publish.commit");
+        assert_eq!(steps[3].forward_action, "publish.notify");
+    }
+
+    // -- Enrichment: multi-saga gc --
+
+    #[test]
+    fn gc_terminal_removes_multiple_old_sagas() {
+        let mut orch = SagaOrchestrator::new(test_epoch(), 10);
+        for i in 0..3 {
+            let id = format!("s{i}");
+            orch.create_saga(&id, SagaType::Publish, simple_steps(), "t", 100)
+                .unwrap();
+            for j in 0..3 {
+                orch.begin_step(&id).unwrap();
+                orch.complete_step(
+                    &id,
+                    j,
+                    StepOutcome::Success {
+                        result: "ok".into(),
+                    },
+                    &format!("k-{i}-{j}"),
+                    200,
+                )
+                .unwrap();
+            }
+        }
+        assert_eq!(orch.total_count(), 3);
+        let removed = orch.gc_terminal(200);
+        assert_eq!(removed, 3);
+        assert_eq!(orch.total_count(), 0);
+    }
+
+    // -- Enrichment: resumable sagas --
+
+    #[test]
+    fn resumable_sagas_empty_when_all_terminal() {
+        let mut orch = SagaOrchestrator::new(test_epoch(), 10);
+        orch.create_saga("s1", SagaType::Publish, simple_steps(), "t1", 0)
+            .unwrap();
+        for i in 0..3 {
+            orch.begin_step("s1").unwrap();
+            orch.complete_step(
+                "s1",
+                i,
+                StepOutcome::Success {
+                    result: "ok".into(),
+                },
+                &format!("k-{i}"),
+                100,
+            )
+            .unwrap();
+        }
+        assert!(orch.resumable_sagas().is_empty());
+    }
+
+    #[test]
+    fn resumable_sagas_includes_compensating() {
+        let mut orch = SagaOrchestrator::new(test_epoch(), 10);
+        orch.create_saga("s1", SagaType::Publish, simple_steps(), "t1", 0)
+            .unwrap();
+        orch.begin_step("s1").unwrap();
+        orch.complete_step(
+            "s1",
+            0,
+            StepOutcome::Success {
+                result: "ok".into(),
+            },
+            "k0",
+            100,
+        )
+        .unwrap();
+        orch.begin_step("s1").unwrap();
+        orch.complete_step(
+            "s1",
+            1,
+            StepOutcome::Failure {
+                diagnostic: "err".into(),
+            },
+            "k1",
+            200,
+        )
+        .unwrap();
+
+        // Now compensating — should be resumable.
+        let resumable = orch.resumable_sagas();
+        assert_eq!(resumable.len(), 1);
+        assert!(matches!(
+            resumable[0].state,
+            SagaState::Compensating { .. }
+        ));
+    }
+
+    // -- Enrichment: next_compensation_step on nonexistent --
+
+    #[test]
+    fn next_compensation_step_nonexistent_saga() {
+        let orch = SagaOrchestrator::new(test_epoch(), 10);
+        let err = orch.next_compensation_step("ghost").unwrap_err();
+        assert!(matches!(err, SagaError::SagaNotFound { .. }));
+    }
 }

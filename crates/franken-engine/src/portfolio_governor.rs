@@ -1899,7 +1899,7 @@ mod tests {
     // -- Enrichment: serde roundtrips --
 
     #[test]
-    fn artifact_evidence_serde_roundtrip() {
+    fn artifact_evidence_serde_roundtrip_enrichment() {
         let ae = ArtifactEvidence {
             artifact_id: "art-1".to_string(),
             obligation_id: "obl-1".to_string(),
@@ -2278,5 +2278,75 @@ mod tests {
         let json = serde_json::to_string(state).unwrap();
         let back: MoonshotState = serde_json::from_str(&json).unwrap();
         assert_eq!(*state, back);
+    }
+
+    // ── Enrichment: serde roundtrip tests ────────────────────────────
+
+    #[test]
+    fn governor_config_serde_roundtrip_default() {
+        let cfg = GovernorConfig::default();
+        let json = serde_json::to_string(&cfg).unwrap();
+        let back: GovernorConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, cfg);
+    }
+
+    #[test]
+    fn governor_config_serde_roundtrip_custom() {
+        let cfg = GovernorConfig {
+            promotion_confidence_threshold_millionths: 800_000,
+            promotion_risk_threshold_millionths: 100_000,
+            hold_confidence_below_millionths: 400_000,
+            scoring_cadence_ns: 1_000_000_000,
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        let back: GovernorConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, cfg);
+    }
+
+    #[test]
+    fn artifact_evidence_serde_roundtrip() {
+        let ev = ArtifactEvidence {
+            artifact_id: "art-001".to_string(),
+            obligation_id: "obl-perf".to_string(),
+            artifact_type: ArtifactType::Proof,
+            submitted_at_ns: 1_000_000,
+            content_hash: "abc123".to_string(),
+        };
+        let json = serde_json::to_string(&ev).unwrap();
+        let back: ArtifactEvidence = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, ev);
+    }
+
+    #[test]
+    fn metric_observation_serde_roundtrip_enrichment() {
+        let obs = MetricObservation {
+            metric_id: "throughput".to_string(),
+            value_millionths: 950_000,
+            observed_at_ns: 2_000_000,
+        };
+        let json = serde_json::to_string(&obs).unwrap();
+        let back: MetricObservation = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, obs);
+    }
+
+    // ── Enrichment: edge case tests ──────────────────────────────────
+
+    #[test]
+    fn scorecard_zero_confidence() {
+        let scorecard = Scorecard {
+            moonshot_id: "mc-test-001".to_string(),
+            ev_millionths: 0,
+            confidence_millionths: 0,
+            risk_of_harm_millionths: 0,
+            implementation_friction_millionths: 0,
+            cross_initiative_interference_millionths: 0,
+            operational_burden_millionths: 0,
+            computed_at_ns: 500_000,
+            epoch: SecurityEpoch::from_raw(1),
+        };
+        let json = serde_json::to_string(&scorecard).unwrap();
+        let back: Scorecard = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, scorecard);
+        assert_eq!(back.confidence_millionths, 0);
     }
 }

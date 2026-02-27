@@ -356,6 +356,8 @@ pub struct RiskAccumulator {
     pub cumulative_regret_millionths: i64,
     /// Per-lane cumulative rewards in millionths.
     pub cumulative_rewards: BTreeMap<LaneChoice, i64>,
+    /// Number of pulls per lane.
+    pub lane_pulls: BTreeMap<LaneChoice, u64>,
     /// Best single-lane cumulative reward in millionths.
     pub best_lane_reward_millionths: i64,
 }
@@ -373,6 +375,7 @@ impl RiskAccumulator {
             compatibility_errors: 0,
             cumulative_regret_millionths: 0,
             cumulative_rewards: BTreeMap::new(),
+            lane_pulls: BTreeMap::new(),
             best_lane_reward_millionths: 0,
         }
     }
@@ -385,17 +388,33 @@ impl RiskAccumulator {
         let lane_reward = self.cumulative_rewards.entry(obs.lane).or_insert(0);
         *lane_reward += reward_millionths;
 
-        // Update best lane
+        let pulls = self.lane_pulls.entry(obs.lane).or_insert(0);
+        *pulls += 1;
+
+        // Estimate best mean reward across all pulled lanes
+        let best_empirical_mean = self
+            .cumulative_rewards
+            .iter()
+            .filter_map(|(lane, &total)| {
+                let p = *self.lane_pulls.get(lane).unwrap_or(&0);
+                if p > 0 {
+                    Some(total / p as i64)
+                } else {
+                    None
+                }
+            })
+            .max()
+            .unwrap_or(0);
+
+        // Update best lane (for legacy compatibility, keep it as the max total, though we don't strictly use it for regret now)
         self.best_lane_reward_millionths =
             self.cumulative_rewards.values().copied().max().unwrap_or(0);
 
-        // Regret = best_lane - our cumulative
+        // Regret = best_mean * n - our_total
         let our_total: i64 = self.cumulative_rewards.values().sum();
         let n = self.latencies_us.len() as i64;
         if n > 0 {
-            // Per-round average regret × rounds
-            self.cumulative_regret_millionths =
-                self.best_lane_reward_millionths - (our_total / n) * n;
+            self.cumulative_regret_millionths = best_empirical_mean * n - our_total;
         }
     }
 
@@ -1540,7 +1559,13 @@ mod tests {
 
     #[test]
     fn e2e_adaptive_session() {
-        let mut router = HybridLaneRouter::with_defaults();
+        let mut router = HybridLaneRouter::new(RouterConfig {
+            change_point: ChangePointConfig {
+                threshold_millionths: 5_000_000,
+                ..ChangePointConfig::default_config()
+            },
+            ..RouterConfig::default_config()
+        });
         router.promote_to_adaptive().unwrap();
 
         // Simulate 50 rounds with Wasm being slightly better

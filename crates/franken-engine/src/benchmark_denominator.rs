@@ -127,7 +127,7 @@ impl PublicationGateDecision {
     }
 }
 
-#[derive(Debug, Error, Clone, PartialEq)]
+#[derive(Debug, Error, Clone, PartialEq, Serialize, Deserialize)]
 pub enum BenchmarkDenominatorError {
     #[error("{baseline} case set is empty")]
     EmptyCaseSet { baseline: String },
@@ -1034,5 +1034,167 @@ mod tests {
             input.native_coverage_progression.len(),
             back.native_coverage_progression.len()
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 3: clone equality, JSON field presence, boundary, Ord,
+    //                      std::error::Error::source, serde roundtrip
+    // -----------------------------------------------------------------------
+
+    // ── Clone equality tests (5) ────────────────────────────────────
+
+    #[test]
+    fn baseline_engine_clone_eq() {
+        let original = BaselineEngine::Node;
+        let cloned = original;
+        assert_eq!(original, cloned);
+
+        let bun = BaselineEngine::Bun;
+        let bun_cloned = bun;
+        assert_eq!(bun, bun_cloned);
+    }
+
+    #[test]
+    fn benchmark_case_clone_eq() {
+        let original = test_case_weighted("wk-1", 5000.0, 1000.0, 0.5);
+        let cloned = original.clone();
+        assert_eq!(original, cloned);
+    }
+
+    #[test]
+    fn publication_context_clone_eq() {
+        let original = PublicationContext::new("tr-99", "dec-42", "pol-7");
+        let cloned = original.clone();
+        assert_eq!(original, cloned);
+    }
+
+    #[test]
+    fn native_coverage_point_clone_eq() {
+        let original = NativeCoveragePoint {
+            recorded_at_utc: "2026-02-26T12:00:00Z".into(),
+            native_slots: 77,
+            total_slots: 100,
+        };
+        let cloned = original.clone();
+        assert_eq!(original, cloned);
+    }
+
+    #[test]
+    fn benchmark_publication_event_clone_eq() {
+        let original = BenchmarkPublicationEvent {
+            trace_id: "tr-1".into(),
+            decision_id: "dec-1".into(),
+            policy_id: "pol-1".into(),
+            component: BENCHMARK_PUBLICATION_COMPONENT.to_string(),
+            event: "test_event".into(),
+            outcome: "pass".into(),
+            error_code: Some("FE-BENCH-1007".into()),
+        };
+        let cloned = original.clone();
+        assert_eq!(original, cloned);
+    }
+
+    // ── JSON field presence tests (3) ───────────────────────────────
+
+    #[test]
+    fn benchmark_case_json_field_names() {
+        let c = test_case("check-fields", 1000.0, 500.0);
+        let json = serde_json::to_string(&c).unwrap();
+        assert!(json.contains("\"workload_id\""));
+        assert!(json.contains("\"throughput_franken_tps\""));
+        assert!(json.contains("\"throughput_baseline_tps\""));
+        assert!(json.contains("\"behavior_equivalent\""));
+        assert!(json.contains("\"latency_envelope_ok\""));
+        assert!(json.contains("\"error_envelope_ok\""));
+    }
+
+    #[test]
+    fn publication_context_json_field_names() {
+        let ctx = PublicationContext::new("t-1", "d-1", "p-1");
+        let json = serde_json::to_string(&ctx).unwrap();
+        assert!(json.contains("\"trace_id\""));
+        assert!(json.contains("\"decision_id\""));
+        assert!(json.contains("\"policy_id\""));
+    }
+
+    #[test]
+    fn publication_gate_decision_json_field_names() {
+        let input = test_gate_input();
+        let decision = evaluate_publication_gate(&input, &test_context()).unwrap();
+        let json = serde_json::to_string(&decision).unwrap();
+        assert!(json.contains("\"score_vs_node\""));
+        assert!(json.contains("\"score_vs_bun\""));
+        assert!(json.contains("\"publish_allowed\""));
+        assert!(json.contains("\"blockers\""));
+        assert!(json.contains("\"native_coverage_progression\""));
+        assert!(json.contains("\"replacement_lineage_ids\""));
+        assert!(json.contains("\"events\""));
+    }
+
+    // ── Serde roundtrip (error variant) ─────────────────────────────
+
+    #[test]
+    fn benchmark_denominator_error_serde_roundtrip() {
+        let err = BenchmarkDenominatorError::DuplicateWorkloadId {
+            baseline: "bun".into(),
+            workload_id: "dup-w".into(),
+        };
+        let json = serde_json::to_string(&err).unwrap();
+        let back: BenchmarkDenominatorError = serde_json::from_str(&json).unwrap();
+        assert_eq!(err, back);
+    }
+
+    // ── Display uniqueness across baselines ─────────────────────────
+
+    #[test]
+    fn error_display_differentiates_baselines() {
+        let node_err = BenchmarkDenominatorError::EmptyCaseSet {
+            baseline: "node".into(),
+        };
+        let bun_err = BenchmarkDenominatorError::EmptyCaseSet {
+            baseline: "bun".into(),
+        };
+        assert_ne!(node_err.to_string(), bun_err.to_string());
+    }
+
+    // ── Boundary: exact threshold score ─────────────────────────────
+
+    #[test]
+    fn gate_exact_threshold_score_passes() {
+        // 3x exactly should pass (>= 3.0)
+        let input = PublicationGateInput {
+            node_cases: vec![test_case("exact-n", 3000.0, 1000.0)],
+            bun_cases: vec![test_case("exact-b", 3000.0, 1000.0)],
+            native_coverage_progression: vec![NativeCoveragePoint {
+                recorded_at_utc: "2026-02-26T00:00:00Z".into(),
+                native_slots: 5,
+                total_slots: 10,
+            }],
+            replacement_lineage_ids: vec!["lin-exact".into()],
+        };
+        let decision = evaluate_publication_gate(&input, &test_context()).unwrap();
+        assert!(
+            decision.publish_allowed,
+            "exactly 3x should pass the gate"
+        );
+    }
+
+    // ── std::error::Error::source ───────────────────────────────────
+
+    #[test]
+    fn error_source_is_none_for_all_variants() {
+        use std::error::Error as StdError;
+        let variants: Vec<BenchmarkDenominatorError> = vec![
+            BenchmarkDenominatorError::EmptyCaseSet {
+                baseline: "node".into(),
+            },
+            BenchmarkDenominatorError::MissingCoverageProgression,
+            BenchmarkDenominatorError::MissingReplacementLineage,
+            BenchmarkDenominatorError::SerializationFailure("x".into()),
+        ];
+        for v in &variants {
+            // thiserror derives source(); for these leaf variants it should be None
+            assert!(v.source().is_none(), "expected source() == None for {v}");
+        }
     }
 }

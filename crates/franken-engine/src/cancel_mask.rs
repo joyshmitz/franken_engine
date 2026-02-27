@@ -1000,4 +1000,157 @@ mod tests {
         assert_eq!(policy, restored);
         assert!(restored.lab_mode);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 3: clone equality, JSON field presence, boundaries
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn clone_eq_mask_justification() {
+        let orig = MaskJustification {
+            operation_name: "checkpoint_write".to_string(),
+            expected_ops_hint: 99,
+            atomicity_reason: "must finalize atomically".to_string(),
+        };
+        let cloned = orig.clone();
+        assert_eq!(orig, cloned);
+    }
+
+    #[test]
+    fn clone_eq_mask_outcome() {
+        let variants = [
+            MaskOutcome::CleanRelease,
+            MaskOutcome::BoundExceeded,
+            MaskOutcome::CancelDeferred,
+        ];
+        for v in &variants {
+            let cloned = *v;
+            assert_eq!(*v, cloned);
+        }
+    }
+
+    #[test]
+    fn clone_eq_mask_error_all_variants() {
+        let variants = vec![
+            MaskError::NestingDenied,
+            MaskError::OperationNotAllowed {
+                operation_name: "some_op".to_string(),
+            },
+            MaskError::AlreadyReleased,
+        ];
+        for v in &variants {
+            let cloned = v.clone();
+            assert_eq!(*v, cloned);
+        }
+    }
+
+    #[test]
+    fn clone_eq_mask_bounds() {
+        let orig = MaskBounds { max_ops: 128 };
+        let cloned = orig;
+        assert_eq!(orig, cloned);
+    }
+
+    #[test]
+    fn clone_eq_mask_policy() {
+        let orig = MaskPolicy::standard();
+        let cloned = orig.clone();
+        assert_eq!(orig, cloned);
+        assert_eq!(orig.operation_bounds.len(), cloned.operation_bounds.len());
+    }
+
+    #[test]
+    fn json_field_presence_mask_justification() {
+        let just = checkpoint_justification();
+        let json = serde_json::to_string(&just).unwrap();
+        assert!(json.contains("\"operation_name\""));
+        assert!(json.contains("\"expected_ops_hint\""));
+        assert!(json.contains("\"atomicity_reason\""));
+    }
+
+    #[test]
+    fn json_field_presence_mask_event() {
+        let event = MaskEvent {
+            trace_id: "t1".to_string(),
+            region_id: "r1".to_string(),
+            mask_id: 7,
+            operation_name: "evidence_append".to_string(),
+            ops_executed: 3,
+            outcome: MaskOutcome::CleanRelease,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"trace_id\""));
+        assert!(json.contains("\"region_id\""));
+        assert!(json.contains("\"mask_id\""));
+        assert!(json.contains("\"operation_name\""));
+        assert!(json.contains("\"ops_executed\""));
+        assert!(json.contains("\"outcome\""));
+    }
+
+    #[test]
+    fn json_field_presence_mask_policy() {
+        let policy = MaskPolicy::standard();
+        let json = serde_json::to_string(&policy).unwrap();
+        assert!(json.contains("\"default_bounds\""));
+        assert!(json.contains("\"operation_bounds\""));
+        assert!(json.contains("\"lab_mode\""));
+    }
+
+    #[test]
+    fn mask_error_source_returns_none() {
+        use std::error::Error;
+        let variants: Vec<MaskError> = vec![
+            MaskError::NestingDenied,
+            MaskError::OperationNotAllowed {
+                operation_name: "op".to_string(),
+            },
+            MaskError::AlreadyReleased,
+        ];
+        for v in &variants {
+            assert!(v.source().is_none(), "MaskError::source() should be None");
+        }
+    }
+
+    #[test]
+    fn mask_bounds_max_ops_one_exceeds_on_first_tick() {
+        let mut policy = MaskPolicy::standard();
+        policy
+            .operation_bounds
+            .insert("tiny_op".to_string(), MaskBounds { max_ops: 1 });
+        let mut ctx = CancelMaskContext::new(policy, "t", "r");
+        ctx.create_mask(&MaskJustification {
+            operation_name: "tiny_op".to_string(),
+            expected_ops_hint: 1,
+            atomicity_reason: "single-tick atomic".to_string(),
+        })
+        .unwrap();
+        // First tick should exceed bound (ops_executed becomes 1 == max_ops)
+        assert!(!ctx.tick());
+        assert!(!ctx.is_masked());
+    }
+
+    #[test]
+    fn mask_outcome_serde_preserves_display() {
+        let variants = [
+            MaskOutcome::CleanRelease,
+            MaskOutcome::BoundExceeded,
+            MaskOutcome::CancelDeferred,
+        ];
+        for v in &variants {
+            let display_before = v.to_string();
+            let json = serde_json::to_string(v).unwrap();
+            let restored: MaskOutcome = serde_json::from_str(&json).unwrap();
+            assert_eq!(display_before, restored.to_string());
+        }
+    }
+
+    #[test]
+    fn mask_error_debug_determinism() {
+        let mk = || MaskError::OperationNotAllowed {
+            operation_name: "replay_op".to_string(),
+        };
+        let debug1 = format!("{:?}", mk());
+        let debug2 = format!("{:?}", mk());
+        assert_eq!(debug1, debug2, "Debug output must be deterministic across runs");
+    }
 }

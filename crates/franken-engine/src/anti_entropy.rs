@@ -2127,4 +2127,119 @@ mod tests {
         let restored: IbltCell = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(cell, restored);
     }
+
+    // ── Enrichment: serde roundtrip tests ────────────────────────────
+
+    #[test]
+    fn object_id_serde_roundtrip() {
+        let id = ObjectId {
+            content_hash: ContentHash::compute(b"test-obj"),
+            object_type: ReconcileObjectType::RevocationEvent,
+            epoch: test_epoch(),
+        };
+        let json = serde_json::to_string(&id).unwrap();
+        let back: ObjectId = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, id);
+    }
+
+    #[test]
+    fn object_id_serde_all_object_types() {
+        for otype in [
+            ReconcileObjectType::RevocationEvent,
+            ReconcileObjectType::CheckpointMarker,
+            ReconcileObjectType::EvidenceEntry,
+        ] {
+            let id = ObjectId {
+                content_hash: ContentHash::compute(b"variant"),
+                object_type: otype.clone(),
+                epoch: test_epoch(),
+            };
+            let json = serde_json::to_string(&id).unwrap();
+            let back: ObjectId = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, id);
+        }
+    }
+
+    #[test]
+    fn fallback_trigger_serde_roundtrip_all_variants() {
+        let variants = [
+            FallbackTrigger::PeelFailed {
+                remaining_cells: 42,
+            },
+            FallbackTrigger::VerificationFailed {
+                object_hash: "abc123".to_string(),
+                reason: "mismatch".to_string(),
+            },
+            FallbackTrigger::Timeout {
+                elapsed_ms: 5000,
+                slo_ms: 3000,
+            },
+            FallbackTrigger::MmrConsistencyFailure {
+                details: "root diverged".to_string(),
+            },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: FallbackTrigger = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, v);
+        }
+    }
+
+    #[test]
+    fn reconcile_config_serde_roundtrip() {
+        let cfg = ReconcileConfig::default();
+        let json = serde_json::to_string(&cfg).unwrap();
+        let back: ReconcileConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, cfg);
+    }
+
+    #[test]
+    fn reconcile_config_serde_roundtrip_custom() {
+        let cfg = ReconcileConfig {
+            iblt_cells: 512,
+            iblt_hashes: 5,
+            max_retries: 4,
+            retry_scale_factor: 3,
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        let back: ReconcileConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, cfg);
+    }
+
+    #[test]
+    fn fallback_config_serde_roundtrip() {
+        let cfg = FallbackConfig::default();
+        let json = serde_json::to_string(&cfg).unwrap();
+        let back: FallbackConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, cfg);
+    }
+
+    #[test]
+    fn fallback_config_serde_roundtrip_custom() {
+        let cfg = FallbackConfig {
+            max_fallback_rate_pct: 10,
+            monitoring_window: 200,
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        let back: FallbackConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, cfg);
+    }
+
+    #[test]
+    fn iblt_serde_roundtrip() {
+        let iblt = Iblt::new(8, 3);
+        let json = serde_json::to_string(&iblt).unwrap();
+        let back: Iblt = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, iblt);
+    }
+
+    #[test]
+    fn iblt_serde_roundtrip_with_inserts() {
+        let mut iblt = Iblt::new(16, 3);
+        iblt.insert(&make_hash(1));
+        iblt.insert(&make_hash(2));
+        let json = serde_json::to_string(&iblt).unwrap();
+        let back: Iblt = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, iblt);
+    }
 }

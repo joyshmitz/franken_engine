@@ -146,6 +146,7 @@ impl SyntaxTree {
 pub enum Statement {
     Import(ImportDeclaration),
     Export(ExportDeclaration),
+    VariableDeclaration(VariableDeclaration),
     Expression(ExpressionStatement),
 }
 
@@ -154,6 +155,7 @@ impl Statement {
         match self {
             Self::Import(v) => &v.span,
             Self::Export(v) => &v.span,
+            Self::VariableDeclaration(v) => &v.span,
             Self::Expression(v) => &v.span,
         }
     }
@@ -174,6 +176,16 @@ impl Statement {
                     CanonicalValue::String("export".to_string()),
                 );
                 map.insert("payload".to_string(), export.canonical_value());
+            }
+            Self::VariableDeclaration(variable_declaration) => {
+                map.insert(
+                    "kind".to_string(),
+                    CanonicalValue::String("variable_declaration".to_string()),
+                );
+                map.insert(
+                    "payload".to_string(),
+                    variable_declaration.canonical_value(),
+                );
             }
             Self::Expression(expr) => {
                 map.insert(
@@ -253,6 +265,70 @@ impl ExportDeclaration {
     pub fn canonical_value(&self) -> CanonicalValue {
         let mut map = BTreeMap::new();
         map.insert("kind".to_string(), self.kind.canonical_value());
+        map.insert("span".to_string(), self.span.canonical_value());
+        CanonicalValue::Map(map)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VariableDeclarationKind {
+    Var,
+}
+
+impl VariableDeclarationKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Var => "var",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VariableDeclarator {
+    pub name: String,
+    pub initializer: Option<Expression>,
+    pub span: SourceSpan,
+}
+
+impl VariableDeclarator {
+    pub fn canonical_value(&self) -> CanonicalValue {
+        let mut map = BTreeMap::new();
+        map.insert("name".to_string(), CanonicalValue::String(self.name.clone()));
+        map.insert(
+            "initializer".to_string(),
+            self.initializer
+                .as_ref()
+                .map(Expression::canonical_value)
+                .unwrap_or(CanonicalValue::Null),
+        );
+        map.insert("span".to_string(), self.span.canonical_value());
+        CanonicalValue::Map(map)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VariableDeclaration {
+    pub kind: VariableDeclarationKind,
+    pub declarations: Vec<VariableDeclarator>,
+    pub span: SourceSpan,
+}
+
+impl VariableDeclaration {
+    pub fn canonical_value(&self) -> CanonicalValue {
+        let mut map = BTreeMap::new();
+        map.insert(
+            "kind".to_string(),
+            CanonicalValue::String(self.kind.as_str().to_string()),
+        );
+        map.insert(
+            "declarations".to_string(),
+            CanonicalValue::Array(
+                self.declarations
+                    .iter()
+                    .map(VariableDeclarator::canonical_value)
+                    .collect(),
+            ),
+        );
         map.insert("span".to_string(), self.span.canonical_value());
         CanonicalValue::Map(map)
     }
@@ -453,6 +529,18 @@ mod tests {
         })
     }
 
+    fn make_var_stmt(name: &str, initializer: Option<Expression>) -> Statement {
+        Statement::VariableDeclaration(VariableDeclaration {
+            kind: VariableDeclarationKind::Var,
+            declarations: vec![VariableDeclarator {
+                name: name.to_string(),
+                initializer,
+                span: make_span(),
+            }],
+            span: make_span(),
+        })
+    }
+
     #[test]
     fn syntax_tree_empty_body_is_valid() {
         let tree = SyntaxTree {
@@ -605,6 +693,17 @@ mod tests {
             span: span.clone(),
         });
         assert_eq!(expr.span(), &span);
+
+        let var_decl = Statement::VariableDeclaration(VariableDeclaration {
+            kind: VariableDeclarationKind::Var,
+            declarations: vec![VariableDeclarator {
+                name: "value".to_string(),
+                initializer: Some(Expression::NumericLiteral(1)),
+                span: span.clone(),
+            }],
+            span: span.clone(),
+        });
+        assert_eq!(var_decl.span(), &span);
     }
 
     #[test]
@@ -653,6 +752,22 @@ mod tests {
                     map.get("kind"),
                     Some(&CanonicalValue::String("expression".to_string()))
                 );
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn statement_canonical_value_variable_has_kind_variable_declaration() {
+        let stmt = make_var_stmt("counter", Some(Expression::NumericLiteral(0)));
+        match stmt.canonical_value() {
+            CanonicalValue::Map(map) => {
+                assert_eq!(
+                    map.get("kind"),
+                    Some(&CanonicalValue::String("variable_declaration".to_string()))
+                );
+                assert!(map.contains_key("payload"));
+                assert!(map.contains_key("span"));
             }
             _ => panic!("expected map"),
         }
@@ -1081,5 +1196,170 @@ mod tests {
         let json = serde_json::to_string(&expr).expect("serialize");
         let restored: Expression = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(expr, restored);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 3: clone equality, JSON fields, roundtrip, boundary
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn source_span_clone_equality() {
+        let original = SourceSpan::new(10, 200, 3, 5, 12, 80);
+        let cloned = original.clone();
+        assert_eq!(original, cloned);
+    }
+
+    #[test]
+    fn import_declaration_clone_equality() {
+        let original = ImportDeclaration {
+            binding: Some("myDep".to_string()),
+            source: "some-package".to_string(),
+            span: make_span(),
+        };
+        let cloned = original.clone();
+        assert_eq!(original, cloned);
+    }
+
+    #[test]
+    fn export_declaration_clone_equality() {
+        let original = ExportDeclaration {
+            kind: ExportKind::Default(Expression::NumericLiteral(99)),
+            span: make_span(),
+        };
+        let cloned = original.clone();
+        assert_eq!(original, cloned);
+    }
+
+    #[test]
+    fn expression_statement_clone_equality() {
+        let original = ExpressionStatement {
+            expression: Expression::Await(Box::new(Expression::Identifier("f".to_string()))),
+            span: make_span(),
+        };
+        let cloned = original.clone();
+        assert_eq!(original, cloned);
+    }
+
+    #[test]
+    fn syntax_tree_clone_equality() {
+        let original = SyntaxTree {
+            goal: ParseGoal::Module,
+            body: vec![
+                Statement::Import(ImportDeclaration {
+                    binding: None,
+                    source: "effects".to_string(),
+                    span: make_span(),
+                }),
+                make_expr_stmt(Expression::BooleanLiteral(true)),
+            ],
+            span: make_span(),
+        };
+        let cloned = original.clone();
+        assert_eq!(original, cloned);
+        assert_eq!(original.canonical_hash(), cloned.canonical_hash());
+    }
+
+    #[test]
+    fn source_span_json_field_presence() {
+        let span = SourceSpan::new(1, 2, 3, 4, 5, 6);
+        let json = serde_json::to_string(&span).expect("serialize");
+        assert!(json.contains("\"start_offset\""));
+        assert!(json.contains("\"end_offset\""));
+        assert!(json.contains("\"start_line\""));
+        assert!(json.contains("\"start_column\""));
+        assert!(json.contains("\"end_line\""));
+        assert!(json.contains("\"end_column\""));
+    }
+
+    #[test]
+    fn import_declaration_json_field_presence() {
+        let import = ImportDeclaration {
+            binding: Some("x".to_string()),
+            source: "mod".to_string(),
+            span: make_span(),
+        };
+        let json = serde_json::to_string(&import).expect("serialize");
+        assert!(json.contains("\"binding\""));
+        assert!(json.contains("\"source\""));
+        assert!(json.contains("\"span\""));
+    }
+
+    #[test]
+    fn export_declaration_json_field_presence() {
+        let export = ExportDeclaration {
+            kind: ExportKind::NamedClause("foo".to_string()),
+            span: make_span(),
+        };
+        let json = serde_json::to_string(&export).expect("serialize");
+        assert!(json.contains("\"kind\""));
+        assert!(json.contains("\"span\""));
+    }
+
+    #[test]
+    fn export_declaration_serde_roundtrip() {
+        let export = ExportDeclaration {
+            kind: ExportKind::Default(Expression::StringLiteral("value".to_string())),
+            span: SourceSpan::new(0, 25, 1, 1, 1, 26),
+        };
+        let json = serde_json::to_string(&export).expect("serialize");
+        let restored: ExportDeclaration = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(export, restored);
+    }
+
+    #[test]
+    fn all_expression_canonical_kinds_are_unique() {
+        let expressions = vec![
+            Expression::Identifier("a".to_string()),
+            Expression::StringLiteral("a".to_string()),
+            Expression::NumericLiteral(0),
+            Expression::BooleanLiteral(true),
+            Expression::NullLiteral,
+            Expression::UndefinedLiteral,
+            Expression::Await(Box::new(Expression::NullLiteral)),
+            Expression::Raw("a".to_string()),
+        ];
+        let mut kinds = std::collections::BTreeSet::new();
+        for expr in &expressions {
+            match expr.canonical_value() {
+                CanonicalValue::Map(map) => {
+                    if let Some(CanonicalValue::String(k)) = map.get("kind") {
+                        assert!(
+                            kinds.insert(k.clone()),
+                            "duplicate canonical kind: {k}"
+                        );
+                    } else {
+                        panic!("missing kind key");
+                    }
+                }
+                _ => panic!("expected map"),
+            }
+        }
+        assert_eq!(kinds.len(), 8);
+    }
+
+    #[test]
+    fn source_span_max_offsets_boundary() {
+        let span = SourceSpan::new(u64::MAX, u64::MAX, u64::MAX, u64::MAX, u64::MAX, u64::MAX);
+        let json = serde_json::to_string(&span).expect("serialize");
+        let restored: SourceSpan = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(span, restored);
+    }
+
+    #[test]
+    fn syntax_tree_body_order_affects_hash() {
+        let span = make_span();
+        let stmt_a = make_expr_stmt(Expression::Identifier("a".to_string()));
+        let stmt_b = make_expr_stmt(Expression::Identifier("b".to_string()));
+        let tree_ab = SyntaxTree {
+            goal: ParseGoal::Script,
+            body: vec![stmt_a.clone(), stmt_b.clone()],
+            span: span.clone(),
+        };
+        let tree_ba = SyntaxTree {
+            goal: ParseGoal::Script,
+            body: vec![stmt_b, stmt_a],
+            span,
+        };
+        assert_ne!(tree_ab.canonical_hash(), tree_ba.canonical_hash());
     }
 }

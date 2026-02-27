@@ -1986,4 +1986,353 @@ mod tests {
         .unwrap();
         assert!(engine.hypotheses_for_proof(&fake_id).is_empty());
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: canonical_bytes content
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn proof_input_canonical_bytes_includes_all_fields() {
+        let proof = make_default_proof(ProofType::PlasCapabilityWitness);
+        let bytes = proof.canonical_bytes();
+
+        // Must contain proof_id bytes, proof_type byte, epoch, start_ns, end_ns,
+        // canonical_hash, and linked_policy_id.
+        assert!(bytes.len() > proof.proof_id.as_bytes().len());
+        // Starts with proof_id bytes.
+        assert_eq!(
+            &bytes[..proof.proof_id.as_bytes().len()],
+            proof.proof_id.as_bytes()
+        );
+        // Ends with linked_policy_id bytes.
+        assert_eq!(
+            &bytes[bytes.len() - proof.linked_policy_id.len()..],
+            proof.linked_policy_id.as_bytes()
+        );
+    }
+
+    #[test]
+    fn hypothesis_canonical_bytes_includes_source_proof_ids() {
+        let mut engine = test_engine();
+        let proof = make_default_proof(ProofType::PlasCapabilityWitness);
+        let hypotheses = engine.ingest_proof(proof.clone(), 1000).unwrap();
+
+        let bytes = hypotheses[0].canonical_bytes();
+        // Should include hypothesis_id bytes and source proof_id bytes.
+        let hid_len = hypotheses[0].hypothesis_id.as_bytes().len();
+        let pid_len = proof.proof_id.as_bytes().len();
+        assert!(bytes.len() >= hid_len + pid_len);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: hypothesis properties per proof type
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn plas_hypothesis_speedup_matches_config() {
+        let mut engine = test_engine();
+        let proof = make_default_proof(ProofType::PlasCapabilityWitness);
+        let hypotheses = engine.ingest_proof(proof, 1000).unwrap();
+
+        for h in &hypotheses {
+            assert_eq!(h.expected_speedup_millionths, 1_200_000);
+        }
+    }
+
+    #[test]
+    fn ifc_hypothesis_optimization_class_and_risk() {
+        let mut engine = test_engine();
+        let proof = make_default_proof(ProofType::IfcFlowProof);
+        let hypotheses = engine.ingest_proof(proof, 1000).unwrap();
+
+        assert_eq!(hypotheses.len(), 1);
+        assert_eq!(
+            hypotheses[0].optimization_class,
+            OptimizationClass::LayoutSpecialization
+        );
+        assert_eq!(hypotheses[0].risk, RiskLevel::High);
+        assert_eq!(hypotheses[0].expected_speedup_millionths, 1_100_000);
+    }
+
+    #[test]
+    fn replay_hypothesis_optimization_class_and_speedup() {
+        let mut engine = test_engine();
+        let proof = make_default_proof(ProofType::ReplaySequenceMotif);
+        let hypotheses = engine.ingest_proof(proof, 1000).unwrap();
+
+        assert_eq!(hypotheses.len(), 1);
+        assert_eq!(
+            hypotheses[0].optimization_class,
+            OptimizationClass::Superinstruction
+        );
+        assert_eq!(hypotheses[0].expected_speedup_millionths, 1_500_000);
+        assert_eq!(hypotheses[0].risk, RiskLevel::Medium);
+    }
+
+    #[test]
+    fn plas_hypothesis_classes_dce_and_dispatch() {
+        let mut engine = test_engine();
+        let proof = make_default_proof(ProofType::PlasCapabilityWitness);
+        let hypotheses = engine.ingest_proof(proof, 1000).unwrap();
+
+        assert_eq!(hypotheses[0].risk, RiskLevel::Low);
+        assert_eq!(
+            hypotheses[0].optimization_class,
+            OptimizationClass::TraceSpecialization
+        );
+        assert_eq!(hypotheses[1].risk, RiskLevel::Medium);
+        assert_eq!(
+            hypotheses[1].optimization_class,
+            OptimizationClass::DevirtualizedHostcallFastPath
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: empty policy bypasses check
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn empty_active_policy_accepts_any_proof_policy() {
+        let mut config = test_config();
+        config.active_policy_id = String::new();
+        let mut engine = ProofIngestionEngine::new(test_epoch(), config);
+
+        let proof = make_proof(
+            ProofType::PlasCapabilityWitness,
+            b"arbitrary",
+            "any-policy-123",
+        );
+        // Should succeed despite mismatched policy, because engine has empty active_policy_id.
+        assert!(engine.ingest_proof(proof, 1000).is_ok());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: receipt linkage and determinism
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn receipt_proof_input_ids_match_hypothesis_sources() {
+        let mut engine = test_engine();
+        let proof = make_default_proof(ProofType::PlasCapabilityWitness);
+        let proof_id = proof.proof_id.clone();
+        let hypotheses = engine.ingest_proof(proof, 1000).unwrap();
+
+        let receipt = engine
+            .emit_receipt(
+                &hypotheses[0].hypothesis_id,
+                ContentHash::compute(b"tw"),
+                ContentHash::compute(b"ee"),
+                ContentHash::compute(b"rt"),
+                ActivationStageLocal::Ramp,
+                2000,
+            )
+            .unwrap();
+
+        assert!(receipt.proof_input_ids.contains(&proof_id));
+        assert_eq!(receipt.proof_input_ids.len(), 1);
+    }
+
+    #[test]
+    fn receipt_signature_deterministic() {
+        let mut engine1 = test_engine();
+        let proof1 = make_default_proof(ProofType::IfcFlowProof);
+        let hyps1 = engine1.ingest_proof(proof1, 1000).unwrap();
+        let r1 = engine1
+            .emit_receipt(
+                &hyps1[0].hypothesis_id,
+                ContentHash::compute(b"tw"),
+                ContentHash::compute(b"ee"),
+                ContentHash::compute(b"rt"),
+                ActivationStageLocal::Canary,
+                2000,
+            )
+            .unwrap();
+
+        let mut engine2 = test_engine();
+        let proof2 = make_default_proof(ProofType::IfcFlowProof);
+        let hyps2 = engine2.ingest_proof(proof2, 1000).unwrap();
+        let r2 = engine2
+            .emit_receipt(
+                &hyps2[0].hypothesis_id,
+                ContentHash::compute(b"tw"),
+                ContentHash::compute(b"ee"),
+                ContentHash::compute(b"rt"),
+                ActivationStageLocal::Canary,
+                2000,
+            )
+            .unwrap();
+
+        assert_eq!(r1.receipt_id, r2.receipt_id);
+        assert_eq!(r1.signature, r2.signature);
+    }
+
+    #[test]
+    fn multiple_receipts_from_same_hypothesis() {
+        let mut engine = test_engine();
+        let proof = make_default_proof(ProofType::ReplaySequenceMotif);
+        let hypotheses = engine.ingest_proof(proof, 1000).unwrap();
+        let hyp_id = hypotheses[0].hypothesis_id.clone();
+
+        let r1 = engine
+            .emit_receipt(
+                &hyp_id,
+                ContentHash::compute(b"tw1"),
+                ContentHash::compute(b"ee1"),
+                ContentHash::compute(b"rt1"),
+                ActivationStageLocal::Shadow,
+                2000,
+            )
+            .unwrap();
+
+        let r2 = engine
+            .emit_receipt(
+                &hyp_id,
+                ContentHash::compute(b"tw2"),
+                ContentHash::compute(b"ee2"),
+                ContentHash::compute(b"rt2"),
+                ActivationStageLocal::Canary,
+                3000,
+            )
+            .unwrap();
+
+        // Different timestamps produce different receipt IDs.
+        assert_ne!(r1.receipt_id, r2.receipt_id);
+        assert_eq!(engine.receipts().len(), 2);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: receipt emission event
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn receipt_emission_generates_event() {
+        let mut engine = test_engine();
+        let proof = make_default_proof(ProofType::IfcFlowProof);
+        let hypotheses = engine.ingest_proof(proof, 1000).unwrap();
+        let pre_event_count = engine.events().len();
+
+        let receipt = engine
+            .emit_receipt(
+                &hypotheses[0].hypothesis_id,
+                ContentHash::compute(b"tw"),
+                ContentHash::compute(b"ee"),
+                ContentHash::compute(b"rt"),
+                ActivationStageLocal::Default,
+                2000,
+            )
+            .unwrap();
+
+        // One new event for receipt emission.
+        assert_eq!(engine.events().len(), pre_event_count + 1);
+        let last_event = engine.events().last().unwrap();
+        assert!(matches!(
+            &last_event.event_type,
+            IngestionEventType::SpecializationReceiptEmitted {
+                receipt_id,
+                hypothesis_id,
+            } if *receipt_id == receipt.receipt_id
+                && *hypothesis_id == hypotheses[0].hypothesis_id
+        ));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: validity boundary
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn proof_valid_at_exact_expiry_boundary() {
+        let mut engine = test_engine();
+        // validity_end_ns = 5000, current_ns = 5000 — condition is current_ns > validity_end_ns,
+        // so exactly equal should still be accepted.
+        let proof = create_proof_input(
+            ProofType::PlasCapabilityWitness,
+            test_epoch(),
+            0,
+            5000,
+            "policy-001",
+            b"boundary-test",
+            &test_key(),
+        )
+        .unwrap();
+
+        assert!(engine.ingest_proof(proof, 5000).is_ok());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: IngestionEventType serde for all 6 variants
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn ingestion_event_type_serde_all_variants() {
+        let fake_id = engine_object_id::derive_id(
+            ObjectDomain::PolicyObject,
+            "test",
+            &SchemaId::from_definition(b"fake"),
+            b"evt",
+        )
+        .unwrap();
+
+        let variants = vec![
+            IngestionEventType::ProofSubmitted {
+                proof_id: fake_id.clone(),
+                proof_type: ProofType::IfcFlowProof,
+            },
+            IngestionEventType::ProofValidated {
+                proof_id: fake_id.clone(),
+                status: ProofValidationStatus::Accepted,
+            },
+            IngestionEventType::HypothesisGenerated {
+                hypothesis_id: fake_id.clone(),
+                kind: HypothesisKind::SuperinstructionFusion,
+                source_proof_count: 2,
+            },
+            IngestionEventType::ProofInvalidated {
+                proof_id: fake_id.clone(),
+                reason: "epoch transition".to_string(),
+            },
+            IngestionEventType::HypothesisInvalidated {
+                hypothesis_id: fake_id.clone(),
+                reason: "source revoked".to_string(),
+            },
+            IngestionEventType::SpecializationReceiptEmitted {
+                receipt_id: fake_id.clone(),
+                hypothesis_id: fake_id.clone(),
+            },
+        ];
+
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let restored: IngestionEventType = serde_json::from_str(&json).unwrap();
+            assert_eq!(&restored, v);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: error trait
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn ingestion_error_implements_std_error() {
+        let err = IngestionError::IdDerivation("test".to_string());
+        let _: &dyn std::error::Error = &err;
+        // source() is None for all variants (no #[from] or #[source] attributes).
+        assert!(std::error::Error::source(&err).is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: proof type ordering
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn proof_type_ord_is_declaration_order() {
+        assert!(ProofType::PlasCapabilityWitness < ProofType::IfcFlowProof);
+        assert!(ProofType::IfcFlowProof < ProofType::ReplaySequenceMotif);
+    }
+
+    #[test]
+    fn hypothesis_kind_ord_is_declaration_order() {
+        assert!(HypothesisKind::DeadCodeElimination < HypothesisKind::DispatchSpecialization);
+        assert!(HypothesisKind::DispatchSpecialization < HypothesisKind::FlowCheckElision);
+        assert!(HypothesisKind::FlowCheckElision < HypothesisKind::SuperinstructionFusion);
+    }
 }

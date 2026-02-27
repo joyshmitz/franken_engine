@@ -1281,4 +1281,144 @@ mod tests {
         let back: DedupEntry = serde_json::from_str(&json).unwrap();
         assert_eq!(entry, back);
     }
+
+    // -- Enrichment: clone equality --
+
+    #[test]
+    fn idempotency_key_clone_equality() {
+        let input = test_derivation_input();
+        let key = derive_idempotency_key(&test_session_key(), test_epoch(), &input);
+        let cloned = key.clone();
+        assert_eq!(key, cloned);
+        assert_eq!(key.to_hex(), cloned.to_hex());
+    }
+
+    #[test]
+    fn key_derivation_input_clone_equality() {
+        let input = test_derivation_input();
+        let cloned = input.clone();
+        assert_eq!(input, cloned);
+    }
+
+    #[test]
+    fn dedup_entry_clone_equality() {
+        let entry = DedupEntry {
+            status: DedupStatus::Completed {
+                result_hash: test_result_hash(),
+            },
+            computation_name: "test_comp".into(),
+            created_at_ticks: 999,
+            epoch: test_epoch(),
+        };
+        let cloned = entry.clone();
+        assert_eq!(entry, cloned);
+    }
+
+    #[test]
+    fn retry_config_clone_equality() {
+        let config = RetryConfig {
+            max_retries: 7,
+            entry_ttl_ticks: 1234,
+        };
+        let cloned = config.clone();
+        assert_eq!(config, cloned);
+    }
+
+    #[test]
+    fn idempotency_event_json_field_presence() {
+        let event = IdempotencyEvent {
+            idempotency_key_hash: "aabb".into(),
+            computation_name: "comp".into(),
+            attempt: 2,
+            dedup_result: "new".into(),
+            trace_id: "t-1".into(),
+            epoch_id: 5,
+            event: "dedup_check".into(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"idempotency_key_hash\""));
+        assert!(json.contains("\"computation_name\""));
+        assert!(json.contains("\"attempt\""));
+        assert!(json.contains("\"dedup_result\""));
+        assert!(json.contains("\"trace_id\""));
+        assert!(json.contains("\"epoch_id\""));
+        assert!(json.contains("\"event\""));
+    }
+
+    #[test]
+    fn dedup_entry_json_field_presence() {
+        let entry = DedupEntry {
+            status: DedupStatus::InProgress,
+            computation_name: "c".into(),
+            created_at_ticks: 0,
+            epoch: test_epoch(),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(json.contains("\"status\""));
+        assert!(json.contains("\"computation_name\""));
+        assert!(json.contains("\"created_at_ticks\""));
+        assert!(json.contains("\"epoch\""));
+    }
+
+    #[test]
+    fn key_derivation_input_json_field_presence() {
+        let input = test_derivation_input();
+        let json = serde_json::to_string(&input).unwrap();
+        assert!(json.contains("\"computation_name\""));
+        assert!(json.contains("\"input_hash\""));
+        assert!(json.contains("\"trace_id\""));
+        assert!(json.contains("\"attempt_number\""));
+    }
+
+    #[test]
+    fn idempotency_error_source_is_none() {
+        let err = IdempotencyError::EntryNotFound {
+            key_hex: "abc".into(),
+        };
+        assert!(std::error::Error::source(&err).is_none());
+    }
+
+    #[test]
+    fn idempotency_key_ord_deterministic() {
+        let mut input_a = test_derivation_input();
+        input_a.trace_id = "trace-a".into();
+        let mut input_b = test_derivation_input();
+        input_b.trace_id = "trace-b".into();
+        let ka = derive_idempotency_key(&test_session_key(), test_epoch(), &input_a);
+        let kb = derive_idempotency_key(&test_session_key(), test_epoch(), &input_b);
+        let cmp1 = ka.cmp(&kb);
+        let cmp2 = ka.cmp(&kb);
+        assert_eq!(cmp1, cmp2);
+        assert_ne!(ka, kb);
+    }
+
+    #[test]
+    fn store_initial_state_empty() {
+        let store = IdempotencyStore::new(test_epoch(), test_session_key());
+        assert_eq!(store.entry_count(), 0);
+        assert!(store.result_counts().is_empty());
+    }
+
+    #[test]
+    fn evict_all_expired_no_entries_is_noop() {
+        let mut store = IdempotencyStore::new(test_epoch(), test_session_key());
+        store.evict_all_expired(999_999);
+        assert_eq!(store.entry_count(), 0);
+    }
+
+    #[test]
+    fn mark_completed_then_check_returns_cached() {
+        let mut store = IdempotencyStore::new(test_epoch(), test_session_key());
+        let input = test_derivation_input();
+        let key = store.derive_key(&input);
+        store.check_and_claim(&key, &input, 100).unwrap();
+        let rh = ContentHash::compute(b"specific-result");
+        store.mark_completed(&key, rh.clone()).unwrap();
+        let result = store.check_and_claim(&key, &input, 101).unwrap();
+        if let DedupResult::CachedResult { result_hash } = result {
+            assert_eq!(result_hash, rh);
+        } else {
+            panic!("expected CachedResult after mark_completed");
+        }
+    }
 }
