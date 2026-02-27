@@ -3396,4 +3396,73 @@ mod tests {
         };
         assert_ne!(h1, h3);
     }
+
+    // ── Enrichment: serde roundtrip tests ────────────────────────────
+
+    #[test]
+    fn shared_payload_descriptor_serde_roundtrip_alt() {
+        let desc = SharedPayloadDescriptor {
+            region_id: 42,
+            payload_len: 1024,
+            payload_hash: ContentHash::compute(b"shared-payload"),
+        };
+        let json = serde_json::to_string(&desc).unwrap();
+        let back: SharedPayloadDescriptor = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, desc);
+    }
+
+    #[test]
+    fn backpressure_signal_serde_roundtrip_alt() {
+        let sig = BackpressureSignal {
+            pending_messages: 100,
+            limit: 50,
+        };
+        let json = serde_json::to_string(&sig).unwrap();
+        let back: BackpressureSignal = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, sig);
+    }
+
+    #[test]
+    fn channel_payload_serde_roundtrip_all_variants() {
+        let variants = [
+            ChannelPayload::Inline(vec![1, 2, 3, 4]),
+            ChannelPayload::Shared(SharedPayloadDescriptor {
+                region_id: 7,
+                payload_len: 256,
+                payload_hash: ContentHash::compute(b"shared"),
+            }),
+            ChannelPayload::Backpressure(BackpressureSignal {
+                pending_messages: 50,
+                limit: 25,
+            }),
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: ChannelPayload = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, v);
+        }
+    }
+
+    #[test]
+    fn session_config_serde_roundtrip_custom() {
+        let cfg = SessionConfig {
+            max_lifetime_ticks: 5000,
+            max_messages: 200,
+            max_buffered_messages: 32,
+            sequence_policy: SequencePolicy::Monotonic,
+            replay_drop_threshold: 10,
+            replay_drop_window_ticks: 500,
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        let back: SessionConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, cfg);
+    }
+
+    #[test]
+    fn channel_payload_inline_empty() {
+        let p = ChannelPayload::Inline(vec![]);
+        let json = serde_json::to_string(&p).unwrap();
+        let back: ChannelPayload = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, p);
+    }
 }

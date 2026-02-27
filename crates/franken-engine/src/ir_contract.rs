@@ -3281,4 +3281,313 @@ mod tests {
         let cv2 = event.canonical_value();
         assert_eq!(cv1, cv2);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: PearlTower 2026-02-26 session 2
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn schema_version_current_value() {
+        let v = IrSchemaVersion::CURRENT;
+        assert_eq!(v.major, 0);
+        assert_eq!(v.minor, 1);
+        assert_eq!(v.patch, 0);
+    }
+
+    #[test]
+    fn reg_range_canonical_value_content() {
+        let rr = RegRange { start: 7, count: 3 };
+        let cv = rr.canonical_value();
+        if let CanonicalValue::Map(m) = cv {
+            assert_eq!(m.get("start"), Some(&CanonicalValue::U64(7)));
+            assert_eq!(m.get("count"), Some(&CanonicalValue::U64(3)));
+            assert_eq!(m.len(), 2);
+        } else {
+            panic!("expected Map");
+        }
+    }
+
+    #[test]
+    fn ir3_function_desc_canonical_value_with_name() {
+        let desc = Ir3FunctionDesc {
+            entry: 10,
+            arity: 2,
+            frame_size: 8,
+            name: Some("main".to_string()),
+        };
+        let cv = desc.canonical_value();
+        if let CanonicalValue::Map(m) = cv {
+            assert_eq!(m.get("entry"), Some(&CanonicalValue::U64(10)));
+            assert_eq!(m.get("arity"), Some(&CanonicalValue::U64(2)));
+            assert_eq!(m.get("frame_size"), Some(&CanonicalValue::U64(8)));
+            assert_eq!(
+                m.get("name"),
+                Some(&CanonicalValue::String("main".to_string()))
+            );
+        } else {
+            panic!("expected Map");
+        }
+    }
+
+    #[test]
+    fn ir3_function_desc_canonical_value_none_name_is_null() {
+        let desc = Ir3FunctionDesc {
+            entry: 0,
+            arity: 0,
+            frame_size: 4,
+            name: None,
+        };
+        let cv = desc.canonical_value();
+        if let CanonicalValue::Map(m) = cv {
+            assert_eq!(m.get("name"), Some(&CanonicalValue::Null));
+        } else {
+            panic!("expected Map");
+        }
+    }
+
+    #[test]
+    fn specialization_linkage_canonical_value_content() {
+        let sl = SpecializationLinkage {
+            proof_input_ids: vec!["p1".to_string(), "p2".to_string()],
+            optimization_class: "hoist".to_string(),
+            validity_epoch: 42,
+            rollback_token: ContentHash::compute(b"rb"),
+        };
+        let cv = sl.canonical_value();
+        if let CanonicalValue::Map(m) = cv {
+            assert_eq!(
+                m.get("optimization_class"),
+                Some(&CanonicalValue::String("hoist".to_string()))
+            );
+            assert_eq!(m.get("validity_epoch"), Some(&CanonicalValue::U64(42)));
+            if let Some(CanonicalValue::Array(ids)) = m.get("proof_input_ids") {
+                assert_eq!(ids.len(), 2);
+                assert_eq!(ids[0], CanonicalValue::String("p1".to_string()));
+                assert_eq!(ids[1], CanonicalValue::String("p2".to_string()));
+            } else {
+                panic!("expected proof_input_ids Array");
+            }
+            assert!(m.contains_key("rollback_token"));
+        } else {
+            panic!("expected Map");
+        }
+    }
+
+    #[test]
+    fn hostcall_decision_record_canonical_value_content() {
+        let hdr = HostcallDecisionRecord {
+            seq: 5,
+            capability: CapabilityTag("fs:read".to_string()),
+            allowed: false,
+            instruction_index: 20,
+        };
+        let cv = hdr.canonical_value();
+        if let CanonicalValue::Map(m) = cv {
+            assert_eq!(m.get("seq"), Some(&CanonicalValue::U64(5)));
+            assert_eq!(m.get("allowed"), Some(&CanonicalValue::Bool(false)));
+            assert_eq!(m.get("instruction_index"), Some(&CanonicalValue::U64(20)));
+            assert!(m.contains_key("capability"));
+        } else {
+            panic!("expected Map");
+        }
+    }
+
+    #[test]
+    fn ir3_instruction_canonical_op_strings() {
+        let cases: Vec<(Ir3Instruction, &str)> = vec![
+            (Ir3Instruction::LoadInt { dst: 0, value: 1 }, "load_int"),
+            (
+                Ir3Instruction::LoadStr {
+                    dst: 0,
+                    pool_index: 0,
+                },
+                "load_str",
+            ),
+            (
+                Ir3Instruction::LoadBool {
+                    dst: 0,
+                    value: true,
+                },
+                "load_bool",
+            ),
+            (Ir3Instruction::LoadNull { dst: 0 }, "load_null"),
+            (Ir3Instruction::LoadUndefined { dst: 0 }, "load_undefined"),
+            (
+                Ir3Instruction::Add {
+                    dst: 0,
+                    lhs: 1,
+                    rhs: 2,
+                },
+                "add",
+            ),
+            (
+                Ir3Instruction::Sub {
+                    dst: 0,
+                    lhs: 1,
+                    rhs: 2,
+                },
+                "sub",
+            ),
+            (
+                Ir3Instruction::Mul {
+                    dst: 0,
+                    lhs: 1,
+                    rhs: 2,
+                },
+                "mul",
+            ),
+            (
+                Ir3Instruction::Div {
+                    dst: 0,
+                    lhs: 1,
+                    rhs: 2,
+                },
+                "div",
+            ),
+            (Ir3Instruction::Move { dst: 0, src: 1 }, "move"),
+            (Ir3Instruction::Jump { target: 0 }, "jump"),
+            (Ir3Instruction::JumpIf { cond: 0, target: 1 }, "jump_if"),
+            (
+                Ir3Instruction::Call {
+                    callee: 0,
+                    args: RegRange { start: 1, count: 1 },
+                    dst: 2,
+                },
+                "call",
+            ),
+            (Ir3Instruction::Return { value: 0 }, "return"),
+            (
+                Ir3Instruction::HostCall {
+                    capability: CapabilityTag("x".to_string()),
+                    args: RegRange { start: 0, count: 0 },
+                    dst: 1,
+                },
+                "hostcall",
+            ),
+            (
+                Ir3Instruction::GetProperty {
+                    obj: 0,
+                    key: 1,
+                    dst: 2,
+                },
+                "get_property",
+            ),
+            (
+                Ir3Instruction::SetProperty {
+                    obj: 0,
+                    key: 1,
+                    val: 2,
+                },
+                "set_property",
+            ),
+            (Ir3Instruction::Halt, "halt"),
+        ];
+        for (instr, expected_op) in &cases {
+            let cv = instr.canonical_value();
+            if let CanonicalValue::Map(m) = cv {
+                assert_eq!(
+                    m.get("op"),
+                    Some(&CanonicalValue::String(expected_op.to_string())),
+                    "op mismatch for {:?}",
+                    instr,
+                );
+            } else {
+                panic!("expected Map for {:?}", instr);
+            }
+        }
+    }
+
+    #[test]
+    fn ir4_new_defaults() {
+        let ir3_hash = ContentHash::compute(b"ir3");
+        let ir4 = Ir4Module::new(ir3_hash.clone(), "defaults.js");
+        assert_eq!(ir4.outcome, ExecutionOutcome::Completed);
+        assert!(ir4.events.is_empty());
+        assert!(ir4.hostcall_decisions.is_empty());
+        assert_eq!(ir4.instructions_executed, 0);
+        assert_eq!(ir4.duration_ticks, 0);
+        assert!(ir4.active_specialization_ids.is_empty());
+        assert_eq!(ir4.executed_ir3_hash, ir3_hash);
+    }
+
+    #[test]
+    fn ir1_content_hash_changes_with_ops() {
+        let src = ContentHash::compute(b"src");
+        let ir1a = Ir1Module::new(src.clone(), "a.js");
+        let mut ir1b = Ir1Module::new(src, "a.js");
+        ir1b.ops.push(Ir1Op::Nop);
+        assert_ne!(ir1a.content_hash(), ir1b.content_hash());
+    }
+
+    #[test]
+    fn ir3_content_hash_changes_with_instructions() {
+        let src = ContentHash::compute(b"src");
+        let ir3a = Ir3Module::new(src.clone(), "a.js");
+        let mut ir3b = Ir3Module::new(src, "a.js");
+        ir3b.instructions.push(Ir3Instruction::Halt);
+        assert_ne!(ir3a.content_hash(), ir3b.content_hash());
+    }
+
+    #[test]
+    fn ir4_content_hash_changes_with_outcome() {
+        let ir3_hash = ContentHash::compute(b"ir3");
+        let ir4a = Ir4Module::new(ir3_hash.clone(), "a.js");
+        let mut ir4b = Ir4Module::new(ir3_hash, "a.js");
+        ir4b.outcome = ExecutionOutcome::Timeout;
+        assert_ne!(ir4a.content_hash(), ir4b.content_hash());
+    }
+
+    #[test]
+    fn verifier_drain_events_clears_state() {
+        let tree = make_syntax_tree();
+        let ir0 = Ir0Module::from_syntax_tree(tree, "drain.js");
+        let hash = ir0.content_hash();
+
+        let mut verifier = IrVerifier::new();
+        verifier.verify_ir0(&ir0, &hash, "t-drain").unwrap();
+        assert_eq!(verifier.drain_events().len(), 1);
+        // Second drain is empty
+        assert!(verifier.drain_events().is_empty());
+    }
+
+    #[test]
+    fn ir_header_canonical_value_content() {
+        let header = IrHeader {
+            schema_version: IrSchemaVersion::CURRENT,
+            level: IrLevel::Ir2,
+            source_hash: Some(ContentHash::compute(b"src")),
+            source_label: "test.js".to_string(),
+        };
+        let cv = header.canonical_value();
+        if let CanonicalValue::Map(m) = cv {
+            assert_eq!(
+                m.get("source_label"),
+                Some(&CanonicalValue::String("test.js".to_string()))
+            );
+            assert_eq!(
+                m.get("level"),
+                Some(&CanonicalValue::String("ir2".to_string()))
+            );
+            assert!(m.contains_key("schema_version"));
+            assert!(m.contains_key("source_hash"));
+        } else {
+            panic!("expected Map");
+        }
+    }
+
+    #[test]
+    fn ir_header_canonical_value_none_source_hash_is_null() {
+        let header = IrHeader {
+            schema_version: IrSchemaVersion::CURRENT,
+            level: IrLevel::Ir0,
+            source_hash: None,
+            source_label: "test.js".to_string(),
+        };
+        let cv = header.canonical_value();
+        if let CanonicalValue::Map(m) = cv {
+            assert_eq!(m.get("source_hash"), Some(&CanonicalValue::Null));
+        } else {
+            panic!("expected Map");
+        }
+    }
 }

@@ -1785,4 +1785,39 @@ mod tests {
         .unwrap();
         assert_ne!(c1.ceremony_id, c2.ceremony_id);
     }
+
+    // ── Enrichment: serde roundtrip tests ────────────────────────────
+
+    #[test]
+    fn threshold_scope_serde_roundtrip_all_variants() {
+        for scope in ThresholdScope::ALL {
+            let json = serde_json::to_string(scope).unwrap();
+            let back: ThresholdScope = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, *scope);
+        }
+    }
+
+    #[test]
+    fn share_holder_id_serde_roundtrip() {
+        let id = ShareHolderId([42u8; 32]);
+        let json = serde_json::to_string(&id).unwrap();
+        let back: ShareHolderId = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, id);
+    }
+
+    #[test]
+    fn share_holder_id_display_hex_prefix() {
+        let id = ShareHolderId([0xABu8; 32]);
+        let s = id.to_string();
+        assert!(s.starts_with("share:"));
+        assert!(s.len() > 6); // "share:" + hex
+    }
+
+    #[test]
+    fn share_holder_id_display_zeros() {
+        let id = ShareHolderId([0u8; 32]);
+        let s = id.to_string();
+        assert!(s.starts_with("share:"));
+        assert!(s.contains("0000"));
+    }
 }
