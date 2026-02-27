@@ -3513,4 +3513,134 @@ mod tests {
         let decoded: GovernancePipelineConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(config, decoded);
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 session 8 --
+
+    #[test]
+    fn policy_source_ord_ordering() {
+        let git = PolicySource::GitRepo {
+            repo_url: "https://r".to_string(),
+            commit_sha: "a".repeat(40),
+            file_path: "p.toml".to_string(),
+        };
+        let fs = PolicySource::FileSystem {
+            absolute_path: "/p".to_string(),
+        };
+        let toml = PolicySource::InlineToml {
+            label: "t".to_string(),
+        };
+        let json = PolicySource::InlineJson {
+            label: "j".to_string(),
+        };
+        assert!(git < fs, "GitRepo < FileSystem");
+        assert!(fs < toml, "FileSystem < InlineToml");
+        assert!(toml < json, "InlineToml < InlineJson");
+    }
+
+    #[test]
+    fn policy_source_display_inline_json() {
+        let src = PolicySource::InlineJson {
+            label: "my_ctx".to_string(),
+        };
+        assert_eq!(format!("{src}"), "inline_json:my_ctx");
+    }
+
+    #[test]
+    fn audit_export_format_ord_ordering() {
+        assert!(
+            AuditExportFormat::JsonLines < AuditExportFormat::Csv,
+            "JsonLines < Csv"
+        );
+        assert!(
+            AuditExportFormat::Csv < AuditExportFormat::Parquet,
+            "Csv < Parquet"
+        );
+        assert!(
+            AuditExportFormat::Parquet < AuditExportFormat::CompliancePdf,
+            "Parquet < CompliancePdf"
+        );
+    }
+
+    #[test]
+    fn export_id_differs_by_format() {
+        let entries = vec![make_entry("policy_update", 10)];
+        let req_jl = make_export_request(AuditExportFormat::JsonLines, 0, 100);
+        let result_jl = export_audit_evidence(req_jl, entries.clone(), ts(200)).unwrap();
+        let req_csv = make_export_request(AuditExportFormat::Csv, 0, 100);
+        let result_csv = export_audit_evidence(req_csv, entries, ts(200)).unwrap();
+        assert_ne!(
+            result_jl.export_id, result_csv.export_id,
+            "different formats should produce different export IDs"
+        );
+    }
+
+    #[test]
+    fn unsatisfied_count_is_zero_when_all_satisfied() {
+        let entries = full_evidence_set();
+        let (_bundle, contract) = generate_compliance_bundle(
+            ComplianceFramework::Soc2,
+            ts(0),
+            ts(1000),
+            entries,
+            ts(2000),
+        )
+        .unwrap();
+        assert_eq!(
+            contract.unsatisfied_count(),
+            0,
+            "with full evidence all SOC 2 controls should be satisfied"
+        );
+    }
+
+    #[test]
+    fn governance_event_attributes_from_hook_details() {
+        let mut pipeline = GovernancePipeline::new(GovernancePipelineConfig {
+            hooks: vec![GovernanceHookType::ComplianceCheck],
+            halt_on_failure: false,
+            frameworks: vec![ComplianceFramework::Soc2],
+            ..Default::default()
+        });
+        let entries = full_evidence_set();
+        let _results =
+            run_governance_pipeline(&mut pipeline, &single_artifact(), entries, ts(500)).unwrap();
+        let event = &pipeline.events()[0];
+        // ComplianceCheck hook populates details with per-framework results;
+        // those should flow into the event attributes.
+        assert!(
+            event.attributes.contains_key("soc2"),
+            "event attributes should include framework key from hook details"
+        );
+    }
+
+    #[test]
+    fn max_entries_larger_than_available_preserves_all() {
+        let entries: Vec<EvidenceEntry> = (0..3)
+            .map(|i| make_entry("policy_update", i * 10))
+            .collect();
+        let mut req = make_export_request(AuditExportFormat::JsonLines, 0, 100);
+        req.max_entries = Some(999);
+        let result = export_audit_evidence(req, entries, ts(200)).unwrap();
+        assert_eq!(
+            result.entry_count, 3,
+            "max_entries > available should not truncate"
+        );
+    }
+
+    #[test]
+    fn pre_deploy_hook_details_contain_artifact_count() {
+        let mut pipeline = GovernancePipeline::new(GovernancePipelineConfig {
+            hooks: vec![GovernanceHookType::PreDeploy],
+            halt_on_failure: true,
+            ..Default::default()
+        });
+        let arts = single_artifact();
+        let results =
+            run_governance_pipeline(&mut pipeline, &arts, vec![], ts(100)).unwrap();
+        assert!(results[0].passed);
+        assert_eq!(
+            results[0].details.get("artifact_count"),
+            Some(&"1".to_string()),
+            "PreDeploy hook should report artifact_count in details"
+        );
+    }
 }

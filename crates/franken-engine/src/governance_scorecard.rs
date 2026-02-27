@@ -2285,4 +2285,146 @@ mod tests {
         assert!(GovernanceScorecardOutcome::Warning < GovernanceScorecardOutcome::Critical);
         assert!(GovernanceScorecardOutcome::Healthy < GovernanceScorecardOutcome::Critical);
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 session 7 --
+
+    #[test]
+    fn verify_signature_standalone() {
+        let req = test_request();
+        let key = test_signing_key();
+        let mut ledger = test_ledger();
+        let publication =
+            publish_governance_scorecard(&req, &key, &mut ledger, test_actor()).unwrap();
+        // Standalone signature verification (not via publish pipeline).
+        verify_governance_scorecard_signature(&publication).unwrap();
+    }
+
+    #[test]
+    fn stable_codes_all_distinct() {
+        let codes = vec![
+            GovernanceScorecardError::InvalidInput {
+                field: "x".into(),
+                detail: "y".into(),
+            }
+            .stable_code(),
+            GovernanceScorecardError::SerializationFailure("s".into()).stable_code(),
+            GovernanceScorecardError::SignatureFailure("sig".into()).stable_code(),
+            GovernanceScorecardError::LedgerWriteFailure("lw".into()).stable_code(),
+        ];
+        let unique: BTreeSet<&str> = codes.iter().copied().collect();
+        assert_eq!(unique.len(), 4, "all error stable codes must be distinct");
+    }
+
+    #[test]
+    fn markdown_report_warnings_section() {
+        let mut req = test_request();
+        // Create trend regression to add a warning (but not a blocker).
+        req.historical = vec![GovernanceScorecardTrendPoint {
+            scorecard_id: "prev".to_string(),
+            generated_at_ns: 500_000_000,
+            attested_receipt_coverage_millionths: 1_000_000,
+            privacy_epoch_consumption_millionths: 0,
+            moonshot_override_frequency_millionths: 0,
+            conformance_pass_rate_millionths: 1_000_000,
+            outcome: GovernanceScorecardOutcome::Healthy,
+        }];
+        let key = test_signing_key();
+        let mut ledger = test_ledger();
+        let publication =
+            publish_governance_scorecard(&req, &key, &mut ledger, test_actor()).unwrap();
+        assert_eq!(publication.outcome, GovernanceScorecardOutcome::Warning);
+        let md = publication.to_markdown_report();
+        assert!(
+            md.contains("## Warnings"),
+            "markdown report should include Warnings section"
+        );
+        assert!(md.contains("WARNING"));
+    }
+
+    #[test]
+    fn empty_scorecard_run_id_derives_id() {
+        let mut req = test_request();
+        req.scorecard_run_id = "".to_string();
+        let key = test_signing_key();
+        let mut ledger = test_ledger();
+        let publication =
+            publish_governance_scorecard(&req, &key, &mut ledger, test_actor()).unwrap();
+        assert!(
+            publication.scorecard_id.starts_with("gov-scorecard-"),
+            "derived ID should start with gov-scorecard-"
+        );
+        assert!(publication.scorecard_id.len() > "gov-scorecard-".len());
+    }
+
+    #[test]
+    fn conformance_outstanding_exemptions_causes_critical() {
+        let mut req = test_request();
+        req.conformance.outstanding_exemptions = 10; // default max is 0
+        let key = test_signing_key();
+        let mut ledger = test_ledger();
+        let publication =
+            publish_governance_scorecard(&req, &key, &mut ledger, test_actor()).unwrap();
+        assert_eq!(publication.outcome, GovernanceScorecardOutcome::Critical);
+        assert!(
+            publication
+                .blockers
+                .iter()
+                .any(|b| b.contains("exemptions")),
+            "blocker should mention exemptions"
+        );
+    }
+
+    #[test]
+    fn request_validate_empty_policy_id_fails() {
+        let mut req = test_request();
+        req.policy_id = "  ".to_string();
+        let err = req.validate().unwrap_err();
+        assert!(
+            matches!(err, GovernanceScorecardError::InvalidInput { ref field, .. } if field == "policy_id")
+        );
+    }
+
+    #[test]
+    fn thresholds_serde_roundtrip_custom_values() {
+        let t = GovernanceScorecardThresholds {
+            min_attested_receipt_coverage_millionths: 800_000,
+            max_privacy_overrun_incidents: 2,
+            max_privacy_epoch_consumption_millionths: 500_000,
+            warn_privacy_exhaustion_within_ns: Some(3_600_000_000_000),
+            max_moonshot_override_frequency_millionths: 100_000,
+            max_moonshot_kill_rate_millionths: 150_000,
+            max_moonshot_mean_time_to_decision_ns: Some(86_400_000_000_000),
+            min_conformance_pass_rate_millionths: 900_000,
+            max_universal_failures: 1,
+            max_version_specific_failures: 3,
+            max_outstanding_exemptions: 2,
+            fail_on_trend_regression: true,
+        };
+        let json = serde_json::to_string(&t).unwrap();
+        let back: GovernanceScorecardThresholds = serde_json::from_str(&json).unwrap();
+        assert_eq!(t, back);
+    }
+
+    #[test]
+    fn is_trend_regression_by_privacy_consumption_increase() {
+        let prev = GovernanceScorecardTrendPoint {
+            scorecard_id: "old".to_string(),
+            generated_at_ns: 100,
+            attested_receipt_coverage_millionths: 950_000,
+            privacy_epoch_consumption_millionths: 200_000,
+            moonshot_override_frequency_millionths: 50_000,
+            conformance_pass_rate_millionths: 980_000,
+            outcome: GovernanceScorecardOutcome::Healthy,
+        };
+        let current = GovernanceScorecardTrendPoint {
+            scorecard_id: "new".to_string(),
+            generated_at_ns: 200,
+            attested_receipt_coverage_millionths: 950_000,
+            privacy_epoch_consumption_millionths: 300_000, // increased
+            moonshot_override_frequency_millionths: 50_000,
+            conformance_pass_rate_millionths: 980_000,
+            outcome: GovernanceScorecardOutcome::Healthy,
+        };
+        assert!(is_trend_regression(&prev, &current));
+    }
 }

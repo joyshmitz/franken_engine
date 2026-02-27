@@ -773,7 +773,7 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    fn safety_action_all_returns_six_variants() {
+    fn safety_action_all_returns_six_variants_batch2() {
         assert_eq!(SafetyAction::all().len(), 6);
     }
 
@@ -785,7 +785,7 @@ mod tests {
     }
 
     #[test]
-    fn safety_action_default_fallback_is_deny() {
+    fn safety_action_default_fallback_is_deny_batch2() {
         for &action in SafetyAction::all() {
             assert!(matches!(
                 action.default_fallback(),
@@ -870,7 +870,7 @@ mod tests {
     }
 
     #[test]
-    fn safety_verdict_serde_roundtrip() {
+    fn safety_verdict_serde_roundtrip_batch2() {
         let verdicts = vec![
             SafetyVerdict::Allow,
             SafetyVerdict::Deny {
@@ -1556,5 +1556,416 @@ mod tests {
         assert_eq!(s.allows, 0);
         assert_eq!(s.denials, 0);
         assert_eq!(s.fallbacks, 0);
+    }
+
+    // -- Enrichment batch 2: PearlTower 2026-02-27 --
+
+    #[test]
+    fn safety_action_all_returns_six_variants() {
+        assert_eq!(SafetyAction::all().len(), 6);
+    }
+
+    #[test]
+    fn safety_action_as_str_all_distinct() {
+        let labels: std::collections::BTreeSet<&str> =
+            SafetyAction::all().iter().map(|a| a.as_str()).collect();
+        assert_eq!(labels.len(), 6);
+    }
+
+    #[test]
+    fn safety_action_default_fallback_is_deny() {
+        for action in SafetyAction::all() {
+            let fallback = action.default_fallback();
+            assert!(matches!(fallback, SafetyVerdict::Deny { .. }));
+        }
+    }
+
+    #[test]
+    fn safety_verdict_outcome_str_distinct() {
+        let v_allow = SafetyVerdict::Allow;
+        let v_deny = SafetyVerdict::Deny { reason: "r".into() };
+        let v_fallback = SafetyVerdict::Fallback { reason: "r".into() };
+        assert_eq!(v_allow.outcome_str(), "allow");
+        assert_eq!(v_deny.outcome_str(), "deny");
+        assert_eq!(v_fallback.outcome_str(), "fallback");
+    }
+
+    #[test]
+    fn safety_verdict_display_contains_reason() {
+        let v = SafetyVerdict::Deny {
+            reason: "model degraded".into(),
+        };
+        assert!(v.to_string().contains("model degraded"));
+    }
+
+    #[test]
+    fn safety_verdict_is_allow_only_for_allow() {
+        assert!(SafetyVerdict::Allow.is_allow());
+        assert!(!SafetyVerdict::Deny { reason: "r".into() }.is_allow());
+        assert!(!SafetyVerdict::Fallback { reason: "r".into() }.is_allow());
+    }
+
+    #[test]
+    fn safety_verdict_serde_roundtrip() {
+        let verdicts = vec![
+            SafetyVerdict::Allow,
+            SafetyVerdict::Deny {
+                reason: "bad".into(),
+            },
+            SafetyVerdict::Fallback {
+                reason: "low cal".into(),
+            },
+        ];
+        for v in &verdicts {
+            let json = serde_json::to_string(v).unwrap();
+            let back: SafetyVerdict = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn router_error_serde_roundtrip() {
+        let errors = vec![
+            SafetyRouterError::BudgetExhausted {
+                action: SafetyAction::ForcedTermination,
+                requested_ms: 100,
+                remaining_ms: 50,
+            },
+            SafetyRouterError::NoContract {
+                action: SafetyAction::BudgetOverride,
+            },
+            SafetyRouterError::InvalidActionIndex {
+                action: SafetyAction::PrivilegeEscalation,
+                index: 5,
+                max: 2,
+            },
+        ];
+        for e in &errors {
+            let json = serde_json::to_string(e).unwrap();
+            let back: SafetyRouterError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*e, back);
+        }
+    }
+
+    #[test]
+    fn router_error_display_all_distinct() {
+        let errors = vec![
+            SafetyRouterError::BudgetExhausted {
+                action: SafetyAction::ForcedTermination,
+                requested_ms: 100,
+                remaining_ms: 50,
+            },
+            SafetyRouterError::NoContract {
+                action: SafetyAction::BudgetOverride,
+            },
+            SafetyRouterError::InvalidActionIndex {
+                action: SafetyAction::PrivilegeEscalation,
+                index: 5,
+                max: 2,
+            },
+        ];
+        let displays: std::collections::BTreeSet<String> =
+            errors.iter().map(|e| e.to_string()).collect();
+        assert_eq!(displays.len(), errors.len());
+    }
+
+    #[test]
+    fn router_multiple_actions_track_summaries() {
+        let mut r = SafetyDecisionRouter::new();
+        r.register_all_defaults();
+        let mut cx = test_cx(200);
+
+        let actions = [
+            SafetyAction::ExtensionQuarantine,
+            SafetyAction::CapabilityRevocation,
+            SafetyAction::ForcedTermination,
+        ];
+        for (i, action) in actions.iter().enumerate() {
+            let req = test_request(*action, i as u64);
+            r.evaluate(&mut cx, &req).unwrap();
+        }
+
+        assert_eq!(r.decision_count(), 3);
+        assert_eq!(r.results().len(), 3);
+    }
+
+    #[test]
+    fn router_drain_events_clears() {
+        let mut r = SafetyDecisionRouter::new();
+        r.register_all_defaults();
+        let mut cx = test_cx(200);
+        let req = test_request(SafetyAction::ExtensionQuarantine, 0);
+        r.evaluate(&mut cx, &req).unwrap();
+
+        let events = r.drain_events();
+        assert!(!events.is_empty());
+        assert!(r.drain_events().is_empty());
+    }
+
+    #[test]
+    fn router_no_contract_returns_error() {
+        let mut r = SafetyDecisionRouter::new();
+        // Don't register any contracts
+        let mut cx = test_cx(200);
+        let req = test_request(SafetyAction::ExtensionQuarantine, 0);
+        let err = r.evaluate(&mut cx, &req).unwrap_err();
+        assert!(matches!(err, SafetyRouterError::NoContract { .. }));
+    }
+
+    #[test]
+    fn router_has_contract_after_register() {
+        let mut r = SafetyDecisionRouter::new();
+        assert!(!r.has_contract(SafetyAction::ExtensionQuarantine));
+        r.register_all_defaults();
+        assert!(r.has_contract(SafetyAction::ExtensionQuarantine));
+        assert_eq!(r.contract_count(), 6);
+    }
+
+    #[test]
+    fn safety_decision_event_serde_roundtrip_batch2() {
+        let event = SafetyDecisionEvent {
+            seq: 1,
+            trace_id: "t".into(),
+            decision_id: "d".into(),
+            policy_id: "p".into(),
+            component: "safety_decision_router".into(),
+            event: "evaluation_started".into(),
+            outcome: "allow".into(),
+            error_code: None,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: SafetyDecisionEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, back);
+    }
+
+    #[test]
+    fn action_summary_serde_roundtrip_batch2() {
+        let s = ActionSummary {
+            total: 10,
+            allows: 5,
+            denials: 3,
+            fallbacks: 2,
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        let back: ActionSummary = serde_json::from_str(&json).unwrap();
+        assert_eq!(s, back);
+    }
+
+    #[test]
+    fn safety_action_serde_roundtrip_batch2() {
+        for action in SafetyAction::all() {
+            let json = serde_json::to_string(action).unwrap();
+            let back: SafetyAction = serde_json::from_str(&json).unwrap();
+            assert_eq!(*action, back);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 3: clone equality, JSON field presence, boundary,
+    // error source, Ord determinism
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn safety_verdict_clone_equality() {
+        let allow = SafetyVerdict::Allow;
+        let allow2 = allow.clone();
+        assert_eq!(allow, allow2);
+
+        let deny = SafetyVerdict::Deny {
+            reason: "test-reason".to_string(),
+        };
+        let deny2 = deny.clone();
+        assert_eq!(deny, deny2);
+
+        let fb = SafetyVerdict::Fallback {
+            reason: "drift".to_string(),
+        };
+        let fb2 = fb.clone();
+        assert_eq!(fb, fb2);
+    }
+
+    #[test]
+    fn safety_decision_request_clone_equality() {
+        let req = test_request(SafetyAction::PrivilegeEscalation, 77);
+        let req2 = req.clone();
+        assert_eq!(req, req2);
+    }
+
+    #[test]
+    fn safety_decision_event_clone_equality() {
+        let event = SafetyDecisionEvent {
+            seq: 42,
+            trace_id: "t-42".to_string(),
+            decision_id: "d-42".to_string(),
+            policy_id: "p-42".to_string(),
+            component: "safety_decision_router".to_string(),
+            event: "evaluate".to_string(),
+            outcome: "deny".to_string(),
+            error_code: Some("budget_exhausted".to_string()),
+        };
+        let event2 = event.clone();
+        assert_eq!(event, event2);
+    }
+
+    #[test]
+    fn action_summary_clone_equality() {
+        let s = ActionSummary {
+            total: 7,
+            allows: 2,
+            denials: 4,
+            fallbacks: 1,
+        };
+        let s2 = s.clone();
+        assert_eq!(s, s2);
+    }
+
+    #[test]
+    fn safety_router_error_clone_equality() {
+        let e = SafetyRouterError::BudgetExhausted {
+            action: SafetyAction::ExtensionQuarantine,
+            requested_ms: 2,
+            remaining_ms: 0,
+        };
+        let e2 = e.clone();
+        assert_eq!(e, e2);
+
+        let e3 = SafetyRouterError::InvalidActionIndex {
+            action: SafetyAction::PrivilegeEscalation,
+            index: 5,
+            max: 2,
+        };
+        let e4 = e3.clone();
+        assert_eq!(e3, e4);
+    }
+
+    #[test]
+    fn safety_decision_request_json_field_presence() {
+        let req = test_request(SafetyAction::CrossExtensionShare, 99);
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("\"action\""), "missing action field");
+        assert!(
+            json.contains("\"extension_id\""),
+            "missing extension_id field"
+        );
+        assert!(
+            json.contains("\"calibration_score_bps\""),
+            "missing calibration_score_bps field"
+        );
+        assert!(
+            json.contains("\"e_process_milli\""),
+            "missing e_process_milli field"
+        );
+    }
+
+    #[test]
+    fn safety_decision_result_json_field_presence() {
+        let result = SafetyDecisionResult {
+            action: SafetyAction::ForcedTermination,
+            verdict: SafetyVerdict::Allow,
+            extension_id: "ext-f".to_string(),
+            trace_id: "tr-f".to_string(),
+            decision_id: "dec-f".to_string(),
+            policy_id: "pol-f".to_string(),
+            expected_loss_milli: 123,
+            fallback_active: false,
+            budget_consumed_ms: 2,
+            sequence_number: 5,
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(
+            json.contains("\"expected_loss_milli\""),
+            "missing expected_loss_milli"
+        );
+        assert!(
+            json.contains("\"fallback_active\""),
+            "missing fallback_active"
+        );
+        assert!(
+            json.contains("\"sequence_number\""),
+            "missing sequence_number"
+        );
+    }
+
+    #[test]
+    fn safety_decision_event_json_field_presence() {
+        let event = SafetyDecisionEvent {
+            seq: 1,
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            component: "c".to_string(),
+            event: "evaluate".to_string(),
+            outcome: "allow".to_string(),
+            error_code: Some("err".to_string()),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"error_code\""), "missing error_code field");
+        assert!(json.contains("\"component\""), "missing component field");
+        assert!(json.contains("\"seq\""), "missing seq field");
+    }
+
+    #[test]
+    fn safety_router_error_source_is_none() {
+        use std::error::Error;
+        let errors: Vec<SafetyRouterError> = vec![
+            SafetyRouterError::BudgetExhausted {
+                action: SafetyAction::ExtensionQuarantine,
+                requested_ms: 2,
+                remaining_ms: 0,
+            },
+            SafetyRouterError::NoContract {
+                action: SafetyAction::ForcedTermination,
+            },
+            SafetyRouterError::InvalidActionIndex {
+                action: SafetyAction::PrivilegeEscalation,
+                index: 5,
+                max: 2,
+            },
+        ];
+        for e in &errors {
+            assert!(
+                e.source().is_none(),
+                "SafetyRouterError should have no source"
+            );
+        }
+    }
+
+    #[test]
+    fn safety_action_ord_consistency() {
+        let a = SafetyAction::ExtensionQuarantine;
+        let b = SafetyAction::BudgetOverride;
+        assert_eq!(a.cmp(&a), std::cmp::Ordering::Equal);
+        assert_eq!(b.cmp(&b), std::cmp::Ordering::Equal);
+        let ab = a.cmp(&b);
+        let ba = b.cmp(&a);
+        assert_eq!(ab, ba.reverse());
+    }
+
+    #[test]
+    fn safety_decision_request_zero_boundary_roundtrip() {
+        let req = SafetyDecisionRequest {
+            action: SafetyAction::ExtensionQuarantine,
+            extension_id: "ext-zero".to_string(),
+            target_extension_id: None,
+            decision_id: decision_id_from_seed(0),
+            policy_id: policy_id_from_seed(0),
+            ts_unix_ms: 0,
+            calibration_score_bps: 0,
+            e_process_milli: 0,
+            ci_width_milli: 0,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let restored: SafetyDecisionRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(req, restored);
+    }
+
+    #[test]
+    fn router_default_trait_equivalent_to_new() {
+        let r1 = SafetyDecisionRouter::new();
+        let r2 = SafetyDecisionRouter::default();
+        assert_eq!(r1.contract_count(), r2.contract_count());
+        assert_eq!(r1.decision_count(), r2.decision_count());
+        assert_eq!(r1.deny_count(), r2.deny_count());
+        assert_eq!(r1.fallback_count(), r2.fallback_count());
     }
 }

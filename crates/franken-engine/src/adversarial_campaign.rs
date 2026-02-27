@@ -5383,4 +5383,229 @@ mod tests {
     fn clamp_millionths_at_exact_million() {
         assert_eq!(clamp_millionths(1_000_000), 1_000_000);
     }
+
+    // -- Enrichment: serde roundtrips for untested types (PearlTower 2026-02-27) --
+
+    #[test]
+    fn campaign_error_serde_roundtrip_all_variants() {
+        let variants = vec![
+            CampaignError::InvalidGrammar { detail: "bad grammar".into() },
+            CampaignError::InvalidCampaign { detail: "bad campaign".into() },
+            CampaignError::InvalidExecutionResult { detail: "bad result".into() },
+            CampaignError::InvalidMutation { detail: "bad mutation".into() },
+            CampaignError::InvalidSeed,
+            CampaignError::InvalidCalibration { detail: "bad cal".into() },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: CampaignError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+        assert_eq!(variants.len(), 6);
+    }
+
+    #[test]
+    fn campaign_complexity_serde_roundtrip_all() {
+        let variants = [CampaignComplexity::Probe, CampaignComplexity::MultiStage, CampaignComplexity::Apt];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: CampaignComplexity = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn attack_dimension_serde_roundtrip_all() {
+        let variants = [
+            AttackDimension::HostcallSequence,
+            AttackDimension::TemporalPayload,
+            AttackDimension::PrivilegeEscalation,
+            AttackDimension::PolicyEvasion,
+            AttackDimension::Exfiltration,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: AttackDimension = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+        assert_eq!(variants.len(), 5);
+    }
+
+    #[test]
+    fn attack_grammar_serde_roundtrip() {
+        let g = AttackGrammar::default();
+        let json = serde_json::to_string(&g).unwrap();
+        let back: AttackGrammar = serde_json::from_str(&json).unwrap();
+        assert_eq!(g, back);
+    }
+
+    #[test]
+    fn attack_step_kind_serde_roundtrip_all() {
+        let variants = vec![
+            AttackStepKind::HostcallSequence { motif: "m1".into(), hostcall_count: 5 },
+            AttackStepKind::TemporalPayload { stage: "s1".into(), delay_ms: 100 },
+            AttackStepKind::PrivilegeEscalation { probe: "p1".into(), escalation_depth: 3 },
+            AttackStepKind::PolicyEvasion { motif: "e1".into(), threshold_margin_millionths: 50_000 },
+            AttackStepKind::Exfiltration { strategy: "x1".into(), chunk_count: 10 },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: AttackStepKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+        assert_eq!(variants.len(), 5);
+    }
+
+    fn make_test_campaign() -> AdversarialCampaign {
+        AdversarialCampaign {
+            campaign_id: "camp-001".into(),
+            trace_id: "t-1".into(),
+            decision_id: "d-1".into(),
+            policy_id: "p-1".into(),
+            grammar_version: 1,
+            seed: 42,
+            complexity: CampaignComplexity::Probe,
+            steps: vec![AttackStep {
+                step_id: 0,
+                dimension: AttackDimension::HostcallSequence,
+                production_label: "credential_theft_chain".into(),
+                kind: AttackStepKind::HostcallSequence { motif: "credential_theft_chain".into(), hostcall_count: 3 },
+            }],
+        }
+    }
+
+    #[test]
+    fn adversarial_campaign_serde_roundtrip() {
+        let c = make_test_campaign();
+        let json = serde_json::to_string(&c).unwrap();
+        let back: AdversarialCampaign = serde_json::from_str(&json).unwrap();
+        assert_eq!(c, back);
+    }
+
+    #[test]
+    fn containment_difficulty_serde_roundtrip_all() {
+        let variants = [
+            ContainmentDifficulty::Easy,
+            ContainmentDifficulty::Moderate,
+            ContainmentDifficulty::Hard,
+            ContainmentDifficulty::Critical,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: ContainmentDifficulty = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn exploit_objective_score_serde_roundtrip() {
+        let s = ExploitObjectiveScore {
+            evasion_score_millionths: 500_000,
+            containment_escape_score_millionths: 0,
+            damage_potential_millionths: 300_000,
+            detection_difficulty_millionths: 200_000,
+            novel_technique_bonus_millionths: 0,
+            composite_score_millionths: 350_000,
+            difficulty: ContainmentDifficulty::Easy,
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        let back: ExploitObjectiveScore = serde_json::from_str(&json).unwrap();
+        assert_eq!(s, back);
+    }
+
+    #[test]
+    fn mutation_operator_serde_roundtrip_all() {
+        let variants = [
+            MutationOperator::PointMutation,
+            MutationOperator::Crossover,
+            MutationOperator::Insertion,
+            MutationOperator::Deletion,
+            MutationOperator::TemporalShift,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: MutationOperator = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+        assert_eq!(variants.len(), 5);
+    }
+
+    #[test]
+    fn mutation_request_serde_roundtrip() {
+        let r = MutationRequest {
+            operator: MutationOperator::Crossover,
+            seed: 99,
+            donor_campaign: Some(make_test_campaign()),
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        let back: MutationRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(r, back);
+    }
+
+    #[test]
+    fn defense_subsystem_serde_roundtrip_all() {
+        let variants = [
+            DefenseSubsystem::Sentinel,
+            DefenseSubsystem::Containment,
+            DefenseSubsystem::EvidenceAccumulation,
+            DefenseSubsystem::FleetConvergence,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: DefenseSubsystem = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn threat_category_serde_roundtrip_all() {
+        let variants = [
+            ThreatCategory::CredentialTheft,
+            ThreatCategory::PrivilegeEscalation,
+            ThreatCategory::Persistence,
+            ThreatCategory::Exfiltration,
+            ThreatCategory::PolicyEvasion,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: ThreatCategory = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+        assert_eq!(variants.len(), 5);
+    }
+
+    #[test]
+    fn campaign_severity_serde_roundtrip_all() {
+        let variants = [
+            CampaignSeverity::Advisory,
+            CampaignSeverity::Moderate,
+            CampaignSeverity::Critical,
+            CampaignSeverity::Blocking,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: CampaignSeverity = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn regression_corpus_serde_roundtrip() {
+        let mut corpus = RegressionCorpus::default();
+        corpus.promote(DeterministicReproFixture {
+            campaign_id: "camp-001".into(),
+            trace_id: "t-1".into(),
+            decision_id: "d-1".into(),
+            policy_id: "p-1".into(),
+            seed: 42,
+            attack_sequence: vec![],
+            expected_defense_response: "contained".into(),
+            actual_defense_response: "contained".into(),
+            minimality_proof: MinimizationProof { rounds: 3, removed_steps: 2, is_fixed_point: true },
+        });
+        let json = serde_json::to_string(&corpus).unwrap();
+        let back: RegressionCorpus = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.len(), 1);
+        assert!(back.fixture("camp-001").is_some());
+    }
 }

@@ -3590,4 +3590,224 @@ mod tests {
             panic!("expected Map");
         }
     }
+
+    // -- Enrichment: serde roundtrip for untested types (PearlTower 2026-02-27) --
+
+    #[test]
+    fn resolved_binding_serde_roundtrip() {
+        let b = ResolvedBinding {
+            name: "myVar".to_string(),
+            binding_id: 42,
+            scope: ScopeId { depth: 1, index: 0 },
+            kind: BindingKind::Let,
+        };
+        let json = serde_json::to_string(&b).unwrap();
+        let back: ResolvedBinding = serde_json::from_str(&json).unwrap();
+        assert_eq!(b, back);
+    }
+
+    #[test]
+    fn resolved_binding_all_kinds_serde_roundtrip() {
+        let kinds = [
+            BindingKind::Let,
+            BindingKind::Const,
+            BindingKind::Var,
+            BindingKind::Parameter,
+            BindingKind::Import,
+            BindingKind::FunctionDecl,
+        ];
+        for (i, kind) in kinds.iter().enumerate() {
+            let b = ResolvedBinding {
+                name: format!("binding_{i}"),
+                binding_id: i as u32,
+                scope: ScopeId { depth: 0, index: i as u32 },
+                kind: *kind,
+            };
+            let json = serde_json::to_string(&b).unwrap();
+            let back: ResolvedBinding = serde_json::from_str(&json).unwrap();
+            assert_eq!(b, back);
+        }
+        assert_eq!(kinds.len(), 6);
+    }
+
+    // -- Enrichment: PearlTower 2026-02-26 session 7 --
+
+    #[test]
+    fn scope_id_canonical_value_content() {
+        let sid = ScopeId {
+            depth: 3,
+            index: 7,
+        };
+        let cv = sid.canonical_value();
+        if let CanonicalValue::Map(m) = cv {
+            assert_eq!(m.get("depth"), Some(&CanonicalValue::U64(3)));
+            assert_eq!(m.get("index"), Some(&CanonicalValue::U64(7)));
+            assert_eq!(m.len(), 2);
+        } else {
+            panic!("expected Map from ScopeId::canonical_value");
+        }
+    }
+
+    #[test]
+    fn ir1_literal_canonical_value_all_variants() {
+        let cases: Vec<(Ir1Literal, &str)> = vec![
+            (Ir1Literal::String("hello".to_string()), "string"),
+            (Ir1Literal::Integer(42), "integer"),
+            (Ir1Literal::Boolean(false), "boolean"),
+            (Ir1Literal::Null, "null"),
+            (Ir1Literal::Undefined, "undefined"),
+        ];
+        for (lit, expected_kind) in &cases {
+            let cv = lit.canonical_value();
+            if let CanonicalValue::Map(m) = cv {
+                assert_eq!(
+                    m.get("kind"),
+                    Some(&CanonicalValue::String(expected_kind.to_string())),
+                    "kind mismatch for {:?}",
+                    lit,
+                );
+            } else {
+                panic!("expected Map for {:?}", lit);
+            }
+        }
+    }
+
+    #[test]
+    fn ir2_op_canonical_value_with_flow() {
+        let op = Ir2Op {
+            inner: Ir1Op::Call { arg_count: 2 },
+            effect: EffectBoundary::NetworkEffect,
+            required_capability: Some(CapabilityTag("net:outbound".to_string())),
+            flow: Some(FlowAnnotation {
+                data_label: Label::Internal,
+                sink_clearance: Label::Internal,
+                declassification_required: true,
+            }),
+        };
+        let cv = op.canonical_value();
+        if let CanonicalValue::Map(m) = cv {
+            assert_eq!(
+                m.get("effect"),
+                Some(&CanonicalValue::String("network".to_string()))
+            );
+            assert!(
+                !matches!(m.get("flow"), Some(CanonicalValue::Null)),
+                "flow should not be Null when present"
+            );
+            assert!(
+                !matches!(m.get("required_capability"), Some(CanonicalValue::Null)),
+                "required_capability should not be Null when present"
+            );
+            assert!(m.contains_key("inner"));
+        } else {
+            panic!("expected Map from Ir2Op::canonical_value");
+        }
+    }
+
+    #[test]
+    fn ir2_module_content_hash_changes_with_ops() {
+        let src = ContentHash::compute(b"src");
+        let ir2a = Ir2Module::new(src.clone(), "a.js");
+        let mut ir2b = Ir2Module::new(src, "a.js");
+        ir2b.ops.push(Ir2Op {
+            inner: Ir1Op::Nop,
+            effect: EffectBoundary::Pure,
+            required_capability: None,
+            flow: None,
+        });
+        assert_ne!(ir2a.content_hash(), ir2b.content_hash());
+    }
+
+    #[test]
+    fn ir3_function_desc_canonical_value_content() {
+        let desc = Ir3FunctionDesc {
+            entry: 10,
+            arity: 3,
+            frame_size: 8,
+            name: Some("myFunc".to_string()),
+        };
+        let cv = desc.canonical_value();
+        if let CanonicalValue::Map(m) = cv {
+            assert_eq!(m.get("entry"), Some(&CanonicalValue::U64(10)));
+            assert_eq!(m.get("arity"), Some(&CanonicalValue::U64(3)));
+            assert_eq!(m.get("frame_size"), Some(&CanonicalValue::U64(8)));
+            assert_eq!(
+                m.get("name"),
+                Some(&CanonicalValue::String("myFunc".to_string()))
+            );
+        } else {
+            panic!("expected Map from Ir3FunctionDesc::canonical_value");
+        }
+    }
+
+    #[test]
+    fn ir3_function_desc_canonical_value_no_name() {
+        let desc = Ir3FunctionDesc {
+            entry: 0,
+            arity: 0,
+            frame_size: 1,
+            name: None,
+        };
+        let cv = desc.canonical_value();
+        if let CanonicalValue::Map(m) = cv {
+            assert_eq!(m.get("name"), Some(&CanonicalValue::Null));
+        } else {
+            panic!("expected Map from Ir3FunctionDesc::canonical_value");
+        }
+    }
+
+    #[test]
+    fn resolved_binding_canonical_value_content() {
+        let binding = ResolvedBinding {
+            name: "counter".to_string(),
+            binding_id: 5,
+            scope: ScopeId { depth: 1, index: 2 },
+            kind: BindingKind::Const,
+        };
+        let cv = binding.canonical_value();
+        if let CanonicalValue::Map(m) = cv {
+            assert_eq!(
+                m.get("name"),
+                Some(&CanonicalValue::String("counter".to_string()))
+            );
+            assert_eq!(m.get("binding_id"), Some(&CanonicalValue::U64(5)));
+            assert_eq!(
+                m.get("kind"),
+                Some(&CanonicalValue::String("const".to_string()))
+            );
+            // scope is a nested Map
+            assert!(matches!(m.get("scope"), Some(CanonicalValue::Map(_))));
+            assert_eq!(m.len(), 4);
+        } else {
+            panic!("expected Map from ResolvedBinding::canonical_value");
+        }
+    }
+
+    #[test]
+    fn flow_annotation_canonical_value_content() {
+        let ann = FlowAnnotation {
+            data_label: Label::Internal,
+            sink_clearance: Label::Internal,
+            declassification_required: true,
+        };
+        let cv = ann.canonical_value();
+        if let CanonicalValue::Map(m) = cv {
+            assert_eq!(
+                m.get("declassification_required"),
+                Some(&CanonicalValue::Bool(true))
+            );
+            // data_label and sink_clearance should be Strings (Debug format)
+            assert!(matches!(
+                m.get("data_label"),
+                Some(CanonicalValue::String(_))
+            ));
+            assert!(matches!(
+                m.get("sink_clearance"),
+                Some(CanonicalValue::String(_))
+            ));
+            assert_eq!(m.len(), 3);
+        } else {
+            panic!("expected Map from FlowAnnotation::canonical_value");
+        }
+    }
 }
