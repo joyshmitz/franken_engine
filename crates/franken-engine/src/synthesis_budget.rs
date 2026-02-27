@@ -1535,7 +1535,7 @@ mod tests {
     }
 
     #[test]
-    fn phase_consumption_zero_is_all_zeros() {
+    fn phase_consumption_zero_is_all_zeros_batch2() {
         let z = PhaseConsumption::zero();
         assert_eq!(z.time_ns, 0);
         assert_eq!(z.compute, 0);
@@ -1598,5 +1598,456 @@ mod tests {
         let json = serde_json::to_string(&err).unwrap();
         let restored: BudgetError = serde_json::from_str(&json).unwrap();
         assert_eq!(err, restored);
+    }
+
+    // -- Enrichment batch 2: PearlTower 2026-02-27 --
+
+    #[test]
+    fn registry_add_and_remove_override() {
+        let mut reg = BudgetRegistry::default();
+        assert_eq!(reg.override_count(), 0);
+
+        let ovr = BudgetOverride {
+            extension_id: "ext-1".into(),
+            contract: SynthesisBudgetContract::default(),
+            justification: "testing".into(),
+        };
+        reg.add_override(ovr);
+        assert_eq!(reg.override_count(), 1);
+
+        assert!(reg.remove_override("ext-1"));
+        assert_eq!(reg.override_count(), 0);
+        assert!(!reg.remove_override("ext-1")); // already removed
+    }
+
+    #[test]
+    fn registry_override_replaces_default() {
+        let mut reg = BudgetRegistry::default();
+        let default_time = reg.default_contract().global_time_cap_ns;
+
+        let mut custom = SynthesisBudgetContract::default();
+        custom.global_time_cap_ns = default_time + 999;
+        let ovr = BudgetOverride {
+            extension_id: "ext-fast".into(),
+            contract: custom,
+            justification: "perf".into(),
+        };
+        reg.add_override(ovr);
+
+        assert_eq!(
+            reg.effective_contract("ext-fast").global_time_cap_ns,
+            default_time + 999
+        );
+        assert_eq!(
+            reg.effective_contract("ext-other").global_time_cap_ns,
+            default_time
+        );
+    }
+
+    #[test]
+    fn monitor_no_active_phase_errors() {
+        let mut m = BudgetMonitor::new(SynthesisBudgetContract::default());
+        assert!(m.current_phase().is_none());
+        let err = m.record_consumption(1, 1, 1).unwrap_err();
+        assert_eq!(err, BudgetError::NoActivePhase);
+    }
+
+    #[test]
+    fn monitor_phase_switching() {
+        let mut m = BudgetMonitor::new(SynthesisBudgetContract::default());
+        m.begin_phase(SynthesisPhase::StaticAnalysis).unwrap();
+        assert_eq!(m.current_phase(), Some(SynthesisPhase::StaticAnalysis));
+        m.begin_phase(SynthesisPhase::Ablation).unwrap();
+        assert_eq!(m.current_phase(), Some(SynthesisPhase::Ablation));
+    }
+
+    #[test]
+    fn monitor_after_exhaustion_rejects_begin_phase() {
+        let mut contract = SynthesisBudgetContract::default();
+        contract.global_time_cap_ns = 10;
+        for phase_budget in contract.phase_budgets.values_mut() {
+            phase_budget.time_cap_ns = 10;
+        }
+        let mut m = BudgetMonitor::new(contract);
+        m.begin_phase(SynthesisPhase::StaticAnalysis).unwrap();
+        let _ = m.record_consumption(100, 0, 0); // exceed
+        assert!(m.is_exhausted());
+        let err = m.begin_phase(SynthesisPhase::Ablation).unwrap_err();
+        assert_eq!(err, BudgetError::AlreadyExhausted);
+    }
+
+    #[test]
+    fn monitor_utilization_returns_correct_ratios() {
+        let mut contract = SynthesisBudgetContract::default();
+        contract.global_time_cap_ns = 1_000;
+        contract.global_compute_cap = 100;
+        contract.global_depth_cap = 10;
+        for phase_budget in contract.phase_budgets.values_mut() {
+            phase_budget.time_cap_ns = 1_000;
+            phase_budget.compute_cap = 100;
+            phase_budget.depth_cap = 10;
+        }
+        let mut m = BudgetMonitor::new(contract);
+        m.begin_phase(SynthesisPhase::StaticAnalysis).unwrap();
+        m.record_consumption(500, 50, 5).unwrap();
+
+        let util = m.utilization();
+        assert_eq!(*util.get(&BudgetDimension::Time).unwrap(), 500_000); // 50%
+        assert_eq!(*util.get(&BudgetDimension::Compute).unwrap(), 500_000);
+        assert_eq!(*util.get(&BudgetDimension::Depth).unwrap(), 500_000);
+    }
+
+    #[test]
+    fn phase_consumption_zero_is_all_zeros() {
+        let z = PhaseConsumption::zero();
+        assert_eq!(z.time_ns, 0);
+        assert_eq!(z.compute, 0);
+        assert_eq!(z.depth, 0);
+    }
+
+    #[test]
+    fn phase_budget_not_exceeded_at_boundary() {
+        let budget = PhaseBudget {
+            time_cap_ns: 100,
+            compute_cap: 50,
+            depth_cap: 10,
+        };
+        let at_limit = PhaseConsumption {
+            time_ns: 100,
+            compute: 50,
+            depth: 10,
+        };
+        assert!(!budget.is_exceeded(&at_limit));
+    }
+
+    #[test]
+    fn phase_budget_exceeded_one_over() {
+        let budget = PhaseBudget {
+            time_cap_ns: 100,
+            compute_cap: 50,
+            depth_cap: 10,
+        };
+        let over = PhaseConsumption {
+            time_ns: 101,
+            compute: 50,
+            depth: 10,
+        };
+        assert!(budget.is_exceeded(&over));
+        let dims = budget.exceeded_dimensions(&over);
+        assert_eq!(dims, vec![BudgetDimension::Time]);
+    }
+
+    #[test]
+    fn synthesis_phase_all_four_distinct_display() {
+        let displays: std::collections::BTreeSet<String> =
+            SynthesisPhase::ALL.iter().map(|p| p.to_string()).collect();
+        assert_eq!(displays.len(), 4);
+    }
+
+    #[test]
+    fn budget_dimension_display_all_distinct() {
+        let dims = [
+            BudgetDimension::Time,
+            BudgetDimension::Compute,
+            BudgetDimension::Depth,
+        ];
+        let displays: std::collections::BTreeSet<String> =
+            dims.iter().map(|d| d.to_string()).collect();
+        assert_eq!(displays.len(), 3);
+    }
+
+    #[test]
+    fn fallback_quality_ordering_batch2() {
+        assert!(FallbackQuality::StaticBound < FallbackQuality::PartialAblation);
+        assert!(FallbackQuality::PartialAblation < FallbackQuality::UnverifiedFull);
+    }
+
+    #[test]
+    fn fallback_result_serde_roundtrip_batch2() {
+        let fr = FallbackResult {
+            quality: FallbackQuality::PartialAblation,
+            result_digest: "abc123".into(),
+            exhaustion_reason: ExhaustionReason {
+                exceeded_dimensions: vec![BudgetDimension::Time],
+                phase: SynthesisPhase::Ablation,
+                global_limit_hit: false,
+                consumption: PhaseConsumption {
+                    time_ns: 100,
+                    compute: 50,
+                    depth: 5,
+                },
+                limit_value: 50,
+            },
+            increase_likely_helpful: true,
+            recommended_multiplier: Some(2_000_000),
+        };
+        let json = serde_json::to_string(&fr).unwrap();
+        let back: FallbackResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(fr, back);
+    }
+
+    #[test]
+    fn monitor_remaining_for_current_phase_decreases() {
+        let mut contract = SynthesisBudgetContract::default();
+        contract.global_time_cap_ns = 10_000;
+        contract.global_compute_cap = 1_000;
+        contract.global_depth_cap = 100;
+        contract.phase_budgets.insert(
+            SynthesisPhase::StaticAnalysis,
+            PhaseBudget {
+                time_cap_ns: 5_000,
+                compute_cap: 500,
+                depth_cap: 50,
+            },
+        );
+        let mut m = BudgetMonitor::new(contract);
+        m.begin_phase(SynthesisPhase::StaticAnalysis).unwrap();
+        m.record_consumption(1_000, 100, 10).unwrap();
+
+        let rem = m.remaining_for_current_phase().unwrap();
+        assert_eq!(rem.time_ns, 4_000);
+        assert_eq!(rem.compute, 400);
+        assert_eq!(rem.depth, 40);
+    }
+
+    #[test]
+    fn budget_override_serde_roundtrip_batch2() {
+        let ovr = BudgetOverride {
+            extension_id: "ext-test".into(),
+            contract: SynthesisBudgetContract::default(),
+            justification: "testing".into(),
+        };
+        let json = serde_json::to_string(&ovr).unwrap();
+        let back: BudgetOverride = serde_json::from_str(&json).unwrap();
+        assert_eq!(ovr, back);
+    }
+
+    #[test]
+    fn exhaustion_reason_display_includes_phase_and_dimension() {
+        let reason = ExhaustionReason {
+            exceeded_dimensions: vec![BudgetDimension::Time, BudgetDimension::Compute],
+            phase: SynthesisPhase::Ablation,
+            global_limit_hit: true,
+            consumption: PhaseConsumption::zero(),
+            limit_value: 100,
+        };
+        let s = reason.to_string();
+        assert!(s.contains("ablation"));
+        assert!(s.contains("time"));
+        assert!(s.contains("compute"));
+        assert!(s.contains("global=true"));
+    }
+
+    // -- Enrichment batch 3: PearlTower 2026-02-27 --
+
+    #[test]
+    fn phase_budget_clone_equality() {
+        let a = PhaseBudget {
+            time_cap_ns: 5000,
+            compute_cap: 250,
+            depth_cap: 42,
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn phase_consumption_clone_equality() {
+        let a = PhaseConsumption {
+            time_ns: 12345,
+            compute: 678,
+            depth: 9,
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn exhaustion_reason_clone_equality() {
+        let a = ExhaustionReason {
+            exceeded_dimensions: vec![BudgetDimension::Compute, BudgetDimension::Depth],
+            phase: SynthesisPhase::TheoremChecking,
+            global_limit_hit: true,
+            consumption: PhaseConsumption {
+                time_ns: 999,
+                compute: 888,
+                depth: 77,
+            },
+            limit_value: 500,
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn fallback_result_clone_equality() {
+        let a = FallbackResult {
+            quality: FallbackQuality::UnverifiedFull,
+            result_digest: "deadbeef".to_string(),
+            exhaustion_reason: ExhaustionReason {
+                exceeded_dimensions: vec![BudgetDimension::Time],
+                phase: SynthesisPhase::ResultAssembly,
+                global_limit_hit: false,
+                consumption: PhaseConsumption {
+                    time_ns: 3000,
+                    compute: 200,
+                    depth: 15,
+                },
+                limit_value: 2500,
+            },
+            increase_likely_helpful: false,
+            recommended_multiplier: None,
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn budget_history_entry_clone_equality() {
+        let mut pc = BTreeMap::new();
+        pc.insert(
+            SynthesisPhase::StaticAnalysis,
+            PhaseConsumption {
+                time_ns: 100,
+                compute: 10,
+                depth: 1,
+            },
+        );
+        let a = BudgetHistoryEntry {
+            extension_id: "ext-clone".to_string(),
+            contract_version: 3,
+            phase_consumption: pc,
+            total_consumption: PhaseConsumption {
+                time_ns: 100,
+                compute: 10,
+                depth: 1,
+            },
+            exhausted: false,
+            timestamp_ns: 42_000_000,
+            epoch: SecurityEpoch::from_raw(7),
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn synthesis_budget_contract_json_field_presence() {
+        let c = tight_contract();
+        let json = serde_json::to_string(&c).unwrap();
+        assert!(json.contains("\"version\""));
+        assert!(json.contains("\"global_time_cap_ns\""));
+        assert!(json.contains("\"global_compute_cap\""));
+        assert!(json.contains("\"global_depth_cap\""));
+        assert!(json.contains("\"phase_budgets\""));
+        assert!(json.contains("\"epoch\""));
+    }
+
+    #[test]
+    fn fallback_result_json_field_presence() {
+        let fb = FallbackResult {
+            quality: FallbackQuality::StaticBound,
+            result_digest: "cafe".to_string(),
+            exhaustion_reason: ExhaustionReason {
+                exceeded_dimensions: vec![BudgetDimension::Depth],
+                phase: SynthesisPhase::StaticAnalysis,
+                global_limit_hit: false,
+                consumption: PhaseConsumption::zero(),
+                limit_value: 10,
+            },
+            increase_likely_helpful: true,
+            recommended_multiplier: Some(3_000_000),
+        };
+        let json = serde_json::to_string(&fb).unwrap();
+        assert!(json.contains("\"quality\""));
+        assert!(json.contains("\"result_digest\""));
+        assert!(json.contains("\"increase_likely_helpful\""));
+        assert!(json.contains("\"recommended_multiplier\""));
+    }
+
+    #[test]
+    fn budget_history_entry_json_field_presence() {
+        let entry = BudgetHistoryEntry {
+            extension_id: "ext-fields".to_string(),
+            contract_version: 1,
+            phase_consumption: BTreeMap::new(),
+            total_consumption: PhaseConsumption::zero(),
+            exhausted: true,
+            timestamp_ns: 9999,
+            epoch: SecurityEpoch::from_raw(0),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(json.contains("\"extension_id\""));
+        assert!(json.contains("\"contract_version\""));
+        assert!(json.contains("\"exhausted\""));
+        assert!(json.contains("\"timestamp_ns\""));
+    }
+
+    #[test]
+    fn budget_error_source_is_none() {
+        use std::error::Error;
+        let errs: Vec<BudgetError> = vec![
+            BudgetError::AlreadyExhausted,
+            BudgetError::NoActivePhase,
+            BudgetError::Exhausted(ExhaustionReason {
+                exceeded_dimensions: vec![BudgetDimension::Compute],
+                phase: SynthesisPhase::Ablation,
+                global_limit_hit: false,
+                consumption: PhaseConsumption::zero(),
+                limit_value: 100,
+            }),
+        ];
+        for err in &errs {
+            assert!(err.source().is_none());
+        }
+    }
+
+    #[test]
+    fn monitor_saturating_add_does_not_overflow() {
+        let mut contract = SynthesisBudgetContract::default();
+        contract.global_time_cap_ns = u64::MAX;
+        contract.global_compute_cap = u64::MAX;
+        contract.global_depth_cap = u64::MAX;
+        let mut m = BudgetMonitor::new(contract);
+        m.begin_phase(SynthesisPhase::StaticAnalysis).unwrap();
+        m.record_consumption(u64::MAX - 1, 0, 0).unwrap();
+        // Adding more should saturate at u64::MAX, not panic.
+        m.record_consumption(10, 0, 0).unwrap();
+        assert_eq!(m.total_consumption().time_ns, u64::MAX);
+    }
+
+    #[test]
+    fn exhaustion_reason_display_single_dimension() {
+        let reason_time = ExhaustionReason {
+            exceeded_dimensions: vec![BudgetDimension::Time],
+            phase: SynthesisPhase::StaticAnalysis,
+            global_limit_hit: false,
+            consumption: PhaseConsumption::zero(),
+            limit_value: 500,
+        };
+        let reason_depth = ExhaustionReason {
+            exceeded_dimensions: vec![BudgetDimension::Depth],
+            phase: SynthesisPhase::ResultAssembly,
+            global_limit_hit: true,
+            consumption: PhaseConsumption::zero(),
+            limit_value: 10,
+        };
+        let s1 = reason_time.to_string();
+        let s2 = reason_depth.to_string();
+        assert_ne!(
+            s1, s2,
+            "different exhaustion reasons should produce different Display"
+        );
+        assert!(s1.contains("static-analysis"));
+        assert!(s2.contains("result-assembly"));
+        assert!(s1.contains("global=false"));
+        assert!(s2.contains("global=true"));
+    }
+
+    #[test]
+    fn history_average_utilization_empty_returns_empty_map() {
+        let history = BudgetHistory::new(10);
+        let contract = tight_contract();
+        let avg = history.average_utilization("nonexistent-ext", &contract);
+        assert!(avg.is_empty());
     }
 }

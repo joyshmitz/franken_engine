@@ -2073,4 +2073,569 @@ mod tests {
         assert_eq!(CutLine::C4.predecessor(), Some(CutLine::C3));
         assert_eq!(CutLine::C5.predecessor(), Some(CutLine::C4));
     }
+
+    // -- Enrichment: revoke then re-promote --
+
+    #[test]
+    fn revoke_then_re_promote() {
+        let mut evaluator = CutLineEvaluator::with_defaults();
+        let now = 1_000_000_000;
+        let make_c0 = || GateEvaluationInput {
+            cut_line: CutLine::C0,
+            now_ns: now,
+            epoch: test_epoch(),
+            inputs: vec![
+                make_passing_input(GateCategory::SemanticContract, now),
+                make_passing_input(GateCategory::GovernanceCompliance, now),
+            ],
+            predecessor_promoted: false,
+            zone: "test".into(),
+        };
+
+        // Promote C0.
+        let r1 = evaluator.evaluate(make_c0()).unwrap();
+        assert_eq!(r1.verdict, GateVerdict::Approved);
+        assert!(evaluator.is_promoted(CutLine::C0));
+
+        // Revoke.
+        assert!(evaluator.revoke_promotion(CutLine::C0));
+        assert!(!evaluator.is_promoted(CutLine::C0));
+
+        // Re-promote.
+        let r2 = evaluator.evaluate(make_c0()).unwrap();
+        assert_eq!(r2.verdict, GateVerdict::Approved);
+        assert!(evaluator.is_promoted(CutLine::C0));
+        assert_eq!(evaluator.history_len(), 2); // evaluate + re-evaluate; revoke doesn't add history
+    }
+
+    // -- Enrichment: record hash sensitivity to zone --
+
+    #[test]
+    fn record_hash_changes_with_zone() {
+        let mut e1 = CutLineEvaluator::with_defaults();
+        let mut e2 = CutLineEvaluator::with_defaults();
+        let now = 1_000_000_000;
+
+        let r1 = e1
+            .evaluate(GateEvaluationInput {
+                cut_line: CutLine::C0,
+                now_ns: now,
+                epoch: test_epoch(),
+                inputs: vec![
+                    make_passing_input(GateCategory::SemanticContract, now),
+                    make_passing_input(GateCategory::GovernanceCompliance, now),
+                ],
+                predecessor_promoted: false,
+                zone: "zone-a".into(),
+            })
+            .unwrap();
+
+        let r2 = e2
+            .evaluate(GateEvaluationInput {
+                cut_line: CutLine::C0,
+                now_ns: now,
+                epoch: test_epoch(),
+                inputs: vec![
+                    make_passing_input(GateCategory::SemanticContract, now),
+                    make_passing_input(GateCategory::GovernanceCompliance, now),
+                ],
+                predecessor_promoted: false,
+                zone: "zone-b".into(),
+            })
+            .unwrap();
+
+        assert_ne!(r1.record_hash, r2.record_hash);
+    }
+
+    // -- Enrichment: record hash sensitivity to epoch --
+
+    #[test]
+    fn record_hash_changes_with_epoch() {
+        let mut e1 = CutLineEvaluator::with_defaults();
+        let mut e2 = CutLineEvaluator::with_defaults();
+        let now = 1_000_000_000;
+
+        let r1 = e1
+            .evaluate(GateEvaluationInput {
+                cut_line: CutLine::C0,
+                now_ns: now,
+                epoch: SecurityEpoch::from_raw(1),
+                inputs: vec![
+                    make_passing_input(GateCategory::SemanticContract, now),
+                    make_passing_input(GateCategory::GovernanceCompliance, now),
+                ],
+                predecessor_promoted: false,
+                zone: "test".into(),
+            })
+            .unwrap();
+
+        let r2 = e2
+            .evaluate(GateEvaluationInput {
+                cut_line: CutLine::C0,
+                now_ns: now,
+                epoch: SecurityEpoch::from_raw(2),
+                inputs: vec![
+                    make_passing_input(GateCategory::SemanticContract, now),
+                    make_passing_input(GateCategory::GovernanceCompliance, now),
+                ],
+                predecessor_promoted: false,
+                zone: "test".into(),
+            })
+            .unwrap();
+
+        assert_ne!(r1.record_hash, r2.record_hash);
+    }
+
+    // -- Enrichment: multiple matching inputs for same category --
+
+    #[test]
+    fn multiple_matching_inputs_best_score_used() {
+        let spec = CutLineSpec {
+            cut_line: CutLine::C2,
+            requirements: vec![GateRequirement {
+                category: GateCategory::PerformanceBenchmark,
+                mandatory: true,
+                description: "Perf meets target".into(),
+                min_score_millionths: Some(800_000),
+            }],
+            max_input_staleness_ns: 86_400_000_000_000,
+            min_schema_major: 1,
+            requires_predecessor: false,
+        };
+        let mut evaluator = CutLineEvaluator::new(vec![spec]);
+        let now = 1_000_000_000;
+
+        // Two inputs for same category: one low score, one high score.
+        let mut low = make_passing_input(GateCategory::PerformanceBenchmark, now);
+        low.score_millionths = Some(600_000);
+        let mut high = make_passing_input(GateCategory::PerformanceBenchmark, now);
+        high.score_millionths = Some(900_000);
+
+        let input = GateEvaluationInput {
+            cut_line: CutLine::C2,
+            now_ns: now,
+            epoch: test_epoch(),
+            inputs: vec![low, high],
+            predecessor_promoted: false,
+            zone: "test".into(),
+        };
+
+        let record = evaluator.evaluate(input).unwrap();
+        // Best score is 900_000 >= 800_000 and all passed → Approved.
+        assert_eq!(record.verdict, GateVerdict::Approved);
+    }
+
+    // -- Enrichment: one failing input among multiple blocks gate --
+
+    #[test]
+    fn one_failing_input_among_multiple_blocks() {
+        let spec = CutLineSpec {
+            cut_line: CutLine::C2,
+            requirements: vec![GateRequirement {
+                category: GateCategory::PerformanceBenchmark,
+                mandatory: true,
+                description: "Perf meets target".into(),
+                min_score_millionths: None,
+            }],
+            max_input_staleness_ns: 86_400_000_000_000,
+            min_schema_major: 1,
+            requires_predecessor: false,
+        };
+        let mut evaluator = CutLineEvaluator::new(vec![spec]);
+        let now = 1_000_000_000;
+
+        let good = make_passing_input(GateCategory::PerformanceBenchmark, now);
+        let bad = make_failing_input(GateCategory::PerformanceBenchmark, now);
+
+        let input = GateEvaluationInput {
+            cut_line: CutLine::C2,
+            now_ns: now,
+            epoch: test_epoch(),
+            inputs: vec![good, bad],
+            predecessor_promoted: false,
+            zone: "test".into(),
+        };
+
+        let record = evaluator.evaluate(input).unwrap();
+        // One failing input means not all passed → Denied.
+        assert_eq!(record.verdict, GateVerdict::Denied);
+    }
+
+    // -- Enrichment: score exactly at threshold passes --
+
+    #[test]
+    fn score_at_exact_threshold_passes() {
+        let spec = CutLineSpec {
+            cut_line: CutLine::C2,
+            requirements: vec![GateRequirement {
+                category: GateCategory::RuntimeParity,
+                mandatory: true,
+                description: "Parity".into(),
+                min_score_millionths: Some(990_000),
+            }],
+            max_input_staleness_ns: 86_400_000_000_000,
+            min_schema_major: 1,
+            requires_predecessor: false,
+        };
+        let mut evaluator = CutLineEvaluator::new(vec![spec]);
+        let now = 1_000_000_000;
+
+        let mut input = make_passing_input(GateCategory::RuntimeParity, now);
+        input.score_millionths = Some(990_000); // Exactly at threshold.
+
+        let eval_input = GateEvaluationInput {
+            cut_line: CutLine::C2,
+            now_ns: now,
+            epoch: test_epoch(),
+            inputs: vec![input],
+            predecessor_promoted: false,
+            zone: "test".into(),
+        };
+
+        let record = evaluator.evaluate(eval_input).unwrap();
+        assert_eq!(record.verdict, GateVerdict::Approved);
+    }
+
+    // -- Enrichment: score one below threshold fails --
+
+    #[test]
+    fn score_one_below_threshold_fails() {
+        let spec = CutLineSpec {
+            cut_line: CutLine::C2,
+            requirements: vec![GateRequirement {
+                category: GateCategory::RuntimeParity,
+                mandatory: true,
+                description: "Parity".into(),
+                min_score_millionths: Some(990_000),
+            }],
+            max_input_staleness_ns: 86_400_000_000_000,
+            min_schema_major: 1,
+            requires_predecessor: false,
+        };
+        let mut evaluator = CutLineEvaluator::new(vec![spec]);
+        let now = 1_000_000_000;
+
+        let mut input = make_passing_input(GateCategory::RuntimeParity, now);
+        input.score_millionths = Some(989_999);
+
+        let eval_input = GateEvaluationInput {
+            cut_line: CutLine::C2,
+            now_ns: now,
+            epoch: test_epoch(),
+            inputs: vec![input],
+            predecessor_promoted: false,
+            zone: "test".into(),
+        };
+
+        let record = evaluator.evaluate(eval_input).unwrap();
+        assert_eq!(record.verdict, GateVerdict::Denied);
+    }
+
+    // -- Enrichment: score required but not provided --
+
+    #[test]
+    fn score_required_but_none_provided_fails() {
+        let spec = CutLineSpec {
+            cut_line: CutLine::C2,
+            requirements: vec![GateRequirement {
+                category: GateCategory::RuntimeParity,
+                mandatory: true,
+                description: "Parity".into(),
+                min_score_millionths: Some(500_000),
+            }],
+            max_input_staleness_ns: 86_400_000_000_000,
+            min_schema_major: 1,
+            requires_predecessor: false,
+        };
+        let mut evaluator = CutLineEvaluator::new(vec![spec]);
+        let now = 1_000_000_000;
+
+        let mut input = make_passing_input(GateCategory::RuntimeParity, now);
+        input.score_millionths = None; // No score provided.
+
+        let eval_input = GateEvaluationInput {
+            cut_line: CutLine::C2,
+            now_ns: now,
+            epoch: test_epoch(),
+            inputs: vec![input],
+            predecessor_promoted: false,
+            zone: "test".into(),
+        };
+
+        let record = evaluator.evaluate(eval_input).unwrap();
+        assert_eq!(record.verdict, GateVerdict::Denied);
+    }
+
+    // -- Enrichment: GateEvaluationInput serde roundtrip --
+
+    #[test]
+    fn gate_evaluation_input_serde_roundtrip() {
+        let now = 1_000_000_000;
+        let input = GateEvaluationInput {
+            cut_line: CutLine::C1,
+            now_ns: now,
+            epoch: test_epoch(),
+            inputs: vec![
+                make_passing_input(GateCategory::CompilerCorrectness, now),
+                make_failing_input(GateCategory::RuntimeParity, now),
+            ],
+            predecessor_promoted: true,
+            zone: "staging".into(),
+        };
+        let json = serde_json::to_string(&input).unwrap();
+        let restored: GateEvaluationInput = serde_json::from_str(&json).unwrap();
+        assert_eq!(input, restored);
+    }
+
+    // -- Enrichment: denied not promoted --
+
+    #[test]
+    fn denied_evaluation_not_promoted() {
+        let mut evaluator = CutLineEvaluator::with_defaults();
+        let now = 1_000_000_000;
+        let input = GateEvaluationInput {
+            cut_line: CutLine::C0,
+            now_ns: now,
+            epoch: test_epoch(),
+            inputs: vec![make_failing_input(GateCategory::SemanticContract, now)],
+            predecessor_promoted: false,
+            zone: "test".into(),
+        };
+
+        let record = evaluator.evaluate(input).unwrap();
+        assert_eq!(record.verdict, GateVerdict::Denied);
+        assert!(!evaluator.is_promoted(CutLine::C0));
+        assert!(evaluator.promotion_hash(CutLine::C0).is_none());
+    }
+
+    // -- Enrichment: evaluator with empty specs --
+
+    #[test]
+    fn evaluator_empty_specs() {
+        let evaluator = CutLineEvaluator::new(vec![]);
+        assert_eq!(evaluator.history_len(), 0);
+        let summary = evaluator.promotion_summary();
+        assert!(summary.promoted_lines.is_empty());
+        assert_eq!(summary.next_line, Some(CutLine::C0));
+    }
+
+    // -- Enrichment: staleness exactly at boundary passes --
+
+    #[test]
+    fn staleness_exactly_at_boundary_passes() {
+        let mut evaluator = CutLineEvaluator::with_defaults();
+        let spec = CutLineSpec::default_c0();
+        let max_staleness = spec.max_input_staleness_ns;
+        let now = max_staleness + 100;
+
+        // Input collected exactly max_staleness ago → age == max_staleness.
+        // Since check is age_ns > max (strict), this should pass.
+        let input = GateEvaluationInput {
+            cut_line: CutLine::C0,
+            now_ns: now,
+            epoch: test_epoch(),
+            inputs: vec![
+                GateInput {
+                    category: GateCategory::SemanticContract,
+                    score_millionths: None,
+                    passed: true,
+                    evidence_hash: ContentHash::compute(b"boundary"),
+                    evidence_refs: vec!["boundary_ref".into()],
+                    collected_at_ns: 100, // age = now - 100 = max_staleness
+                    schema_major: 1,
+                    metadata: BTreeMap::new(),
+                },
+                make_passing_input(GateCategory::GovernanceCompliance, now),
+            ],
+            predecessor_promoted: false,
+            zone: "test".into(),
+        };
+
+        let record = evaluator.evaluate(input).unwrap();
+        assert_eq!(record.verdict, GateVerdict::Approved);
+    }
+
+    // -- Enrichment: staleness one nanosecond over boundary fails --
+
+    #[test]
+    fn staleness_one_ns_over_boundary_fails() {
+        let mut evaluator = CutLineEvaluator::with_defaults();
+        let spec = CutLineSpec::default_c0();
+        let max_staleness = spec.max_input_staleness_ns;
+        let now = max_staleness + 100;
+
+        let input = GateEvaluationInput {
+            cut_line: CutLine::C0,
+            now_ns: now,
+            epoch: test_epoch(),
+            inputs: vec![
+                GateInput {
+                    category: GateCategory::SemanticContract,
+                    score_millionths: None,
+                    passed: true,
+                    evidence_hash: ContentHash::compute(b"stale"),
+                    evidence_refs: vec!["stale_ref".into()],
+                    collected_at_ns: 99, // age = now - 99 = max_staleness + 1
+                    schema_major: 1,
+                    metadata: BTreeMap::new(),
+                },
+                make_passing_input(GateCategory::GovernanceCompliance, now),
+            ],
+            predecessor_promoted: false,
+            zone: "test".into(),
+        };
+
+        let record = evaluator.evaluate(input).unwrap();
+        assert_eq!(record.verdict, GateVerdict::Denied);
+        let stale_eval = record
+            .evaluations
+            .iter()
+            .find(|e| e.category == GateCategory::SemanticContract)
+            .unwrap();
+        assert!(matches!(
+            stale_eval.input_validity,
+            InputValidity::Stale { .. }
+        ));
+    }
+
+    // -- Enrichment: GateHistory with multiple records --
+
+    #[test]
+    fn gate_history_multiple_records_verify() {
+        let mut evaluator = CutLineEvaluator::with_defaults();
+        let now = 1_000_000_000;
+
+        // Denied C0.
+        evaluator.evaluate(GateEvaluationInput {
+            cut_line: CutLine::C0,
+            now_ns: now,
+            epoch: test_epoch(),
+            inputs: vec![],
+            predecessor_promoted: false,
+            zone: "test".into(),
+        });
+
+        // Approved C0.
+        evaluator.evaluate(GateEvaluationInput {
+            cut_line: CutLine::C0,
+            now_ns: now,
+            epoch: test_epoch(),
+            inputs: vec![
+                make_passing_input(GateCategory::SemanticContract, now),
+                make_passing_input(GateCategory::GovernanceCompliance, now),
+            ],
+            predecessor_promoted: false,
+            zone: "test".into(),
+        });
+
+        let history = GateHistory::from_evaluator(&evaluator);
+        assert_eq!(history.records.len(), 2);
+        assert!(history.verify());
+
+        // Serde roundtrip.
+        let json = serde_json::to_string(&history).unwrap();
+        let restored: GateHistory = serde_json::from_str(&json).unwrap();
+        assert_eq!(history, restored);
+        assert!(restored.verify());
+    }
+
+    // -- Enrichment: InputValidity Display all variants non-empty --
+
+    #[test]
+    fn input_validity_display_all_nonempty() {
+        let variants = [
+            InputValidity::Valid,
+            InputValidity::Stale {
+                age_ns: 5_000,
+                max_age_ns: 1_000,
+            },
+            InputValidity::Missing {
+                field: "test_field".into(),
+            },
+            InputValidity::Incompatible {
+                reason: "version mismatch".into(),
+            },
+        ];
+        for v in &variants {
+            let s = format!("{v}");
+            assert!(!s.is_empty(), "Display for {v:?} should not be empty");
+        }
+    }
+
+    // -- Enrichment: CutLine hash distinct --
+
+    #[test]
+    fn cut_line_hash_distinct() {
+        use std::collections::BTreeSet;
+        let hashes: BTreeSet<_> = CutLine::all().iter().collect();
+        assert_eq!(hashes.len(), 6, "all CutLine variants should be distinct");
+    }
+
+    // -- Enrichment: promotion summary denied_count accurate --
+
+    #[test]
+    fn promotion_summary_denied_count_accurate() {
+        let mut evaluator = CutLineEvaluator::with_defaults();
+        let now = 1_000_000_000;
+
+        // Three denied evaluations.
+        for _ in 0..3 {
+            evaluator.evaluate(GateEvaluationInput {
+                cut_line: CutLine::C0,
+                now_ns: now,
+                epoch: test_epoch(),
+                inputs: vec![],
+                predecessor_promoted: false,
+                zone: "test".into(),
+            });
+        }
+
+        let summary = evaluator.promotion_summary();
+        assert_eq!(summary.denied_count, 3);
+        assert_eq!(summary.approved_count, 0);
+        assert_eq!(summary.total_evaluations, 3);
+    }
+
+    // -- Enrichment: CutLineEvaluator with_defaults has C0 and C1 --
+
+    #[test]
+    fn with_defaults_has_c0_and_c1() {
+        let mut evaluator = CutLineEvaluator::with_defaults();
+        // with_defaults registers C0 and C1.
+        let now = 1_000_000_000;
+        // C0 exists.
+        assert!(
+            evaluator
+                .evaluate(GateEvaluationInput {
+                    cut_line: CutLine::C0,
+                    now_ns: now,
+                    epoch: test_epoch(),
+                    inputs: vec![
+                        make_passing_input(GateCategory::SemanticContract, now),
+                        make_passing_input(GateCategory::GovernanceCompliance, now),
+                    ],
+                    predecessor_promoted: false,
+                    zone: "test".into(),
+                })
+                .is_some()
+        );
+    }
+
+    // -- Enrichment: evaluate returns None for unregistered cut line --
+
+    #[test]
+    fn evaluate_returns_none_for_unregistered() {
+        let mut evaluator = CutLineEvaluator::with_defaults();
+        let now = 1_000_000_000;
+        // C3 is not registered in with_defaults.
+        let result = evaluator.evaluate(GateEvaluationInput {
+            cut_line: CutLine::C3,
+            now_ns: now,
+            epoch: test_epoch(),
+            inputs: vec![],
+            predecessor_promoted: false,
+            zone: "test".into(),
+        });
+        assert!(result.is_none());
+    }
 }

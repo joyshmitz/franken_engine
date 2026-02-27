@@ -2709,4 +2709,300 @@ mod tests {
         assert!(!spec.is_valid_at(SecurityEpoch::from_raw(99)));
         assert!(!spec.is_valid_at(SecurityEpoch::from_raw(201)));
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 session 7 --
+
+    #[test]
+    fn advance_epoch_twice_sequential_invalidation() {
+        let mut engine = test_engine();
+        let s1 = make_spec(
+            OptimizationClass::TraceSpecialization,
+            90,
+            105,
+            "policy-001",
+            "seq-short",
+        );
+        let s2 = make_spec(
+            OptimizationClass::Superinstruction,
+            90,
+            115,
+            "policy-001",
+            "seq-long",
+        );
+        engine.register_specialization(s1, 1000).unwrap();
+        engine.register_specialization(s2, 1000).unwrap();
+
+        // First advance: s1 expires (valid_until=105), s2 survives.
+        let inv1 = engine.advance_epoch(SecurityEpoch::from_raw(110), 2000);
+        assert_eq!(inv1, 1);
+        assert_eq!(engine.active_count(), 1);
+
+        // Second advance: s2 expires (valid_until=115).
+        let inv2 = engine.advance_epoch(SecurityEpoch::from_raw(120), 3000);
+        assert_eq!(inv2, 1);
+        assert_eq!(engine.active_count(), 0);
+        assert_eq!(engine.fallback_count(), 2);
+        assert_eq!(engine.total_invalidations(), 2);
+    }
+
+    #[test]
+    fn invalidate_by_proof_skips_already_fallen_back() {
+        let mut engine = test_engine();
+        let shared_proof = make_proof_id("shared-skip");
+        let mut proofs = BTreeSet::new();
+        proofs.insert(shared_proof.clone());
+
+        let s1 = create_specialization(SpecializationInput {
+            optimization_class: OptimizationClass::TraceSpecialization,
+            valid_from_epoch: SecurityEpoch::from_raw(90),
+            valid_until_epoch: SecurityEpoch::from_raw(110),
+            source_proof_ids: proofs.clone(),
+            linked_policy_id: "policy-001".to_string(),
+            rollback_token_hash: ContentHash::compute(b"rb-skip-1"),
+            baseline_ir_hash: ContentHash::compute(b"bl-skip-1"),
+            activated_epoch: SecurityEpoch::from_raw(90),
+            activated_at_ns: 1000,
+        })
+        .unwrap();
+        let s1_id = s1.specialization_id.clone();
+
+        let s2 = create_specialization(SpecializationInput {
+            optimization_class: OptimizationClass::Superinstruction,
+            valid_from_epoch: SecurityEpoch::from_raw(90),
+            valid_until_epoch: SecurityEpoch::from_raw(110),
+            source_proof_ids: proofs,
+            linked_policy_id: "policy-001".to_string(),
+            rollback_token_hash: ContentHash::compute(b"rb-skip-2"),
+            baseline_ir_hash: ContentHash::compute(b"bl-skip-2"),
+            activated_epoch: SecurityEpoch::from_raw(90),
+            activated_at_ns: 1000,
+        })
+        .unwrap();
+
+        engine.register_specialization(s1, 1000).unwrap();
+        engine.register_specialization(s2, 1000).unwrap();
+
+        // Manually invalidate s1.
+        engine
+            .invalidate_specialization(
+                &s1_id,
+                InvalidationReason::OperatorInvalidation {
+                    reason: "manual".into(),
+                },
+                1500,
+            )
+            .unwrap();
+        assert_eq!(engine.fallback_count(), 1);
+
+        // invalidate_by_proof should only hit s2 (the still-active one).
+        let count = engine.invalidate_by_proof(&shared_proof, 2000);
+        assert_eq!(count, 1);
+        assert_eq!(engine.fallback_count(), 2);
+        assert_eq!(engine.active_count(), 0);
+    }
+
+    #[test]
+    fn begin_respecialization_emits_respec_started_event() {
+        let mut engine = test_engine();
+        let spec = make_default_spec();
+        let spec_id = spec.specialization_id.clone();
+        engine.register_specialization(spec, 1000).unwrap();
+
+        engine.advance_epoch(SecurityEpoch::from_raw(111), 2000);
+        engine.begin_respecialization(&spec_id, 3000).unwrap();
+
+        let has_respec = engine.events().iter().any(|e| {
+            matches!(
+                &e.event_type,
+                InvalidationEventType::ReSpecializationStarted { specialization_id }
+                    if *specialization_id == spec_id
+            )
+        });
+        assert!(has_respec);
+    }
+
+    #[test]
+    fn invalidate_respecializing_spec_transitions_to_fallback() {
+        let mut engine = test_engine();
+        let spec = make_default_spec();
+        let spec_id = spec.specialization_id.clone();
+        engine.register_specialization(spec, 1000).unwrap();
+
+        // Invalidate then begin re-specialization.
+        engine.advance_epoch(SecurityEpoch::from_raw(111), 2000);
+        engine.begin_respecialization(&spec_id, 3000).unwrap();
+        assert_eq!(
+            engine.get_specialization(&spec_id).unwrap().state,
+            FallbackState::ReSpecializing,
+        );
+
+        // ReSpecializing is NOT BaselineFallback or Invalidating,
+        // so invalidate_specialization should succeed.
+        let receipt = engine
+            .invalidate_specialization(
+                &spec_id,
+                InvalidationReason::OperatorInvalidation {
+                    reason: "cancel-respec".into(),
+                },
+                4000,
+            )
+            .unwrap();
+        assert_eq!(receipt.specialization_id, spec_id);
+        assert_eq!(
+            engine.get_specialization(&spec_id).unwrap().state,
+            FallbackState::BaselineFallback,
+        );
+    }
+
+    #[test]
+    fn advance_epoch_no_bulk_event_when_zero_invalidated() {
+        let mut engine = test_engine();
+        let spec = make_spec(
+            OptimizationClass::TraceSpecialization,
+            90,
+            200,
+            "policy-001",
+            "long-valid",
+        );
+        engine.register_specialization(spec, 1000).unwrap();
+
+        // Advance within validity — 0 invalidated.
+        let count = engine.advance_epoch(SecurityEpoch::from_raw(105), 2000);
+        assert_eq!(count, 0);
+
+        // Should NOT have a BulkInvalidationCompleted event.
+        let has_bulk = engine.events().iter().any(|e| {
+            matches!(
+                e.event_type,
+                InvalidationEventType::BulkInvalidationCompleted { .. }
+            )
+        });
+        assert!(
+            !has_bulk,
+            "BulkInvalidationCompleted should not be emitted when count is 0"
+        );
+    }
+
+    #[test]
+    fn multiple_respecialization_cycles() {
+        let mut engine = test_engine();
+        let spec = make_spec(
+            OptimizationClass::TraceSpecialization,
+            90,
+            105,
+            "policy-001",
+            "cycle",
+        );
+        let spec_id = spec.specialization_id.clone();
+        engine.register_specialization(spec, 1000).unwrap();
+
+        // Cycle 1: invalidate -> respec.
+        engine.advance_epoch(SecurityEpoch::from_raw(106), 2000);
+        engine.begin_respecialization(&spec_id, 3000).unwrap();
+        engine
+            .complete_respecialization(
+                &spec_id,
+                SecurityEpoch::from_raw(106),
+                SecurityEpoch::from_raw(115),
+                BTreeSet::new(),
+                4000,
+            )
+            .unwrap();
+        assert_eq!(
+            engine.get_specialization(&spec_id).unwrap().state,
+            FallbackState::Active,
+        );
+
+        // Cycle 2: invalidate again -> respec again.
+        engine.advance_epoch(SecurityEpoch::from_raw(120), 5000);
+        assert_eq!(
+            engine.get_specialization(&spec_id).unwrap().state,
+            FallbackState::BaselineFallback,
+        );
+        engine.begin_respecialization(&spec_id, 6000).unwrap();
+        engine
+            .complete_respecialization(
+                &spec_id,
+                SecurityEpoch::from_raw(120),
+                SecurityEpoch::from_raw(200),
+                BTreeSet::new(),
+                7000,
+            )
+            .unwrap();
+        assert_eq!(
+            engine.get_specialization(&spec_id).unwrap().state,
+            FallbackState::Active,
+        );
+        assert_eq!(engine.total_invalidations(), 2);
+    }
+
+    #[test]
+    fn receipt_id_varies_with_timestamp() {
+        let mut config1 = test_config();
+        config1.signing_key = [7u8; 32];
+        let config2 = config1.clone();
+        let _ = &config2; // same config
+
+        let mut e1 = EpochInvalidationEngine::new(test_epoch(), config1);
+        let mut e2 = EpochInvalidationEngine::new(test_epoch(), config2);
+
+        let spec1 = make_default_spec();
+        let spec2 = make_default_spec();
+        let sid = spec1.specialization_id.clone();
+
+        e1.register_specialization(spec1, 1000).unwrap();
+        e2.register_specialization(spec2, 1000).unwrap();
+
+        let reason = InvalidationReason::OperatorInvalidation {
+            reason: "ts-test".into(),
+        };
+        let r1 = e1
+            .invalidate_specialization(&sid, reason.clone(), 2000)
+            .unwrap();
+        let r2 = e2
+            .invalidate_specialization(&sid, reason, 3000) // different timestamp
+            .unwrap();
+
+        // Receipt IDs should differ because timestamp is in the derivation input.
+        assert_ne!(r1.receipt_id, r2.receipt_id);
+    }
+
+    #[test]
+    fn invalidate_by_policy_skips_already_fallen_back() {
+        let mut engine = test_engine();
+        let s1 = make_spec(
+            OptimizationClass::TraceSpecialization,
+            90,
+            110,
+            "pol-shared",
+            "pol-skip-1",
+        );
+        let s1_id = s1.specialization_id.clone();
+        let s2 = make_spec(
+            OptimizationClass::Superinstruction,
+            90,
+            110,
+            "pol-shared",
+            "pol-skip-2",
+        );
+        engine.register_specialization(s1, 1000).unwrap();
+        engine.register_specialization(s2, 1000).unwrap();
+
+        // Manually invalidate s1.
+        engine
+            .invalidate_specialization(
+                &s1_id,
+                InvalidationReason::OperatorInvalidation {
+                    reason: "manual".into(),
+                },
+                1500,
+            )
+            .unwrap();
+
+        // invalidate_by_policy should only hit s2.
+        let count = engine.invalidate_by_policy("pol-shared", 2000);
+        assert_eq!(count, 1);
+        assert_eq!(engine.fallback_count(), 2);
+        assert_eq!(engine.active_count(), 0);
+    }
 }

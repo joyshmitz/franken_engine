@@ -2456,4 +2456,165 @@ mod tests {
         };
         assert!(c1 < c2);
     }
+
+    // -- Enrichment: serde roundtrips for untested types (PearlTower 2026-02-27) --
+
+    #[test]
+    fn publisher_identity_serde_roundtrip() {
+        let sk = test_signing_key();
+        let vk = test_verification_key_from(&sk);
+        let mut reg = ExtensionRegistry::new(DeterministicTimestamp(100));
+        let pub_id = reg.register_publisher("TestOrg", vk.clone()).unwrap();
+        let identity = PublisherIdentity {
+            id: pub_id,
+            display_name: "TestOrg".to_string(),
+            verification_key: vk,
+            owned_scopes: {
+                let mut s = BTreeSet::new();
+                s.insert("testorg".to_string());
+                s
+            },
+            registered_at: DeterministicTimestamp(100),
+            revoked: false,
+            revoked_at: None,
+            revocation_reason: None,
+        };
+        let json = serde_json::to_string(&identity).unwrap();
+        let back: PublisherIdentity = serde_json::from_str(&json).unwrap();
+        assert_eq!(identity, back);
+    }
+
+    #[test]
+    fn publisher_identity_revoked_serde_roundtrip() {
+        let sk = test_signing_key();
+        let vk = test_verification_key_from(&sk);
+        let mut reg = ExtensionRegistry::new(DeterministicTimestamp(100));
+        let pub_id = reg.register_publisher("Revoked", vk.clone()).unwrap();
+        let identity = PublisherIdentity {
+            id: pub_id,
+            display_name: "Revoked".to_string(),
+            verification_key: vk,
+            owned_scopes: BTreeSet::new(),
+            registered_at: DeterministicTimestamp(100),
+            revoked: true,
+            revoked_at: Some(DeterministicTimestamp(200)),
+            revocation_reason: Some("policy violation".to_string()),
+        };
+        let json = serde_json::to_string(&identity).unwrap();
+        let back: PublisherIdentity = serde_json::from_str(&json).unwrap();
+        assert_eq!(identity, back);
+        assert!(back.revoked);
+    }
+
+    #[test]
+    fn extension_manifest_serde_roundtrip() {
+        let sk = test_signing_key();
+        let vk = test_verification_key_from(&sk);
+        let mut reg = ExtensionRegistry::new(DeterministicTimestamp(100));
+        let pub_id = reg.register_publisher("TestOrg", vk.clone()).unwrap();
+        let manifest = build_manifest("testorg", "weather-ext", PackageVersion::new(1, 0, 0), &pub_id, &vk);
+        let json = serde_json::to_string(&manifest).unwrap();
+        let back: ExtensionManifest = serde_json::from_str(&json).unwrap();
+        assert_eq!(manifest, back);
+    }
+
+    // -- Enrichment: PearlTower 2026-02-26 session 7 --
+
+    #[test]
+    fn manifest_unsigned_bytes_sensitive_to_version() {
+        let (_, pub_id, _, vk) = setup_registry_with_publisher();
+        let m1 = build_manifest("testorg", "ext", PackageVersion::new(1, 0, 0), &pub_id, &vk);
+        let m2 = build_manifest("testorg", "ext", PackageVersion::new(1, 0, 1), &pub_id, &vk);
+        assert_ne!(
+            m1.unsigned_bytes(),
+            m2.unsigned_bytes(),
+            "different versions must produce different unsigned bytes"
+        );
+    }
+
+    #[test]
+    fn compute_artifacts_root_empty_artifacts() {
+        let (_, pub_id, _, vk) = setup_registry_with_publisher();
+        let mut m = build_manifest("testorg", "ext", PackageVersion::new(1, 0, 0), &pub_id, &vk);
+        m.artifacts.clear();
+        let root = m.compute_artifacts_root();
+        // Empty artifacts list should still produce a deterministic hash (hash of empty bytes).
+        let root2 = m.compute_artifacts_root();
+        assert_eq!(root, root2);
+        // And it should be the hash of an empty byte sequence.
+        assert_eq!(root, ContentHash::compute(b""));
+    }
+
+    #[test]
+    fn derive_package_id_deterministic() {
+        let (_, pub_id, _, vk) = setup_registry_with_publisher();
+        let m = build_manifest("testorg", "ext", PackageVersion::new(1, 0, 0), &pub_id, &vk);
+        let id1 = SignedPackage::derive_package_id(&m).unwrap();
+        let id2 = SignedPackage::derive_package_id(&m).unwrap();
+        assert_eq!(id1, id2, "same manifest must produce same package ID");
+    }
+
+    #[test]
+    fn validate_name_rejects_special_chars() {
+        let result = validate_name("my ext!");
+        assert!(
+            matches!(result, Err(RegistryError::InvalidName { .. })),
+            "name with special chars should be rejected"
+        );
+    }
+
+    #[test]
+    fn claim_scope_unknown_publisher_fails() {
+        let mut reg = ExtensionRegistry::new(DeterministicTimestamp(1));
+        let unknown_id = EngineObjectId([0xFF; 32]);
+        let result = reg.claim_scope(unknown_id, "newscope");
+        assert!(matches!(
+            result,
+            Err(RegistryError::PublisherNotFound { .. })
+        ));
+    }
+
+    #[test]
+    fn search_combined_scope_and_name_filter() {
+        let (mut reg, pub_id, sk, vk) = setup_registry_with_publisher();
+        let v = PackageVersion::new(1, 0, 0);
+        let m_a = build_manifest("testorg", "ext-a", v, &pub_id, &vk);
+        let m_b = build_manifest("testorg", "ext-b", v, &pub_id, &vk);
+        sign_and_publish(&mut reg, &m_a, &sk).unwrap();
+        sign_and_publish(&mut reg, &m_b, &sk).unwrap();
+
+        let results = reg.search(&PackageQuery {
+            scope: Some("testorg".to_string()),
+            name: Some("ext-a".to_string()),
+            ..PackageQuery::default()
+        });
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].manifest.name, "ext-a");
+    }
+
+    #[test]
+    fn build_descriptor_content_hash_changes_with_reproducible_flag() {
+        let mut bd = test_build_descriptor();
+        assert!(bd.reproducible);
+        let h_true = bd.content_hash();
+        bd.reproducible = false;
+        let h_false = bd.content_hash();
+        assert_ne!(h_true, h_false, "reproducible flag change must alter content hash");
+    }
+
+    #[test]
+    fn revoke_package_stores_reason_string() {
+        let (mut reg, pub_id, sk, vk) = setup_registry_with_publisher();
+        let v = PackageVersion::new(1, 0, 0);
+        let m = build_manifest("testorg", "ext", v, &pub_id, &vk);
+        sign_and_publish(&mut reg, &m, &sk).unwrap();
+
+        reg.revoke_package("testorg", "ext", v, "critical vulnerability CVE-2026-0001")
+            .unwrap();
+        let pkg = reg.get_package("testorg", "ext", v).unwrap();
+        assert_eq!(
+            pkg.revocation_reason.as_deref(),
+            Some("critical vulnerability CVE-2026-0001")
+        );
+    }
 }

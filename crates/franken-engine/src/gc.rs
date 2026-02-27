@@ -1464,4 +1464,259 @@ mod tests {
         let decoded: GcError = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(decoded, err);
     }
+
+    // ── Enrichment: GcObject serde ───────────────────────────────────
+
+    #[test]
+    fn gc_object_serde_roundtrip() {
+        let mut refs = BTreeSet::new();
+        refs.insert(GcObjectId(10));
+        refs.insert(GcObjectId(20));
+        let obj = GcObject {
+            id: GcObjectId(5),
+            size_bytes: 1024,
+            references: refs,
+            rooted: true,
+        };
+        let json = serde_json::to_string(&obj).unwrap();
+        let back: GcObject = serde_json::from_str(&json).unwrap();
+        assert_eq!(obj, back);
+    }
+
+    #[test]
+    fn gc_object_empty_references_serde() {
+        let obj = GcObject {
+            id: GcObjectId(0),
+            size_bytes: 0,
+            references: BTreeSet::new(),
+            rooted: false,
+        };
+        let json = serde_json::to_string(&obj).unwrap();
+        let back: GcObject = serde_json::from_str(&json).unwrap();
+        assert_eq!(obj, back);
+    }
+
+    // ── Enrichment: ExtensionHeap accessors ──────────────────────────
+
+    #[test]
+    fn extension_heap_contains_and_get() {
+        let mut heap = ExtensionHeap::new("ext-a".into());
+        let id = heap.allocate(64);
+        assert!(heap.contains(id));
+        assert!(heap.get(id).is_some());
+        assert!(!heap.contains(GcObjectId(999)));
+        assert!(heap.get(GcObjectId(999)).is_none());
+    }
+
+    #[test]
+    fn extension_heap_extension_id_accessor() {
+        let heap = ExtensionHeap::new("my-ext-42".into());
+        assert_eq!(heap.extension_id(), "my-ext-42");
+    }
+
+    #[test]
+    fn extension_heap_add_reference_idempotent() {
+        let mut heap = ExtensionHeap::new("ext".into());
+        let a = heap.allocate(10);
+        let b = heap.allocate(20);
+        heap.add_reference(a, b).unwrap();
+        heap.add_reference(a, b).unwrap(); // duplicate
+        let obj = heap.get(a).unwrap();
+        assert_eq!(obj.references.len(), 1); // BTreeSet deduplicates
+    }
+
+    #[test]
+    fn extension_heap_root_already_rooted_object() {
+        let mut heap = ExtensionHeap::new("ext".into());
+        let id = heap.allocate(10); // starts rooted
+        heap.root(id).unwrap(); // re-root is no-op
+        let obj = heap.get(id).unwrap();
+        assert!(obj.rooted);
+    }
+
+    #[test]
+    fn extension_heap_serde_roundtrip() {
+        let mut heap = ExtensionHeap::new("serde-ext".into());
+        let a = heap.allocate(100);
+        let b = heap.allocate(200);
+        heap.add_reference(a, b).unwrap();
+        heap.unroot(b).unwrap();
+
+        let json = serde_json::to_string(&heap).unwrap();
+        let back: ExtensionHeap = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.extension_id(), "serde-ext");
+        assert_eq!(back.object_count(), 2);
+        assert_eq!(back.total_bytes(), 300);
+    }
+
+    // ── Enrichment: GcCollector accessors ────────────────────────────
+
+    #[test]
+    fn collector_get_heap_returns_none_for_missing() {
+        let gc = GcCollector::new(GcConfig::deterministic());
+        assert!(gc.get_heap("nonexistent").is_none());
+    }
+
+    #[test]
+    fn collector_get_heap_mut_returns_none_for_missing() {
+        let mut gc = GcCollector::new(GcConfig::deterministic());
+        assert!(gc.get_heap_mut("nonexistent").is_none());
+    }
+
+    #[test]
+    fn collector_config_accessor() {
+        let cfg = GcConfig {
+            deterministic: true,
+            pressure_threshold_percent: 50,
+        };
+        let gc = GcCollector::new(cfg.clone());
+        assert_eq!(*gc.config(), cfg);
+    }
+
+    #[test]
+    fn collector_event_sequence_monotonic() {
+        let mut gc = GcCollector::new(GcConfig::deterministic());
+        gc.register_heap("ext-a".into()).unwrap();
+        gc.register_heap("ext-b".into()).unwrap();
+        let e1 = gc.collect("ext-a").unwrap();
+        let e2 = gc.collect("ext-b").unwrap();
+        assert!(e2.sequence > e1.sequence);
+    }
+
+    #[test]
+    fn collect_all_events_have_complete_phase() {
+        let mut gc = GcCollector::new(GcConfig::deterministic());
+        gc.register_heap("a".into()).unwrap();
+        gc.register_heap("b".into()).unwrap();
+        let events = gc.collect_all();
+        assert_eq!(events.len(), 2);
+        for ev in &events {
+            assert_eq!(ev.phase, GcPhase::Complete);
+        }
+    }
+
+    // ── Enrichment: CollectionStats ──────────────────────────────────
+
+    #[test]
+    fn collection_stats_equality() {
+        let a = CollectionStats {
+            marked_count: 5,
+            swept_count: 3,
+            bytes_reclaimed: 100,
+        };
+        let b = CollectionStats {
+            marked_count: 5,
+            swept_count: 3,
+            bytes_reclaimed: 100,
+        };
+        let c = CollectionStats {
+            marked_count: 5,
+            swept_count: 2,
+            bytes_reclaimed: 100,
+        };
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+
+    // ── Enrichment: GcPhase ──────────────────────────────────────────
+
+    #[test]
+    fn gc_phase_display_all_unique_alt() {
+        let mut set = BTreeSet::new();
+        for v in [GcPhase::Mark, GcPhase::Sweep, GcPhase::Complete] {
+            set.insert(v.to_string());
+        }
+        assert_eq!(set.len(), 3);
+    }
+
+    #[test]
+    fn gc_phase_serde_roundtrip_all_variants() {
+        for v in [GcPhase::Mark, GcPhase::Sweep, GcPhase::Complete] {
+            let json = serde_json::to_string(&v).unwrap();
+            let back: GcPhase = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, back);
+        }
+    }
+
+    // ── Enrichment: GcError display ──────────────────────────────────
+
+    #[test]
+    fn gc_error_display_all_unique() {
+        let variants: Vec<GcError> = vec![
+            GcError::HeapNotFound {
+                extension_id: "a".into(),
+            },
+            GcError::DuplicateHeap {
+                extension_id: "b".into(),
+            },
+            GcError::ObjectNotFound {
+                extension_id: "c".into(),
+                object_id: GcObjectId(1),
+            },
+            GcError::DomainError(AllocDomainError::BudgetExceeded {
+                requested: 10,
+                remaining: 5,
+                domain: None,
+            }),
+        ];
+        let mut set = BTreeSet::new();
+        for v in &variants {
+            set.insert(v.to_string());
+        }
+        assert_eq!(set.len(), variants.len());
+    }
+
+    #[test]
+    fn gc_error_implements_std_error_alt() {
+        let err = GcError::HeapNotFound {
+            extension_id: "x".into(),
+        };
+        let dyn_err: &dyn std::error::Error = &err;
+        assert!(dyn_err.source().is_none());
+    }
+
+    // ── Enrichment: self-referencing object ──────────────────────────
+
+    #[test]
+    fn self_referencing_object_survives_collection() {
+        let mut gc = GcCollector::new(GcConfig::deterministic());
+        gc.register_heap("ext".into()).unwrap();
+        let id = gc.allocate("ext", 64).unwrap();
+        gc.add_reference("ext", id, id).unwrap(); // self-reference
+        let ev = gc.collect("ext").unwrap();
+        // rooted + self-referencing: survives collection
+        assert_eq!(ev.swept_count, 0);
+        assert_eq!(ev.marked_count, 1);
+    }
+
+    // ── Enrichment: GcConfig thresholds ──────────────────────────────
+
+    #[test]
+    fn gc_config_pressure_ratio_boundary_1_percent() {
+        let cfg = GcConfig {
+            deterministic: false,
+            pressure_threshold_percent: 1,
+        };
+        let ratio = cfg.pressure_ratio();
+        assert!((ratio - 0.01).abs() < 1e-6);
+    }
+
+    #[test]
+    fn gc_config_should_collect_at_exact_threshold() {
+        let mut gc = GcCollector::new(GcConfig {
+            deterministic: true,
+            pressure_threshold_percent: 50,
+        });
+        gc.register_heap("ext".into()).unwrap();
+        gc.allocate("ext", 50).unwrap(); // 50 bytes out of budget 100
+        assert!(gc.should_collect("ext", 100)); // 50% == threshold => true
+    }
+
+    // ── Enrichment: GcObjectId display ───────────────────────────────
+
+    #[test]
+    fn gc_object_id_display_format() {
+        let id = GcObjectId(42);
+        assert_eq!(id.to_string(), "obj-42");
+    }
 }
