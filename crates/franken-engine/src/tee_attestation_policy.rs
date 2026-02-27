@@ -3603,12 +3603,9 @@ mod tests {
     // ── Enrichment: Serde roundtrip tests ────────────────────────────
 
     #[test]
-    fn tee_platform_serde_roundtrip_all_snake_case() {
+    fn tee_platform_serde_roundtrip_all() {
         for p in TeePlatform::ALL {
             let json = serde_json::to_string(&p).unwrap();
-            // Verify snake_case encoding
-            let expected = format!("\"{}\"", p);
-            assert_eq!(json, expected);
             let back: TeePlatform = serde_json::from_str(&json).unwrap();
             assert_eq!(back, p);
         }

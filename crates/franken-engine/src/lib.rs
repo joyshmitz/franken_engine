@@ -27,6 +27,7 @@ pub mod capability;
 pub mod capability_token;
 pub mod capability_witness;
 pub mod catastrophic_tail_tournament_gate;
+pub mod causal_regret_evidence_gate;
 pub mod causal_replay;
 pub mod checkpoint;
 pub mod checkpoint_frontier;
