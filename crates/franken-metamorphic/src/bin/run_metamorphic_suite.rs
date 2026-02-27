@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::error::Error;
 use std::fs;
 use std::path::PathBuf;
@@ -5,9 +6,11 @@ use std::path::PathBuf;
 use frankenengine_metamorphic::build_enabled_relations;
 use frankenengine_metamorphic::catalog::RelationCatalog;
 use frankenengine_metamorphic::relation::MetamorphicRelation;
+use frankenengine_metamorphic::relations::CatalogBackedRelation;
 use frankenengine_metamorphic::runner::{
-    MinimizerConfig, RunContext, evidence_entries_for_suite, relation_log_events_for_suite,
-    run_suite, write_evidence_jsonl,
+    evidence_entries_for_suite, relation_log_events_for_suite, run_suite,
+    seed_transcript_entries_for_suite, write_evidence_jsonl, write_seed_transcript_jsonl,
+    MinimizerConfig, RunContext,
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -18,6 +21,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut policy_id = String::from("policy-metamorphic-v1");
     let mut evidence_path = PathBuf::from("artifacts/metamorphic/metamorphic_evidence.jsonl");
     let mut events_path = PathBuf::from("artifacts/metamorphic/relation_events.jsonl");
+    let mut seed_transcript_path = PathBuf::from("artifacts/metamorphic/seed_transcript.jsonl");
     let mut failures_dir = PathBuf::from("artifacts/metamorphic/failures");
     let mut relation_filters = Vec::<String>::new();
 
@@ -66,6 +70,12 @@ fn main() -> Result<(), Box<dyn Error>> {
                 };
                 events_path = PathBuf::from(value);
             }
+            "--seed-transcript" => {
+                let Some(value) = args.next() else {
+                    return Err("missing value for --seed-transcript".into());
+                };
+                seed_transcript_path = PathBuf::from(value);
+            }
             "--failures-dir" => {
                 let Some(value) = args.next() else {
                     return Err("missing value for --failures-dir".into());
@@ -88,18 +98,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let catalog_hash = catalog.content_hash();
 
     let all_relations = build_enabled_relations(&catalog);
-    let selected_relations = if relation_filters.is_empty() {
-        all_relations
-    } else {
-        all_relations
-            .into_iter()
-            .filter(|relation| {
-                relation_filters
-                    .iter()
-                    .any(|filter| relation.spec().id == *filter)
-            })
-            .collect::<Vec<_>>()
-    };
+    let selected_relations = select_relations(&all_relations, &relation_filters)?;
 
     if selected_relations.is_empty() {
         return Err("no relations selected for execution".into());
@@ -109,6 +108,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         fs::create_dir_all(parent)?;
     }
     if let Some(parent) = events_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    if let Some(parent) = seed_transcript_path.parent() {
         fs::create_dir_all(parent)?;
     }
     fs::create_dir_all(&failures_dir)?;
@@ -140,14 +142,17 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let events = relation_log_events_for_suite(&suite);
     write_events_jsonl(&events_path, &events)?;
+    let seed_transcript = seed_transcript_entries_for_suite(&suite);
+    write_seed_transcript_jsonl(&seed_transcript_path, &seed_transcript)?;
 
     println!(
-        "metamorphic suite relations={} total_pairs={} violations={} evidence={} events={} failures_dir={}",
+        "metamorphic suite relations={} total_pairs={} violations={} evidence={} events={} seed_transcript={} failures_dir={}",
         suite.relation_executions.len(),
         suite.total_pairs,
         suite.total_violations,
         evidence_path.display(),
         events_path.display(),
+        seed_transcript_path.display(),
         failures_dir.display()
     );
 
@@ -174,4 +179,101 @@ fn write_events_jsonl(
     }
 
     fs::write(events_path, payload)
+}
+
+fn select_relations(
+    all_relations: &[CatalogBackedRelation],
+    relation_filters: &[String],
+) -> Result<Vec<CatalogBackedRelation>, String> {
+    if relation_filters.is_empty() {
+        return Ok(all_relations.to_vec());
+    }
+
+    let mut selected = Vec::new();
+    let mut unknown = Vec::new();
+    let mut seen = BTreeSet::new();
+
+    for relation_filter in relation_filters {
+        if !seen.insert(relation_filter.clone()) {
+            continue;
+        }
+
+        match all_relations
+            .iter()
+            .find(|relation| relation.spec().id.as_str() == relation_filter.as_str())
+        {
+            Some(relation) => selected.push(relation.clone()),
+            None => unknown.push(relation_filter.clone()),
+        }
+    }
+
+    if !unknown.is_empty() {
+        let available = all_relations
+            .iter()
+            .map(|relation| relation.spec().id.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(format!(
+            "unknown relation filter(s): {}. available enabled relations: {available}",
+            unknown.join(", ")
+        ));
+    }
+
+    Ok(selected)
+}
+
+#[cfg(test)]
+mod tests {
+    use frankenengine_metamorphic::build_enabled_relations;
+    use frankenengine_metamorphic::catalog::RelationCatalog;
+    use frankenengine_metamorphic::relation::MetamorphicRelation;
+
+    use super::select_relations;
+
+    #[test]
+    fn select_relations_returns_all_when_filters_are_empty() {
+        let catalog = RelationCatalog::load_default().expect("catalog should load");
+        let all_relations = build_enabled_relations(&catalog);
+        let selected = select_relations(&all_relations, &[]).expect("selection should succeed");
+        assert_eq!(selected.len(), all_relations.len());
+    }
+
+    #[test]
+    fn select_relations_rejects_unknown_filter_even_if_some_valid() {
+        let catalog = RelationCatalog::load_default().expect("catalog should load");
+        let all_relations = build_enabled_relations(&catalog);
+        let filters = vec![
+            "parser_whitespace_invariance".to_string(),
+            "nonexistent_relation".to_string(),
+        ];
+
+        let error = select_relations(&all_relations, &filters).expect_err("selection should fail");
+        assert!(error.contains("unknown relation filter(s): nonexistent_relation"));
+        assert!(error.contains("available enabled relations:"));
+    }
+
+    #[test]
+    fn select_relations_deduplicates_filters_preserving_first_seen_order() {
+        let catalog = RelationCatalog::load_default().expect("catalog should load");
+        let all_relations = build_enabled_relations(&catalog);
+        let filters = vec![
+            "execution_gc_timing_independence".to_string(),
+            "execution_gc_timing_independence".to_string(),
+            "parser_comment_invariance".to_string(),
+        ];
+
+        let selected = select_relations(&all_relations, &filters).expect("selection should pass");
+        let selected_ids = selected
+            .iter()
+            .map(|relation| relation.spec().id.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            selected_ids,
+            vec![
+                "execution_gc_timing_independence",
+                "parser_comment_invariance"
+            ]
+        );
+    }
 }

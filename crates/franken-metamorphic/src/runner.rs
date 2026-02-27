@@ -156,6 +156,21 @@ pub struct RelationEvidenceEntry {
     pub environment_fingerprint: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SeedTranscriptEntry {
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub component: String,
+    pub event: String,
+    pub outcome: String,
+    pub error_code: Option<String>,
+    pub relation_id: String,
+    pub subsystem: String,
+    pub pair_index: u32,
+    pub run_seed: u64,
+}
+
 impl RelationEvidenceEntry {
     pub fn from_execution(execution: &RelationExecution, context: &RunContext) -> Self {
         Self {
@@ -421,6 +436,46 @@ pub fn relation_log_events_for_suite(suite: &SuiteExecution) -> Vec<RelationLogE
     });
 
     events
+}
+
+pub fn seed_transcript_entries_for_suite(suite: &SuiteExecution) -> Vec<SeedTranscriptEntry> {
+    suite
+        .relation_executions
+        .iter()
+        .flat_map(|execution| {
+            execution
+                .outcomes
+                .iter()
+                .enumerate()
+                .map(|(pair_index, outcome)| SeedTranscriptEntry {
+                    trace_id: outcome.trace_id.clone(),
+                    decision_id: outcome.decision_id.clone(),
+                    policy_id: outcome.policy_id.clone(),
+                    component: outcome.component.clone(),
+                    event: "pair_seed_evaluated".to_string(),
+                    outcome: outcome.outcome.clone(),
+                    error_code: outcome.error_code.clone(),
+                    relation_id: execution.relation_id.clone(),
+                    subsystem: execution.subsystem.as_str().to_string(),
+                    pair_index: pair_index as u32,
+                    run_seed: outcome.seed,
+                })
+        })
+        .collect()
+}
+
+pub fn write_seed_transcript_jsonl(
+    path: &Path,
+    entries: &[SeedTranscriptEntry],
+) -> std::io::Result<()> {
+    let mut lines = String::new();
+    for entry in entries {
+        let json = serde_json::to_string(entry).expect("seed transcript serialization should pass");
+        lines.push_str(&json);
+        lines.push('\n');
+    }
+
+    fs::write(path, lines)
 }
 
 pub fn minimize_failure_pair(
@@ -814,8 +869,9 @@ mod tests {
     use crate::{build_enabled_relations, build_relation};
 
     use super::{
-        MinimizerConfig, RelationEvidenceEntry, RunContext, evidence_entries_for_suite,
-        minimize_failure_pair, relation_log_events_for_suite, run_relation_with_budget, run_suite,
+        evidence_entries_for_suite, minimize_failure_pair, relation_log_events_for_suite,
+        run_relation_with_budget, run_suite, seed_transcript_entries_for_suite, MinimizerConfig,
+        RelationEvidenceEntry, RunContext,
     };
 
     struct AlwaysPassRelation {
@@ -1102,11 +1158,159 @@ mod tests {
 
         let entries = evidence_entries_for_suite(&suite);
         assert!(entries.iter().any(|entry| entry.event == "suite_summary"));
-        assert!(
-            entries
-                .iter()
-                .filter(|entry| entry.event == "suite_summary")
-                .all(|entry| entry.total_violations.is_some())
+        assert!(entries
+            .iter()
+            .filter(|entry| entry.event == "suite_summary")
+            .all(|entry| entry.total_violations.is_some()));
+    }
+
+    #[test]
+    fn seed_transcript_rows_are_ordered_and_seeded_deterministically() {
+        let relation_left = AlwaysPassRelation {
+            spec: RelationSpec {
+                id: "left_relation".to_string(),
+                subsystem: Subsystem::Parser,
+                description: "left".to_string(),
+                oracle: OracleKind::AstEquality,
+                budget_pairs: 2,
+                enabled: true,
+            },
+        };
+        let relation_right = AlwaysPassRelation {
+            spec: RelationSpec {
+                id: "right_relation".to_string(),
+                subsystem: Subsystem::Execution,
+                description: "right".to_string(),
+                oracle: OracleKind::CanonicalOutputEquality,
+                budget_pairs: 2,
+                enabled: true,
+            },
+        };
+        let context = test_context();
+        let relation_refs: Vec<&dyn MetamorphicRelation> = vec![&relation_left, &relation_right];
+
+        let suite = run_suite(
+            &relation_refs,
+            &context,
+            Some(2),
+            None,
+            MinimizerConfig::default(),
+        )
+        .expect("suite should run");
+        let transcript = seed_transcript_entries_for_suite(&suite);
+
+        let relation_order = transcript
+            .iter()
+            .map(|entry| entry.relation_id.as_str())
+            .collect::<Vec<_>>();
+        let seed_order = transcript
+            .iter()
+            .map(|entry| entry.run_seed)
+            .collect::<Vec<_>>();
+        let pair_indexes = transcript
+            .iter()
+            .map(|entry| entry.pair_index)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            relation_order,
+            vec![
+                "left_relation",
+                "left_relation",
+                "right_relation",
+                "right_relation"
+            ]
         );
+        assert_eq!(seed_order, vec![7, 8, 7, 8]);
+        assert_eq!(pair_indexes, vec![0, 1, 0, 1]);
+        assert!(transcript
+            .iter()
+            .all(|entry| entry.event == "pair_seed_evaluated"));
+    }
+
+    #[test]
+    fn seed_transcript_is_stable_for_identical_suite_inputs() {
+        let relation = AlwaysPassRelation {
+            spec: RelationSpec {
+                id: "stable_seed_relation".to_string(),
+                subsystem: Subsystem::Ir,
+                description: "stable".to_string(),
+                oracle: OracleKind::IrEquality,
+                budget_pairs: 3,
+                enabled: true,
+            },
+        };
+        let context = test_context();
+        let relation_refs: Vec<&dyn MetamorphicRelation> = vec![&relation];
+
+        let first = run_suite(
+            &relation_refs,
+            &context,
+            Some(3),
+            None,
+            MinimizerConfig::default(),
+        )
+        .expect("first suite should run");
+        let second = run_suite(
+            &relation_refs,
+            &context,
+            Some(3),
+            None,
+            MinimizerConfig::default(),
+        )
+        .expect("second suite should run");
+
+        assert_eq!(
+            seed_transcript_entries_for_suite(&first),
+            seed_transcript_entries_for_suite(&second)
+        );
+    }
+
+    #[test]
+    fn seed_transcript_writer_emits_jsonl_rows() {
+        let relation = AlwaysPassRelation {
+            spec: RelationSpec {
+                id: "writer_relation".to_string(),
+                subsystem: Subsystem::Parser,
+                description: "writer".to_string(),
+                oracle: OracleKind::AstEquality,
+                budget_pairs: 2,
+                enabled: true,
+            },
+        };
+        let context = test_context();
+        let relation_refs: Vec<&dyn MetamorphicRelation> = vec![&relation];
+        let suite = run_suite(
+            &relation_refs,
+            &context,
+            Some(2),
+            None,
+            MinimizerConfig::default(),
+        )
+        .expect("suite should run");
+        let transcript = seed_transcript_entries_for_suite(&suite);
+
+        let file_name = format!(
+            "seed_transcript_writer_test_{}_{}.jsonl",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time should move forward")
+                .as_nanos()
+        );
+        let output_path = std::env::temp_dir().join(file_name);
+
+        super::write_seed_transcript_jsonl(&output_path, &transcript)
+            .expect("writer should serialize transcript");
+        let payload =
+            std::fs::read_to_string(&output_path).expect("seed transcript file should exist");
+        let _ = std::fs::remove_file(&output_path);
+
+        let lines = payload.lines().collect::<Vec<_>>();
+        assert_eq!(lines.len(), transcript.len());
+        assert_eq!(lines.len(), 2);
+        assert!(lines
+            .iter()
+            .all(|line| line.contains("\"event\":\"pair_seed_evaluated\"")));
     }
 }

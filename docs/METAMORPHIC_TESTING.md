@@ -1,4 +1,4 @@
-# Metamorphic Testing (bd-2eu)
+# Metamorphic Testing (bd-mjh3.5.2)
 
 This document defines the metamorphic test framework for parser, IR, and execution invariants.
 
@@ -27,11 +27,21 @@ Use the suite wrapper (heavy cargo paths routed through `rch`):
 ./scripts/run_metamorphic_suite.sh ci
 ```
 
+`rch` is required for this runner. If `rch` is unavailable, the script fails
+closed with `FE-META-RCH-0002` and still emits deterministic run artifacts
+(`run_manifest.json`, `events.jsonl`, `commands.txt`) with failure metadata.
+
 Environment overrides:
 - `METAMORPHIC_PAIRS` (default `1000`, applied per enabled relation)
 - `METAMORPHIC_SEED` (default `1`)
+- `METAMORPHIC_RELATIONS` (optional comma-separated enabled relation IDs; example: `parser_whitespace_invariance,ir_lowering_determinism`)
 - `RUSTUP_TOOLCHAIN` (default `nightly`)
 - `CARGO_TARGET_DIR` (default `/tmp/rch_target_franken_engine_metamorphic`)
+
+Relation filter semantics:
+- Filters are passed as repeated `--relation` arguments to the runner.
+- Duplicate relation IDs are deduplicated (first-seen order preserved).
+- Unknown relation IDs fail closed even when other IDs are valid.
 
 ## Failure Minimization
 
@@ -56,6 +66,7 @@ Each run writes deterministic metadata under:
 - `artifacts/metamorphic/<timestamp>/events.jsonl`
 - `artifacts/metamorphic/<timestamp>/relation_events.jsonl`
 - `artifacts/metamorphic/<timestamp>/metamorphic_evidence.jsonl`
+- `artifacts/metamorphic/<timestamp>/seed_transcript.jsonl`
 - `artifacts/metamorphic/<timestamp>/failures/`
 - `artifacts/metamorphic/<timestamp>/commands.txt`
 
@@ -82,6 +93,19 @@ Plus relation metrics:
 
 A `suite_summary` row is appended with aggregate totals.
 
+Seed transcript rows capture deterministic pair-seed replay metadata:
+- `trace_id`
+- `decision_id`
+- `policy_id`
+- `component`
+- `event` (`pair_seed_evaluated`)
+- `relation_id`
+- `subsystem`
+- `pair_index`
+- `run_seed`
+- `outcome`
+- `error_code`
+
 ## Meta-Tests
 
 The crate includes infrastructure self-tests for:
@@ -94,6 +118,7 @@ The crate includes infrastructure self-tests for:
 ## Structured Failure Semantics
 
 - Non-zero relation violations emit `FE-META-0001` and fail the suite.
+- Unknown relation filter IDs emit a deterministic runner error and fail the suite.
 - No suppression mechanism is implemented; CI remains zero-violation.
 
 ## Operator Verification
@@ -105,5 +130,6 @@ cat artifacts/metamorphic/<timestamp>/run_manifest.json
 cat artifacts/metamorphic/<timestamp>/events.jsonl
 cat artifacts/metamorphic/<timestamp>/relation_events.jsonl
 cat artifacts/metamorphic/<timestamp>/metamorphic_evidence.jsonl
+cat artifacts/metamorphic/<timestamp>/seed_transcript.jsonl
 ls artifacts/metamorphic/<timestamp>/failures
 ```
