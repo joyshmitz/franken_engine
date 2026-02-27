@@ -1449,4 +1449,147 @@ mod tests {
         let r2 = generate_report(&specs, &states2, epoch(1));
         assert_ne!(r1.content_hash, r2.content_hash);
     }
+
+    #[test]
+    fn channel_spec_clone_equality() {
+        let spec = &canonical_channel_specs()[0];
+        let cloned = spec.clone();
+        assert_eq!(spec, &cloned);
+    }
+
+    #[test]
+    fn channel_state_clone_equality() {
+        let spec = &canonical_channel_specs()[0];
+        let state = ChannelState::new(spec.channel_id.clone(), epoch(1));
+        let cloned = state.clone();
+        assert_eq!(state, cloned);
+    }
+
+    #[test]
+    fn policy_violation_clone_equality() {
+        let v = PolicyViolation {
+            channel_id: "ch-0".into(),
+            violation_kind: ViolationKind::UncappedTelemetry,
+            epoch: epoch(1),
+            detail: "test".into(),
+        };
+        let cloned = v.clone();
+        assert_eq!(v, cloned);
+    }
+
+    #[test]
+    fn rate_distortion_point_clone_equality() {
+        let p = RateDistortionPoint {
+            distortion_millionths: 100_000,
+            rate_millibits: 500_000,
+        };
+        let cloned = p.clone();
+        assert_eq!(p, cloned);
+    }
+
+    #[test]
+    fn failure_budget_clone_equality() {
+        let fb = FailureBudget {
+            max_drops_per_epoch: 10,
+            max_degraded_per_epoch: 50,
+            degradation_threshold_millionths: 100_000,
+            fail_closed: true,
+        };
+        let cloned = fb.clone();
+        assert_eq!(fb, cloned);
+    }
+
+    #[test]
+    fn channel_spec_json_field_presence() {
+        let spec = &canonical_channel_specs()[0];
+        let json = serde_json::to_string(spec).unwrap();
+        assert!(json.contains("\"channel_id\""));
+        assert!(json.contains("\"max_items_per_epoch\""));
+        assert!(json.contains("\"failure_budget\""));
+    }
+
+    #[test]
+    fn policy_violation_json_field_presence() {
+        let v = PolicyViolation {
+            channel_id: "ch-0".into(),
+            violation_kind: ViolationKind::UncappedTelemetry,
+            epoch: epoch(1),
+            detail: "d".into(),
+        };
+        let json = serde_json::to_string(&v).unwrap();
+        assert!(json.contains("\"channel_id\""));
+        assert!(json.contains("\"violation_kind\""));
+        assert!(json.contains("\"epoch\""));
+        assert!(json.contains("\"detail\""));
+    }
+
+    #[test]
+    fn rate_distortion_envelope_json_field_presence() {
+        let env = RateDistortionEnvelope {
+            family: PayloadFamily::Decision,
+            metric: DistortionMetric::LogLoss,
+            frontier: vec![RateDistortionPoint {
+                distortion_millionths: 100_000,
+                rate_millibits: 500_000,
+            }],
+            max_distortion_millionths: 100_000,
+            min_rate_millibits: 250_000,
+        };
+        let json = serde_json::to_string(&env).unwrap();
+        assert!(json.contains("\"family\""));
+        assert!(json.contains("\"metric\""));
+        assert!(json.contains("\"frontier\""));
+        assert!(json.contains("\"rate_millibits\""));
+        assert!(json.contains("\"distortion_millionths\""));
+    }
+
+    #[test]
+    fn channel_state_fresh_has_zero_counters() {
+        let state = ChannelState::new("fresh".into(), epoch(1));
+        assert_eq!(state.items_emitted, 0);
+        assert_eq!(state.items_dropped, 0);
+        assert_eq!(state.items_degraded, 0);
+        assert_eq!(state.buffer_used, 0);
+        assert!(state.violations.is_empty());
+    }
+
+    #[test]
+    fn distortion_metric_serde_roundtrip_all() {
+        for dm in [
+            DistortionMetric::Hamming,
+            DistortionMetric::SquaredError,
+            DistortionMetric::LogLoss,
+            DistortionMetric::EditDistance,
+            DistortionMetric::BinaryFidelity,
+        ] {
+            let json = serde_json::to_string(&dm).unwrap();
+            let back: DistortionMetric = serde_json::from_str(&json).unwrap();
+            assert_eq!(dm, back);
+        }
+    }
+
+    #[test]
+    fn channel_path_serde_roundtrip_all() {
+        for cp in ChannelPath::ALL {
+            let json = serde_json::to_string(&cp).unwrap();
+            let back: ChannelPath = serde_json::from_str(&json).unwrap();
+            assert_eq!(cp, back);
+        }
+    }
+
+    #[test]
+    fn rate_distortion_envelope_clone_equality() {
+        let env = RateDistortionEnvelope {
+            family: PayloadFamily::Replay,
+            metric: DistortionMetric::Hamming,
+            frontier: vec![RateDistortionPoint {
+                distortion_millionths: 100_000,
+                rate_millibits: 500_000,
+            }],
+            max_distortion_millionths: 100_000,
+            min_rate_millibits: 100_000,
+        };
+        let cloned = env.clone();
+        assert_eq!(env, cloned);
+    }
 }

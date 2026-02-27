@@ -1315,4 +1315,162 @@ mod tests {
         let back: SubsystemSummary = serde_json::from_str(&json).unwrap();
         assert_eq!(summary, back);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 3: clone equality, JSON fields, boundary, Ord
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn action_id_clone_eq() {
+        let original = ActionId("inject_payload".to_string());
+        let cloned = original.clone();
+        assert_eq!(original, cloned);
+    }
+
+    #[test]
+    fn strategic_action_clone_eq() {
+        let original = make_attacker_action("exploit_parser", Subsystem::Compiler);
+        let cloned = original.clone();
+        assert_eq!(original, cloned);
+    }
+
+    #[test]
+    fn loss_entry_clone_eq() {
+        let original = LossEntry {
+            attacker_action: atk("a1"),
+            defender_action: atk("d1"),
+            dimension: LossDimension::UserHarm,
+            loss_millionths: 500_000,
+        };
+        let cloned = original.clone();
+        assert_eq!(original, cloned);
+    }
+
+    #[test]
+    fn hard_constraint_clone_eq() {
+        let original = HardConstraint {
+            constraint_id: "hc-1".to_string(),
+            description: "no escalation".to_string(),
+            forbidden_actions: BTreeSet::from([atk("escalate"), atk("bypass")]),
+            active_conditions: vec!["epoch_active".to_string()],
+        };
+        let cloned = original.clone();
+        assert_eq!(original, cloned);
+    }
+
+    #[test]
+    fn game_model_report_clone_eq() {
+        let report = generate_report(&[], &test_epoch());
+        let cloned = report.clone();
+        assert_eq!(report, cloned);
+    }
+
+    #[test]
+    fn loss_entry_json_field_names() {
+        let entry = LossEntry {
+            attacker_action: atk("a1"),
+            defender_action: atk("d1"),
+            dimension: LossDimension::PerformanceCost,
+            loss_millionths: 42_000,
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(json.contains("\"attacker_action\""));
+        assert!(json.contains("\"defender_action\""));
+        assert!(json.contains("\"dimension\""));
+        assert!(json.contains("\"loss_millionths\""));
+    }
+
+    #[test]
+    fn game_model_report_json_field_names() {
+        let report = generate_report(&[], &test_epoch());
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("\"schema_version\""));
+        assert!(json.contains("\"epoch\""));
+        assert!(json.contains("\"subsystem_summaries\""));
+        assert!(json.contains("\"total_models\""));
+        assert!(json.contains("\"total_attacker_actions\""));
+        assert!(json.contains("\"total_defender_actions\""));
+        assert!(json.contains("\"total_constraints\""));
+        assert!(json.contains("\"report_hash\""));
+    }
+
+    #[test]
+    fn subsystem_summary_json_field_names() {
+        let summary = SubsystemSummary {
+            subsystem: "compiler".to_string(),
+            attacker_actions: 2,
+            defender_actions: 1,
+            admissible_actions: 1,
+            constraints: 0,
+            minimax_recommendation: None,
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        assert!(json.contains("\"subsystem\""));
+        assert!(json.contains("\"attacker_actions\""));
+        assert!(json.contains("\"defender_actions\""));
+        assert!(json.contains("\"admissible_actions\""));
+        assert!(json.contains("\"constraints\""));
+        assert!(json.contains("\"minimax_recommendation\""));
+    }
+
+    #[test]
+    fn action_id_serde_roundtrip() {
+        let id = ActionId("complex_multi_stage_attack".to_string());
+        let json = serde_json::to_string(&id).unwrap();
+        let back: ActionId = serde_json::from_str(&json).unwrap();
+        assert_eq!(id, back);
+    }
+
+    #[test]
+    fn loss_entry_negative_loss_boundary() {
+        let entries = vec![
+            LossEntry {
+                attacker_action: atk("a1"),
+                defender_action: atk("d1"),
+                dimension: LossDimension::UserHarm,
+                loss_millionths: -500_000,
+            },
+            LossEntry {
+                attacker_action: atk("a1"),
+                defender_action: atk("d1"),
+                dimension: LossDimension::PerformanceCost,
+                loss_millionths: 300_000,
+            },
+        ];
+        let tensor = LossTensor::from_entries(Subsystem::Runtime, entries);
+        // Negative + positive = net loss of -200_000 (benefit)
+        assert_eq!(tensor.total_loss(&atk("a1"), &atk("d1")), -200_000);
+    }
+
+    #[test]
+    fn action_id_ord_deterministic() {
+        let ids = vec![atk("zebra"), atk("alpha"), atk("middle")];
+        let mut sorted1 = ids.clone();
+        sorted1.sort();
+        let mut sorted2 = ids;
+        sorted2.sort();
+        assert_eq!(sorted1, sorted2);
+        assert_eq!(sorted1[0], atk("alpha"));
+        assert_eq!(sorted1[1], atk("middle"));
+        assert_eq!(sorted1[2], atk("zebra"));
+    }
+
+    #[test]
+    fn tensor_content_hash_changes_with_loss_value() {
+        let e1 = vec![LossEntry {
+            attacker_action: atk("a"),
+            defender_action: atk("d"),
+            dimension: LossDimension::UserHarm,
+            loss_millionths: 100_000,
+        }];
+        let e2 = vec![LossEntry {
+            attacker_action: atk("a"),
+            defender_action: atk("d"),
+            dimension: LossDimension::UserHarm,
+            loss_millionths: 200_000,
+        }];
+        let t1 = LossTensor::from_entries(Subsystem::Runtime, e1);
+        let t2 = LossTensor::from_entries(Subsystem::Runtime, e2);
+        assert_ne!(t1.content_hash, t2.content_hash);
+    }
 }

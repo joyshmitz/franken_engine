@@ -1354,4 +1354,157 @@ mod tests {
         // Non-blocking obligation should not prevent stage promotion
         assert!(c.stage_obligations_met(MoonshotStage::Research, &["proof-research".into()]));
     }
+
+    #[test]
+    fn hypothesis_clone_equality() {
+        let h = Hypothesis {
+            problem: "slow detection".into(),
+            mechanism: "shared evidence".into(),
+            expected_outcome: "faster response".into(),
+            falsification_criteria: vec!["no measurable improvement".into()],
+        };
+        let cloned = h.clone();
+        assert_eq!(h, cloned);
+    }
+
+    #[test]
+    fn target_metric_clone_equality() {
+        let m = TargetMetric {
+            metric_id: "m-1".into(),
+            description: "latency".into(),
+            threshold_millionths: 500_000,
+            direction: MetricDirection::LowerIsBetter,
+            measurement_method: MeasurementMethod::Benchmark,
+            evaluation_cadence_ns: 1_000_000_000,
+        };
+        let cloned = m.clone();
+        assert_eq!(m, cloned);
+    }
+
+    #[test]
+    fn ev_model_clone_equality() {
+        let mut params = BTreeMap::new();
+        params.insert("value".into(), 300_000);
+        let ev = EvModel {
+            success_distribution: DistributionType::PointEstimate,
+            distribution_params: params,
+            cost_millionths: 1_000_000,
+            benefit_on_success_millionths: 10_000_000,
+            harm_on_failure_millionths: -500_000,
+        };
+        let cloned = ev.clone();
+        assert_eq!(ev, cloned);
+    }
+
+    #[test]
+    fn risk_budget_clone_equality() {
+        let mut caps = BTreeMap::new();
+        caps.insert(RiskDimension::SecurityRegression, 50_000);
+        let rb = RiskBudget {
+            dimension_caps: caps,
+        };
+        let cloned = rb.clone();
+        assert_eq!(rb, cloned);
+    }
+
+    #[test]
+    fn moonshot_contract_clone_equality() {
+        let c = test_contract();
+        let cloned = c.clone();
+        assert_eq!(c, cloned);
+    }
+
+    #[test]
+    fn hypothesis_json_field_presence() {
+        let h = Hypothesis {
+            problem: "desc".into(),
+            mechanism: "mechanism".into(),
+            expected_outcome: "outcome".into(),
+            falsification_criteria: vec!["criterion".into()],
+        };
+        let json = serde_json::to_string(&h).unwrap();
+        assert!(json.contains("\"problem\""));
+        assert!(json.contains("\"mechanism\""));
+        assert!(json.contains("\"expected_outcome\""));
+        assert!(json.contains("\"falsification_criteria\""));
+    }
+
+    #[test]
+    fn target_metric_json_field_presence() {
+        let m = TargetMetric {
+            metric_id: "m-1".into(),
+            description: "d".into(),
+            threshold_millionths: 500_000,
+            direction: MetricDirection::LowerIsBetter,
+            measurement_method: MeasurementMethod::FleetTelemetry,
+            evaluation_cadence_ns: 1_000_000_000,
+        };
+        let json = serde_json::to_string(&m).unwrap();
+        assert!(json.contains("\"metric_id\""));
+        assert!(json.contains("\"direction\""));
+        assert!(json.contains("\"threshold_millionths\""));
+        assert!(json.contains("\"measurement_method\""));
+        assert!(json.contains("\"evaluation_cadence_ns\""));
+    }
+
+    #[test]
+    fn ev_model_json_field_presence() {
+        let mut params = BTreeMap::new();
+        params.insert("value".into(), 300_000);
+        let ev = EvModel {
+            success_distribution: DistributionType::PointEstimate,
+            distribution_params: params,
+            cost_millionths: 1_000_000,
+            benefit_on_success_millionths: 10_000_000,
+            harm_on_failure_millionths: -500_000,
+        };
+        let json = serde_json::to_string(&ev).unwrap();
+        assert!(json.contains("\"success_distribution\""));
+        assert!(json.contains("\"distribution_params\""));
+        assert!(json.contains("\"benefit_on_success_millionths\""));
+        assert!(json.contains("\"cost_millionths\""));
+        assert!(json.contains("\"harm_on_failure_millionths\""));
+    }
+
+    #[test]
+    fn contract_error_source_is_none() {
+        let err = ContractError::InvalidHypothesis {
+            reason: "bad".into(),
+        };
+        assert!(std::error::Error::source(&err).is_none());
+    }
+
+    #[test]
+    fn measurement_method_display_uniqueness() {
+        let variants = [
+            MeasurementMethod::Benchmark,
+            MeasurementMethod::EvidenceQuery,
+            MeasurementMethod::FleetTelemetry,
+            MeasurementMethod::OperatorReview,
+        ];
+        let displays: std::collections::BTreeSet<String> =
+            variants.iter().map(|v| format!("{v}")).collect();
+        assert_eq!(displays.len(), variants.len());
+    }
+
+    #[test]
+    fn metric_direction_serde_roundtrip() {
+        for d in [
+            MetricDirection::HigherIsBetter,
+            MetricDirection::LowerIsBetter,
+        ] {
+            let json = serde_json::to_string(&d).unwrap();
+            let back: MetricDirection = serde_json::from_str(&json).unwrap();
+            assert_eq!(d, back);
+        }
+    }
+
+    #[test]
+    fn contract_version_clone_equality() {
+        let v = ContractVersion { major: 2, minor: 5 };
+        let cloned = v.clone();
+        assert_eq!(v, cloned);
+        assert_eq!(v.major, 2);
+        assert_eq!(v.minor, 5);
+    }
 }

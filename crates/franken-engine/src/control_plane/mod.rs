@@ -1122,4 +1122,155 @@ mod tests {
         let v2 = schema_version_from_seed(5);
         assert_eq!(v1, v2);
     }
+
+    // -- Enrichment batch 3: clone equality, JSON field presence, serde, Display, error::source --
+
+    #[test]
+    fn decision_verdict_clone_eq_allow() {
+        let v = DecisionVerdict::Allow;
+        let cloned = v;
+        assert_eq!(v, cloned);
+    }
+
+    #[test]
+    fn decision_verdict_clone_eq_deny() {
+        let v = DecisionVerdict::Deny;
+        let cloned = v;
+        assert_eq!(v, cloned);
+    }
+
+    #[test]
+    fn decision_request_clone_eq() {
+        let req = request(200);
+        let cloned = req.clone();
+        assert_eq!(req, cloned);
+    }
+
+    #[test]
+    fn adapter_event_clone_eq() {
+        let event = AdapterEvent {
+            trace_id: "trace_clone".to_string(),
+            decision_id: "dec_clone".to_string(),
+            policy_id: "pol_clone".to_string(),
+            component: "comp_clone".to_string(),
+            event: "evt_clone".to_string(),
+            outcome: "ok".to_string(),
+            error_code: Some("ec_clone".to_string()),
+        };
+        let cloned = event.clone();
+        assert_eq!(event, cloned);
+    }
+
+    #[test]
+    fn control_plane_adapter_error_clone_eq() {
+        let e1 = ControlPlaneAdapterError::BudgetExhausted { requested_ms: 42 };
+        let c1 = e1.clone();
+        assert_eq!(e1, c1);
+
+        let e2 = ControlPlaneAdapterError::DecisionGateway { code: "gw" };
+        let c2 = e2.clone();
+        assert_eq!(e2, c2);
+
+        let e3 = ControlPlaneAdapterError::EvidenceEmission { code: "ee" };
+        let c3 = e3.clone();
+        assert_eq!(e3, c3);
+    }
+
+    #[test]
+    fn decision_request_json_field_presence() {
+        let req = request(300);
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("\"decision_id\""));
+        assert!(json.contains("\"policy_id\""));
+        assert!(json.contains("\"trace_id\""));
+        assert!(json.contains("\"ts_unix_ms\""));
+        assert!(json.contains("\"calibration_score_bps\""));
+        assert!(json.contains("\"e_process_milli\""));
+        assert!(json.contains("\"ci_width_milli\""));
+    }
+
+    #[test]
+    fn adapter_event_json_field_presence() {
+        let event = AdapterEvent {
+            trace_id: "t_fp".to_string(),
+            decision_id: "d_fp".to_string(),
+            policy_id: "p_fp".to_string(),
+            component: "c_fp".to_string(),
+            event: "e_fp".to_string(),
+            outcome: "o_fp".to_string(),
+            error_code: Some("ec_fp".to_string()),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"trace_id\""));
+        assert!(json.contains("\"decision_id\""));
+        assert!(json.contains("\"policy_id\""));
+        assert!(json.contains("\"component\""));
+        assert!(json.contains("\"event\""));
+        assert!(json.contains("\"outcome\""));
+        assert!(json.contains("\"error_code\""));
+    }
+
+    #[test]
+    fn decision_verdict_json_values_are_quoted_strings() {
+        let allow_json = serde_json::to_string(&DecisionVerdict::Allow).unwrap();
+        let deny_json = serde_json::to_string(&DecisionVerdict::Deny).unwrap();
+        let timeout_json = serde_json::to_string(&DecisionVerdict::Timeout).unwrap();
+        assert!(allow_json.contains("Allow"));
+        assert!(deny_json.contains("Deny"));
+        assert!(timeout_json.contains("Timeout"));
+        // Each serialized form must be distinct
+        let mut set = std::collections::BTreeSet::new();
+        set.insert(allow_json);
+        set.insert(deny_json);
+        set.insert(timeout_json);
+        assert_eq!(set.len(), 3);
+    }
+
+    #[test]
+    fn adapter_event_none_error_code_serde_roundtrip() {
+        let event = AdapterEvent {
+            trace_id: "t_rt".to_string(),
+            decision_id: "d_rt".to_string(),
+            policy_id: "p_rt".to_string(),
+            component: "c_rt".to_string(),
+            event: "e_rt".to_string(),
+            outcome: "o_rt".to_string(),
+            error_code: None,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: AdapterEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, back);
+        assert!(back.error_code.is_none());
+    }
+
+    #[test]
+    fn error_display_messages_are_unique_across_variants() {
+        let msgs: Vec<String> = vec![
+            ControlPlaneAdapterError::BudgetExhausted { requested_ms: 1 }.to_string(),
+            ControlPlaneAdapterError::DecisionGateway { code: "gw_unique" }.to_string(),
+            ControlPlaneAdapterError::EvidenceEmission { code: "ee_unique" }.to_string(),
+        ];
+        let set: std::collections::BTreeSet<&str> = msgs.iter().map(|s| s.as_str()).collect();
+        assert_eq!(set.len(), 3, "all error Display strings must be unique");
+    }
+
+    #[test]
+    fn error_source_is_none_for_all_variants() {
+        use std::error::Error;
+        let variants: Vec<ControlPlaneAdapterError> = vec![
+            ControlPlaneAdapterError::BudgetExhausted { requested_ms: 5 },
+            ControlPlaneAdapterError::DecisionGateway { code: "src_test" },
+            ControlPlaneAdapterError::EvidenceEmission { code: "src_test" },
+        ];
+        for e in &variants {
+            assert!(e.source().is_none(), "source() should be None for {e}");
+        }
+    }
+
+    #[test]
+    fn mock_budget_as_budget_remaining_matches() {
+        let b = MockBudget::new(999);
+        let kernel_budget = b.as_budget();
+        assert_eq!(kernel_budget.remaining_ms(), b.remaining_ms());
+    }
 }

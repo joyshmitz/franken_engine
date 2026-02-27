@@ -1403,4 +1403,142 @@ mod tests {
             assert_eq!(report.gates.len(), 4);
         }
     }
+
+    #[test]
+    fn gate_verdict_clone_equality() {
+        let v = GateVerdict::Fail {
+            reason: "test".into(),
+        };
+        assert_eq!(v, v.clone());
+    }
+
+    #[test]
+    fn gate_result_clone_equality() {
+        let r = GateResult::pass(GateKind::ReplayDeterminism, 5);
+        assert_eq!(r, r.clone());
+    }
+
+    #[test]
+    fn gate_event_clone_equality() {
+        let e = GateEvent {
+            component: "c".into(),
+            gate: "g".into(),
+            event: "e".into(),
+            outcome: "pass".into(),
+            error_code: None,
+        };
+        assert_eq!(e, e.clone());
+    }
+
+    #[test]
+    fn gate_config_clone_equality() {
+        let c = GateConfig::default();
+        assert_eq!(c, c.clone());
+    }
+
+    #[test]
+    fn overall_verdict_clone_equality() {
+        let v = OverallVerdict::Blocked {
+            failing_gates: vec![GateKind::EvidenceCompleteness],
+        };
+        assert_eq!(v, v.clone());
+    }
+
+    #[test]
+    fn gate_result_json_field_presence() {
+        let r = GateResult::pass(GateKind::FrankenlabScenarios, 3);
+        let json = serde_json::to_string(&r).unwrap();
+        assert!(json.contains("\"kind\""));
+        assert!(json.contains("\"verdict\""));
+        assert!(json.contains("\"checks_performed\""));
+        assert!(json.contains("\"checks_passed\""));
+        assert!(json.contains("\"events\""));
+    }
+
+    #[test]
+    fn gate_event_json_field_presence() {
+        let e = GateEvent {
+            component: "c".into(),
+            gate: "g".into(),
+            event: "e".into(),
+            outcome: "pass".into(),
+            error_code: Some("E01".into()),
+        };
+        let json = serde_json::to_string(&e).unwrap();
+        assert!(json.contains("\"component\""));
+        assert!(json.contains("\"gate\""));
+        assert!(json.contains("\"event\""));
+        assert!(json.contains("\"outcome\""));
+        assert!(json.contains("\"error_code\""));
+    }
+
+    #[test]
+    fn gate_report_json_field_presence() {
+        let mut runner = ReleaseGateRunner::new(GateConfig {
+            check_replay: false,
+            check_obligations: false,
+            check_evidence: false,
+            ..Default::default()
+        });
+        let mut cx = mock_cx(500_000);
+        let report = runner.run(&mut cx);
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("\"seed\""));
+        assert!(json.contains("\"gates\""));
+        assert!(json.contains("\"overall_verdict\""));
+        assert!(json.contains("\"total_checks\""));
+        assert!(json.contains("\"total_passed\""));
+        assert!(json.contains("\"failure_summary\""));
+    }
+
+    #[test]
+    fn gate_verdict_display_all_unique() {
+        let verdicts = [
+            GateVerdict::Pass,
+            GateVerdict::Fail { reason: "r".into() },
+            GateVerdict::InfrastructureError { detail: "d".into() },
+            GateVerdict::Timeout {
+                gate: "g".into(),
+                elapsed_ticks: 1,
+            },
+        ];
+        let set: std::collections::BTreeSet<_> = verdicts.iter().map(|v| v.to_string()).collect();
+        assert_eq!(set.len(), 4);
+    }
+
+    #[test]
+    fn gate_verdict_as_str_all_unique() {
+        let verdicts = [
+            GateVerdict::Pass,
+            GateVerdict::Fail { reason: "r".into() },
+            GateVerdict::InfrastructureError { detail: "d".into() },
+            GateVerdict::Timeout {
+                gate: "g".into(),
+                elapsed_ticks: 1,
+            },
+        ];
+        let set: std::collections::BTreeSet<_> = verdicts.iter().map(|v| v.as_str()).collect();
+        assert_eq!(set.len(), 4);
+    }
+
+    #[test]
+    fn gate_report_clone_equality() {
+        let mut runner = ReleaseGateRunner::new(GateConfig {
+            check_replay: false,
+            check_obligations: false,
+            check_evidence: false,
+            ..Default::default()
+        });
+        let mut cx = mock_cx(500_000);
+        let report = runner.run(&mut cx);
+        let cloned = report.clone();
+        assert_eq!(report, cloned);
+    }
+
+    #[test]
+    fn gate_kind_as_str_all_unique() {
+        let set: std::collections::BTreeSet<_> =
+            GateKind::all().iter().map(|k| k.as_str()).collect();
+        assert_eq!(set.len(), 4);
+    }
 }

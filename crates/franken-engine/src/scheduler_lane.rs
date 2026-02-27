@@ -1512,4 +1512,239 @@ mod tests {
         let err = LaneError::TaskNotFound { task_id: 999 };
         assert!(err.to_string().contains("999"));
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: clone equality tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn task_label_clone_equality() {
+        let label = TaskLabel {
+            lane: SchedulerLane::Timed,
+            task_type: TaskType::MonitoringProbe,
+            trace_id: "trace-clone-1".to_string(),
+            priority_sub_band: 7,
+        };
+        let cloned = label.clone();
+        assert_eq!(label, cloned);
+    }
+
+    #[test]
+    fn scheduled_task_clone_equality() {
+        let task = ScheduledTask {
+            task_id: TaskId(99),
+            label: ready_label("trace-clone-2"),
+            deadline_tick: 500,
+            submitted_at: 42,
+            payload_id: "payload-clone".to_string(),
+        };
+        let cloned = task.clone();
+        assert_eq!(task, cloned);
+    }
+
+    #[test]
+    fn lane_metrics_clone_equality() {
+        let m = LaneMetrics {
+            lane: "timed".to_string(),
+            queue_depth: 12,
+            tasks_submitted: 50,
+            tasks_scheduled: 40,
+            tasks_completed: 35,
+            tasks_timed_out: 3,
+        };
+        let cloned = m.clone();
+        assert_eq!(m, cloned);
+    }
+
+    #[test]
+    fn scheduler_event_clone_equality() {
+        let evt = SchedulerEvent {
+            task_id: 7,
+            lane: "ready".to_string(),
+            task_type: "gc_cycle".to_string(),
+            trace_id: "trace-clone-3".to_string(),
+            queue_position: 2,
+            event: "schedule".to_string(),
+        };
+        let cloned = evt.clone();
+        assert_eq!(evt, cloned);
+    }
+
+    #[test]
+    fn lane_config_clone_equality() {
+        let cfg = LaneConfig {
+            cancel_max_depth: 64,
+            timed_max_depth: 128,
+            ready_max_depth: 512,
+            ready_min_throughput: 3,
+        };
+        let cloned = cfg.clone();
+        assert_eq!(cfg, cloned);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: JSON field presence tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn task_label_json_field_presence() {
+        let label = cancel_label("field-check");
+        let json = serde_json::to_string(&label).unwrap();
+        assert!(json.contains("\"lane\""));
+        assert!(json.contains("\"task_type\""));
+        assert!(json.contains("\"trace_id\""));
+        assert!(json.contains("\"priority_sub_band\""));
+    }
+
+    #[test]
+    fn scheduled_task_json_field_presence() {
+        let task = ScheduledTask {
+            task_id: TaskId(5),
+            label: timed_label("field-check-2"),
+            deadline_tick: 200,
+            submitted_at: 10,
+            payload_id: "p-field".to_string(),
+        };
+        let json = serde_json::to_string(&task).unwrap();
+        assert!(json.contains("\"task_id\""));
+        assert!(json.contains("\"label\""));
+        assert!(json.contains("\"deadline_tick\""));
+        assert!(json.contains("\"submitted_at\""));
+        assert!(json.contains("\"payload_id\""));
+    }
+
+    #[test]
+    fn lane_metrics_json_field_presence() {
+        let m = LaneMetrics {
+            lane: "cancel".to_string(),
+            queue_depth: 1,
+            tasks_submitted: 2,
+            tasks_scheduled: 3,
+            tasks_completed: 4,
+            tasks_timed_out: 5,
+        };
+        let json = serde_json::to_string(&m).unwrap();
+        assert!(json.contains("\"lane\""));
+        assert!(json.contains("\"queue_depth\""));
+        assert!(json.contains("\"tasks_submitted\""));
+        assert!(json.contains("\"tasks_scheduled\""));
+        assert!(json.contains("\"tasks_completed\""));
+        assert!(json.contains("\"tasks_timed_out\""));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: serde roundtrip for LaneError variants
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn lane_error_lane_full_serde_roundtrip() {
+        let err = LaneError::LaneFull {
+            lane: "ready".to_string(),
+            max_depth: 4096,
+        };
+        let json = serde_json::to_string(&err).unwrap();
+        let restored: LaneError = serde_json::from_str(&json).unwrap();
+        assert_eq!(err, restored);
+        assert!(json.contains("4096"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: Display uniqueness across SchedulerLane variants
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn scheduler_lane_display_uniqueness() {
+        let displays: std::collections::BTreeSet<String> = [
+            SchedulerLane::Cancel,
+            SchedulerLane::Timed,
+            SchedulerLane::Ready,
+        ]
+        .iter()
+        .map(|l| l.to_string())
+        .collect();
+        assert_eq!(displays.len(), 3, "all 3 lanes produce distinct display strings");
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: boundary condition — batch_size of 1
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn batch_size_one_selects_highest_priority_only() {
+        let mut sched = LaneScheduler::new(LaneConfig {
+            ready_min_throughput: 0,
+            ..Default::default()
+        });
+        sched.submit(ready_label("t1"), 0, "ready-1", 0).unwrap();
+        sched.submit(timed_label("t2"), 10, "timed-1", 0).unwrap();
+        sched.submit(cancel_label("t3"), 0, "cancel-1", 0).unwrap();
+
+        let batch = sched.schedule_batch(1, 100);
+        assert_eq!(batch.len(), 1);
+        assert_eq!(batch[0].label.lane, SchedulerLane::Cancel);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: Ord determinism for SchedulerLane
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn scheduler_lane_ord_determinism() {
+        let mut lanes = vec![
+            SchedulerLane::Ready,
+            SchedulerLane::Cancel,
+            SchedulerLane::Timed,
+        ];
+        lanes.sort();
+        assert_eq!(
+            lanes,
+            vec![SchedulerLane::Cancel, SchedulerLane::Timed, SchedulerLane::Ready]
+        );
+        // Re-sort to confirm determinism.
+        lanes.sort();
+        assert_eq!(
+            lanes,
+            vec![SchedulerLane::Cancel, SchedulerLane::Timed, SchedulerLane::Ready]
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: std::error::Error::source returns None
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn lane_error_source_is_none() {
+        use std::error::Error;
+        let variants: Vec<LaneError> = vec![
+            LaneError::LaneMismatch {
+                task_type: "a".into(),
+                declared_lane: "b".into(),
+                required_lane: "c".into(),
+            },
+            LaneError::LaneFull {
+                lane: "x".into(),
+                max_depth: 1,
+            },
+            LaneError::TaskNotFound { task_id: 0 },
+            LaneError::EmptyTraceId,
+        ];
+        for err in &variants {
+            assert!(err.source().is_none(), "LaneError::source() should be None for all variants");
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: LaneMetrics default values
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn lane_metrics_default_zeroed() {
+        let m = LaneMetrics::default();
+        assert_eq!(m.lane, "");
+        assert_eq!(m.queue_depth, 0);
+        assert_eq!(m.tasks_submitted, 0);
+        assert_eq!(m.tasks_scheduled, 0);
+        assert_eq!(m.tasks_completed, 0);
+        assert_eq!(m.tasks_timed_out, 0);
+    }
 }

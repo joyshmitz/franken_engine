@@ -1406,4 +1406,203 @@ mod tests {
         let back: ErrorEnvelope = serde_json::from_str(&json).unwrap();
         assert_eq!(env, back);
     }
+
+    // -- Clone equality tests --
+
+    #[test]
+    fn request_context_clone_equality() {
+        let ctx = context();
+        let cloned = ctx.clone();
+        assert_eq!(ctx, cloned);
+    }
+
+    #[test]
+    fn auth_context_clone_equality() {
+        let auth = auth_with_scopes(&[SCOPE_HEALTH_READ, SCOPE_CONTROL_WRITE, SCOPE_REPLAY_READ]);
+        let cloned = auth.clone();
+        assert_eq!(auth, cloned);
+    }
+
+    #[test]
+    fn structured_log_event_clone_equality() {
+        let event = StructuredLogEvent {
+            trace_id: "t-clone".to_string(),
+            decision_id: Some("d-clone".to_string()),
+            policy_id: None,
+            component: "engine.clone".to_string(),
+            event: "clone.test".to_string(),
+            outcome: "ok".to_string(),
+            error_code: None,
+        };
+        let cloned = event.clone();
+        assert_eq!(event, cloned);
+    }
+
+    #[test]
+    fn error_envelope_clone_equality() {
+        let mut details = BTreeMap::new();
+        details.insert("a".to_string(), "b".to_string());
+        details.insert("c".to_string(), "d".to_string());
+        let envelope = ErrorEnvelope {
+            error_code: "E-CLONE".to_string(),
+            message: "clone test".to_string(),
+            trace_id: "t-clone".to_string(),
+            component: "c-clone".to_string(),
+            details,
+        };
+        let cloned = envelope.clone();
+        assert_eq!(envelope, cloned);
+    }
+
+    #[test]
+    fn endpoint_failure_clone_equality() {
+        let mut f = EndpointFailure::new("CLONE-ERR", "clone failure msg");
+        f.details.insert("detail_key".to_string(), "detail_val".to_string());
+        let cloned = f.clone();
+        assert_eq!(f, cloned);
+    }
+
+    // -- JSON field presence tests --
+
+    #[test]
+    fn request_context_json_field_names() {
+        let ctx = context();
+        let json = serde_json::to_value(&ctx).unwrap();
+        let obj = json.as_object().unwrap();
+        assert!(obj.contains_key("trace_id"));
+        assert!(obj.contains_key("request_id"));
+        assert!(obj.contains_key("component"));
+        assert!(obj.contains_key("decision_id"));
+        assert!(obj.contains_key("policy_id"));
+        assert_eq!(obj.len(), 5);
+    }
+
+    #[test]
+    fn health_status_response_json_field_names() {
+        let h = HealthStatusResponse {
+            runtime_status: "healthy".to_string(),
+            loaded_extensions: vec!["ext-z".to_string()],
+            security_epoch: 99,
+            gc_pressure_basis_points: 42,
+        };
+        let json = serde_json::to_value(&h).unwrap();
+        let obj = json.as_object().unwrap();
+        assert!(obj.contains_key("runtime_status"));
+        assert!(obj.contains_key("loaded_extensions"));
+        assert!(obj.contains_key("security_epoch"));
+        assert!(obj.contains_key("gc_pressure_basis_points"));
+        assert_eq!(obj.len(), 4);
+    }
+
+    #[test]
+    fn evidence_record_json_field_names() {
+        let r = EvidenceRecord {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            component: "c".to_string(),
+            event: "e".to_string(),
+            outcome: "ok".to_string(),
+            artifact_ref: "ref".to_string(),
+        };
+        let json = serde_json::to_value(&r).unwrap();
+        let obj = json.as_object().unwrap();
+        assert!(obj.contains_key("trace_id"));
+        assert!(obj.contains_key("decision_id"));
+        assert!(obj.contains_key("policy_id"));
+        assert!(obj.contains_key("component"));
+        assert!(obj.contains_key("event"));
+        assert!(obj.contains_key("outcome"));
+        assert!(obj.contains_key("artifact_ref"));
+        assert_eq!(obj.len(), 7);
+    }
+
+    // -- Serde roundtrip --
+
+    #[test]
+    fn evidence_export_response_serde_roundtrip() {
+        let resp = EvidenceExportResponse {
+            records: vec![
+                EvidenceRecord {
+                    trace_id: "t1".to_string(),
+                    decision_id: "d1".to_string(),
+                    policy_id: "p1".to_string(),
+                    component: "c1".to_string(),
+                    event: "e1".to_string(),
+                    outcome: "ok".to_string(),
+                    artifact_ref: "evidence://r1".to_string(),
+                },
+                EvidenceRecord {
+                    trace_id: "t2".to_string(),
+                    decision_id: "d2".to_string(),
+                    policy_id: "p2".to_string(),
+                    component: "c2".to_string(),
+                    event: "e2".to_string(),
+                    outcome: "deny".to_string(),
+                    artifact_ref: "evidence://r2".to_string(),
+                },
+            ],
+            next_cursor: Some("cursor-next".to_string()),
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let back: EvidenceExportResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(resp, back);
+    }
+
+    // -- Display uniqueness --
+
+    #[test]
+    fn control_action_debug_variants_are_distinct() {
+        let variants = [
+            ControlAction::Start,
+            ControlAction::Stop,
+            ControlAction::Suspend,
+            ControlAction::Quarantine,
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for v in &variants {
+            let repr = format!("{:?}", v);
+            assert!(seen.insert(repr), "duplicate Debug output for ControlAction variant");
+        }
+        assert_eq!(seen.len(), 4);
+    }
+
+    // -- Boundary condition --
+
+    #[test]
+    fn evidence_export_request_max_since_epoch_roundtrips() {
+        let req = EvidenceExportRequest {
+            since_epoch_seconds: u64::MAX,
+            until_epoch_seconds: None,
+            page_size: 1,
+            cursor: None,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let back: EvidenceExportRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(req.since_epoch_seconds, back.since_epoch_seconds);
+        assert_eq!(back.since_epoch_seconds, u64::MAX);
+    }
+
+    // -- Ord determinism --
+
+    #[test]
+    fn replay_command_debug_variants_are_distinct_and_deterministic() {
+        let variants = [
+            ReplayCommand::Start,
+            ReplayCommand::Stop,
+            ReplayCommand::Status,
+        ];
+        let mut outputs = Vec::new();
+        for v in &variants {
+            outputs.push(format!("{:?}", v));
+        }
+        // All distinct
+        let deduped: std::collections::BTreeSet<&str> =
+            outputs.iter().map(|s| s.as_str()).collect();
+        assert_eq!(deduped.len(), 3);
+        // Deterministic: second pass produces same output
+        for (i, v) in variants.iter().enumerate() {
+            assert_eq!(format!("{:?}", v), outputs[i]);
+        }
+    }
 }

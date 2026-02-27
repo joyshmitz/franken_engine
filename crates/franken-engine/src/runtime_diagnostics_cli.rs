@@ -1493,4 +1493,154 @@ mod tests {
         assert!(!filter.matches_decision_type(Some(DecisionType::PolicyUpdate)));
         assert!(!filter.matches_decision_type(None));
     }
+
+    #[test]
+    fn structured_log_event_clone_equality() {
+        let e = StructuredLogEvent {
+            trace_id: "t-1".into(),
+            decision_id: "d-1".into(),
+            policy_id: "p-1".into(),
+            component: "engine".into(),
+            event: "startup".into(),
+            outcome: "ok".into(),
+            error_code: None,
+        };
+        let cloned = e.clone();
+        assert_eq!(e, cloned);
+    }
+
+    #[test]
+    fn gc_pressure_sample_clone_equality() {
+        let s = GcPressureSample {
+            extension_id: "ext-1".into(),
+            used_bytes: 1024,
+            budget_bytes: 4096,
+        };
+        let cloned = s.clone();
+        assert_eq!(s, cloned);
+    }
+
+    #[test]
+    fn scheduler_lane_sample_clone_equality() {
+        let s = SchedulerLaneSample {
+            lane: "lane-0".into(),
+            queue_depth: 5,
+            max_depth: 100,
+            tasks_submitted: 50,
+            tasks_scheduled: 45,
+            tasks_completed: 40,
+            tasks_timed_out: 2,
+        };
+        let cloned = s.clone();
+        assert_eq!(s, cloned);
+    }
+
+    #[test]
+    fn evidence_export_filter_clone_equality() {
+        let f = EvidenceExportFilter {
+            decision_type: Some(DecisionType::SecurityAction),
+            ..EvidenceExportFilter::default()
+        };
+        let cloned = f.clone();
+        assert_eq!(f, cloned);
+    }
+
+    #[test]
+    fn replay_artifact_record_clone_equality() {
+        let r = ReplayArtifactRecord {
+            trace_id: "t-1".into(),
+            extension_id: "ext-1".into(),
+            timestamp_ns: 5000,
+            artifact_id: "a-1".into(),
+            replay_pointer: "ptr-1".into(),
+        };
+        let cloned = r.clone();
+        assert_eq!(r, cloned);
+    }
+
+    #[test]
+    fn structured_log_event_json_field_presence() {
+        let e = StructuredLogEvent {
+            trace_id: "t-1".into(),
+            decision_id: "d-1".into(),
+            policy_id: "p-1".into(),
+            component: "engine".into(),
+            event: "startup".into(),
+            outcome: "ok".into(),
+            error_code: None,
+        };
+        let json = serde_json::to_string(&e).unwrap();
+        assert!(json.contains("\"trace_id\""));
+        assert!(json.contains("\"decision_id\""));
+        assert!(json.contains("\"policy_id\""));
+        assert!(json.contains("\"component\""));
+        assert!(json.contains("\"event\""));
+        assert!(json.contains("\"outcome\""));
+    }
+
+    #[test]
+    fn gc_pressure_sample_json_field_presence() {
+        let s = GcPressureSample {
+            extension_id: "ext-1".into(),
+            used_bytes: 1024,
+            budget_bytes: 4096,
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(json.contains("\"extension_id\""));
+        assert!(json.contains("\"used_bytes\""));
+        assert!(json.contains("\"budget_bytes\""));
+    }
+
+    #[test]
+    fn replay_artifact_record_json_field_presence() {
+        let r = ReplayArtifactRecord {
+            trace_id: "t-1".into(),
+            extension_id: "ext-1".into(),
+            timestamp_ns: 5000,
+            artifact_id: "a-1".into(),
+            replay_pointer: "ptr-1".into(),
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        assert!(json.contains("\"trace_id\""));
+        assert!(json.contains("\"extension_id\""));
+        assert!(json.contains("\"timestamp_ns\""));
+        assert!(json.contains("\"artifact_id\""));
+        assert!(json.contains("\"replay_pointer\""));
+    }
+
+    #[test]
+    fn evidence_severity_serde_roundtrip_all() {
+        for s in [
+            EvidenceSeverity::Info,
+            EvidenceSeverity::Warning,
+            EvidenceSeverity::Critical,
+        ] {
+            let json = serde_json::to_string(&s).unwrap();
+            let back: EvidenceSeverity = serde_json::from_str(&json).unwrap();
+            assert_eq!(s, back);
+        }
+    }
+
+    #[test]
+    fn evidence_severity_display_nonempty() {
+        for s in [
+            EvidenceSeverity::Info,
+            EvidenceSeverity::Warning,
+            EvidenceSeverity::Critical,
+        ] {
+            assert!(!format!("{s}").is_empty());
+        }
+    }
+
+    #[test]
+    fn parse_evidence_severity_unknown_returns_none() {
+        assert!(parse_evidence_severity("bogus").is_none());
+        assert!(parse_evidence_severity("").is_none());
+    }
+
+    #[test]
+    fn parse_decision_type_unknown_returns_none() {
+        assert!(parse_decision_type("bogus").is_none());
+        assert!(parse_decision_type("").is_none());
+    }
 }
