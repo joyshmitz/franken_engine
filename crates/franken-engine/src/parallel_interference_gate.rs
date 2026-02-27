@@ -1512,4 +1512,213 @@ mod tests {
         assert_eq!(diff.diffs.len(), 1);
         assert_eq!(diff.diffs[0].field, "witness_hash");
     }
+
+    // --- Enrichment: clone equality ---
+
+    #[test]
+    fn enrichment_interference_incident_clone_equality() {
+        let incident = InterferenceIncident {
+            class: InterferenceClass::ArtifactPipeline,
+            severity: InterferenceSeverity::Warning,
+            seed: 99,
+            worker_count: 8,
+            run_index: 3,
+            expected_hash: ContentHash::compute(b"exp"),
+            actual_hash: ContentHash::compute(b"act"),
+            mismatch_token_index: Some(42),
+            triage_hint: "artifact divergence".to_string(),
+            remediation_playbook_id: "playbook.artifact".to_string(),
+            replay_command: "replay --seed 99".to_string(),
+        };
+        let cloned = incident.clone();
+        assert_eq!(incident, cloned);
+    }
+
+    #[test]
+    fn enrichment_witness_diff_entry_clone_equality() {
+        let entry = WitnessDiffEntry {
+            field: "chunk_count".to_string(),
+            expected: "3".to_string(),
+            actual: "5".to_string(),
+        };
+        let cloned = entry.clone();
+        assert_eq!(entry, cloned);
+    }
+
+    #[test]
+    fn enrichment_witness_diff_clone_equality() {
+        let diff = WitnessDiff {
+            matches: false,
+            diffs: vec![
+                WitnessDiffEntry {
+                    field: "merged_hash".to_string(),
+                    expected: "aaa".to_string(),
+                    actual: "bbb".to_string(),
+                },
+                WitnessDiffEntry {
+                    field: "total_tokens".to_string(),
+                    expected: "10".to_string(),
+                    actual: "20".to_string(),
+                },
+            ],
+        };
+        let cloned = diff.clone();
+        assert_eq!(diff, cloned);
+    }
+
+    #[test]
+    fn enrichment_run_record_clone_equality() {
+        let rr = RunRecord {
+            seed: 55,
+            worker_count: 2,
+            run_index: 0,
+            output_hash: ContentHash::compute(b"output"),
+            token_count: 250,
+            mode: ParserMode::Parallel,
+            parity_ok: Some(true),
+            merge_witness_hash: Some(ContentHash::compute(b"mw")),
+        };
+        let cloned = rr.clone();
+        assert_eq!(rr, cloned);
+    }
+
+    #[test]
+    fn enrichment_root_cause_hint_clone_equality() {
+        let hint = RootCauseHint {
+            class: InterferenceClass::BackpressureDrift,
+            count: 7,
+            severity: InterferenceSeverity::Critical,
+            remediation: "add stable ordering tiebreaker".to_string(),
+        };
+        let cloned = hint.clone();
+        assert_eq!(hint, cloned);
+    }
+
+    // --- Enrichment: JSON field presence ---
+
+    #[test]
+    fn enrichment_interference_incident_json_field_presence() {
+        let incident = InterferenceIncident {
+            class: InterferenceClass::TimeoutRace,
+            severity: InterferenceSeverity::Info,
+            seed: 1,
+            worker_count: 2,
+            run_index: 0,
+            expected_hash: ContentHash::compute(b"e"),
+            actual_hash: ContentHash::compute(b"a"),
+            mismatch_token_index: None,
+            triage_hint: "hint".to_string(),
+            remediation_playbook_id: "pb".to_string(),
+            replay_command: "cmd".to_string(),
+        };
+        let json = serde_json::to_string(&incident).unwrap();
+        assert!(json.contains("\"class\""));
+        assert!(json.contains("\"severity\""));
+        assert!(json.contains("\"seed\""));
+        assert!(json.contains("\"worker_count\""));
+        assert!(json.contains("\"run_index\""));
+        assert!(json.contains("\"expected_hash\""));
+        assert!(json.contains("\"actual_hash\""));
+        assert!(json.contains("\"mismatch_token_index\""));
+        assert!(json.contains("\"triage_hint\""));
+        assert!(json.contains("\"remediation_playbook_id\""));
+        assert!(json.contains("\"replay_command\""));
+    }
+
+    #[test]
+    fn enrichment_flake_rate_json_field_presence() {
+        let fr = FlakeRate::compute(50, 5, 200_000);
+        let json = serde_json::to_string(&fr).unwrap();
+        assert!(json.contains("\"total_runs\""));
+        assert!(json.contains("\"mismatched_runs\""));
+        assert!(json.contains("\"rate_millionths\""));
+        assert!(json.contains("\"threshold_millionths\""));
+        assert!(json.contains("\"within_threshold\""));
+    }
+
+    #[test]
+    fn enrichment_operator_summary_json_field_presence() {
+        let source = test_source();
+        let config = small_gate_config();
+        let result = evaluate_gate(&source, &config);
+        let summary = generate_operator_summary(&result);
+        let json = serde_json::to_string(&summary).unwrap();
+        assert!(json.contains("\"decision\""));
+        assert!(json.contains("\"total_runs\""));
+        assert!(json.contains("\"incident_count\""));
+        assert!(json.contains("\"root_cause_hints\""));
+        assert!(json.contains("\"flake_rate_display\""));
+        assert!(json.contains("\"recommended_action\""));
+    }
+
+    // --- Enrichment: serde roundtrip ---
+
+    #[test]
+    fn enrichment_root_cause_hint_serde_roundtrip() {
+        let hint = RootCauseHint {
+            class: InterferenceClass::DataStructureIteration,
+            count: 3,
+            severity: InterferenceSeverity::Warning,
+            remediation: "Replace HashMap with BTreeMap in merge path.".to_string(),
+        };
+        let json = serde_json::to_string(&hint).unwrap();
+        let back: RootCauseHint = serde_json::from_str(&json).unwrap();
+        assert_eq!(hint, back);
+    }
+
+    // --- Enrichment: Display uniqueness ---
+
+    #[test]
+    fn enrichment_remediation_strings_all_unique() {
+        let classes = [
+            InterferenceClass::MergeOrder,
+            InterferenceClass::Scheduler,
+            InterferenceClass::DataStructureIteration,
+            InterferenceClass::ArtifactPipeline,
+            InterferenceClass::TimeoutRace,
+            InterferenceClass::BackpressureDrift,
+        ];
+        let remediations: BTreeSet<String> =
+            classes.iter().map(|c| remediation_for_class(*c)).collect();
+        assert_eq!(
+            remediations.len(),
+            6,
+            "all 6 classes should have unique remediation strings"
+        );
+    }
+
+    // --- Enrichment: boundary condition ---
+
+    #[test]
+    fn enrichment_flake_rate_large_values_no_overflow() {
+        // Near u64::MAX values -- checked_mul/checked_div should handle gracefully
+        let fr = FlakeRate::compute(u64::MAX, 1, 0);
+        // 1 * 1_000_000 / u64::MAX rounds to 0
+        assert_eq!(fr.rate_millionths, 0);
+        assert!(fr.within_threshold);
+    }
+
+    // --- Enrichment: Ord transitivity ---
+
+    #[test]
+    fn enrichment_interference_class_ord_full_transitivity() {
+        let ordered = [
+            InterferenceClass::MergeOrder,
+            InterferenceClass::Scheduler,
+            InterferenceClass::DataStructureIteration,
+            InterferenceClass::ArtifactPipeline,
+            InterferenceClass::TimeoutRace,
+            InterferenceClass::BackpressureDrift,
+        ];
+        for i in 0..ordered.len() {
+            for j in (i + 1)..ordered.len() {
+                assert!(
+                    ordered[i] < ordered[j],
+                    "{:?} should be < {:?}",
+                    ordered[i],
+                    ordered[j]
+                );
+            }
+        }
+    }
 }

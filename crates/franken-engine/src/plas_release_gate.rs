@@ -1699,4 +1699,178 @@ mod tests {
             serde_json::from_str("\"cohort_plas_not_active\"").unwrap();
         assert_eq!(back, PlasReleaseGateFailureCode::CohortPlasNotActive);
     }
+
+    // -- Enrichment: PearlTower 2026-02-27 --
+
+    #[test]
+    fn clone_equality_escrow_replay_evidence() {
+        let a = PlasEscrowReplayEvidence {
+            receipt_id: "r1".into(),
+            replay_decision_kind: "grant".into(),
+            replay_outcome: "allow".into(),
+            replay_policy_id: "p1".into(),
+            deterministic_replay: true,
+            replay_trace_id: "t1".into(),
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn clone_equality_finding() {
+        let a = PlasReleaseGateFinding {
+            code: PlasReleaseGateFailureCode::EscrowReplayMismatch,
+            extension_id: "ext-42".into(),
+            receipt_id: Some("r-42".into()),
+            detail: "mismatch detail".into(),
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn clone_equality_log_event() {
+        let a = PlasReleaseGateLogEvent {
+            trace_id: "t".into(),
+            decision_id: "d".into(),
+            policy_id: "p".into(),
+            component: "plas_release_gate".into(),
+            event: "cohort_activation".into(),
+            outcome: "pass".into(),
+            error_code: None,
+            extension_id: Some("ext".into()),
+            receipt_id: None,
+            capability: Some("net.connect".into()),
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn clone_equality_trust_anchors() {
+        let a = trust_anchors();
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn clone_equality_cohort_extension() {
+        let a = minimal_extension(7, PlasActivationMode::Shadow);
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn json_field_presence_escrow_replay_evidence() {
+        let e = PlasEscrowReplayEvidence {
+            receipt_id: "r1".into(),
+            replay_decision_kind: "grant".into(),
+            replay_outcome: "allow".into(),
+            replay_policy_id: "p1".into(),
+            deterministic_replay: true,
+            replay_trace_id: "t1".into(),
+        };
+        let j = serde_json::to_string(&e).unwrap();
+        assert!(j.contains("\"receipt_id\""));
+        assert!(j.contains("\"replay_decision_kind\""));
+        assert!(j.contains("\"replay_outcome\""));
+        assert!(j.contains("\"replay_policy_id\""));
+        assert!(j.contains("\"deterministic_replay\""));
+        assert!(j.contains("\"replay_trace_id\""));
+    }
+
+    #[test]
+    fn json_field_presence_finding() {
+        let f = PlasReleaseGateFinding {
+            code: PlasReleaseGateFailureCode::AmbientAuthorityDetected,
+            extension_id: "ext-1".into(),
+            receipt_id: Some("r-1".into()),
+            detail: "ambient".into(),
+        };
+        let j = serde_json::to_string(&f).unwrap();
+        assert!(j.contains("\"code\""));
+        assert!(j.contains("\"extension_id\""));
+        assert!(j.contains("\"receipt_id\""));
+        assert!(j.contains("\"detail\""));
+    }
+
+    #[test]
+    fn json_field_presence_log_event() {
+        let le = PlasReleaseGateLogEvent {
+            trace_id: "t".into(),
+            decision_id: "d".into(),
+            policy_id: "p".into(),
+            component: "c".into(),
+            event: "e".into(),
+            outcome: "pass".into(),
+            error_code: Some("err".into()),
+            extension_id: Some("ext".into()),
+            receipt_id: Some("rcpt".into()),
+            capability: Some("cap".into()),
+        };
+        let j = serde_json::to_string(&le).unwrap();
+        assert!(j.contains("\"trace_id\""));
+        assert!(j.contains("\"decision_id\""));
+        assert!(j.contains("\"policy_id\""));
+        assert!(j.contains("\"component\""));
+        assert!(j.contains("\"event\""));
+        assert!(j.contains("\"outcome\""));
+        assert!(j.contains("\"error_code\""));
+    }
+
+    #[test]
+    fn display_uniqueness_activation_mode() {
+        let variants = [
+            PlasActivationMode::Active,
+            PlasActivationMode::Shadow,
+            PlasActivationMode::AuditOnly,
+            PlasActivationMode::Disabled,
+        ];
+        let mut displays = BTreeSet::new();
+        for v in &variants {
+            assert!(displays.insert(v.to_string()), "duplicate display for {v:?}");
+        }
+        assert_eq!(displays.len(), 4);
+    }
+
+    #[test]
+    fn display_uniqueness_failure_code() {
+        let codes = [
+            PlasReleaseGateFailureCode::CohortPlasNotActive,
+            PlasReleaseGateFailureCode::CohortCoverageMissingGrantExercise,
+            PlasReleaseGateFailureCode::MissingCapabilityWitness,
+            PlasReleaseGateFailureCode::WitnessSignatureVerificationFailed,
+            PlasReleaseGateFailureCode::EscrowReplayEvidenceMissing,
+            PlasReleaseGateFailureCode::EscrowReplayMismatch,
+            PlasReleaseGateFailureCode::RevocationWitnessMissing,
+            PlasReleaseGateFailureCode::RevocationEscrowEventMissing,
+            PlasReleaseGateFailureCode::AmbientAuthorityDetected,
+        ];
+        let mut displays = BTreeSet::new();
+        for c in &codes {
+            assert!(displays.insert(c.to_string()), "duplicate display for {c:?}");
+        }
+        assert_eq!(displays.len(), 9);
+    }
+
+    #[test]
+    fn error_source_is_none() {
+        use std::error::Error;
+        let err1 = PlasReleaseGateError::InvalidInput {
+            detail: "test".into(),
+        };
+        let err2 = PlasReleaseGateError::Serialization {
+            detail: "test".into(),
+        };
+        assert!(err1.source().is_none());
+        assert!(err2.source().is_none());
+    }
+
+    #[test]
+    fn whitespace_only_trace_id_rejected() {
+        let mut input = make_input(vec![minimal_extension(1, PlasActivationMode::Active)]);
+        input.trace_id = "   ".to_string();
+        let err = evaluate_plas_release_gate(&input, &trust_anchors()).unwrap_err();
+        assert!(err.to_string().contains("trace_id"));
+    }
 }

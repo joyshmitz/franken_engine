@@ -1525,4 +1525,146 @@ mod tests {
         let back: GateFinding = serde_json::from_str(&json).unwrap();
         assert_eq!(finding, back);
     }
+
+    // -- Enrichment: PearlTower 2026-02-27 edge-case batch --
+
+    #[test]
+    fn benchmark_sample_clone_equality() {
+        let a = BenchmarkSample {
+            workload_id: "wl-clone".into(),
+            lane_type: LaneType::ProofSpecialized,
+            wall_time_ns: 42_000,
+            memory_peak_bytes: 8192,
+            throughput_ops_per_sec: Some(500),
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn benchmark_comparison_clone_equality() {
+        let a = BenchmarkComparison::from_samples(
+            sample("cmp-clone", LaneType::ProofSpecialized, 90, 2048),
+            sample("cmp-clone", LaneType::AmbientAuthority, 100, 2048),
+        );
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn receipt_coverage_entry_clone_equality() {
+        let a = full_receipt("clone-opt");
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn fallback_test_result_clone_equality() {
+        let a = passing_fallback("clone-fb");
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn statistical_summary_clone_equality() {
+        let comps: Vec<_> = (0..10)
+            .map(|i| comparison(&format!("ce{i}"), 75, 100))
+            .collect();
+        let a = StatisticalSummary::from_comparisons(&comps);
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn benchmark_sample_json_field_presence() {
+        let s = sample("fp-wl", LaneType::AmbientAuthority, 999, 4096);
+        let j = serde_json::to_string(&s).unwrap();
+        assert!(j.contains("\"workload_id\""));
+        assert!(j.contains("\"lane_type\""));
+        assert!(j.contains("\"wall_time_ns\""));
+        assert!(j.contains("\"memory_peak_bytes\""));
+        assert!(j.contains("\"throughput_ops_per_sec\""));
+    }
+
+    #[test]
+    fn gate_decision_json_field_presence() {
+        let input = full_input(20);
+        let decision = evaluate(&input);
+        let j = serde_json::to_string(&decision).unwrap();
+        assert!(j.contains("\"decision_id\""));
+        assert!(j.contains("\"pass\""));
+        assert!(j.contains("\"receipt_coverage_millionths\""));
+        assert!(j.contains("\"schema_version\""));
+        assert!(j.contains("\"scorecard_performance_delta_millionths\""));
+    }
+
+    #[test]
+    fn gate_log_event_json_field_presence() {
+        let evt = GateLogEvent {
+            trace_id: "t-1".into(),
+            lane_type: Some("proof_specialized".into()),
+            optimization_pass: None,
+            proof_status: None,
+            capability_witness_ref: None,
+            specialization_receipt_hash: None,
+            fallback_triggered: Some(false),
+            wall_time_ns: Some(1234),
+            memory_peak_bytes: None,
+            event: "test_event".into(),
+            outcome: "ok".into(),
+        };
+        let j = serde_json::to_string(&evt).unwrap();
+        assert!(j.contains("\"trace_id\""));
+        assert!(j.contains("\"event\""));
+        assert!(j.contains("\"outcome\""));
+    }
+
+    #[test]
+    fn gate_input_serde_roundtrip() {
+        let input = full_input(5);
+        let json = serde_json::to_string(&input).unwrap();
+        let back: GateInput = serde_json::from_str(&json).unwrap();
+        assert_eq!(input, back);
+    }
+
+    #[test]
+    fn fallback_performance_zero_ambient_is_acceptable() {
+        let mut fb = passing_fallback("zero-amb");
+        fb.ambient_wall_time_ns = 0;
+        fb.fallback_wall_time_ns = 999_999;
+        // Zero ambient means no regression can be computed; treated as acceptable.
+        assert!(fb.fallback_performance_acceptable());
+    }
+
+    #[test]
+    fn fallback_performance_exactly_at_10_percent_threshold() {
+        let mut fb = passing_fallback("threshold");
+        fb.ambient_wall_time_ns = 1_000_000;
+        // Exactly 10% regression => 100_000 millionths => should still be acceptable (<= 100_000).
+        fb.fallback_wall_time_ns = 1_100_000;
+        assert!(fb.fallback_performance_acceptable());
+        // One nanosecond past the threshold => not acceptable.
+        fb.fallback_wall_time_ns = 1_100_001;
+        assert!(!fb.fallback_performance_acceptable());
+    }
+
+    #[test]
+    fn lane_type_display_uniqueness() {
+        let a = LaneType::ProofSpecialized.to_string();
+        let b = LaneType::AmbientAuthority.to_string();
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn gate_failure_code_display_uniqueness_selected_pairs() {
+        // Spot-check that semantically close failure codes still produce distinct strings.
+        assert_ne!(
+            GateFailureCode::FallbackCrashed.to_string(),
+            GateFailureCode::FallbackHung.to_string(),
+        );
+        assert_ne!(
+            GateFailureCode::InsufficientSamples.to_string(),
+            GateFailureCode::EmptyInput.to_string(),
+        );
+    }
 }
