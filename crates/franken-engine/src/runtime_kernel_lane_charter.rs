@@ -1693,4 +1693,266 @@ mod tests {
             .build();
         assert_eq!(charter.schema_version, SCHEMA_VERSION);
     }
+
+    // ── Enrichment: FailureAction serde ──────────────────────────────
+
+    #[test]
+    fn failure_action_fallback_to_lane_serde_roundtrip() {
+        let action = FailureAction::FallbackToLane(RuntimeLane::Wasm);
+        let json = serde_json::to_string(&action).unwrap();
+        let back: FailureAction = serde_json::from_str(&json).unwrap();
+        assert_eq!(action, back);
+    }
+
+    #[test]
+    fn failure_action_all_variants_serde_roundtrip() {
+        let variants = [
+            FailureAction::LogAndContinue,
+            FailureAction::FallbackToLane(RuntimeLane::Js),
+            FailureAction::FallbackToLane(RuntimeLane::Wasm),
+            FailureAction::ActivateSafeMode,
+            FailureAction::ForceTerminate,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: FailureAction = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn failure_action_display_all_unique() {
+        let variants = [
+            FailureAction::LogAndContinue,
+            FailureAction::FallbackToLane(RuntimeLane::Js),
+            FailureAction::FallbackToLane(RuntimeLane::Wasm),
+            FailureAction::ActivateSafeMode,
+            FailureAction::ForceTerminate,
+        ];
+        let mut set = BTreeSet::new();
+        for v in &variants {
+            set.insert(v.to_string());
+        }
+        assert_eq!(set.len(), variants.len());
+    }
+
+    // ── Enrichment: InvariantKind ────────────────────────────────────
+
+    #[test]
+    fn invariant_kind_serde_roundtrip_all() {
+        let variants = [
+            InvariantKind::SemanticDivergence,
+            InvariantKind::SchedulerNondeterminism,
+            InvariantKind::BudgetExceeded,
+            InvariantKind::AbiMismatch,
+            InvariantKind::TraceEmissionFailure,
+            InvariantKind::RoutingInconsistency,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: InvariantKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn invariant_kind_display_all_unique() {
+        let variants = [
+            InvariantKind::SemanticDivergence,
+            InvariantKind::SchedulerNondeterminism,
+            InvariantKind::BudgetExceeded,
+            InvariantKind::AbiMismatch,
+            InvariantKind::TraceEmissionFailure,
+            InvariantKind::RoutingInconsistency,
+        ];
+        let mut set = BTreeSet::new();
+        for v in &variants {
+            set.insert(v.to_string());
+        }
+        assert_eq!(set.len(), 6);
+    }
+
+    #[test]
+    fn invariant_kind_ordering() {
+        assert!(InvariantKind::SemanticDivergence < InvariantKind::SchedulerNondeterminism);
+        assert!(InvariantKind::BudgetExceeded < InvariantKind::AbiMismatch);
+    }
+
+    // ── Enrichment: OwnershipDomain ordering ─────────────────────────
+
+    #[test]
+    fn ownership_domain_ordering_chain() {
+        assert!(OwnershipDomain::ExecutionCorrectness < OwnershipDomain::FootprintBudget);
+        assert!(OwnershipDomain::FootprintBudget < OwnershipDomain::SchedulerDeterminism);
+    }
+
+    #[test]
+    fn ownership_domain_display_all_unique() {
+        let domains = [
+            OwnershipDomain::ExecutionCorrectness,
+            OwnershipDomain::FootprintBudget,
+            OwnershipDomain::SchedulerDeterminism,
+            OwnershipDomain::AbiStability,
+            OwnershipDomain::FailoverBehavior,
+            OwnershipDomain::RoutingPolicy,
+            OwnershipDomain::TraceEmission,
+            OwnershipDomain::IncidentResponse,
+        ];
+        let mut set = BTreeSet::new();
+        for d in &domains {
+            set.insert(d.to_string());
+        }
+        assert_eq!(set.len(), 8);
+    }
+
+    // ── Enrichment: FootprintBudget check_usage ──────────────────────
+
+    #[test]
+    fn budget_check_usage_exact_boundary_passes() {
+        let budget = FootprintBudget::js_default();
+        let usage = ResourceUsage {
+            heap_bytes: budget.max_heap_bytes,
+            stack_frames: budget.max_stack_frames,
+            update_cycle_micros: budget.max_update_cycle_micros,
+            dom_patches: budget.max_dom_patches_per_cycle,
+        };
+        let result = budget.check_usage(&usage);
+        assert!(result.within_budget);
+        assert!(result.violations.is_empty());
+    }
+
+    #[test]
+    fn budget_check_usage_single_dom_patch_violation() {
+        let budget = FootprintBudget::js_default();
+        let usage = ResourceUsage {
+            heap_bytes: 0,
+            stack_frames: 0,
+            update_cycle_micros: 0,
+            dom_patches: budget.max_dom_patches_per_cycle + 1,
+        };
+        let result = budget.check_usage(&usage);
+        assert!(!result.within_budget);
+        assert_eq!(result.violations.len(), 1);
+        assert_eq!(result.violations[0].resource, "dom_patches");
+    }
+
+    #[test]
+    fn budget_check_usage_all_zeros_passes() {
+        let budget = FootprintBudget::wasm_default();
+        let usage = ResourceUsage {
+            heap_bytes: 0,
+            stack_frames: 0,
+            update_cycle_micros: 0,
+            dom_patches: 0,
+        };
+        let result = budget.check_usage(&usage);
+        assert!(result.within_budget);
+    }
+
+    // ── Enrichment: LaneInputContract ────────────────────────────────
+
+    #[test]
+    fn js_and_wasm_input_contracts_differ() {
+        let js = LaneInputContract::js_default();
+        let wasm = LaneInputContract::wasm_default();
+        assert_ne!(js, wasm);
+        // WASM requires compiler witness; JS does not
+        assert!(!js.requires_compiler_witness);
+        assert!(wasm.requires_compiler_witness);
+    }
+
+    #[test]
+    fn input_contract_serde_roundtrip() {
+        let contract = LaneInputContract::hybrid_router_default();
+        let json = serde_json::to_string(&contract).unwrap();
+        let back: LaneInputContract = serde_json::from_str(&json).unwrap();
+        assert_eq!(contract, back);
+    }
+
+    // ── Enrichment: LaneOutputContract ───────────────────────────────
+
+    #[test]
+    fn hybrid_router_output_contract_no_signal_graph() {
+        let out = LaneOutputContract::hybrid_router_default();
+        assert!(!out.required_outputs.contains("signal_graph_snapshot"));
+    }
+
+    #[test]
+    fn output_contract_serde_roundtrip() {
+        let contract = LaneOutputContract::wasm_default();
+        let json = serde_json::to_string(&contract).unwrap();
+        let back: LaneOutputContract = serde_json::from_str(&json).unwrap();
+        assert_eq!(contract, back);
+    }
+
+    // ── Enrichment: BudgetViolation / BudgetCheckResult serde ────────
+
+    #[test]
+    fn budget_violation_serde_roundtrip() {
+        let v = BudgetViolation {
+            resource: "heap_bytes".into(),
+            limit: 1024,
+            observed: 2048,
+        };
+        let json = serde_json::to_string(&v).unwrap();
+        let back: BudgetViolation = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+    }
+
+    #[test]
+    fn budget_check_result_serde_roundtrip() {
+        let r = BudgetCheckResult {
+            lane: RuntimeLane::Js,
+            within_budget: false,
+            violations: vec![BudgetViolation {
+                resource: "stack_frames".into(),
+                limit: 256,
+                observed: 300,
+            }],
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        let back: BudgetCheckResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(r, back);
+    }
+
+    // ── Enrichment: InputValidation / OutputValidation serde ─────────
+
+    #[test]
+    fn input_validation_serde_roundtrip() {
+        let iv = InputValidation {
+            lane: RuntimeLane::Wasm,
+            satisfied: false,
+            missing_inputs: BTreeSet::from(["wasm_module".to_string()]),
+        };
+        let json = serde_json::to_string(&iv).unwrap();
+        let back: InputValidation = serde_json::from_str(&json).unwrap();
+        assert_eq!(iv, back);
+    }
+
+    #[test]
+    fn output_validation_serde_roundtrip() {
+        let ov = OutputValidation {
+            lane: RuntimeLane::Js,
+            satisfied: true,
+            missing_outputs: BTreeSet::new(),
+        };
+        let json = serde_json::to_string(&ov).unwrap();
+        let back: OutputValidation = serde_json::from_str(&json).unwrap();
+        assert_eq!(ov, back);
+    }
+
+    // ── Enrichment: RuntimeLane serde ────────────────────────────────
+
+    #[test]
+    fn runtime_lane_serde_roundtrip_all() {
+        for lane in [
+            RuntimeLane::Js,
+            RuntimeLane::Wasm,
+            RuntimeLane::HybridRouter,
+        ] {
+            let json = serde_json::to_string(&lane).unwrap();
+            let back: RuntimeLane = serde_json::from_str(&json).unwrap();
+            assert_eq!(lane, back);
+        }
+    }
 }

@@ -1803,4 +1803,329 @@ mod tests {
         let result = e.evaluate(&batch, &target).unwrap();
         assert!(result.candidate_envelope.effective_samples > 0);
     }
+
+    // ── Enrichment: serde roundtrips ─────────────────────────────────
+
+    #[test]
+    fn baseline_policy_serde_roundtrip() {
+        let bp = BaselinePolicy::default();
+        let json = serde_json::to_string(&bp).unwrap();
+        let back: BaselinePolicy = serde_json::from_str(&json).unwrap();
+        assert_eq!(bp, back);
+    }
+
+    #[test]
+    fn transition_batch_serde_roundtrip() {
+        let batch = make_batch(3, 100_000, 500_000);
+        let json = serde_json::to_string(&batch).unwrap();
+        let back: TransitionBatch = serde_json::from_str(&json).unwrap();
+        assert_eq!(batch, back);
+    }
+
+    #[test]
+    fn target_policy_mapping_serde_roundtrip() {
+        let target = make_target(5, 600_000);
+        let json = serde_json::to_string(&target).unwrap();
+        let back: TargetPolicyMapping = serde_json::from_str(&json).unwrap();
+        assert_eq!(target, back);
+    }
+
+    #[test]
+    fn confidence_envelope_serde_roundtrip() {
+        let ce = ConfidenceEnvelope {
+            estimate_millionths: 500_000,
+            lower_millionths: 400_000,
+            upper_millionths: 600_000,
+            confidence_millionths: 950_000,
+            effective_samples: 42,
+        };
+        let json = serde_json::to_string(&ce).unwrap();
+        let back: ConfidenceEnvelope = serde_json::from_str(&json).unwrap();
+        assert_eq!(ce, back);
+    }
+
+    #[test]
+    fn envelope_status_serde_roundtrip_all_variants() {
+        for variant in [
+            EnvelopeStatus::Safe,
+            EnvelopeStatus::Inconclusive,
+            EnvelopeStatus::Unsafe,
+        ] {
+            let json = serde_json::to_string(&variant).unwrap();
+            let back: EnvelopeStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(variant, back);
+        }
+    }
+
+    #[test]
+    fn evaluator_config_serde_roundtrip() {
+        let cfg = EvaluatorConfig::default();
+        let json = serde_json::to_string(&cfg).unwrap();
+        let back: EvaluatorConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(cfg, back);
+    }
+
+    #[test]
+    fn counterfactual_evaluator_serde_roundtrip() {
+        let e = CounterfactualEvaluator::default_safe_mode();
+        let json = serde_json::to_string(&e).unwrap();
+        let back: CounterfactualEvaluator = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.evaluation_count(), 0);
+        assert_eq!(back.config().estimator, EstimatorKind::DoublyRobust);
+    }
+
+    // ── Enrichment: ConfidenceEnvelope accessors ─────────────────────
+
+    #[test]
+    fn confidence_envelope_width_zero_when_equal() {
+        let ce = ConfidenceEnvelope {
+            estimate_millionths: 500_000,
+            lower_millionths: 500_000,
+            upper_millionths: 500_000,
+            confidence_millionths: 950_000,
+            effective_samples: 10,
+        };
+        assert_eq!(ce.width(), 0);
+    }
+
+    #[test]
+    fn confidence_envelope_is_positive_boundary_at_zero() {
+        let ce = ConfidenceEnvelope {
+            estimate_millionths: 100,
+            lower_millionths: 0,
+            upper_millionths: 200,
+            confidence_millionths: 950_000,
+            effective_samples: 10,
+        };
+        // lower == 0 means is_positive() returns false (> 0 required)
+        assert!(!ce.is_positive());
+    }
+
+    #[test]
+    fn confidence_envelope_is_negative_boundary_at_zero() {
+        let ce = ConfidenceEnvelope {
+            estimate_millionths: -100,
+            lower_millionths: -200,
+            upper_millionths: 0,
+            confidence_millionths: 950_000,
+            effective_samples: 10,
+        };
+        // upper == 0 means is_negative() returns false (< 0 required)
+        assert!(!ce.is_negative());
+    }
+
+    #[test]
+    fn confidence_envelope_neither_positive_nor_negative() {
+        let ce = ConfidenceEnvelope {
+            estimate_millionths: 0,
+            lower_millionths: -100,
+            upper_millionths: 100,
+            confidence_millionths: 950_000,
+            effective_samples: 10,
+        };
+        assert!(!ce.is_positive());
+        assert!(!ce.is_negative());
+    }
+
+    // ── Enrichment: error display and std::error ─────────────────────
+
+    #[test]
+    fn counterfactual_error_implements_std_error() {
+        let err = CounterfactualError::EmptyBatch;
+        let dyn_err: &dyn std::error::Error = &err;
+        assert!(dyn_err.source().is_none());
+    }
+
+    #[test]
+    fn counterfactual_error_all_variants_display_unique() {
+        let variants: Vec<CounterfactualError> = vec![
+            CounterfactualError::EmptyBatch,
+            CounterfactualError::BatchTooLarge {
+                size: 200_000,
+                max: 100_000,
+            },
+            CounterfactualError::PropensityLengthMismatch {
+                batch: 10,
+                target: 5,
+            },
+            CounterfactualError::PropensityOutOfRange {
+                index: 3,
+                value: -1,
+            },
+            CounterfactualError::ZeroEffectiveSamples,
+            CounterfactualError::ModelPredictionLengthMismatch {
+                batch: 10,
+                predictions: 7,
+            },
+            CounterfactualError::InvalidConfidence { value: 0 },
+            CounterfactualError::NegativeThreshold { value: -100 },
+        ];
+        let mut set = BTreeSet::new();
+        for v in &variants {
+            let s = v.to_string();
+            assert!(!s.is_empty());
+            set.insert(s);
+        }
+        assert_eq!(set.len(), variants.len());
+    }
+
+    #[test]
+    fn counterfactual_error_serde_roundtrip_all_variants() {
+        let variants = vec![
+            CounterfactualError::EmptyBatch,
+            CounterfactualError::BatchTooLarge { size: 1, max: 2 },
+            CounterfactualError::PropensityLengthMismatch {
+                batch: 3,
+                target: 4,
+            },
+            CounterfactualError::PropensityOutOfRange {
+                index: 0,
+                value: -5,
+            },
+            CounterfactualError::ZeroEffectiveSamples,
+            CounterfactualError::ModelPredictionLengthMismatch {
+                batch: 5,
+                predictions: 6,
+            },
+            CounterfactualError::InvalidConfidence { value: 0 },
+            CounterfactualError::NegativeThreshold { value: -1 },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: CounterfactualError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    // ── Enrichment: EnvelopeStatus display ───────────────────────────
+
+    #[test]
+    fn envelope_status_display_all_unique() {
+        let variants = [
+            EnvelopeStatus::Safe,
+            EnvelopeStatus::Inconclusive,
+            EnvelopeStatus::Unsafe,
+        ];
+        let mut set = BTreeSet::new();
+        for v in &variants {
+            set.insert(v.to_string());
+        }
+        assert_eq!(set.len(), 3);
+    }
+
+    // ── Enrichment: evaluator accessors ──────────────────────────────
+
+    #[test]
+    fn evaluator_config_accessor_matches_input() {
+        let cfg = EvaluatorConfig {
+            estimator: EstimatorKind::Ips,
+            confidence_millionths: 900_000,
+            min_propensity_millionths: 50_000,
+            improvement_threshold_millionths: 10_000,
+            regime_breakdown: false,
+        };
+        let e = CounterfactualEvaluator::new(cfg.clone(), BaselinePolicy::default()).unwrap();
+        assert_eq!(*e.config(), cfg);
+    }
+
+    #[test]
+    fn evaluator_baseline_accessor_returns_correct_baseline() {
+        let bl = BaselinePolicy {
+            id: PolicyId("custom-baseline".into()),
+            action: LaneAction::FallbackSafe,
+        };
+        let e = CounterfactualEvaluator::new(EvaluatorConfig::default(), bl.clone()).unwrap();
+        assert_eq!(*e.baseline(), bl);
+    }
+
+    #[test]
+    fn evaluation_count_increments_repeated() {
+        let mut e = CounterfactualEvaluator::default_safe_mode();
+        assert_eq!(e.evaluation_count(), 0);
+        let batch = make_batch(5, 500_000, 500_000);
+        let target = make_target(5, 500_000);
+        e.evaluate(&batch, &target).unwrap();
+        assert_eq!(e.evaluation_count(), 1);
+        e.evaluate(&batch, &target).unwrap();
+        assert_eq!(e.evaluation_count(), 2);
+    }
+
+    // ── Enrichment: validation errors ────────────────────────────────
+
+    #[test]
+    fn invalid_confidence_zero_rejected() {
+        let cfg = EvaluatorConfig {
+            confidence_millionths: 0,
+            ..EvaluatorConfig::default()
+        };
+        let err = CounterfactualEvaluator::new(cfg, BaselinePolicy::default()).unwrap_err();
+        assert_eq!(err, CounterfactualError::InvalidConfidence { value: 0 });
+    }
+
+    #[test]
+    fn invalid_confidence_million_rejected() {
+        let cfg = EvaluatorConfig {
+            confidence_millionths: 1_000_000,
+            ..EvaluatorConfig::default()
+        };
+        let err = CounterfactualEvaluator::new(cfg, BaselinePolicy::default()).unwrap_err();
+        assert_eq!(
+            err,
+            CounterfactualError::InvalidConfidence { value: 1_000_000 }
+        );
+    }
+
+    #[test]
+    fn negative_threshold_rejected() {
+        let cfg = EvaluatorConfig {
+            improvement_threshold_millionths: -1,
+            ..EvaluatorConfig::default()
+        };
+        let err = CounterfactualEvaluator::new(cfg, BaselinePolicy::default()).unwrap_err();
+        assert_eq!(err, CounterfactualError::NegativeThreshold { value: -1 });
+    }
+
+    // ── Enrichment: EstimatorKind ────────────────────────────────────
+
+    #[test]
+    fn estimator_kind_display_all_unique() {
+        let variants = [
+            EstimatorKind::Ips,
+            EstimatorKind::DoublyRobust,
+            EstimatorKind::DirectMethod,
+        ];
+        let mut set = BTreeSet::new();
+        for v in &variants {
+            set.insert(v.to_string());
+        }
+        assert_eq!(set.len(), 3);
+    }
+
+    #[test]
+    fn estimator_kind_serde_roundtrip_all() {
+        for v in [
+            EstimatorKind::Ips,
+            EstimatorKind::DoublyRobust,
+            EstimatorKind::DirectMethod,
+        ] {
+            let json = serde_json::to_string(&v).unwrap();
+            let back: EstimatorKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, back);
+        }
+    }
+
+    // ── Enrichment: PolicyId ─────────────────────────────────────────
+
+    #[test]
+    fn policy_id_ordering_is_lexicographic() {
+        let a = PolicyId("a-policy".into());
+        let b = PolicyId("b-policy".into());
+        assert!(a < b);
+    }
+
+    #[test]
+    fn policy_id_display_matches_inner() {
+        let pid = PolicyId("my-policy".into());
+        assert_eq!(pid.to_string(), "my-policy");
+    }
 }

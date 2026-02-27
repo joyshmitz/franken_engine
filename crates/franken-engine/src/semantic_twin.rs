@@ -1625,4 +1625,362 @@ mod tests {
         // Verify all 5 variants are present
         assert_eq!(original.len(), 5);
     }
+
+    // ── Enrichment: SignalNamespace ───────────────────────────────────
+
+    #[test]
+    fn signal_namespace_as_str_all_unique() {
+        let variants = [
+            SignalNamespace::Frir,
+            SignalNamespace::RuntimeDecisionCore,
+            SignalNamespace::RuntimeObservability,
+            SignalNamespace::PolicyController,
+            SignalNamespace::AssumptionsLedger,
+        ];
+        let mut set = BTreeSet::new();
+        for v in &variants {
+            set.insert(v.as_str());
+        }
+        assert_eq!(set.len(), 5);
+    }
+
+    #[test]
+    fn signal_namespace_serde_roundtrip_all_variants() {
+        for v in [
+            SignalNamespace::Frir,
+            SignalNamespace::RuntimeDecisionCore,
+            SignalNamespace::RuntimeObservability,
+            SignalNamespace::PolicyController,
+            SignalNamespace::AssumptionsLedger,
+        ] {
+            let json = serde_json::to_string(&v).unwrap();
+            let back: SignalNamespace = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, back);
+        }
+    }
+
+    #[test]
+    fn signal_namespace_in_btree_set() {
+        let mut set = BTreeSet::new();
+        set.insert(SignalNamespace::Frir);
+        set.insert(SignalNamespace::Frir); // duplicate
+        set.insert(SignalNamespace::PolicyController);
+        assert_eq!(set.len(), 2);
+    }
+
+    // ── Enrichment: TelemetryContractRef ─────────────────────────────
+
+    #[test]
+    fn telemetry_contract_ref_serde_roundtrip() {
+        let tcr = TelemetryContractRef {
+            namespace: SignalNamespace::RuntimeObservability,
+            signal_key: "latency.p99_millionths".to_string(),
+            units: "microseconds".to_string(),
+            deterministic: true,
+            required: true,
+        };
+        let json = serde_json::to_string(&tcr).unwrap();
+        let back: TelemetryContractRef = serde_json::from_str(&json).unwrap();
+        assert_eq!(tcr, back);
+    }
+
+    #[test]
+    fn telemetry_contract_ref_validate_whitespace_only_units() {
+        let tcr = TelemetryContractRef {
+            namespace: SignalNamespace::Frir,
+            signal_key: "valid_key".to_string(),
+            units: "   ".to_string(),
+            deterministic: false,
+            required: false,
+        };
+        assert!(tcr.validate().is_err());
+    }
+
+    #[test]
+    fn telemetry_contract_ref_validate_whitespace_only_signal_key() {
+        let tcr = TelemetryContractRef {
+            namespace: SignalNamespace::Frir,
+            signal_key: "  ".to_string(),
+            units: "ms".to_string(),
+            deterministic: false,
+            required: false,
+        };
+        assert!(tcr.validate().is_err());
+    }
+
+    // ── Enrichment: TwinStateVariable ────────────────────────────────
+
+    #[test]
+    fn twin_state_variable_serde_roundtrip_alt() {
+        let var = TwinStateVariable {
+            id: "v1".to_string(),
+            label: "Latency".to_string(),
+            description: "P99 latency metric".to_string(),
+            domain: VariableDomain::ObservedOutcome,
+            observable: true,
+            telemetry: TelemetryContractRef {
+                namespace: SignalNamespace::RuntimeObservability,
+                signal_key: "latency".to_string(),
+                units: "us".to_string(),
+                deterministic: true,
+                required: true,
+            },
+        };
+        let json = serde_json::to_string(&var).unwrap();
+        let back: TwinStateVariable = serde_json::from_str(&json).unwrap();
+        assert_eq!(var, back);
+    }
+
+    #[test]
+    fn twin_state_variable_label_distinct_from_description() {
+        let var = TwinStateVariable {
+            id: "v2".to_string(),
+            label: "Label".to_string(),
+            description: "Description".to_string(),
+            domain: VariableDomain::WorkloadCharacteristic,
+            observable: false,
+            telemetry: TelemetryContractRef {
+                namespace: SignalNamespace::Frir,
+                signal_key: "key".to_string(),
+                units: "unit".to_string(),
+                deterministic: false,
+                required: false,
+            },
+        };
+        assert_ne!(var.label, var.description);
+    }
+
+    // ── Enrichment: TransitionGuard ──────────────────────────────────
+
+    #[test]
+    fn transition_guard_serde_roundtrip_alt() {
+        let guard = TransitionGuard {
+            variable: "env_load".to_string(),
+            op: MonitorOp::Le,
+            threshold_millionths: 500_000,
+        };
+        let json = serde_json::to_string(&guard).unwrap();
+        let back: TransitionGuard = serde_json::from_str(&json).unwrap();
+        assert_eq!(guard, back);
+    }
+
+    // ── Enrichment: CausalAdjustmentStrategy ─────────────────────────
+
+    #[test]
+    fn causal_adjustment_strategy_serde_roundtrip_alt() {
+        let strategy = CausalAdjustmentStrategy {
+            effect_id: "eff1".to_string(),
+            treatment: "lane_choice".to_string(),
+            outcome: "latency_outcome".to_string(),
+            identified: true,
+            adjustment_set: BTreeSet::from(["regime".to_string(), "workload".to_string()]),
+            blocked_confounding_paths: vec![vec!["a".into(), "b".into()]],
+            strategy_note: "backdoor adjustment".to_string(),
+        };
+        let json = serde_json::to_string(&strategy).unwrap();
+        let back: CausalAdjustmentStrategy = serde_json::from_str(&json).unwrap();
+        assert_eq!(strategy, back);
+    }
+
+    #[test]
+    fn causal_adjustment_strategy_empty_adjustment_set() {
+        let strategy = CausalAdjustmentStrategy {
+            effect_id: "eff2".to_string(),
+            treatment: "t".to_string(),
+            outcome: "o".to_string(),
+            identified: false,
+            adjustment_set: BTreeSet::new(),
+            blocked_confounding_paths: vec![],
+            strategy_note: "no confounders".to_string(),
+        };
+        let json = serde_json::to_string(&strategy).unwrap();
+        let back: CausalAdjustmentStrategy = serde_json::from_str(&json).unwrap();
+        assert_eq!(strategy, back);
+        assert!(back.adjustment_set.is_empty());
+    }
+
+    // ── Enrichment: IdentifiabilityAssumption ────────────────────────
+
+    #[test]
+    fn identifiability_assumption_serde_roundtrip() {
+        let asm = IdentifiabilityAssumption {
+            assumption_id: "asm-test".to_string(),
+            description: "test assumption".to_string(),
+            category: AssumptionCategory::Structural,
+            origin: AssumptionOrigin::Runtime,
+            decision_effect_id: "eff1".to_string(),
+            telemetry_contract: "rt.signal".to_string(),
+            monitor_kind: MonitorKind::Invariant,
+            monitor_variable: "var1".to_string(),
+            monitor_op: MonitorOp::Ge,
+            monitor_threshold_millionths: 1_000_000,
+            trigger_count: 1,
+            violation_severity: ViolationSeverity::Critical,
+        };
+        let json = serde_json::to_string(&asm).unwrap();
+        let back: IdentifiabilityAssumption = serde_json::from_str(&json).unwrap();
+        assert_eq!(asm, back);
+    }
+
+    // ── Enrichment: SemanticTwinLogEvent ──────────────────────────────
+
+    #[test]
+    fn semantic_twin_log_event_all_none_fields_serde() {
+        let ev = SemanticTwinLogEvent {
+            schema_version: SEMANTIC_TWIN_LOG_SCHEMA_VERSION.to_string(),
+            trace_id: "t1".to_string(),
+            decision_id: "d1".to_string(),
+            policy_id: "p1".to_string(),
+            component: SEMANTIC_TWIN_COMPONENT.to_string(),
+            event: "observation_ok".to_string(),
+            outcome: "ok".to_string(),
+            error_code: None,
+            variable: "v1".to_string(),
+            observed_value_millionths: 500_000,
+            assumption_id: None,
+            monitor_id: None,
+            action: None,
+        };
+        let json = serde_json::to_string(&ev).unwrap();
+        let back: SemanticTwinLogEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(ev, back);
+    }
+
+    #[test]
+    fn semantic_twin_log_event_all_some_fields_serde() {
+        let ev = SemanticTwinLogEvent {
+            schema_version: SEMANTIC_TWIN_LOG_SCHEMA_VERSION.to_string(),
+            trace_id: "t2".to_string(),
+            decision_id: "d2".to_string(),
+            policy_id: "p2".to_string(),
+            component: SEMANTIC_TWIN_COMPONENT.to_string(),
+            event: "assumption_violated".to_string(),
+            outcome: "falsified".to_string(),
+            error_code: Some("FE-ST-001".to_string()),
+            variable: "drift_var".to_string(),
+            observed_value_millionths: 200_000,
+            assumption_id: Some("asm-1".to_string()),
+            monitor_id: Some("mon-1".to_string()),
+            action: Some("demote".to_string()),
+        };
+        let json = serde_json::to_string(&ev).unwrap();
+        let back: SemanticTwinLogEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(ev, back);
+    }
+
+    // ── Enrichment: SemanticTwinObservationResult ─────────────────────
+
+    #[test]
+    fn semantic_twin_observation_result_serde_roundtrip() {
+        let result = SemanticTwinObservationResult {
+            actions: vec![],
+            events: vec![SemanticTwinLogEvent {
+                schema_version: SEMANTIC_TWIN_LOG_SCHEMA_VERSION.to_string(),
+                trace_id: "t".into(),
+                decision_id: "d".into(),
+                policy_id: "p".into(),
+                component: SEMANTIC_TWIN_COMPONENT.into(),
+                event: "observation_ok".into(),
+                outcome: "ok".into(),
+                error_code: None,
+                variable: "v".into(),
+                observed_value_millionths: 0,
+                assumption_id: None,
+                monitor_id: None,
+                action: None,
+            }],
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let back: SemanticTwinObservationResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(result, back);
+    }
+
+    // ── Enrichment: SemanticTwinError display ────────────────────────
+
+    #[test]
+    fn semantic_twin_error_display_all_unique() {
+        let variants = vec![
+            SemanticTwinError::DuplicateVariable("x".to_string()),
+            SemanticTwinError::MissingTelemetrySignalKey {
+                namespace: "ns".to_string(),
+            },
+            SemanticTwinError::MissingTelemetryUnits {
+                signal_key: "k".to_string(),
+            },
+            SemanticTwinError::TransitionMissingVariable {
+                transition_id: "t1".to_string(),
+                variable: "v1".to_string(),
+            },
+            SemanticTwinError::AdjustmentNotIdentified {
+                effect_id: "e1".to_string(),
+            },
+            SemanticTwinError::AssumptionMissingVariable {
+                assumption_id: "a1".to_string(),
+                variable: "v2".to_string(),
+            },
+            SemanticTwinError::AssumptionMissingEffect {
+                assumption_id: "a2".to_string(),
+                effect_id: "e2".to_string(),
+            },
+            SemanticTwinError::InvalidAssumptionTriggerCount {
+                assumption_id: "a3".to_string(),
+            },
+        ];
+        let mut set = BTreeSet::new();
+        for v in &variants {
+            set.insert(v.to_string());
+        }
+        assert_eq!(set.len(), variants.len());
+    }
+
+    // ── Enrichment: schema version constants ─────────────────────────
+
+    #[test]
+    fn schema_version_constants_consistent_prefix() {
+        assert!(
+            SEMANTIC_TWIN_STATE_SPACE_SCHEMA_VERSION.starts_with("franken-engine.semantic-twin.")
+        );
+        assert!(
+            SEMANTIC_TWIN_CAUSAL_ADJUSTMENT_SCHEMA_VERSION
+                .starts_with("franken-engine.semantic-twin.")
+        );
+        assert!(SEMANTIC_TWIN_LOG_SCHEMA_VERSION.starts_with("franken-engine.semantic-twin."));
+    }
+
+    // ── Enrichment: TwinStateTransition ──────────────────────────────
+
+    #[test]
+    fn twin_state_transition_serde_with_guard() {
+        let t = TwinStateTransition {
+            transition_id: "tr-1".to_string(),
+            source_variable: "lane_choice".to_string(),
+            target_variable: "latency_outcome".to_string(),
+            trigger_event: "routing_decision".to_string(),
+            telemetry_contract: "rt.signal".to_string(),
+            guard: Some(TransitionGuard {
+                variable: "env_load".to_string(),
+                op: MonitorOp::Le,
+                threshold_millionths: 800_000,
+            }),
+        };
+        let json = serde_json::to_string(&t).unwrap();
+        let back: TwinStateTransition = serde_json::from_str(&json).unwrap();
+        assert_eq!(t, back);
+    }
+
+    #[test]
+    fn twin_state_transition_serde_without_guard() {
+        let t = TwinStateTransition {
+            transition_id: "tr-2".to_string(),
+            source_variable: "a".to_string(),
+            target_variable: "b".to_string(),
+            trigger_event: "ev".to_string(),
+            telemetry_contract: "c".to_string(),
+            guard: None,
+        };
+        let json = serde_json::to_string(&t).unwrap();
+        let back: TwinStateTransition = serde_json::from_str(&json).unwrap();
+        assert_eq!(t, back);
+        assert!(back.guard.is_none());
+    }
 }

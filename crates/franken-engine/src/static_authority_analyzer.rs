@@ -2273,4 +2273,204 @@ mod tests {
         let h2 = analysis_report_schema_hash();
         assert_eq!(h1, h2);
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 session 6 --
+
+    #[test]
+    fn excluded_dead_path_evidence_present_in_report() {
+        // Same setup as path_sensitivity_excludes_dead_branch_caps but verify
+        // that an ExcludedDeadPath evidence item for net_send exists.
+        let mut graph = EffectGraph::new("ext-dead-ev");
+        graph.add_node(entry_node("e"));
+        graph.add_node(control_flow_node("b"));
+        graph.add_node(hostcall_node("h_read", "fs_read"));
+        graph.add_node(hostcall_node("h_net", "net_send"));
+        graph.add_node(exit_node("x"));
+        graph.add_edge(edge("e", "b"));
+        graph.add_edge(edge("b", "h_read"));
+        graph.add_edge(dead_edge("b", "h_net"));
+        graph.add_edge(edge("h_read", "x"));
+        graph.add_edge(edge("h_net", "x"));
+
+        let manifest = ManifestIntents {
+            extension_id: "ext-dead-ev".to_string(),
+            declared_capabilities: [cap("fs_read")].into(),
+            optional_capabilities: BTreeSet::new(),
+        };
+
+        let analyzer = StaticAuthorityAnalyzer::new(path_sensitive_config());
+        let report = analyzer
+            .analyze(&graph, &manifest, SecurityEpoch::from_raw(1), 50_000)
+            .expect("analysis");
+
+        let dead_evidence = report
+            .per_capability_evidence
+            .iter()
+            .find(|e| e.capability == cap("net_send"));
+        assert!(
+            dead_evidence.is_some(),
+            "ExcludedDeadPath evidence expected"
+        );
+        assert_eq!(
+            dead_evidence.unwrap().analysis_method,
+            AnalysisMethod::ExcludedDeadPath
+        );
+    }
+
+    #[test]
+    fn optional_capabilities_affect_manifest_hash() {
+        let m1 = ManifestIntents {
+            extension_id: "ext-opt".to_string(),
+            declared_capabilities: [cap("fs_read")].into(),
+            optional_capabilities: BTreeSet::new(),
+        };
+        let m2 = ManifestIntents {
+            extension_id: "ext-opt".to_string(),
+            declared_capabilities: [cap("fs_read")].into(),
+            optional_capabilities: [cap("net_send")].into(),
+        };
+
+        let h1 = StaticAuthorityAnalyzer::compute_manifest_hash(&m1);
+        let h2 = StaticAuthorityAnalyzer::compute_manifest_hash(&m2);
+        assert_ne!(h1, h2, "optional capabilities should affect manifest hash");
+    }
+
+    #[test]
+    fn different_zones_produce_different_report_ids() {
+        let gh = ContentHash::compute(b"graph");
+        let mh = ContentHash::compute(b"manifest");
+        let id1 = StaticAnalysisReport::derive_report_id("ext", &gh, &mh, 100, "zone-a").unwrap();
+        let id2 = StaticAnalysisReport::derive_report_id("ext", &gh, &mh, 100, "zone-b").unwrap();
+        assert_ne!(
+            id1, id2,
+            "different zones should produce different report IDs"
+        );
+    }
+
+    #[test]
+    fn content_hash_changes_when_capabilities_differ() {
+        let analyzer = StaticAuthorityAnalyzer::new(default_config());
+        let r1 = analyzer
+            .analyze(
+                &simple_graph(),
+                &simple_manifest(),
+                SecurityEpoch::from_raw(1),
+                51_000,
+            )
+            .expect("r1");
+
+        // Build a graph with a different capability (fs_write instead of fs_read).
+        let mut graph2 = EffectGraph::new("ext-simple");
+        graph2.add_node(entry_node("e0"));
+        graph2.add_node(hostcall_node("h1", "fs_write"));
+        graph2.add_node(exit_node("x2"));
+        graph2.add_edge(edge("e0", "h1"));
+        graph2.add_edge(edge("h1", "x2"));
+        let manifest2 = ManifestIntents {
+            extension_id: "ext-simple".to_string(),
+            declared_capabilities: [cap("fs_write")].into(),
+            optional_capabilities: BTreeSet::new(),
+        };
+        let r2 = analyzer
+            .analyze(&graph2, &manifest2, SecurityEpoch::from_raw(1), 51_000)
+            .expect("r2");
+
+        assert_ne!(
+            r1.content_hash(),
+            r2.content_hash(),
+            "different capabilities should produce different content hashes"
+        );
+    }
+
+    #[test]
+    fn cache_capacity_one_evicts_on_second_insert() {
+        let mut cache = AnalysisCache::new(1);
+        let analyzer = StaticAuthorityAnalyzer::new(default_config());
+        let report = analyzer
+            .analyze(
+                &simple_graph(),
+                &simple_manifest(),
+                SecurityEpoch::from_raw(1),
+                52_000,
+            )
+            .expect("analysis");
+
+        let key1 = AnalysisCacheKey {
+            effect_graph_hash: ContentHash::compute(b"g1"),
+            manifest_hash: ContentHash::compute(b"m1"),
+            path_sensitive: false,
+        };
+        let key2 = AnalysisCacheKey {
+            effect_graph_hash: ContentHash::compute(b"g2"),
+            manifest_hash: ContentHash::compute(b"m2"),
+            path_sensitive: false,
+        };
+
+        cache.insert(key1.clone(), report.clone());
+        assert_eq!(cache.len(), 1);
+        assert!(cache.get(&key1).is_some());
+
+        cache.insert(key2.clone(), report);
+        assert_eq!(cache.len(), 1);
+        assert!(cache.get(&key1).is_none(), "key1 should be evicted");
+        assert!(cache.get(&key2).is_some());
+    }
+
+    #[test]
+    fn graph_edge_to_nonexistent_node_does_not_crash() {
+        // Edge references a node that doesn't exist in nodes list.
+        let mut graph = EffectGraph::new("ext-phantom");
+        graph.add_node(entry_node("e"));
+        graph.add_node(exit_node("x"));
+        graph.add_edge(edge("e", "phantom")); // phantom not in nodes
+        graph.add_edge(edge("e", "x"));
+
+        let manifest = ManifestIntents {
+            extension_id: "ext-phantom".to_string(),
+            declared_capabilities: BTreeSet::new(),
+            optional_capabilities: BTreeSet::new(),
+        };
+
+        let analyzer = StaticAuthorityAnalyzer::new(default_config());
+        let report = analyzer
+            .analyze(&graph, &manifest, SecurityEpoch::from_raw(1), 53_000)
+            .expect("analysis should not crash on phantom edges");
+        // No capabilities in graph, so upper bound should be empty.
+        assert!(report.upper_bound_capabilities.is_empty());
+    }
+
+    #[test]
+    fn evidence_summary_includes_hostcall_site_count() {
+        // Diamond graph: two hostcall sites for the same capability.
+        let mut graph = EffectGraph::new("ext-diamond-ev");
+        graph.add_node(entry_node("e"));
+        graph.add_node(control_flow_node("branch"));
+        graph.add_node(hostcall_node("h_a", "fs_read"));
+        graph.add_node(hostcall_node("h_b", "fs_read"));
+        graph.add_node(exit_node("x"));
+        graph.add_edge(edge("e", "branch"));
+        graph.add_edge(edge("branch", "h_a"));
+        graph.add_edge(edge("branch", "h_b"));
+        graph.add_edge(edge("h_a", "x"));
+        graph.add_edge(edge("h_b", "x"));
+
+        let manifest = ManifestIntents {
+            extension_id: "ext-diamond-ev".to_string(),
+            declared_capabilities: [cap("fs_read")].into(),
+            optional_capabilities: BTreeSet::new(),
+        };
+
+        let analyzer = StaticAuthorityAnalyzer::new(default_config());
+        let report = analyzer
+            .analyze(&graph, &manifest, SecurityEpoch::from_raw(1), 54_000)
+            .expect("analysis");
+
+        let ev = report
+            .per_capability_evidence
+            .iter()
+            .find(|e| e.capability == cap("fs_read"))
+            .expect("evidence for fs_read");
+        assert_eq!(ev.analysis_method, AnalysisMethod::LatticeReachability);
+        assert!(ev.summary.contains("2 hostcall site(s)"));
+    }
 }

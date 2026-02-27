@@ -2686,4 +2686,222 @@ mod tests {
         let back: TransportAnalysisInput = serde_json::from_str(&json).unwrap();
         assert_eq!(input, back);
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 session 6 --
+
+    #[test]
+    fn test_can_release_budget_exhausted_is_false() {
+        let config = TransportAnalyzerConfig {
+            max_entries: 1,
+            ..TransportAnalyzerConfig::default()
+        };
+        let a = SemanticTransportAnalyzer::with_config(config);
+        let specs = vec![simple_spec("a", vec![]), simple_spec("b", vec![])];
+        let input = simple_input(specs);
+        let result = a.analyze(&input).unwrap();
+        assert_eq!(result.outcome, TransportAnalysisOutcome::BudgetExhausted);
+        assert!(!result.can_release());
+    }
+
+    #[test]
+    fn test_can_release_regression_mask_detected_is_false() {
+        // Create an adapter-required entry with a lossy morphism to trigger regression mask.
+        let a = SemanticTransportAnalyzer::new();
+        let spec = TransportEntrySpec {
+            fragment_name: "masked-frag".to_string(),
+            domain: ContractDomain::Hook,
+            source_version: v(0, 1, 0),
+            target_version: v(0, 2, 0),
+            behavioral_deltas: vec![delta(200_000, true)],
+            required_invariants: vec!["inv-a".to_string()],
+            verified_invariants: vec!["inv-a".to_string()],
+            broken_invariants: vec![],
+        };
+        let morph = MorphismSpec {
+            name: "lossy-morph".to_string(),
+            domain: ContractDomain::Hook,
+            source_version: v(0, 1, 0),
+            target_version: v(0, 2, 0),
+            preserved_invariants: vec!["inv-a".to_string()],
+            broken_invariants: vec!["inv-b".to_string()],
+            verified: true,
+            description: "Lossy adapter.".to_string(),
+            adapter_ref: None,
+        };
+        let input = TransportAnalysisInput {
+            entries: vec![spec],
+            morphisms: vec![morph],
+            epoch: 10,
+        };
+        let result = a.analyze(&input).unwrap();
+        assert_eq!(
+            result.outcome,
+            TransportAnalysisOutcome::RegressionMaskDetected
+        );
+        assert!(!result.can_release());
+    }
+
+    #[test]
+    fn test_coverage_millionths_partial_unknown() {
+        let a = SemanticTransportAnalyzer::new();
+        // Two entries: one unchanged (known), one with Unknown verdict.
+        // simple_spec with no deltas → Unchanged. For Unknown, we need no deltas
+        // but that gives Unchanged. The Unknown variant isn't produced by the
+        // analyzer directly — it's a data-level concept. So we test the ledger
+        // method directly by constructing a ledger.
+        let spec_known = simple_spec("known", vec![]);
+        let input = simple_input(vec![spec_known]);
+        let mut result = a.analyze(&input).unwrap();
+        // Manually add an Unknown entry to test coverage calculation.
+        let unknown_entry = TransportEntry {
+            id: result.ledger.entries[0].id.clone(),
+            fragment_name: "unknown-frag".to_string(),
+            domain: ContractDomain::Effect,
+            version_pair: VersionPair::new(v(0, 1, 0), v(0, 2, 0)),
+            verdict: TransportVerdict::Unknown,
+            behavioral_deltas: vec![],
+            required_invariants: vec![],
+            verified_invariants: vec![],
+            broken_invariants: vec![],
+            debt_code: None,
+            confidence_millionths: 0,
+            entry_hash: ContentHash::compute(b"unknown"),
+        };
+        result.ledger.entries.push(unknown_entry);
+        // 1 known out of 2 = 500_000
+        assert_eq!(result.ledger.coverage_millionths(), 500_000);
+    }
+
+    #[test]
+    fn test_version_pair_is_upgrade() {
+        let pair = VersionPair::new(v(1, 0, 0), v(2, 0, 0));
+        assert!(pair.is_upgrade());
+        assert!(!pair.is_downgrade());
+
+        let pair2 = VersionPair::new(v(1, 0, 0), v(1, 1, 0));
+        assert!(pair2.is_upgrade());
+        assert!(pair2.is_same_major());
+    }
+
+    #[test]
+    fn test_all_debt_codes_includes_mask_codes() {
+        let a = SemanticTransportAnalyzer::new();
+        // Create conditions for regression mask (adapter + lossy morphism).
+        let spec = TransportEntrySpec {
+            fragment_name: "debt-test".to_string(),
+            domain: ContractDomain::Context,
+            source_version: v(0, 1, 0),
+            target_version: v(0, 2, 0),
+            behavioral_deltas: vec![delta(100_000, true)],
+            required_invariants: vec!["i1".to_string()],
+            verified_invariants: vec!["i1".to_string()],
+            broken_invariants: vec![],
+        };
+        let morph = MorphismSpec {
+            name: "lossy-for-debt".to_string(),
+            domain: ContractDomain::Context,
+            source_version: v(0, 1, 0),
+            target_version: v(0, 2, 0),
+            preserved_invariants: vec![],
+            broken_invariants: vec!["dropped".to_string()],
+            verified: true,
+            description: "Test.".to_string(),
+            adapter_ref: None,
+        };
+        let input = TransportAnalysisInput {
+            entries: vec![spec],
+            morphisms: vec![morph],
+            epoch: 20,
+        };
+        let result = a.analyze(&input).unwrap();
+        let codes = result.ledger.all_debt_codes();
+        assert!(
+            codes.contains(DEBT_REGRESSION_MASKED),
+            "debt codes should include mask-side code"
+        );
+        assert!(
+            codes.contains(DEBT_ADAPTER_REQUIRED),
+            "debt codes should include entry-side code"
+        );
+    }
+
+    #[test]
+    fn test_entry_all_invariants_verified_false_with_broken() {
+        // An entry with required_invariants == verified_invariants in count
+        // but broken_invariants non-empty should return false.
+        let a = SemanticTransportAnalyzer::new();
+        let spec = TransportEntrySpec {
+            fragment_name: "broken-check".to_string(),
+            domain: ContractDomain::Hook,
+            source_version: v(0, 1, 0),
+            target_version: v(0, 2, 0),
+            behavioral_deltas: vec![],
+            required_invariants: vec!["i1".to_string()],
+            verified_invariants: vec!["i1".to_string()],
+            broken_invariants: vec!["i2".to_string()],
+        };
+        let input = simple_input(vec![spec]);
+        let result = a.analyze(&input).unwrap();
+        let entry = &result.ledger.entries[0];
+        assert!(
+            !entry.all_invariants_verified(),
+            "broken_invariants non-empty means not all verified"
+        );
+    }
+
+    #[test]
+    fn test_render_report_groups_by_verdict() {
+        let a = SemanticTransportAnalyzer::new();
+        let specs = vec![
+            simple_spec("unchanged-1", vec![]),
+            simple_spec("adapted-1", vec![delta(100_000, true)]),
+            {
+                let mut s = simple_spec("incompat-1", vec![]);
+                s.broken_invariants = vec!["broken".to_string()];
+                s
+            },
+        ];
+        let input = simple_input(specs);
+        let result = a.analyze(&input).unwrap();
+        let report = render_transport_report(&result);
+        assert!(
+            report.contains("incompatible"),
+            "report should group incompatible entries"
+        );
+        assert!(
+            report.contains("adapter-required"),
+            "report should group adapter entries"
+        );
+        assert!(
+            report.contains("unchanged"),
+            "report should group unchanged entries"
+        );
+    }
+
+    #[test]
+    fn test_morphism_summary_safe_label() {
+        // Verified, not lossy → "safe" in summary.
+        let a = SemanticTransportAnalyzer::new();
+        let morph_spec = MorphismSpec {
+            name: "safe-morph".to_string(),
+            domain: ContractDomain::Effect,
+            source_version: v(0, 1, 0),
+            target_version: v(0, 2, 0),
+            preserved_invariants: vec!["i1".to_string()],
+            broken_invariants: vec![],
+            verified: true,
+            description: "Safe transformation.".to_string(),
+            adapter_ref: None,
+        };
+        let input = TransportAnalysisInput {
+            entries: vec![],
+            morphisms: vec![morph_spec],
+            epoch: 30,
+        };
+        let result = a.analyze(&input).unwrap();
+        let m = &result.ledger.morphisms[0];
+        assert!(m.is_safe());
+        assert!(m.summary_line().contains("safe"));
+        assert!(!m.summary_line().contains("UNVERIFIED"));
+    }
 }

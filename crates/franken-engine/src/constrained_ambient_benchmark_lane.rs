@@ -1486,4 +1486,369 @@ mod tests {
         assert!(msg.contains("workload-1"));
         assert!(msg.contains("must be positive"));
     }
+
+    // -- Enrichment batch 2: PearlTower 2026-02-27 --
+
+    #[test]
+    fn multiple_workloads_all_pass() {
+        let request = ConstrainedAmbientBenchmarkRequest {
+            trace_id: "t".into(),
+            decision_id: "d".into(),
+            policy_id: "p".into(),
+            benchmark_run_id: "r".into(),
+            constrained_lane: vec![
+                test_workload("w1", 2000, 500),
+                test_workload("w2", 3000, 300),
+            ],
+            ambient_lane: vec![
+                test_workload("w1", 1000, 1000),
+                test_workload("w2", 1500, 600),
+            ],
+            proof_attribution: vec![test_attribution("p1", "s1"), test_attribution("p2", "s2")],
+        };
+        let dec = run_constrained_ambient_benchmark_lane(&request);
+        assert!(dec.allows_publication());
+        assert_eq!(dec.workload_reports.len(), 2);
+        assert_eq!(dec.attribution_reports.len(), 2);
+    }
+
+    #[test]
+    fn workload_reports_sorted_by_id() {
+        let request = ConstrainedAmbientBenchmarkRequest {
+            trace_id: "t".into(),
+            decision_id: "d".into(),
+            policy_id: "p".into(),
+            benchmark_run_id: "r".into(),
+            constrained_lane: vec![
+                test_workload("zzz", 2000, 500),
+                test_workload("aaa", 3000, 300),
+            ],
+            ambient_lane: vec![
+                test_workload("zzz", 1000, 1000),
+                test_workload("aaa", 1500, 600),
+            ],
+            proof_attribution: vec![test_attribution("p1", "s1")],
+        };
+        let dec = run_constrained_ambient_benchmark_lane(&request);
+        assert_eq!(dec.workload_reports[0].workload_id, "aaa");
+        assert_eq!(dec.workload_reports[1].workload_id, "zzz");
+    }
+
+    #[test]
+    fn report_id_deterministic_for_same_request() {
+        let request = valid_request();
+        let id1 = build_report_id(&request);
+        let id2 = build_report_id(&request);
+        assert_eq!(id1, id2);
+    }
+
+    #[test]
+    fn report_id_changes_with_benchmark_run_id() {
+        let mut r1 = valid_request();
+        let mut r2 = valid_request();
+        r1.benchmark_run_id = "run-A".into();
+        r2.benchmark_run_id = "run-B".into();
+        assert_ne!(build_report_id(&r1), build_report_id(&r2));
+    }
+
+    #[test]
+    fn decision_blocked_on_digest_mismatch_sets_error_code() {
+        let mut request = valid_request();
+        // Mutate constrained output_digest so it differs from ambient
+        request.constrained_lane[0].output_digest = "different-digest".into();
+        let dec = run_constrained_ambient_benchmark_lane(&request);
+        assert!(dec.blocked);
+        assert_eq!(dec.error_code.as_deref(), Some("FE-CABL-1004"));
+    }
+
+    #[test]
+    fn decision_blocked_on_workload_set_mismatch() {
+        let request = ConstrainedAmbientBenchmarkRequest {
+            trace_id: "t".into(),
+            decision_id: "d".into(),
+            policy_id: "p".into(),
+            benchmark_run_id: "r".into(),
+            constrained_lane: vec![test_workload("w1", 2000, 500)],
+            ambient_lane: vec![test_workload("w2", 1000, 1000)],
+            proof_attribution: vec![test_attribution("p1", "s1")],
+        };
+        let dec = run_constrained_ambient_benchmark_lane(&request);
+        assert!(dec.blocked);
+        assert_eq!(dec.error_code.as_deref(), Some("FE-CABL-1003"));
+    }
+
+    #[test]
+    fn decision_schema_version_is_correct() {
+        let dec = run_constrained_ambient_benchmark_lane(&valid_request());
+        assert_eq!(dec.schema_version, CONSTRAINED_AMBIENT_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn decision_events_contain_start_and_end() {
+        let dec = run_constrained_ambient_benchmark_lane(&valid_request());
+        let event_names: Vec<&str> = dec.events.iter().map(|e| e.event.as_str()).collect();
+        assert!(event_names.contains(&"constrained_ambient_evaluation_started"));
+        assert!(event_names.contains(&"constrained_ambient_evaluation_completed"));
+    }
+
+    #[test]
+    fn proof_revoked_blocks_decision() {
+        let mut request = valid_request();
+        request.proof_attribution[0].revoked = true;
+        let dec = run_constrained_ambient_benchmark_lane(&request);
+        assert!(dec.blocked);
+        assert_eq!(dec.error_code.as_deref(), Some("FE-CABL-1009"));
+    }
+
+    #[test]
+    fn proof_expired_blocks_decision() {
+        let mut request = valid_request();
+        request.proof_attribution[0].validity_epoch = Some(5);
+        request.proof_attribution[0].evaluation_epoch = Some(10);
+        let dec = run_constrained_ambient_benchmark_lane(&request);
+        assert!(dec.blocked);
+        assert_eq!(dec.error_code.as_deref(), Some("FE-CABL-1008"));
+    }
+
+    #[test]
+    fn optimization_class_mismatch_blocks() {
+        let mut request = valid_request();
+        request.proof_attribution[0].optimization_class = "class-A".into();
+        request.proof_attribution[0].validated_optimization_class = "class-B".into();
+        let dec = run_constrained_ambient_benchmark_lane(&request);
+        assert!(dec.blocked);
+        assert_eq!(dec.error_code.as_deref(), Some("FE-CABL-1007"));
+    }
+
+    #[test]
+    fn allows_publication_false_when_blocked() {
+        let mut request = valid_request();
+        request.proof_attribution[0].revoked = true;
+        let dec = run_constrained_ambient_benchmark_lane(&request);
+        assert!(!dec.allows_publication());
+    }
+
+    #[test]
+    fn empty_trace_id_fails_validation() {
+        let mut request = valid_request();
+        request.trace_id = "".into();
+        let dec = run_constrained_ambient_benchmark_lane(&request);
+        assert!(dec.blocked);
+        assert_eq!(dec.error_code.as_deref(), Some("FE-CABL-1001"));
+    }
+
+    #[test]
+    fn empty_proof_id_fails_validation() {
+        let mut request = valid_request();
+        request.proof_attribution[0].proof_id = "".into();
+        let dec = run_constrained_ambient_benchmark_lane(&request);
+        assert!(dec.blocked);
+        assert_eq!(dec.error_code.as_deref(), Some("FE-CABL-1001"));
+    }
+
+    #[test]
+    fn decision_serde_roundtrip() {
+        let dec = run_constrained_ambient_benchmark_lane(&valid_request());
+        let json = serde_json::to_string(&dec).unwrap();
+        let back: ConstrainedAmbientBenchmarkDecision = serde_json::from_str(&json).unwrap();
+        assert_eq!(dec, back);
+    }
+
+    #[test]
+    fn constrained_ambient_event_serde_roundtrip() {
+        let event = ConstrainedAmbientEvent {
+            trace_id: "t".into(),
+            decision_id: "d".into(),
+            policy_id: "p".into(),
+            component: "c".into(),
+            event: "e".into(),
+            outcome: "pass".into(),
+            error_code: Some("FE-CABL-1001".into()),
+            workload_id: Some("w1".into()),
+            proof_id: None,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: ConstrainedAmbientEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, back);
+    }
+
+    #[test]
+    fn summary_with_multiple_workloads_computes_means() {
+        let reports = vec![
+            WorkloadDeltaReport {
+                workload_id: "w1".into(),
+                canonical_output_digest: "d1".into(),
+                throughput_delta_millionths: 200_000,
+                latency_p50_improvement_millionths: 100_000,
+                latency_p95_improvement_millionths: 300_000,
+                latency_p99_improvement_millionths: 400_000,
+                memory_improvement_millionths: 500_000,
+                allocation_improvement_millionths: 600_000,
+            },
+            WorkloadDeltaReport {
+                workload_id: "w2".into(),
+                canonical_output_digest: "d2".into(),
+                throughput_delta_millionths: 400_000,
+                latency_p50_improvement_millionths: 100_000,
+                latency_p95_improvement_millionths: 100_000,
+                latency_p99_improvement_millionths: 200_000,
+                memory_improvement_millionths: 100_000,
+                allocation_improvement_millionths: 200_000,
+            },
+        ];
+        let attr = vec![ProofAttributionReport {
+            proof_id: "p1".into(),
+            specialization_id: "s1".into(),
+            throughput_gain_millionths: 100_000,
+            latency_p95_improvement_millionths: 50_000,
+            supports_uplift: true,
+        }];
+        let s = build_summary(&reports, &attr);
+        assert_eq!(s.workload_count, 2);
+        assert_eq!(s.attribution_count, 1);
+        assert_eq!(s.mean_throughput_delta_millionths, 300_000);
+        assert_eq!(s.mean_latency_p95_improvement_millionths, 200_000);
+        assert_eq!(s.mean_memory_improvement_millionths, 300_000);
+    }
+
+    // -- Enrichment batch 3: PearlTower 2026-02-27 --
+
+    #[test]
+    fn clone_equality_lane_workload_metrics() {
+        let a = test_workload("w1", 5000, 250);
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn clone_equality_proof_attribution_sample() {
+        let a = test_attribution("proof-x", "spec-y");
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn clone_equality_workload_delta_report() {
+        let a = WorkloadDeltaReport {
+            workload_id: "w1".into(),
+            canonical_output_digest: "d".into(),
+            throughput_delta_millionths: 123_456,
+            latency_p50_improvement_millionths: -50_000,
+            latency_p95_improvement_millionths: 0,
+            latency_p99_improvement_millionths: 999_999,
+            memory_improvement_millionths: -1,
+            allocation_improvement_millionths: 1,
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn clone_equality_constrained_ambient_summary() {
+        let a = ConstrainedAmbientSummary {
+            workload_count: 7,
+            attribution_count: 3,
+            mean_throughput_delta_millionths: -100_000,
+            mean_latency_p95_improvement_millionths: 500_000,
+            mean_memory_improvement_millionths: 0,
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn clone_equality_constrained_ambient_event() {
+        let a = ConstrainedAmbientEvent {
+            trace_id: "t1".into(),
+            decision_id: "d1".into(),
+            policy_id: "p1".into(),
+            component: "comp".into(),
+            event: "evt".into(),
+            outcome: "pass".into(),
+            error_code: Some("FE-CABL-1005".into()),
+            workload_id: Some("w1".into()),
+            proof_id: None,
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn json_field_presence_lane_workload_metrics() {
+        let m = test_workload("w1", 100, 50);
+        let json = serde_json::to_string(&m).unwrap();
+        assert!(json.contains("\"output_digest\""));
+        assert!(json.contains("\"throughput_ops_per_sec\""));
+        assert!(json.contains("\"allocation_count\""));
+    }
+
+    #[test]
+    fn json_field_presence_proof_attribution_sample() {
+        let s = test_attribution("p1", "s1");
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(json.contains("\"validity_epoch\""));
+        assert!(json.contains("\"rollback_token\""));
+        assert!(json.contains("\"revoked\""));
+    }
+
+    #[test]
+    fn json_field_presence_decision() {
+        let dec = run_constrained_ambient_benchmark_lane(&valid_request());
+        let json = serde_json::to_string(&dec).unwrap();
+        assert!(json.contains("\"schema_version\""));
+        assert!(json.contains("\"benchmark_run_id\""));
+        assert!(json.contains("\"blockers\""));
+    }
+
+    #[test]
+    fn error_source_is_none_for_invalid_request() {
+        use std::error::Error;
+        let e = ConstrainedAmbientError::InvalidRequest {
+            field: "f".into(),
+            detail: "d".into(),
+        };
+        assert!(e.source().is_none());
+    }
+
+    #[test]
+    fn error_source_is_none_for_invalid_metric() {
+        use std::error::Error;
+        let e = ConstrainedAmbientError::InvalidMetric {
+            field: "f".into(),
+            subject: "s".into(),
+            detail: "d".into(),
+        };
+        assert!(e.source().is_none());
+    }
+
+    #[test]
+    fn delta_millionths_large_values() {
+        // Near u64::MAX / 2 to avoid overflow in i128 arithmetic
+        let large = u64::MAX / 2;
+        let half = large / 2;
+        let d = delta_millionths(large, half).unwrap();
+        // large/half ~ 2.0, so delta ~ +1_000_000 (100% improvement)
+        assert!(d > 900_000);
+        assert!(d < 1_100_000);
+    }
+
+    #[test]
+    fn proof_attribution_sample_serde_defaults() {
+        // Deserialize JSON without optional fields; defaults should apply
+        let json = r#"{
+            "proof_id": "p1",
+            "specialization_id": "s1",
+            "constrained_throughput_ops_per_sec": 2000,
+            "without_proof_throughput_ops_per_sec": 1000,
+            "constrained_latency_p95_ns": 500,
+            "without_proof_latency_p95_ns": 1000
+        }"#;
+        let sample: ProofAttributionSample = serde_json::from_str(json).unwrap();
+        assert_eq!(sample.optimization_class, "unspecified");
+        assert_eq!(sample.validated_optimization_class, "unspecified");
+        assert_eq!(sample.validity_epoch, None);
+        assert_eq!(sample.evaluation_epoch, None);
+        assert_eq!(sample.rollback_token, None);
+        assert!(!sample.revoked);
+    }
 }

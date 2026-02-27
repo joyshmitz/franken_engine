@@ -3497,4 +3497,256 @@ mod tests {
             "must have completion log"
         );
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 session 7 --
+
+    #[test]
+    fn config_validation_rejects_whitespace_only_zone() {
+        let mut config = config_with_seed(1);
+        config.zone = "  \t ".to_string();
+        let err = ShadowAblationEngine::new(config, SynthesisBudgetContract::default())
+            .expect_err("whitespace-only zone must be rejected");
+        assert!(err.to_string().contains("zone"));
+    }
+
+    #[test]
+    fn run_all_caps_removable_reduces_to_empty() {
+        // When oracle accepts every single removal, the minimal set should be empty.
+        let config = config_with_seed(7);
+        let engine =
+            ShadowAblationEngine::new(config.clone(), SynthesisBudgetContract::default()).unwrap();
+        let report = test_static_report(
+            &config.extension_id,
+            BTreeSet::from([cap("a"), cap("b"), cap("c")]),
+        );
+        let signing_key = SigningKey::from_bytes([0x08; 32]);
+        let result = engine
+            .run(&report, &signing_key, |_| {
+                Ok(ShadowAblationObservation {
+                    correctness_score_millionths: 999_000,
+                    correctness_threshold_millionths: 500_000,
+                    invariants: BTreeMap::new(),
+                    risk_score_millionths: 0,
+                    risk_threshold_millionths: 500_000,
+                    consumed: PhaseConsumption::zero(),
+                    replay_pointer: "replay://ok".to_string(),
+                    evidence_pointer: "evidence://ok".to_string(),
+                    execution_trace_hash: ContentHash::compute(b"ok"),
+                    failure_detail: None,
+                })
+            })
+            .unwrap();
+        assert!(
+            result.minimal_capabilities.is_empty(),
+            "all caps should be removed when oracle always accepts"
+        );
+        assert!(!result.budget_exhausted);
+    }
+
+    #[test]
+    fn run_max_pair_trials_limits_pair_search() {
+        // With max_pair_trials=1 and single removals rejected, pair phase should stop after 1 trial.
+        let mut config = config_with_seed(1);
+        config.max_pair_trials = 1;
+        let engine =
+            ShadowAblationEngine::new(config.clone(), SynthesisBudgetContract::default()).unwrap();
+        let report = test_static_report(
+            &config.extension_id,
+            BTreeSet::from([cap("a"), cap("b"), cap("c")]),
+        );
+        let signing_key = SigningKey::from_bytes([0x09; 32]);
+        let pair_count = std::cell::Cell::new(0u32);
+        let result = engine
+            .run(&report, &signing_key, |req| {
+                if req.search_stage == AblationSearchStage::CorrelatedPair {
+                    pair_count.set(pair_count.get() + 1);
+                }
+                // Reject all removals
+                Ok(ShadowAblationObservation {
+                    correctness_score_millionths: 100_000,
+                    correctness_threshold_millionths: 900_000,
+                    invariants: BTreeMap::new(),
+                    risk_score_millionths: 0,
+                    risk_threshold_millionths: 500_000,
+                    consumed: PhaseConsumption::zero(),
+                    replay_pointer: "replay://ok".to_string(),
+                    evidence_pointer: "evidence://ok".to_string(),
+                    execution_trace_hash: ContentHash::compute(b"ok"),
+                    failure_detail: None,
+                })
+            })
+            .unwrap();
+        assert!(
+            pair_count.get() <= 1,
+            "pair phase should stop after max_pair_trials=1, but got {}",
+            pair_count.get()
+        );
+        assert_eq!(result.minimal_capabilities.len(), 3, "no caps should be removed");
+    }
+
+    #[test]
+    fn fallback_value_none_recommended_multiplier() {
+        let result = FallbackResult {
+            quality: FallbackQuality::PartialAblation,
+            result_digest: "digest-none".to_string(),
+            exhaustion_reason: ExhaustionReason {
+                exceeded_dimensions: vec![], // no helpful dimension → None multiplier
+                phase: SynthesisPhase::Ablation,
+                global_limit_hit: true,
+                consumption: PhaseConsumption::zero(),
+                limit_value: 100,
+            },
+            increase_likely_helpful: false,
+            recommended_multiplier: None,
+        };
+        let val = fallback_value(&Some(result));
+        if let CanonicalValue::Map(map) = &val {
+            assert_eq!(
+                map.get("recommended_multiplier"),
+                Some(&CanonicalValue::Null),
+                "None recommended_multiplier should map to CanonicalValue::Null"
+            );
+        } else {
+            panic!("expected Map, got {val:?}");
+        }
+    }
+
+    #[test]
+    fn transcript_as_unsigned_input_roundtrip() {
+        let signing_key = SigningKey::from_bytes([0x0A; 32]);
+        let original_input = ShadowAblationTranscriptInput {
+            trace_id: "trace-roundtrip".to_string(),
+            decision_id: "decision-roundtrip".to_string(),
+            policy_id: "policy-roundtrip".to_string(),
+            extension_id: "ext-roundtrip".to_string(),
+            static_report_id: EngineObjectId([0xDD; 32]),
+            replay_corpus_id: "corpus-roundtrip".to_string(),
+            randomness_snapshot_id: "rng-roundtrip".to_string(),
+            deterministic_seed: 77,
+            search_strategy: AblationSearchStrategy::BinaryGuided,
+            initial_capabilities: BTreeSet::from([cap("a"), cap("b")]),
+            final_capabilities: BTreeSet::from([cap("a")]),
+            evaluations: vec![sample_evaluation("rt-1")],
+            fallback: None,
+            budget_utilization: BTreeMap::from([(BudgetDimension::Compute, 42)]),
+        };
+        let transcript = SignedShadowAblationTranscript::create_signed(
+            original_input.clone(),
+            &signing_key,
+        )
+        .unwrap();
+        let recovered = transcript.as_unsigned_input();
+        assert_eq!(recovered, original_input);
+    }
+
+    #[test]
+    fn run_binary_guided_two_caps_block_size_zero() {
+        // With exactly 2 capabilities, highest_power_of_two_leq(2/2) = 1 < 2,
+        // so block phase should be skipped (block_size starts at 1, loop requires >= 2).
+        let mut config = config_with_seed(5);
+        config.strategy = AblationSearchStrategy::BinaryGuided;
+        config.max_pair_trials = 10;
+        config.max_block_trials = 10;
+        let engine =
+            ShadowAblationEngine::new(config.clone(), SynthesisBudgetContract::default()).unwrap();
+        let report = test_static_report(
+            &config.extension_id,
+            BTreeSet::from([cap("x"), cap("y")]),
+        );
+        let signing_key = SigningKey::from_bytes([0x0B; 32]);
+        let result = engine
+            .run(&report, &signing_key, |_| {
+                // Reject all removals
+                Ok(ShadowAblationObservation {
+                    correctness_score_millionths: 100_000,
+                    correctness_threshold_millionths: 900_000,
+                    invariants: BTreeMap::new(),
+                    risk_score_millionths: 0,
+                    risk_threshold_millionths: 500_000,
+                    consumed: PhaseConsumption::zero(),
+                    replay_pointer: "replay://ok".to_string(),
+                    evidence_pointer: "evidence://ok".to_string(),
+                    execution_trace_hash: ContentHash::compute(b"ok"),
+                    failure_detail: None,
+                })
+            })
+            .unwrap();
+        // No block evaluations should exist because block_size < 2
+        assert!(
+            !result
+                .evaluations
+                .iter()
+                .any(|e| e.search_stage == AblationSearchStage::BinaryBlock),
+            "binary block phase should not run with only 2 capabilities"
+        );
+        assert_eq!(result.minimal_capabilities.len(), 2);
+    }
+
+    #[test]
+    fn evaluation_record_canonical_value_with_invariant_failures() {
+        let mut record = sample_evaluation("inv-fail");
+        record.pass = false;
+        record.failure_class = Some(AblationFailureClass::InvariantViolation);
+        record.invariant_failures = vec!["no_exfil".to_string(), "no_side_channel".to_string()];
+        record.invariants = BTreeMap::from([
+            ("no_exfil".to_string(), false),
+            ("no_side_channel".to_string(), false),
+        ]);
+        let val = record.canonical_value();
+        if let CanonicalValue::Map(map) = &val {
+            if let Some(CanonicalValue::Array(failures)) = map.get("invariant_failures") {
+                assert_eq!(failures.len(), 2);
+                assert_eq!(
+                    failures[0],
+                    CanonicalValue::String("no_exfil".to_string())
+                );
+            } else {
+                panic!("invariant_failures should be an Array");
+            }
+            if let Some(CanonicalValue::Map(inv_map)) = map.get("invariants") {
+                assert_eq!(inv_map.get("no_exfil"), Some(&CanonicalValue::Bool(false)));
+            } else {
+                panic!("invariants should be a Map");
+            }
+        } else {
+            panic!("expected Map from canonical_value");
+        }
+    }
+
+    #[test]
+    fn run_required_invariant_absent_from_observation_fails() {
+        // When a required invariant is missing from the observation's invariant map,
+        // it should default to false and produce InvariantViolation.
+        let mut config = config_with_seed(1);
+        config.required_invariants = BTreeSet::from(["missing_inv".to_string()]);
+        let engine =
+            ShadowAblationEngine::new(config.clone(), SynthesisBudgetContract::default()).unwrap();
+        let report = test_static_report(&config.extension_id, BTreeSet::from([cap("only")]));
+        let signing_key = SigningKey::from_bytes([0x0C; 32]);
+        let result = engine
+            .run(&report, &signing_key, |_| {
+                Ok(ShadowAblationObservation {
+                    correctness_score_millionths: 999_000,
+                    correctness_threshold_millionths: 500_000,
+                    invariants: BTreeMap::new(), // missing_inv not present
+                    risk_score_millionths: 0,
+                    risk_threshold_millionths: 500_000,
+                    consumed: PhaseConsumption::zero(),
+                    replay_pointer: "replay://inv".to_string(),
+                    evidence_pointer: "evidence://inv".to_string(),
+                    execution_trace_hash: ContentHash::compute(b"inv"),
+                    failure_detail: None,
+                })
+            })
+            .unwrap();
+        assert_eq!(result.minimal_capabilities.len(), 1, "cap should be retained");
+        assert!(
+            result
+                .evaluations
+                .iter()
+                .any(|e| e.failure_class == Some(AblationFailureClass::InvariantViolation)
+                    && e.invariant_failures.contains(&"missing_inv".to_string())),
+            "missing required invariant should cause InvariantViolation with failure listed"
+        );
+    }
 }

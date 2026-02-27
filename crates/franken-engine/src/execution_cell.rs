@@ -2701,4 +2701,122 @@ mod tests {
         assert_eq!(cell.decision_id(), "d-2");
         assert_eq!(cell.policy_id(), "p-2");
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 session 7 --
+
+    #[test]
+    fn delegate_cell_trace_id_propagated() {
+        let mut mgr = CellManager::new();
+        let cell = mgr.create_delegate_cell("del-1", "trace-del");
+        assert_eq!(cell.trace_id(), "trace-del");
+        assert_eq!(cell.kind(), CellKind::Delegate);
+        assert_eq!(cell.cell_id(), "del-1");
+    }
+
+    #[test]
+    fn closed_results_contain_finalize_result_details() {
+        let mut mgr = CellManager::new();
+        mgr.create_extension_cell("ext-close", "t-close");
+        let mut cx = mock_cx(200);
+        let result = mgr
+            .close_cell(
+                "ext-close",
+                &mut cx,
+                CancelReason::OperatorShutdown,
+                DrainDeadline::default(),
+            )
+            .unwrap();
+        assert!(result.success);
+
+        let closed = mgr.closed_results();
+        assert_eq!(closed.len(), 1);
+        assert_eq!(closed[0].0, "ext-close");
+        assert!(closed[0].1.success);
+    }
+
+    #[test]
+    fn with_context_propagates_all_fields() {
+        let cell = ExecutionCell::with_context(
+            "ctx-cell",
+            CellKind::Session,
+            "trace-ctx",
+            "decision-ctx",
+            "policy-ctx",
+        );
+        assert_eq!(cell.cell_id(), "ctx-cell");
+        assert_eq!(cell.kind(), CellKind::Session);
+        assert_eq!(cell.trace_id(), "trace-ctx");
+        assert_eq!(cell.decision_id(), "decision-ctx");
+        assert_eq!(cell.policy_id(), "policy-ctx");
+        assert_eq!(cell.state(), RegionState::Running);
+    }
+
+    #[test]
+    fn effect_log_accumulates_multiple_categories() {
+        let mut cell = ExecutionCell::new("ext-el", CellKind::Extension, "t-el");
+        let mut cx = mock_cx(500);
+
+        cell.execute_effect(&mut cx, EffectCategory::Hostcall, "op-hc")
+            .unwrap();
+        cell.execute_effect(&mut cx, EffectCategory::PolicyCheck, "op-pc")
+            .unwrap();
+        cell.execute_effect(&mut cx, EffectCategory::TelemetryEmit, "op-te")
+            .unwrap();
+
+        let log = cell.effect_log();
+        assert_eq!(log.len(), 3);
+        assert_eq!(log[0].category, EffectCategory::Hostcall);
+        assert_eq!(log[1].category, EffectCategory::PolicyCheck);
+        assert_eq!(log[2].category, EffectCategory::TelemetryEmit);
+        assert_eq!(log[0].operation, "op-hc");
+        assert_eq!(log[1].operation, "op-pc");
+        assert_eq!(log[2].operation, "op-te");
+    }
+
+    #[test]
+    fn cell_kind_display_delegate() {
+        assert_eq!(CellKind::Delegate.to_string(), "delegate");
+    }
+
+    #[test]
+    fn cell_event_fields_carry_cell_kind_and_state() {
+        let mut cell = ExecutionCell::with_context("ev-cell", CellKind::Extension, "t", "d", "p");
+        let mut cx = mock_cx(200);
+        cell.execute_effect(&mut cx, EffectCategory::Hostcall, "some-op")
+            .unwrap();
+
+        let events = cell.events();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].cell_kind, CellKind::Extension);
+        assert_eq!(events[0].region_state, RegionState::Running);
+        assert_eq!(events[0].decision_id, "d");
+        assert_eq!(events[0].policy_id, "p");
+        assert!(events[0].budget_consumed_ms > 0);
+    }
+
+    #[test]
+    fn binding_evidence_entries_have_correct_cell_kind() {
+        let mut binding = ExtensionHostBinding::new(DrainDeadline::default());
+        let mut cx = mock_cx(500);
+        binding
+            .load_extension("ext-kind", &mut cx, "d", "p")
+            .unwrap();
+
+        let evidence = binding.evidence_log();
+        assert!(!evidence.is_empty());
+        assert_eq!(evidence[0].cell_kind, CellKind::Extension);
+        assert_eq!(evidence[0].event, "extension_load");
+    }
+
+    #[test]
+    fn create_session_inherits_parent_context() {
+        let mut parent =
+            ExecutionCell::with_context("ext-p", CellKind::Extension, "t-p", "d-p", "p-p");
+        let session = parent.create_session("sess-1", "t-sess").unwrap();
+        assert_eq!(session.kind(), CellKind::Session);
+        assert_eq!(session.decision_id(), "d-p");
+        assert_eq!(session.policy_id(), "p-p");
+        assert_eq!(session.trace_id(), "t-sess");
+        assert_eq!(parent.session_count(), 1);
+    }
 }

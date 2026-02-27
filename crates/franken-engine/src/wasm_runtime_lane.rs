@@ -775,7 +775,7 @@ mod tests {
     }
 
     #[test]
-    fn bounded_queue_clear() {
+    fn bounded_queue_clear_batch2() {
         let mut q = BoundedQueue::new(5);
         q.push(1).unwrap();
         q.push(2).unwrap();
@@ -1428,7 +1428,7 @@ mod tests {
     // -- Enrichment: WasmSignalKind serde roundtrip --
 
     #[test]
-    fn wasm_signal_kind_serde_roundtrip() {
+    fn wasm_signal_kind_serde_roundtrip_batch2() {
         for kind in [
             WasmSignalKind::Source,
             WasmSignalKind::Derived,
@@ -1646,5 +1646,371 @@ mod tests {
         assert!(WasmSignalId(0) < WasmSignalId(1));
         assert!(WasmSignalId(1) < WasmSignalId(100));
         assert_eq!(WasmSignalId(42), WasmSignalId(42));
+    }
+
+    // -- Enrichment batch 2: PearlTower 2026-02-27 --
+
+    #[test]
+    fn bounded_queue_push_to_full_then_reject() {
+        let mut q = BoundedQueue::<u32>::new(2);
+        assert!(!q.is_full());
+        q.push(10).unwrap();
+        q.push(20).unwrap();
+        assert!(q.is_full());
+        let err = q.push(30).unwrap_err();
+        assert_eq!(err, QueueError::Full { capacity: 2 });
+    }
+
+    #[test]
+    fn bounded_queue_pop_fifo_order() {
+        let mut q = BoundedQueue::new(3);
+        q.push(1u32).unwrap();
+        q.push(2).unwrap();
+        q.push(3).unwrap();
+        assert_eq!(q.pop().unwrap(), 1);
+        assert_eq!(q.pop().unwrap(), 2);
+        assert_eq!(q.pop().unwrap(), 3);
+        assert_eq!(q.pop().unwrap_err(), QueueError::Empty);
+    }
+
+    #[test]
+    fn bounded_queue_drain_all_empties() {
+        let mut q = BoundedQueue::new(3);
+        q.push(1u32).unwrap();
+        q.push(2).unwrap();
+        let drained = q.drain_all();
+        assert_eq!(drained.len(), 2);
+        assert!(q.is_empty());
+    }
+
+    #[test]
+    fn bounded_queue_clear() {
+        let mut q = BoundedQueue::new(3);
+        q.push(1u32).unwrap();
+        q.push(2).unwrap();
+        q.clear();
+        assert!(q.is_empty());
+        assert!(!q.is_full());
+    }
+
+    #[test]
+    fn graph_register_duplicate_fails() {
+        let mut graph = WasmSignalGraph::new(16, 32);
+        let id = graph.next_id();
+        graph
+            .register(id, WasmSignalKind::Source, BTreeSet::new())
+            .unwrap();
+        let err = graph
+            .register(id, WasmSignalKind::Source, BTreeSet::new())
+            .unwrap_err();
+        assert!(matches!(err, WasmGraphError::DuplicateSignal(_)));
+    }
+
+    #[test]
+    fn graph_register_with_missing_dep_fails() {
+        let mut graph = WasmSignalGraph::new(16, 32);
+        let mut deps = BTreeSet::new();
+        deps.insert(WasmSignalId(999));
+        let id = graph.next_id();
+        let err = graph
+            .register(id, WasmSignalKind::Derived, deps)
+            .unwrap_err();
+        assert!(matches!(err, WasmGraphError::DepNotFound(_)));
+    }
+
+    #[test]
+    fn graph_dispose_marks_disposed() {
+        let mut graph = WasmSignalGraph::new(16, 32);
+        let id = graph.next_id();
+        graph
+            .register(id, WasmSignalKind::Source, BTreeSet::new())
+            .unwrap();
+        graph.dispose(id).unwrap();
+        let node = graph.get(id).unwrap();
+        assert_eq!(node.status, WasmSignalStatus::Disposed);
+    }
+
+    #[test]
+    fn graph_propagate_dirty_on_disposed_fails() {
+        let mut graph = WasmSignalGraph::new(16, 32);
+        let id = graph.next_id();
+        graph
+            .register(id, WasmSignalKind::Source, BTreeSet::new())
+            .unwrap();
+        graph.dispose(id).unwrap();
+        let err = graph.propagate_dirty(id).unwrap_err();
+        assert!(matches!(err, WasmGraphError::Disposed(_)));
+    }
+
+    #[test]
+    fn graph_propagate_dirty_topological_order() {
+        let mut graph = WasmSignalGraph::new(16, 32);
+        let a = graph.next_id();
+        let b = graph.next_id();
+        let c = graph.next_id();
+        graph
+            .register(a, WasmSignalKind::Source, BTreeSet::new())
+            .unwrap();
+        let mut deps_b = BTreeSet::new();
+        deps_b.insert(a);
+        graph.register(b, WasmSignalKind::Derived, deps_b).unwrap();
+        let mut deps_c = BTreeSet::new();
+        deps_c.insert(b);
+        graph.register(c, WasmSignalKind::Effect, deps_c).unwrap();
+
+        graph.mark_clean(a).unwrap();
+        graph.mark_clean(b).unwrap();
+        graph.mark_clean(c).unwrap();
+
+        let dirty = graph.propagate_dirty(a).unwrap();
+        // a(depth=0), b(depth=1), c(depth=2)
+        assert_eq!(dirty.len(), 3);
+        assert_eq!(dirty[0], a);
+        assert_eq!(dirty[1], b);
+        assert_eq!(dirty[2], c);
+    }
+
+    #[test]
+    fn wasm_signal_kind_serde_roundtrip() {
+        let kinds = [
+            WasmSignalKind::Source,
+            WasmSignalKind::Derived,
+            WasmSignalKind::Effect,
+        ];
+        for kind in &kinds {
+            let json = serde_json::to_string(kind).unwrap();
+            let back: WasmSignalKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(*kind, back);
+        }
+    }
+
+    #[test]
+    fn wasm_signal_status_serde_roundtrip_all_variants() {
+        let statuses = [
+            WasmSignalStatus::Clean,
+            WasmSignalStatus::Dirty,
+            WasmSignalStatus::Evaluating,
+            WasmSignalStatus::Disposed,
+        ];
+        for s in &statuses {
+            let json = serde_json::to_string(s).unwrap();
+            let back: WasmSignalStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(*s, back);
+        }
+    }
+
+    #[test]
+    fn abi_dom_op_target_element_for_all_variants() {
+        let ops = vec![
+            AbiDomOp::Create {
+                element_id: 1,
+                tag_index: 0,
+            },
+            AbiDomOp::Remove { element_id: 2 },
+            AbiDomOp::SetProp {
+                element_id: 3,
+                prop_index: 0,
+                value: vec![],
+            },
+            AbiDomOp::RemoveProp {
+                element_id: 4,
+                prop_index: 0,
+            },
+            AbiDomOp::SetText {
+                element_id: 5,
+                text: vec![],
+            },
+            AbiDomOp::Move {
+                element_id: 6,
+                new_parent: 0,
+                before: 0,
+            },
+        ];
+        let ids: Vec<u32> = ops.iter().map(|op| op.target_element()).collect();
+        assert_eq!(ids, vec![1, 2, 3, 4, 5, 6]);
+    }
+
+    #[test]
+    fn queue_error_serde_roundtrip() {
+        let full = QueueError::Full { capacity: 42 };
+        let json = serde_json::to_string(&full).unwrap();
+        let back: QueueError = serde_json::from_str(&json).unwrap();
+        assert_eq!(full, back);
+
+        let empty = QueueError::Empty;
+        let json2 = serde_json::to_string(&empty).unwrap();
+        let back2: QueueError = serde_json::from_str(&json2).unwrap();
+        assert_eq!(empty, back2);
+    }
+
+    #[test]
+    fn wasm_graph_error_serde_roundtrip() {
+        let err = WasmGraphError::DepthExceeded {
+            signal: WasmSignalId(1),
+            depth: 20,
+            max: 16,
+        };
+        let json = serde_json::to_string(&err).unwrap();
+        let back: WasmGraphError = serde_json::from_str(&json).unwrap();
+        assert_eq!(err, back);
+    }
+
+    // -- Enrichment batch 3: PearlTower 2026-02-27 --
+
+    #[test]
+    fn clone_eq_wasm_signal_node() {
+        let node = WasmSignalNode {
+            id: WasmSignalId(7),
+            kind: WasmSignalKind::Derived,
+            status: WasmSignalStatus::Dirty,
+            depth: 3,
+            generation: 10,
+            dependencies: {
+                let mut s = BTreeSet::new();
+                s.insert(WasmSignalId(1));
+                s
+            },
+            dependents: BTreeSet::new(),
+        };
+        let cloned = node.clone();
+        assert_eq!(node, cloned);
+    }
+
+    #[test]
+    fn clone_eq_wasm_budget() {
+        let budget = WasmBudget {
+            max_signals: 100,
+            max_depth: 16,
+            max_pending_updates: 50,
+            max_dom_ops_per_cycle: 200,
+            max_evaluations_per_flush: 500,
+        };
+        let cloned = budget.clone();
+        assert_eq!(budget, cloned);
+    }
+
+    #[test]
+    fn clone_eq_abi_state_update() {
+        let update = AbiStateUpdate {
+            signal_id: WasmSignalId(42),
+            payload: vec![0xCA, 0xFE],
+            sequence: 999,
+        };
+        let cloned = update.clone();
+        assert_eq!(update, cloned);
+    }
+
+    #[test]
+    fn clone_eq_flush_result() {
+        let result = WasmFlushResult {
+            cycle: 5,
+            updates_consumed: 3,
+            signals_evaluated: 8,
+            dom_ops_emitted: 2,
+            mode_after: WasmLaneMode::Degraded,
+            safe_mode_triggers: vec![SafeModeReason::EvalBudgetExhausted {
+                evals: 100,
+                limit: 100,
+            }],
+        };
+        let cloned = result.clone();
+        assert_eq!(result, cloned);
+    }
+
+    #[test]
+    fn json_field_presence_wasm_signal_node() {
+        let node = WasmSignalNode {
+            id: WasmSignalId(0),
+            kind: WasmSignalKind::Source,
+            status: WasmSignalStatus::Clean,
+            depth: 0,
+            generation: 1,
+            dependencies: BTreeSet::new(),
+            dependents: BTreeSet::new(),
+        };
+        let json = serde_json::to_string(&node).unwrap();
+        assert!(json.contains("\"id\""));
+        assert!(json.contains("\"kind\""));
+        assert!(json.contains("\"status\""));
+        assert!(json.contains("\"depth\""));
+        assert!(json.contains("\"generation\""));
+        assert!(json.contains("\"dependencies\""));
+        assert!(json.contains("\"dependents\""));
+    }
+
+    #[test]
+    fn json_field_presence_wasm_budget() {
+        let budget = WasmBudget::default_budget();
+        let json = serde_json::to_string(&budget).unwrap();
+        assert!(json.contains("\"max_signals\""));
+        assert!(json.contains("\"max_depth\""));
+        assert!(json.contains("\"max_pending_updates\""));
+        assert!(json.contains("\"max_dom_ops_per_cycle\""));
+        assert!(json.contains("\"max_evaluations_per_flush\""));
+    }
+
+    #[test]
+    fn json_field_presence_abi_dom_batch() {
+        let batch = AbiDomBatch::new(42);
+        let json = serde_json::to_string(&batch).unwrap();
+        assert!(json.contains("\"ops\""));
+        assert!(json.contains("\"cycle\""));
+    }
+
+    #[test]
+    fn serde_roundtrip_lane_with_signals() {
+        let mut lane = WasmRuntimeLane::with_defaults();
+        let s = lane.graph.next_id();
+        lane.graph
+            .register(s, WasmSignalKind::Source, BTreeSet::new())
+            .unwrap();
+        let d = lane.graph.next_id();
+        let mut deps = BTreeSet::new();
+        deps.insert(s);
+        lane.graph
+            .register(d, WasmSignalKind::Derived, deps)
+            .unwrap();
+        lane.enqueue_update(AbiStateUpdate {
+            signal_id: s,
+            payload: vec![1, 2, 3],
+            sequence: 0,
+        })
+        .unwrap();
+        let json = serde_json::to_string(&lane).unwrap();
+        let restored: WasmRuntimeLane = serde_json::from_str(&json).unwrap();
+        assert_eq!(lane, restored);
+    }
+
+    #[test]
+    fn bounded_queue_capacity_zero_always_full() {
+        let mut q = BoundedQueue::<u32>::new(0);
+        assert!(q.is_full());
+        assert!(q.is_empty());
+        let err = q.push(1).unwrap_err();
+        assert_eq!(err, QueueError::Full { capacity: 0 });
+    }
+
+    #[test]
+    fn graph_zero_max_nodes_rejects_all() {
+        let mut g = WasmSignalGraph::new(64, 0);
+        let id = g.next_id();
+        let err = g
+            .register(id, WasmSignalKind::Source, BTreeSet::new())
+            .unwrap_err();
+        assert!(matches!(err, WasmGraphError::BudgetExceeded { .. }));
+    }
+
+    #[test]
+    fn graph_mark_clean_nonexistent_returns_not_found() {
+        let mut g = WasmSignalGraph::new(64, 100);
+        let err = g.mark_clean(WasmSignalId(999)).unwrap_err();
+        assert!(matches!(err, WasmGraphError::NotFound(_)));
+    }
+
+    #[test]
+    fn graph_dispose_nonexistent_returns_not_found() {
+        let g = WasmSignalGraph::new(64, 100);
+        let err = g.clone().dispose(WasmSignalId(999)).unwrap_err();
+        assert!(matches!(err, WasmGraphError::NotFound(_)));
     }
 }
