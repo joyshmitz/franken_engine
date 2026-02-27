@@ -533,3 +533,69 @@ fn franken_verify_attestation_create_and_verify_commands() {
     let _ = fs::remove_file(input_path);
     let _ = fs::remove_file(attestation_path);
 }
+
+#[test]
+fn franken_verify_attestation_create_supports_signing_key_file_override() {
+    let mut input = make_attestation_input(false);
+    input.signing_key_hex = None;
+    let input_path = write_json("tpv_attestation_input_override", &input);
+
+    let signing_key = make_signing_key(41);
+    let signing_key_hex = hex::encode(signing_key.as_bytes());
+    let signing_key_path = write_text("tpv_attestation_signing_key", &signing_key_hex);
+
+    let create_output = Command::new(env!("CARGO_BIN_EXE_franken-verify"))
+        .args([
+            "attestation",
+            "create",
+            "--input",
+            input_path.to_str().expect("utf8 path"),
+            "--signing-key-file",
+            signing_key_path.to_str().expect("utf8 path"),
+        ])
+        .output()
+        .expect("attestation create command should execute");
+
+    assert_eq!(create_output.status.code(), Some(0));
+    let attestation: VerificationAttestation =
+        serde_json::from_slice(&create_output.stdout).expect("attestation json");
+    assert!(attestation.signature_hex.is_some());
+    assert!(attestation.signer_verification_key_hex.is_some());
+
+    let _ = fs::remove_file(input_path);
+    let _ = fs::remove_file(signing_key_path);
+}
+
+#[test]
+fn franken_verify_attestation_create_rejects_ambiguous_signing_key_flags() {
+    let mut input = make_attestation_input(false);
+    input.signing_key_hex = None;
+    let input_path = write_json("tpv_attestation_input_ambiguous", &input);
+
+    let signing_key_hex = hex::encode(make_signing_key(51).as_bytes());
+    let signing_key_path = write_text(
+        "tpv_attestation_signing_key_ambiguous",
+        &hex::encode(make_signing_key(52).as_bytes()),
+    );
+
+    let create_output = Command::new(env!("CARGO_BIN_EXE_franken-verify"))
+        .args([
+            "attestation",
+            "create",
+            "--input",
+            input_path.to_str().expect("utf8 path"),
+            "--signing-key-hex",
+            &signing_key_hex,
+            "--signing-key-file",
+            signing_key_path.to_str().expect("utf8 path"),
+        ])
+        .output()
+        .expect("attestation create command should execute");
+
+    assert_eq!(create_output.status.code(), Some(2));
+    let stderr = String::from_utf8(create_output.stderr).expect("utf8 stderr");
+    assert!(stderr.contains("mutually exclusive"));
+
+    let _ = fs::remove_file(input_path);
+    let _ = fs::remove_file(signing_key_path);
+}

@@ -55,6 +55,7 @@ fn usage() -> String {
         "      [--counterfactual-config-file <path>]...",
         "  franken-verify containment --input <path> [--summary]",
         "  franken-verify attestation create --input <path> [--summary]",
+        "      [--signing-key-hex <hex> | --signing-key-file <path>]",
         "  franken-verify attestation verify --input <path> [--summary]",
         "",
         "exit codes:",
@@ -232,8 +233,53 @@ fn run_attestation(args: &[String]) -> Result<i32, String> {
 }
 
 fn run_attestation_create(args: &[String]) -> Result<i32, String> {
-    let (input_path, summary) = parse_input_flags(args, "attestation create")?;
-    let input = load_json::<VerificationAttestationInput>(input_path, "attestation input")?;
+    let mut input_path: Option<&str> = None;
+    let mut summary = false;
+    let mut signing_key_hex: Option<String> = None;
+    let mut signing_key_file: Option<String> = None;
+
+    let mut index = 0usize;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--input" => {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| "--input requires a path".to_string())?;
+                input_path = Some(value);
+            }
+            "--summary" => summary = true,
+            "--signing-key-hex" => {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| "--signing-key-hex requires a value".to_string())?;
+                signing_key_hex = Some(value.trim().to_string());
+            }
+            "--signing-key-file" => {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| "--signing-key-file requires a path".to_string())?;
+                signing_key_file = Some(value.to_string());
+            }
+            flag => return Err(format!("unknown flag for attestation create: {flag}")),
+        }
+        index += 1;
+    }
+
+    if signing_key_hex.is_some() && signing_key_file.is_some() {
+        return Err("--signing-key-hex and --signing-key-file are mutually exclusive".to_string());
+    }
+
+    let input_path = input_path.ok_or_else(|| "missing required --input <path>".to_string())?;
+    let mut input = load_json::<VerificationAttestationInput>(input_path, "attestation input")?;
+    if let Some(hex) = signing_key_hex {
+        input.signing_key_hex = Some(hex);
+    } else if let Some(path) = signing_key_file {
+        input.signing_key_hex = Some(load_trimmed_file(&path, "attestation signing key file")?);
+    }
+
     let attestation = generate_attestation(&input)?;
     if summary {
         println!("{}", render_attestation_summary(&attestation));

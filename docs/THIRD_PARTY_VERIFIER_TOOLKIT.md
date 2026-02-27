@@ -14,7 +14,7 @@ Current verifier surfaces:
 ## Build
 
 ```bash
-cargo build -p frankenengine-engine --bin franken-verify
+rch exec -- cargo build -p frankenengine-engine --bin franken-verify
 ```
 
 Binary path:
@@ -35,6 +35,7 @@ franken-verify replay --input <path> [--summary]
     [--counterfactual-config-file <path>]...
 franken-verify containment --input <path> [--summary]
 franken-verify attestation create --input <path> [--summary]
+    [--signing-key-hex <hex> | --signing-key-file <path>]
 franken-verify attestation verify --input <path> [--summary]
 ```
 
@@ -194,6 +195,9 @@ object or an array of configs.
 
 This input wraps a previously produced verifier report plus publication metadata.
 If `signing_key_hex` is provided, output includes a deterministic signature and signer verification key.
+CLI overrides are also supported with:
+- `--signing-key-hex`
+- `--signing-key-file`
 
 ```json
 {
@@ -235,6 +239,7 @@ franken-verify benchmark --input artifacts/claims/benchmark_claim.json --summary
 franken-verify replay --input artifacts/claims/replay_claim.json --summary
 franken-verify containment --input artifacts/claims/containment_claim.json --summary
 franken-verify attestation create --input artifacts/claims/attestation_input.json > artifacts/claims/attestation.json
+franken-verify attestation create --input artifacts/claims/attestation_input.json --signing-key-file artifacts/claims/attestation_signing_key.hex > artifacts/claims/attestation_signed.json
 franken-verify attestation verify --input artifacts/claims/attestation.json --summary
 
 # replay with auditor-side key/config overlays
