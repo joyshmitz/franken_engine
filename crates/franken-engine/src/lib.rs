@@ -226,6 +226,7 @@ pub mod synthesis_budget;
 pub mod tee_attestation_policy;
 pub mod test262_release_gate;
 pub mod test_depth_gate;
+pub mod test_flake_quarantine_workflow;
 pub mod test_logging_schema;
 pub mod test_taxonomy;
 pub mod third_party_verifier;
