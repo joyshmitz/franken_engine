@@ -368,6 +368,42 @@ pub fn lower_ir0_to_ir1(
                     });
                 }
             },
+            Statement::VariableDeclaration(variable_declaration) => {
+                let mut binding_ids = Vec::with_capacity(variable_declaration.declarations.len());
+                for declarator in &variable_declaration.declarations {
+                    let binding_id = alloc_binding(
+                        &mut bindings,
+                        &mut binding_lookup,
+                        &mut binding_index,
+                        root_scope_id,
+                        &declarator.name,
+                        BindingKind::Var,
+                    );
+                    binding_ids.push(binding_id);
+                }
+
+                for (declarator, binding_id) in variable_declaration
+                    .declarations
+                    .iter()
+                    .zip(binding_ids.into_iter())
+                {
+                    if let Some(initializer) = &declarator.initializer {
+                        lower_expression_to_ir1(
+                            initializer,
+                            &mut ir1.ops,
+                            &mut bindings,
+                            &mut binding_lookup,
+                            &mut binding_index,
+                            root_scope_id,
+                        );
+                    } else {
+                        ir1.ops.push(Ir1Op::LoadLiteral {
+                            value: Ir1Literal::Undefined,
+                        });
+                    }
+                    ir1.ops.push(Ir1Op::StoreBinding { binding_id });
+                }
+            }
             Statement::Expression(statement) => {
                 lower_expression_to_ir1(
                     &statement.expression,
@@ -1284,7 +1320,9 @@ fn failure_event(context: &LoweringContext, event: &str, error_code: &str) -> Lo
 mod tests {
     use super::*;
     use crate::ast::{
-        Expression, ExpressionStatement, ParseGoal, SourceSpan, Statement, SyntaxTree,
+        ExportDeclaration, ExportKind, Expression, ExpressionStatement, ImportDeclaration,
+        ParseGoal, SourceSpan, Statement, SyntaxTree, VariableDeclaration,
+        VariableDeclarationKind, VariableDeclarator,
     };
 
     fn span() -> SourceSpan {
@@ -2360,6 +2398,103 @@ mod tests {
             .iter()
             .any(|op| matches!(op, Ir1Op::Await));
         assert!(has_await);
+    }
+
+    #[test]
+    fn lower_var_declaration_without_initializer_loads_undefined() {
+        let tree = SyntaxTree {
+            goal: ParseGoal::Script,
+            body: vec![Statement::VariableDeclaration(VariableDeclaration {
+                kind: VariableDeclarationKind::Var,
+                declarations: vec![VariableDeclarator {
+                    name: "counter".to_string(),
+                    initializer: None,
+                    span: span(),
+                }],
+                span: span(),
+            })],
+            span: span(),
+        };
+        let ir0 = Ir0Module::from_syntax_tree(tree, "var_undefined.js");
+        let result = lower_ir0_to_ir1(&ir0).expect("should succeed");
+
+        let counter_binding = result.module.scopes[0]
+            .bindings
+            .iter()
+            .find(|binding| binding.name == "counter")
+            .expect("counter binding must exist");
+        assert_eq!(counter_binding.kind, BindingKind::Var);
+        assert!(matches!(
+            result.module.ops.as_slice(),
+            [
+                Ir1Op::LoadLiteral {
+                    value: Ir1Literal::Undefined
+                },
+                Ir1Op::StoreBinding { binding_id },
+                Ir1Op::Return
+            ] if *binding_id == counter_binding.binding_id
+        ));
+    }
+
+    #[test]
+    fn lower_var_declaration_hoists_bindings_before_initializers() {
+        let tree = SyntaxTree {
+            goal: ParseGoal::Script,
+            body: vec![Statement::VariableDeclaration(VariableDeclaration {
+                kind: VariableDeclarationKind::Var,
+                declarations: vec![
+                    VariableDeclarator {
+                        name: "y".to_string(),
+                        initializer: Some(Expression::Identifier("x".to_string())),
+                        span: span(),
+                    },
+                    VariableDeclarator {
+                        name: "x".to_string(),
+                        initializer: Some(Expression::NumericLiteral(1)),
+                        span: span(),
+                    },
+                ],
+                span: span(),
+            })],
+            span: span(),
+        };
+        let ir0 = Ir0Module::from_syntax_tree(tree, "var_hoist.js");
+        let result = lower_ir0_to_ir1(&ir0).expect("should succeed");
+
+        let scope = &result.module.scopes[0];
+        let y_binding = scope
+            .bindings
+            .iter()
+            .find(|binding| binding.name == "y")
+            .expect("y binding must exist");
+        let x_binding = scope
+            .bindings
+            .iter()
+            .find(|binding| binding.name == "x")
+            .expect("x binding must exist");
+        assert_eq!(y_binding.kind, BindingKind::Var);
+        assert_eq!(x_binding.kind, BindingKind::Var);
+
+        assert!(matches!(
+            result.module.ops.as_slice(),
+            [
+                Ir1Op::LoadBinding {
+                    binding_id: load_x_binding_id
+                },
+                Ir1Op::StoreBinding {
+                    binding_id: store_y_binding_id
+                },
+                Ir1Op::LoadLiteral {
+                    value: Ir1Literal::Integer(1)
+                },
+                Ir1Op::StoreBinding {
+                    binding_id: store_x_binding_id
+                },
+                Ir1Op::Return
+            ] if *load_x_binding_id == x_binding.binding_id
+                && *store_y_binding_id == y_binding.binding_id
+                && *store_x_binding_id == x_binding.binding_id
+        ));
     }
 
     // -- Raw expression with call --
