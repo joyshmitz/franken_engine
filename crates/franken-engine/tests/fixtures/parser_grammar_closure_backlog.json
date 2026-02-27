@@ -187,7 +187,7 @@
     {
       "family_id": "statement.variable_declaration",
       "es2020_clause": "ECMA-262 §14.3",
-      "current_status": "unsupported",
+      "current_status": "partial",
       "implementation_slice": "phase2-statement-lowering",
       "owner": "parser-frontier",
       "fixture_ids": ["script_variable_declaration_raw"],

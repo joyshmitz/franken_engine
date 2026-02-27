@@ -3337,6 +3337,97 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
+    // Variable declaration parsing
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn var_declaration_with_initializer_is_parsed() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser
+            .parse("var counter = 1", ParseGoal::Script)
+            .expect("parse");
+        match &tree.body[0] {
+            Statement::VariableDeclaration(variable_declaration) => {
+                assert_eq!(variable_declaration.kind, VariableDeclarationKind::Var);
+                assert_eq!(variable_declaration.declarations.len(), 1);
+                let declarator = &variable_declaration.declarations[0];
+                assert_eq!(declarator.name, "counter");
+                assert_eq!(declarator.initializer, Some(Expression::NumericLiteral(1)));
+            }
+            _ => panic!("expected variable declaration statement"),
+        }
+    }
+
+    #[test]
+    fn var_declaration_without_initializer_is_parsed() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser.parse("var ready", ParseGoal::Script).expect("parse");
+        match &tree.body[0] {
+            Statement::VariableDeclaration(variable_declaration) => {
+                assert_eq!(variable_declaration.kind, VariableDeclarationKind::Var);
+                assert_eq!(variable_declaration.declarations.len(), 1);
+                let declarator = &variable_declaration.declarations[0];
+                assert_eq!(declarator.name, "ready");
+                assert_eq!(declarator.initializer, None);
+            }
+            _ => panic!("expected variable declaration statement"),
+        }
+    }
+
+    #[test]
+    fn var_declaration_with_multiple_declarators_is_parsed() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser
+            .parse("var first = \"a,b\", second = 2", ParseGoal::Script)
+            .expect("parse");
+        match &tree.body[0] {
+            Statement::VariableDeclaration(variable_declaration) => {
+                assert_eq!(variable_declaration.declarations.len(), 2);
+                let first = &variable_declaration.declarations[0];
+                assert_eq!(first.name, "first");
+                assert_eq!(
+                    first.initializer,
+                    Some(Expression::StringLiteral("a,b".to_string()))
+                );
+                let second = &variable_declaration.declarations[1];
+                assert_eq!(second.name, "second");
+                assert_eq!(second.initializer, Some(Expression::NumericLiteral(2)));
+            }
+            _ => panic!("expected variable declaration statement"),
+        }
+    }
+
+    #[test]
+    fn var_declaration_missing_binding_is_rejected() {
+        let parser = CanonicalEs2020Parser;
+        let err = parser
+            .parse("var", ParseGoal::Script)
+            .expect_err("var without binding must fail");
+        assert_eq!(err.code, ParseErrorCode::UnsupportedSyntax);
+    }
+
+    #[test]
+    fn var_declaration_non_identifier_binding_is_rejected() {
+        let parser = CanonicalEs2020Parser;
+        let err = parser
+            .parse("var {x} = source", ParseGoal::Script)
+            .expect_err("destructuring binding should fail in scaffold");
+        assert_eq!(err.code, ParseErrorCode::UnsupportedSyntax);
+    }
+
+    #[test]
+    fn identifier_starting_with_var_is_expression_not_declaration() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser.parse("variant", ParseGoal::Script).expect("parse");
+        match &tree.body[0] {
+            Statement::Expression(expr) => {
+                assert_eq!(expr.expression, Expression::Identifier("variant".to_string()));
+            }
+            _ => panic!("expected expression statement"),
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // Multi-statement / semicolons
     // -----------------------------------------------------------------------
 
@@ -5267,6 +5358,18 @@ mod tests {
                 span: span.clone(),
             })),
             "export"
+        );
+        assert_eq!(
+            statement_kind_label(&Statement::VariableDeclaration(VariableDeclaration {
+                kind: VariableDeclarationKind::Var,
+                declarations: vec![VariableDeclarator {
+                    name: "x".to_string(),
+                    initializer: Some(Expression::NumericLiteral(1)),
+                    span: span.clone(),
+                }],
+                span: span.clone(),
+            })),
+            "variable_declaration"
         );
         assert_eq!(
             statement_kind_label(&Statement::Expression(ExpressionStatement {
