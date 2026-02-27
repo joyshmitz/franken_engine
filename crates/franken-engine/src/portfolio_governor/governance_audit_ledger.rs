@@ -1868,4 +1868,243 @@ mod tests {
         assert!(q.end_time_ns.is_none());
         assert!(q.override_only.is_none());
     }
+
+    // -- Enrichment: PearlTower 2026-02-27 --
+
+    #[test]
+    fn enrichment_governance_rationale_clone_equality() {
+        let r = GovernanceRationale {
+            summary: "manual override due to incident".to_string(),
+            passed_criteria: vec!["crit-a".to_string(), "crit-b".to_string()],
+            failed_criteria: vec!["crit-c".to_string()],
+            confidence_millionths: 750_000,
+            risk_of_harm_millionths: 200_000,
+            bypassed_risk_criteria: vec!["risk-1".to_string()],
+            acknowledged_bypass: true,
+        };
+        let cloned = r.clone();
+        assert_eq!(r, cloned);
+        assert_eq!(r.summary, cloned.summary);
+        assert_eq!(r.bypassed_risk_criteria, cloned.bypassed_risk_criteria);
+        assert_eq!(r.acknowledged_bypass, cloned.acknowledged_bypass);
+    }
+
+    #[test]
+    fn enrichment_scorecard_snapshot_clone_equality() {
+        let snap = ScorecardSnapshot {
+            ev_millionths: -1_000_000,
+            confidence_millionths: 0,
+            risk_of_harm_millionths: 1_000_000,
+            implementation_friction_millionths: 500_000,
+            cross_initiative_interference_millionths: 999_999,
+            operational_burden_millionths: 1,
+        };
+        let cloned = snap.clone();
+        assert_eq!(snap, cloned);
+    }
+
+    #[test]
+    fn enrichment_governance_ledger_entry_clone_equality() {
+        let mut ledger = ledger();
+        let entry = ledger
+            .append(automatic_input(
+                "ce-1",
+                "moon-1",
+                GovernanceDecisionType::Promote,
+                10,
+            ))
+            .unwrap();
+        let cloned = entry.clone();
+        assert_eq!(entry, cloned);
+        assert_eq!(entry.entry_hash, cloned.entry_hash);
+        assert_eq!(entry.signature, cloned.signature);
+        assert_eq!(entry.sequence, cloned.sequence);
+    }
+
+    #[test]
+    fn enrichment_governance_log_event_clone_equality() {
+        let event = GovernanceLogEvent {
+            trace_id: "t-99".into(),
+            decision_id: "d-99".into(),
+            policy_id: "pol-1".into(),
+            component: "governance_audit_ledger".into(),
+            event: "append_decision".into(),
+            outcome: "success".into(),
+            error_code: Some("FE-GOV-LED-0001".into()),
+            timestamp_ns: 42_000,
+        };
+        let cloned = event.clone();
+        assert_eq!(event, cloned);
+        assert_eq!(event.error_code, cloned.error_code);
+    }
+
+    #[test]
+    fn enrichment_governance_ledger_config_clone_equality() {
+        let config = GovernanceLedgerConfig {
+            checkpoint_interval: 128,
+            signer_key: b"custom-signing-key-bytes".to_vec(),
+            policy_id: "my-policy-v2".to_string(),
+        };
+        let cloned = config.clone();
+        assert_eq!(config, cloned);
+        assert_eq!(config.signer_key, cloned.signer_key);
+    }
+
+    #[test]
+    fn enrichment_entry_json_has_required_fields() {
+        let mut ledger = ledger();
+        let entry = ledger
+            .append(automatic_input(
+                "json-1",
+                "moon-1",
+                GovernanceDecisionType::Kill,
+                50,
+            ))
+            .unwrap();
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(json.contains("\"sequence\""));
+        assert!(json.contains("\"decision_id\""));
+        assert!(json.contains("\"moonshot_id\""));
+        assert!(json.contains("\"decision_type\""));
+        assert!(json.contains("\"entry_hash\""));
+        assert!(json.contains("\"signature\""));
+        assert!(json.contains("\"is_override\""));
+        assert!(json.contains("\"previous_hash\""));
+    }
+
+    #[test]
+    fn enrichment_rationale_json_has_required_fields() {
+        let r = GovernanceRationale::for_automatic_decision(
+            "auto decision",
+            900_000,
+            50_000,
+            vec!["pass-1".to_string()],
+            vec!["fail-1".to_string()],
+        );
+        let json = serde_json::to_string(&r).unwrap();
+        assert!(json.contains("\"summary\""));
+        assert!(json.contains("\"passed_criteria\""));
+        assert!(json.contains("\"failed_criteria\""));
+        assert!(json.contains("\"confidence_millionths\""));
+        assert!(json.contains("\"risk_of_harm_millionths\""));
+        assert!(json.contains("\"bypassed_risk_criteria\""));
+        assert!(json.contains("\"acknowledged_bypass\""));
+    }
+
+    #[test]
+    fn enrichment_checkpoint_json_has_required_fields() {
+        let cp = GovernanceLedgerCheckpoint {
+            checkpoint_id: "cp-json".into(),
+            sequence: 2,
+            entry_count: 2,
+            head_hash: "deadbeef".into(),
+            timestamp_ns: 1000,
+            signature: "sig-abc".into(),
+        };
+        let json = serde_json::to_string(&cp).unwrap();
+        assert!(json.contains("\"checkpoint_id\""));
+        assert!(json.contains("\"head_hash\""));
+        assert!(json.contains("\"entry_count\""));
+        assert!(json.contains("\"signature\""));
+    }
+
+    #[test]
+    fn enrichment_full_ledger_serde_roundtrip() {
+        let mut ledger = ledger();
+        ledger
+            .append(automatic_input(
+                "rt-1",
+                "moon-1",
+                GovernanceDecisionType::Promote,
+                10,
+            ))
+            .unwrap();
+        ledger
+            .append(automatic_input(
+                "rt-2",
+                "moon-1",
+                GovernanceDecisionType::Hold,
+                20,
+            ))
+            .unwrap();
+        ledger.append(override_input("rt-3", 30)).unwrap();
+        let json = serde_json::to_string(&ledger).unwrap();
+        let back: GovernanceAuditLedger = serde_json::from_str(&json).unwrap();
+        assert_eq!(ledger, back);
+        assert_eq!(back.entries().len(), 3);
+        assert_eq!(back.checkpoints().len(), 1);
+        assert!(back.events().len() >= 3);
+    }
+
+    #[test]
+    fn enrichment_error_display_strings_all_unique() {
+        let errors: Vec<GovernanceLedgerError> = vec![
+            GovernanceLedgerError::InvalidConfig {
+                reason: "x".to_string(),
+            },
+            GovernanceLedgerError::InvalidInput {
+                field: "f".to_string(),
+                reason: "r".to_string(),
+            },
+            GovernanceLedgerError::DuplicateDecisionId {
+                decision_id: "d".to_string(),
+            },
+            GovernanceLedgerError::OutOfOrderTimestamp {
+                previous_ns: 100,
+                new_ns: 50,
+            },
+            GovernanceLedgerError::SerializationFailed {
+                reason: "json".to_string(),
+            },
+            GovernanceLedgerError::HashChainMismatch { sequence: 1 },
+            GovernanceLedgerError::SignatureMismatch { sequence: 2 },
+            GovernanceLedgerError::EntryHashMismatch { sequence: 3 },
+            GovernanceLedgerError::EmptyLedger,
+        ];
+        let display_strings: BTreeSet<String> = errors.iter().map(|e| e.to_string()).collect();
+        assert_eq!(display_strings.len(), errors.len());
+    }
+
+    #[test]
+    fn enrichment_boundary_confidence_and_risk_at_exact_million() {
+        let mut ledger = ledger();
+        let mut input =
+            automatic_input("boundary-1", "moon-1", GovernanceDecisionType::Promote, 10);
+        input.rationale.confidence_millionths = 1_000_000;
+        input.rationale.risk_of_harm_millionths = 1_000_000;
+        let entry = ledger.append(input).unwrap();
+        assert_eq!(entry.rationale.confidence_millionths, 1_000_000);
+        assert_eq!(entry.rationale.risk_of_harm_millionths, 1_000_000);
+
+        // Zero boundary
+        let mut input2 = automatic_input("boundary-2", "moon-1", GovernanceDecisionType::Hold, 20);
+        input2.rationale.confidence_millionths = 0;
+        input2.rationale.risk_of_harm_millionths = 0;
+        let entry2 = ledger.append(input2).unwrap();
+        assert_eq!(entry2.rationale.confidence_millionths, 0);
+        assert_eq!(entry2.rationale.risk_of_harm_millionths, 0);
+    }
+
+    #[test]
+    fn enrichment_governance_decision_type_ord_and_error_source() {
+        // Verify Ord derivation works for GovernanceDecisionType
+        let mut types = vec![
+            GovernanceDecisionType::Override,
+            GovernanceDecisionType::Promote,
+            GovernanceDecisionType::Kill,
+            GovernanceDecisionType::Hold,
+            GovernanceDecisionType::Resume,
+            GovernanceDecisionType::Pause,
+        ];
+        types.sort();
+        // Just confirm sort does not panic and first < last
+        assert!(types[0] <= types[types.len() - 1]);
+
+        // Verify std::error::Error source() returns None (no nested cause)
+        let err = GovernanceLedgerError::InvalidConfig {
+            reason: "test".to_string(),
+        };
+        let std_err: &dyn std::error::Error = &err;
+        assert!(std_err.source().is_none());
+    }
 }

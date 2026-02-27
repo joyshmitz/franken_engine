@@ -2335,4 +2335,188 @@ mod tests {
         sorted.sort();
         assert_eq!(sorted.len(), 5);
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 session 3 --
+
+    #[test]
+    fn schema_hashes_are_all_distinct() {
+        let s1 = revocation_schema();
+        let s2 = revocation_event_schema();
+        let s3 = revocation_head_schema();
+        assert_ne!(s1, s2);
+        assert_ne!(s2, s3);
+        assert_ne!(s1, s3);
+    }
+
+    #[test]
+    fn schema_ids_are_all_distinct() {
+        let s1 = revocation_schema_id();
+        let s2 = revocation_event_schema_id();
+        let s3 = revocation_head_schema_id();
+        assert_ne!(s1, s2);
+        assert_ne!(s2, s3);
+        assert_ne!(s1, s3);
+    }
+
+    #[test]
+    fn rebuild_from_empty_events_no_head_succeeds() {
+        let chain =
+            RevocationChain::rebuild_from_events(TEST_ZONE, vec![], None).unwrap();
+        assert!(chain.is_empty());
+        assert_eq!(chain.len(), 0);
+        assert!(chain.head().is_none());
+    }
+
+    #[test]
+    fn rebuild_from_empty_events_with_head_fails() {
+        let head = RevocationHead {
+            head_id: EngineObjectId([20; 32]),
+            latest_event: EngineObjectId([19; 32]),
+            head_seq: 0,
+            chain_hash: ContentHash::compute(b"x"),
+            zone: TEST_ZONE.to_string(),
+            signature: Signature::from_bytes(SIGNATURE_SENTINEL),
+        };
+        let err =
+            RevocationChain::rebuild_from_events(TEST_ZONE, vec![], Some(head)).unwrap_err();
+        assert!(matches!(err, ChainError::ChainIntegrity { .. }));
+        assert!(err.to_string().contains("empty chain must not have a head"));
+    }
+
+    #[test]
+    fn verify_append_genesis_with_prev_event_fails_hash_link() {
+        // On an empty chain, expected_prev = None. Providing prev_event = Some
+        // triggers HashLinkMismatch because the hash link check precedes genesis
+        // validation.
+        let chain = RevocationChain::new(TEST_ZONE);
+        let rev = make_revocation(
+            RevocationTargetType::Key,
+            RevocationReason::Compromised,
+            [1; 32],
+            &test_revocation_key(),
+        );
+        let event = RevocationEvent {
+            event_id: EngineObjectId([0xAA; 32]),
+            revocation: rev,
+            prev_event: Some(EngineObjectId([0xFF; 32])),
+            event_seq: 0,
+        };
+        let err = chain.verify_append(&event).unwrap_err();
+        assert!(matches!(err, ChainError::HashLinkMismatch { .. }));
+    }
+
+    #[test]
+    fn chain_error_head_regression_display_content() {
+        let err = ChainError::HeadSequenceRegression {
+            current_seq: 10,
+            attempted_seq: 5,
+        };
+        let s = err.to_string();
+        assert!(s.contains("head sequence regression"));
+        assert!(s.contains("current=10"));
+        assert!(s.contains("attempted=5"));
+    }
+
+    #[test]
+    fn revocation_preimage_bytes_deterministic() {
+        let rev = make_revocation(
+            RevocationTargetType::Key,
+            RevocationReason::Compromised,
+            [1; 32],
+            &test_revocation_key(),
+        );
+        let p1 = rev.preimage_bytes();
+        let p2 = rev.preimage_bytes();
+        assert_eq!(p1, p2);
+        assert!(!p1.is_empty());
+    }
+
+    #[test]
+    fn revocation_head_preimage_bytes_deterministic() {
+        let head = RevocationHead {
+            head_id: EngineObjectId([20; 32]),
+            latest_event: EngineObjectId([19; 32]),
+            head_seq: 5,
+            chain_hash: ContentHash::compute(b"test"),
+            zone: TEST_ZONE.to_string(),
+            signature: Signature::from_bytes(SIGNATURE_SENTINEL),
+        };
+        let p1 = head.preimage_bytes();
+        let p2 = head.preimage_bytes();
+        assert_eq!(p1, p2);
+        assert!(!p1.is_empty());
+    }
+
+    #[test]
+    fn rebuild_from_events_detects_genesis_seq_mismatch() {
+        let mut chain = RevocationChain::new(TEST_ZONE);
+        let sk = test_signing_key();
+        let rev = make_revocation(
+            RevocationTargetType::Key,
+            RevocationReason::Compromised,
+            [1; 32],
+            &test_revocation_key(),
+        );
+        chain.append(rev, &sk, "t").unwrap();
+
+        let mut events = chain.events().to_vec();
+        events[0].event_seq = 5; // should be 0
+
+        let err =
+            RevocationChain::rebuild_from_events(TEST_ZONE, events, None).unwrap_err();
+        assert!(matches!(err, ChainError::SequenceDiscontinuity { .. }));
+    }
+
+    #[test]
+    fn empty_chain_hash_is_genesis_sentinel() {
+        let chain = RevocationChain::new(TEST_ZONE);
+        let expected = ContentHash::compute(b"revocation-chain-genesis");
+        assert_eq!(*chain.chain_hash(), expected);
+    }
+
+    #[test]
+    fn rebuild_from_events_detects_chain_hash_mismatch() {
+        let mut chain = RevocationChain::new(TEST_ZONE);
+        let sk = test_signing_key();
+        let rev = make_revocation(
+            RevocationTargetType::Key,
+            RevocationReason::Compromised,
+            [1; 32],
+            &test_revocation_key(),
+        );
+        chain.append(rev, &sk, "t").unwrap();
+
+        let events = chain.events().to_vec();
+        let mut head = chain.head().cloned().unwrap();
+        head.chain_hash = ContentHash::compute(b"tampered"); // wrong hash
+
+        let err =
+            RevocationChain::rebuild_from_events(TEST_ZONE, events, Some(head)).unwrap_err();
+        assert!(matches!(err, ChainError::ChainIntegrity { .. }));
+        assert!(err.to_string().contains("chain_hash"));
+    }
+
+    #[test]
+    fn revocation_signature_domain_is_revocation() {
+        let rev = make_revocation(
+            RevocationTargetType::Key,
+            RevocationReason::Compromised,
+            [1; 32],
+            &test_revocation_key(),
+        );
+        assert_eq!(rev.signature_domain(), ObjectDomain::Revocation);
+    }
+
+    #[test]
+    fn revocation_head_signature_domain_is_revocation() {
+        let head = RevocationHead {
+            head_id: EngineObjectId([20; 32]),
+            latest_event: EngineObjectId([19; 32]),
+            head_seq: 0,
+            chain_hash: ContentHash::compute(b"x"),
+            zone: TEST_ZONE.to_string(),
+            signature: Signature::from_bytes(SIGNATURE_SENTINEL),
+        };
+        assert_eq!(head.signature_domain(), ObjectDomain::Revocation);
+    }
 }

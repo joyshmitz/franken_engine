@@ -3795,4 +3795,258 @@ mod tests {
         let back: ReplayJoinQuery = serde_json::from_str(&json).unwrap();
         assert_eq!(query, back);
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 session 3 --
+
+    #[test]
+    fn lineage_log_error_display_content_all_variants() {
+        let seq_err = LineageLogError::SequenceMismatch {
+            expected: 5,
+            got: 3,
+        };
+        assert_eq!(seq_err.to_string(), "sequence mismatch: expected 5, got 3");
+
+        let chain_err = LineageLogError::ChainBreak { sequence: 7 };
+        assert_eq!(chain_err.to_string(), "chain break at sequence 7");
+
+        let cp_not_found = LineageLogError::CheckpointNotFound { checkpoint_seq: 9 };
+        assert_eq!(cp_not_found.to_string(), "checkpoint not found: sequence 9");
+
+        let invalid_order = LineageLogError::InvalidCheckpointOrder { older: 2, newer: 1 };
+        assert_eq!(
+            invalid_order.to_string(),
+            "invalid checkpoint order: older=2, newer=1 (must be older < newer)"
+        );
+
+        let empty = LineageLogError::EmptyLog;
+        assert_eq!(empty.to_string(), "log is empty");
+    }
+
+    #[test]
+    fn evidence_category_display_matches_as_str_all_variants() {
+        for cat in [
+            EvidenceCategory::GateResult,
+            EvidenceCategory::PerformanceBenchmark,
+            EvidenceCategory::SentinelRiskScore,
+            EvidenceCategory::DifferentialExecutionLog,
+            EvidenceCategory::Additional,
+        ] {
+            assert_eq!(cat.to_string(), cat.as_str());
+        }
+    }
+
+    #[test]
+    fn config_default_all_fields_verified() {
+        let config = LineageLogConfig::default();
+        assert_eq!(config.checkpoint_interval, 100);
+        assert_eq!(config.max_entries_in_memory, 0);
+    }
+
+    #[test]
+    fn merkle_leaf_and_node_domain_separation() {
+        // Same input to leaf and node should produce different hashes
+        // because they use different domain prefixes (0x00 vs 0x01).
+        let h = ContentHash::compute(b"test-entry");
+        let leaf = merkle_leaf(&h);
+        let node = merkle_node(&h, &h);
+        assert_ne!(leaf, node, "leaf and node must differ for same input");
+    }
+
+    #[test]
+    fn compute_merkle_root_single_entry_equals_leaf() {
+        let h = ContentHash::compute(b"sole-entry");
+        let root = compute_merkle_root(&[h.clone()]);
+        assert_eq!(root, merkle_leaf(&h));
+    }
+
+    #[test]
+    fn emit_event_trace_id_and_fields() {
+        let config = LineageLogConfig::default();
+        let mut log = ReplacementLineageLog::new(config);
+        let receipt = test_receipt("slot-ev", "old", "new", 1000);
+        log.append(receipt, ReplacementKind::DelegateToNative, 1000)
+            .unwrap();
+        let events = log.events();
+        assert!(!events.is_empty());
+        let ev = &events[0];
+        assert!(
+            ev.trace_id.starts_with("lineage-"),
+            "trace_id should start with lineage-"
+        );
+        assert!(
+            ev.decision_id.starts_with("lineage-decision-"),
+            "decision_id should start with lineage-decision-"
+        );
+        assert_eq!(ev.policy_id, "replacement-lineage-policy");
+        assert_eq!(ev.component, "replacement_lineage_log");
+        assert_eq!(ev.event, "entry_appended");
+        assert_eq!(ev.outcome, "ok");
+        assert!(ev.error_code.is_none());
+    }
+
+    #[test]
+    fn lineage_log_serde_roundtrip_with_entries() {
+        let config = LineageLogConfig::default();
+        let mut log = ReplacementLineageLog::new(config);
+        let r1 = test_receipt("slot-serde", "old", "new", 100);
+        let r2 = test_receipt("slot-serde", "new", "newer", 200);
+        log.append(r1, ReplacementKind::DelegateToNative, 100)
+            .unwrap();
+        log.append(r2, ReplacementKind::Demotion, 200).unwrap();
+        log.create_checkpoint(200, SecurityEpoch::from_raw(1))
+            .unwrap();
+        let json = serde_json::to_string(&log).unwrap();
+        let restored: ReplacementLineageLog = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.len(), 2);
+        assert_eq!(restored.checkpoints().len(), 1);
+        assert_eq!(
+            restored.entries()[0].kind,
+            ReplacementKind::DelegateToNative
+        );
+        assert_eq!(restored.entries()[1].kind, ReplacementKind::Demotion);
+    }
+
+    #[test]
+    fn slot_lineage_receipt_id_is_hex_encoded() {
+        let config = LineageLogConfig::default();
+        let mut log = ReplacementLineageLog::new(config);
+        let receipt = test_receipt("slot-hex", "old", "new", 100);
+        log.append(receipt, ReplacementKind::DelegateToNative, 100)
+            .unwrap();
+        let slot_id = test_slot_id("slot-hex");
+        let steps = log.slot_lineage(&slot_id);
+        assert_eq!(steps.len(), 1);
+        // hex::encode produces lowercase hex characters
+        assert!(
+            steps[0].receipt_id.chars().all(|c| c.is_ascii_hexdigit()),
+            "receipt_id in LineageStep should be hex-encoded"
+        );
+    }
+
+    #[test]
+    fn slot_lineage_query_matches_direct() {
+        let entry = LineageChainEntry {
+            slot_id: test_slot_id("slot-m"),
+            timestamp_ns: 500,
+            receipt_id: "r".to_string(),
+            kind: ReplacementKind::DelegateToNative,
+            from_cell_digest: "f".to_string(),
+            to_cell_digest: "t".to_string(),
+            receipt_content_hash: "h".to_string(),
+        };
+
+        // No filters — matches everything.
+        let q_all = SlotLineageQuery::default();
+        assert!(q_all.matches(&entry));
+
+        // Min filter excludes.
+        let q_min = SlotLineageQuery {
+            min_timestamp_ns: Some(600),
+            ..Default::default()
+        };
+        assert!(!q_min.matches(&entry));
+
+        // Max filter excludes.
+        let q_max = SlotLineageQuery {
+            max_timestamp_ns: Some(400),
+            ..Default::default()
+        };
+        assert!(!q_max.matches(&entry));
+
+        // Both filters include.
+        let q_range = SlotLineageQuery {
+            min_timestamp_ns: Some(400),
+            max_timestamp_ns: Some(600),
+            ..Default::default()
+        };
+        assert!(q_range.matches(&entry));
+    }
+
+    #[test]
+    fn table_name_constants_nonempty_and_distinct() {
+        let names = [
+            TABLE_REPLACEMENT_RECEIPTS,
+            TABLE_DEMOTION_RECEIPTS,
+            TABLE_LINEAGE_CHAIN,
+            TABLE_REPLACEMENT_BY_HASH,
+            TABLE_DEMOTION_BY_HASH,
+            TABLE_EVIDENCE_INDEX,
+        ];
+        for name in &names {
+            assert!(!name.is_empty());
+        }
+        let set: std::collections::BTreeSet<&str> = names.iter().copied().collect();
+        assert_eq!(set.len(), names.len(), "table names must all be distinct");
+    }
+
+    #[test]
+    fn slot_ids_deduplication_and_ordering() {
+        let config = LineageLogConfig::default();
+        let mut log = ReplacementLineageLog::new(config);
+        let r1 = test_receipt("bravo", "old", "new", 100);
+        let r2 = test_receipt("alpha", "old", "new", 200);
+        let r3 = test_receipt("bravo", "new", "newer", 300);
+        log.append(r1, ReplacementKind::DelegateToNative, 100)
+            .unwrap();
+        log.append(r2, ReplacementKind::DelegateToNative, 200)
+            .unwrap();
+        log.append(r3, ReplacementKind::Demotion, 300).unwrap();
+        let ids = log.slot_ids();
+        // BTreeSet guarantees sorted order and deduplication.
+        assert_eq!(ids.len(), 2);
+        assert!(ids[0].as_str() <= ids[1].as_str());
+    }
+
+    #[test]
+    fn evidence_index_empty_artifact_digest_fails() {
+        use crate::storage_adapter::InMemoryStorageAdapter;
+        let mut idx = ReplacementLineageEvidenceIndex::new(InMemoryStorageAdapter::new());
+        let ctx = test_context();
+        let receipt = test_receipt("slot-bad-ev", "old", "new", 1000);
+        let bad_evidence = vec![EvidencePointerInput {
+            category: EvidenceCategory::GateResult,
+            artifact_digest: "   ".to_string(), // whitespace-only → empty after trim
+            passed: Some(true),
+            summary: "ok".to_string(),
+        }];
+        let err = idx
+            .index_replacement_receipt(
+                &receipt,
+                ReplacementKind::DelegateToNative,
+                &bad_evidence,
+                &ctx,
+            )
+            .unwrap_err();
+        assert!(matches!(err, LineageIndexError::InvalidInput { .. }));
+    }
+
+    #[test]
+    fn lineage_index_error_storage_display_includes_inner() {
+        let storage_err = StorageError::NotFound {
+            store: StoreKind::ReplacementLineage,
+            key: "some_key".to_string(),
+        };
+        let idx_err = LineageIndexError::Storage(storage_err);
+        let display = idx_err.to_string();
+        assert!(
+            display.starts_with("storage error:"),
+            "Storage display should start with 'storage error:'"
+        );
+        assert!(
+            display.contains("some_key"),
+            "Storage display should include inner error"
+        );
+    }
+
+    #[test]
+    fn lineage_log_len_and_is_empty() {
+        let mut log = ReplacementLineageLog::new(LineageLogConfig::default());
+        assert_eq!(log.len(), 0);
+        assert!(log.is_empty());
+        let receipt = test_receipt("slot-len", "old", "new", 100);
+        log.append(receipt, ReplacementKind::DelegateToNative, 100)
+            .unwrap();
+        assert_eq!(log.len(), 1);
+        assert!(!log.is_empty());
+    }
 }
