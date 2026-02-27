@@ -29,7 +29,7 @@ use frankenengine_engine::signature_preimage::{SigningKey, VerificationKey};
 // ===========================================================================
 
 fn test_signing_key() -> SigningKey {
-    SigningKey::generate()
+    SigningKey::from_bytes([42u8; 32])
 }
 
 fn field(name: &str, ft: FeatureFieldType) -> (String, FeatureField) {
