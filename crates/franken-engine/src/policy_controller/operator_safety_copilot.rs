@@ -2369,4 +2369,463 @@ mod tests {
         assert!(p.replay_pointer.is_none());
         assert!(p.counterfactual_pointer.is_none());
     }
+
+    // -- Enrichment: serde roundtrips for untested types (PearlTower 2026-02-26) --
+
+    #[test]
+    fn extension_trust_level_serde_roundtrip_all() {
+        let variants = [
+            ExtensionTrustLevel::High,
+            ExtensionTrustLevel::Guarded,
+            ExtensionTrustLevel::Watch,
+            ExtensionTrustLevel::Quarantined,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: ExtensionTrustLevel = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn confidence_band_serde_roundtrip() {
+        let cb = ConfidenceBand {
+            metric: "accuracy".into(),
+            point_millionths: 500_000,
+            lower_millionths: 400_000,
+            upper_millionths: 600_000,
+            confidence_level_bps: 9500,
+        };
+        let json = serde_json::to_string(&cb).unwrap();
+        let back: ConfidenceBand = serde_json::from_str(&json).unwrap();
+        assert_eq!(cb, back);
+    }
+
+    #[test]
+    fn evidence_strength_serde_roundtrip() {
+        let es = EvidenceStrength {
+            evidence_atoms: 42,
+            observation_window_seconds: 3600,
+        };
+        let json = serde_json::to_string(&es).unwrap();
+        let back: EvidenceStrength = serde_json::from_str(&json).unwrap();
+        assert_eq!(es, back);
+    }
+
+    #[test]
+    fn decision_boundary_hint_serde_roundtrip() {
+        let h = DecisionBoundaryHint {
+            metric: "safety_score".into(),
+            current_millionths: 700_000,
+            threshold_millionths: 800_000,
+            additional_evidence_needed: 5,
+            evidence_type: "test_run".into(),
+            trigger_direction: BoundaryTriggerDirection::AtOrAbove,
+        };
+        let json = serde_json::to_string(&h).unwrap();
+        let back: DecisionBoundaryHint = serde_json::from_str(&json).unwrap();
+        assert_eq!(h, back);
+    }
+
+    #[test]
+    fn timeline_drilldown_pointers_serde_roundtrip() {
+        let p = TimelineDrilldownPointers {
+            evidence_pointer: Some("ev-1".into()),
+            decision_receipt_pointer: None,
+            replay_pointer: Some("rp-1".into()),
+            counterfactual_pointer: None,
+        };
+        let json = serde_json::to_string(&p).unwrap();
+        let back: TimelineDrilldownPointers = serde_json::from_str(&json).unwrap();
+        assert_eq!(p, back);
+    }
+
+    #[test]
+    fn incident_timeline_event_serde_roundtrip() {
+        let e = IncidentTimelineEvent {
+            timestamp_ns: 1_000_000,
+            event_id: "evt-1".into(),
+            event_type: "detection".into(),
+            detail: "anomaly detected".into(),
+            outcome: "flagged".into(),
+            error_code: None,
+            drilldown: TimelineDrilldownPointers::default(),
+        };
+        let json = serde_json::to_string(&e).unwrap();
+        let back: IncidentTimelineEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(e, back);
+    }
+
+    #[test]
+    fn rollback_command_serde_roundtrip() {
+        let rc = RollbackCommand {
+            command: "restore-snapshot ext-a snap-123".into(),
+            safety_summary: "reverts to known-good state".into(),
+        };
+        let json = serde_json::to_string(&rc).unwrap();
+        let back: RollbackCommand = serde_json::from_str(&json).unwrap();
+        assert_eq!(rc, back);
+    }
+
+    #[test]
+    fn operator_identity_serde_roundtrip() {
+        let id = OperatorIdentity {
+            operator_id: "op-1".into(),
+            role: OperatorRole::Administrator,
+        };
+        let json = serde_json::to_string(&id).unwrap();
+        let back: OperatorIdentity = serde_json::from_str(&json).unwrap();
+        assert_eq!(id, back);
+    }
+
+    #[test]
+    fn action_recommendation_candidate_serde_roundtrip() {
+        let c = ActionRecommendationCandidate {
+            action_type: "quarantine".into(),
+            target_extension: "ext-a".into(),
+            expected_loss_reduction_millionths: 500_000,
+            confidence_millionths: 800_000,
+            side_effects: vec!["downtime".into()],
+            collateral_extensions: 2,
+            estimated_action_latency_ms: 1000,
+            reversibility: RecommendationReversibility::Reversible,
+            time_sensitivity: TimeSensitivity::Immediate,
+            rollback_window_ms: Some(60_000),
+            snapshot_id: Some("snap-1".into()),
+        };
+        let json = serde_json::to_string(&c).unwrap();
+        let back: ActionRecommendationCandidate = serde_json::from_str(&json).unwrap();
+        assert_eq!(c, back);
+    }
+
+    #[test]
+    fn action_execution_receipt_serde_roundtrip() {
+        let r = ActionExecutionReceipt {
+            receipt_id: "rcpt-1".into(),
+            signature: "sig-abc".into(),
+            trace_id: "t-1".into(),
+            decision_id: "d-1".into(),
+            policy_id: "p-1".into(),
+            incident_id: "inc-1".into(),
+            action_type: "quarantine".into(),
+            target_extension: "ext-a".into(),
+            operator_id: "op-1".into(),
+            confirmed_at_ns: 999_000,
+            rollback_command: "rollback ext-a".into(),
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        let back: ActionExecutionReceipt = serde_json::from_str(&json).unwrap();
+        assert_eq!(r, back);
+    }
+
+    // -- Enrichment: serde roundtrips for remaining types (PearlTower 2026-02-27) --
+
+    fn make_rollback_cmd() -> RollbackCommand {
+        RollbackCommand {
+            command: "rollback ext-a".into(),
+            safety_summary: "safe to rollback".into(),
+        }
+    }
+
+    fn make_ranked_rec(rank: u32) -> RankedRecommendation {
+        RankedRecommendation {
+            rank,
+            action_type: "quarantine".into(),
+            target_extension: "ext-a".into(),
+            expected_loss_reduction_millionths: 500_000,
+            confidence_millionths: 900_000,
+            side_effects: vec!["disable ext-b".into()],
+            collateral_extensions: 1,
+            estimated_action_latency_ms: 50,
+            reversibility: RecommendationReversibility::Reversible,
+            time_sensitivity: TimeSensitivity::Immediate,
+            rollback_window_ms: Some(60_000),
+            rollback_command: make_rollback_cmd(),
+            explanation: "quarantine to stop exfil".into(),
+        }
+    }
+
+    fn make_audit_event() -> OperatorAuditEvent {
+        OperatorAuditEvent {
+            trace_id: "t-1".into(),
+            decision_id: "d-1".into(),
+            policy_id: "p-1".into(),
+            operator_id: "op-1".into(),
+            operator_role: OperatorRole::Administrator,
+            event: "confirm".into(),
+            outcome: "ok".into(),
+            context: "manual".into(),
+            timestamp_ns: 1_000_000,
+            error_code: None,
+        }
+    }
+
+    fn make_log_event() -> CopilotStructuredLogEvent {
+        CopilotStructuredLogEvent {
+            trace_id: "t-1".into(),
+            decision_id: "d-1".into(),
+            policy_id: "p-1".into(),
+            component: "copilot".into(),
+            event: "surface_rendered".into(),
+            outcome: "ok".into(),
+            error_code: None,
+        }
+    }
+
+    #[test]
+    fn ranked_recommendation_serde_roundtrip() {
+        let r = make_ranked_rec(1);
+        let json = serde_json::to_string(&r).unwrap();
+        let back: RankedRecommendation = serde_json::from_str(&json).unwrap();
+        assert_eq!(r, back);
+    }
+
+    #[test]
+    fn copilot_structured_log_event_serde_roundtrip() {
+        let e = make_log_event();
+        let json = serde_json::to_string(&e).unwrap();
+        let back: CopilotStructuredLogEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(e, back);
+    }
+
+    #[test]
+    fn operator_audit_event_serde_roundtrip() {
+        let e = make_audit_event();
+        let json = serde_json::to_string(&e).unwrap();
+        let back: OperatorAuditEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(e, back);
+    }
+
+    #[test]
+    fn action_impact_summary_serde_roundtrip() {
+        let s = ActionImpactSummary {
+            dependent_extensions_affected: 3,
+            estimated_latency_ms: 200,
+            reversible: true,
+            rollback_window_ms_remaining: Some(30_000),
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        let back: ActionImpactSummary = serde_json::from_str(&json).unwrap();
+        assert_eq!(s, back);
+    }
+
+    #[test]
+    fn action_selection_review_serde_roundtrip() {
+        let r = ActionSelectionReview {
+            trace_id: "t-1".into(),
+            decision_id: "d-1".into(),
+            policy_id: "p-1".into(),
+            incident_id: "inc-1".into(),
+            selected_rank: 1,
+            selected_recommendation: make_ranked_rec(1),
+            impact_summary: ActionImpactSummary {
+                dependent_extensions_affected: 2,
+                estimated_latency_ms: 100,
+                reversible: true,
+                rollback_window_ms_remaining: None,
+            },
+            selected_by: OperatorIdentity { operator_id: "op-1".into(), role: OperatorRole::Administrator },
+            selected_at_ns: 2_000_000,
+            audit_event: make_audit_event(),
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        let back: ActionSelectionReview = serde_json::from_str(&json).unwrap();
+        assert_eq!(r, back);
+    }
+
+    #[test]
+    fn confirmed_action_execution_serde_roundtrip() {
+        let c = ConfirmedActionExecution {
+            execution_command: "quarantine ext-a".into(),
+            rollback_command: make_rollback_cmd(),
+            receipt: ActionExecutionReceipt {
+                receipt_id: "rcpt-1".into(),
+                signature: "sig-1".into(),
+                trace_id: "t-1".into(),
+                decision_id: "d-1".into(),
+                policy_id: "p-1".into(),
+                incident_id: "inc-1".into(),
+                action_type: "quarantine".into(),
+                target_extension: "ext-a".into(),
+                operator_id: "op-1".into(),
+                confirmed_at_ns: 3_000_000,
+                rollback_command: "rollback ext-a".into(),
+            },
+            audit_event: make_audit_event(),
+            log_event: make_log_event(),
+        };
+        let json = serde_json::to_string(&c).unwrap();
+        let back: ConfirmedActionExecution = serde_json::from_str(&json).unwrap();
+        assert_eq!(c, back);
+    }
+
+    #[test]
+    fn rollback_receipt_input_serde_roundtrip() {
+        let r = RollbackReceiptInput {
+            trace_id: "t-1".into(),
+            decision_id: "d-1".into(),
+            policy_id: "p-1".into(),
+            action_receipt_id: "rcpt-1".into(),
+            rollback_decision_id: "rd-1".into(),
+            evidence_pointer: "ev-ptr".into(),
+            restoration_verification: "verified".into(),
+            executed_at_ns: 4_000_000,
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        let back: RollbackReceiptInput = serde_json::from_str(&json).unwrap();
+        assert_eq!(r, back);
+    }
+
+    #[test]
+    fn rollback_execution_receipt_serde_roundtrip() {
+        let r = RollbackExecutionReceipt {
+            receipt_id: "rb-rcpt-1".into(),
+            signature: "sig-rb".into(),
+            trace_id: "t-1".into(),
+            decision_id: "d-1".into(),
+            policy_id: "p-1".into(),
+            action_receipt_id: "rcpt-1".into(),
+            rollback_decision_id: "rd-1".into(),
+            evidence_pointer: "ev-ptr".into(),
+            restoration_verification: "verified".into(),
+            executed_at_ns: 5_000_000,
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        let back: RollbackExecutionReceipt = serde_json::from_str(&json).unwrap();
+        assert_eq!(r, back);
+    }
+
+    #[test]
+    fn extension_trust_card_serde_roundtrip() {
+        let c = ExtensionTrustCard {
+            extension_id: "ext-a".into(),
+            trust_level: ExtensionTrustLevel::High,
+            recent_evidence_atoms: 12,
+            recent_decision_ids: vec!["d-1".into(), "d-2".into()],
+            current_recommendation: Some("monitor".into()),
+        };
+        let json = serde_json::to_string(&c).unwrap();
+        let back: ExtensionTrustCard = serde_json::from_str(&json).unwrap();
+        assert_eq!(c, back);
+    }
+
+    #[test]
+    fn active_incident_summary_serde_roundtrip() {
+        let s = ActiveIncidentSummary {
+            incident_id: "inc-1".into(),
+            extension_id: "ext-a".into(),
+            severity: IncidentSeverity::High,
+            started_at_ns: 100_000,
+            status: "active".into(),
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        let back: ActiveIncidentSummary = serde_json::from_str(&json).unwrap();
+        assert_eq!(s, back);
+    }
+
+    #[test]
+    fn fleet_health_overview_serde_roundtrip() {
+        let f = FleetHealthOverview {
+            trust_level_distribution: vec![TrustLevelDistributionEntry {
+                trust_level: ExtensionTrustLevel::High,
+                extensions: 5,
+            }],
+            active_incidents: vec![],
+            active_incidents_count: 0,
+            highest_severity: IncidentSeverity::Low,
+            attacker_roi_trend_millionths: vec![100_000, 90_000],
+            recent_containment_actions: vec![ContainmentActionOutcome {
+                incident_id: "inc-old".into(),
+                action_type: "quarantine".into(),
+                outcome: "success".into(),
+                latency_ms: 45,
+            }],
+            extension_details: vec![],
+        };
+        let json = serde_json::to_string(&f).unwrap();
+        let back: FleetHealthOverview = serde_json::from_str(&json).unwrap();
+        assert_eq!(f, back);
+    }
+
+    #[test]
+    fn policy_effectiveness_input_serde_roundtrip() {
+        let p = PolicyEffectivenessInput {
+            detection_counts: vec![CategoryDetectionCount {
+                category: "exfil".into(),
+                detected_events: 95,
+                total_events: 100,
+            }],
+            false_positive_rate_trend_millionths: vec![50_000, 45_000],
+            containment_latencies_ms: vec![10, 20, 30],
+            calibration_history: vec![CalibrationPoint {
+                timestamp_ns: 1_000,
+                expected_millionths: 900_000,
+                observed_millionths: 880_000,
+            }],
+        };
+        let json = serde_json::to_string(&p).unwrap();
+        let back: PolicyEffectivenessInput = serde_json::from_str(&json).unwrap();
+        assert_eq!(p, back);
+    }
+
+    #[test]
+    fn policy_effectiveness_view_serde_roundtrip() {
+        let v = PolicyEffectivenessView {
+            detection_rate_by_category: vec![CategoryDetectionRate {
+                category: "exfil".into(),
+                detected_events: 95,
+                total_events: 100,
+                rate_millionths: 950_000,
+            }],
+            false_positive_rate_trend_millionths: vec![50_000],
+            containment_latency_p50_ms: 15,
+            containment_latency_p95_ms: 45,
+            calibration_history: vec![],
+        };
+        let json = serde_json::to_string(&v).unwrap();
+        let back: PolicyEffectivenessView = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+    }
+
+    #[test]
+    fn copilot_error_serde_roundtrip_all_variants() {
+        let variants: Vec<CopilotError> = vec![
+            CopilotError::MissingRecommendations,
+            CopilotError::InvalidProbability { field: "conf".into(), value: -1 },
+            CopilotError::InvalidField { field: "name".into() },
+            CopilotError::InvalidConfidenceBand { metric: "loss".into() },
+            CopilotError::InvalidDecisionBoundaryHint { metric: "threshold".into() },
+            CopilotError::MissingSnapshotForRollback { action_type: "quarantine".into(), target_extension: "ext".into() },
+            CopilotError::InvalidRollbackWindow { action_type: "quarantine".into(), target_extension: "ext".into() },
+            CopilotError::UnauthorizedRole { role: OperatorRole::Viewer, action: "execute".into() },
+            CopilotError::RecommendationRankOutOfRange { requested_rank: 5, available: 3 },
+            CopilotError::OperatorMismatch { selected_by: "a".into(), confirmed_by: "b".into() },
+            CopilotError::MissingConfirmationToken,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: CopilotError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+        assert_eq!(variants.len(), 11);
+    }
+
+    #[test]
+    fn copilot_error_display_all_unique() {
+        let variants: Vec<CopilotError> = vec![
+            CopilotError::MissingRecommendations,
+            CopilotError::InvalidProbability { field: "a".into(), value: 0 },
+            CopilotError::InvalidField { field: "a".into() },
+            CopilotError::InvalidConfidenceBand { metric: "a".into() },
+            CopilotError::InvalidDecisionBoundaryHint { metric: "a".into() },
+            CopilotError::MissingSnapshotForRollback { action_type: "a".into(), target_extension: "b".into() },
+            CopilotError::InvalidRollbackWindow { action_type: "a".into(), target_extension: "b".into() },
+            CopilotError::UnauthorizedRole { role: OperatorRole::Viewer, action: "a".into() },
+            CopilotError::RecommendationRankOutOfRange { requested_rank: 1, available: 1 },
+            CopilotError::OperatorMismatch { selected_by: "a".into(), confirmed_by: "b".into() },
+            CopilotError::MissingConfirmationToken,
+        ];
+        let displays: std::collections::BTreeSet<String> = variants.iter().map(|e| e.to_string()).collect();
+        assert_eq!(displays.len(), 11);
+    }
 }

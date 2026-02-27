@@ -7358,4 +7358,392 @@ mod tests {
         let closure = CapabilityWitness::dependency_transitive_closure(&cap_a, &deps);
         assert!(closure.is_empty());
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 session 5 --
+
+    #[test]
+    fn validator_detects_empty_required_set() {
+        let mut witness = build_test_witness();
+        witness.required_capabilities.clear();
+        let errors = WitnessValidator::new().validate(&witness);
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, WitnessError::EmptyRequiredSet)),
+            "validator should detect empty required set: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn validator_returns_multiple_errors() {
+        let mut witness = build_test_witness();
+        witness.schema_version = WitnessSchemaVersion {
+            major: 99,
+            minor: 0,
+        };
+        witness.required_capabilities.clear();
+        let errors = WitnessValidator::new().validate(&witness);
+        assert!(
+            errors.len() >= 2,
+            "expected multiple validation errors, got {}: {errors:?}",
+            errors.len()
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, WitnessError::IncompatibleSchema { .. }))
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, WitnessError::EmptyRequiredSet))
+        );
+    }
+
+    #[test]
+    fn builder_default_confidence_all_zero() {
+        let cap = Capability::new("read");
+        let witness = WitnessBuilder::new(
+            test_extension_id(),
+            test_policy_id(),
+            SecurityEpoch::from_raw(1),
+            1000,
+            test_signing_key(),
+        )
+        .require(cap.clone())
+        .proof(make_proof(&cap))
+        .build()
+        .unwrap();
+        assert_eq!(witness.confidence.n_trials, 0);
+        assert_eq!(witness.confidence.n_successes, 0);
+        assert_eq!(witness.confidence.lower_millionths, 0);
+        assert_eq!(witness.confidence.upper_millionths, 0);
+    }
+
+    #[test]
+    fn store_insert_active_witness_updates_active_pair() {
+        let mut store = WitnessStore::new();
+        let mut witness = build_test_witness();
+        let ext_id = witness.extension_id.clone();
+        witness.lifecycle_state = LifecycleState::Active;
+        let wid = witness.witness_id.clone();
+        store.insert(witness);
+        assert_eq!(store.len(), 1);
+        let active = store.active_for_extension(&ext_id);
+        assert!(
+            active.is_some(),
+            "active_for_extension should find the witness"
+        );
+        assert_eq!(active.unwrap().witness_id, wid);
+    }
+
+    #[test]
+    fn apply_promotion_report_idempotent_for_proofs() {
+        let cap = Capability::new("read");
+        let mut witness = WitnessBuilder::new(
+            test_extension_id(),
+            test_policy_id(),
+            SecurityEpoch::from_raw(1),
+            1000,
+            test_signing_key(),
+        )
+        .require(cap.clone())
+        .proof(make_proof(&cap))
+        .build()
+        .unwrap();
+        let input = promotion_theorem_input_for(&witness);
+        let report = witness.evaluate_promotion_theorems(&input).unwrap();
+        assert!(report.all_passed);
+        witness.apply_promotion_theorem_report(&report);
+        let count_after_first = witness
+            .proof_obligations
+            .iter()
+            .filter(|p| p.kind == ProofKind::PolicyTheoremCheck)
+            .count();
+        witness.apply_promotion_theorem_report(&report);
+        let count_after_second = witness
+            .proof_obligations
+            .iter()
+            .filter(|p| p.kind == ProofKind::PolicyTheoremCheck)
+            .count();
+        assert_eq!(
+            count_after_first, count_after_second,
+            "applying same report twice must not duplicate proofs"
+        );
+    }
+
+    #[test]
+    fn pipeline_query_by_policy_id() {
+        let head_signing_key = SigningKey::from_bytes([77u8; 32]);
+        let mut pipeline = WitnessPublicationPipeline::new(
+            SecurityEpoch::from_raw(500),
+            head_signing_key,
+            WitnessPublicationConfig {
+                checkpoint_interval: 8,
+                policy_id: "policy-filter-test".to_string(),
+                governance_ledger_config: None,
+            },
+        )
+        .unwrap();
+        let w1 = build_promoted_witness(90);
+        let policy_id = w1.policy_id.clone();
+        pipeline.publish_witness(w1, 100).unwrap();
+
+        let matches = pipeline.query(&WitnessPublicationQuery {
+            extension_id: None,
+            policy_id: Some(policy_id),
+            epoch: None,
+            content_hash: None,
+            include_revoked: true,
+        });
+        assert_eq!(matches.len(), 1);
+
+        let bogus_policy = engine_object_id::derive_id(
+            ObjectDomain::PolicyObject,
+            "bogus",
+            &SchemaId::from_definition(b"Bogus.v1"),
+            b"nope",
+        )
+        .unwrap();
+        let no_match = pipeline.query(&WitnessPublicationQuery {
+            extension_id: None,
+            policy_id: Some(bogus_policy),
+            epoch: None,
+            content_hash: None,
+            include_revoked: true,
+        });
+        assert!(no_match.is_empty());
+    }
+
+    #[test]
+    fn store_serde_roundtrip_preserves_active_pairs() {
+        let mut store = WitnessStore::new();
+        let mut witness = build_test_witness();
+        let ext_id = witness.extension_id.clone();
+        witness.lifecycle_state = LifecycleState::Active;
+        let wid = witness.witness_id.clone();
+        store.insert(witness);
+        assert!(store.active_for_extension(&ext_id).is_some());
+
+        let json = serde_json::to_string(&store).unwrap();
+        let restored: WitnessStore = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.len(), 1);
+        let active = restored.active_for_extension(&ext_id);
+        assert!(
+            active.is_some(),
+            "active_pairs must survive serde roundtrip"
+        );
+        assert_eq!(active.unwrap().witness_id, wid);
+    }
+
+    #[test]
+    fn witness_index_store_migrate_schema_emits_event() {
+        use crate::storage_adapter::InMemoryStorageAdapter;
+        let adapter = InMemoryStorageAdapter::new();
+        let mut store = WitnessIndexStore::new(adapter);
+        let ctx = test_event_context();
+        let _result = store.migrate_schema(WITNESS_INDEX_SCHEMA_VERSION, &ctx);
+        assert!(
+            !store.events().is_empty(),
+            "migrate_schema must emit at least one event"
+        );
+        assert_eq!(store.events()[0].event, "migrate_schema");
+        assert_eq!(store.events()[0].component, "capability_witness_index");
+    }
+
+    // -- Enrichment: PearlTower 2026-02-26 session 9 --
+
+    #[test]
+    fn pipeline_log_entries_populated_after_publish() {
+        let head_key = SigningKey::from_bytes([90u8; 32]);
+        let mut pipeline = WitnessPublicationPipeline::new(
+            SecurityEpoch::from_raw(1),
+            head_key,
+            WitnessPublicationConfig::default(),
+        )
+        .unwrap();
+        assert!(pipeline.log_entries().is_empty(), "empty before publish");
+        let w = build_promoted_witness(90);
+        pipeline.publish_witness(w, 100).unwrap();
+        assert_eq!(pipeline.log_entries().len(), 1);
+        assert_eq!(
+            pipeline.log_entries()[0].kind,
+            PublicationEntryKind::Publish
+        );
+    }
+
+    #[test]
+    fn denial_record_evidence_id_some_serde_roundtrip() {
+        let eid = engine_object_id::derive_id(
+            ObjectDomain::EvidenceRecord,
+            "denial-evidence",
+            &SchemaId::from_definition(b"DenialEvidence.v1"),
+            b"ev-001",
+        )
+        .unwrap();
+        let dr = DenialRecord {
+            capability: Capability::new("network"),
+            reason: "denied by policy".to_string(),
+            evidence_id: Some(eid.clone()),
+        };
+        let json = serde_json::to_string(&dr).unwrap();
+        let restored: DenialRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.evidence_id, Some(eid));
+    }
+
+    #[test]
+    fn witness_schema_version_ord_ordering() {
+        let v1_0 = WitnessSchemaVersion { major: 1, minor: 0 };
+        let v1_1 = WitnessSchemaVersion { major: 1, minor: 1 };
+        let v2_0 = WitnessSchemaVersion { major: 2, minor: 0 };
+        assert!(v1_0 < v1_1, "1.0 < 1.1");
+        assert!(v1_1 < v2_0, "1.1 < 2.0");
+        assert!(v1_0 < v2_0, "1.0 < 2.0");
+    }
+
+    #[test]
+    fn validator_passes_zero_trial_confidence() {
+        let cap = Capability::new("read");
+        let witness = WitnessBuilder::new(
+            test_extension_id(),
+            test_policy_id(),
+            SecurityEpoch::from_raw(1),
+            1000,
+            test_signing_key(),
+        )
+        .require(cap.clone())
+        .proof(make_proof(&cap))
+        .confidence(ConfidenceInterval::from_trials(0, 0))
+        .build()
+        .unwrap();
+        let validator = WitnessValidator::new();
+        let errors = validator.validate(&witness);
+        assert!(
+            !errors.iter().any(|e| matches!(e, WitnessError::InvalidConfidence { .. })),
+            "zero-trial confidence must not trigger InvalidConfidence"
+        );
+    }
+
+    #[test]
+    fn store_by_state_revoked() {
+        let witness = build_test_witness();
+        let mut store = WitnessStore::new();
+        let wid = witness.witness_id.clone();
+        store.insert(witness);
+        store.transition(&wid, LifecycleState::Validated).unwrap();
+        store.transition(&wid, LifecycleState::Promoted).unwrap();
+        store.transition(&wid, LifecycleState::Active).unwrap();
+        store.transition(&wid, LifecycleState::Revoked).unwrap();
+        assert_eq!(store.by_state(LifecycleState::Revoked).len(), 1);
+        assert_eq!(store.by_state(LifecycleState::Active).len(), 0);
+    }
+
+    #[test]
+    fn structured_events_error_code_for_failed_theorem() {
+        let cap_r = Capability::new("read");
+        let cap_w = Capability::new("write");
+        let witness = WitnessBuilder::new(
+            test_extension_id(),
+            test_policy_id(),
+            SecurityEpoch::from_raw(1),
+            1000,
+            test_signing_key(),
+        )
+        .require(cap_r.clone())
+        .require(cap_w.clone())
+        .proof(make_proof(&cap_r))
+        .proof(make_proof(&cap_w))
+        .build()
+        .unwrap();
+        // Manifest missing cap_w → AttenuationLegality fails
+        let input = PromotionTheoremInput {
+            source_capability_sets: vec![SourceCapabilitySet {
+                source_id: "src".to_string(),
+                capabilities: BTreeSet::from([cap_r.clone(), cap_w]),
+            }],
+            manifest_capabilities: BTreeSet::from([cap_r]),
+            capability_lattice: BTreeMap::new(),
+            non_interference_dependencies: BTreeMap::new(),
+            custom_extensions: Vec::new(),
+        };
+        let report = witness.evaluate_promotion_theorems(&input).unwrap();
+        let events = report.structured_events("t1", "d1", "p1");
+        let failed_event = events
+            .iter()
+            .find(|e| e.outcome == "fail" && e.event.contains("attenuation"))
+            .expect("should have a failed attenuation event");
+        assert!(
+            failed_event.error_code.is_some(),
+            "failed theorem must have error_code"
+        );
+        assert!(
+            failed_event
+                .error_code
+                .as_deref()
+                .unwrap()
+                .contains("attenuation"),
+            "error_code should mention the theorem kind"
+        );
+    }
+
+    #[test]
+    fn unsigned_bytes_sensitive_to_denied_capabilities() {
+        let cap = Capability::new("read");
+        let cap_denied = Capability::new("admin");
+        let w_no_deny = WitnessBuilder::new(
+            test_extension_id(),
+            test_policy_id(),
+            SecurityEpoch::from_raw(1),
+            1000,
+            test_signing_key(),
+        )
+        .require(cap.clone())
+        .proof(make_proof(&cap))
+        .build()
+        .unwrap();
+        let w_with_deny = WitnessBuilder::new(
+            test_extension_id(),
+            test_policy_id(),
+            SecurityEpoch::from_raw(1),
+            1000,
+            test_signing_key(),
+        )
+        .require(cap.clone())
+        .proof(make_proof(&cap))
+        .deny(cap_denied, "not needed")
+        .build()
+        .unwrap();
+        assert_ne!(
+            w_no_deny.unsigned_bytes(),
+            w_with_deny.unsigned_bytes(),
+            "adding a denied capability must change unsigned_bytes"
+        );
+    }
+
+    #[test]
+    fn passing_theorem_counterexample_is_none() {
+        let cap = Capability::new("read");
+        let witness = WitnessBuilder::new(
+            test_extension_id(),
+            test_policy_id(),
+            SecurityEpoch::from_raw(1),
+            1000,
+            test_signing_key(),
+        )
+        .require(cap.clone())
+        .proof(make_proof(&cap))
+        .build()
+        .unwrap();
+        let report = witness
+            .evaluate_promotion_theorems(&promotion_theorem_input_for(&witness))
+            .unwrap();
+        assert!(report.all_passed);
+        for result in &report.results {
+            assert!(
+                result.counterexample.is_none(),
+                "passing theorem {} should have no counterexample",
+                result.theorem
+            );
+        }
+    }
 }

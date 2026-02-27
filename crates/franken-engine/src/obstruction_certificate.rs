@@ -3975,15 +3975,9 @@ mod tests {
     fn collect_debt_codes_includes_plan_debt_code_when_infeasible() {
         let schema = SchemaId::from_definition(b"test.enrichment.v1");
         let plan = FallbackPlan {
-            id: derive_id(ObjectDomain::EvidenceRecord, "test-plan", &schema, b"p1")
+            id: derive_id(ObjectDomain::EvidenceRecord, "test-plan", &schema, b"p1").unwrap(),
+            certificate_id: derive_id(ObjectDomain::EvidenceRecord, "test-cert", &schema, b"c1")
                 .unwrap(),
-            certificate_id: derive_id(
-                ObjectDomain::EvidenceRecord,
-                "test-cert",
-                &schema,
-                b"c1",
-            )
-            .unwrap(),
             actions: vec![],
             recommended_action_index: 0,
             has_feasible_resolution: false,
@@ -3991,8 +3985,7 @@ mod tests {
             plan_hash: ContentHash::compute(b"infeasible-plan"),
         };
         let cert = ObstructionCertificate {
-            id: derive_id(ObjectDomain::EvidenceRecord, "test-cert", &schema, b"c1")
-                .unwrap(),
+            id: derive_id(ObjectDomain::EvidenceRecord, "test-cert", &schema, b"c1").unwrap(),
             source_violation_id: derive_id(
                 ObjectDomain::EvidenceRecord,
                 "test-viol",
@@ -4066,15 +4059,9 @@ mod tests {
     fn infeasible_certificates_includes_no_plan_cert() {
         let schema = SchemaId::from_definition(b"test.enrichment.v1");
         let cert = ObstructionCertificate {
-            id: derive_id(ObjectDomain::EvidenceRecord, "test", &schema, b"c")
+            id: derive_id(ObjectDomain::EvidenceRecord, "test", &schema, b"c").unwrap(),
+            source_violation_id: derive_id(ObjectDomain::EvidenceRecord, "test", &schema, b"v")
                 .unwrap(),
-            source_violation_id: derive_id(
-                ObjectDomain::EvidenceRecord,
-                "test",
-                &schema,
-                b"v",
-            )
-            .unwrap(),
             violation_kind_tag: "test-kind".to_string(),
             severity: SeverityScore::critical(),
             debt_code: "TEST-DEBT".to_string(),

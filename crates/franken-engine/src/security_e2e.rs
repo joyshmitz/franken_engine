@@ -1640,8 +1640,7 @@ mod tests {
         r.evidence_produced = true;
         r.invariant_violations = 3;
         r.security_events = 7;
-        r.details
-            .insert("key1".to_string(), "value1".to_string());
+        r.details.insert("key1".to_string(), "value1".to_string());
         let cloned = r.clone();
         assert_eq!(cloned.category, r.category);
         assert_eq!(cloned.scenario_name, r.scenario_name);

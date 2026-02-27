@@ -1754,4 +1754,153 @@ mod tests {
                 .unwrap();
         assert_eq!(id1, id2);
     }
+
+    // -- Enrichment: serde roundtrips and Display tests (PearlTower 2026-02-26) --
+
+    #[test]
+    fn trust_zone_class_display_all_unique() {
+        let displays: std::collections::BTreeSet<String> = TrustZoneClass::ORDERED
+            .iter()
+            .map(|c| c.to_string())
+            .collect();
+        assert_eq!(displays.len(), 4);
+    }
+
+    #[test]
+    fn zone_event_type_serde_roundtrip_all() {
+        let variants = [
+            ZoneEventType::Assignment,
+            ZoneEventType::CeilingCheck,
+            ZoneEventType::ZoneTransition,
+            ZoneEventType::CrossZoneReference,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: ZoneEventType = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn zone_event_outcome_serde_roundtrip_all() {
+        let variants = [
+            ZoneEventOutcome::Pass,
+            ZoneEventOutcome::Allowed,
+            ZoneEventOutcome::Assigned,
+            ZoneEventOutcome::Migrated,
+            ZoneEventOutcome::CeilingExceeded,
+            ZoneEventOutcome::Denied,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: ZoneEventOutcome = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn reference_type_serde_roundtrip_all() {
+        let variants = [ReferenceType::Provenance, ReferenceType::Authority];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: ReferenceType = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn trust_zone_error_display_all_unique() {
+        let errors: Vec<TrustZoneError> = vec![
+            TrustZoneError::ZoneAlreadyExists {
+                zone_name: "z".into(),
+            },
+            TrustZoneError::ParentZoneMissing {
+                zone_name: "z".into(),
+                parent_zone: "p".into(),
+            },
+            TrustZoneError::ZoneMissing {
+                zone_name: "z".into(),
+            },
+            TrustZoneError::CeilingExceedsParent {
+                zone_name: "z".into(),
+                exceeded: BTreeSet::new(),
+            },
+            TrustZoneError::CapabilityCeilingExceeded {
+                zone_name: "z".into(),
+                requested: BTreeSet::new(),
+                ceiling: BTreeSet::new(),
+            },
+            TrustZoneError::PolicyGateDenied {
+                entity_id: "e".into(),
+                from_zone: "a".into(),
+                to_zone: "b".into(),
+            },
+            TrustZoneError::CrossZoneAuthorityLeak {
+                source_zone: "a".into(),
+                target_zone: "b".into(),
+            },
+            TrustZoneError::CrossZoneProvenanceNotPermitted {
+                source_zone: "a".into(),
+                target_zone: "b".into(),
+            },
+        ];
+        let displays: std::collections::BTreeSet<String> =
+            errors.iter().map(|e| e.to_string()).collect();
+        assert_eq!(displays.len(), errors.len());
+    }
+
+    #[test]
+    fn zone_create_request_serde_roundtrip_with_parent() {
+        let req = ZoneCreateRequest::new("team-a", TrustZoneClass::Team, 1, "admin")
+            .with_parent("private");
+        let json = serde_json::to_string(&req).unwrap();
+        let back: ZoneCreateRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(req, back);
+    }
+
+    #[test]
+    fn cross_zone_reference_request_enrichment_serde_roundtrip() {
+        let req = CrossZoneReferenceRequest {
+            source_zone: "team".into(),
+            target_zone: "community".into(),
+            reference_type: ReferenceType::Provenance,
+            trace_id: "trace-1".into(),
+            decision_id: Some("dec-1".into()),
+            policy_id: Some("pol-1".into()),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let back: CrossZoneReferenceRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(req, back);
+    }
+
+    #[test]
+    fn zone_event_enrichment_serde_roundtrip() {
+        let event = ZoneEvent {
+            trace_id: "trace-1".into(),
+            decision_id: None,
+            policy_id: None,
+            component: "trust_zone".into(),
+            event: ZoneEventType::Assignment,
+            outcome: ZoneEventOutcome::Assigned,
+            error_code: None,
+            entity_id: Some("ext-a".into()),
+            zone_name: Some("team".into()),
+            from_zone: None,
+            to_zone: None,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: ZoneEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, back);
+    }
+
+    #[test]
+    fn zone_hierarchy_enrichment_serde_roundtrip() {
+        let h = ZoneHierarchy::standard("root", 1).unwrap();
+        let json = serde_json::to_string(&h).unwrap();
+        let back: ZoneHierarchy = serde_json::from_str(&json).unwrap();
+        // Verify standard zones are present in roundtripped hierarchy
+        assert!(back.zone("owner").is_some());
+        assert!(back.zone("team").is_some());
+        assert!(back.zone("community").is_some());
+    }
 }

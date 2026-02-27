@@ -1609,4 +1609,32 @@ mod tests {
             assert_eq!(format!("{:?}", v), outputs[i]);
         }
     }
+
+    // -- Enrichment: serde roundtrips for untested types (PearlTower 2026-02-26) --
+
+    #[test]
+    fn control_action_response_serde_roundtrip() {
+        let r = ControlActionResponse {
+            extension_id: "ext-a".into(),
+            action: ControlAction::Quarantine,
+            accepted: true,
+            decision_id: "d-1".into(),
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        let back: ControlActionResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(r, back);
+    }
+
+    #[test]
+    fn replay_control_response_serde_roundtrip() {
+        let r = ReplayControlResponse {
+            session_id: "sess-1".into(),
+            state: "running".into(),
+            trace_id: Some("t-1".into()),
+            note: "replay in progress".into(),
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        let back: ReplayControlResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(r, back);
+    }
 }

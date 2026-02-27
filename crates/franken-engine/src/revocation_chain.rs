@@ -2360,8 +2360,7 @@ mod tests {
 
     #[test]
     fn rebuild_from_empty_events_no_head_succeeds() {
-        let chain =
-            RevocationChain::rebuild_from_events(TEST_ZONE, vec![], None).unwrap();
+        let chain = RevocationChain::rebuild_from_events(TEST_ZONE, vec![], None).unwrap();
         assert!(chain.is_empty());
         assert_eq!(chain.len(), 0);
         assert!(chain.head().is_none());
@@ -2377,8 +2376,7 @@ mod tests {
             zone: TEST_ZONE.to_string(),
             signature: Signature::from_bytes(SIGNATURE_SENTINEL),
         };
-        let err =
-            RevocationChain::rebuild_from_events(TEST_ZONE, vec![], Some(head)).unwrap_err();
+        let err = RevocationChain::rebuild_from_events(TEST_ZONE, vec![], Some(head)).unwrap_err();
         assert!(matches!(err, ChainError::ChainIntegrity { .. }));
         assert!(err.to_string().contains("empty chain must not have a head"));
     }
@@ -2462,8 +2460,7 @@ mod tests {
         let mut events = chain.events().to_vec();
         events[0].event_seq = 5; // should be 0
 
-        let err =
-            RevocationChain::rebuild_from_events(TEST_ZONE, events, None).unwrap_err();
+        let err = RevocationChain::rebuild_from_events(TEST_ZONE, events, None).unwrap_err();
         assert!(matches!(err, ChainError::SequenceDiscontinuity { .. }));
     }
 
@@ -2490,8 +2487,7 @@ mod tests {
         let mut head = chain.head().cloned().unwrap();
         head.chain_hash = ContentHash::compute(b"tampered"); // wrong hash
 
-        let err =
-            RevocationChain::rebuild_from_events(TEST_ZONE, events, Some(head)).unwrap_err();
+        let err = RevocationChain::rebuild_from_events(TEST_ZONE, events, Some(head)).unwrap_err();
         assert!(matches!(err, ChainError::ChainIntegrity { .. }));
         assert!(err.to_string().contains("chain_hash"));
     }

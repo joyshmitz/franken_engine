@@ -4884,4 +4884,151 @@ expiry_date = "2030-01-01"
         let result = parse_ifc_observed_outcome("evidence_id:");
         assert!(result.evidence_id.is_none());
     }
+
+    // -- Enrichment: serde roundtrips for untested types (PearlTower 2026-02-27) --
+
+    #[test]
+    fn conformance_minimized_repro_artifact_serde_roundtrip() {
+        let mut versions = BTreeMap::new();
+        versions.insert("franken_engine".to_string(), "0.1.0".to_string());
+        let artifact = ConformanceMinimizedReproArtifact {
+            schema_version: ConformanceMinimizedReproArtifact::CURRENT_SCHEMA.to_string(),
+            artifact_id: "art-001".to_string(),
+            failure_id: "fail-001".to_string(),
+            boundary_surface: "parser".to_string(),
+            failure_class: ConformanceFailureClass::Breaking,
+            severity: ConformanceFailureSeverity::Critical,
+            version_combination: versions,
+            first_seen_commit: "abc123".to_string(),
+            regression_commit: Some("def456".to_string()),
+            environment: ConformanceReproEnvironment {
+                locale: "C".to_string(),
+                timezone: "UTC".to_string(),
+                gc_schedule: "deterministic".to_string(),
+                rust_toolchain: "nightly-2026-02-20".to_string(),
+                os: "linux".to_string(),
+                arch: "x86_64".to_string(),
+            },
+            replay: ConformanceReplayContract {
+                deterministic_seed: 42,
+                replay_command: "cargo test".to_string(),
+                verification_command: "cargo test --verify".to_string(),
+                verification_digest: "digest-hex".to_string(),
+            },
+            expected_output: "expected".to_string(),
+            actual_output: "actual".to_string(),
+            delta_classification: vec![ConformanceDeltaClassification {
+                kind: ConformanceDeltaKind::BehavioralSemanticShift,
+                field: Some("output".to_string()),
+                expected: Some("expected".to_string()),
+                actual: Some("actual".to_string()),
+                detail: "output differs".to_string(),
+            }],
+            minimization: ConformanceMinimizationSummary {
+                strategy: "ddmin".to_string(),
+                original_source_lines: 100,
+                minimized_source_lines: 10,
+                original_expected_lines: 50,
+                minimized_expected_lines: 5,
+                original_actual_lines: 50,
+                minimized_actual_lines: 5,
+                preserved_failure_class: true,
+            },
+            failing_vector: ConformanceMinimizedFailingVector {
+                asset_id: "asset-001".to_string(),
+                source_donor: "test262".to_string(),
+                semantic_domain: "strict-mode".to_string(),
+                normative_reference: "sec-14.6".to_string(),
+                fixture: DonorFixture {
+                    donor_harness: "test262".to_string(),
+                    source: "var x = 1;".to_string(),
+                    observed_output: "actual".to_string(),
+                },
+                expected_output: "expected".to_string(),
+            },
+            evidence_ledger_id: "ev-001".to_string(),
+            linked_run: ConformanceRunLinkage {
+                run_id: "run-001".to_string(),
+                trace_id: "trace-001".to_string(),
+                decision_id: "dec-001".to_string(),
+                ci_run_id: Some("ci-001".to_string()),
+            },
+            issue_tracker: ConformanceIssueLink {
+                tracker: "beads".to_string(),
+                issue_id: "bd-test".to_string(),
+            },
+        };
+        let json = serde_json::to_string(&artifact).unwrap();
+        let back: ConformanceMinimizedReproArtifact = serde_json::from_str(&json).unwrap();
+        assert_eq!(artifact, back);
+    }
+
+    #[test]
+    fn conformance_run_result_serde_roundtrip() {
+        let result = ConformanceRunResult {
+            run_id: "run-001".to_string(),
+            asset_manifest_hash: "hash-001".to_string(),
+            logs: vec![ConformanceLogEvent {
+                trace_id: "t-001".to_string(),
+                decision_id: "d-001".to_string(),
+                policy_id: "p-001".to_string(),
+                component: "parser".to_string(),
+                event: "eval".to_string(),
+                outcome: "pass".to_string(),
+                error_code: None,
+                asset_id: "a-001".to_string(),
+                workload_id: "w-001".to_string(),
+                semantic_domain: "strict".to_string(),
+                category: Some("ifc".to_string()),
+                source_labels: vec!["secret".to_string()],
+                sink_clearances: vec!["public".to_string()],
+                flow_path_type: Some("direct".to_string()),
+                expected_outcome: Some("pass".to_string()),
+                actual_outcome: Some("pass".to_string()),
+                evidence_type: Some("assertion".to_string()),
+                evidence_id: Some("ev-01".to_string()),
+                duration_us: 123,
+                error_detail: None,
+            }],
+            summary: ConformanceRunSummary {
+                run_id: "run-001".to_string(),
+                asset_manifest_hash: "hash-001".to_string(),
+                total_assets: 10,
+                passed: 9,
+                failed: 1,
+                waived: 0,
+                errored: 0,
+                env_fingerprint: "fp-001".to_string(),
+            },
+            minimized_repros: vec![],
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let back: ConformanceRunResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(result, back);
+        assert_eq!(back.logs.len(), 1);
+    }
+
+    #[test]
+    fn conformance_run_result_empty_logs_serde_roundtrip() {
+        let result = ConformanceRunResult {
+            run_id: "run-empty".to_string(),
+            asset_manifest_hash: "hash-empty".to_string(),
+            logs: vec![],
+            summary: ConformanceRunSummary {
+                run_id: "run-empty".to_string(),
+                asset_manifest_hash: "hash-empty".to_string(),
+                total_assets: 0,
+                passed: 0,
+                failed: 0,
+                waived: 0,
+                errored: 0,
+                env_fingerprint: "fp-empty".to_string(),
+            },
+            minimized_repros: vec![],
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let back: ConformanceRunResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(result, back);
+        assert!(back.logs.is_empty());
+    }
 }
