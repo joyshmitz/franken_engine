@@ -2574,7 +2574,9 @@ fn split_var_declarator_assignment(segment: &str) -> (&str, Option<&str>) {
             '}' => brace_depth = brace_depth.saturating_sub(1),
             '=' if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 => {
                 let prev = segment[..index].chars().next_back();
-                let next = segment[index.saturating_add(ch.len_utf8())..].chars().next();
+                let next = segment[index.saturating_add(ch.len_utf8())..]
+                    .chars()
+                    .next();
                 let part_of_comparison =
                     matches!(prev, Some('=') | Some('!') | Some('<') | Some('>'))
                         || matches!(next, Some('='));
@@ -3421,7 +3423,10 @@ mod tests {
         let tree = parser.parse("variant", ParseGoal::Script).expect("parse");
         match &tree.body[0] {
             Statement::Expression(expr) => {
-                assert_eq!(expr.expression, Expression::Identifier("variant".to_string()));
+                assert_eq!(
+                    expr.expression,
+                    Expression::Identifier("variant".to_string())
+                );
             }
             _ => panic!("expected expression statement"),
         }

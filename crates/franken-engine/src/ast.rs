@@ -293,7 +293,10 @@ pub struct VariableDeclarator {
 impl VariableDeclarator {
     pub fn canonical_value(&self) -> CanonicalValue {
         let mut map = BTreeMap::new();
-        map.insert("name".to_string(), CanonicalValue::String(self.name.clone()));
+        map.insert(
+            "name".to_string(),
+            CanonicalValue::String(self.name.clone()),
+        );
         map.insert(
             "initializer".to_string(),
             self.initializer
@@ -1323,10 +1326,7 @@ mod tests {
             match expr.canonical_value() {
                 CanonicalValue::Map(map) => {
                     if let Some(CanonicalValue::String(k)) = map.get("kind") {
-                        assert!(
-                            kinds.insert(k.clone()),
-                            "duplicate canonical kind: {k}"
-                        );
+                        assert!(kinds.insert(k.clone()), "duplicate canonical kind: {k}");
                     } else {
                         panic!("missing kind key");
                     }

@@ -315,7 +315,10 @@ fn parser_event_ast_equivalence_replay_scenarios_are_deterministic() {
         .map(|scenario| scenario.scenario_id.as_str())
         .collect::<Vec<_>>();
     scenario_ids.sort_unstable();
-    assert_eq!(scenario_ids, ["full", "malformed", "parity", "replay", "tamper"]);
+    assert_eq!(
+        scenario_ids,
+        ["full", "malformed", "parity", "replay", "tamper"]
+    );
 
     for scenario in &fixture.replay_scenarios {
         assert_eq!(scenario.expected_outcome, "pass");

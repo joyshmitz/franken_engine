@@ -3047,10 +3047,7 @@ mod tests {
         // Now compensating — should be resumable.
         let resumable = orch.resumable_sagas();
         assert_eq!(resumable.len(), 1);
-        assert!(matches!(
-            resumable[0].state,
-            SagaState::Compensating { .. }
-        ));
+        assert!(matches!(resumable[0].state, SagaState::Compensating { .. }));
     }
 
     // -- Enrichment: next_compensation_step on nonexistent --

@@ -648,8 +648,13 @@ pub fn evaluate_release_gate(
     }
 
     let pass = findings.is_empty();
-    let decision_id =
-        decision_id_for(input, thresholds, &findings, pass, replay_multiplier_millionths);
+    let decision_id = decision_id_for(
+        input,
+        thresholds,
+        &findings,
+        pass,
+        replay_multiplier_millionths,
+    );
     let rollback_token = format!("rollback-{}", &decision_id[..16]);
 
     let mut logs = Vec::new();

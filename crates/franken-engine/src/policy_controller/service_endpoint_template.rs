@@ -1457,7 +1457,8 @@ mod tests {
     #[test]
     fn endpoint_failure_clone_equality() {
         let mut f = EndpointFailure::new("CLONE-ERR", "clone failure msg");
-        f.details.insert("detail_key".to_string(), "detail_val".to_string());
+        f.details
+            .insert("detail_key".to_string(), "detail_val".to_string());
         let cloned = f.clone();
         assert_eq!(f, cloned);
     }
@@ -1562,7 +1563,10 @@ mod tests {
         let mut seen = std::collections::BTreeSet::new();
         for v in &variants {
             let repr = format!("{:?}", v);
-            assert!(seen.insert(repr), "duplicate Debug output for ControlAction variant");
+            assert!(
+                seen.insert(repr),
+                "duplicate Debug output for ControlAction variant"
+            );
         }
         assert_eq!(seen.len(), 4);
     }

@@ -1173,10 +1173,7 @@ mod tests {
             replacement_lineage_ids: vec!["lin-exact".into()],
         };
         let decision = evaluate_publication_gate(&input, &test_context()).unwrap();
-        assert!(
-            decision.publish_allowed,
-            "exactly 3x should pass the gate"
-        );
+        assert!(decision.publish_allowed, "exactly 3x should pass the gate");
     }
 
     // ── std::error::Error::source ───────────────────────────────────

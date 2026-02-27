@@ -1151,6 +1151,9 @@ mod tests {
         };
         let debug1 = format!("{:?}", mk());
         let debug2 = format!("{:?}", mk());
-        assert_eq!(debug1, debug2, "Debug output must be deterministic across runs");
+        assert_eq!(
+            debug1, debug2,
+            "Debug output must be deterministic across runs"
+        );
     }
 }

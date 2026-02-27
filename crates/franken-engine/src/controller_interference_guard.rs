@@ -3128,7 +3128,14 @@ mod tests {
 
     #[test]
     fn controller_registration_serde_roundtrip() {
-        let reg = registration("ctrl-a", &["cpu", "mem"], &["throttle"], 1_000_000, 5_000_000, "fast reader");
+        let reg = registration(
+            "ctrl-a",
+            &["cpu", "mem"],
+            &["throttle"],
+            1_000_000,
+            5_000_000,
+            "fast reader",
+        );
         let json = serde_json::to_string(&reg).unwrap();
         let back: ControllerRegistration = serde_json::from_str(&json).unwrap();
         assert_eq!(back, reg);

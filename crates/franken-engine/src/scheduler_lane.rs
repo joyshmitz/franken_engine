@@ -1662,7 +1662,11 @@ mod tests {
         .iter()
         .map(|l| l.to_string())
         .collect();
-        assert_eq!(displays.len(), 3, "all 3 lanes produce distinct display strings");
+        assert_eq!(
+            displays.len(),
+            3,
+            "all 3 lanes produce distinct display strings"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1698,13 +1702,21 @@ mod tests {
         lanes.sort();
         assert_eq!(
             lanes,
-            vec![SchedulerLane::Cancel, SchedulerLane::Timed, SchedulerLane::Ready]
+            vec![
+                SchedulerLane::Cancel,
+                SchedulerLane::Timed,
+                SchedulerLane::Ready
+            ]
         );
         // Re-sort to confirm determinism.
         lanes.sort();
         assert_eq!(
             lanes,
-            vec![SchedulerLane::Cancel, SchedulerLane::Timed, SchedulerLane::Ready]
+            vec![
+                SchedulerLane::Cancel,
+                SchedulerLane::Timed,
+                SchedulerLane::Ready
+            ]
         );
     }
 
@@ -1729,7 +1741,10 @@ mod tests {
             LaneError::EmptyTraceId,
         ];
         for err in &variants {
-            assert!(err.source().is_none(), "LaneError::source() should be None for all variants");
+            assert!(
+                err.source().is_none(),
+                "LaneError::source() should be None for all variants"
+            );
         }
     }
 
