@@ -6193,7 +6193,7 @@ mod tests {
             Capability::new("cap-b"),
             Capability::new("cap-c"),
         ];
-        let proofs: Vec<_> = caps.iter().map(|c| make_proof(c)).collect();
+        let proofs: Vec<_> = caps.iter().map(make_proof).collect();
         let mut builder = WitnessBuilder::new(
             test_extension_id(),
             test_policy_id(),

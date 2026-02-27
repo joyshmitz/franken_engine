@@ -2685,7 +2685,7 @@ mod tests {
 
     #[test]
     fn test_fallback_action_kind_ordering() {
-        let mut kinds = vec![
+        let mut kinds = [
             FallbackActionKind::Escalate,
             FallbackActionKind::Isolate,
             FallbackActionKind::Degrade,

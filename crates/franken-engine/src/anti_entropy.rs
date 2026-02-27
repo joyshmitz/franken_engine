@@ -2151,7 +2151,7 @@ mod tests {
         ] {
             let id = ObjectId {
                 content_hash: ContentHash::compute(b"variant"),
-                object_type: otype.clone(),
+                object_type: otype,
                 epoch: test_epoch(),
             };
             let json = serde_json::to_string(&id).unwrap();

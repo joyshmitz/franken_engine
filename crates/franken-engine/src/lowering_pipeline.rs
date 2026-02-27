@@ -1321,8 +1321,8 @@ mod tests {
     use super::*;
     use crate::ast::{
         ExportDeclaration, ExportKind, Expression, ExpressionStatement, ImportDeclaration,
-        ParseGoal, SourceSpan, Statement, SyntaxTree, VariableDeclaration,
-        VariableDeclarationKind, VariableDeclarator,
+        ParseGoal, SourceSpan, Statement, SyntaxTree, VariableDeclaration, VariableDeclarationKind,
+        VariableDeclarator,
     };
 
     fn span() -> SourceSpan {
@@ -1724,8 +1724,6 @@ mod tests {
     // ================================================================
     // Additional coverage tests
     // ================================================================
-
-    use crate::ast::{ExportDeclaration, ExportKind, ImportDeclaration};
 
     // -- LoweringContext --
 

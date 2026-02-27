@@ -1820,7 +1820,7 @@ mod tests {
 
         let stats = enforcer.stats();
         assert_eq!(stats.len(), 3);
-        for (_, s) in stats {
+        for s in stats.values() {
             assert_eq!(s.checks, 1);
             assert_eq!(s.cleared, 1);
             assert_eq!(s.denied, 0);

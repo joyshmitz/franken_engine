@@ -1421,7 +1421,7 @@ mod tests {
         let s = Severity::SubtreeRestart;
         let cloned = s;
         assert_eq!(s, cloned);
-        assert!(!(Severity::Restart == Severity::RootEscalation));
+        assert!(Severity::Restart != Severity::RootEscalation);
     }
 
     #[test]
