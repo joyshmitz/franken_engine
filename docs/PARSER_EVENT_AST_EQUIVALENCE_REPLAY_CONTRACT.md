@@ -61,6 +61,7 @@ One-command replay wrapper:
 
 ```bash
 ./scripts/e2e/parser_event_ast_equivalence_replay.sh
+./scripts/e2e/parser_event_ast_equivalence_replay.sh full
 ```
 
 Scenario-specific replay commands (all deterministic):
@@ -70,6 +71,7 @@ PARSER_EVENT_AST_EQUIVALENCE_SCENARIO=parity ./scripts/run_parser_event_ast_equi
 PARSER_EVENT_AST_EQUIVALENCE_SCENARIO=malformed ./scripts/run_parser_event_ast_equivalence.sh test
 PARSER_EVENT_AST_EQUIVALENCE_SCENARIO=tamper ./scripts/run_parser_event_ast_equivalence.sh test
 PARSER_EVENT_AST_EQUIVALENCE_SCENARIO=replay ./scripts/run_parser_event_ast_equivalence.sh test
+PARSER_EVENT_AST_EQUIVALENCE_SCENARIO=full ./scripts/run_parser_event_ast_equivalence.sh test
 ```
 
 ## Deterministic Execution Contract
@@ -108,4 +110,5 @@ cat artifacts/parser_event_ast_equivalence/<timestamp>/run_manifest.json
 cat artifacts/parser_event_ast_equivalence/<timestamp>/events.jsonl
 cat artifacts/parser_event_ast_equivalence/<timestamp>/commands.txt
 ./scripts/e2e/parser_event_ast_equivalence_replay.sh
+./scripts/e2e/parser_event_ast_equivalence_replay.sh full
 ```

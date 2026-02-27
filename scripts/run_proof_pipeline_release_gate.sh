@@ -13,6 +13,14 @@ echo "[bd-2rx] Running proof-release-gate unit tests (offloaded)..."
 rch exec -- env CARGO_TARGET_DIR="${TARGET_DIR}" \
   cargo test -p frankenengine-engine --lib proof_release_gate::tests::
 
+echo "[bd-2rx] Running proof-release-gate integration tests (offloaded)..."
+rch exec -- env CARGO_TARGET_DIR="${TARGET_DIR}" \
+  cargo test -p frankenengine-engine --test proof_release_gate_integration
+
+echo "[bd-2rx] Running proof-release-gate clippy checks (offloaded)..."
+rch exec -- env CARGO_TARGET_DIR="${TARGET_DIR}" \
+  cargo clippy -p frankenengine-engine --lib --test proof_release_gate_integration -- -D warnings
+
 echo "[bd-2rx] Running crate check for compile-active gate module (offloaded)..."
 rch exec -- env CARGO_TARGET_DIR="${TARGET_DIR}" \
   cargo check -p frankenengine-engine --lib

@@ -27,6 +27,14 @@ All conditions must pass:
 4. Independent replay verification must succeed for verified proofs.
 5. Replay-time multiplier must be <= `5.0x` (`5_000_000` millionths).
 6. Artifact bundle must be content-addressed (`cas://...`) with non-zero root.
+7. Comprehensive test/e2e/logging evidence must be present and pass fail-closed
+   quality thresholds:
+   - unit coverage >= `900_000` millionths
+   - mutation score >= `850_000` millionths
+   - executed failure-mode tests >= required failure-mode tests
+   - executed e2e scenarios >= required e2e scenarios
+   - structured logging artifacts present and fresh
+   - trace-correlated structured logs available for deterministic replay
 
 ## Failure Codes
 
@@ -37,6 +45,11 @@ All conditions must pass:
 - `independent_replay_failed`
 - `replay_multiplier_exceeded`
 - `archive_not_content_addressed`
+- `missing_test_evidence`
+- `test_evidence_below_threshold`
+- `logging_artifacts_missing`
+- `logging_artifacts_stale`
+- `logging_artifacts_uncorrelated`
 
 ## Structured Log Fields
 
@@ -56,6 +69,9 @@ Gate output logs emit stable keys:
 - `verification_time_ns`
 - `ir_diff_size_bytes`
 
+Test/e2e/logging quality failures are emitted via deterministic gate findings and
+surface through `release_gate_decision.error_code` plus finding details.
+
 ## Operator Commands (RCH Required)
 
 ```bash
@@ -65,7 +81,9 @@ Gate output logs emit stable keys:
 This script runs:
 
 1. `cargo test -p frankenengine-engine --lib proof_release_gate::tests::`
-2. `cargo check -p frankenengine-engine --lib`
+2. `cargo test -p frankenengine-engine --test proof_release_gate_integration`
+3. `cargo clippy -p frankenengine-engine --lib --test proof_release_gate_integration -- -D warnings`
+4. `cargo check -p frankenengine-engine --lib`
 
 Both are offloaded via `rch exec`.
 

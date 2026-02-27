@@ -415,6 +415,33 @@ Artifacts are written under:
 - `artifacts/frx_end_to_end_scenario_matrix/<timestamp>/events.jsonl`
 - `artifacts/frx_end_to_end_scenario_matrix/<timestamp>/commands.txt`
 
+## FRX Milestone/Release Test-Evidence Integrator Gate
+
+`bd-mjh3.20.6` binds FRX test-quality evidence into cut-line and release
+promotion decisions with fail-closed behavior for missing, stale, malformed, or
+unsigned signal artifacts.
+
+```bash
+# FRX milestone/release test-evidence integrator gate (rch-backed check + test + clippy)
+./scripts/run_frx_milestone_release_test_evidence_integrator_suite.sh ci
+
+# deterministic replay wrapper
+./scripts/e2e/frx_milestone_release_test_evidence_integrator_replay.sh ci
+```
+
+Contract and vectors:
+
+- [`docs/FRX_MILESTONE_RELEASE_TEST_EVIDENCE_INTEGRATOR_V1.md`](./docs/FRX_MILESTONE_RELEASE_TEST_EVIDENCE_INTEGRATOR_V1.md)
+- `docs/frx_milestone_release_test_evidence_integrator_v1.json`
+- `crates/franken-engine/src/milestone_release_test_evidence_integrator.rs`
+- `crates/franken-engine/tests/frx_milestone_release_test_evidence_integrator.rs`
+
+Artifacts are written under:
+
+- `artifacts/frx_milestone_release_test_evidence_integrator/<timestamp>/run_manifest.json`
+- `artifacts/frx_milestone_release_test_evidence_integrator/<timestamp>/events.jsonl`
+- `artifacts/frx_milestone_release_test_evidence_integrator/<timestamp>/commands.txt`
+
 ## Parser Phase0 Gate
 
 `bd-3spt` parser phase0 gate validates scalar-reference parser determinism, semantic fixture hashes, and artifact-bundle generation.
