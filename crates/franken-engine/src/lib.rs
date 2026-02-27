@@ -2,6 +2,7 @@
 
 pub mod activation_lifecycle;
 pub mod adversarial_campaign;
+pub mod adversarial_coevolution_harness;
 pub mod alloc_domain;
 pub mod ambient_authority;
 pub mod anti_entropy;
@@ -24,6 +25,7 @@ pub mod canonical_evidence_emitter;
 pub mod capability;
 pub mod capability_token;
 pub mod capability_witness;
+pub mod catastrophic_tail_tournament_gate;
 pub mod causal_replay;
 pub mod checkpoint;
 pub mod checkpoint_frontier;
@@ -115,6 +117,7 @@ pub mod marker_stream;
 pub mod migration_compatibility;
 pub mod migration_contract;
 pub mod migration_kit;
+pub mod milestone_release_test_evidence_integrator;
 pub mod mmr_proof;
 pub mod module_cache;
 pub mod module_compatibility_matrix;

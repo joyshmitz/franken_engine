@@ -1120,7 +1120,7 @@ pub struct PolicyBundle {
 // ---------------------------------------------------------------------------
 
 /// Configuration for the runtime decision context.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DecisionContextConfig {
     pub cvar_config: CvarConfig,
     pub conformal_config: ConformalConfig,

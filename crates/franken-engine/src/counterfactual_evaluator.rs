@@ -506,18 +506,18 @@ impl CounterfactualEvaluator {
             }
         }
         for (i, &p) in target.target_propensities_millionths.iter().enumerate() {
-            if p < 0 || p > MILLION {
+            if !(0..=MILLION).contains(&p) {
                 return Err(CounterfactualError::PropensityOutOfRange { index: i, value: p });
             }
         }
         // Validate model predictions length if present
-        if let Some(ref preds) = target.target_model_predictions_millionths {
-            if preds.len() != n {
-                return Err(CounterfactualError::ModelPredictionLengthMismatch {
-                    batch: n,
-                    predictions: preds.len(),
-                });
-            }
+        if let Some(ref preds) = target.target_model_predictions_millionths
+            && preds.len() != n
+        {
+            return Err(CounterfactualError::ModelPredictionLengthMismatch {
+                batch: n,
+                predictions: preds.len(),
+            });
         }
         Ok(())
     }
@@ -842,7 +842,7 @@ pub fn rank_by_safety(results: &[EvaluationResult]) -> Vec<(usize, i64)> {
         .enumerate()
         .map(|(i, r)| (i, r.improvement_envelope.lower_millionths))
         .collect();
-    ranked.sort_by(|a, b| b.1.cmp(&a.1));
+    ranked.sort_by_key(|b| std::cmp::Reverse(b.1));
     ranked
 }
 
@@ -1128,14 +1128,14 @@ mod tests {
     }
 
     #[test]
-    fn ips_zero_target_propensity_yields_zero() {
+    fn ips_zero_target_propensity_yields_zero_effective_samples() {
         let mut cfg = EvaluatorConfig::default();
         cfg.estimator = EstimatorKind::Ips;
         let mut e = CounterfactualEvaluator::new(cfg, BaselinePolicy::default()).unwrap();
         let batch = make_batch(10, 500_000, 500_000);
         let target = make_target(10, 0); // Target never takes this action
-        let result = e.evaluate(&batch, &target).unwrap();
-        assert_eq!(result.candidate_envelope.estimate_millionths, 0);
+        let result = e.evaluate(&batch, &target);
+        assert!(result.is_err(), "expected ZeroEffectiveSamples error");
     }
 
     // ── DR estimator tests ────────────────────────────────────────
