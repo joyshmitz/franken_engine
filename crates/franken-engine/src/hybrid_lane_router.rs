@@ -383,6 +383,9 @@ impl RiskAccumulator {
     /// Record a routing observation.
     pub fn record(&mut self, obs: &LaneObservation, reward_millionths: i64) {
         self.latencies_us.push(obs.latency_us);
+        if self.latencies_us.len() > 1000 {
+            self.latencies_us.remove(0);
+        }
         self.compatibility_errors += obs.compatibility_errors as u64;
 
         let lane_reward = self.cumulative_rewards.entry(obs.lane).or_insert(0);
@@ -408,7 +411,7 @@ impl RiskAccumulator {
 
         // Regret = best_mean * n - our_total
         let our_total: i64 = self.cumulative_rewards.values().sum();
-        let n = self.latencies_us.len() as i64;
+        let n: i64 = self.lane_pulls.values().copied().sum::<u64>() as i64;
         if n > 0 {
             self.cumulative_regret_millionths = best_empirical_mean * n - our_total;
         }

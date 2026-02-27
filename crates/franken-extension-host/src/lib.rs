@@ -382,15 +382,16 @@ fn parse_semver(version: &str) -> Option<(u64, u64, u64)> {
 pub fn validate_engine_version(min_engine_version: &str) -> Result<(), ManifestValidationError> {
     let requested = parse_semver(min_engine_version.trim());
     let supported = parse_semver(CURRENT_ENGINE_VERSION).expect("static engine version is valid");
-    let Some((requested_major, requested_minor, _)) = requested else {
+    let Some((requested_major, requested_minor, requested_patch)) = requested else {
         return Err(ManifestValidationError::UnsupportedEngineVersion {
             min_engine_version: min_engine_version.to_string(),
             supported_engine_version: CURRENT_ENGINE_VERSION,
         });
     };
-    let (supported_major, supported_minor, _) = supported;
+    let (supported_major, supported_minor, supported_patch) = supported;
     if requested_major > supported_major
         || (requested_major == supported_major && requested_minor > supported_minor)
+        || (requested_major == supported_major && requested_minor == supported_minor && requested_patch > supported_patch)
     {
         return Err(ManifestValidationError::UnsupportedEngineVersion {
             min_engine_version: min_engine_version.to_string(),

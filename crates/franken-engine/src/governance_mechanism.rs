@@ -685,8 +685,19 @@ impl GovernanceMechanism {
             .iter_mut()
             .find(|q| q.quarantine_id == quarantine_id)
         {
+            if q.status != QuarantineStatus::Active {
+                return Err(MechanismError::ReinstateNotAllowed {
+                    quarantine_id,
+                    reason: format!("quarantine status is {}, not active", q.status),
+                });
+            }
             q.status = QuarantineStatus::Lifted;
             q.lifted_at = Some(approved_at);
+        } else {
+            return Err(MechanismError::ReinstateNotAllowed {
+                quarantine_id,
+                reason: "quarantine not found".into(),
+            });
         }
 
         self.emit_event(
@@ -925,9 +936,14 @@ fn classify_ic(false_report_loss: i64, truthful_gain: i64) -> IncentiveCompatibi
 
 /// Compute IC score from payoffs.
 fn compute_ic_score(false_report_loss: i64, truthful_gain: i64) -> i64 {
-    let range = truthful_gain.saturating_sub(false_report_loss).max(1);
-    let numerator = truthful_gain.saturating_sub(false_report_loss.min(0));
-    (numerator * 1_000_000) / range
+    if false_report_loss <= 0 {
+        1_000_000
+    } else if truthful_gain <= 0 {
+        0
+    } else {
+        let net_gain = truthful_gain.saturating_sub(false_report_loss).max(0);
+        (net_gain * 1_000_000) / truthful_gain
+    }
 }
 
 // ---------------------------------------------------------------------------

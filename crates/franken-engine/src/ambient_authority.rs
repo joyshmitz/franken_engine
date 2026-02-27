@@ -344,8 +344,7 @@ impl SourceAuditor {
             let trimmed = line.trim();
 
             // Skip comments.
-            if trimmed.starts_with("//") || trimmed.starts_with("///") || trimmed.starts_with("//!")
-            {
+            if trimmed.starts_with("//") {
                 continue;
             }
 
