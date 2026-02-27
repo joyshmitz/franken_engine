@@ -1301,7 +1301,7 @@ pub fn build_replay_envelope(
         merge_witness: output.merge_witness.clone(),
         parity_result: output.parity_result.clone(),
         routing_digest: routing_digest.clone(),
-        cancellation: None,
+        cancellation: output.cancellation.clone(),
         failover_decision: output.failover_decision.clone(),
         output_hash: output.output_hash.clone(),
         replay_command: format!(
@@ -1414,6 +1414,12 @@ pub struct ParseOutput {
     pub parity_result: Option<ParityResult>,
     /// Deterministic failover decision log (if fallback triggered).
     pub failover_decision: Option<FailoverDecision>,
+    /// Timeout policy projected for replayable diagnostics (parallel path only).
+    pub timeout_policy: Option<TimeoutPolicy>,
+    /// Cancellation record if timeout/failover cancellation occurred.
+    pub cancellation: Option<CancellationRecord>,
+    /// Backpressure snapshot for deterministic queue behavior.
+    pub backpressure: Option<BackpressureSnapshot>,
     /// Content hash of the output token stream.
     pub output_hash: ContentHash,
 }
@@ -1439,6 +1445,10 @@ pub struct ParseLogEntry {
     pub failover_witness_ids: Option<Vec<String>>,
     pub replay_command: Option<String>,
     pub parity_result: Option<String>,
+    pub cancellation_state: Option<String>,
+    pub cancellation_elapsed_us: Option<u64>,
+    pub backpressure_level: Option<String>,
+    pub backpressure_peak_queue_depth: Option<u32>,
     pub error_code: Option<String>,
 }
 
@@ -1528,6 +1538,86 @@ fn build_failover_decision(
     }
 }
 
+fn derive_timeout_policy(config: &ParallelConfig, chunk_count: usize) -> TimeoutPolicy {
+    let max_chunk_us = config.chunk_budget_us.max(1);
+    let max_total_us = max_chunk_us
+        .saturating_mul(chunk_count as u64)
+        .saturating_add(max_chunk_us / 2);
+    TimeoutPolicy {
+        max_total_us,
+        max_chunk_us,
+        allow_drain: true,
+    }
+}
+
+fn deterministic_chunk_elapsed_us(chunk_bytes: u64, token_count: u64, step_index: usize) -> u64 {
+    let byte_component = chunk_bytes.saturating_mul(2);
+    let token_component = token_count.saturating_mul(3);
+    let step_component = (step_index as u64 + 1).saturating_mul(17);
+    byte_component
+        .saturating_add(token_component)
+        .saturating_add(step_component)
+        .saturating_add(50)
+}
+
+fn classify_backpressure_level(peak_queue_depth: u32) -> BackpressureLevel {
+    if peak_queue_depth >= 12 {
+        BackpressureLevel::Critical
+    } else if peak_queue_depth >= 2 {
+        BackpressureLevel::Elevated
+    } else {
+        BackpressureLevel::Normal
+    }
+}
+
+fn compute_backpressure_snapshot(
+    chunk_timings: &[ChunkTiming],
+    timeout_policy: &TimeoutPolicy,
+) -> BackpressureSnapshot {
+    let delay_quantum_us = (timeout_policy.max_chunk_us / 4).max(1);
+    let mut queue_depth = 0u32;
+    let mut peak_queue_depth = 0u32;
+    let mut delayed_chunks = 0u32;
+    let mut total_delay_us = 0u64;
+
+    for timing in chunk_timings {
+        let overload_units = timing.elapsed_us / delay_quantum_us;
+        let current_depth = u32::try_from(overload_units.saturating_sub(1)).unwrap_or(u32::MAX);
+        queue_depth = current_depth;
+        peak_queue_depth = peak_queue_depth.max(current_depth);
+        if current_depth > 0 {
+            delayed_chunks = delayed_chunks.saturating_add(1);
+            total_delay_us =
+                total_delay_us.saturating_add(timing.elapsed_us.saturating_sub(delay_quantum_us));
+        }
+    }
+
+    BackpressureSnapshot {
+        queue_depth,
+        peak_queue_depth,
+        level: classify_backpressure_level(peak_queue_depth),
+        delayed_chunks,
+        total_delay_us,
+    }
+}
+
+fn build_timeout_cancellation_record(
+    timeout_policy: &TimeoutPolicy,
+    elapsed_us: u64,
+    trigger_chunk: Option<u32>,
+) -> CancellationRecord {
+    CancellationRecord {
+        state: if timeout_policy.allow_drain {
+            CancellationState::Finalized
+        } else {
+            CancellationState::Requested
+        },
+        elapsed_us,
+        trigger_chunk,
+        drain_completed: timeout_policy.allow_drain,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Core parse logic
 // ---------------------------------------------------------------------------
@@ -1546,6 +1636,11 @@ pub fn parse(input: &ParseInput<'_>) -> Result<ParseOutput, ParseError> {
     if config.max_workers == 0 {
         return Err(ParseError::InvalidConfig {
             detail: "max_workers must be >= 1".to_string(),
+        });
+    }
+    if config.chunk_budget_us == 0 {
+        return Err(ParseError::InvalidConfig {
+            detail: "chunk_budget_us must be >= 1".to_string(),
         });
     }
 
@@ -1581,6 +1676,8 @@ pub fn parse(input: &ParseInput<'_>) -> Result<ParseOutput, ParseError> {
 
     // 1. Compute chunk plan.
     let chunk_plan = compute_chunk_plan(bytes, config.max_workers);
+    let timeout_policy = derive_timeout_policy(config, chunk_plan.chunks.len());
+    let mut backpressure_snapshot = compute_backpressure_snapshot(&[], &timeout_policy);
 
     // 2. Build deterministic schedule transcript and self-validate replay invariants.
     let schedule_transcript = build_schedule_transcript(&chunk_plan, config.schedule_seed);
@@ -1616,6 +1713,9 @@ pub fn parse(input: &ParseInput<'_>) -> Result<ParseOutput, ParseError> {
                 schedule_transcript: Some(schedule_transcript),
                 parity_result: None,
                 failover_decision: Some(failover_decision),
+                timeout_policy: Some(timeout_policy.clone()),
+                cancellation: None,
+                backpressure: Some(backpressure_snapshot.clone()),
                 output_hash,
             });
         }
@@ -1623,6 +1723,8 @@ pub fn parse(input: &ParseInput<'_>) -> Result<ParseOutput, ParseError> {
 
     // 3. Lex each chunk independently using transcripted execution order.
     let mut chunk_results = Vec::new();
+    let mut chunk_timings = Vec::new();
+    let mut total_elapsed_us = 0u64;
     let mut lexer_config = config.lexer_config.clone();
     lexer_config.emit_tokens = true;
 
@@ -1632,6 +1734,102 @@ pub fn parse(input: &ParseInput<'_>) -> Result<ParseOutput, ParseError> {
         let chunk_str = std::str::from_utf8(chunk_bytes).unwrap_or("");
         match simd_lexer::lex(chunk_str, &lexer_config) {
             Ok(output) => {
+                let elapsed_us = deterministic_chunk_elapsed_us(
+                    end.saturating_sub(start),
+                    output.token_count,
+                    chunk_timings.len(),
+                );
+                total_elapsed_us = total_elapsed_us.saturating_add(elapsed_us);
+                chunk_timings.push(ChunkTiming {
+                    chunk_index,
+                    chunk_bytes: end.saturating_sub(start),
+                    token_count: output.token_count,
+                    elapsed_us,
+                });
+                backpressure_snapshot =
+                    compute_backpressure_snapshot(&chunk_timings, &timeout_policy);
+
+                let chunk_budget_exceeded = elapsed_us > timeout_policy.max_chunk_us;
+                let total_budget_exceeded = total_elapsed_us > timeout_policy.max_total_us;
+                let critical_backpressure =
+                    backpressure_snapshot.level == BackpressureLevel::Critical;
+
+                if chunk_budget_exceeded || total_budget_exceeded || critical_backpressure {
+                    let trigger = if critical_backpressure {
+                        FailoverTrigger {
+                            class: FailoverTriggerClass::ResourceLimit,
+                            detail: format!(
+                                "critical backpressure: peak_queue_depth={} delayed_chunks={} total_delay_us={}",
+                                backpressure_snapshot.peak_queue_depth,
+                                backpressure_snapshot.delayed_chunks,
+                                backpressure_snapshot.total_delay_us
+                            ),
+                        }
+                    } else if chunk_budget_exceeded {
+                        FailoverTrigger {
+                            class: FailoverTriggerClass::Timeout,
+                            detail: format!(
+                                "chunk {} elapsed {}us exceeded chunk budget {}us",
+                                chunk_index, elapsed_us, timeout_policy.max_chunk_us
+                            ),
+                        }
+                    } else {
+                        FailoverTrigger {
+                            class: FailoverTriggerClass::Timeout,
+                            detail: format!(
+                                "total elapsed {}us exceeded total budget {}us",
+                                total_elapsed_us, timeout_policy.max_total_us
+                            ),
+                        }
+                    };
+                    let cancellation = if critical_backpressure {
+                        None
+                    } else {
+                        Some(build_timeout_cancellation_record(
+                            &timeout_policy,
+                            total_elapsed_us,
+                            if chunk_budget_exceeded {
+                                Some(chunk_index)
+                            } else {
+                                None
+                            },
+                        ))
+                    };
+                    let budget_us = if chunk_budget_exceeded || critical_backpressure {
+                        timeout_policy.max_chunk_us
+                    } else {
+                        timeout_policy.max_total_us
+                    };
+                    let reason = SerialReason::BudgetExhausted { budget_us };
+                    let serial = serial_parse_inner(source, &config.lexer_config)?;
+                    let output_hash = compute_token_hash(&serial.tokens);
+                    let failover_decision = build_failover_decision(
+                        input,
+                        trigger,
+                        Some(&schedule_transcript),
+                        None,
+                        &output_hash,
+                    );
+                    return Ok(ParseOutput {
+                        schema_version: SCHEMA_VERSION.to_string(),
+                        mode: ParserMode::Serial,
+                        serial_reason: Some(reason.clone()),
+                        fallback_cause: Some(FallbackCause::ResourceLimit(reason)),
+                        tokens: serial.tokens,
+                        token_count: serial.token_count,
+                        bytes_scanned: serial.bytes_scanned,
+                        chunk_plan: Some(chunk_plan),
+                        merge_witness: None,
+                        schedule_transcript: Some(schedule_transcript),
+                        parity_result: None,
+                        failover_decision: Some(failover_decision),
+                        timeout_policy: Some(timeout_policy.clone()),
+                        cancellation,
+                        backpressure: Some(backpressure_snapshot.clone()),
+                        output_hash,
+                    });
+                }
+
                 chunk_results.push(ChunkResult {
                     chunk_index,
                     chunk_start: start,
@@ -1703,6 +1901,9 @@ pub fn parse(input: &ParseInput<'_>) -> Result<ParseOutput, ParseError> {
             schedule_transcript: Some(schedule_transcript),
             parity_result: None,
             failover_decision: Some(failover_decision),
+            timeout_policy: Some(timeout_policy.clone()),
+            cancellation: None,
+            backpressure: Some(backpressure_snapshot.clone()),
             output_hash,
         });
     }
@@ -1748,6 +1949,9 @@ pub fn parse(input: &ParseInput<'_>) -> Result<ParseOutput, ParseError> {
             schedule_transcript: Some(schedule_transcript),
             parity_result: Some(pr.clone()),
             failover_decision: Some(failover_decision),
+            timeout_policy: Some(timeout_policy.clone()),
+            cancellation: None,
+            backpressure: Some(backpressure_snapshot.clone()),
             output_hash,
         });
     }
@@ -1767,6 +1971,9 @@ pub fn parse(input: &ParseInput<'_>) -> Result<ParseOutput, ParseError> {
         schedule_transcript: Some(schedule_transcript),
         parity_result,
         failover_decision: None,
+        timeout_policy: Some(timeout_policy),
+        cancellation: None,
+        backpressure: Some(backpressure_snapshot),
         output_hash,
     })
 }
@@ -1792,6 +1999,9 @@ fn serial_parse(
         schedule_transcript: None,
         parity_result: None,
         failover_decision: None,
+        timeout_policy: None,
+        cancellation: None,
+        backpressure: None,
         output_hash,
     })
 }
@@ -1907,6 +2117,10 @@ pub fn compute_routing_digest(source: &str, config: &ParallelConfig) -> RoutingD
 pub fn generate_log_entries(trace_id: &str, output: &ParseOutput) -> Vec<ParseLogEntry> {
     let mut entries = Vec::new();
     let failover = output.failover_decision.as_ref();
+    let cancellation_state = output.cancellation.as_ref().map(|c| c.state.to_string());
+    let cancellation_elapsed_us = output.cancellation.as_ref().map(|c| c.elapsed_us);
+    let backpressure_level = output.backpressure.as_ref().map(|b| b.level.to_string());
+    let backpressure_peak_queue_depth = output.backpressure.as_ref().map(|b| b.peak_queue_depth);
 
     entries.push(ParseLogEntry {
         trace_id: trace_id.to_string(),
@@ -1935,6 +2149,10 @@ pub fn generate_log_entries(trace_id: &str, output: &ParseOutput) -> Vec<ParseLo
             .parity_result
             .as_ref()
             .map(|p| if p.parity_ok { "ok" } else { "mismatch" }.to_string()),
+        cancellation_state: cancellation_state.clone(),
+        cancellation_elapsed_us,
+        backpressure_level: backpressure_level.clone(),
+        backpressure_peak_queue_depth,
         error_code: None,
     });
 
@@ -1960,6 +2178,10 @@ pub fn generate_log_entries(trace_id: &str, output: &ParseOutput) -> Vec<ParseLo
             failover_witness_ids: failover.map(|d| d.witness_ids.clone()),
             replay_command: failover.map(|d| d.replay_command.clone()),
             parity_result: None,
+            cancellation_state,
+            cancellation_elapsed_us,
+            backpressure_level,
+            backpressure_peak_queue_depth,
             error_code: Some("fallback".to_string()),
         });
     }
@@ -2872,6 +3094,78 @@ mod tests {
     }
 
     #[test]
+    fn parse_timeout_budget_exhaustion_records_cancellation() {
+        let config = ParallelConfig {
+            min_parallel_bytes: 10,
+            max_workers: 2,
+            chunk_budget_us: 1_500,
+            always_check_parity: true,
+            ..default_config()
+        };
+        let mut source = String::new();
+        for i in 0..120 {
+            source.push_str(&format!("var timeout_{i} = {i};\n"));
+        }
+        let input = make_input(&source, &config);
+        let output = parse(&input).expect("parse should complete with deterministic fallback");
+        assert_eq!(output.mode, ParserMode::Serial);
+        assert!(matches!(
+            output.serial_reason.as_ref(),
+            Some(SerialReason::BudgetExhausted { budget_us }) if *budget_us == 1_500
+        ));
+        let failover = output
+            .failover_decision
+            .as_ref()
+            .expect("timeout fallback should emit failover decision");
+        assert_eq!(failover.trigger.class, FailoverTriggerClass::Timeout);
+        let cancellation = output
+            .cancellation
+            .as_ref()
+            .expect("timeout fallback should emit cancellation");
+        assert_eq!(cancellation.state, CancellationState::Finalized);
+        assert!(cancellation.drain_completed);
+        assert!(cancellation.trigger_chunk.is_some());
+        let backpressure = output
+            .backpressure
+            .as_ref()
+            .expect("backpressure should be captured");
+        assert_eq!(backpressure.level, BackpressureLevel::Elevated);
+    }
+
+    #[test]
+    fn parse_critical_backpressure_triggers_resource_limit_failover() {
+        let config = ParallelConfig {
+            min_parallel_bytes: 10,
+            max_workers: 2,
+            chunk_budget_us: 200,
+            always_check_parity: true,
+            ..default_config()
+        };
+        let mut source = String::new();
+        for i in 0..140 {
+            source.push_str(&format!("var backlog_{i} = {i};\n"));
+        }
+        let input = make_input(&source, &config);
+        let output = parse(&input).expect("parse should complete with deterministic fallback");
+        assert_eq!(output.mode, ParserMode::Serial);
+        assert!(matches!(
+            output.serial_reason.as_ref(),
+            Some(SerialReason::BudgetExhausted { budget_us }) if *budget_us == 200
+        ));
+        let failover = output
+            .failover_decision
+            .as_ref()
+            .expect("resource-limit fallback should emit failover decision");
+        assert_eq!(failover.trigger.class, FailoverTriggerClass::ResourceLimit);
+        let backpressure = output
+            .backpressure
+            .as_ref()
+            .expect("backpressure should be captured");
+        assert_eq!(backpressure.level, BackpressureLevel::Critical);
+        assert!(output.cancellation.is_none());
+    }
+
+    #[test]
     fn routing_digest_serial_small_input() {
         let config = default_config();
         let digest = compute_routing_digest("x = 1", &config);
@@ -3424,5 +3718,161 @@ mod tests {
             set.insert(v.to_string());
         }
         assert_eq!(set.len(), variants.len());
+    }
+
+    // -- Enrichment: PearlTower 2026-02-26 session 6 --
+
+    #[test]
+    fn log_entries_for_fallback_include_fallback_triggered_event() {
+        // Trigger a budget-exhaustion fallback to get a fallback_cause on the output.
+        let config = ParallelConfig {
+            min_parallel_bytes: 10,
+            max_workers: 2,
+            chunk_budget_us: 1_500,
+            always_check_parity: true,
+            ..default_config()
+        };
+        let mut source = String::new();
+        for i in 0..120 {
+            source.push_str(&format!("var log_{i} = {i};\n"));
+        }
+        let input = make_input(&source, &config);
+        let output = parse(&input).unwrap();
+        assert!(output.fallback_cause.is_some(), "expected a fallback");
+
+        let entries = generate_log_entries("trace-fb", &output);
+        assert!(entries.len() >= 2, "fallback should emit >=2 log entries");
+        assert_eq!(entries[0].event, "parse_complete");
+        assert_eq!(entries[1].event, "fallback_triggered");
+        assert_eq!(entries[1].outcome, "fallback");
+        assert!(entries[1].error_code.as_deref() == Some("fallback"));
+        assert!(entries[1].failover_trigger.is_some());
+    }
+
+    #[test]
+    fn replay_transcript_rejects_worker_count_mismatch() {
+        let source = "a=1;\nb=2;\nc=3;\nd=4;\n";
+        let chunk_plan = compute_chunk_plan(source.as_bytes(), 4);
+        let transcript = build_schedule_transcript(&chunk_plan, 0);
+        let mut wrong_plan = chunk_plan.clone();
+        wrong_plan.worker_count = 99;
+        let err = replay_schedule_transcript(&transcript, &wrong_plan).unwrap_err();
+        assert!(matches!(
+            err,
+            TranscriptReplayError::WorkerCountMismatch {
+                expected: 99,
+                actual: _
+            }
+        ));
+    }
+
+    #[test]
+    fn replay_transcript_rejects_duplicate_chunk_reference() {
+        let source = "a=1;\nb=2;\nc=3;\nd=4;\n";
+        let chunk_plan = compute_chunk_plan(source.as_bytes(), 2);
+        let mut transcript = build_schedule_transcript(&chunk_plan, 0);
+        // Tamper: make both execution_order entries reference chunk 0.
+        if transcript.execution_order.len() >= 2 {
+            transcript.execution_order[1] = transcript.execution_order[0];
+            transcript.dispatches[1].chunk_index = transcript.dispatches[0].chunk_index;
+            // Recompute the hash so it doesn't fail on hash mismatch first.
+            transcript.transcript_hash = compute_schedule_transcript_hash(
+                transcript.seed,
+                transcript.worker_count,
+                &transcript.plan_hash,
+                &transcript.execution_order,
+                &transcript.dispatches,
+            );
+        }
+        let err = replay_schedule_transcript(&transcript, &chunk_plan).unwrap_err();
+        assert!(matches!(
+            err,
+            TranscriptReplayError::DuplicateChunkReference { .. }
+        ));
+    }
+
+    #[test]
+    fn repair_boundary_tokens_multiple_consecutive_merges() {
+        // Three overlapping same-kind tokens should merge into one.
+        let mut tokens = vec![
+            Token {
+                kind: TokenKind::Identifier,
+                start: 0,
+                end: 3,
+            },
+            Token {
+                kind: TokenKind::Identifier,
+                start: 2,
+                end: 5,
+            },
+            Token {
+                kind: TokenKind::Identifier,
+                start: 4,
+                end: 8,
+            },
+        ];
+        repair_boundary_tokens(&mut tokens);
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].start, 0);
+        assert_eq!(tokens[0].end, 8);
+    }
+
+    #[test]
+    fn throughput_sample_compute_handles_overflow() {
+        // Near-u64-max bytes should not panic; overflow is clamped via checked_mul.
+        let sample = ThroughputSample::compute(u64::MAX, u64::MAX, 1);
+        // checked_mul overflows → unwrap_or(0)
+        assert_eq!(sample.bytes_per_sec_millionths, 0);
+        assert_eq!(sample.tokens_per_sec_millionths, 0);
+        assert_eq!(sample.bytes, u64::MAX);
+    }
+
+    #[test]
+    fn rollback_failure_accumulates_distinct_trace_ids() {
+        let mut rc = RollbackControl::default();
+        rc.record_failure("trace-a");
+        rc.record_failure("trace-b");
+        rc.record_failure("trace-a"); // duplicate
+        // consecutive_failures still increments even for duplicate trace_id
+        assert_eq!(rc.consecutive_failures, 3);
+        // but failure_trace_ids deduplicates
+        assert_eq!(rc.failure_trace_ids.len(), 2);
+        assert!(rc.failure_trace_ids.contains("trace-a"));
+        assert!(rc.failure_trace_ids.contains("trace-b"));
+    }
+
+    #[test]
+    fn chunk_plan_worker_count_capped_to_input_bytes() {
+        // 6 bytes with 8 workers: worker_count should be capped to 6.
+        let plan = compute_chunk_plan(b"a\nb\nc\n", 8);
+        assert!(plan.worker_count <= 6);
+        // Chunks must cover entire input.
+        assert!(!plan.chunks.is_empty());
+        let first_start = plan.chunks[0].0;
+        let last_end = plan.chunks.last().unwrap().1;
+        assert_eq!(first_start, 0);
+        assert_eq!(last_end, 6);
+    }
+
+    #[test]
+    fn replay_envelope_contains_transcript_hash_in_replay_command() {
+        let config = small_config();
+        let mut source = String::new();
+        for i in 0..100 {
+            source.push_str(&format!("var env_{i} = {i};\n"));
+        }
+        let input = make_input(&source, &config);
+        let output = parse(&input).unwrap();
+        let digest = compute_routing_digest(&source, &config);
+        let envelope = build_replay_envelope(&input, &output, &digest);
+        // The replay command should include --transcript-hash when a transcript exists.
+        assert!(envelope.replay_command.contains("--transcript-hash"));
+        if let Some(ref transcript) = output.schedule_transcript {
+            assert!(
+                envelope
+                    .replay_command
+                    .contains(&transcript.transcript_hash.to_hex())
+            );
+        }
     }
 }

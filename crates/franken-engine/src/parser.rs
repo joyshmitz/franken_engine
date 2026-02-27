@@ -5414,4 +5414,100 @@ mod tests {
             panic!("expected CanonicalValue::Map");
         }
     }
+
+    // -- Enrichment: serde roundtrips for untested types (PearlTower 2026-02-27) --
+
+    #[test]
+    fn parse_event_serde_roundtrip() {
+        let e = ParseEvent {
+            sequence: 1,
+            kind: ParseEventKind::StatementParsed,
+            parser_mode: ParserMode::ScalarReference,
+            goal: ParseGoal::Script,
+            source_label: "test.js".to_string(),
+            trace_id: "t-1".to_string(),
+            decision_id: "d-1".to_string(),
+            policy_id: "p-1".to_string(),
+            component: "parser".to_string(),
+            outcome: "ok".to_string(),
+            error_code: None,
+            statement_index: Some(0),
+            span: Some(SourceSpan::new(0, 10, 1, 1, 1, 11)),
+            payload_kind: Some("statement".to_string()),
+            payload_hash: Some("abc123".to_string()),
+        };
+        let json = serde_json::to_string(&e).unwrap();
+        let back: ParseEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(e, back);
+    }
+
+    #[test]
+    fn parse_event_minimal_serde_roundtrip() {
+        let e = ParseEvent {
+            sequence: 0,
+            kind: ParseEventKind::ParseStarted,
+            parser_mode: ParserMode::ScalarReference,
+            goal: ParseGoal::Module,
+            source_label: "mod.js".to_string(),
+            trace_id: "t-2".to_string(),
+            decision_id: "d-2".to_string(),
+            policy_id: "p-2".to_string(),
+            component: "parser".to_string(),
+            outcome: "started".to_string(),
+            error_code: None,
+            statement_index: None,
+            span: None,
+            payload_kind: None,
+            payload_hash: None,
+        };
+        let json = serde_json::to_string(&e).unwrap();
+        let back: ParseEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(e, back);
+    }
+
+    #[test]
+    fn materialized_statement_node_serde_roundtrip() {
+        let n = MaterializedStatementNode {
+            node_id: "node-001".to_string(),
+            sequence: 1,
+            statement_index: 0,
+            payload_hash: "hash-abc".to_string(),
+            span: SourceSpan::new(0, 20, 1, 1, 1, 21),
+        };
+        let json = serde_json::to_string(&n).unwrap();
+        let back: MaterializedStatementNode = serde_json::from_str(&json).unwrap();
+        assert_eq!(n, back);
+    }
+
+    #[test]
+    fn materialized_syntax_tree_serde_roundtrip() {
+        let tree = MaterializedSyntaxTree {
+            schema_version: MaterializedSyntaxTree::schema_version().to_string(),
+            contract_version: MaterializedSyntaxTree::contract_version().to_string(),
+            trace_id: "t-1".to_string(),
+            decision_id: "d-1".to_string(),
+            policy_id: "p-1".to_string(),
+            component: "parser".to_string(),
+            parser_mode: ParserMode::ScalarReference,
+            goal: ParseGoal::Script,
+            source_label: "test.js".to_string(),
+            root_node_id: "root-001".to_string(),
+            statement_nodes: vec![MaterializedStatementNode {
+                node_id: "node-001".to_string(),
+                sequence: 1,
+                statement_index: 0,
+                payload_hash: "hash-abc".to_string(),
+                span: SourceSpan::new(0, 10, 1, 1, 1, 11),
+            }],
+            syntax_tree: SyntaxTree {
+                goal: ParseGoal::Script,
+                body: vec![],
+                span: SourceSpan::new(0, 10, 1, 1, 1, 11),
+            },
+        };
+        let json = serde_json::to_string(&tree).unwrap();
+        let back: MaterializedSyntaxTree = serde_json::from_str(&json).unwrap();
+        assert_eq!(tree, back);
+        assert_eq!(back.statement_nodes.len(), 1);
+    }
 }

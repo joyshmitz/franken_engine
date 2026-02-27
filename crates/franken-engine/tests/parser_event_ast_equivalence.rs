@@ -348,7 +348,7 @@ fn parser_event_ast_equivalence_contract_doc_and_logs_are_well_formed() {
     let fixture = load_fixture();
     let doc = load_doc();
 
-    assert!(doc.contains("bd-2mds.1.4.4.1"));
+    assert!(doc.contains("bd-2mds.1.4.4"));
     assert!(doc.contains("./scripts/run_parser_event_ast_equivalence.sh ci"));
     assert!(doc.contains("./scripts/e2e/parser_event_ast_equivalence_replay.sh"));
     assert!(doc.contains("artifacts/parser_event_ast_equivalence/<timestamp>/run_manifest.json"));

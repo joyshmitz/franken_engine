@@ -1374,6 +1374,10 @@ fn parse_log_entry_serde_roundtrip() {
         failover_witness_ids: None,
         replay_command: None,
         parity_result: None,
+        cancellation_state: None,
+        cancellation_elapsed_us: None,
+        backpressure_level: None,
+        backpressure_peak_queue_depth: None,
         error_code: None,
     };
     serde_roundtrip(&entry);
@@ -1396,6 +1400,10 @@ fn parse_log_entry_all_none_fields() {
         failover_witness_ids: None,
         replay_command: None,
         parity_result: None,
+        cancellation_state: None,
+        cancellation_elapsed_us: None,
+        backpressure_level: None,
+        backpressure_peak_queue_depth: None,
         error_code: None,
     };
     serde_roundtrip(&entry);
@@ -1623,6 +1631,18 @@ fn parse_zero_workers_is_invalid_config() {
 }
 
 #[test]
+fn parse_zero_chunk_budget_is_invalid_config() {
+    let config = ParallelConfig {
+        chunk_budget_us: 0,
+        ..default_config()
+    };
+    let input = make_input("x", &config);
+    let err = parallel_parser::parse(&input).unwrap_err();
+    assert!(matches!(err, ParseError::InvalidConfig { .. }));
+    assert!(err.to_string().contains("chunk_budget_us"));
+}
+
+#[test]
 fn parse_input_too_large() {
     let config = ParallelConfig {
         lexer_config: LexerConfig {
@@ -1654,6 +1674,26 @@ fn parse_parallel_large_input_with_newlines() {
     let output = parallel_parser::parse(&input).unwrap();
     assert!(output.token_count > 0);
     assert!(output.chunk_plan.is_some());
+}
+
+#[test]
+fn parse_parallel_exposes_timeout_policy_and_backpressure() {
+    let config = small_config();
+    let source = generate_source(120);
+    let input = make_input(&source, &config);
+    let output = parallel_parser::parse(&input).unwrap();
+    assert_eq!(output.mode, ParserMode::Parallel);
+    let timeout_policy = output
+        .timeout_policy
+        .as_ref()
+        .expect("parallel output should include timeout policy");
+    assert_eq!(timeout_policy.max_chunk_us, config.chunk_budget_us);
+    let backpressure = output
+        .backpressure
+        .as_ref()
+        .expect("parallel output should include backpressure snapshot");
+    assert_eq!(backpressure.level, BackpressureLevel::Normal);
+    assert!(output.cancellation.is_none());
 }
 
 #[test]
@@ -1948,6 +1988,33 @@ fn replay_envelope_cancellation_is_none() {
 }
 
 #[test]
+fn replay_envelope_projects_timeout_cancellation() {
+    let config = ParallelConfig {
+        min_parallel_bytes: 10,
+        max_workers: 2,
+        chunk_budget_us: 1_500,
+        always_check_parity: true,
+        ..default_config()
+    };
+    let source = generate_source(120);
+    let input = make_input(&source, &config);
+    let output = parallel_parser::parse(&input).unwrap();
+    assert!(output.fallback_cause.is_some());
+    let digest = parallel_parser::compute_routing_digest(input.source, &config);
+    let envelope = parallel_parser::build_replay_envelope(&input, &output, &digest);
+    let cancellation = envelope
+        .cancellation
+        .as_ref()
+        .expect("timeout fallback should project cancellation into replay envelope");
+    assert!(cancellation.trigger_chunk.is_some());
+    let failover = envelope
+        .failover_decision
+        .as_ref()
+        .expect("timeout fallback should include failover decision");
+    assert_eq!(failover.trigger.class, FailoverTriggerClass::Timeout);
+}
+
+#[test]
 fn replay_envelope_fields_populated() {
     let config = small_config();
     let source = generate_source(50);
@@ -2070,6 +2137,25 @@ fn log_entries_failover_include_trigger_transition_and_replay() {
     assert!(fallback.failover_transition_path.is_some());
     assert!(fallback.failover_witness_ids.is_some());
     assert!(fallback.replay_command.is_some());
+}
+
+#[test]
+fn log_entries_include_cancellation_and_backpressure_fields() {
+    let config = ParallelConfig {
+        min_parallel_bytes: 10,
+        max_workers: 2,
+        chunk_budget_us: 1_500,
+        always_check_parity: true,
+        ..default_config()
+    };
+    let source = generate_source(120);
+    let input = make_input(&source, &config);
+    let output = parallel_parser::parse(&input).unwrap();
+    let entries = parallel_parser::generate_log_entries("trace-timeout", &output);
+    assert_eq!(entries[0].cancellation_state.as_deref(), Some("finalized"));
+    assert!(entries[0].cancellation_elapsed_us.is_some());
+    assert_eq!(entries[0].backpressure_level.as_deref(), Some("elevated"));
+    assert!(entries[0].backpressure_peak_queue_depth.is_some());
 }
 
 #[test]

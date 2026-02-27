@@ -1749,7 +1749,10 @@ mod tests {
         let b = EvidenceIndexerError::DuplicateRunId("run-a".into());
         let c = EvidenceIndexerError::InvalidSchemaVersion("bad".into());
         let d = EvidenceIndexerError::Json("parse fail".into());
-        let msgs: Vec<String> = vec![a, b, c, d].into_iter().map(|e| format!("{e}")).collect();
+        let msgs: Vec<String> = vec![a, b, c, d]
+            .into_iter()
+            .map(|e| format!("{e}"))
+            .collect();
         for i in 0..msgs.len() {
             for j in (i + 1)..msgs.len() {
                 assert_ne!(msgs[i], msgs[j], "variants {i} and {j} must differ");
