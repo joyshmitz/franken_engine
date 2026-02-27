@@ -1571,4 +1571,228 @@ mod tests {
         let back: CorrelationKey = serde_json::from_str(&json).unwrap();
         assert_eq!(key, back);
     }
+
+    // -- Enrichment: PearlTower 2026-02-27 --
+
+    #[test]
+    fn clone_eq_parser_run_artifact_ref() {
+        let a = ParserRunArtifactRef {
+            run_id: "run-x".into(),
+            manifest_schema_version: "fam.run.v1".into(),
+            manifest_path: "/m.json".into(),
+            events_path: "/e.jsonl".into(),
+            commands_path: "/c.txt".into(),
+            replay_command: "replay --run run-x".into(),
+            generated_at_utc: Some("2026-02-27T00:00:00Z".into()),
+            outcome: Some("pass".into()),
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn clone_eq_indexed_parser_event() {
+        let a = IndexedParserEvent {
+            run_id: "run-y".into(),
+            sequence: 99,
+            schema_version: "fam.event.v3".into(),
+            trace_id: "tr-99".into(),
+            decision_id: "dec-99".into(),
+            policy_id: "pol-a".into(),
+            component: "gate".into(),
+            event: "evaluate".into(),
+            outcome: "fail".into(),
+            error_code: Some("E-42".into()),
+            replay_command: Some("replay --trace tr-99".into()),
+            scenario_id: Some("scen-7".into()),
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn clone_eq_schema_migration_boundary() {
+        let a = SchemaMigrationBoundary {
+            run_id: "run-z".into(),
+            sequence: 5,
+            from_schema: "fam.event.v1".into(),
+            to_schema: "fam.event.v2".into(),
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn clone_eq_correlated_regression() {
+        let a = CorrelatedRegression {
+            key: CorrelationKey {
+                component: "lexer".into(),
+                event: "token_mismatch".into(),
+                scenario_id: None,
+                error_code: Some("LEX-01".into()),
+                outcome: "fail".into(),
+            },
+            run_count: 4,
+            occurrence_count: 12,
+            run_ids: vec!["r1".into(), "r2".into(), "r3".into(), "r4".into()],
+            trace_ids: vec!["t1".into(), "t2".into()],
+            replay_commands: vec!["cmd1".into()],
+            severity: "high".into(),
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn clone_eq_parser_evidence_index() {
+        let a = ParserEvidenceIndex {
+            schema_version: PARSER_EVIDENCE_INDEX_SCHEMA_V1.into(),
+            runs: vec![],
+            events: vec![],
+            schema_migrations: vec![],
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn json_field_presence_indexed_parser_event() {
+        let ev = IndexedParserEvent {
+            run_id: "run-fp".into(),
+            sequence: 7,
+            schema_version: "fam.event.v1".into(),
+            trace_id: "tr-fp".into(),
+            decision_id: "dec-fp".into(),
+            policy_id: "pol-fp".into(),
+            component: "verifier".into(),
+            event: "check".into(),
+            outcome: "pass".into(),
+            error_code: None,
+            replay_command: None,
+            scenario_id: Some("scen-fp".into()),
+        };
+        let json = serde_json::to_string(&ev).unwrap();
+        assert!(json.contains("\"run_id\""));
+        assert!(json.contains("\"sequence\""));
+        assert!(json.contains("\"trace_id\""));
+        assert!(json.contains("\"scenario_id\""));
+    }
+
+    #[test]
+    fn json_field_presence_correlated_regression() {
+        let cr = CorrelatedRegression {
+            key: CorrelationKey {
+                component: "c".into(),
+                event: "e".into(),
+                scenario_id: None,
+                error_code: None,
+                outcome: "fail".into(),
+            },
+            run_count: 2,
+            occurrence_count: 3,
+            run_ids: vec!["r1".into()],
+            trace_ids: vec!["t1".into()],
+            replay_commands: vec![],
+            severity: "medium".into(),
+        };
+        let json = serde_json::to_string(&cr).unwrap();
+        assert!(json.contains("\"run_count\""));
+        assert!(json.contains("\"occurrence_count\""));
+        assert!(json.contains("\"severity\""));
+        assert!(json.contains("\"key\""));
+    }
+
+    #[test]
+    fn json_field_presence_applied_schema_migration() {
+        let m = AppliedSchemaMigration {
+            migration_id: "mig-fp".into(),
+            from_schema: "fam.v1".into(),
+            to_schema: "fam.v2".into(),
+            affected_records: 100,
+        };
+        let json = serde_json::to_string(&m).unwrap();
+        assert!(json.contains("\"migration_id\""));
+        assert!(json.contains("\"from_schema\""));
+        assert!(json.contains("\"to_schema\""));
+        assert!(json.contains("\"affected_records\""));
+    }
+
+    #[test]
+    fn error_source_is_none_for_all_variants() {
+        let variants: Vec<EvidenceIndexerError> = vec![
+            EvidenceIndexerError::MissingField("f"),
+            EvidenceIndexerError::InvalidFieldType {
+                field: "f",
+                expected: "string",
+            },
+            EvidenceIndexerError::DuplicateRunId("r".into()),
+            EvidenceIndexerError::UnknownRunId("r".into()),
+            EvidenceIndexerError::InvalidSchemaVersion("bad".into()),
+            EvidenceIndexerError::IncompatibleSchemaFamily {
+                from_schema: "a.v1".into(),
+                to_schema: "b.v1".into(),
+            },
+            EvidenceIndexerError::NoMigrationPath {
+                from_schema: "a.v1".into(),
+                to_schema: "a.v9".into(),
+            },
+            EvidenceIndexerError::Json("msg".into()),
+        ];
+        for v in &variants {
+            assert!(v.source().is_none());
+        }
+    }
+
+    #[test]
+    fn display_uniqueness_across_error_variants() {
+        let a = EvidenceIndexerError::MissingField("run_id");
+        let b = EvidenceIndexerError::DuplicateRunId("run-a".into());
+        let c = EvidenceIndexerError::InvalidSchemaVersion("bad".into());
+        let d = EvidenceIndexerError::Json("parse fail".into());
+        let msgs: Vec<String> = vec![a, b, c, d].into_iter().map(|e| format!("{e}")).collect();
+        for i in 0..msgs.len() {
+            for j in (i + 1)..msgs.len() {
+                assert_ne!(msgs[i], msgs[j], "variants {i} and {j} must differ");
+            }
+        }
+    }
+
+    #[test]
+    fn correlation_key_ord_with_scenario_and_error_code() {
+        let base = CorrelationKey {
+            component: "c".into(),
+            event: "e".into(),
+            scenario_id: None,
+            error_code: None,
+            outcome: "fail".into(),
+        };
+        let with_scenario = CorrelationKey {
+            scenario_id: Some("s1".into()),
+            ..base.clone()
+        };
+        let with_error = CorrelationKey {
+            error_code: Some("E01".into()),
+            ..base.clone()
+        };
+        // None < Some in Ord for Option<String>
+        assert!(base < with_scenario);
+        assert!(base < with_error);
+        // Verify reflexive
+        assert!(base == base.clone());
+        assert!(with_scenario == with_scenario.clone());
+    }
+
+    #[test]
+    fn validate_schema_compatibility_empty_events_passes() {
+        let index = ParserEvidenceIndex {
+            schema_version: PARSER_EVIDENCE_INDEX_SCHEMA_V1.into(),
+            runs: vec![],
+            events: vec![],
+            schema_migrations: vec![],
+        };
+        // No events means nothing to reject.
+        index
+            .validate_event_schema_compatibility("fam.event.v99")
+            .unwrap();
+    }
 }
