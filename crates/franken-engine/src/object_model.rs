@@ -5170,4 +5170,84 @@ mod tests {
         // Different value → error.
         assert!(ProxyInvariantChecker::check_get(&target, &str_key("x"), &int_val(99)).is_err());
     }
+
+    // -- Enrichment: serde roundtrips for untested types (PearlTower 2026-02-27) --
+
+    #[test]
+    fn symbol_id_serde_roundtrip() {
+        let id = SymbolId(42);
+        let json = serde_json::to_string(&id).unwrap();
+        let back: SymbolId = serde_json::from_str(&json).unwrap();
+        assert_eq!(id, back);
+    }
+
+    #[test]
+    fn well_known_symbol_serde_roundtrip_all() {
+        let variants = [
+            WellKnownSymbol::Iterator,
+            WellKnownSymbol::ToPrimitive,
+            WellKnownSymbol::HasInstance,
+            WellKnownSymbol::ToStringTag,
+            WellKnownSymbol::Species,
+            WellKnownSymbol::IsConcatSpreadable,
+            WellKnownSymbol::Unscopables,
+            WellKnownSymbol::AsyncIterator,
+            WellKnownSymbol::Match,
+            WellKnownSymbol::MatchAll,
+            WellKnownSymbol::Replace,
+            WellKnownSymbol::Search,
+            WellKnownSymbol::Split,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: WellKnownSymbol = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+        assert_eq!(variants.len(), 13);
+    }
+
+    #[test]
+    fn object_handle_serde_roundtrip() {
+        let h = ObjectHandle(99);
+        let json = serde_json::to_string(&h).unwrap();
+        let back: ObjectHandle = serde_json::from_str(&json).unwrap();
+        assert_eq!(h, back);
+    }
+
+    #[test]
+    fn proxy_object_serde_roundtrip() {
+        let p = ProxyObject::new(ObjectHandle(1), ObjectHandle(2));
+        let json = serde_json::to_string(&p).unwrap();
+        let back: ProxyObject = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.target, Some(ObjectHandle(1)));
+        assert_eq!(back.handler, Some(ObjectHandle(2)));
+    }
+
+    #[test]
+    fn proxy_object_revoked_serde_roundtrip() {
+        let mut p = ProxyObject::new(ObjectHandle(1), ObjectHandle(2));
+        p.revoke();
+        let json = serde_json::to_string(&p).unwrap();
+        let back: ProxyObject = serde_json::from_str(&json).unwrap();
+        assert!(back.is_revoked());
+        assert_eq!(back.target, None);
+    }
+
+    #[test]
+    fn managed_object_ordinary_serde_roundtrip() {
+        let obj = OrdinaryObject::default();
+        let m = ManagedObject::Ordinary(obj);
+        let json = serde_json::to_string(&m).unwrap();
+        let back: ManagedObject = serde_json::from_str(&json).unwrap();
+        assert!(back.as_ordinary().is_some());
+    }
+
+    #[test]
+    fn managed_object_proxy_serde_roundtrip() {
+        let p = ProxyObject::new(ObjectHandle(5), ObjectHandle(6));
+        let m = ManagedObject::Proxy(p);
+        let json = serde_json::to_string(&m).unwrap();
+        let back: ManagedObject = serde_json::from_str(&json).unwrap();
+        assert!(back.as_ordinary().is_none());
+    }
 }

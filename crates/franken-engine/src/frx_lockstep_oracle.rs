@@ -1734,4 +1734,20 @@ mod tests {
         assert!(!FRX_LOCKSTEP_REPORT_SCHEMA_VERSION.is_empty());
         assert!(!FRX_LOCKSTEP_COMPONENT.is_empty());
     }
+
+    // -- Enrichment: serde roundtrip for untested type (PearlTower 2026-02-26) --
+
+    #[test]
+    fn trace_event_signature_serde_roundtrip() {
+        let sig = FrxTraceEventSignature {
+            seq: 42,
+            phase: "render".into(),
+            event: "commit".into(),
+            decision_path: "fast-path".into(),
+            outcome: "success".into(),
+        };
+        let json = serde_json::to_string(&sig).unwrap();
+        let back: FrxTraceEventSignature = serde_json::from_str(&json).unwrap();
+        assert_eq!(sig, back);
+    }
 }

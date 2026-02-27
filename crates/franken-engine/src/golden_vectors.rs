@@ -976,4 +976,59 @@ mod tests {
         let h2 = ContentHash::compute(b"golden-content-hash-input");
         assert_eq!(h1, h2, "PINNED: ContentHash must be deterministic");
     }
+
+    // -- Enrichment: serde roundtrips for untested types (PearlTower 2026-02-27) --
+
+    #[test]
+    fn golden_vector_serde_roundtrip() {
+        let mut input = BTreeMap::new();
+        input.insert(
+            "key".to_string(),
+            serde_json::Value::String("value".to_string()),
+        );
+        let mut expected = BTreeMap::new();
+        expected.insert(
+            "hash".to_string(),
+            serde_json::Value::String("abc123".to_string()),
+        );
+        let v = GoldenVector {
+            test_name: "test_deterministic_serde_001".to_string(),
+            description: "Verify serde roundtrip".to_string(),
+            category: "deterministic_serde".to_string(),
+            schema_version: "v1".to_string(),
+            input,
+            expected,
+            expect_error: false,
+        };
+        let json = serde_json::to_string(&v).unwrap();
+        let back: GoldenVector = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+    }
+
+    #[test]
+    fn golden_vector_set_serde_roundtrip() {
+        let mut input = BTreeMap::new();
+        input.insert("a".to_string(), serde_json::json!(1));
+        let mut expected = BTreeMap::new();
+        expected.insert("b".to_string(), serde_json::json!(2));
+        let vector = GoldenVector {
+            test_name: "set_test".to_string(),
+            description: "desc".to_string(),
+            category: "schema_hash".to_string(),
+            schema_version: "v1".to_string(),
+            input,
+            expected,
+            expect_error: true,
+        };
+        let set = GoldenVectorSet {
+            vector_format_version: "1.0".to_string(),
+            category: "schema_hash".to_string(),
+            vectors: vec![vector],
+        };
+        let json = serde_json::to_string(&set).unwrap();
+        let back: GoldenVectorSet = serde_json::from_str(&json).unwrap();
+        assert_eq!(set, back);
+        assert_eq!(back.vectors.len(), 1);
+        assert!(back.vectors[0].expect_error);
+    }
 }

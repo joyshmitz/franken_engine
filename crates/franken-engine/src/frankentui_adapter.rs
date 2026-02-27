@@ -7570,4 +7570,471 @@ mod tests {
         };
         assert!(!slot_row_matches_filter(&row, &filter2));
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 session 4 --
+
+    #[test]
+    fn replay_snapshot_non_empty_events_is_complete() {
+        let events = vec![ReplayEventView::new(1, "comp", "evt", "ok", 1000)];
+        let replay = IncidentReplayView::snapshot("trace-2", "scenario-b", events);
+        assert_eq!(replay.replay_status, ReplayStatus::Complete);
+        assert!(replay.deterministic);
+        assert_eq!(replay.events.len(), 1);
+    }
+
+    #[test]
+    fn replay_event_view_new_normalizes_empty_fields() {
+        let event = ReplayEventView::new(0, "", "  ", "   ", 500);
+        assert_eq!(event.component, "unknown");
+        assert_eq!(event.event, "unknown");
+        assert_eq!(event.outcome, "unknown");
+        assert!(event.error_code.is_none());
+        assert_eq!(event.sequence, 0);
+        assert_eq!(event.timestamp_unix_ms, 500);
+    }
+
+    #[test]
+    fn adapter_envelope_encode_json_roundtrips() {
+        let replay = IncidentReplayView::snapshot("t", "s", vec![]);
+        let env = AdapterEnvelope::new(
+            "trace-enc",
+            42,
+            AdapterStream::IncidentReplay,
+            UpdateKind::Snapshot,
+            FrankentuiViewPayload::IncidentReplay(replay),
+        );
+        let bytes = env.encode_json().expect("encode");
+        let restored: AdapterEnvelope = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(env, restored);
+    }
+
+    #[test]
+    fn canonicalize_coverage_caps_at_one_million() {
+        assert_eq!(canonicalize_coverage_millionths(0), 0);
+        assert_eq!(canonicalize_coverage_millionths(500_000), 500_000);
+        assert_eq!(canonicalize_coverage_millionths(1_000_000), 1_000_000);
+        assert_eq!(canonicalize_coverage_millionths(2_000_000), 1_000_000);
+    }
+
+    #[test]
+    fn threshold_matches_all_comparators() {
+        assert!(threshold_matches(ThresholdComparator::GreaterThan, 5, 3));
+        assert!(!threshold_matches(ThresholdComparator::GreaterThan, 3, 3));
+
+        assert!(threshold_matches(ThresholdComparator::GreaterOrEqual, 3, 3));
+        assert!(!threshold_matches(
+            ThresholdComparator::GreaterOrEqual,
+            2,
+            3
+        ));
+
+        assert!(threshold_matches(ThresholdComparator::LessThan, 2, 3));
+        assert!(!threshold_matches(ThresholdComparator::LessThan, 3, 3));
+
+        assert!(threshold_matches(ThresholdComparator::LessOrEqual, 3, 3));
+        assert!(!threshold_matches(ThresholdComparator::LessOrEqual, 4, 3));
+
+        assert!(threshold_matches(ThresholdComparator::Equal, 3, 3));
+        assert!(!threshold_matches(ThresholdComparator::Equal, 4, 3));
+    }
+
+    #[test]
+    fn default_enum_values() {
+        assert_eq!(DashboardSeverity::default(), DashboardSeverity::Info);
+        assert_eq!(ReplayHealthStatus::default(), ReplayHealthStatus::Unknown);
+        assert_eq!(RecoveryStatus::default(), RecoveryStatus::Recovering);
+        assert_eq!(
+            SchemaCompatibilityStatus::default(),
+            SchemaCompatibilityStatus::Unknown
+        );
+        assert_eq!(FlowSensitivityLevel::default(), FlowSensitivityLevel::Low);
+        assert_eq!(ProofValidityStatus::default(), ProofValidityStatus::Valid);
+        assert_eq!(
+            OverrideReviewStatus::default(),
+            OverrideReviewStatus::Pending
+        );
+        assert_eq!(GrantExpiryStatus::default(), GrantExpiryStatus::Active);
+    }
+
+    #[test]
+    fn build_native_coverage_meter_mixed_slots() {
+        let rows = vec![
+            SlotStatusOverviewRow {
+                slot_id: "s-1".into(),
+                slot_kind: "parser".into(),
+                implementation_kind: "native".into(),
+                promotion_status: "promoted".into(),
+                risk_level: ReplacementRiskLevel::Low,
+                last_transition_unix_ms: 1000,
+                health: "ok".into(),
+                lineage_ref: "l".into(),
+            },
+            SlotStatusOverviewRow {
+                slot_id: "s-2".into(),
+                slot_kind: "lexer".into(),
+                implementation_kind: "delegate".into(),
+                promotion_status: "pending".into(),
+                risk_level: ReplacementRiskLevel::Medium,
+                last_transition_unix_ms: 2000,
+                health: "ok".into(),
+                lineage_ref: "l".into(),
+            },
+        ];
+        let meter = build_native_coverage_meter(&rows, vec![]);
+        assert_eq!(meter.native_slots, 1);
+        assert_eq!(meter.delegate_slots, 1);
+        assert_eq!(meter.native_coverage_millionths, 500_000);
+    }
+
+    #[test]
+    fn rank_replacement_opportunities_descending_by_score() {
+        let inputs = vec![
+            ReplacementOpportunityInput {
+                slot_id: "low".into(),
+                slot_kind: "parser".into(),
+                performance_uplift_millionths: 100,
+                invocation_frequency_per_minute: 1,
+                risk_reduction_millionths: 10,
+            },
+            ReplacementOpportunityInput {
+                slot_id: "high".into(),
+                slot_kind: "lexer".into(),
+                performance_uplift_millionths: 500_000,
+                invocation_frequency_per_minute: 100,
+                risk_reduction_millionths: 200_000,
+            },
+        ];
+        let ranked = rank_replacement_opportunities(inputs);
+        assert_eq!(ranked.len(), 2);
+        assert_eq!(ranked[0].slot_id, "high");
+        assert_eq!(ranked[1].slot_id, "low");
+        assert!(
+            ranked[0].expected_value_score_millionths > ranked[1].expected_value_score_millionths
+        );
+        // Rationale includes perf_uplift, freq, risk_reduction
+        assert!(ranked[0].rationale.contains("500000"));
+        assert!(ranked[0].rationale.contains("100"));
+        assert!(ranked[0].rationale.contains("200000"));
+    }
+
+    // -- Enrichment: serde roundtrips for untested types (PearlTower 2026-02-27) --
+
+    #[test]
+    fn decision_outcomes_panel_view_serde_roundtrip() {
+        let v = DecisionOutcomesPanelView {
+            allow_count: 100,
+            deny_count: 5,
+            fallback_count: 2,
+            average_expected_loss_millionths: 150_000,
+        };
+        let json = serde_json::to_string(&v).unwrap();
+        let back: DecisionOutcomesPanelView = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+    }
+
+    #[test]
+    fn obligation_status_panel_view_serde_roundtrip() {
+        let v = ObligationStatusPanelView {
+            open_count: 10,
+            fulfilled_count: 80,
+            failed_count: 3,
+        };
+        let json = serde_json::to_string(&v).unwrap();
+        let back: ObligationStatusPanelView = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+    }
+
+    #[test]
+    fn schema_version_panel_view_serde_roundtrip() {
+        let v = SchemaVersionPanelView {
+            evidence_schema_version: 3,
+            last_migration_unix_ms: Some(1_700_000_000_000),
+            compatibility_status: SchemaCompatibilityStatus::Compatible,
+        };
+        let json = serde_json::to_string(&v).unwrap();
+        let back: SchemaVersionPanelView = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+    }
+
+    #[test]
+    fn benchmark_trend_point_view_serde_roundtrip() {
+        let v = BenchmarkTrendPointView {
+            timestamp_unix_ms: 1_700_000_000_000,
+            throughput_tps: 5000,
+            latency_p95_ms: 12,
+            memory_peak_mb: 256,
+        };
+        let json = serde_json::to_string(&v).unwrap();
+        let back: BenchmarkTrendPointView = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+    }
+
+    #[test]
+    fn native_coverage_meter_serde_roundtrip() {
+        let v = NativeCoverageMeter {
+            native_slots: 8,
+            delegate_slots: 2,
+            native_coverage_millionths: 800_000,
+            trend: vec![CoverageTrendPoint {
+                timestamp_unix_ms: 1_000,
+                native_coverage_millionths: 750_000,
+            }],
+        };
+        let json = serde_json::to_string(&v).unwrap();
+        let back: NativeCoverageMeter = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+    }
+
+    #[test]
+    fn replacement_opportunity_input_serde_roundtrip() {
+        let v = ReplacementOpportunityInput {
+            slot_id: "slot-1".to_string(),
+            slot_kind: "parser".to_string(),
+            performance_uplift_millionths: 500_000,
+            invocation_frequency_per_minute: 100,
+            risk_reduction_millionths: 200_000,
+        };
+        let json = serde_json::to_string(&v).unwrap();
+        let back: ReplacementOpportunityInput = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+    }
+
+    #[test]
+    fn control_dashboard_view_serde_roundtrip() {
+        let v = ControlDashboardView {
+            cluster: "prod".to_string(),
+            zone: "us-east".to_string(),
+            security_epoch: 7,
+            runtime_mode: "normal".to_string(),
+            metrics: vec![DashboardMetricView {
+                metric: "throughput".to_string(),
+                value: 5000,
+                unit: "tps".to_string(),
+            }],
+            extension_rows: vec![ExtensionStatusRow {
+                extension_id: "ext-a".to_string(),
+                state: "active".to_string(),
+                trust_level: "trusted".to_string(),
+            }],
+            incident_counts: {
+                let mut m = BTreeMap::new();
+                m.insert("high".to_string(), 1);
+                m
+            },
+        };
+        let json = serde_json::to_string(&v).unwrap();
+        let back: ControlDashboardView = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+    }
+
+    #[test]
+    fn adapter_envelope_serde_roundtrip() {
+        let v = AdapterEnvelope {
+            schema_version: 1,
+            trace_id: "t-1".to_string(),
+            decision_id: Some("d-1".to_string()),
+            policy_id: Some("p-1".to_string()),
+            generated_at_unix_ms: 1_700_000_000_000,
+            stream: AdapterStream::ControlDashboard,
+            update_kind: UpdateKind::Snapshot,
+            payload: FrankentuiViewPayload::ControlDashboard(ControlDashboardView {
+                cluster: "prod".to_string(),
+                zone: "us-east".to_string(),
+                security_epoch: 7,
+                runtime_mode: "normal".to_string(),
+                metrics: vec![],
+                extension_rows: vec![],
+                incident_counts: BTreeMap::new(),
+            }),
+        };
+        let json = serde_json::to_string(&v).unwrap();
+        let back: AdapterEnvelope = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+    }
+
+    #[test]
+    fn specialization_performance_impact_view_serde_roundtrip() {
+        let v = SpecializationPerformanceImpactView {
+            active_specialization_count: 5,
+            aggregate_latency_reduction_millionths: 300_000,
+            aggregate_throughput_increase_millionths: 200_000,
+            specialization_coverage_millionths: 750_000,
+        };
+        let json = serde_json::to_string(&v).unwrap();
+        let back: SpecializationPerformanceImpactView = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+    }
+
+    #[test]
+    fn flow_decision_dashboard_view_empty_serde_roundtrip() {
+        let v = FlowDecisionDashboardView {
+            cluster: "prod".to_string(),
+            zone: "us-east".to_string(),
+            security_epoch: 7,
+            generated_at_unix_ms: 1_000,
+            label_map: LabelMapView { nodes: vec![], edges: vec![] },
+            blocked_flows: vec![],
+            declassification_history: vec![],
+            confinement_proofs: vec![],
+            alert_indicators: vec![],
+        };
+        let json = serde_json::to_string(&v).unwrap();
+        let back: FlowDecisionDashboardView = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+    }
+
+    #[test]
+    fn proof_specialization_lineage_dashboard_view_empty_serde_roundtrip() {
+        let v = ProofSpecializationLineageDashboardView {
+            cluster: "prod".to_string(),
+            zone: "us-east".to_string(),
+            security_epoch: 7,
+            generated_at_unix_ms: 1_000,
+            proof_inventory: vec![],
+            active_specializations: vec![],
+            invalidation_feed: vec![],
+            fallback_events: vec![],
+            performance_impact: SpecializationPerformanceImpactView {
+                active_specialization_count: 0,
+                aggregate_latency_reduction_millionths: 0,
+                aggregate_throughput_increase_millionths: 0,
+                specialization_coverage_millionths: 0,
+            },
+            alert_indicators: vec![],
+        };
+        let json = serde_json::to_string(&v).unwrap();
+        let back: ProofSpecializationLineageDashboardView = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+    }
+
+    #[test]
+    fn capability_delta_dashboard_view_empty_serde_roundtrip() {
+        let v = CapabilityDeltaDashboardView {
+            cluster: "prod".to_string(),
+            zone: "us-east".to_string(),
+            security_epoch: 7,
+            generated_at_unix_ms: 1_000,
+            current_capability_rows: vec![],
+            proposed_minimal_rows: vec![],
+            escrow_event_feed: vec![],
+            override_rationale_rows: vec![],
+            batch_review_queue: vec![],
+            alert_indicators: vec![],
+            event_subscription_cursor: None,
+        };
+        let json = serde_json::to_string(&v).unwrap();
+        let back: CapabilityDeltaDashboardView = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+    }
+
+    #[test]
+    fn replacement_progress_dashboard_view_empty_serde_roundtrip() {
+        let v = ReplacementProgressDashboardView {
+            cluster: "prod".to_string(),
+            zone: "us-east".to_string(),
+            security_epoch: 7,
+            generated_at_unix_ms: 1_000,
+            slot_status_overview: vec![],
+            native_coverage: NativeCoverageMeter {
+                native_slots: 0,
+                delegate_slots: 0,
+                native_coverage_millionths: 0,
+                trend: vec![],
+            },
+            blocked_promotions: vec![],
+            rollback_events: vec![],
+            next_best_replacements: vec![],
+        };
+        let json = serde_json::to_string(&v).unwrap();
+        let back: ReplacementProgressDashboardView = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+    }
+
+    #[test]
+    fn flow_decision_alert_view_serde_roundtrip() {
+        let v = FlowDecisionAlertView {
+            alert_id: "alert-1".to_string(),
+            extension_id: "ext-a".to_string(),
+            severity: DashboardSeverity::Warning,
+            reason: "blocked flows detected".to_string(),
+            blocked_flow_count: 3,
+            generated_at_unix_ms: 1_000,
+        };
+        let json = serde_json::to_string(&v).unwrap();
+        let back: FlowDecisionAlertView = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+    }
+
+    #[test]
+    fn proof_specialization_alert_view_serde_roundtrip() {
+        let v = ProofSpecializationAlertView {
+            alert_id: "alert-2".to_string(),
+            severity: DashboardSeverity::Critical,
+            reason: "proof expired".to_string(),
+            affected_count: 2,
+            generated_at_unix_ms: 2_000,
+        };
+        let json = serde_json::to_string(&v).unwrap();
+        let back: ProofSpecializationAlertView = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+    }
+
+    #[test]
+    fn confinement_proof_view_serde_roundtrip() {
+        let v = ConfinementProofView {
+            extension_id: "ext-a".to_string(),
+            status: ConfinementStatus::Full,
+            covered_flow_count: 10,
+            uncovered_flow_count: 0,
+            proof_rows: vec![],
+            uncovered_flow_refs: vec![],
+        };
+        let json = serde_json::to_string(&v).unwrap();
+        let back: ConfinementProofView = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+    }
+
+    #[test]
+    fn label_map_view_serde_roundtrip() {
+        let v = LabelMapView { nodes: vec![], edges: vec![] };
+        let json = serde_json::to_string(&v).unwrap();
+        let back: LabelMapView = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+    }
+
+    #[test]
+    fn capability_delta_escrow_event_view_serde_roundtrip() {
+        let v = CapabilityDeltaEscrowEventView {
+            receipt_id: "rcpt-1".to_string(),
+            extension_id: "ext-a".to_string(),
+            capability: Some("net:outbound".to_string()),
+            decision_kind: "grant".to_string(),
+            outcome: "approved".to_string(),
+            trace_id: "t-1".to_string(),
+            decision_id: "d-1".to_string(),
+            policy_id: "p-1".to_string(),
+            error_code: None,
+            timestamp_ns: 1_000_000,
+            receipt_ref: "ref-1".to_string(),
+            replay_ref: "replay-1".to_string(),
+        };
+        let json = serde_json::to_string(&v).unwrap();
+        let back: CapabilityDeltaEscrowEventView = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+    }
+
+    #[test]
+    fn capability_promotion_batch_review_view_serde_roundtrip() {
+        let v = CapabilityPromotionBatchReviewView {
+            batch_id: "batch-1".to_string(),
+            extension_ids: vec!["ext-a".to_string()],
+            witness_ids: vec!["w-1".to_string()],
+            pending_review_count: 1,
+            generated_at_unix_ms: 1_000,
+            workflow_ref: "wf-1".to_string(),
+        };
+        let json = serde_json::to_string(&v).unwrap();
+        let back: CapabilityPromotionBatchReviewView = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+    }
 }

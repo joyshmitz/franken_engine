@@ -42,6 +42,10 @@ franken-verify attestation verify --input <path> [--summary]
 `--summary` emits a compact line suitable for CI gates.
 Without `--summary`, the tool emits JSON reports.
 
+JSON reports include:
+- `confidence_statement`: deterministic confidence summary for the final verdict.
+- `scope_limitations`: normalized list of skipped-scope reasons (for partial verification).
+
 ## Exit Codes
 
 - `0`: verified/pass
@@ -255,6 +259,16 @@ For machine ingestion:
 
 ```bash
 franken-verify replay --input artifacts/claims/replay_claim.json > artifacts/claims/replay_verify_report.json
+```
+
+Example report fields of interest:
+
+```json
+{
+  "verdict": "partially_verified",
+  "confidence_statement": "all 7 checks passed with 1 scope limitation(s): unsigned attestation",
+  "scope_limitations": ["unsigned attestation"]
+}
 ```
 
 ## Verification Semantics

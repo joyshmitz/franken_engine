@@ -14,6 +14,7 @@ target_dir="${CARGO_TARGET_DIR:-/tmp/rch_target_franken_engine_parser_event_ast_
 artifact_root="${PARSER_EVENT_AST_EQUIVALENCE_ARTIFACT_ROOT:-artifacts/parser_event_ast_equivalence}"
 rch_timeout_seconds="${RCH_EXEC_TIMEOUT_SECONDS:-900}"
 cargo_build_jobs="${CARGO_BUILD_JOBS:-1}"
+bead_id="${PARSER_EVENT_AST_EQUIVALENCE_BEAD_ID:-bd-2mds.1.4.4}"
 
 case "${scenario}" in
   parity|malformed|tamper|replay|full)
@@ -96,33 +97,41 @@ run_test_scenario() {
   case "${scenario}" in
     parity)
       run_step \
-        "cargo test -p frankenengine-engine --test parser_event_ast_equivalence -- --exact parser_event_ast_equivalence_success_cases_have_hash_parity_and_stable_witnesses" \
-        cargo test -p frankenengine-engine --test parser_event_ast_equivalence -- --exact parser_event_ast_equivalence_success_cases_have_hash_parity_and_stable_witnesses
+        "cargo test -p frankenengine-engine --test parser_event_ast_equivalence -- --skip parser_event_ast_equivalence_failure_case_has_replayable_error_codes --skip parser_event_ast_equivalence_tamper_detection_is_deterministic --skip parser_event_ast_equivalence_replay_scenarios_are_deterministic" \
+        cargo test -p frankenengine-engine --test parser_event_ast_equivalence -- \
+          --skip parser_event_ast_equivalence_failure_case_has_replayable_error_codes \
+          --skip parser_event_ast_equivalence_tamper_detection_is_deterministic \
+          --skip parser_event_ast_equivalence_replay_scenarios_are_deterministic
       ;;
     malformed)
       run_step \
-        "cargo test -p frankenengine-engine --test parser_event_ast_equivalence -- --exact parser_event_ast_equivalence_failure_case_has_replayable_error_codes" \
-        cargo test -p frankenengine-engine --test parser_event_ast_equivalence -- --exact parser_event_ast_equivalence_failure_case_has_replayable_error_codes
+        "cargo test -p frankenengine-engine --test parser_event_ast_equivalence -- --skip parser_event_ast_equivalence_success_cases_have_hash_parity_and_stable_witnesses --skip parser_event_ast_equivalence_tamper_detection_is_deterministic --skip parser_event_ast_equivalence_replay_scenarios_are_deterministic" \
+        cargo test -p frankenengine-engine --test parser_event_ast_equivalence -- \
+          --skip parser_event_ast_equivalence_success_cases_have_hash_parity_and_stable_witnesses \
+          --skip parser_event_ast_equivalence_tamper_detection_is_deterministic \
+          --skip parser_event_ast_equivalence_replay_scenarios_are_deterministic
       ;;
     tamper)
       run_step \
-        "cargo test -p frankenengine-engine --test parser_event_ast_equivalence -- --exact parser_event_ast_equivalence_tamper_detection_is_deterministic" \
-        cargo test -p frankenengine-engine --test parser_event_ast_equivalence -- --exact parser_event_ast_equivalence_tamper_detection_is_deterministic
+        "cargo test -p frankenengine-engine --test parser_event_ast_equivalence -- --skip parser_event_ast_equivalence_success_cases_have_hash_parity_and_stable_witnesses --skip parser_event_ast_equivalence_failure_case_has_replayable_error_codes --skip parser_event_ast_equivalence_replay_scenarios_are_deterministic" \
+        cargo test -p frankenengine-engine --test parser_event_ast_equivalence -- \
+          --skip parser_event_ast_equivalence_success_cases_have_hash_parity_and_stable_witnesses \
+          --skip parser_event_ast_equivalence_failure_case_has_replayable_error_codes \
+          --skip parser_event_ast_equivalence_replay_scenarios_are_deterministic
       ;;
     replay)
       run_step \
-        "cargo test -p frankenengine-engine --test parser_event_ast_equivalence -- --exact parser_event_ast_equivalence_replay_scenarios_are_deterministic" \
-        cargo test -p frankenengine-engine --test parser_event_ast_equivalence -- --exact parser_event_ast_equivalence_replay_scenarios_are_deterministic
+        "cargo test -p frankenengine-engine --test parser_event_ast_equivalence -- --skip parser_event_ast_equivalence_success_cases_have_hash_parity_and_stable_witnesses --skip parser_event_ast_equivalence_failure_case_has_replayable_error_codes --skip parser_event_ast_equivalence_tamper_detection_is_deterministic" \
+        cargo test -p frankenengine-engine --test parser_event_ast_equivalence -- \
+          --skip parser_event_ast_equivalence_success_cases_have_hash_parity_and_stable_witnesses \
+          --skip parser_event_ast_equivalence_failure_case_has_replayable_error_codes \
+          --skip parser_event_ast_equivalence_tamper_detection_is_deterministic
       ;;
     full)
       run_step "cargo test -p frankenengine-engine --test parser_event_ast_equivalence" \
         cargo test -p frankenengine-engine --test parser_event_ast_equivalence
       ;;
   esac
-
-  run_step \
-    "cargo test -p frankenengine-engine --test parser_event_ast_equivalence -- --exact parser_event_ast_equivalence_contract_doc_and_logs_are_well_formed" \
-    cargo test -p frankenengine-engine --test parser_event_ast_equivalence -- --exact parser_event_ast_equivalence_contract_doc_and_logs_are_well_formed
 }
 
 run_mode() {
@@ -208,7 +217,7 @@ write_manifest() {
   {
     echo "{"
     echo '  "schema_version": "franken-engine.parser-event-ast-equivalence.run-manifest.v1",'
-    echo '  "bead_id": "bd-2mds.1.4.4.1",'
+    echo "  \"bead_id\": \"${bead_id}\","
     echo "  \"component\": \"${component}\"," 
     echo "  \"mode\": \"${mode}\"," 
     echo "  \"scenario\": \"${scenario}\"," 

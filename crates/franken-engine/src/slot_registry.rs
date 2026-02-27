@@ -3663,4 +3663,325 @@ mod tests {
         let display = status.to_string();
         assert!(display.contains("regression detected"));
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 session 5 --
+
+    #[test]
+    fn is_ga_ready_mixed_slots_not_ready() {
+        let mut reg = SlotRegistry::new();
+        let parser = register_slot(&mut reg, "parser", SlotKind::Parser, "sha256:d-parser");
+        register_slot(
+            &mut reg,
+            "interpreter",
+            SlotKind::Interpreter,
+            "sha256:d-interp",
+        );
+        promote_slot(&mut reg, &parser, "sha256:n-parser");
+        assert!(
+            !reg.is_ga_ready(),
+            "mixed native/delegate should not be GA ready"
+        );
+        assert_eq!(reg.native_count(), 1);
+        assert_eq!(reg.delegate_count(), 1);
+    }
+
+    #[test]
+    fn ga_guard_blocks_on_lineage_digest_mismatch() {
+        let mut reg = SlotRegistry::new();
+        let parser = register_slot(
+            &mut reg,
+            "parser",
+            SlotKind::Parser,
+            "sha256:delegate-parser",
+        );
+        promote_slot(&mut reg, &parser, "sha256:native-parser");
+
+        let core_slots = BTreeSet::from([parser.clone()]);
+        let mut input = guard_input(core_slots, None);
+        let wrong_lineage =
+            lineage_artifact(&parser, "sha256:delegate-parser", "sha256:wrong-digest");
+        input.lineage_artifacts = vec![wrong_lineage];
+
+        let artifact = reg.evaluate_ga_release_guard(&input).unwrap();
+        assert_eq!(artifact.verdict, GaReleaseGuardVerdict::Blocked);
+        assert_eq!(artifact.core_slots_lineage_mismatch, vec![parser]);
+    }
+
+    #[test]
+    fn ga_guard_blocks_on_equivalence_failure() {
+        let mut reg = SlotRegistry::new();
+        let parser = register_slot(
+            &mut reg,
+            "parser",
+            SlotKind::Parser,
+            "sha256:delegate-parser",
+        );
+        promote_slot(&mut reg, &parser, "sha256:native-parser");
+
+        let core_slots = BTreeSet::from([parser.clone()]);
+        let mut input = guard_input(core_slots, None);
+        let mut lineage =
+            lineage_artifact(&parser, "sha256:delegate-parser", "sha256:native-parser");
+        lineage.equivalence_passed = false;
+        input.lineage_artifacts = vec![lineage];
+
+        let artifact = reg.evaluate_ga_release_guard(&input).unwrap();
+        assert_eq!(artifact.verdict, GaReleaseGuardVerdict::Blocked);
+        assert_eq!(artifact.core_slots_equivalence_failed, vec![parser]);
+    }
+
+    #[test]
+    fn ga_guard_rejects_duplicate_exemptions() {
+        let mut reg = SlotRegistry::new();
+        let parser = register_slot(
+            &mut reg,
+            "parser",
+            SlotKind::Parser,
+            "sha256:delegate-parser",
+        );
+        let core_slots = BTreeSet::from([parser.clone()]);
+        let mut input = guard_input(core_slots, None);
+        input.exemptions = vec![exemption_for(parser.clone()), exemption_for(parser)];
+        let err = reg.evaluate_ga_release_guard(&input).unwrap_err();
+        assert!(matches!(
+            err,
+            GaReleaseGuardError::DuplicateExemption { .. }
+        ));
+    }
+
+    #[test]
+    fn ga_guard_rejects_duplicate_lineage_artifacts() {
+        let mut reg = SlotRegistry::new();
+        let parser = register_slot(
+            &mut reg,
+            "parser",
+            SlotKind::Parser,
+            "sha256:delegate-parser",
+        );
+        promote_slot(&mut reg, &parser, "sha256:native-parser");
+
+        let core_slots = BTreeSet::from([parser.clone()]);
+        let mut input = guard_input(core_slots, None);
+        input.lineage_artifacts = vec![
+            lineage_artifact(&parser, "sha256:delegate-parser", "sha256:native-parser"),
+            lineage_artifact(&parser, "sha256:delegate-parser", "sha256:native-parser"),
+        ];
+        let err = reg.evaluate_ga_release_guard(&input).unwrap_err();
+        assert!(matches!(
+            err,
+            GaReleaseGuardError::DuplicateLineageArtifact { .. }
+        ));
+    }
+
+    #[test]
+    fn re_promotion_from_demoted_state() {
+        let mut reg = SlotRegistry::new();
+        let id = register_slot(&mut reg, "parser", SlotKind::Parser, "sha256:d1");
+        promote_slot(&mut reg, &id, "sha256:n1");
+        reg.demote(&id, "regression".into(), "t3".into()).unwrap();
+        assert!(reg.get(&id).unwrap().status.is_delegate());
+
+        reg.begin_candidacy(&id, "sha256:c2".into(), "t4".into())
+            .unwrap();
+        assert!(matches!(
+            reg.get(&id).unwrap().status,
+            PromotionStatus::PromotionCandidate { .. }
+        ));
+        reg.promote(
+            &id,
+            "sha256:n2".into(),
+            &narrower_authority(),
+            "receipt-n2".into(),
+            "t5".into(),
+        )
+        .unwrap();
+        assert!(reg.get(&id).unwrap().status.is_native());
+        assert_eq!(reg.get(&id).unwrap().promotion_lineage.len(), 6);
+    }
+
+    #[test]
+    fn demote_restores_implementation_digest() {
+        let mut reg = SlotRegistry::new();
+        let id = register_slot(&mut reg, "parser", SlotKind::Parser, "sha256:delegate-v1");
+        promote_slot(&mut reg, &id, "sha256:native-v1");
+        assert_eq!(
+            reg.get(&id).unwrap().implementation_digest,
+            "sha256:native-v1"
+        );
+        reg.demote(&id, "perf regression".into(), "t3".into())
+            .unwrap();
+        assert_eq!(
+            reg.get(&id).unwrap().implementation_digest,
+            "sha256:delegate-v1",
+            "implementation_digest should be restored to rollback_target"
+        );
+    }
+
+    #[test]
+    fn ga_guard_rejects_empty_lineage_dashboard_ref() {
+        let mut reg = SlotRegistry::new();
+        register_slot(&mut reg, "parser", SlotKind::Parser, "sha256:d");
+        let mut input = guard_input(BTreeSet::new(), None);
+        input.config.lineage_dashboard_ref = "  ".to_string();
+        let err = reg.evaluate_ga_release_guard(&input).unwrap_err();
+        assert!(matches!(
+            err,
+            GaReleaseGuardError::InvalidInput { field, .. } if field == "lineage_dashboard_ref"
+        ));
+    }
+
+    // -- Enrichment: PearlTower 2026-02-26 session 8 --
+
+    #[test]
+    fn register_delegate_rejects_inconsistent_authority() {
+        let mut reg = SlotRegistry::new();
+        let id = SlotId::new("parser").unwrap();
+        // HeapAlloc is required but not in permitted → inconsistent
+        let bad_authority = AuthorityEnvelope {
+            required: vec![SlotCapability::ReadSource, SlotCapability::HeapAlloc],
+            permitted: vec![SlotCapability::ReadSource, SlotCapability::EmitIr],
+        };
+        let err = reg
+            .register_delegate(id, SlotKind::Parser, bad_authority, "sha256:d".into(), "t0".into())
+            .unwrap_err();
+        assert!(matches!(err, SlotRegistryError::InconsistentAuthority { .. }));
+    }
+
+    #[test]
+    fn register_delegate_rejects_duplicate_slot_id() {
+        let mut reg = SlotRegistry::new();
+        register_slot(&mut reg, "parser", SlotKind::Parser, "sha256:d1");
+        let id = SlotId::new("parser").unwrap();
+        let err = reg
+            .register_delegate(
+                id,
+                SlotKind::Parser,
+                test_authority(),
+                "sha256:d2".into(),
+                "t1".into(),
+            )
+            .unwrap_err();
+        assert!(matches!(err, SlotRegistryError::DuplicateSlotId { .. }));
+    }
+
+    #[test]
+    fn promote_rejects_authority_broadening() {
+        let mut reg = SlotRegistry::new();
+        let id = register_slot(&mut reg, "parser", SlotKind::Parser, "sha256:d1");
+        reg.begin_candidacy(&id, "sha256:c1".into(), "t1".into())
+            .unwrap();
+        // broader_authority() includes HeapAlloc and InvokeHostcall which
+        // are not in test_authority().permitted → AuthorityBroadening
+        let err = reg
+            .promote(
+                &id,
+                "sha256:n1".into(),
+                &broader_authority(),
+                "receipt-1".into(),
+                "t2".into(),
+            )
+            .unwrap_err();
+        assert!(matches!(err, SlotRegistryError::AuthorityBroadening { .. }));
+    }
+
+    #[test]
+    fn begin_candidacy_from_native_is_invalid_transition() {
+        let mut reg = SlotRegistry::new();
+        let id = register_slot(&mut reg, "parser", SlotKind::Parser, "sha256:d1");
+        promote_slot(&mut reg, &id, "sha256:n1");
+        assert!(reg.get(&id).unwrap().status.is_native());
+        let err = reg
+            .begin_candidacy(&id, "sha256:c2".into(), "t3".into())
+            .unwrap_err();
+        assert!(matches!(err, SlotRegistryError::InvalidTransition { .. }));
+    }
+
+    #[test]
+    fn demote_from_delegate_is_invalid_transition() {
+        let mut reg = SlotRegistry::new();
+        let id = register_slot(&mut reg, "parser", SlotKind::Parser, "sha256:d1");
+        assert!(reg.get(&id).unwrap().status.is_delegate());
+        let err = reg.demote(&id, "reason".into(), "t1".into()).unwrap_err();
+        assert!(matches!(err, SlotRegistryError::InvalidTransition { .. }));
+    }
+
+    #[test]
+    fn ga_guard_blocks_core_delegate_without_exemption() {
+        let mut reg = SlotRegistry::new();
+        let parser = register_slot(&mut reg, "parser", SlotKind::Parser, "sha256:d-parser");
+        // parser remains delegate, declared as core slot
+        let core_slots = BTreeSet::from([parser.clone()]);
+        let input = guard_input(core_slots, None);
+        let artifact = reg.evaluate_ga_release_guard(&input).unwrap();
+        assert_eq!(artifact.verdict, GaReleaseGuardVerdict::Blocked);
+        assert_eq!(artifact.core_delegate_count, 1);
+        assert!(!artifact.blocking_slots.is_empty());
+        assert!(artifact.blocking_slots[0].blocking);
+    }
+
+    #[test]
+    fn ga_guard_blocks_invalid_lineage_signature() {
+        let mut reg = SlotRegistry::new();
+        let parser = register_slot(
+            &mut reg,
+            "parser",
+            SlotKind::Parser,
+            "sha256:delegate-parser",
+        );
+        promote_slot(&mut reg, &parser, "sha256:native-parser");
+
+        let core_slots = BTreeSet::from([parser.clone()]);
+        let mut input = guard_input(core_slots, None);
+        let mut lineage =
+            lineage_artifact(&parser, "sha256:delegate-parser", "sha256:native-parser");
+        lineage.signature_verified = false;
+        input.lineage_artifacts = vec![lineage];
+
+        let artifact = reg.evaluate_ga_release_guard(&input).unwrap();
+        assert_eq!(artifact.verdict, GaReleaseGuardVerdict::Blocked);
+        assert_eq!(artifact.core_slots_invalid_signature, vec![parser]);
+    }
+
+    #[test]
+    fn snapshot_replacement_progress_weighted_coverage() {
+        let mut reg = SlotRegistry::new();
+        let parser = register_slot(&mut reg, "parser", SlotKind::Parser, "sha256:d-parser");
+        let interp = register_slot(
+            &mut reg,
+            "interpreter",
+            SlotKind::Interpreter,
+            "sha256:d-interp",
+        );
+        promote_slot(&mut reg, &parser, "sha256:n-parser");
+        // parser is native with weight 3M, interpreter is delegate with weight 1M
+        let mut signals = BTreeMap::new();
+        signals.insert(
+            parser.clone(),
+            SlotReplacementSignal {
+                invocation_weight_millionths: 3_000_000,
+                throughput_uplift_millionths: 0,
+                security_risk_reduction_millionths: 0,
+            },
+        );
+        signals.insert(
+            interp.clone(),
+            SlotReplacementSignal {
+                invocation_weight_millionths: 1_000_000,
+                throughput_uplift_millionths: 200_000,
+                security_risk_reduction_millionths: 100_000,
+            },
+        );
+        let snap = reg
+            .snapshot_replacement_progress("t1", "d1", "p1", &signals)
+            .unwrap();
+        assert_eq!(snap.total_slots, 2);
+        assert_eq!(snap.native_slots, 1);
+        assert_eq!(snap.delegate_slots, 1);
+        // weighted native coverage = 3M / (3M + 1M) * 1M = 750_000
+        assert_eq!(snap.weighted_native_coverage_millionths, 750_000);
+        // one delegate candidate in replacement order
+        assert_eq!(snap.recommended_replacement_order.len(), 1);
+        assert_eq!(snap.recommended_replacement_order[0].slot_id, interp);
+        assert!(snap.recommended_replacement_order[0].delegate_backed);
+    }
 }

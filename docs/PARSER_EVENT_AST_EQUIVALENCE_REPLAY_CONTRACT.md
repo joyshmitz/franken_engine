@@ -1,4 +1,4 @@
-# Parser Event->AST Equivalence and Deterministic Replay Contract (`bd-2mds.1.4.4.1`)
+# Parser Event->AST Equivalence and Deterministic Replay Contract (`bd-2mds.1.4.4`)
 
 This contract defines the core equivalence harness between parser event-stream
 semantics and materialized AST semantics, plus deterministic replay requirements
@@ -101,6 +101,15 @@ Each run emits:
 
 The manifest includes deterministic environment fingerprints, replay command,
 scenario, and pass/fail outcome.
+
+Default manifest bead tracking uses `bd-2mds.1.4.4`. Override per run when
+needed:
+
+```bash
+PARSER_EVENT_AST_EQUIVALENCE_BEAD_ID=bd-2mds.1.4.4.2 \
+  PARSER_EVENT_AST_EQUIVALENCE_SCENARIO=parity \
+  ./scripts/run_parser_event_ast_equivalence.sh test
+```
 
 ## Operator Verification
 
