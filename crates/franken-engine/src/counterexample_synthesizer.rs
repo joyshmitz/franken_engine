@@ -2602,4 +2602,197 @@ mod tests {
         // Original priority preserved.
         assert_eq!(mutated.nodes[0].priority, base.nodes[0].priority);
     }
+
+    // -------------------------------------------------------------------
+    // Enrichment: constants and defaults
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn default_constants_values() {
+        assert_eq!(DEFAULT_BUDGET_NS, 30_000_000_000);
+        assert_eq!(DEFAULT_MAX_MINIMIZATION_ROUNDS, 50);
+    }
+
+    #[test]
+    fn synthesis_config_default_values() {
+        let cfg = SynthesisConfig::default();
+        assert_eq!(cfg.budget_ns, DEFAULT_BUDGET_NS);
+        assert_eq!(cfg.max_minimization_rounds, DEFAULT_MAX_MINIMIZATION_ROUNDS);
+        assert_eq!(
+            cfg.preferred_strategy,
+            SynthesisStrategy::CompilerExtraction
+        );
+        assert!(cfg.detect_controller_interference);
+        assert_eq!(cfg.max_enumeration_candidates, 100);
+        assert_eq!(cfg.epoch, SecurityEpoch::from_raw(1));
+        assert_eq!(cfg.signing_key_bytes.len(), 32);
+    }
+
+    #[test]
+    fn regression_corpus_default_equals_new() {
+        let c1 = RegressionCorpus::new();
+        let c2 = RegressionCorpus::default();
+        assert_eq!(c1, c2);
+        assert!(c1.is_empty());
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: corpus unresolved after partial resolve
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn corpus_unresolved_returns_only_unresolved() {
+        let mut synth = CounterexampleSynthesizer::new(test_config());
+        let policy = make_monotonicity_violating_policy();
+        let compiler = PolicyTheoremCompiler::new();
+        let result = compiler.compile(&policy).unwrap();
+
+        let scxs = synth.synthesize(&result, 1000).unwrap();
+        assert!(scxs.len() >= 1);
+
+        // Resolve the first counterexample.
+        let first_id = scxs[0].conflict_id.clone();
+        synth.corpus.resolve(&first_id);
+
+        let unresolved = synth.corpus().unresolved();
+        // None of the unresolved entries should have the resolved ID.
+        assert!(unresolved.iter().all(|e| e.entry_id != first_id));
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: Display all variants
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn synthesis_strategy_display_all_variants() {
+        assert_eq!(
+            SynthesisStrategy::CompilerExtraction.to_string(),
+            "compiler-extraction"
+        );
+        assert_eq!(SynthesisStrategy::Enumeration.to_string(), "enumeration");
+        assert_eq!(SynthesisStrategy::Mutation.to_string(), "mutation");
+        assert_eq!(SynthesisStrategy::TimeBounded.to_string(), "time-bounded");
+    }
+
+    #[test]
+    fn synthesis_outcome_display_all_variants() {
+        assert_eq!(SynthesisOutcome::Complete.to_string(), "complete");
+        assert_eq!(SynthesisOutcome::Partial.to_string(), "partial");
+        assert_eq!(SynthesisOutcome::Incomplete.to_string(), "incomplete");
+    }
+
+    #[test]
+    fn interference_kind_display_all_variants() {
+        assert_eq!(
+            InterferenceKind::InvariantInvalidation.to_string(),
+            "invariant-invalidation"
+        );
+        assert_eq!(InterferenceKind::Oscillation.to_string(), "oscillation");
+        assert_eq!(
+            InterferenceKind::TimescaleConflict.to_string(),
+            "timescale-conflict"
+        );
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: diagnostic severity per property
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn diagnostic_severity_matches_property() {
+        let mut synth = CounterexampleSynthesizer::new(test_config());
+        let policy = make_monotonicity_violating_policy();
+        let compiler = PolicyTheoremCompiler::new();
+        let result = compiler.compile(&policy).unwrap();
+        let scxs = synth.synthesize(&result, 1000).unwrap();
+
+        // Monotonicity/AttenuationLegality -> 900_000, NonInterference -> 1_000_000,
+        // MergeDeterminism/PrecedenceStability -> 700_000.
+        for diag in synth.diagnostics() {
+            match diag.property {
+                FormalProperty::Monotonicity | FormalProperty::AttenuationLegality => {
+                    assert_eq!(diag.severity_millionths, 900_000);
+                }
+                FormalProperty::NonInterference => {
+                    assert_eq!(diag.severity_millionths, 1_000_000);
+                }
+                FormalProperty::MergeDeterminism | FormalProperty::PrecedenceStability => {
+                    assert_eq!(diag.severity_millionths, 700_000);
+                }
+            }
+        }
+
+        // Verify we actually checked at least one diagnostic.
+        assert!(!synth.diagnostics().is_empty());
+        // Verify scxs is non-empty too (we need it bound to avoid unused warning).
+        assert!(!scxs.is_empty());
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: controller_config.has_timescale_statement
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn has_timescale_statement_whitespace_only_is_false() {
+        let config = ControllerConfig {
+            controller_id: "ctrl-a".to_string(),
+            read_metrics: BTreeSet::new(),
+            write_metrics: BTreeSet::new(),
+            affected_metrics: BTreeSet::new(),
+            timescale_millionths: 1_000_000,
+            timescale_statement: "   \t  ".to_string(),
+        };
+        assert!(!config.has_timescale_statement());
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: replay fixture metadata
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn replay_fixture_metadata_includes_property_and_strategy() {
+        let mut synth = CounterexampleSynthesizer::new(test_config());
+        let policy = make_monotonicity_violating_policy();
+        let compiler = PolicyTheoremCompiler::new();
+        let result = compiler.compile(&policy).unwrap();
+        let scxs = synth.synthesize(&result, 1000).unwrap();
+
+        let fixture = synth.to_replay_fixture(&scxs[0], 5000);
+        // The fixture should have metadata set for property_violated and strategy.
+        let metadata = &fixture.metadata;
+        assert!(metadata.contains_key("property_violated"));
+        assert!(metadata.contains_key("strategy"));
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: apply_mutation remove_constraint with empty constraints
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn apply_mutation_remove_constraint_empty_is_noop() {
+        let base = make_valid_policy();
+        assert!(base.nodes[0].constraints.is_empty());
+        let mutation = PolicyMutation {
+            kind: MutationKind::RemoveConstraint,
+            target_node: "node-1".to_string(),
+            new_value: String::new(),
+        };
+        let mutated = apply_mutation(&base, &mutation);
+        assert!(mutated.nodes[0].constraints.is_empty());
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: corpus contains after append
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn corpus_contains_after_append() {
+        let mut synth = CounterexampleSynthesizer::new(test_config());
+        let policy = make_monotonicity_violating_policy();
+        let compiler = PolicyTheoremCompiler::new();
+        let result = compiler.compile(&policy).unwrap();
+        let scxs = synth.synthesize(&result, 1000).unwrap();
+
+        assert!(synth.corpus().contains(&scxs[0].conflict_id));
+    }
 }

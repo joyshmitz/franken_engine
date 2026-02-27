@@ -2861,4 +2861,213 @@ mod tests {
             assert_eq!(kind.to_string(), *expected);
         }
     }
+
+    // -------------------------------------------------------------------
+    // Enrichment: format version constant
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn bundle_format_version_constant_is_1_0() {
+        assert_eq!(BUNDLE_FORMAT_VERSION.major, 1);
+        assert_eq!(BUNDLE_FORMAT_VERSION.minor, 0);
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: verify_receipts empty bundle
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn verify_receipts_skips_when_no_receipts() {
+        let bundle = build_test_bundle();
+        // build_test_bundle doesn't add opt_receipts, so this should skip.
+        let verifier = BundleVerifier::new();
+        let report = verifier.verify_receipts(
+            &bundle,
+            &BTreeMap::new(),
+            SecurityEpoch::from_raw(100),
+            6000,
+        );
+        assert!(report.passed);
+        assert_eq!(report.checks.len(), 1);
+        assert!(matches!(
+            &report.checks[0].outcome,
+            CheckOutcome::Skipped { .. }
+        ));
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: inspect metadata and epochs
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn inspect_metadata_propagated() {
+        let bundle = build_test_bundle();
+        let verifier = BundleVerifier::new();
+        let inspection = verifier.inspect(&bundle);
+
+        assert_eq!(inspection.metadata.get("severity").unwrap(), "high");
+    }
+
+    #[test]
+    fn inspect_epochs_collects_from_traces() {
+        let bundle = build_test_bundle();
+        let verifier = BundleVerifier::new();
+        let inspection = verifier.inspect(&bundle);
+
+        // Should include creation epoch and trace start/end epochs.
+        assert!(inspection.epochs.contains(&100));
+    }
+
+    #[test]
+    fn inspect_window_matches_builder() {
+        let bundle = build_test_bundle();
+        let verifier = BundleVerifier::new();
+        let inspection = verifier.inspect(&bundle);
+
+        assert_eq!(inspection.window, (1000, 2000));
+    }
+
+    #[test]
+    fn inspect_trace_ids_collected() {
+        let bundle = build_test_bundle();
+        let verifier = BundleVerifier::new();
+        let inspection = verifier.inspect(&bundle);
+
+        assert!(inspection.trace_ids.contains(&"trace-001".to_string()));
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: CheckOutcome::Skipped behavior
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn check_outcome_skipped_is_neither_pass_nor_fail() {
+        let skipped = CheckOutcome::Skipped {
+            reason: "test".to_string(),
+        };
+        assert!(!skipped.is_pass());
+        assert!(!skipped.is_fail());
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: builder with custom redaction policy
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn builder_with_custom_redaction_policy() {
+        let key = test_signing_key();
+        let mut custom_keys = BTreeSet::new();
+        custom_keys.insert("pii-field".to_string());
+        let policy = RedactionPolicy {
+            redact_extension_ids: true,
+            redact_evidence_metadata: false,
+            redact_nondeterminism_values: true,
+            redact_node_ids: false,
+            custom_redaction_keys: custom_keys,
+        };
+
+        let bundle = BundleBuilder::new(
+            "incident-002".to_string(),
+            SecurityEpoch::from_raw(50),
+            9000,
+            "producer-2".to_string(),
+            key,
+        )
+        .redaction_policy(policy.clone())
+        .trace("t-1".to_string(), make_trace("t-1", 1))
+        .build()
+        .unwrap();
+
+        assert_eq!(bundle.manifest.redaction_policy, policy);
+        assert!(bundle.manifest.redaction_policy.redact_extension_ids);
+        assert!(
+            bundle
+                .manifest
+                .redaction_policy
+                .custom_redaction_keys
+                .contains("pii-field")
+        );
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: merkle proof for last leaf in even tree
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn merkle_proof_last_leaf_even_tree() {
+        let leaves: Vec<ContentHash> = (0..4u8).map(|i| ContentHash::compute(&[i])).collect();
+        let root = compute_merkle_root(&leaves);
+        let proof = build_merkle_proof(&leaves, 3);
+        assert!(!proof.is_empty());
+        assert!(verify_merkle_proof(&leaves[3], &proof, &root));
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: signing_bytes includes incident_id
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn signing_bytes_includes_incident_id() {
+        let bundle = build_test_bundle();
+        let bytes = bundle.manifest.signing_bytes();
+        // incident_id "incident-001" should appear in the signing bytes.
+        let incident_bytes = b"incident-001";
+        // Check that the signing bytes contain the incident_id substring.
+        let found = bytes
+            .windows(incident_bytes.len())
+            .any(|w| w == incident_bytes);
+        assert!(found, "signing_bytes should include incident_id");
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: verify_counterfactual with empty configs
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn verify_counterfactual_empty_configs() {
+        let bundle = build_test_bundle();
+        let verifier = BundleVerifier::new();
+        let report = verifier.verify_counterfactual(&bundle, &[], 6000);
+        // No configs => no checks => report passes by default.
+        assert!(report.passed);
+        assert!(report.checks.is_empty());
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: BundleVerifier default
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn bundle_verifier_default_matches_new() {
+        let v1 = BundleVerifier::new();
+        let v2 = BundleVerifier::default();
+        assert_eq!(v1.supported_version, v2.supported_version);
+    }
+
+    // -------------------------------------------------------------------
+    // Enrichment: multiple traces bundle integrity
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn verify_integrity_multiple_traces_all_pass() {
+        let key = test_signing_key();
+        let bundle = BundleBuilder::new(
+            "incident-multi".to_string(),
+            SecurityEpoch::from_raw(100),
+            5000,
+            "producer-key-1".to_string(),
+            key,
+        )
+        .window(1000, 3000)
+        .trace("trace-a".to_string(), make_trace("trace-a", 2))
+        .trace("trace-b".to_string(), make_trace("trace-b", 4))
+        .trace("trace-c".to_string(), make_trace("trace-c", 1))
+        .build()
+        .unwrap();
+
+        let verifier = BundleVerifier::new();
+        let report = verifier.verify_integrity(&bundle, 6000);
+        assert!(report.passed);
+        assert_eq!(report.fail_count(), 0);
+    }
 }

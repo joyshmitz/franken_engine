@@ -1790,4 +1790,211 @@ mod tests {
         let back: SchemaContract = serde_json::from_str(&json).unwrap();
         assert_eq!(contract, back);
     }
+
+    // ── Enrichment: serde roundtrip tests ────────────────────────────
+
+    #[test]
+    fn version_compatibility_entry_serde_roundtrip() {
+        let entry = VersionCompatibilityEntry {
+            boundary: "parser-ast".to_string(),
+            current_version: 3,
+            minimum_compatible_version: 1,
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let back: VersionCompatibilityEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, entry);
+    }
+
+    #[test]
+    fn field_type_serde_roundtrip_all_variants() {
+        let all = [
+            FieldType::String,
+            FieldType::Number,
+            FieldType::Bool,
+            FieldType::Array,
+            FieldType::Object,
+            FieldType::Null,
+        ];
+        for ft in &all {
+            let json = serde_json::to_string(ft).unwrap();
+            let back: FieldType = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, ft);
+        }
+    }
+
+    #[test]
+    fn schema_contract_verify_empty_required_fields() {
+        let contract = SchemaContract {
+            boundary: "test-empty".to_string(),
+            type_name: "EmptySchema".to_string(),
+            required_fields: BTreeSet::new(),
+            field_types: BTreeMap::new(),
+        };
+        let obj = serde_json::json!({"anything": "goes"});
+        let violations = contract.verify(&obj);
+        assert!(
+            violations.is_empty(),
+            "empty required_fields means no violations"
+        );
+    }
+
+    // ── enrichment: clone equality ──────────────────────────────────────
+
+    #[test]
+    fn enrichment_clone_eq_regression_class() {
+        let a = RegressionClass::Performance;
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn enrichment_clone_eq_contract_violation() {
+        let a = ContractViolation {
+            boundary: "frankentui".to_string(),
+            contract_name: "AdapterEnvelope".to_string(),
+            regression_class: RegressionClass::Observability,
+            detail: "missing field `trace_id`".to_string(),
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn enrichment_clone_eq_schema_contract() {
+        let a = frankensqlite_migration_receipt_contract();
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn enrichment_clone_eq_field_type() {
+        let a = FieldType::Array;
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn enrichment_clone_eq_contract_suite_result() {
+        let a = ContractSuiteResult {
+            total_contracts: 7,
+            passed: 5,
+            failed: 2,
+            violations: vec![ContractViolation {
+                boundary: "frankensqlite".to_string(),
+                contract_name: "StoreRecord".to_string(),
+                regression_class: RegressionClass::Breaking,
+                detail: "missing field `revision`".to_string(),
+            }],
+            boundaries_covered: {
+                let mut s = BTreeSet::new();
+                s.insert("frankensqlite".to_string());
+                s
+            },
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    // ── enrichment: JSON field presence ─────────────────────────────────
+
+    #[test]
+    fn enrichment_json_field_presence_contract_violation() {
+        let v = ContractViolation {
+            boundary: "tui".to_string(),
+            contract_name: "TestType".to_string(),
+            regression_class: RegressionClass::Performance,
+            detail: "latency exceeded".to_string(),
+        };
+        let json = serde_json::to_string(&v).unwrap();
+        assert!(json.contains("\"boundary\""));
+        assert!(json.contains("\"contract_name\""));
+        assert!(json.contains("\"regression_class\""));
+        assert!(json.contains("\"detail\""));
+    }
+
+    #[test]
+    fn enrichment_json_field_presence_version_compatibility_entry() {
+        let entry = VersionCompatibilityEntry {
+            boundary: "fastapi_rust".to_string(),
+            current_version: 2,
+            minimum_compatible_version: 1,
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(json.contains("\"boundary\""));
+        assert!(json.contains("\"current_version\""));
+        assert!(json.contains("\"minimum_compatible_version\""));
+    }
+
+    #[test]
+    fn enrichment_json_field_presence_contract_suite_result() {
+        let result = ContractSuiteResult {
+            total_contracts: 3,
+            passed: 2,
+            failed: 1,
+            violations: Vec::new(),
+            boundaries_covered: BTreeSet::new(),
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("\"total_contracts\""));
+        assert!(json.contains("\"passed\""));
+        assert!(json.contains("\"failed\""));
+        assert!(json.contains("\"violations\""));
+        assert!(json.contains("\"boundaries_covered\""));
+    }
+
+    // ── enrichment: display uniqueness ──────────────────────────────────
+
+    #[test]
+    fn enrichment_display_uniqueness_contract_suite_result() {
+        let results: Vec<ContractSuiteResult> = (0..4)
+            .map(|i| ContractSuiteResult {
+                total_contracts: 10 + i,
+                passed: 8 + i,
+                failed: 2,
+                violations: Vec::new(),
+                boundaries_covered: BTreeSet::new(),
+            })
+            .collect();
+        let displays: BTreeSet<String> = results.iter().map(|r| r.to_string()).collect();
+        assert_eq!(displays.len(), 4);
+    }
+
+    // ── enrichment: boundary condition ───────────────────────────────────
+
+    #[test]
+    fn enrichment_boundary_contract_suite_all_passing_zero_violations() {
+        let result = ContractSuiteResult {
+            total_contracts: 0,
+            passed: 0,
+            failed: 0,
+            violations: Vec::new(),
+            boundaries_covered: BTreeSet::new(),
+        };
+        assert!(result.is_passing());
+        // Display should still produce valid output for zero counters.
+        let display = result.to_string();
+        assert!(display.contains("contracts=0"));
+        assert!(display.contains("passed=0"));
+        assert!(display.contains("failed=0"));
+        assert!(display.contains("boundaries=0"));
+    }
+
+    // ── enrichment: Ord determinism ─────────────────────────────────────
+
+    #[test]
+    fn enrichment_field_type_ord_determinism() {
+        let mut a = vec![
+            FieldType::Null,
+            FieldType::Object,
+            FieldType::String,
+            FieldType::Bool,
+            FieldType::Number,
+            FieldType::Array,
+        ];
+        let mut b = a.clone();
+        b.reverse();
+        a.sort();
+        b.sort();
+        assert_eq!(a, b);
+    }
 }

@@ -1714,4 +1714,192 @@ mod tests {
         let back: ReadinessSummary = serde_json::from_str(&json).unwrap();
         assert_eq!(summary, back);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: clone equality (5 tests)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn enrichment_clone_eq_demo_artifact() {
+        let a = test_artifact(ArtifactCategory::ReplayFidelity, "clone-da");
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn enrichment_clone_eq_artifact_verification() {
+        let art = test_artifact(ArtifactCategory::AttestationChain, "clone-av");
+        let a = passing_verification(&art);
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn enrichment_clone_eq_gate_definition() {
+        let a =
+            GateDefinition::for_program(FrontierProgram::TrustEconomics, test_gate_id("clone-gd"));
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn enrichment_clone_eq_override_justification() {
+        let a = OverrideJustification {
+            authorizer: "admin".to_string(),
+            justification: "hot-fix".to_string(),
+            signature: "sig-abc".to_string(),
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn enrichment_clone_eq_release_gate_check() {
+        let registry = GateRegistry::new();
+        let a = check_release_readiness(&registry, &[FrontierProgram::OperatorCopilot]);
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: JSON field presence (3 tests)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn enrichment_json_fields_demo_artifact() {
+        let art = test_artifact(ArtifactCategory::PropertyProof, "json-da");
+        let json = serde_json::to_string(&art).unwrap();
+        assert!(json.contains("artifact_id"));
+        assert!(json.contains("category"));
+        assert!(json.contains("content_hash"));
+        assert!(json.contains("producing_commit"));
+        assert!(json.contains("test_run_id"));
+        assert!(json.contains("summary"));
+        assert!(json.contains("public_eligible"));
+    }
+
+    #[test]
+    fn enrichment_json_fields_gate_evaluation_receipt() {
+        let gate =
+            GateDefinition::for_program(FrontierProgram::ReputationGraph, test_gate_id("json-rec"));
+        let art = test_artifact(ArtifactCategory::CompromiseWindowReduction, "json-art");
+        let ver = passing_verification(&art);
+        let input = GateEvaluationInput {
+            gate,
+            artifacts: vec![art],
+            verifications: vec![ver],
+            override_justification: None,
+        };
+        let receipt = evaluate_gate(&input, 42_000);
+        let json = serde_json::to_string(&receipt).unwrap();
+        assert!(json.contains("gate_id"));
+        assert!(json.contains("program"));
+        assert!(json.contains("evaluation_timestamp_ms"));
+        assert!(json.contains("category_coverage"));
+        assert!(json.contains("decision"));
+        assert!(json.contains("rationale"));
+        assert!(json.contains("receipt_hash"));
+    }
+
+    #[test]
+    fn enrichment_json_fields_readiness_summary() {
+        let registry = GateRegistry::new();
+        let summary = registry.readiness();
+        let json = serde_json::to_string(&summary).unwrap();
+        assert!(json.contains("total_gates"));
+        assert!(json.contains("gates_passed"));
+        assert!(json.contains("gates_held"));
+        assert!(json.contains("gates_rejected"));
+        assert!(json.contains("gates_pending"));
+        assert!(json.contains("readiness_millionths"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: serde roundtrip (1 test)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn enrichment_serde_roundtrip_gate_evaluation_input() {
+        let gate = GateDefinition::for_program(
+            FrontierProgram::AttestedExecutionCells,
+            test_gate_id("serde-input"),
+        );
+        let art = test_artifact(ArtifactCategory::AttestationChain, "serde-ac");
+        let ver = passing_verification(&art);
+        let input = GateEvaluationInput {
+            gate,
+            artifacts: vec![art],
+            verifications: vec![ver],
+            override_justification: Some(OverrideJustification {
+                authorizer: "root".to_string(),
+                justification: "test".to_string(),
+                signature: "test-sig".to_string(),
+            }),
+        };
+        let json = serde_json::to_string(&input).unwrap();
+        let back: GateEvaluationInput = serde_json::from_str(&json).unwrap();
+        assert_eq!(input, back);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: Display uniqueness (1 test)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn enrichment_verification_result_display_all_unique() {
+        let variants = [
+            VerificationResult::Passed {
+                details: "x".into(),
+            },
+            VerificationResult::Failed { reason: "x".into() },
+            VerificationResult::Skipped { reason: "x".into() },
+        ];
+        let displays: BTreeSet<String> = variants.iter().map(|v| v.to_string()).collect();
+        assert_eq!(displays.len(), variants.len());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: boundary condition (1 test)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn enrichment_readiness_with_max_timestamp() {
+        let gate = GateDefinition::for_program(
+            FrontierProgram::OperatorCopilot,
+            test_gate_id("bound-max"),
+        );
+        let art = test_artifact(ArtifactCategory::OperatorWorkflow, "bound-art");
+        let ver = passing_verification(&art);
+        let input = GateEvaluationInput {
+            gate,
+            artifacts: vec![art],
+            verifications: vec![ver],
+            override_justification: None,
+        };
+        let receipt = evaluate_gate(&input, u64::MAX);
+        assert_eq!(receipt.evaluation_timestamp_ms, u64::MAX);
+        assert_eq!(receipt.decision, PromotionDecision::Promote);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: Ord determinism (1 test)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn enrichment_promotion_decision_ord_determinism() {
+        let mut decisions = vec![
+            PromotionDecision::Reject,
+            PromotionDecision::Promote,
+            PromotionDecision::Hold,
+            PromotionDecision::Reject,
+            PromotionDecision::Promote,
+        ];
+        decisions.sort();
+        let sorted_once = decisions.clone();
+        decisions.sort();
+        assert_eq!(decisions, sorted_once);
+        // Promote < Hold < Reject by derive order
+        assert!(PromotionDecision::Promote < PromotionDecision::Hold);
+        assert!(PromotionDecision::Hold < PromotionDecision::Reject);
+    }
 }

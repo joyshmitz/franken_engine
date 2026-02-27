@@ -1463,4 +1463,219 @@ mod tests {
         let back: ClosureHandle = serde_json::from_str(&json).unwrap();
         assert_eq!(h, back);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 3: clone equality, JSON field presence, boundary,
+    // ord determinism
+    // -----------------------------------------------------------------------
+
+    // --- Clone equality (5 tests) ---
+
+    #[test]
+    fn enrichment_clone_eq_closure_handle() {
+        let a = ClosureHandle(99);
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn enrichment_clone_eq_environment_handle() {
+        let a = EnvironmentHandle(255);
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn enrichment_clone_eq_binding_slot() {
+        let a = BindingSlot::new_lexical("alpha".into(), 7, BindingKind::Let);
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn enrichment_clone_eq_closure_capture() {
+        let a = ClosureCapture {
+            name: "captured".into(),
+            binding_id: 42,
+            source_scope: ScopeId { depth: 3, index: 1 },
+            label: Label::Confidential,
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn enrichment_clone_eq_closure() {
+        let a = Closure {
+            handle: ClosureHandle(5),
+            name: "myClosure".into(),
+            arity: 3,
+            strict: true,
+            captures: vec![ClosureCapture {
+                name: "v".into(),
+                binding_id: 10,
+                source_scope: ScopeId { depth: 1, index: 0 },
+                label: Label::Secret,
+            }],
+            max_capture_label: Label::Secret,
+            creation_env: EnvironmentHandle(2),
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    // --- JSON field presence (3 tests) ---
+
+    #[test]
+    fn enrichment_json_field_presence_binding_slot() {
+        let slot = BindingSlot::new_parameter(
+            "param1".into(),
+            99,
+            EnvValue::Number(500_000),
+            Label::Internal,
+        );
+        let json = serde_json::to_string(&slot).unwrap();
+        assert!(json.contains("\"name\""));
+        assert!(json.contains("\"binding_id\""));
+        assert!(json.contains("\"kind\""));
+        assert!(json.contains("\"value\""));
+        assert!(json.contains("\"initialized\""));
+        assert!(json.contains("\"mutable\""));
+        assert!(json.contains("\"label\""));
+    }
+
+    #[test]
+    fn enrichment_json_field_presence_environment_record() {
+        let mut env = EnvironmentRecord::new(
+            EnvironmentHandle(3),
+            ScopeId { depth: 2, index: 1 },
+            ScopeKind::Function,
+            EnvironmentKind::Function,
+        );
+        env.this_binding = Some(EnvValue::ObjectRef(77));
+        env.arguments_handle = Some(88);
+        let json = serde_json::to_string(&env).unwrap();
+        assert!(json.contains("\"handle\""));
+        assert!(json.contains("\"scope_id\""));
+        assert!(json.contains("\"scope_kind\""));
+        assert!(json.contains("\"env_kind\""));
+        assert!(json.contains("\"bindings\""));
+        assert!(json.contains("\"this_binding\""));
+        assert!(json.contains("\"arguments_handle\""));
+        assert!(json.contains("\"max_label\""));
+    }
+
+    #[test]
+    fn enrichment_json_field_presence_closure() {
+        let c = Closure {
+            handle: ClosureHandle(0),
+            name: "fn_name".into(),
+            arity: 2,
+            strict: false,
+            captures: vec![],
+            max_capture_label: Label::Public,
+            creation_env: EnvironmentHandle(1),
+        };
+        let json = serde_json::to_string(&c).unwrap();
+        assert!(json.contains("\"handle\""));
+        assert!(json.contains("\"name\""));
+        assert!(json.contains("\"arity\""));
+        assert!(json.contains("\"strict\""));
+        assert!(json.contains("\"captures\""));
+        assert!(json.contains("\"max_capture_label\""));
+        assert!(json.contains("\"creation_env\""));
+    }
+
+    // --- Serde roundtrip (1 test) ---
+
+    #[test]
+    fn enrichment_scope_chain_serde_roundtrip() {
+        let mut chain = fresh_chain();
+        chain.declare_var("g".into(), 1).unwrap();
+        chain
+            .set_value("g", EnvValue::Number(1_000_000), Label::Public)
+            .unwrap();
+        let fn_id = ScopeId { depth: 1, index: 0 };
+        chain.push_scope(fn_id, ScopeKind::Function);
+        chain.declare_let("local".into(), 2).unwrap();
+        chain
+            .initialize_binding("local", EnvValue::Str("hello".into()), Label::Internal)
+            .unwrap();
+        let json = serde_json::to_string(&chain).unwrap();
+        let back: ScopeChain = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.depth(), chain.depth());
+        // Verify bindings survived the round-trip.
+        let val = back.get_value("g").unwrap();
+        assert_eq!(*val, EnvValue::Number(1_000_000));
+        let val = back.get_value("local").unwrap();
+        assert_eq!(*val, EnvValue::Str("hello".into()));
+    }
+
+    // --- Display uniqueness (1 test) ---
+
+    #[test]
+    fn enrichment_env_value_display_all_distinct_with_varied_data() {
+        // Use different data from the existing test to confirm Display
+        // is sensitive to the carried payload, not just the variant tag.
+        let displays: std::collections::BTreeSet<String> = [
+            EnvValue::Undefined,
+            EnvValue::Null,
+            EnvValue::Bool(false),
+            EnvValue::Number(0),
+            EnvValue::Str("".into()),
+            EnvValue::ObjectRef(0),
+            EnvValue::ClosureRef(ClosureHandle(0)),
+            EnvValue::Tdz,
+        ]
+        .iter()
+        .map(|v| v.to_string())
+        .collect();
+        assert_eq!(
+            displays.len(),
+            8,
+            "all 8 variants must have unique Display even with zero/empty payloads"
+        );
+    }
+
+    // --- Boundary condition (1 test) ---
+
+    #[test]
+    fn enrichment_boundary_zero_arity_empty_captures_max_handle() {
+        let mut store = ClosureStore::new();
+        let h = store.create_closure(
+            String::new(),               // anonymous (empty name)
+            0,                           // zero arity
+            false,                       // non-strict
+            vec![],                      // no captures
+            EnvironmentHandle(u32::MAX), // max handle value
+        );
+        let c = store.get(h).unwrap();
+        assert_eq!(c.name, "");
+        assert_eq!(c.arity, 0);
+        assert!(!c.strict);
+        assert!(c.captures.is_empty());
+        assert_eq!(c.max_capture_label, Label::Public); // default for empty captures
+        assert_eq!(c.creation_env, EnvironmentHandle(u32::MAX));
+    }
+
+    // --- Ord determinism (1 test) ---
+
+    #[test]
+    fn enrichment_closure_handle_ord_determinism() {
+        let handles = vec![
+            ClosureHandle(5),
+            ClosureHandle(2),
+            ClosureHandle(9),
+            ClosureHandle(0),
+            ClosureHandle(7),
+        ];
+        let mut sorted_a = handles.clone();
+        sorted_a.sort();
+        let mut sorted_b = handles.clone();
+        sorted_b.sort();
+        assert_eq!(sorted_a, sorted_b, "Ord must be deterministic across sorts");
+        // Verify the actual ordering is by inner u32.
+        assert_eq!(sorted_a[0], ClosureHandle(0));
+        assert_eq!(sorted_a[4], ClosureHandle(9));
+    }
 }

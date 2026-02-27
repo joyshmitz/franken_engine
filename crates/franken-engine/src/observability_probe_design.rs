@@ -1157,4 +1157,164 @@ mod tests {
         let back: ProbeUtilityLedger = serde_json::from_str(&json).unwrap();
         assert_eq!(ledger, back);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment tests — clone equality, JSON field presence, serde roundtrip,
+    // Display uniqueness, boundary conditions, Error source
+    // -----------------------------------------------------------------------
+
+    // --- Clone equality (5 tests) ---
+
+    #[test]
+    fn enrichment_clone_eq_candidate_probe() {
+        let a = make_probe("ce1", ProbeDomain::Runtime, 750_000, 42, 2048, &["x", "y"]);
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn enrichment_clone_eq_observability_budget() {
+        let a = ObservabilityBudget::degraded();
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn enrichment_clone_eq_probe_schedule() {
+        let u = make_universe_with_probes();
+        let a = build_schedule(&u, OperatingMode::Incident, ObservabilityBudget::incident());
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn enrichment_clone_eq_approximation_certificate() {
+        let u = make_universe_with_probes();
+        let result = greedy_submodular_select(&u, &ObservabilityBudget::normal());
+        let a = build_approximation_certificate(&result, &ObservabilityBudget::normal());
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn enrichment_clone_eq_multi_mode_manifest() {
+        let u = make_universe_with_probes();
+        let a = MultiModeManifest::build(&u);
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    // --- JSON field presence (3 tests) ---
+
+    #[test]
+    fn enrichment_json_field_presence_candidate_probe() {
+        let p = make_probe("jp", ProbeDomain::Scheduler, 300_000, 55, 4096, &["evt_a"]);
+        let json = serde_json::to_string(&p).unwrap();
+        assert!(json.contains("\"name\""));
+        assert!(json.contains("\"domain\""));
+        assert!(json.contains("\"granularity\""));
+        assert!(json.contains("\"forensic_utility_millionths\""));
+        assert!(json.contains("\"latency_overhead_micros\""));
+        assert!(json.contains("\"memory_overhead_bytes\""));
+        assert!(json.contains("\"covers_events\""));
+        assert!(json.contains("\"metadata\""));
+    }
+
+    #[test]
+    fn enrichment_json_field_presence_probe_schedule() {
+        let u = make_universe_with_probes();
+        let s = build_schedule(&u, OperatingMode::Degraded, ObservabilityBudget::degraded());
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(json.contains("\"mode\""));
+        assert!(json.contains("\"selected_probe_ids\""));
+        assert!(json.contains("\"total_latency_micros\""));
+        assert!(json.contains("\"total_memory_bytes\""));
+        assert!(json.contains("\"event_coverage_millionths\""));
+        assert!(json.contains("\"within_budget\""));
+        assert!(json.contains("\"schedule_hash\""));
+    }
+
+    #[test]
+    fn enrichment_json_field_presence_approximation_certificate() {
+        let u = make_universe_with_probes();
+        let result = greedy_submodular_select(&u, &ObservabilityBudget::normal());
+        let cert = build_approximation_certificate(&result, &ObservabilityBudget::normal());
+        let json = serde_json::to_string(&cert).unwrap();
+        assert!(json.contains("\"algorithm\""));
+        assert!(json.contains("\"optimality_bound_millionths\""));
+        assert!(json.contains("\"actual_utility_millionths\""));
+        assert!(json.contains("\"budget_headroom_latency_micros\""));
+        assert!(json.contains("\"budget_headroom_memory_bytes\""));
+        assert!(json.contains("\"certificate_hash\""));
+    }
+
+    // --- Serde roundtrip (1 test) ---
+
+    #[test]
+    fn enrichment_serde_roundtrip_probe_design_error() {
+        let errors = [
+            ProbeDesignError::UniverseCapacityExceeded,
+            ProbeDesignError::DuplicateProbe,
+            ProbeDesignError::EmptyUniverse,
+            ProbeDesignError::InvalidBudget("budget too small".to_string()),
+        ];
+        for err in &errors {
+            let json = serde_json::to_string(err).unwrap();
+            let back: ProbeDesignError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*err, back);
+        }
+    }
+
+    // --- Display uniqueness (1 test) ---
+
+    #[test]
+    fn enrichment_display_uniqueness_operating_mode() {
+        let modes = [
+            OperatingMode::Normal,
+            OperatingMode::Degraded,
+            OperatingMode::Incident,
+        ];
+        let display_set: BTreeSet<String> = modes.iter().map(|m| m.to_string()).collect();
+        assert_eq!(display_set.len(), modes.len());
+    }
+
+    // --- Boundary condition (1 test) ---
+
+    #[test]
+    fn enrichment_boundary_zero_utility_probes_skipped() {
+        let mut u = ProbeUniverse::new();
+        // Add a probe with zero forensic utility — greedy should skip it
+        // because its marginal gain is 0.
+        u.add_probe(make_probe(
+            "zero_util",
+            ProbeDomain::Compiler,
+            0,
+            10,
+            100,
+            &["ev_zero"],
+        ))
+        .unwrap();
+        let budget = ObservabilityBudget::normal();
+        let result = greedy_submodular_select(&u, &budget);
+        // Zero utility means marginal_gain returns 0, which is not > best_gain (0),
+        // so the probe is never selected.
+        assert!(result.selected_indices.is_empty());
+        assert_eq!(result.total_utility_millionths, 0);
+    }
+
+    // --- Error source (1 test) ---
+
+    #[test]
+    fn enrichment_error_source_returns_none() {
+        use std::error::Error;
+        let errors: Vec<ProbeDesignError> = vec![
+            ProbeDesignError::UniverseCapacityExceeded,
+            ProbeDesignError::DuplicateProbe,
+            ProbeDesignError::EmptyUniverse,
+            ProbeDesignError::InvalidBudget("msg".to_string()),
+        ];
+        for err in &errors {
+            assert!(err.source().is_none());
+        }
+    }
 }

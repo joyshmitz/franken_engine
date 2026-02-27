@@ -1462,4 +1462,163 @@ mod tests {
         let events = harness.events_of_type(&HarnessEventType::ResourceViolation);
         assert!(events.is_empty());
     }
+
+    // -- Enrichment: clone equality (5 tests) --
+
+    #[test]
+    fn enrichment_clone_eq_cell_lifecycle() {
+        let a = CellLifecycle::Quarantined;
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn enrichment_clone_eq_resource_violation() {
+        let a = ResourceViolation::HeapExceeded {
+            used: 999,
+            limit: 500,
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn enrichment_clone_eq_invocation_outcome() {
+        let a = InvocationOutcome::Error {
+            code: 7,
+            message: "oops".into(),
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn enrichment_clone_eq_harness_event() {
+        let a = HarnessEvent {
+            event_type: HarnessEventType::CapabilityCheck,
+            cell_id: test_slot_id(),
+            timestamp_ns: 42,
+            fields: BTreeMap::new(),
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn enrichment_clone_eq_replay_verification() {
+        let a = ReplayVerification::Match { sequence: 17 };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    // -- Enrichment: JSON field presence (3 tests) --
+
+    #[test]
+    fn enrichment_json_fields_resource_usage() {
+        let usage = ok_usage();
+        let json = serde_json::to_string(&usage).unwrap();
+        assert!(json.contains("heap_bytes_used"));
+        assert!(json.contains("execution_ns"));
+        assert!(json.contains("hostcall_count"));
+        assert!(json.contains("network_egress_bytes"));
+        assert!(json.contains("filesystem_read_bytes"));
+    }
+
+    #[test]
+    fn enrichment_json_fields_performance_metrics() {
+        let metrics = PerformanceMetrics {
+            total_invocations: 5,
+            successful_invocations: 4,
+            failed_invocations: 1,
+            total_duration_ns: 100_000,
+            min_duration_ns: 10_000,
+            max_duration_ns: 50_000,
+            total_heap_bytes: 2_000_000,
+            total_hostcalls: 25,
+        };
+        let json = serde_json::to_string(&metrics).unwrap();
+        assert!(json.contains("total_invocations"));
+        assert!(json.contains("successful_invocations"));
+        assert!(json.contains("min_duration_ns"));
+        assert!(json.contains("total_hostcalls"));
+    }
+
+    #[test]
+    fn enrichment_json_fields_harness_event() {
+        let mut fields = BTreeMap::new();
+        fields.insert("key1".into(), "val1".into());
+        let event = HarnessEvent {
+            event_type: HarnessEventType::InvocationStarted,
+            cell_id: test_slot_id(),
+            timestamp_ns: 999,
+            fields,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("event_type"));
+        assert!(json.contains("cell_id"));
+        assert!(json.contains("timestamp_ns"));
+        assert!(json.contains("key1"));
+    }
+
+    // -- Enrichment: serde roundtrip (1 test) --
+
+    #[test]
+    fn enrichment_serde_roundtrip_delegate_cell_harness() {
+        let harness = test_harness();
+        let json = serde_json::to_string(&harness).unwrap();
+        let decoded: DelegateCellHarness = serde_json::from_str(&json).unwrap();
+        assert_eq!(harness.slot_id, decoded.slot_id);
+        assert_eq!(harness.lifecycle, decoded.lifecycle);
+        assert_eq!(harness.metrics, decoded.metrics);
+        assert_eq!(
+            harness.expected_behavior_hash,
+            decoded.expected_behavior_hash
+        );
+    }
+
+    // -- Enrichment: Display uniqueness (1 test) --
+
+    #[test]
+    fn enrichment_resource_violation_display_all_unique() {
+        let violations = [
+            ResourceViolation::HeapExceeded { used: 1, limit: 0 },
+            ResourceViolation::ExecutionTimeExceeded {
+                used_ns: 1,
+                limit_ns: 0,
+            },
+            ResourceViolation::HostcallLimitExceeded { count: 1, limit: 0 },
+            ResourceViolation::NetworkEgressDenied { bytes: 1 },
+            ResourceViolation::FilesystemAccessDenied { bytes: 1 },
+        ];
+        let displays: BTreeSet<String> = violations.iter().map(|v| v.to_string()).collect();
+        assert_eq!(displays.len(), violations.len());
+    }
+
+    // -- Enrichment: boundary condition (1 test) --
+
+    #[test]
+    fn enrichment_boundary_resource_exactly_at_limit() {
+        let sandbox = test_sandbox();
+        // Usage exactly at every limit should NOT violate.
+        let usage = ResourceUsage {
+            heap_bytes_used: sandbox.max_heap_bytes,
+            execution_ns: sandbox.max_execution_ns,
+            hostcall_count: sandbox.max_hostcalls,
+            network_egress_bytes: 0,
+            filesystem_read_bytes: 0,
+        };
+        assert!(usage.exceeds_limits(&sandbox).is_none());
+    }
+
+    // -- Enrichment: Error source (1 test) --
+
+    #[test]
+    fn enrichment_delegate_cell_error_source_is_none() {
+        use std::error::Error;
+        let err = DelegateCellError::ResourceLimitExceeded(ResourceViolation::HeapExceeded {
+            used: 10,
+            limit: 5,
+        });
+        assert!(err.source().is_none());
+    }
 }

@@ -1125,4 +1125,160 @@ mod tests {
         assert!(decision.lever_categories.is_empty());
         assert!(!decision.optimization_change);
     }
+
+    // ── Enrichment: clone equality ──────────────────────────────────
+
+    #[test]
+    fn enrichment_clone_eq_lever_category() {
+        let a = LeverCategory::Security;
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn enrichment_clone_eq_evidence_refs() {
+        let a = full_evidence(1_500_000);
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn enrichment_clone_eq_policy_request() {
+        let a = single_lever_opt_request(2_500_000);
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn enrichment_clone_eq_path_lever_classification() {
+        let a = PathLeverClassification {
+            path: "crates/franken-engine/src/parser.rs".to_string(),
+            category: Some(LeverCategory::Execution),
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn enrichment_clone_eq_policy_event() {
+        let a = OneLeverPolicyEvent {
+            trace_id: "t-99".to_string(),
+            decision_id: "d-99".to_string(),
+            policy_id: "p-99".to_string(),
+            component: ONE_LEVER_POLICY_COMPONENT.to_string(),
+            event: "test_event".to_string(),
+            outcome: "pass".to_string(),
+            error_code: Some("FE-1LEV-1001".to_string()),
+            change_id: None,
+            path: Some("src/foo.rs".to_string()),
+            lever_category: Some("execution".to_string()),
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    // ── Enrichment: JSON field presence ─────────────────────────────
+
+    #[test]
+    fn enrichment_json_field_presence_evidence_refs() {
+        let ev = full_evidence(4_200_000);
+        let json = serde_json::to_string(&ev).unwrap();
+        assert!(json.contains("baseline_benchmark_run_id"));
+        assert!(json.contains("post_change_benchmark_run_id"));
+        assert!(json.contains("opportunity_score_millionths"));
+        assert!(json.contains("rollback_instructions_ref"));
+        assert!(json.contains("reprofile_after_merge_ref"));
+    }
+
+    #[test]
+    fn enrichment_json_field_presence_policy_request() {
+        let req = single_lever_opt_request(3_000_000);
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("trace_id"));
+        assert!(json.contains("decision_id"));
+        assert!(json.contains("commit_sha"));
+        assert!(json.contains("changed_paths"));
+        assert!(json.contains("evidence"));
+    }
+
+    #[test]
+    fn enrichment_json_field_presence_policy_decision() {
+        let decision = evaluate_one_lever_policy(&single_lever_opt_request(3_000_000));
+        let json = serde_json::to_string(&decision).unwrap();
+        assert!(json.contains("schema_version"));
+        assert!(json.contains("lever_categories"));
+        assert!(json.contains("lever_classification"));
+        assert!(json.contains("score_threshold_millionths"));
+        assert!(json.contains("optimization_change"));
+    }
+
+    // ── Enrichment: serde roundtrip (decision with deny) ────────────
+
+    #[test]
+    fn enrichment_serde_roundtrip_denied_decision() {
+        let req = single_lever_opt_request(500_000); // below threshold
+        let decision = evaluate_one_lever_policy(&req);
+        assert!(decision.blocked);
+        let json = serde_json::to_string(&decision).unwrap();
+        let back: OneLeverPolicyDecision = serde_json::from_str(&json).unwrap();
+        assert_eq!(decision, back);
+    }
+
+    // ── Enrichment: Display uniqueness ──────────────────────────────
+
+    #[test]
+    fn enrichment_display_uniqueness_lever_category_as_str() {
+        let all = [
+            LeverCategory::Execution,
+            LeverCategory::Memory,
+            LeverCategory::Security,
+            LeverCategory::Benchmark,
+            LeverCategory::Config,
+        ];
+        let strs: BTreeSet<&str> = all.iter().map(|c| c.as_str()).collect();
+        assert_eq!(strs.len(), all.len());
+    }
+
+    // ── Enrichment: boundary condition ──────────────────────────────
+
+    #[test]
+    fn enrichment_boundary_zero_score_denied() {
+        let req = single_lever_opt_request(0);
+        let decision = evaluate_one_lever_policy(&req);
+        assert!(!decision.allows_change());
+        assert!(decision.blocked);
+        assert_eq!(
+            decision.error_code.as_deref(),
+            Some(ERROR_SCORE_BELOW_THRESHOLD)
+        );
+        assert_eq!(decision.opportunity_score_millionths, Some(0));
+    }
+
+    // ── Enrichment: Ord determinism ─────────────────────────────────
+
+    #[test]
+    fn enrichment_ord_determinism_lever_category() {
+        let mut cats = vec![
+            LeverCategory::Config,
+            LeverCategory::Execution,
+            LeverCategory::Benchmark,
+            LeverCategory::Memory,
+            LeverCategory::Security,
+        ];
+        let mut cats2 = cats.clone();
+        cats.sort();
+        cats2.sort();
+        assert_eq!(cats, cats2);
+        // Verify canonical order
+        assert_eq!(
+            cats,
+            vec![
+                LeverCategory::Execution,
+                LeverCategory::Memory,
+                LeverCategory::Security,
+                LeverCategory::Benchmark,
+                LeverCategory::Config,
+            ]
+        );
+    }
 }
