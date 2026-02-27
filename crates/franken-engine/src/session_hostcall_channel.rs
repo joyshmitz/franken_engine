@@ -3465,4 +3465,184 @@ mod tests {
         let back: ChannelPayload = serde_json::from_str(&json).unwrap();
         assert_eq!(back, p);
     }
+
+    // -- Enrichment: PearlTower 2026-02-26 session 3 --
+
+    #[test]
+    fn signature_failure_display_contains_inner_error() {
+        let sk = SigningKey::from_bytes([0xCC; 32]);
+        let sig_err = SignatureError::VerificationFailed {
+            signer: sk.verification_key(),
+            reason: "mismatch detail".into(),
+        };
+        let ch_err = SessionChannelError::SignatureFailure(sig_err);
+        let display = ch_err.to_string();
+        assert!(
+            display.starts_with("signature failure:"),
+            "SignatureFailure Display should start with 'signature failure:'"
+        );
+        assert!(
+            display.contains("mismatch detail"),
+            "SignatureFailure Display should include inner reason"
+        );
+    }
+
+    #[test]
+    fn signature_failure_serde_roundtrip() {
+        let sk = SigningKey::from_bytes([0xDD; 32]);
+        let sig_err = SignatureError::VerificationFailed {
+            signer: sk.verification_key(),
+            reason: "bad sig".into(),
+        };
+        let err = SessionChannelError::SignatureFailure(sig_err);
+        let json = serde_json::to_string(&err).expect("serialize");
+        let restored: SessionChannelError = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(err, restored);
+    }
+
+    #[test]
+    fn deterministic_nonce_serde_roundtrip() {
+        let key = [0x33; 32];
+        let nonce = derive_deterministic_aead_nonce(
+            &key,
+            DataPlaneDirection::HostToExtension,
+            5,
+            AeadAlgorithm::ChaCha20Poly1305,
+        )
+        .unwrap();
+        let json = serde_json::to_string(&nonce).unwrap();
+        let restored: DeterministicNonce = serde_json::from_str(&json).unwrap();
+        assert_eq!(nonce, restored);
+        assert_eq!(restored.as_bytes().len(), 12);
+    }
+
+    #[test]
+    fn identity_field_at_128_chars_accepted() {
+        let mut channel = SessionHostcallChannel::new();
+        let mut hs = handshake("sess-boundary", "trace", 100);
+        hs.extension_id = "x".repeat(128);
+        // Should succeed since 128 is exactly at the limit.
+        let result = channel.create_session(
+            hs,
+            &signing_key(1),
+            &signing_key(2),
+            SessionConfig::default(),
+        );
+        assert!(result.is_ok(), "128-char identity should be accepted");
+    }
+
+    #[test]
+    fn aead_algorithm_as_tag_all_distinct() {
+        let tags = [
+            AeadAlgorithm::ChaCha20Poly1305.as_tag(),
+            AeadAlgorithm::Aes256Gcm.as_tag(),
+            AeadAlgorithm::XChaCha20Poly1305.as_tag(),
+        ];
+        let set: std::collections::BTreeSet<u8> = tags.iter().copied().collect();
+        assert_eq!(set.len(), 3, "AEAD algorithm tags must be distinct");
+    }
+
+    #[test]
+    fn data_plane_direction_as_byte_distinct() {
+        assert_ne!(
+            DataPlaneDirection::HostToExtension.as_byte(),
+            DataPlaneDirection::ExtensionToHost.as_byte(),
+            "direction bytes must differ"
+        );
+    }
+
+    #[test]
+    fn replay_drop_reason_as_str_all_distinct() {
+        let strs: std::collections::BTreeSet<&str> = [
+            ReplayDropReason::Replay.as_str(),
+            ReplayDropReason::Duplicate.as_str(),
+            ReplayDropReason::OutOfOrder.as_str(),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(strs.len(), 3, "all replay drop reasons must be distinct");
+    }
+
+    #[test]
+    fn event_component_is_session_hostcall_channel() {
+        let mut channel = SessionHostcallChannel::new();
+        let _ = create_basic_session(&mut channel, "sess-comp");
+        let events = channel.drain_events();
+        assert!(!events.is_empty());
+        for event in &events {
+            assert_eq!(
+                event.component, "session_hostcall_channel",
+                "component must be 'session_hostcall_channel'"
+            );
+        }
+    }
+
+    #[test]
+    fn hkdf_expand_zero_length_returns_empty() {
+        let prk = [0xAA; 32];
+        let result = hkdf_expand(&prk, b"info", 0);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn send_event_includes_sequence_and_decision_id() {
+        let mut channel = SessionHostcallChannel::new();
+        let handle = create_basic_session(&mut channel, "sess-send-evt");
+        let _ = channel.drain_events(); // clear create event
+        channel
+            .send(
+                &handle,
+                b"data".to_vec(),
+                "trace-se",
+                101,
+                Some("dec-se"),
+                Some("pol-se"),
+            )
+            .unwrap();
+        let events = channel.drain_events();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event, "message_sent");
+        assert_eq!(events[0].sequence, Some(1));
+        assert_eq!(events[0].decision_id.as_deref(), Some("dec-se"));
+        assert_eq!(events[0].policy_id.as_deref(), Some("pol-se"));
+    }
+
+    #[test]
+    fn shared_send_event_name_is_shared_payload_sent() {
+        let mut channel = SessionHostcallChannel::new();
+        let handle = create_basic_session(&mut channel, "sess-shared-evt");
+        let _ = channel.drain_events();
+        channel
+            .send_shared_buffer(
+                &handle,
+                SharedSendInput {
+                    region_id: 1,
+                    payload: b"data",
+                    trace_id: "trace-shared-evt",
+                    timestamp_ticks: 101,
+                    decision_id: None,
+                    policy_id: None,
+                },
+            )
+            .unwrap();
+        let events = channel.drain_events();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event, "shared_payload_sent");
+    }
+
+    #[test]
+    fn receive_event_name_is_message_received() {
+        let mut channel = SessionHostcallChannel::new();
+        let handle = create_basic_session(&mut channel, "sess-recv-evt");
+        channel
+            .send(&handle, b"x".to_vec(), "trace", 101, None, None)
+            .unwrap();
+        let _ = channel.drain_events();
+        channel
+            .receive(&handle, "trace-recv", 102, None, None)
+            .unwrap();
+        let events = channel.drain_events();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event, "message_received");
+    }
 }

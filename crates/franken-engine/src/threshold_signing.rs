@@ -1820,4 +1820,313 @@ mod tests {
         assert!(s.starts_with("share:"));
         assert!(s.contains("0000"));
     }
+
+    // ── Enrichment: clone equality ─────────────────────────────────────
+
+    #[test]
+    fn enrichment_policy_clone_equality() {
+        let keys = make_share_keys(3);
+        let policy = create_test_policy(2, &keys);
+        let cloned = policy.clone();
+        assert_eq!(policy.policy_id, cloned.policy_id);
+        assert_eq!(policy.principal_id, cloned.principal_id);
+        assert_eq!(policy.threshold_k, cloned.threshold_k);
+        assert_eq!(policy.total_n, cloned.total_n);
+        assert_eq!(policy.authorized_shares, cloned.authorized_shares);
+        assert_eq!(policy.scoped_operations, cloned.scoped_operations);
+        assert_eq!(policy.epoch, cloned.epoch);
+        assert_eq!(policy.zone, cloned.zone);
+    }
+
+    #[test]
+    fn enrichment_threshold_result_clone_equality() {
+        let keys = make_share_keys(3);
+        let policy = create_test_policy(2, &keys);
+        let mut ceremony = ThresholdCeremony::new(
+            &policy,
+            ThresholdScope::EmergencyRevocation,
+            TEST_PREIMAGE,
+            DeterministicTimestamp(1000),
+        )
+        .unwrap();
+        ceremony
+            .submit_partial(&keys[0], TEST_PREIMAGE, DeterministicTimestamp(1001))
+            .unwrap();
+        ceremony
+            .submit_partial(&keys[1], TEST_PREIMAGE, DeterministicTimestamp(1002))
+            .unwrap();
+        let result = ceremony.finalize(TEST_PREIMAGE).unwrap();
+        let cloned = result.clone();
+        assert_eq!(result.ceremony_id, cloned.ceremony_id);
+        assert_eq!(result.policy_id, cloned.policy_id);
+        assert_eq!(result.scope, cloned.scope);
+        assert_eq!(result.preimage_hash, cloned.preimage_hash);
+        assert_eq!(result.signatures, cloned.signatures);
+        assert_eq!(result.participating_shares, cloned.participating_shares);
+        assert_eq!(result.threshold_k, cloned.threshold_k);
+    }
+
+    #[test]
+    fn enrichment_share_refresh_result_clone_equality() {
+        let keys = make_share_keys(3);
+        let policy = create_test_policy(2, &keys);
+        let new_keys: Vec<SigningKey> = (0..3)
+            .map(|i| SigningKey::from_bytes([(i + 80) as u8; 32]))
+            .collect();
+        let new_vks: Vec<VerificationKey> =
+            new_keys.iter().map(|sk| sk.verification_key()).collect();
+        let (_, refresh) = refresh_shares(&policy, &new_vks, SecurityEpoch::from_raw(5)).unwrap();
+        let cloned = refresh.clone();
+        assert_eq!(refresh.policy_id, cloned.policy_id);
+        assert_eq!(refresh.old_shares, cloned.old_shares);
+        assert_eq!(refresh.new_shares, cloned.new_shares);
+        assert_eq!(refresh.refresh_epoch, cloned.refresh_epoch);
+    }
+
+    #[test]
+    fn enrichment_partial_signature_clone_equality() {
+        let keys = make_share_keys(3);
+        let policy = create_test_policy(2, &keys);
+        let mut ceremony = ThresholdCeremony::new(
+            &policy,
+            ThresholdScope::EmergencyRevocation,
+            TEST_PREIMAGE,
+            DeterministicTimestamp(1000),
+        )
+        .unwrap();
+        ceremony
+            .submit_partial(&keys[0], TEST_PREIMAGE, DeterministicTimestamp(1001))
+            .unwrap();
+        ceremony
+            .submit_partial(&keys[1], TEST_PREIMAGE, DeterministicTimestamp(1002))
+            .unwrap();
+        let result = ceremony.finalize(TEST_PREIMAGE).unwrap();
+        let partial = &result.signatures[0];
+        let cloned = partial.clone();
+        assert_eq!(partial.signer, cloned.signer);
+        assert_eq!(partial.verification_key, cloned.verification_key);
+        assert_eq!(partial.signature, cloned.signature);
+        assert_eq!(partial.signed_at, cloned.signed_at);
+    }
+
+    #[test]
+    fn enrichment_threshold_event_clone_equality() {
+        let keys = make_share_keys(3);
+        let policy = create_test_policy(2, &keys);
+        let mut ceremony = ThresholdCeremony::new(
+            &policy,
+            ThresholdScope::EmergencyRevocation,
+            TEST_PREIMAGE,
+            DeterministicTimestamp(1000),
+        )
+        .unwrap();
+        ceremony
+            .submit_partial(&keys[0], TEST_PREIMAGE, DeterministicTimestamp(1001))
+            .unwrap();
+        let events = ceremony.drain_events();
+        assert!(!events.is_empty());
+        let event = &events[0];
+        let cloned = event.clone();
+        assert_eq!(event.event_type, cloned.event_type);
+        assert_eq!(event.ceremony_id, cloned.ceremony_id);
+        assert_eq!(event.zone, cloned.zone);
+    }
+
+    // ── Enrichment: JSON field presence ────────────────────────────────
+
+    #[test]
+    fn enrichment_policy_json_field_presence() {
+        let keys = make_share_keys(3);
+        let policy = create_test_policy(2, &keys);
+        let json = serde_json::to_string(&policy).unwrap();
+        assert!(json.contains("\"policy_id\""), "missing policy_id");
+        assert!(json.contains("\"principal_id\""), "missing principal_id");
+        assert!(json.contains("\"threshold_k\""), "missing threshold_k");
+        assert!(json.contains("\"total_n\""), "missing total_n");
+        assert!(
+            json.contains("\"authorized_shares\""),
+            "missing authorized_shares"
+        );
+        assert!(
+            json.contains("\"scoped_operations\""),
+            "missing scoped_operations"
+        );
+        assert!(json.contains("\"epoch\""), "missing epoch");
+        assert!(json.contains("\"zone\""), "missing zone");
+    }
+
+    #[test]
+    fn enrichment_threshold_result_json_field_presence() {
+        let keys = make_share_keys(3);
+        let policy = create_test_policy(2, &keys);
+        let mut ceremony = ThresholdCeremony::new(
+            &policy,
+            ThresholdScope::EmergencyRevocation,
+            TEST_PREIMAGE,
+            DeterministicTimestamp(1000),
+        )
+        .unwrap();
+        ceremony
+            .submit_partial(&keys[0], TEST_PREIMAGE, DeterministicTimestamp(1001))
+            .unwrap();
+        ceremony
+            .submit_partial(&keys[1], TEST_PREIMAGE, DeterministicTimestamp(1002))
+            .unwrap();
+        let result = ceremony.finalize(TEST_PREIMAGE).unwrap();
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("\"ceremony_id\""), "missing ceremony_id");
+        assert!(json.contains("\"policy_id\""), "missing policy_id");
+        assert!(json.contains("\"scope\""), "missing scope");
+        assert!(json.contains("\"preimage_hash\""), "missing preimage_hash");
+        assert!(json.contains("\"signatures\""), "missing signatures");
+        assert!(
+            json.contains("\"participating_shares\""),
+            "missing participating_shares"
+        );
+        assert!(json.contains("\"threshold_k\""), "missing threshold_k");
+    }
+
+    #[test]
+    fn enrichment_share_refresh_result_json_field_presence() {
+        let keys = make_share_keys(3);
+        let policy = create_test_policy(2, &keys);
+        let new_keys: Vec<SigningKey> = (0..3)
+            .map(|i| SigningKey::from_bytes([(i + 80) as u8; 32]))
+            .collect();
+        let new_vks: Vec<VerificationKey> =
+            new_keys.iter().map(|sk| sk.verification_key()).collect();
+        let (_, refresh) = refresh_shares(&policy, &new_vks, SecurityEpoch::from_raw(5)).unwrap();
+        let json = serde_json::to_string(&refresh).unwrap();
+        assert!(json.contains("\"policy_id\""), "missing policy_id");
+        assert!(json.contains("\"old_shares\""), "missing old_shares");
+        assert!(json.contains("\"new_shares\""), "missing new_shares");
+        assert!(json.contains("\"refresh_epoch\""), "missing refresh_epoch");
+    }
+
+    // ── Enrichment: serde roundtrip ────────────────────────────────────
+
+    #[test]
+    fn enrichment_ceremony_serde_roundtrip() {
+        // NOTE: ThresholdCeremony contains BTreeMap<ShareHolderId, PartialSignature>
+        // where ShareHolderId([u8; 32]) is not a valid JSON map key.
+        // Test roundtrip on a ceremony with no partial signatures collected
+        // (empty BTreeMap serializes fine as `{}`).
+        let keys = make_share_keys(3);
+        let policy = create_test_policy(2, &keys);
+        let ceremony = ThresholdCeremony::new(
+            &policy,
+            ThresholdScope::EmergencyRevocation,
+            TEST_PREIMAGE,
+            DeterministicTimestamp(1000),
+        )
+        .unwrap();
+        let json = serde_json::to_string(&ceremony).unwrap();
+        let restored: ThresholdCeremony = serde_json::from_str(&json).unwrap();
+        assert_eq!(ceremony.ceremony_id, restored.ceremony_id);
+        assert_eq!(ceremony.policy_id, restored.policy_id);
+        assert_eq!(ceremony.scope, restored.scope);
+        assert_eq!(ceremony.threshold_k, restored.threshold_k);
+        assert_eq!(ceremony.preimage_hash, restored.preimage_hash);
+        assert_eq!(ceremony.initiated_at, restored.initiated_at);
+        assert_eq!(ceremony.zone, restored.zone);
+        assert_eq!(
+            ceremony.signatures_collected(),
+            restored.signatures_collected()
+        );
+    }
+
+    // ── Enrichment: Display uniqueness ─────────────────────────────────
+
+    #[test]
+    fn enrichment_error_display_all_variants_unique() {
+        let holder_a = ShareHolderId([0xAAu8; 32]);
+        let holder_b = ShareHolderId([0xBBu8; 32]);
+        let all_errors = vec![
+            ThresholdError::InvalidThreshold {
+                k: 5,
+                n: 3,
+                detail: "test".into(),
+            },
+            ThresholdError::InsufficientThresholdShares {
+                collected: 1,
+                required: 3,
+            },
+            ThresholdError::UnauthorizedShareHolder {
+                holder: holder_a.clone(),
+            },
+            ThresholdError::DuplicateSubmission {
+                holder: holder_a.clone(),
+            },
+            ThresholdError::DuplicateShareHolder,
+            ThresholdError::PartialSignatureInvalid { holder: holder_b },
+            ThresholdError::SigningFailed {
+                detail: "oops".into(),
+            },
+            ThresholdError::IdDerivationFailed {
+                detail: "bad id".into(),
+            },
+            ThresholdError::CeremonyAlreadyFinalized,
+            ThresholdError::PreimageMismatch,
+            ThresholdError::ScopeNotThresholded {
+                scope: ThresholdScope::KeyRotation,
+            },
+            ThresholdError::NoScopedOperations,
+        ];
+        let displays: BTreeSet<String> = all_errors.iter().map(|e| e.to_string()).collect();
+        assert_eq!(
+            displays.len(),
+            all_errors.len(),
+            "all Display strings must be unique"
+        );
+    }
+
+    // ── Enrichment: boundary conditions ────────────────────────────────
+
+    #[test]
+    fn enrichment_policy_id_differs_for_different_epochs() {
+        let keys = make_share_keys(3);
+        let p1 = ThresholdSigningPolicy::create(CreateThresholdPolicyInput {
+            principal_id: test_principal(),
+            threshold_k: 2,
+            authorized_shares: make_share_holder_ids(&keys),
+            scoped_operations: make_scopes(),
+            epoch: SecurityEpoch::from_raw(1),
+            zone: TEST_ZONE,
+        })
+        .unwrap();
+        let p2 = ThresholdSigningPolicy::create(CreateThresholdPolicyInput {
+            principal_id: test_principal(),
+            threshold_k: 2,
+            authorized_shares: make_share_holder_ids(&keys),
+            scoped_operations: make_scopes(),
+            epoch: SecurityEpoch::from_raw(2),
+            zone: TEST_ZONE,
+        })
+        .unwrap();
+        assert_ne!(
+            p1.policy_id, p2.policy_id,
+            "different epoch must produce different policy_id"
+        );
+    }
+
+    // ── Enrichment: Ord / Error source ─────────────────────────────────
+
+    #[test]
+    fn enrichment_share_holder_id_ord_consistent_with_eq() {
+        let a = ShareHolderId([0x01u8; 32]);
+        let b = ShareHolderId([0x02u8; 32]);
+        let c = ShareHolderId([0x01u8; 32]);
+        // a == c, a < b
+        assert_eq!(a, c);
+        assert!(a < b);
+        assert!(b > a);
+        // Ordering should be transitive with BTreeSet
+        let mut set = BTreeSet::new();
+        set.insert(b.clone());
+        set.insert(a.clone());
+        set.insert(c.clone());
+        assert_eq!(set.len(), 2, "a == c so only 2 distinct entries");
+        let ordered: Vec<_> = set.into_iter().collect();
+        assert!(ordered[0] < ordered[1], "BTreeSet preserves ordering");
+    }
 }

@@ -1297,4 +1297,175 @@ mod tests {
         let h2 = preimage_hash(&obj2.preimage_bytes());
         assert_ne!(h1, h2);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn enrichment_signing_key_clone_equality() {
+        let sk = test_signing_key();
+        let sk2 = sk.clone();
+        assert_eq!(sk, sk2);
+        assert_eq!(sk.as_bytes(), sk2.as_bytes());
+    }
+
+    #[test]
+    fn enrichment_verification_key_clone_equality() {
+        let vk = test_signing_key().verification_key();
+        let vk2 = vk.clone();
+        assert_eq!(vk, vk2);
+        assert_eq!(vk.to_hex(), vk2.to_hex());
+    }
+
+    #[test]
+    fn enrichment_signature_clone_equality() {
+        let mut ctx = SignatureContext::new();
+        let sig = ctx
+            .sign(&test_object(), &test_signing_key(), "t-clone")
+            .unwrap();
+        let sig2 = sig.clone();
+        assert_eq!(sig, sig2);
+        assert_eq!(sig.to_bytes(), sig2.to_bytes());
+    }
+
+    #[test]
+    fn enrichment_signature_error_clone_equality() {
+        let err = SignatureError::VerificationFailed {
+            signer: VerificationKey::from_bytes([0xAB; VERIFICATION_KEY_LEN]),
+            reason: "tampered".to_string(),
+        };
+        let err2 = err.clone();
+        assert_eq!(err, err2);
+    }
+
+    #[test]
+    fn enrichment_signature_event_clone_equality() {
+        let event = SignatureEvent {
+            event_type: SignatureEventType::CanonicalityCheckFailed {
+                detail: "non-canonical".to_string(),
+            },
+            domain: ObjectDomain::Revocation,
+            trace_id: "t-clone-event".to_string(),
+        };
+        let event2 = event.clone();
+        assert_eq!(event, event2);
+        assert_eq!(event.trace_id, event2.trace_id);
+    }
+
+    #[test]
+    fn enrichment_signature_json_has_lower_upper_fields() {
+        let sig = Signature::from_bytes([0xDD; SIGNATURE_LEN]);
+        let json = serde_json::to_string(&sig).unwrap();
+        assert!(
+            json.contains("\"lower\""),
+            "JSON must contain 'lower' field"
+        );
+        assert!(
+            json.contains("\"upper\""),
+            "JSON must contain 'upper' field"
+        );
+    }
+
+    #[test]
+    fn enrichment_signature_error_json_has_variant_tag() {
+        let err = SignatureError::PreimageError {
+            detail: "hash collision".to_string(),
+        };
+        let json = serde_json::to_string(&err).unwrap();
+        assert!(
+            json.contains("PreimageError"),
+            "JSON must contain variant tag 'PreimageError'"
+        );
+        assert!(
+            json.contains("hash collision"),
+            "JSON must contain detail text"
+        );
+    }
+
+    #[test]
+    fn enrichment_signature_event_json_has_all_fields() {
+        let event = SignatureEvent {
+            event_type: SignatureEventType::Verified {
+                signer: VerificationKey::from_bytes([0x11; VERIFICATION_KEY_LEN]),
+            },
+            domain: ObjectDomain::SignedManifest,
+            trace_id: "t-json-fields".to_string(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"event_type\""));
+        assert!(json.contains("\"domain\""));
+        assert!(json.contains("\"trace_id\""));
+    }
+
+    #[test]
+    fn enrichment_verification_key_serde_roundtrip_preserves_ordering() {
+        let vk_a = VerificationKey::from_bytes([0x01; VERIFICATION_KEY_LEN]);
+        let vk_b = VerificationKey::from_bytes([0x02; VERIFICATION_KEY_LEN]);
+        assert!(vk_a < vk_b, "Ord should order by bytes");
+
+        let json_a = serde_json::to_string(&vk_a).unwrap();
+        let json_b = serde_json::to_string(&vk_b).unwrap();
+        let restored_a: VerificationKey = serde_json::from_str(&json_a).unwrap();
+        let restored_b: VerificationKey = serde_json::from_str(&json_b).unwrap();
+        assert!(
+            restored_a < restored_b,
+            "Ord must be preserved after serde roundtrip"
+        );
+    }
+
+    #[test]
+    fn enrichment_all_signature_error_displays_unique() {
+        let vk = VerificationKey::from_bytes([0x77; VERIFICATION_KEY_LEN]);
+        let variants = vec![
+            SignatureError::VerificationFailed {
+                signer: vk,
+                reason: "mismatch".to_string(),
+            },
+            SignatureError::NonCanonicalObject {
+                detail: "out of order".to_string(),
+            },
+            SignatureError::PreimageError {
+                detail: "encoding failed".to_string(),
+            },
+            SignatureError::InvalidSigningKey,
+            SignatureError::InvalidVerificationKey,
+        ];
+        let displays: std::collections::BTreeSet<String> =
+            variants.iter().map(|e| e.to_string()).collect();
+        assert_eq!(
+            displays.len(),
+            variants.len(),
+            "all 5 error variants must produce distinct Display strings"
+        );
+    }
+
+    #[test]
+    fn enrichment_signature_from_bytes_boundary_split() {
+        // Verify byte 31 goes to lower and byte 32 goes to upper
+        let mut bytes = [0u8; SIGNATURE_LEN];
+        bytes[31] = 0xFF; // last byte of lower half
+        bytes[32] = 0xAA; // first byte of upper half
+        let sig = Signature::from_bytes(bytes);
+        assert_eq!(sig.lower[31], 0xFF);
+        assert_eq!(sig.upper[0], 0xAA);
+        // Roundtrip must preserve exact split
+        let roundtripped = sig.to_bytes();
+        assert_eq!(roundtripped, bytes);
+    }
+
+    #[test]
+    fn enrichment_signature_ord_and_hash_consistency() {
+        let sig_a = Signature::from_bytes([0x01; SIGNATURE_LEN]);
+        let sig_b = Signature::from_bytes([0x02; SIGNATURE_LEN]);
+        // Ord is derived, so lower bytes differ => sig_a < sig_b
+        assert!(sig_a < sig_b);
+
+        // BTreeSet uses Ord; ensure both are kept distinct
+        let mut set = std::collections::BTreeSet::new();
+        set.insert(sig_a.clone());
+        set.insert(sig_b.clone());
+        set.insert(sig_a.clone()); // duplicate
+        assert_eq!(set.len(), 2);
+    }
 }
