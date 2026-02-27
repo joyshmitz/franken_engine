@@ -249,6 +249,8 @@ fn benchmark_claim_verifies_when_claim_matches_computation() {
     let report = verify_benchmark_claim(&bundle);
     assert_eq!(report.verdict, VerificationVerdict::Verified);
     assert_eq!(report.exit_code(), 0);
+    assert!(report.scope_limitations.is_empty());
+    assert!(report.confidence_statement.contains("checks passed"));
 }
 
 #[test]
@@ -462,6 +464,11 @@ fn franken_verify_replay_command_supports_receipt_key_file_json_map() {
     let report: ThirdPartyVerificationReport =
         serde_json::from_slice(&output.stdout).expect("replay report json");
     assert_eq!(report.verdict, VerificationVerdict::PartiallyVerified);
+    assert!(report.scope_limitations.iter().any(|entry| {
+        entry.contains("no receipts in bundle")
+            || entry.contains("required receipt verification keys missing")
+    }));
+    assert!(report.confidence_statement.contains("scope limitation"));
     assert!(report.checks.iter().any(|check| {
         check.name == "receipts:receipts-present" && check.detail.contains("skipped:")
     }));

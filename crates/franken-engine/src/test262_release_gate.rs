@@ -3118,4 +3118,30 @@ unknown_field = "value"
         let back: DeterministicWorkerAssignment = serde_json::from_str(&json).unwrap();
         assert_eq!(back, wa);
     }
+
+    // -- Enrichment: serde roundtrips for untested types (PearlTower 2026-02-26) --
+
+    #[test]
+    fn profile_include_serde_roundtrip() {
+        let inc = Test262ProfileInclude {
+            pattern: "built-ins/Array/**".into(),
+            rationale: "core Array coverage".into(),
+            normative_clause: "22.1".into(),
+        };
+        let json = serde_json::to_string(&inc).unwrap();
+        let back: Test262ProfileInclude = serde_json::from_str(&json).unwrap();
+        assert_eq!(inc, back);
+    }
+
+    #[test]
+    fn profile_exclude_serde_roundtrip() {
+        let exc = Test262ProfileExclude {
+            pattern: "annexB/**".into(),
+            rationale: "legacy annex B not supported".into(),
+            normative_clause: "B".into(),
+        };
+        let json = serde_json::to_string(&exc).unwrap();
+        let back: Test262ProfileExclude = serde_json::from_str(&json).unwrap();
+        assert_eq!(exc, back);
+    }
 }

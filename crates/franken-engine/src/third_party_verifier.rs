@@ -94,6 +94,10 @@ pub struct ThirdPartyVerificationReport {
     pub policy_id: String,
     pub component: String,
     pub verdict: VerificationVerdict,
+    #[serde(default)]
+    pub confidence_statement: String,
+    #[serde(default)]
+    pub scope_limitations: Vec<String>,
     pub checks: Vec<VerificationCheckResult>,
     pub events: Vec<VerifierEvent>,
 }
@@ -838,12 +842,14 @@ pub fn render_attestation_summary(attestation: &VerificationAttestation) -> Stri
 pub fn render_report_summary(report: &ThirdPartyVerificationReport) -> String {
     let failed = report.checks.iter().filter(|check| !check.passed).count();
     format!(
-        "claim_type={} verdict={:?} checks={} failed={} exit_code={}",
+        "claim_type={} verdict={:?} checks={} failed={} limitations={} exit_code={} confidence=\"{}\"",
         report.claim_type,
         report.verdict,
         report.checks.len(),
         failed,
+        report.scope_limitations.len(),
         report.exit_code(),
+        report.confidence_statement,
     )
 }
 
@@ -944,6 +950,51 @@ fn normalize_strings(values: &[String]) -> Vec<String> {
     normalized.sort();
     normalized.dedup();
     normalized
+}
+
+fn collect_scope_limitations(checks: &[VerificationCheckResult]) -> Vec<String> {
+    let mut limits = BTreeSet::new();
+    for check in checks {
+        if let Some(detail) = check.detail.strip_prefix("skipped:") {
+            let normalized = detail.trim();
+            if !normalized.is_empty() {
+                limits.insert(normalized.to_string());
+            }
+        }
+    }
+    limits.into_iter().collect()
+}
+
+fn confidence_statement(
+    verdict: VerificationVerdict,
+    total_checks: usize,
+    failed_checks: usize,
+    scope_limitations: &[String],
+) -> String {
+    match verdict {
+        VerificationVerdict::Verified => {
+            format!("all {total_checks} checks passed with no skipped verification scope")
+        }
+        VerificationVerdict::PartiallyVerified => {
+            if scope_limitations.is_empty() {
+                format!(
+                    "all {total_checks} checks passed, but verification scope is partially constrained"
+                )
+            } else {
+                format!(
+                    "all {total_checks} checks passed with {} scope limitation(s): {}",
+                    scope_limitations.len(),
+                    scope_limitations.join("; "),
+                )
+            }
+        }
+        VerificationVerdict::Failed => {
+            format!("{failed_checks} of {total_checks} checks failed; claim verification failed")
+        }
+        VerificationVerdict::Inconclusive => {
+            "no verification checks were executed; claim remains inconclusive".to_string()
+        }
+    }
 }
 
 fn workload_id_set(cases: &[crate::benchmark_denominator::BenchmarkCase]) -> BTreeSet<String> {
@@ -1150,6 +1201,10 @@ fn build_report<T: ClaimContext>(
     checks: Vec<VerificationCheckResult>,
     events: Vec<VerifierEvent>,
 ) -> ThirdPartyVerificationReport {
+    let scope_limitations = collect_scope_limitations(&checks);
+    let failed_checks = checks.iter().filter(|check| !check.passed).count();
+    let confidence_statement =
+        confidence_statement(verdict, checks.len(), failed_checks, &scope_limitations);
     ThirdPartyVerificationReport {
         claim_type: claim_type.to_string(),
         trace_id: ctx.trace_id().to_string(),
@@ -1157,6 +1212,8 @@ fn build_report<T: ClaimContext>(
         policy_id: ctx.policy_id().to_string(),
         component: THIRD_PARTY_VERIFIER_COMPONENT.to_string(),
         verdict,
+        confidence_statement,
+        scope_limitations,
         checks,
         events,
     }
@@ -1283,6 +1340,8 @@ mod tests {
             policy_id: "p-1".to_string(),
             component: THIRD_PARTY_VERIFIER_COMPONENT.to_string(),
             verdict,
+            confidence_statement: "all checks passed".to_string(),
+            scope_limitations: Vec::new(),
             checks: vec![VerificationCheckResult {
                 name: "check1".to_string(),
                 passed: true,
@@ -2137,6 +2196,8 @@ mod tests {
             policy_id: "p".to_string(),
             component: THIRD_PARTY_VERIFIER_COMPONENT.to_string(),
             verdict: VerificationVerdict::PartiallyVerified,
+            confidence_statement: "partial coverage".to_string(),
+            scope_limitations: vec!["unsigned attestation".to_string()],
             checks: vec![
                 VerificationCheckResult {
                     name: "a".to_string(),
@@ -2165,6 +2226,8 @@ mod tests {
             policy_id: "p".to_string(),
             component: THIRD_PARTY_VERIFIER_COMPONENT.to_string(),
             verdict: VerificationVerdict::Failed,
+            confidence_statement: "1 check failed".to_string(),
+            scope_limitations: Vec::new(),
             checks: vec![
                 VerificationCheckResult {
                     name: "a".to_string(),
@@ -2190,6 +2253,22 @@ mod tests {
         let summary = render_report_summary(&report);
         assert!(summary.contains("failed=2"), "summary: {summary}");
         assert!(summary.contains("checks=3"), "summary: {summary}");
+        assert!(summary.contains("limitations=0"), "summary: {summary}");
+    }
+
+    #[test]
+    fn report_confidence_statement_includes_scope_limitations_for_partial_verdict() {
+        let input = make_attestation_input(make_report(VerificationVerdict::Verified), None);
+        let attestation = generate_attestation(&input).expect("attestation should generate");
+        let report = verify_attestation(&attestation);
+        assert_eq!(report.verdict, VerificationVerdict::PartiallyVerified);
+        assert!(report.confidence_statement.contains("scope limitation"));
+        assert!(
+            report
+                .scope_limitations
+                .iter()
+                .any(|entry| entry.contains("unsigned attestation"))
+        );
     }
 
     #[test]

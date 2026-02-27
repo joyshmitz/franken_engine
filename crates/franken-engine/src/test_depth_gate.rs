@@ -1687,4 +1687,20 @@ mod tests {
         // With all gates advisory and permissive regression, should be Warn not Block
         assert_eq!(result.outcome, GateOutcome::Warn);
     }
+
+    // -- Enrichment: serde roundtrip for untested type (PearlTower 2026-02-26) --
+
+    #[test]
+    fn regression_direction_serde_roundtrip_all_variants() {
+        let variants = [
+            RegressionDirection::Decrease,
+            RegressionDirection::Stable,
+            RegressionDirection::Increase,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: RegressionDirection = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
 }

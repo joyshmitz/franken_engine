@@ -1577,4 +1577,45 @@ mod tests {
                 .any(|f| f.code == GateFailureCode::ReplayMultiplierExceeded)
         );
     }
+
+    // -- Enrichment: serde roundtrips for untested types (PearlTower 2026-02-26) --
+
+    #[test]
+    fn test_evidence_bundle_serde_roundtrip() {
+        let bundle = TestEvidenceBundle {
+            unit_coverage_millionths: 800_000,
+            mutation_score_millionths: 700_000,
+            required_failure_mode_tests: 10,
+            executed_failure_mode_tests: 9,
+            required_e2e_scenarios: 5,
+            executed_e2e_scenarios: 5,
+            logging_artifact_count: 3,
+            logging_artifact_max_age_ns: 1_000_000_000,
+            trace_correlated_logging: true,
+        };
+        let json = serde_json::to_string(&bundle).unwrap();
+        let back: TestEvidenceBundle = serde_json::from_str(&json).unwrap();
+        assert_eq!(bundle, back);
+    }
+
+    #[test]
+    fn gate_failure_code_display_all_unique() {
+        let codes = [
+            GateFailureCode::MissingProofArtifact,
+            GateFailureCode::MissingBundleField,
+            GateFailureCode::ProofVerificationFailed,
+            GateFailureCode::FallbackPathInvalid,
+            GateFailureCode::IndependentReplayFailed,
+            GateFailureCode::ReplayMultiplierExceeded,
+            GateFailureCode::ArchiveNotContentAddressed,
+            GateFailureCode::MissingTestEvidence,
+            GateFailureCode::TestEvidenceBelowThreshold,
+            GateFailureCode::LoggingArtifactsMissing,
+            GateFailureCode::LoggingArtifactsStale,
+            GateFailureCode::LoggingArtifactsUncorrelated,
+        ];
+        let displays: std::collections::BTreeSet<String> =
+            codes.iter().map(|c| c.to_string()).collect();
+        assert_eq!(displays.len(), 12);
+    }
 }

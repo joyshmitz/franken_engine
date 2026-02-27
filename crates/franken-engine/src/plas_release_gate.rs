@@ -1828,7 +1828,10 @@ mod tests {
         ];
         let mut displays = BTreeSet::new();
         for v in &variants {
-            assert!(displays.insert(v.to_string()), "duplicate display for {v:?}");
+            assert!(
+                displays.insert(v.to_string()),
+                "duplicate display for {v:?}"
+            );
         }
         assert_eq!(displays.len(), 4);
     }
@@ -1848,7 +1851,10 @@ mod tests {
         ];
         let mut displays = BTreeSet::new();
         for c in &codes {
-            assert!(displays.insert(c.to_string()), "duplicate display for {c:?}");
+            assert!(
+                displays.insert(c.to_string()),
+                "duplicate display for {c:?}"
+            );
         }
         assert_eq!(displays.len(), 9);
     }
