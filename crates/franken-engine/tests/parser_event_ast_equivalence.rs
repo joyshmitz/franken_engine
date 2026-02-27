@@ -315,7 +315,7 @@ fn parser_event_ast_equivalence_replay_scenarios_are_deterministic() {
         .map(|scenario| scenario.scenario_id.as_str())
         .collect::<Vec<_>>();
     scenario_ids.sort_unstable();
-    assert_eq!(scenario_ids, ["malformed", "parity", "replay", "tamper"]);
+    assert_eq!(scenario_ids, ["full", "malformed", "parity", "replay", "tamper"]);
 
     for scenario in &fixture.replay_scenarios {
         assert_eq!(scenario.expected_outcome, "pass");
@@ -328,6 +328,14 @@ fn parser_event_ast_equivalence_replay_scenarios_are_deterministic() {
             scenario
                 .command
                 .starts_with("PARSER_EVENT_AST_EQUIVALENCE_SCENARIO=")
+        );
+        assert!(
+            scenario.command.contains(&format!(
+                "PARSER_EVENT_AST_EQUIVALENCE_SCENARIO={}",
+                scenario.scenario_id
+            )),
+            "scenario command must encode its own scenario_id: {}",
+            scenario.scenario_id
         );
     }
 }

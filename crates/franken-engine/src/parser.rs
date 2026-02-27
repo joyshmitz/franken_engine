@@ -14,7 +14,8 @@ use sha2::{Digest, Sha256};
 
 use crate::ast::{
     ExportDeclaration, ExportKind, Expression, ExpressionStatement, ImportDeclaration, ParseGoal,
-    SourceSpan, Statement, SyntaxTree,
+    SourceSpan, Statement, SyntaxTree, VariableDeclaration, VariableDeclarationKind,
+    VariableDeclarator,
 };
 use crate::deterministic_serde::{self, CanonicalValue};
 
@@ -1612,6 +1613,7 @@ fn statement_kind_label(statement: &Statement) -> &'static str {
     match statement {
         Statement::Import(_) => "import",
         Statement::Export(_) => "export",
+        Statement::VariableDeclaration(_) => "variable_declaration",
         Statement::Expression(_) => "expression",
     }
 }
@@ -1721,9 +1723,11 @@ impl GrammarCompletenessMatrix {
                 GrammarFamilyCoverage {
                     family_id: "statement.variable_declaration".to_string(),
                     es2020_clause: "ECMA-262 §14.3".to_string(),
-                    script_goal: GrammarCoverageStatus::Unsupported,
-                    module_goal: GrammarCoverageStatus::Unsupported,
-                    notes: "No dedicated declaration AST yet.".to_string(),
+                    script_goal: GrammarCoverageStatus::Partial,
+                    module_goal: GrammarCoverageStatus::Partial,
+                    notes:
+                        "Supports `var` declarations with identifier bindings and optional initializers; let/const/destructuring remain pending."
+                            .to_string(),
                 },
                 GrammarFamilyCoverage {
                     family_id: "statement.function_declaration".to_string(),
@@ -2301,6 +2305,10 @@ fn parse_statement(
         return parse_export(statement, span, context).map(Statement::Export);
     }
 
+    if is_var_declaration_statement(statement) {
+        return parse_var_declaration(statement, span, context).map(Statement::VariableDeclaration);
+    }
+
     let expression = parse_expression(statement, &span, context, 1)?;
     Ok(Statement::Expression(ExpressionStatement {
         expression,
@@ -2392,6 +2400,195 @@ fn parse_export(
         ExportKind::NamedClause(canonicalize_whitespace(body))
     };
     Ok(ExportDeclaration { kind, span })
+}
+
+fn is_var_declaration_statement(statement: &str) -> bool {
+    let Some(rest) = statement.strip_prefix("var") else {
+        return false;
+    };
+    rest.is_empty() || rest.chars().next().is_some_and(char::is_whitespace)
+}
+
+fn parse_var_declaration(
+    statement: &str,
+    span: SourceSpan,
+    context: &mut ParseExecutionContext<'_>,
+) -> ParseResult<VariableDeclaration> {
+    let body = statement
+        .strip_prefix("var")
+        .map(str::trim_start)
+        .unwrap_or_default();
+    if body.is_empty() {
+        return Err(ParseError::new(
+            ParseErrorCode::UnsupportedSyntax,
+            "var declaration must include at least one binding",
+            context.source_label.to_string(),
+            Some(span),
+        ));
+    }
+
+    let declarator_segments = split_var_declarator_segments(body);
+    if declarator_segments.is_empty() {
+        return Err(ParseError::new(
+            ParseErrorCode::UnsupportedSyntax,
+            "var declaration must include at least one binding",
+            context.source_label.to_string(),
+            Some(span),
+        ));
+    }
+
+    let mut declarations = Vec::with_capacity(declarator_segments.len());
+    for declarator in declarator_segments {
+        let (name_raw, initializer_raw) = split_var_declarator_assignment(declarator);
+        let name = name_raw.trim();
+        if !is_identifier(name) {
+            return Err(ParseError::new(
+                ParseErrorCode::UnsupportedSyntax,
+                "var declaration bindings must be identifiers in parser scaffold",
+                context.source_label.to_string(),
+                Some(span.clone()),
+            ));
+        }
+
+        let initializer = match initializer_raw {
+            Some(initializer_source) => {
+                let initializer_source = initializer_source.trim();
+                if initializer_source.is_empty() {
+                    return Err(ParseError::new(
+                        ParseErrorCode::UnsupportedSyntax,
+                        "var initializer expression is empty",
+                        context.source_label.to_string(),
+                        Some(span.clone()),
+                    ));
+                }
+                Some(parse_expression(initializer_source, &span, context, 1)?)
+            }
+            None => None,
+        };
+
+        declarations.push(VariableDeclarator {
+            name: name.to_string(),
+            initializer,
+            span: span.clone(),
+        });
+    }
+
+    Ok(VariableDeclaration {
+        kind: VariableDeclarationKind::Var,
+        declarations,
+        span,
+    })
+}
+
+fn split_var_declarator_segments(source: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut segment_start = 0usize;
+    let mut in_quote: Option<char> = None;
+    let mut escaped = false;
+    let mut paren_depth = 0usize;
+    let mut bracket_depth = 0usize;
+    let mut brace_depth = 0usize;
+
+    for (index, ch) in source.char_indices() {
+        if let Some(quote) = in_quote {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if ch == quote {
+                in_quote = None;
+            }
+            continue;
+        }
+
+        match ch {
+            '\'' | '"' => in_quote = Some(ch),
+            '(' => paren_depth = paren_depth.saturating_add(1),
+            ')' => paren_depth = paren_depth.saturating_sub(1),
+            '[' => bracket_depth = bracket_depth.saturating_add(1),
+            ']' => bracket_depth = bracket_depth.saturating_sub(1),
+            '{' => brace_depth = brace_depth.saturating_add(1),
+            '}' => brace_depth = brace_depth.saturating_sub(1),
+            ',' if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 => {
+                push_var_declarator_segment(&mut out, source, segment_start, index);
+                segment_start = index.saturating_add(ch.len_utf8());
+            }
+            _ => {}
+        }
+    }
+    push_var_declarator_segment(&mut out, source, segment_start, source.len());
+    out
+}
+
+fn push_var_declarator_segment<'a>(
+    out: &mut Vec<&'a str>,
+    source: &'a str,
+    start: usize,
+    end: usize,
+) {
+    if end < start {
+        return;
+    }
+    let raw = &source[start..end];
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    out.push(trimmed);
+}
+
+fn split_var_declarator_assignment(segment: &str) -> (&str, Option<&str>) {
+    let mut in_quote: Option<char> = None;
+    let mut escaped = false;
+    let mut paren_depth = 0usize;
+    let mut bracket_depth = 0usize;
+    let mut brace_depth = 0usize;
+
+    for (index, ch) in segment.char_indices() {
+        if let Some(quote) = in_quote {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if ch == quote {
+                in_quote = None;
+            }
+            continue;
+        }
+
+        match ch {
+            '\'' | '"' => in_quote = Some(ch),
+            '(' => paren_depth = paren_depth.saturating_add(1),
+            ')' => paren_depth = paren_depth.saturating_sub(1),
+            '[' => bracket_depth = bracket_depth.saturating_add(1),
+            ']' => bracket_depth = bracket_depth.saturating_sub(1),
+            '{' => brace_depth = brace_depth.saturating_add(1),
+            '}' => brace_depth = brace_depth.saturating_sub(1),
+            '=' if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 => {
+                let prev = segment[..index].chars().next_back();
+                let next = segment[index.saturating_add(ch.len_utf8())..].chars().next();
+                let part_of_comparison =
+                    matches!(prev, Some('=') | Some('!') | Some('<') | Some('>'))
+                        || matches!(next, Some('='));
+                if part_of_comparison {
+                    continue;
+                }
+                let rhs_start = index.saturating_add(ch.len_utf8());
+                return (&segment[..index], Some(&segment[rhs_start..]));
+            }
+            _ => {}
+        }
+    }
+
+    (segment, None)
 }
 
 fn parse_expression(

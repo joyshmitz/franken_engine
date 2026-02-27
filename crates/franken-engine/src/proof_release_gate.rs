@@ -154,16 +154,83 @@ pub struct ProofChainBundle {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TestEvidenceBundle {
+    pub unit_coverage_millionths: u32,
+    pub mutation_score_millionths: u32,
+    pub required_failure_mode_tests: u32,
+    pub executed_failure_mode_tests: u32,
+    pub required_e2e_scenarios: u32,
+    pub executed_e2e_scenarios: u32,
+    pub logging_artifact_count: u32,
+    pub logging_artifact_max_age_ns: u64,
+    pub trace_correlated_logging: bool,
+}
+
+impl TestEvidenceBundle {
+    fn has_required_fields(&self) -> bool {
+        self.required_failure_mode_tests > 0
+            && self.required_e2e_scenarios > 0
+            && self.logging_artifact_count > 0
+    }
+
+    fn canonical_value(&self) -> CanonicalValue {
+        let mut map = std::collections::BTreeMap::new();
+        map.insert(
+            "executed_e2e_scenarios".to_string(),
+            CanonicalValue::U64(u64::from(self.executed_e2e_scenarios)),
+        );
+        map.insert(
+            "executed_failure_mode_tests".to_string(),
+            CanonicalValue::U64(u64::from(self.executed_failure_mode_tests)),
+        );
+        map.insert(
+            "logging_artifact_count".to_string(),
+            CanonicalValue::U64(u64::from(self.logging_artifact_count)),
+        );
+        map.insert(
+            "logging_artifact_max_age_ns".to_string(),
+            CanonicalValue::U64(self.logging_artifact_max_age_ns),
+        );
+        map.insert(
+            "mutation_score_millionths".to_string(),
+            CanonicalValue::U64(u64::from(self.mutation_score_millionths)),
+        );
+        map.insert(
+            "required_e2e_scenarios".to_string(),
+            CanonicalValue::U64(u64::from(self.required_e2e_scenarios)),
+        );
+        map.insert(
+            "required_failure_mode_tests".to_string(),
+            CanonicalValue::U64(u64::from(self.required_failure_mode_tests)),
+        );
+        map.insert(
+            "trace_correlated_logging".to_string(),
+            CanonicalValue::Bool(self.trace_correlated_logging),
+        );
+        map.insert(
+            "unit_coverage_millionths".to_string(),
+            CanonicalValue::U64(u64::from(self.unit_coverage_millionths)),
+        );
+        CanonicalValue::Map(map)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReleaseGateInput {
     pub trace_id: String,
     pub policy_id: String,
     pub expected_optimization_passes: BTreeSet<String>,
     pub bundle: ProofChainBundle,
+    pub test_evidence: Option<TestEvidenceBundle>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReleaseGateThresholds {
     pub max_replay_multiplier_millionths: u64,
+    pub min_unit_coverage_millionths: u32,
+    pub min_mutation_score_millionths: u32,
+    pub max_logging_artifact_age_ns: u64,
+    pub require_trace_correlated_logging: bool,
 }
 
 impl Default for ReleaseGateThresholds {
@@ -171,6 +238,10 @@ impl Default for ReleaseGateThresholds {
         Self {
             // 5x replay bound from bead definition.
             max_replay_multiplier_millionths: 5_000_000,
+            min_unit_coverage_millionths: 900_000,
+            min_mutation_score_millionths: 850_000,
+            max_logging_artifact_age_ns: 3_600_000_000_000,
+            require_trace_correlated_logging: true,
         }
     }
 }
@@ -184,6 +255,11 @@ pub enum GateFailureCode {
     IndependentReplayFailed,
     ReplayMultiplierExceeded,
     ArchiveNotContentAddressed,
+    MissingTestEvidence,
+    TestEvidenceBelowThreshold,
+    LoggingArtifactsMissing,
+    LoggingArtifactsStale,
+    LoggingArtifactsUncorrelated,
 }
 
 impl fmt::Display for GateFailureCode {
@@ -196,6 +272,11 @@ impl fmt::Display for GateFailureCode {
             Self::IndependentReplayFailed => f.write_str("independent_replay_failed"),
             Self::ReplayMultiplierExceeded => f.write_str("replay_multiplier_exceeded"),
             Self::ArchiveNotContentAddressed => f.write_str("archive_not_content_addressed"),
+            Self::MissingTestEvidence => f.write_str("missing_test_evidence"),
+            Self::TestEvidenceBelowThreshold => f.write_str("test_evidence_below_threshold"),
+            Self::LoggingArtifactsMissing => f.write_str("logging_artifacts_missing"),
+            Self::LoggingArtifactsStale => f.write_str("logging_artifacts_stale"),
+            Self::LoggingArtifactsUncorrelated => f.write_str("logging_artifacts_uncorrelated"),
         }
     }
 }
@@ -253,6 +334,7 @@ fn compute_replay_multiplier_millionths(replay_ns: u64, compile_ns: u64) -> u64 
 
 fn canonical_decision_value(
     input: &ReleaseGateInput,
+    thresholds: &ReleaseGateThresholds,
     findings: &[GateFinding],
     pass: bool,
     replay_multiplier_millionths: u64,
@@ -324,6 +406,33 @@ fn canonical_decision_value(
     );
     map.insert("pass".to_string(), CanonicalValue::Bool(pass));
     map.insert(
+        "test_evidence".to_string(),
+        match &input.test_evidence {
+            Some(evidence) => evidence.canonical_value(),
+            None => CanonicalValue::Null,
+        },
+    );
+    map.insert(
+        "thresholds.max_logging_artifact_age_ns".to_string(),
+        CanonicalValue::U64(thresholds.max_logging_artifact_age_ns),
+    );
+    map.insert(
+        "thresholds.max_replay_multiplier_millionths".to_string(),
+        CanonicalValue::U64(thresholds.max_replay_multiplier_millionths),
+    );
+    map.insert(
+        "thresholds.min_mutation_score_millionths".to_string(),
+        CanonicalValue::U64(u64::from(thresholds.min_mutation_score_millionths)),
+    );
+    map.insert(
+        "thresholds.min_unit_coverage_millionths".to_string(),
+        CanonicalValue::U64(u64::from(thresholds.min_unit_coverage_millionths)),
+    );
+    map.insert(
+        "thresholds.require_trace_correlated_logging".to_string(),
+        CanonicalValue::Bool(thresholds.require_trace_correlated_logging),
+    );
+    map.insert(
         "policy_id".to_string(),
         CanonicalValue::String(input.policy_id.clone()),
     );
@@ -340,11 +449,18 @@ fn canonical_decision_value(
 
 fn decision_id_for(
     input: &ReleaseGateInput,
+    thresholds: &ReleaseGateThresholds,
     findings: &[GateFinding],
     pass: bool,
     replay_multiplier_millionths: u64,
 ) -> String {
-    let material = canonical_decision_value(input, findings, pass, replay_multiplier_millionths);
+    let material = canonical_decision_value(
+        input,
+        thresholds,
+        findings,
+        pass,
+        replay_multiplier_millionths,
+    );
     let encoded = deterministic_serde::encode_value(&material);
     let mut preimage = Vec::with_capacity(PROOF_RELEASE_GATE_DOMAIN.len() + encoded.len());
     preimage.extend_from_slice(PROOF_RELEASE_GATE_DOMAIN);
@@ -432,8 +548,108 @@ pub fn evaluate_release_gate(
         });
     }
 
+    match &input.test_evidence {
+        None => findings.push(GateFinding {
+            code: GateFailureCode::MissingTestEvidence,
+            optimization_pass: None,
+            detail: "missing comprehensive unit/e2e/logging test evidence bundle".to_string(),
+        }),
+        Some(test_evidence) => {
+            if !test_evidence.has_required_fields() {
+                findings.push(GateFinding {
+                    code: GateFailureCode::TestEvidenceBelowThreshold,
+                    optimization_pass: None,
+                    detail:
+                        "test evidence bundle missing required obligations (failure-mode/e2e/logging)"
+                            .to_string(),
+                });
+            }
+
+            if test_evidence.unit_coverage_millionths < thresholds.min_unit_coverage_millionths {
+                findings.push(GateFinding {
+                    code: GateFailureCode::TestEvidenceBelowThreshold,
+                    optimization_pass: None,
+                    detail: format!(
+                        "unit coverage {} below threshold {}",
+                        test_evidence.unit_coverage_millionths,
+                        thresholds.min_unit_coverage_millionths
+                    ),
+                });
+            }
+
+            if test_evidence.mutation_score_millionths < thresholds.min_mutation_score_millionths {
+                findings.push(GateFinding {
+                    code: GateFailureCode::TestEvidenceBelowThreshold,
+                    optimization_pass: None,
+                    detail: format!(
+                        "mutation score {} below threshold {}",
+                        test_evidence.mutation_score_millionths,
+                        thresholds.min_mutation_score_millionths
+                    ),
+                });
+            }
+
+            if test_evidence.executed_failure_mode_tests < test_evidence.required_failure_mode_tests
+            {
+                findings.push(GateFinding {
+                    code: GateFailureCode::TestEvidenceBelowThreshold,
+                    optimization_pass: None,
+                    detail: format!(
+                        "failure-mode tests executed {} below required {}",
+                        test_evidence.executed_failure_mode_tests,
+                        test_evidence.required_failure_mode_tests
+                    ),
+                });
+            }
+
+            if test_evidence.executed_e2e_scenarios < test_evidence.required_e2e_scenarios {
+                findings.push(GateFinding {
+                    code: GateFailureCode::TestEvidenceBelowThreshold,
+                    optimization_pass: None,
+                    detail: format!(
+                        "e2e scenarios executed {} below required {}",
+                        test_evidence.executed_e2e_scenarios, test_evidence.required_e2e_scenarios
+                    ),
+                });
+            }
+
+            if test_evidence.logging_artifact_count == 0 {
+                findings.push(GateFinding {
+                    code: GateFailureCode::LoggingArtifactsMissing,
+                    optimization_pass: None,
+                    detail: "no structured test/e2e logging artifacts present".to_string(),
+                });
+            }
+
+            if test_evidence.logging_artifact_max_age_ns > thresholds.max_logging_artifact_age_ns {
+                findings.push(GateFinding {
+                    code: GateFailureCode::LoggingArtifactsStale,
+                    optimization_pass: None,
+                    detail: format!(
+                        "logging artifacts stale: max_age_ns={} threshold_ns={}",
+                        test_evidence.logging_artifact_max_age_ns,
+                        thresholds.max_logging_artifact_age_ns
+                    ),
+                });
+            }
+
+            if thresholds.require_trace_correlated_logging
+                && !test_evidence.trace_correlated_logging
+            {
+                findings.push(GateFinding {
+                    code: GateFailureCode::LoggingArtifactsUncorrelated,
+                    optimization_pass: None,
+                    detail:
+                        "structured test/e2e logs are not trace-correlated for deterministic replay"
+                            .to_string(),
+                });
+            }
+        }
+    }
+
     let pass = findings.is_empty();
-    let decision_id = decision_id_for(input, &findings, pass, replay_multiplier_millionths);
+    let decision_id =
+        decision_id_for(input, thresholds, &findings, pass, replay_multiplier_millionths);
     let rollback_token = format!("rollback-{}", &decision_id[..16]);
 
     let mut logs = Vec::new();
@@ -540,6 +756,17 @@ mod tests {
                 archive_uri: "cas://proof-chain/compile-0001".to_string(),
                 artifacts: vec![ok_artifact("inline"), ok_artifact("dce")],
             },
+            test_evidence: Some(TestEvidenceBundle {
+                unit_coverage_millionths: 940_000,
+                mutation_score_millionths: 900_000,
+                required_failure_mode_tests: 12,
+                executed_failure_mode_tests: 12,
+                required_e2e_scenarios: 9,
+                executed_e2e_scenarios: 9,
+                logging_artifact_count: 18,
+                logging_artifact_max_age_ns: 600_000_000_000,
+                trace_correlated_logging: true,
+            }),
         }
     }
 
@@ -656,6 +883,26 @@ mod tests {
             format!("{}", GateFailureCode::ArchiveNotContentAddressed),
             "archive_not_content_addressed"
         );
+        assert_eq!(
+            format!("{}", GateFailureCode::MissingTestEvidence),
+            "missing_test_evidence"
+        );
+        assert_eq!(
+            format!("{}", GateFailureCode::TestEvidenceBelowThreshold),
+            "test_evidence_below_threshold"
+        );
+        assert_eq!(
+            format!("{}", GateFailureCode::LoggingArtifactsMissing),
+            "logging_artifacts_missing"
+        );
+        assert_eq!(
+            format!("{}", GateFailureCode::LoggingArtifactsStale),
+            "logging_artifacts_stale"
+        );
+        assert_eq!(
+            format!("{}", GateFailureCode::LoggingArtifactsUncorrelated),
+            "logging_artifacts_uncorrelated"
+        );
     }
 
     #[test]
@@ -664,6 +911,7 @@ mod tests {
         assert!(
             GateFailureCode::ReplayMultiplierExceeded < GateFailureCode::ArchiveNotContentAddressed
         );
+        assert!(GateFailureCode::ArchiveNotContentAddressed < GateFailureCode::MissingTestEvidence);
     }
 
     #[test]
@@ -676,6 +924,11 @@ mod tests {
             GateFailureCode::IndependentReplayFailed,
             GateFailureCode::ReplayMultiplierExceeded,
             GateFailureCode::ArchiveNotContentAddressed,
+            GateFailureCode::MissingTestEvidence,
+            GateFailureCode::TestEvidenceBelowThreshold,
+            GateFailureCode::LoggingArtifactsMissing,
+            GateFailureCode::LoggingArtifactsStale,
+            GateFailureCode::LoggingArtifactsUncorrelated,
         ] {
             let json = serde_json::to_string(&code).unwrap();
             let back: GateFailureCode = serde_json::from_str(&json).unwrap();
@@ -689,12 +942,20 @@ mod tests {
     fn thresholds_default() {
         let t = ReleaseGateThresholds::default();
         assert_eq!(t.max_replay_multiplier_millionths, 5_000_000);
+        assert_eq!(t.min_unit_coverage_millionths, 900_000);
+        assert_eq!(t.min_mutation_score_millionths, 850_000);
+        assert_eq!(t.max_logging_artifact_age_ns, 3_600_000_000_000);
+        assert!(t.require_trace_correlated_logging);
     }
 
     #[test]
     fn thresholds_serde_roundtrip() {
         let t = ReleaseGateThresholds {
             max_replay_multiplier_millionths: 3_000_000,
+            min_unit_coverage_millionths: 910_000,
+            min_mutation_score_millionths: 870_000,
+            max_logging_artifact_age_ns: 1_200_000_000_000,
+            require_trace_correlated_logging: false,
         };
         let json = serde_json::to_string(&t).unwrap();
         let back: ReleaseGateThresholds = serde_json::from_str(&json).unwrap();
@@ -913,6 +1174,7 @@ mod tests {
         input.bundle.replay_time_ns = 700_000_000; // 14x > 5x default
         let thresholds = ReleaseGateThresholds {
             max_replay_multiplier_millionths: 15_000_000, // 15x
+            ..ReleaseGateThresholds::default()
         };
         let decision = evaluate_release_gate(&input, &thresholds);
         assert!(
@@ -1049,6 +1311,63 @@ mod tests {
                 .findings
                 .iter()
                 .any(|f| f.code == GateFailureCode::FallbackPathInvalid)
+        );
+    }
+
+    // ── test evidence fail-closed policy ───────────────────────────
+
+    #[test]
+    fn missing_test_evidence_fails_closed() {
+        let mut input = base_input();
+        input.test_evidence = None;
+        let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
+        assert!(
+            decision
+                .findings
+                .iter()
+                .any(|f| f.code == GateFailureCode::MissingTestEvidence)
+        );
+    }
+
+    #[test]
+    fn low_unit_coverage_fails_threshold() {
+        let mut input = base_input();
+        let evidence = input.test_evidence.as_mut().expect("test evidence");
+        evidence.unit_coverage_millionths = 100_000;
+        let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
+        assert!(
+            decision
+                .findings
+                .iter()
+                .any(|f| f.code == GateFailureCode::TestEvidenceBelowThreshold)
+        );
+    }
+
+    #[test]
+    fn stale_logging_artifacts_fail_closed() {
+        let mut input = base_input();
+        let evidence = input.test_evidence.as_mut().expect("test evidence");
+        evidence.logging_artifact_max_age_ns = 9_000_000_000_000;
+        let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
+        assert!(
+            decision
+                .findings
+                .iter()
+                .any(|f| f.code == GateFailureCode::LoggingArtifactsStale)
+        );
+    }
+
+    #[test]
+    fn uncorrelated_logging_fails_when_required() {
+        let mut input = base_input();
+        let evidence = input.test_evidence.as_mut().expect("test evidence");
+        evidence.trace_correlated_logging = false;
+        let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
+        assert!(
+            decision
+                .findings
+                .iter()
+                .any(|f| f.code == GateFailureCode::LoggingArtifactsUncorrelated)
         );
     }
 

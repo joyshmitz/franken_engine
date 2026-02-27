@@ -7,7 +7,8 @@ use std::collections::BTreeSet;
 
 use frankenengine_engine::proof_release_gate::{
     GateFailureCode, GateFinding, OptimizationProofArtifact, PromotionDecisionArtifact,
-    ProofChainBundle, ReleaseGateInput, ReleaseGateThresholds, evaluate_release_gate,
+    ProofChainBundle, ReleaseGateInput, ReleaseGateThresholds, TestEvidenceBundle,
+    evaluate_release_gate,
 };
 
 // ---------------------------------------------------------------------------
@@ -54,6 +55,17 @@ fn base_input() -> ReleaseGateInput {
             archive_uri: "cas://proof-chain/compile-0001".to_string(),
             artifacts: vec![ok_artifact("inline"), ok_artifact("dce")],
         },
+        test_evidence: Some(TestEvidenceBundle {
+            unit_coverage_millionths: 940_000,
+            mutation_score_millionths: 900_000,
+            required_failure_mode_tests: 12,
+            executed_failure_mode_tests: 12,
+            required_e2e_scenarios: 9,
+            executed_e2e_scenarios: 9,
+            logging_artifact_count: 18,
+            logging_artifact_max_age_ns: 600_000_000_000,
+            trace_correlated_logging: true,
+        }),
     }
 }
 
@@ -117,6 +129,46 @@ fn failure_code_display_archive_not_content_addressed() {
     );
 }
 
+#[test]
+fn failure_code_display_missing_test_evidence() {
+    assert_eq!(
+        GateFailureCode::MissingTestEvidence.to_string(),
+        "missing_test_evidence"
+    );
+}
+
+#[test]
+fn failure_code_display_test_evidence_below_threshold() {
+    assert_eq!(
+        GateFailureCode::TestEvidenceBelowThreshold.to_string(),
+        "test_evidence_below_threshold"
+    );
+}
+
+#[test]
+fn failure_code_display_logging_artifacts_missing() {
+    assert_eq!(
+        GateFailureCode::LoggingArtifactsMissing.to_string(),
+        "logging_artifacts_missing"
+    );
+}
+
+#[test]
+fn failure_code_display_logging_artifacts_stale() {
+    assert_eq!(
+        GateFailureCode::LoggingArtifactsStale.to_string(),
+        "logging_artifacts_stale"
+    );
+}
+
+#[test]
+fn failure_code_display_logging_artifacts_uncorrelated() {
+    assert_eq!(
+        GateFailureCode::LoggingArtifactsUncorrelated.to_string(),
+        "logging_artifacts_uncorrelated"
+    );
+}
+
 // ===========================================================================
 // Serde round-trips
 // ===========================================================================
@@ -131,6 +183,11 @@ fn serde_round_trip_gate_failure_code() {
         GateFailureCode::IndependentReplayFailed,
         GateFailureCode::ReplayMultiplierExceeded,
         GateFailureCode::ArchiveNotContentAddressed,
+        GateFailureCode::MissingTestEvidence,
+        GateFailureCode::TestEvidenceBelowThreshold,
+        GateFailureCode::LoggingArtifactsMissing,
+        GateFailureCode::LoggingArtifactsStale,
+        GateFailureCode::LoggingArtifactsUncorrelated,
     ] {
         let json = serde_json::to_string(&variant).unwrap();
         let parsed: GateFailureCode = serde_json::from_str(&json).unwrap();
@@ -152,6 +209,14 @@ fn serde_round_trip_proof_chain_bundle() {
     let json = serde_json::to_string(&bundle).unwrap();
     let parsed: ProofChainBundle = serde_json::from_str(&json).unwrap();
     assert_eq!(bundle, parsed);
+}
+
+#[test]
+fn serde_round_trip_test_evidence_bundle() {
+    let evidence = base_input().test_evidence.expect("test evidence");
+    let json = serde_json::to_string(&evidence).unwrap();
+    let parsed: TestEvidenceBundle = serde_json::from_str(&json).unwrap();
+    assert_eq!(evidence, parsed);
 }
 
 #[test]
@@ -198,6 +263,10 @@ fn serde_round_trip_promotion_decision_artifact() {
 fn default_thresholds_replay_multiplier() {
     let thresholds = ReleaseGateThresholds::default();
     assert_eq!(thresholds.max_replay_multiplier_millionths, 5_000_000);
+    assert_eq!(thresholds.min_unit_coverage_millionths, 900_000);
+    assert_eq!(thresholds.min_mutation_score_millionths, 850_000);
+    assert_eq!(thresholds.max_logging_artifact_age_ns, 3_600_000_000_000);
+    assert!(thresholds.require_trace_correlated_logging);
 }
 
 // ===========================================================================
@@ -643,6 +712,7 @@ fn gate_passes_with_custom_relaxed_threshold() {
     input.bundle.replay_time_ns = 300_000_000; // 6x
     let thresholds = ReleaseGateThresholds {
         max_replay_multiplier_millionths: 10_000_000, // 10x
+        ..ReleaseGateThresholds::default()
     };
     let decision = evaluate_release_gate(&input, &thresholds);
     let has_replay_exceeded = decision
@@ -681,6 +751,69 @@ fn gate_fails_cas_uri_with_zero_root() {
             .findings
             .iter()
             .any(|f| f.code == GateFailureCode::ArchiveNotContentAddressed)
+    );
+}
+
+// ===========================================================================
+// evaluate — fail-closed test/e2e/logging evidence policy
+// ===========================================================================
+
+#[test]
+fn gate_fails_when_test_evidence_bundle_missing() {
+    let mut input = base_input();
+    input.test_evidence = None;
+    let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
+    assert!(!decision.pass);
+    assert!(
+        decision
+            .findings
+            .iter()
+            .any(|f| f.code == GateFailureCode::MissingTestEvidence)
+    );
+}
+
+#[test]
+fn gate_fails_when_unit_coverage_below_threshold() {
+    let mut input = base_input();
+    let evidence = input.test_evidence.as_mut().expect("test evidence");
+    evidence.unit_coverage_millionths = 200_000;
+    let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
+    assert!(!decision.pass);
+    assert!(
+        decision
+            .findings
+            .iter()
+            .any(|f| f.code == GateFailureCode::TestEvidenceBelowThreshold)
+    );
+}
+
+#[test]
+fn gate_fails_when_logging_artifacts_stale() {
+    let mut input = base_input();
+    let evidence = input.test_evidence.as_mut().expect("test evidence");
+    evidence.logging_artifact_max_age_ns = 10_000_000_000_000;
+    let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
+    assert!(!decision.pass);
+    assert!(
+        decision
+            .findings
+            .iter()
+            .any(|f| f.code == GateFailureCode::LoggingArtifactsStale)
+    );
+}
+
+#[test]
+fn gate_fails_when_logging_not_trace_correlated() {
+    let mut input = base_input();
+    let evidence = input.test_evidence.as_mut().expect("test evidence");
+    evidence.trace_correlated_logging = false;
+    let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
+    assert!(!decision.pass);
+    assert!(
+        decision
+            .findings
+            .iter()
+            .any(|f| f.code == GateFailureCode::LoggingArtifactsUncorrelated)
     );
 }
 

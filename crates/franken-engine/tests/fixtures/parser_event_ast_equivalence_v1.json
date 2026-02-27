@@ -73,6 +73,11 @@
       "scenario_id": "replay",
       "command": "PARSER_EVENT_AST_EQUIVALENCE_SCENARIO=replay ./scripts/run_parser_event_ast_equivalence.sh test",
       "expected_outcome": "pass"
+    },
+    {
+      "scenario_id": "full",
+      "command": "PARSER_EVENT_AST_EQUIVALENCE_SCENARIO=full ./scripts/run_parser_event_ast_equivalence.sh test",
+      "expected_outcome": "pass"
     }
   ]
 }
