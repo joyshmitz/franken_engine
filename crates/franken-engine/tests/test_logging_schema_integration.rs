@@ -13,9 +13,9 @@ use frankenengine_engine::test_logging_schema::{
     RGC_STRUCTURED_LOGGING_FAILURE_CODE, RedactionAction, RedactionRule, RetentionPolicy,
     TEST_LOG_EVENT_SCHEMA_VERSION, TEST_LOGGING_COMPONENT, TEST_LOGGING_CONTRACT_SCHEMA_VERSION,
     TEST_LOGGING_FAILURE_CODE, TestLane, TestLogEvent, TestLoggingSchemaSpec, ValidationErrorCode,
-    ValidationFailure, ValidationReport, apply_redaction, rgc_structured_logging_spec,
-    validate_correlation, validate_event, validate_events, validate_logging_contract,
-    validate_redaction, validate_schema_evolution,
+    ValidationFailure, ValidationReport, apply_redaction, apply_redaction_with_audit,
+    detect_secret_patterns, rgc_structured_logging_spec, validate_correlation, validate_event,
+    validate_events, validate_logging_contract, validate_redaction, validate_schema_evolution,
 };
 use serde::Deserialize;
 
@@ -262,6 +262,7 @@ fn validation_error_code_serde_roundtrip_all_variants() {
         ValidationErrorCode::SchemaVersionMismatch,
         ValidationErrorCode::CorrelationMismatch,
         ValidationErrorCode::RedactionPolicyViolation,
+        ValidationErrorCode::SecretPatternLeak,
         ValidationErrorCode::ContractValidationViolation,
     ] {
         let json = serde_json::to_string(&code).unwrap();
@@ -830,6 +831,65 @@ fn apply_redaction_preserves_extra_fields() {
     );
 }
 
+#[test]
+fn apply_redaction_with_audit_is_deterministic() {
+    let record = BTreeMap::from([
+        (
+            "payload.user_email".to_string(),
+            "ops@example.com".to_string(),
+        ),
+        (
+            "payload.auth_token".to_string(),
+            "ghp_abcdefghijklmnopqrstuvwxyz123456".to_string(),
+        ),
+        ("payload.ip_address".to_string(), "10.0.0.4".to_string()),
+    ]);
+
+    let mut spec_reordered = TestLoggingSchemaSpec::default();
+    spec_reordered.redaction_rules.reverse();
+    let spec_default = TestLoggingSchemaSpec::default();
+
+    let report_a = apply_redaction_with_audit(&record, &spec_default);
+    let report_b = apply_redaction_with_audit(&record, &spec_reordered);
+
+    assert_eq!(report_a.redacted_record, report_b.redacted_record);
+    assert_eq!(report_a.audit_entries, report_b.audit_entries);
+    assert_eq!(report_a.report_hash, report_b.report_hash);
+    assert!(report_a.report_hash.starts_with("sha256:"));
+}
+
+#[test]
+fn detect_secret_patterns_catches_multiple_shapes() {
+    let record = BTreeMap::from([
+        (
+            "payload.aws".to_string(),
+            "AKIA1234567890ABCDEF".to_string(),
+        ),
+        ("payload.inline".to_string(), "password=hunter2".to_string()),
+        (
+            "payload.slack".to_string(),
+            "xoxb-1234-5678-unsafe".to_string(),
+        ),
+    ]);
+
+    let matches = detect_secret_patterns(&record);
+    assert!(
+        matches
+            .iter()
+            .any(|entry| entry.pattern_id == "aws_access_key_id")
+    );
+    assert!(
+        matches
+            .iter()
+            .any(|entry| entry.pattern_id == "password_inline")
+    );
+    assert!(
+        matches
+            .iter()
+            .any(|entry| entry.pattern_id == "slack_token")
+    );
+}
+
 // ===================================================================
 // 15. validate_redaction
 // ===================================================================
@@ -871,6 +931,21 @@ fn validate_redaction_absent_fields_not_violations() {
     let record = BTreeMap::new();
     let spec = TestLoggingSchemaSpec::default();
     assert!(validate_redaction(&record, &spec).is_empty());
+}
+
+#[test]
+fn validate_redaction_detects_secret_pattern_leaks() {
+    let record = BTreeMap::from([(
+        "payload.unruled".to_string(),
+        "bearer leaked-token".to_string(),
+    )]);
+    let spec = TestLoggingSchemaSpec::default();
+    let failures = validate_redaction(&record, &spec);
+    assert!(
+        failures
+            .iter()
+            .any(|f| f.error_code == ValidationErrorCode::SecretPatternLeak)
+    );
 }
 
 #[test]

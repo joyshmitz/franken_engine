@@ -11,11 +11,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use frankenengine_engine::bayesian_posterior::{Posterior, RiskState};
 use frankenengine_engine::expected_loss_selector::{
     ActionDecision, AlienRiskAlertLevel, AlienRiskEnvelope, CandidateActionScore,
-    ContainmentAction, DecisionConfidenceInterval, DecisionExplanation, ExpectedLossSelector,
-    LossEntry, LossMatrix, RuntimeDecisionScoreEvent, RuntimeDecisionScoringError,
-    RuntimeDecisionScoringInput,
+    ContainmentAction, DecisionConfidenceInterval, ExpectedLossSelector, LossEntry, LossMatrix,
+    RuntimeDecisionScoreEvent, RuntimeDecisionScoringError,
 };
-use frankenengine_engine::hash_tiers::ContentHash;
 use frankenengine_engine::security_epoch::SecurityEpoch;
 
 // ===========================================================================

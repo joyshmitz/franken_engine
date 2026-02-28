@@ -1041,7 +1041,8 @@ fn check_pressure_zero_budget() {
     gc.register_heap("ext-a".into()).unwrap();
     gc.allocate("ext-a", 100).unwrap();
     let pressure = gc.check_pressure("ext-a", 0).unwrap();
-    assert!((pressure).abs() < f64::EPSILON);
+    // Budget=0 with bytes>0 returns f64::MAX (infinite pressure)
+    assert_eq!(pressure, f64::MAX);
 }
 
 #[test]

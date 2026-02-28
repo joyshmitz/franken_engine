@@ -12,8 +12,8 @@ use frankenengine_engine::hash_tiers::ContentHash;
 use frankenengine_engine::runtime_comparison_gate::{
     ArtifactBundleAudit, BenchmarkCategory, BenchmarkResult, CategorySummary,
     DEFAULT_MAX_CV_MILLIONTHS, DEFAULT_MIN_RUNS_PER_BENCHMARK, GATE_COMPONENT, GATE_SCHEMA_VERSION,
-    GateBlocker, GateError, GateLogEntry, GateOutcome, MethodologyAudit, PerformanceSummary,
-    REQUIRED_CATEGORIES, ReproducibilityResult, RuntimeId,
+    GateBlocker, GateError, GateLogEntry, GateOutcome, MethodologyAudit, REQUIRED_CATEGORIES,
+    ReproducibilityResult, RuntimeId,
 };
 
 // ===========================================================================

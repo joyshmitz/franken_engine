@@ -11,7 +11,7 @@ use std::collections::BTreeSet;
 use frankenengine_engine::ts_normalization::{
     CapabilityIntent, NormalizationDecision, NormalizationEvent, SourceMapEntry, TsCompilerOptions,
     TsIngestionError, TsIngestionErrorCode, TsIngestionEvent, TsIngestionProvenance,
-    TsNormalizationConfig, TsNormalizationError, TsNormalizationOutput, TsNormalizationWitness,
+    TsNormalizationConfig, TsNormalizationError,
 };
 
 // ===========================================================================

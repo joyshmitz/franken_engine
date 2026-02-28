@@ -11,6 +11,8 @@ mode="${1:-ci}"
 toolchain="${RUSTUP_TOOLCHAIN:-nightly}"
 artifact_root="${RGC_ARTIFACT_VALIDATOR_PHASE_A_ARTIFACT_ROOT:-artifacts/rgc_artifact_validator_phase_a}"
 rch_timeout_seconds="${RCH_EXEC_TIMEOUT_SECONDS:-900}"
+rch_ready_attempts="${RCH_READY_ATTEMPTS:-18}"
+rch_ready_sleep_seconds="${RCH_READY_SLEEP_SECONDS:-2}"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 default_target_dir="/data/projects/franken_engine/target_rch_rgc_artifact_validator_phase_a"
 target_dir="${CARGO_TARGET_DIR:-${default_target_dir}}"
@@ -71,6 +73,7 @@ rch_reject_local_fallback() {
 }
 
 declare -a commands_run=()
+declare -a step_logs=()
 failed_command=""
 manifest_written=false
 
@@ -96,14 +99,19 @@ run_step_expect_exit() {
   commands_run+=("$command_text")
   echo "==> $command_text"
   log_path="$(mktemp "${run_dir}/rch-log.XXXXXX")"
+  step_logs+=("$log_path")
 
-  if ! ensure_rch_ready 6 2; then
-    failed_command="${command_text} (rch-not-ready)"
-    rm -f "$log_path"
-    return 1
+  if ! ensure_rch_ready "${rch_ready_attempts}" "${rch_ready_sleep_seconds}"; then
+    echo "==> warning: rch check not ready after ${rch_ready_attempts} attempts; attempting remote execution anyway" \
+      | tee -a "$log_path"
   fi
 
   if ! run_rch "$@" > >(tee "$log_path") 2>&1; then
+    if ! rch_reject_local_fallback "$log_path"; then
+      failed_command="${command_text} (rch-local-fallback-detected)"
+      return 1
+    fi
+
     if rg -q "Remote command finished: exit=${expected_exit}" "$log_path"; then
       echo "==> recovered: remote execution produced expected exit=${expected_exit}" \
         | tee -a "$log_path"
@@ -111,26 +119,21 @@ run_step_expect_exit() {
       echo "==> recovered: remote execution succeeded; artifact retrieval timed out" \
         | tee -a "$log_path"
     else
-      rm -f "$log_path"
       failed_command="$command_text"
       return 1
     fi
   fi
 
   if ! rch_reject_local_fallback "$log_path"; then
-    rm -f "$log_path"
     failed_command="${command_text} (rch-local-fallback-detected)"
     return 1
   fi
 
   remote_exit_code="$(rch_remote_exit_code "$log_path" || true)"
   if [[ -z "$remote_exit_code" || "$remote_exit_code" != "$expected_exit" ]]; then
-    rm -f "$log_path"
     failed_command="${command_text} (remote-exit=${remote_exit_code:-missing}, expected=${expected_exit})"
     return 1
   fi
-
-  rm -f "$log_path"
 }
 
 run_step() {
@@ -321,6 +324,7 @@ write_manifest() {
     echo "    \"commands\": \"${commands_path}\","
     echo "    \"valid_report\": \"${valid_report_path}\","
     echo "    \"invalid_report\": \"${invalid_report_path}\","
+    echo "    \"rch_logs_dir\": \"${run_dir}\","
     echo '    "gate_script": "scripts/run_rgc_artifact_validator_phase_a_gate.sh",'
     echo '    "replay_wrapper": "scripts/e2e/rgc_artifact_validator_phase_a_replay.sh",'
     echo '    "validator_bin": "crates/franken-engine/src/bin/rgc_artifact_validator.rs",'
@@ -333,7 +337,18 @@ write_manifest() {
     echo "    \"cat ${commands_path}\","
     echo "    \"cat ${valid_report_path}\","
     echo "    \"cat ${invalid_report_path}\","
+    echo "    \"ls -1 ${run_dir}/rch-log.*\","
     echo "    \"${replay_command}\""
+    echo '  ]'
+    echo '  ,'
+    echo '  "rch_step_logs": ['
+    for idx in "${!step_logs[@]}"; do
+      comma=,
+      if [[ "$idx" == "$(( ${#step_logs[@]} - 1 ))" ]]; then
+        comma=''
+      fi
+      echo "    \"$(parser_frontier_json_escape "${step_logs[$idx]}")\"${comma}"
+    done
     echo '  ]'
     echo '}'
   } >"$manifest_path"

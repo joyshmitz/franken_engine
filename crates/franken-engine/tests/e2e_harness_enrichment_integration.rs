@@ -8,14 +8,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use frankenengine_engine::e2e_harness::{
-    CounterfactualDelta, CounterfactualDivergenceKind, CounterfactualDivergenceSample,
-    CrossMachineReplayDiagnosis, DeterministicRng, DeterministicRunner, DeterministicRunnerConfig,
-    EvidenceLinkageRecord, ExpectedEvent, FixtureMigrationError, FixtureValidationError,
-    HarnessEvent, LogExpectation, ReplayEnvironmentFingerprint, ReplayInputError,
-    ReplayInputErrorCode, ReplayMismatchKind, ReplayPerformance, ReplayVerification, RunResult,
-    ScenarioStep, TestFixture, VirtualClock, assert_structured_logs, build_evidence_linkage,
-    compare_counterfactual, diagnose_cross_machine_replay, evaluate_replay_performance,
-    parse_fixture_with_migration, validate_replay_input, verify_replay,
+    CounterfactualDivergenceKind, DeterministicRng, DeterministicRunner, DeterministicRunnerConfig,
+    EvidenceLinkageRecord, ExpectedEvent, FixtureMigrationError, FixtureValidationError, HarnessEvent,
+    LogExpectation, ReplayEnvironmentFingerprint, ReplayInputError, ReplayInputErrorCode,
+    ReplayMismatchKind, ReplayPerformance, ReplayVerification, RunResult, ScenarioStep, TestFixture,
+    VirtualClock, assert_structured_logs, build_evidence_linkage, compare_counterfactual,
+    diagnose_cross_machine_replay, evaluate_replay_performance, parse_fixture_with_migration,
+    validate_replay_input, verify_replay,
 };
 
 // ===========================================================================
