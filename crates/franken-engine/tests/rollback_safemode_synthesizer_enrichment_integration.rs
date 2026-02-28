@@ -22,10 +22,9 @@ use frankenengine_engine::counterfactual_replay_engine::{
 use frankenengine_engine::hash_tiers::ContentHash;
 use frankenengine_engine::rollback_safemode_synthesizer::{
     BundleKind, ConstraintCategory, ConstraintCheckResult, EvidenceRef, EvidenceSource,
-    EvidenceTrigger, NonRegressionConstraint, PolicyDelta,
-    RollbackSafemodeSynthesizer, SynthesisInput, SynthesisResult, SynthesizedBundle,
-    SynthesisRule, SynthesizerConfig, SynthesizerError, VerificationKind,
-    SYNTHESIZER_SCHEMA_VERSION,
+    EvidenceTrigger, NonRegressionConstraint, PolicyDelta, RollbackSafemodeSynthesizer,
+    SYNTHESIZER_SCHEMA_VERSION, SynthesisInput, SynthesisResult, SynthesisRule, SynthesizedBundle,
+    SynthesizerConfig, SynthesizerError, VerificationKind,
 };
 use frankenengine_engine::runtime_decision_theory::{LaneAction, LaneId};
 use frankenengine_engine::security_epoch::SecurityEpoch;
@@ -188,10 +187,7 @@ fn evidence_trigger_display_exact_combined() {
         min_replay_improvement_millionths: 50_000,
         min_bifurcation_risk_millionths: 30_000,
     };
-    assert_eq!(
-        t.to_string(),
-        "combined(replay=50000, bifurcation=30000)"
-    );
+    assert_eq!(t.to_string(), "combined(replay=50000, bifurcation=30000)");
 }
 
 // ===========================================================================
@@ -364,7 +360,10 @@ fn synthesized_bundle_display_approved() {
     };
     let result = synth.synthesize(&input).unwrap();
     let s = result.bundles[0].to_string();
-    assert!(s.contains("approved"), "approved bundle should say approved");
+    assert!(
+        s.contains("approved"),
+        "approved bundle should say approved"
+    );
     assert!(s.contains("rollback"), "should contain kind");
     assert!(s.contains("deltas="), "should contain delta count");
 }
@@ -390,7 +389,10 @@ fn synthesized_bundle_display_rejected() {
     };
     let result = synth.synthesize(&input).unwrap();
     let s = result.bundles[0].to_string();
-    assert!(s.contains("rejected"), "rejected bundle should say rejected");
+    assert!(
+        s.contains("rejected"),
+        "rejected bundle should say rejected"
+    );
 }
 
 #[test]
@@ -915,7 +917,10 @@ fn soft_constraint_violation_allows_approval() {
         scan_result: None,
     };
     let result = synth.synthesize(&input).unwrap();
-    assert!(result.bundles[0].is_approved(), "soft constraint shouldn't block");
+    assert!(
+        result.bundles[0].is_approved(),
+        "soft constraint shouldn't block"
+    );
     assert!(result.bundles[0].soft_violations > 0);
 }
 
@@ -1118,10 +1123,12 @@ fn safemode_bundle_gets_safemode_hook() {
         scan_result: Some(scan),
     };
     let result = synth.synthesize(&input).unwrap();
-    assert!(result.bundles[0]
-        .verification_hooks
-        .iter()
-        .any(|h| h.verification_kind == VerificationKind::SafeModeReplay));
+    assert!(
+        result.bundles[0]
+            .verification_hooks
+            .iter()
+            .any(|h| h.verification_kind == VerificationKind::SafeModeReplay)
+    );
 }
 
 // ===========================================================================
@@ -1153,10 +1160,12 @@ fn stability_hook_added_for_multiple_deltas() {
         scan_result: None,
     };
     let result = synth.synthesize(&input).unwrap();
-    assert!(result.bundles[0]
-        .verification_hooks
-        .iter()
-        .any(|h| h.verification_kind == VerificationKind::StabilityReplay));
+    assert!(
+        result.bundles[0]
+            .verification_hooks
+            .iter()
+            .any(|h| h.verification_kind == VerificationKind::StabilityReplay)
+    );
 }
 
 #[test]
@@ -1168,10 +1177,12 @@ fn no_stability_hook_for_single_delta() {
         scan_result: None,
     };
     let result = synth.synthesize(&input).unwrap();
-    assert!(!result.bundles[0]
-        .verification_hooks
-        .iter()
-        .any(|h| h.verification_kind == VerificationKind::StabilityReplay));
+    assert!(
+        !result.bundles[0]
+            .verification_hooks
+            .iter()
+            .any(|h| h.verification_kind == VerificationKind::StabilityReplay)
+    );
 }
 
 // ===========================================================================
@@ -1276,7 +1287,7 @@ fn zero_confidence_recommendation_skipped() {
 fn recommendations_filtered_by_improvement_and_confidence() {
     let mut synth = default_synthesizer();
     let recs = vec![
-        make_recommendation("alt1", 50_000, 950_000),  // Too low improvement (< 100_000)
+        make_recommendation("alt1", 50_000, 950_000), // Too low improvement (< 100_000)
         make_recommendation("alt2", 200_000, 100_000), // Too low confidence (< 900_000)
         make_recommendation("alt3", 200_000, 950_000), // Good
     ];
@@ -1377,7 +1388,11 @@ fn high_confidence_yields_zero_regression() {
         },
         BundleKind::Rollback,
     )];
-    let constraints = vec![basic_constraint("perf", ConstraintCategory::Performance, true)];
+    let constraints = vec![basic_constraint(
+        "perf",
+        ConstraintCategory::Performance,
+        true,
+    )];
     let mut synth = RollbackSafemodeSynthesizer::new(default_config(), rules, constraints).unwrap();
 
     // Perfect confidence → uncertainty=0 → regression=0
@@ -1454,8 +1469,7 @@ fn artifact_hash_deterministic_across_instances() {
         scan_result: None,
     };
 
-    let mut s1 =
-        RollbackSafemodeSynthesizer::new(default_config(), rules.clone(), vec![]).unwrap();
+    let mut s1 = RollbackSafemodeSynthesizer::new(default_config(), rules.clone(), vec![]).unwrap();
     let r1 = s1.synthesize(&input).unwrap();
 
     let mut s2 = RollbackSafemodeSynthesizer::new(default_config(), rules, vec![]).unwrap();

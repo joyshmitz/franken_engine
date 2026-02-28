@@ -112,8 +112,14 @@ fn flake_severity_as_str_values() {
 
 #[test]
 fn flake_severity_display_matches_as_str() {
-    assert_eq!(FlakeSeverity::Warning.to_string(), FlakeSeverity::Warning.as_str());
-    assert_eq!(FlakeSeverity::High.to_string(), FlakeSeverity::High.as_str());
+    assert_eq!(
+        FlakeSeverity::Warning.to_string(),
+        FlakeSeverity::Warning.as_str()
+    );
+    assert_eq!(
+        FlakeSeverity::High.to_string(),
+        FlakeSeverity::High.as_str()
+    );
 }
 
 #[test]
@@ -127,8 +133,14 @@ fn flake_severity_serde_roundtrip() {
 
 #[test]
 fn flake_severity_serde_snake_case_format() {
-    assert_eq!(serde_json::to_string(&FlakeSeverity::Warning).unwrap(), "\"warning\"");
-    assert_eq!(serde_json::to_string(&FlakeSeverity::High).unwrap(), "\"high\"");
+    assert_eq!(
+        serde_json::to_string(&FlakeSeverity::Warning).unwrap(),
+        "\"warning\""
+    );
+    assert_eq!(
+        serde_json::to_string(&FlakeSeverity::High).unwrap(),
+        "\"high\""
+    );
 }
 
 // ===========================================================================
@@ -138,18 +150,27 @@ fn flake_severity_serde_snake_case_format() {
 #[test]
 fn quarantine_action_as_str_values() {
     assert_eq!(QuarantineAction::Observe.as_str(), "observe");
-    assert_eq!(QuarantineAction::QuarantineImmediate.as_str(), "quarantine-immediate");
+    assert_eq!(
+        QuarantineAction::QuarantineImmediate.as_str(),
+        "quarantine-immediate"
+    );
 }
 
 #[test]
 fn quarantine_action_display_matches_as_str() {
     assert_eq!(QuarantineAction::Observe.to_string(), "observe");
-    assert_eq!(QuarantineAction::QuarantineImmediate.to_string(), "quarantine-immediate");
+    assert_eq!(
+        QuarantineAction::QuarantineImmediate.to_string(),
+        "quarantine-immediate"
+    );
 }
 
 #[test]
 fn quarantine_action_serde_kebab_case() {
-    assert_eq!(serde_json::to_string(&QuarantineAction::Observe).unwrap(), "\"observe\"");
+    assert_eq!(
+        serde_json::to_string(&QuarantineAction::Observe).unwrap(),
+        "\"observe\""
+    );
     assert_eq!(
         serde_json::to_string(&QuarantineAction::QuarantineImmediate).unwrap(),
         "\"quarantine-immediate\""
@@ -158,7 +179,10 @@ fn quarantine_action_serde_kebab_case() {
 
 #[test]
 fn quarantine_action_serde_roundtrip() {
-    for act in [QuarantineAction::Observe, QuarantineAction::QuarantineImmediate] {
+    for act in [
+        QuarantineAction::Observe,
+        QuarantineAction::QuarantineImmediate,
+    ] {
         let json = serde_json::to_string(&act).unwrap();
         let back: QuarantineAction = serde_json::from_str(&json).unwrap();
         assert_eq!(act, back);
@@ -171,7 +195,11 @@ fn quarantine_action_serde_roundtrip() {
 
 #[test]
 fn quarantine_status_serde_roundtrip() {
-    for st in [QuarantineStatus::Active, QuarantineStatus::Expired, QuarantineStatus::Lifted] {
+    for st in [
+        QuarantineStatus::Active,
+        QuarantineStatus::Expired,
+        QuarantineStatus::Lifted,
+    ] {
         let json = serde_json::to_string(&st).unwrap();
         let back: QuarantineStatus = serde_json::from_str(&json).unwrap();
         assert_eq!(st, back);
@@ -180,9 +208,18 @@ fn quarantine_status_serde_roundtrip() {
 
 #[test]
 fn quarantine_status_serde_snake_case() {
-    assert_eq!(serde_json::to_string(&QuarantineStatus::Active).unwrap(), "\"active\"");
-    assert_eq!(serde_json::to_string(&QuarantineStatus::Expired).unwrap(), "\"expired\"");
-    assert_eq!(serde_json::to_string(&QuarantineStatus::Lifted).unwrap(), "\"lifted\"");
+    assert_eq!(
+        serde_json::to_string(&QuarantineStatus::Active).unwrap(),
+        "\"active\""
+    );
+    assert_eq!(
+        serde_json::to_string(&QuarantineStatus::Expired).unwrap(),
+        "\"expired\""
+    );
+    assert_eq!(
+        serde_json::to_string(&QuarantineStatus::Lifted).unwrap(),
+        "\"lifted\""
+    );
 }
 
 // ===========================================================================
@@ -191,7 +228,11 @@ fn quarantine_status_serde_snake_case() {
 
 #[test]
 fn trend_direction_serde_roundtrip() {
-    for td in [TrendDirection::Improving, TrendDirection::Stable, TrendDirection::Degrading] {
+    for td in [
+        TrendDirection::Improving,
+        TrendDirection::Stable,
+        TrendDirection::Degrading,
+    ] {
         let json = serde_json::to_string(&td).unwrap();
         let back: TrendDirection = serde_json::from_str(&json).unwrap();
         assert_eq!(td, back);
@@ -200,9 +241,18 @@ fn trend_direction_serde_roundtrip() {
 
 #[test]
 fn trend_direction_serde_snake_case() {
-    assert_eq!(serde_json::to_string(&TrendDirection::Improving).unwrap(), "\"improving\"");
-    assert_eq!(serde_json::to_string(&TrendDirection::Stable).unwrap(), "\"stable\"");
-    assert_eq!(serde_json::to_string(&TrendDirection::Degrading).unwrap(), "\"degrading\"");
+    assert_eq!(
+        serde_json::to_string(&TrendDirection::Improving).unwrap(),
+        "\"improving\""
+    );
+    assert_eq!(
+        serde_json::to_string(&TrendDirection::Stable).unwrap(),
+        "\"stable\""
+    );
+    assert_eq!(
+        serde_json::to_string(&TrendDirection::Degrading).unwrap(),
+        "\"degrading\""
+    );
 }
 
 // ===========================================================================
@@ -294,7 +344,10 @@ fn classify_flakes_high_severity_at_threshold() {
     let result = classify_flakes(&runs, &policy);
     assert_eq!(result.len(), 1);
     assert_eq!(result[0].severity, FlakeSeverity::High);
-    assert_eq!(result[0].quarantine_action, QuarantineAction::QuarantineImmediate);
+    assert_eq!(
+        result[0].quarantine_action,
+        QuarantineAction::QuarantineImmediate
+    );
 }
 
 #[test]
@@ -382,7 +435,10 @@ fn classify_flakes_impacted_suites_deduplicated_and_sorted() {
     let mut r2 = make_run("f1", 1, "e2e", "sc-dup", "fail", Some("e"), 1);
     r2.related_unit_suites = vec!["unit-a".to_string(), "unit-m".to_string()];
     let result = classify_flakes(&[r1, r2], &default_sensitive_policy());
-    assert_eq!(result[0].impacted_unit_suites, vec!["unit-a", "unit-m", "unit-z"]);
+    assert_eq!(
+        result[0].impacted_unit_suites,
+        vec!["unit-a", "unit-m", "unit-z"]
+    );
 }
 
 #[test]
@@ -392,7 +448,10 @@ fn classify_flakes_root_cause_artifacts_deduplicated() {
     let mut r2 = make_run("f1", 1, "e2e", "sc-rc", "fail", Some("e"), 1);
     r2.root_cause_hypothesis_artifacts = vec!["hyp-x".to_string(), "hyp-y".to_string()];
     let result = classify_flakes(&[r1, r2], &default_sensitive_policy());
-    assert_eq!(result[0].root_cause_hypothesis_artifacts, vec!["hyp-x", "hyp-y"]);
+    assert_eq!(
+        result[0].root_cause_hypothesis_artifacts,
+        vec!["hyp-x", "hyp-y"]
+    );
 }
 
 // ===========================================================================
@@ -411,7 +470,10 @@ fn build_quarantine_only_high_severity() {
     let classifications = classify_flakes(&runs, &policy);
     assert_eq!(classifications[0].severity, FlakeSeverity::Warning);
     let quarantines = build_quarantine_records(&classifications, &BTreeMap::new(), 1, &policy);
-    assert!(quarantines.is_empty(), "Warning-level should not be quarantined");
+    assert!(
+        quarantines.is_empty(),
+        "Warning-level should not be quarantined"
+    );
 }
 
 #[test]
@@ -531,7 +593,11 @@ fn validate_missing_owner_binding() {
         linked_reproducer_bundle_id: "b1".into(),
     }];
     let violations = validate_quarantine_records(&records, 2);
-    assert!(violations.iter().any(|v| v.contains("missing_owner_binding")));
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("missing_owner_binding"))
+    );
 }
 
 #[test]
@@ -548,7 +614,11 @@ fn validate_non_expiring_quarantine() {
         linked_reproducer_bundle_id: "b1".into(),
     }];
     let violations = validate_quarantine_records(&records, 3);
-    assert!(violations.iter().any(|v| v.contains("non_expiring_quarantine")));
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("non_expiring_quarantine"))
+    );
 }
 
 #[test]
@@ -566,7 +636,11 @@ fn validate_expired_active_quarantine() {
     }];
     // current_epoch 5 > expires_epoch 4 => violation
     let violations = validate_quarantine_records(&records, 5);
-    assert!(violations.iter().any(|v| v.contains("expired_active_quarantine")));
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("expired_active_quarantine"))
+    );
 }
 
 #[test]
@@ -583,7 +657,11 @@ fn validate_lifted_status_no_expired_active_violation() {
         linked_reproducer_bundle_id: "b1".into(),
     }];
     let violations = validate_quarantine_records(&records, 10);
-    assert!(!violations.iter().any(|v| v.contains("expired_active_quarantine")));
+    assert!(
+        !violations
+            .iter()
+            .any(|v| v.contains("expired_active_quarantine"))
+    );
 }
 
 #[test]
@@ -600,7 +678,11 @@ fn validate_expired_status_no_expired_active_violation() {
         linked_reproducer_bundle_id: "b1".into(),
     }];
     let violations = validate_quarantine_records(&records, 10);
-    assert!(!violations.iter().any(|v| v.contains("expired_active_quarantine")));
+    assert!(
+        !violations
+            .iter()
+            .any(|v| v.contains("expired_active_quarantine"))
+    );
 }
 
 #[test]
@@ -656,7 +738,12 @@ fn gate_confidence_high_flakes_block() {
     let classifications = classify_flakes(&runs, &policy);
     let report = evaluate_gate_confidence(&runs, &classifications, &policy);
     assert_eq!(report.promotion_outcome, "hold");
-    assert!(report.blockers.iter().any(|b| b.contains("high_flake_rate")));
+    assert!(
+        report
+            .blockers
+            .iter()
+            .any(|b| b.contains("high_flake_rate"))
+    );
 }
 
 #[test]
@@ -670,7 +757,12 @@ fn gate_confidence_burden_exceeds_budget_blocks() {
     let runs = scenario_runs("e2e", "sc-bud", 1, 1, 1, 42);
     let classifications = classify_flakes(&runs, &policy);
     let report = evaluate_gate_confidence(&runs, &classifications, &policy);
-    assert!(report.blockers.iter().any(|b| b.contains("flake_burden_exceeds_budget")));
+    assert!(
+        report
+            .blockers
+            .iter()
+            .any(|b| b.contains("flake_burden_exceeds_budget"))
+    );
     assert_eq!(report.promotion_outcome, "hold");
 }
 
@@ -816,7 +908,10 @@ fn emit_events_classification_event_fields() {
     assert_eq!(first.trace_id, "t1");
     assert_eq!(first.policy_id, "p1");
     assert!(first.flake_rate_millionths.is_some());
-    assert_eq!(first.error_code, Some(FLAKE_WORKFLOW_FAILURE_CODE.to_string()));
+    assert_eq!(
+        first.error_code,
+        Some(FLAKE_WORKFLOW_FAILURE_CODE.to_string())
+    );
     assert_eq!(first.quarantine_owner, Some("oncall".to_string()));
     assert!(first.quarantine_expires_epoch.is_some());
 }
@@ -846,7 +941,10 @@ fn emit_events_gate_hold_has_error_code() {
     assert_eq!(report.promotion_outcome, "hold");
     let events = emit_structured_events("t1", "d1", "p1", &classifications, &[], &report);
     let gate = events.last().unwrap();
-    assert_eq!(gate.error_code, Some(FLAKE_WORKFLOW_FAILURE_CODE.to_string()));
+    assert_eq!(
+        gate.error_code,
+        Some(FLAKE_WORKFLOW_FAILURE_CODE.to_string())
+    );
 }
 
 #[test]

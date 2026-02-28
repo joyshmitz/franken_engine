@@ -13,9 +13,9 @@ use frankenengine_engine::policy_controller::service_endpoint_template::{
     DecisionContractExecutor, EndpointFailure, EndpointResponse, ErrorEnvelope,
     EvidenceExportProvider, EvidenceExportRequest, EvidenceExportResponse, EvidenceRecord,
     HealthStatusResponse, ReplayCommand, ReplayControlRequest, ReplayControlResponse,
-    ReplayController, RequestContext, RuntimeHealthProvider, ServiceEndpointTemplate,
-    StructuredLogEvent, SCOPE_CONTROL_WRITE, SCOPE_EVIDENCE_READ, SCOPE_HEALTH_READ,
-    SCOPE_REPLAY_READ, SCOPE_REPLAY_WRITE,
+    ReplayController, RequestContext, RuntimeHealthProvider, SCOPE_CONTROL_WRITE,
+    SCOPE_EVIDENCE_READ, SCOPE_HEALTH_READ, SCOPE_REPLAY_READ, SCOPE_REPLAY_WRITE,
+    ServiceEndpointTemplate, StructuredLogEvent,
 };
 
 // ── Mock providers ──────────────────────────────────────────────────
@@ -282,7 +282,9 @@ fn replay_status_req(session_id: &str) -> ReplayControlRequest {
 #[test]
 fn health_endpoint_full_pipeline() {
     let kit = build_template();
-    let resp = kit.template.health_endpoint(&auth(&[SCOPE_HEALTH_READ]), &ctx());
+    let resp = kit
+        .template
+        .health_endpoint(&auth(&[SCOPE_HEALTH_READ]), &ctx());
     assert_eq!(resp.status, "ok");
     assert_eq!(resp.endpoint, "health");
     assert_eq!(resp.trace_id, "trace-integ-001");
@@ -319,10 +321,7 @@ fn health_endpoint_wrong_scope_is_unauthorized() {
         .template
         .health_endpoint(&auth(&[SCOPE_CONTROL_WRITE, SCOPE_REPLAY_READ]), &ctx());
     assert_eq!(resp.status, "error");
-    assert_eq!(
-        resp.error.expect("err").error_code,
-        "unauthorized"
-    );
+    assert_eq!(resp.error.expect("err").error_code, "unauthorized");
 }
 
 #[test]
@@ -524,7 +523,11 @@ fn control_action_validation_precedes_execution() {
         &ctx(),
         &control_req("", ControlAction::Start, "reason"),
     );
-    assert_eq!(kit.decision_calls.get(), 0, "executor must not run on invalid input");
+    assert_eq!(
+        kit.decision_calls.get(),
+        0,
+        "executor must not run on invalid input"
+    );
 }
 
 // ── Section 3: Evidence export endpoint pipeline ────────────────────
@@ -868,7 +871,9 @@ fn trace_id_propagated_across_all_endpoints() {
     assert_eq!(ctrl.trace_id, "trace-cross-01");
     assert_eq!(ctrl.log.trace_id, "trace-cross-01");
 
-    let ev = kit.template.evidence_export_endpoint(&a, &c, &evidence_req(0, None, 5));
+    let ev = kit
+        .template
+        .evidence_export_endpoint(&a, &c, &evidence_req(0, None, 5));
     assert_eq!(ev.trace_id, "trace-cross-01");
     assert_eq!(ev.log.trace_id, "trace-cross-01");
 
@@ -891,11 +896,7 @@ fn request_id_propagated_to_all_ok_responses() {
     );
     assert_eq!(
         kit.template
-            .control_action_endpoint(
-                &a,
-                &c,
-                &control_req("ext", ControlAction::Start, "r")
-            )
+            .control_action_endpoint(&a, &c, &control_req("ext", ControlAction::Start, "r"))
             .request_id,
         "req-integ-001"
     );
@@ -920,13 +921,14 @@ fn error_envelope_always_has_trace_id_and_component() {
     let no_auth = auth(&[]);
 
     let responses: Vec<String> = vec![
-        kit.template.health_endpoint(&no_auth, &c).error.expect("err").trace_id.clone(),
         kit.template
-            .control_action_endpoint(
-                &no_auth,
-                &c,
-                &control_req("ext", ControlAction::Start, "r"),
-            )
+            .health_endpoint(&no_auth, &c)
+            .error
+            .expect("err")
+            .trace_id
+            .clone(),
+        kit.template
+            .control_action_endpoint(&no_auth, &c, &control_req("ext", ControlAction::Start, "r"))
             .error
             .expect("err")
             .trace_id
@@ -938,11 +940,7 @@ fn error_envelope_always_has_trace_id_and_component() {
             .trace_id
             .clone(),
         kit.template
-            .replay_control_endpoint(
-                &no_auth,
-                &c,
-                &replay_start_req("t"),
-            )
+            .replay_control_endpoint(&no_auth, &c, &replay_start_req("t"))
             .error
             .expect("err")
             .trace_id
@@ -965,7 +963,9 @@ fn log_captures_decision_id_and_policy_id_from_context() {
         decision_id: Some("dec-ctx".into()),
         policy_id: Some("pol-ctx".into()),
     };
-    let resp = kit.template.health_endpoint(&auth(&[SCOPE_HEALTH_READ]), &c);
+    let resp = kit
+        .template
+        .health_endpoint(&auth(&[SCOPE_HEALTH_READ]), &c);
     assert_eq!(resp.log.decision_id.as_deref(), Some("dec-ctx"));
     assert_eq!(resp.log.policy_id.as_deref(), Some("pol-ctx"));
     assert_eq!(resp.log.component, "comp");
@@ -981,7 +981,9 @@ fn log_handles_none_decision_id_and_policy_id() {
         decision_id: None,
         policy_id: None,
     };
-    let resp = kit.template.health_endpoint(&auth(&[SCOPE_HEALTH_READ]), &c);
+    let resp = kit
+        .template
+        .health_endpoint(&auth(&[SCOPE_HEALTH_READ]), &c);
     assert!(resp.log.decision_id.is_none());
     assert!(resp.log.policy_id.is_none());
 }
@@ -1030,7 +1032,9 @@ fn multiple_replay_calls_increment_call_counter() {
 #[test]
 fn health_ok_response_json_schema_stable() {
     let kit = build_template();
-    let resp = kit.template.health_endpoint(&auth(&[SCOPE_HEALTH_READ]), &ctx());
+    let resp = kit
+        .template
+        .health_endpoint(&auth(&[SCOPE_HEALTH_READ]), &ctx());
     let json = serde_json::to_value(&resp).expect("serialize");
     assert_eq!(json["status"], "ok");
     assert_eq!(json["endpoint"], "health");
@@ -1306,7 +1310,9 @@ fn replay_control_response_serde_roundtrip() {
 #[test]
 fn endpoint_response_ok_serde_roundtrip() {
     let kit = build_template();
-    let resp = kit.template.health_endpoint(&auth(&[SCOPE_HEALTH_READ]), &ctx());
+    let resp = kit
+        .template
+        .health_endpoint(&auth(&[SCOPE_HEALTH_READ]), &ctx());
     let json = serde_json::to_string(&resp).unwrap();
     let back: EndpointResponse<HealthStatusResponse> = serde_json::from_str(&json).unwrap();
     assert_eq!(resp.status, back.status);
@@ -1432,11 +1438,9 @@ fn control_action_auth_check_before_validation() {
 #[test]
 fn evidence_export_auth_check_before_validation() {
     let kit = build_template();
-    let resp = kit.template.evidence_export_endpoint(
-        &auth(&[]),
-        &ctx(),
-        &evidence_req(100, Some(50), 0),
-    );
+    let resp =
+        kit.template
+            .evidence_export_endpoint(&auth(&[]), &ctx(), &evidence_req(100, Some(50), 0));
     assert_eq!(resp.error.expect("err").error_code, "unauthorized");
 }
 
@@ -1499,7 +1503,13 @@ fn evidence_record_clone_equality() {
 fn request_context_json_field_names_stable() {
     let json = serde_json::to_value(ctx()).unwrap();
     let obj = json.as_object().unwrap();
-    for key in ["trace_id", "request_id", "component", "decision_id", "policy_id"] {
+    for key in [
+        "trace_id",
+        "request_id",
+        "component",
+        "decision_id",
+        "policy_id",
+    ] {
         assert!(obj.contains_key(key), "missing field: {key}");
     }
     assert_eq!(obj.len(), 5);

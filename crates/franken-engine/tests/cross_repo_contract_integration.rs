@@ -11,27 +11,26 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use frankenengine_engine::cross_repo_contract::{
-    ContractSuiteResult, ContractViolation, FieldType, RegressionClass, SchemaContract,
-    VersionCompatibilityEntry, fastapi_endpoint_response_contract,
+    ContractSuiteResult, ContractViolation, FieldType, OPTIONAL_LOG_FIELDS, REQUIRED_LOG_FIELDS,
+    RegressionClass, SchemaContract, VersionCompatibilityEntry, fastapi_endpoint_response_contract,
     frankensqlite_migration_receipt_contract, frankensqlite_storage_event_contract,
     frankensqlite_store_record_contract, frankentui_envelope_contract, integration_point_inventory,
     verify_deterministic_serde, verify_error_code_format, verify_schema_compliance,
-    verify_structured_log, version_compatibility_registry, OPTIONAL_LOG_FIELDS,
-    REQUIRED_LOG_FIELDS,
+    verify_structured_log, version_compatibility_registry,
 };
 use frankenengine_engine::frankentui_adapter::{
-    AdapterEnvelope, AdapterStream, ControlDashboardView, DashboardMetricView,
-    ExtensionStatusRow, FrankentuiViewPayload, IncidentReplayView, ReplayEventView,
-    ReplayStatus, UpdateKind, FRANKENTUI_ADAPTER_SCHEMA_VERSION,
+    AdapterEnvelope, AdapterStream, ControlDashboardView, DashboardMetricView, ExtensionStatusRow,
+    FRANKENTUI_ADAPTER_SCHEMA_VERSION, FrankentuiViewPayload, IncidentReplayView, ReplayEventView,
+    ReplayStatus, UpdateKind,
 };
 use frankenengine_engine::policy_controller::service_endpoint_template::{
     AuthContext, ControlAction, EndpointResponse, ErrorEnvelope, HealthStatusResponse,
-    ReplayCommand, RequestContext, StructuredLogEvent, SCOPE_CONTROL_WRITE,
-    SCOPE_EVIDENCE_READ, SCOPE_HEALTH_READ, SCOPE_REPLAY_READ, SCOPE_REPLAY_WRITE,
+    ReplayCommand, RequestContext, SCOPE_CONTROL_WRITE, SCOPE_EVIDENCE_READ, SCOPE_HEALTH_READ,
+    SCOPE_REPLAY_READ, SCOPE_REPLAY_WRITE, StructuredLogEvent,
 };
 use frankenengine_engine::storage_adapter::{
-    EventContext, InMemoryStorageAdapter, MigrationReceipt, StorageAdapter, StorageError,
-    StorageEvent, StoreKind, StoreQuery, StoreRecord, STORAGE_SCHEMA_VERSION,
+    EventContext, InMemoryStorageAdapter, MigrationReceipt, STORAGE_SCHEMA_VERSION, StorageAdapter,
+    StorageError, StorageEvent, StoreKind, StoreQuery, StoreRecord,
 };
 
 // ============================================================================
@@ -557,7 +556,10 @@ fn frankentui_contract_field_types_cover_all_required() {
     for field in &c.required_fields {
         assert!(c.field_types.contains_key(field));
     }
-    assert_eq!(*c.field_types.get("schema_version").unwrap(), FieldType::Number);
+    assert_eq!(
+        *c.field_types.get("schema_version").unwrap(),
+        FieldType::Number
+    );
     assert_eq!(*c.field_types.get("trace_id").unwrap(), FieldType::String);
     assert_eq!(*c.field_types.get("payload").unwrap(), FieldType::Object);
 }
@@ -589,7 +591,14 @@ fn frankensqlite_storage_event_contract_content() {
     assert_eq!(c.boundary, "frankensqlite");
     assert_eq!(c.type_name, "StorageEvent");
     assert_eq!(c.required_fields.len(), 6);
-    for f in ["trace_id", "decision_id", "policy_id", "component", "event", "outcome"] {
+    for f in [
+        "trace_id",
+        "decision_id",
+        "policy_id",
+        "component",
+        "event",
+        "outcome",
+    ] {
         assert!(c.required_fields.contains(f));
     }
 }
@@ -642,7 +651,10 @@ fn all_contracts_types_cover_required() {
 #[test]
 fn contract_builders_deterministic_over_iterations() {
     for _ in 0..10 {
-        assert_eq!(frankentui_envelope_contract(), frankentui_envelope_contract());
+        assert_eq!(
+            frankentui_envelope_contract(),
+            frankentui_envelope_contract()
+        );
         assert_eq!(
             frankensqlite_store_record_contract(),
             frankensqlite_store_record_contract()
@@ -715,14 +727,20 @@ fn version_compatibility_registry_covers_all_three_boundaries() {
 #[test]
 fn version_compatibility_registry_frankentui_version_matches_const() {
     let registry = version_compatibility_registry();
-    let tui = registry.iter().find(|e| e.boundary == "frankentui").unwrap();
+    let tui = registry
+        .iter()
+        .find(|e| e.boundary == "frankentui")
+        .unwrap();
     assert_eq!(tui.current_version, FRANKENTUI_ADAPTER_SCHEMA_VERSION);
 }
 
 #[test]
 fn version_compatibility_registry_frankensqlite_version_matches_const() {
     let registry = version_compatibility_registry();
-    let sql = registry.iter().find(|e| e.boundary == "frankensqlite").unwrap();
+    let sql = registry
+        .iter()
+        .find(|e| e.boundary == "frankensqlite")
+        .unwrap();
     assert_eq!(sql.current_version, STORAGE_SCHEMA_VERSION);
 }
 
@@ -1177,8 +1195,7 @@ fn frankensqlite_error_codes_all_start_with_fe_stor() {
 #[test]
 fn frankensqlite_adapter_operations_emit_events() {
     let mut adapter = InMemoryStorageAdapter::new();
-    let ctx =
-        EventContext::new("trace-integ", "decision-integ", "policy-integ").expect("ctx");
+    let ctx = EventContext::new("trace-integ", "decision-integ", "policy-integ").expect("ctx");
     adapter
         .put(
             StoreKind::ReplayIndex,
@@ -1413,10 +1430,7 @@ fn cross_boundary_service_and_storage_both_pass_structured_log() {
         &serde_json::to_value(&storage_event).unwrap(),
         "frankensqlite",
     );
-    let v2 = verify_structured_log(
-        &serde_json::to_value(&service_log).unwrap(),
-        "fastapi_rust",
-    );
+    let v2 = verify_structured_log(&serde_json::to_value(&service_log).unwrap(), "fastapi_rust");
     assert!(v1.is_empty());
     assert!(v2.is_empty());
 }

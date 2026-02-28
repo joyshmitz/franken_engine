@@ -197,7 +197,7 @@ fn error_display_empty_source_contains_keyword() {
     assert!(
         err.to_string().contains("empty"),
         "got: {}",
-        err.to_string()
+        err
     );
 }
 
@@ -205,7 +205,10 @@ fn error_display_empty_source_contains_keyword() {
 fn error_display_empty_extension_id_contains_keyword() {
     let err = OrchestratorError::EmptyExtensionId;
     let msg = err.to_string();
-    assert!(msg.contains("extension_id") || msg.contains("empty"), "got: {msg}");
+    assert!(
+        msg.contains("extension_id") || msg.contains("empty"),
+        "got: {msg}"
+    );
 }
 
 #[test]
@@ -252,7 +255,7 @@ fn loss_matrix_preset_debug_format() {
 fn loss_matrix_preset_copy_and_clone() {
     let a = LossMatrixPreset::Balanced;
     let b = a; // Copy
-    let c = a.clone(); // Clone
+    let c = a; // Clone
     assert_eq!(a, b);
     assert_eq!(a, c);
 }
@@ -528,10 +531,7 @@ fn all_presets_produce_valid_posteriors() {
         let result = orch
             .execute(&simple_package("ext-all", "42"))
             .unwrap_or_else(|e| panic!("{preset:?} failed: {e}"));
-        assert!(
-            result.posterior.is_valid(),
-            "{preset:?}: invalid posterior"
-        );
+        assert!(result.posterior.is_valid(), "{preset:?}: invalid posterior");
     }
 }
 
@@ -640,7 +640,11 @@ fn evidence_entry_metadata_contains_compression_fields() {
     let entry = &result.evidence_entries[0];
     assert!(entry.metadata.contains_key("evidence_entropy_millibits"));
     assert!(entry.metadata.contains_key("evidence_shannon_bound_bits"));
-    assert!(entry.metadata.contains_key("evidence_overhead_ratio_millionths"));
+    assert!(
+        entry
+            .metadata
+            .contains_key("evidence_overhead_ratio_millionths")
+    );
 }
 
 // =========================================================================

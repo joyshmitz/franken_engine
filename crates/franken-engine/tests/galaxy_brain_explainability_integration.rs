@@ -27,7 +27,11 @@ fn lane(name: &str) -> LaneId {
 }
 
 /// Build a minimal valid explanation via the builder.
-fn minimal_expl(decision_id: &str, ep: SecurityEpoch, domain: DecisionDomain) -> DecisionExplanation {
+fn minimal_expl(
+    decision_id: &str,
+    ep: SecurityEpoch,
+    domain: DecisionDomain,
+) -> DecisionExplanation {
     ExplanationBuilder::new(decision_id.to_string(), ep, domain)
         .chosen(LaneAction::FallbackSafe, 0)
         .rationale("auto".to_string())
@@ -237,7 +241,10 @@ fn rejection_reason_display_all() {
         (RejectionReason::HigherLoss, "higher_loss"),
         (RejectionReason::GuardrailViolation, "guardrail_violation"),
         (RejectionReason::BudgetInsufficient, "budget_insufficient"),
-        (RejectionReason::CalibrationInsufficient, "calibration_insufficient"),
+        (
+            RejectionReason::CalibrationInsufficient,
+            "calibration_insufficient",
+        ),
         (RejectionReason::RegimeRestriction, "regime_restriction"),
         (RejectionReason::PolicyForbidden, "policy_forbidden"),
     ];
@@ -386,7 +393,10 @@ fn counterfactual_positive_delta_means_worse() {
 
 #[test]
 fn schema_version_is_expected() {
-    assert_eq!(SCHEMA_VERSION, "franken-engine.galaxy-brain-explainability.v1");
+    assert_eq!(
+        SCHEMA_VERSION,
+        "franken-engine.galaxy-brain-explainability.v1"
+    );
 }
 
 // =========================================================================
@@ -454,9 +464,10 @@ fn candidates_considered_with_no_alternatives() {
 
 #[test]
 fn candidates_considered_with_many_alternatives() {
-    let mut builder = ExplanationBuilder::new("d-cc1".to_string(), epoch(1), DecisionDomain::LaneRouting)
-        .chosen(LaneAction::RouteTo(lane("js")), 100_000)
-        .rationale("best".to_string());
+    let mut builder =
+        ExplanationBuilder::new("d-cc1".to_string(), epoch(1), DecisionDomain::LaneRouting)
+            .chosen(LaneAction::RouteTo(lane("js")), 100_000)
+            .rationale("best".to_string());
 
     for i in 0..7 {
         builder = builder.alternative(ExplainedAlternative {
@@ -542,48 +553,49 @@ fn total_risk_millionths_sums_contributions() {
 
 #[test]
 fn explanation_serde_roundtrip_full() {
-    let expl = ExplanationBuilder::new("d-sr1".to_string(), epoch(42), DecisionDomain::Optimization)
-        .verbosity(VerbosityLevel::GalaxyBrain)
-        .regime(RegimeLabel::Elevated)
-        .chosen(LaneAction::RouteTo(lane("wasm")), 200_000)
-        .rationale("wasm optimized path".to_string())
-        .equation(GoverningEquation {
-            name: "eq1".to_string(),
-            formula: "a + b".to_string(),
-            parameters: BTreeMap::from([("a".to_string(), 100_000)]),
-            result_millionths: 100_000,
-            threshold_millionths: Some(500_000),
-            threshold_exceeded: false,
-        })
-        .alternative(ExplainedAlternative {
-            action: LaneAction::FallbackSafe,
-            expected_loss_millionths: 0,
-            rejection_reason: RejectionReason::PolicyForbidden,
-            detail: "forbidden".to_string(),
-        })
-        .constraint(ConstraintInteraction {
-            constraint_id: "c1".to_string(),
-            description: "budget floor".to_string(),
-            binding: false,
-            slack_millionths: 300_000,
-        })
-        .risk(RiskBreakdown {
-            factor: "latency".to_string(),
-            weight_millionths: 500_000,
-            belief_millionths: 400_000,
-            contribution_millionths: 200_000,
-        })
-        .counterfactual(CounterfactualOutcome {
-            action: LaneAction::SuspendAdaptive,
-            predicted_loss_millionths: 0,
-            loss_delta_millionths: -200_000,
-            would_trigger_guardrail: false,
-            narrative: "no risk at all".to_string(),
-        })
-        .posterior("latency".to_string(), 600_000)
-        .confidence(850_000)
-        .build()
-        .unwrap();
+    let expl =
+        ExplanationBuilder::new("d-sr1".to_string(), epoch(42), DecisionDomain::Optimization)
+            .verbosity(VerbosityLevel::GalaxyBrain)
+            .regime(RegimeLabel::Elevated)
+            .chosen(LaneAction::RouteTo(lane("wasm")), 200_000)
+            .rationale("wasm optimized path".to_string())
+            .equation(GoverningEquation {
+                name: "eq1".to_string(),
+                formula: "a + b".to_string(),
+                parameters: BTreeMap::from([("a".to_string(), 100_000)]),
+                result_millionths: 100_000,
+                threshold_millionths: Some(500_000),
+                threshold_exceeded: false,
+            })
+            .alternative(ExplainedAlternative {
+                action: LaneAction::FallbackSafe,
+                expected_loss_millionths: 0,
+                rejection_reason: RejectionReason::PolicyForbidden,
+                detail: "forbidden".to_string(),
+            })
+            .constraint(ConstraintInteraction {
+                constraint_id: "c1".to_string(),
+                description: "budget floor".to_string(),
+                binding: false,
+                slack_millionths: 300_000,
+            })
+            .risk(RiskBreakdown {
+                factor: "latency".to_string(),
+                weight_millionths: 500_000,
+                belief_millionths: 400_000,
+                contribution_millionths: 200_000,
+            })
+            .counterfactual(CounterfactualOutcome {
+                action: LaneAction::SuspendAdaptive,
+                predicted_loss_millionths: 0,
+                loss_delta_millionths: -200_000,
+                would_trigger_guardrail: false,
+                narrative: "no risk at all".to_string(),
+            })
+            .posterior("latency".to_string(), 600_000)
+            .confidence(850_000)
+            .build()
+            .unwrap();
 
     let json = serde_json::to_string_pretty(&expl).unwrap();
     let back: DecisionExplanation = serde_json::from_str(&json).unwrap();
@@ -596,7 +608,8 @@ fn explanation_serde_roundtrip_full() {
 
 #[test]
 fn builder_returns_none_without_chosen_action() {
-    let builder = ExplanationBuilder::new("d-bn".to_string(), epoch(1), DecisionDomain::LaneRouting);
+    let builder =
+        ExplanationBuilder::new("d-bn".to_string(), epoch(1), DecisionDomain::LaneRouting);
     assert!(builder.build().is_none());
 }
 
@@ -753,9 +766,21 @@ fn index_by_domain_filters_correctly() {
 #[test]
 fn index_by_epoch_filters_correctly() {
     let mut idx = ExplanationIndex::new();
-    idx.insert(minimal_expl("d-be1", epoch(1), DecisionDomain::Optimization));
-    idx.insert(minimal_expl("d-be2", epoch(1), DecisionDomain::Optimization));
-    idx.insert(minimal_expl("d-be3", epoch(2), DecisionDomain::Optimization));
+    idx.insert(minimal_expl(
+        "d-be1",
+        epoch(1),
+        DecisionDomain::Optimization,
+    ));
+    idx.insert(minimal_expl(
+        "d-be2",
+        epoch(1),
+        DecisionDomain::Optimization,
+    ));
+    idx.insert(minimal_expl(
+        "d-be3",
+        epoch(2),
+        DecisionDomain::Optimization,
+    ));
 
     assert_eq!(idx.by_epoch(&epoch(1)).len(), 2);
     assert_eq!(idx.by_epoch(&epoch(2)).len(), 1);
@@ -766,20 +791,25 @@ fn index_by_epoch_filters_correctly() {
 fn index_with_binding_constraints() {
     let mut idx = ExplanationIndex::new();
 
-    let expl_bound = ExplanationBuilder::new("d-wbc1".to_string(), epoch(1), DecisionDomain::Fallback)
-        .chosen(LaneAction::FallbackSafe, 0)
-        .constraint(ConstraintInteraction {
-            constraint_id: "c1".to_string(),
-            description: "binding".to_string(),
-            binding: true,
-            slack_millionths: 0,
-        })
-        .rationale("bound".to_string())
-        .build()
-        .unwrap();
+    let expl_bound =
+        ExplanationBuilder::new("d-wbc1".to_string(), epoch(1), DecisionDomain::Fallback)
+            .chosen(LaneAction::FallbackSafe, 0)
+            .constraint(ConstraintInteraction {
+                constraint_id: "c1".to_string(),
+                description: "binding".to_string(),
+                binding: true,
+                slack_millionths: 0,
+            })
+            .rationale("bound".to_string())
+            .build()
+            .unwrap();
 
     idx.insert(expl_bound);
-    idx.insert(minimal_expl("d-wbc2", epoch(1), DecisionDomain::LaneRouting));
+    idx.insert(minimal_expl(
+        "d-wbc2",
+        epoch(1),
+        DecisionDomain::LaneRouting,
+    ));
 
     assert_eq!(idx.with_binding_constraints().len(), 1);
 }
@@ -788,12 +818,13 @@ fn index_with_binding_constraints() {
 fn index_in_regime_filters() {
     let mut idx = ExplanationIndex::new();
 
-    let attack_expl = ExplanationBuilder::new("d-ir1".to_string(), epoch(1), DecisionDomain::Security)
-        .regime(RegimeLabel::Attack)
-        .chosen(LaneAction::SuspendAdaptive, 0)
-        .rationale("attack".to_string())
-        .build()
-        .unwrap();
+    let attack_expl =
+        ExplanationBuilder::new("d-ir1".to_string(), epoch(1), DecisionDomain::Security)
+            .regime(RegimeLabel::Attack)
+            .chosen(LaneAction::SuspendAdaptive, 0)
+            .rationale("attack".to_string())
+            .build()
+            .unwrap();
 
     idx.insert(attack_expl);
     idx.insert(minimal_expl("d-ir2", epoch(1), DecisionDomain::LaneRouting));
@@ -806,7 +837,11 @@ fn index_in_regime_filters() {
 #[test]
 fn index_serde_roundtrip() {
     let mut idx = ExplanationIndex::new();
-    idx.insert(minimal_expl("d-isr1", epoch(1), DecisionDomain::LaneRouting));
+    idx.insert(minimal_expl(
+        "d-isr1",
+        epoch(1),
+        DecisionDomain::LaneRouting,
+    ));
     idx.insert(minimal_expl("d-isr2", epoch(2), DecisionDomain::Fallback));
 
     let json = serde_json::to_string(&idx).unwrap();
@@ -840,8 +875,16 @@ fn report_empty_index() {
 #[test]
 fn report_counts_domains_correctly() {
     let mut idx = ExplanationIndex::new();
-    idx.insert(minimal_expl("d-rcd1", epoch(1), DecisionDomain::LaneRouting));
-    idx.insert(minimal_expl("d-rcd2", epoch(1), DecisionDomain::LaneRouting));
+    idx.insert(minimal_expl(
+        "d-rcd1",
+        epoch(1),
+        DecisionDomain::LaneRouting,
+    ));
+    idx.insert(minimal_expl(
+        "d-rcd2",
+        epoch(1),
+        DecisionDomain::LaneRouting,
+    ));
     idx.insert(minimal_expl("d-rcd3", epoch(1), DecisionDomain::Fallback));
 
     let report = generate_report(&idx, &epoch(1));
@@ -853,7 +896,11 @@ fn report_counts_domains_correctly() {
 #[test]
 fn report_content_hash_deterministic() {
     let mut idx = ExplanationIndex::new();
-    idx.insert(minimal_expl("d-rch1", epoch(42), DecisionDomain::Governance));
+    idx.insert(minimal_expl(
+        "d-rch1",
+        epoch(42),
+        DecisionDomain::Governance,
+    ));
 
     let r1 = generate_report(&idx, &epoch(42));
     let r2 = generate_report(&idx, &epoch(42));
@@ -875,12 +922,13 @@ fn report_content_hash_differs_by_epoch() {
 fn report_average_confidence() {
     let mut idx = ExplanationIndex::new();
     for (i, conf) in [800_000i64, 600_000].iter().enumerate() {
-        let expl = ExplanationBuilder::new(format!("d-rac{i}"), epoch(1), DecisionDomain::LaneRouting)
-            .chosen(LaneAction::FallbackSafe, 0)
-            .confidence(*conf)
-            .rationale("test".to_string())
-            .build()
-            .unwrap();
+        let expl =
+            ExplanationBuilder::new(format!("d-rac{i}"), epoch(1), DecisionDomain::LaneRouting)
+                .chosen(LaneAction::FallbackSafe, 0)
+                .confidence(*conf)
+                .rationale("test".to_string())
+                .build()
+                .unwrap();
         idx.insert(expl);
     }
     let report = generate_report(&idx, &epoch(1));
@@ -892,23 +940,24 @@ fn report_average_alternatives() {
     let mut idx = ExplanationIndex::new();
 
     // 2 alternatives.
-    let expl1 = ExplanationBuilder::new("d-raa1".to_string(), epoch(1), DecisionDomain::LaneRouting)
-        .chosen(LaneAction::RouteTo(lane("js")), 100_000)
-        .alternative(ExplainedAlternative {
-            action: LaneAction::RouteTo(lane("wasm")),
-            expected_loss_millionths: 200_000,
-            rejection_reason: RejectionReason::HigherLoss,
-            detail: "higher".to_string(),
-        })
-        .alternative(ExplainedAlternative {
-            action: LaneAction::FallbackSafe,
-            expected_loss_millionths: 0,
-            rejection_reason: RejectionReason::PolicyForbidden,
-            detail: "forbidden".to_string(),
-        })
-        .rationale("test".to_string())
-        .build()
-        .unwrap();
+    let expl1 =
+        ExplanationBuilder::new("d-raa1".to_string(), epoch(1), DecisionDomain::LaneRouting)
+            .chosen(LaneAction::RouteTo(lane("js")), 100_000)
+            .alternative(ExplainedAlternative {
+                action: LaneAction::RouteTo(lane("wasm")),
+                expected_loss_millionths: 200_000,
+                rejection_reason: RejectionReason::HigherLoss,
+                detail: "higher".to_string(),
+            })
+            .alternative(ExplainedAlternative {
+                action: LaneAction::FallbackSafe,
+                expected_loss_millionths: 0,
+                rejection_reason: RejectionReason::PolicyForbidden,
+                detail: "forbidden".to_string(),
+            })
+            .rationale("test".to_string())
+            .build()
+            .unwrap();
 
     // 0 alternatives.
     let expl2 = minimal_expl("d-raa2", epoch(1), DecisionDomain::Fallback);
@@ -925,15 +974,20 @@ fn report_average_alternatives() {
 fn report_non_normal_regime_count() {
     let mut idx = ExplanationIndex::new();
 
-    let attack_expl = ExplanationBuilder::new("d-rnr1".to_string(), epoch(1), DecisionDomain::Security)
-        .regime(RegimeLabel::Attack)
-        .chosen(LaneAction::SuspendAdaptive, 0)
-        .rationale("attack".to_string())
-        .build()
-        .unwrap();
+    let attack_expl =
+        ExplanationBuilder::new("d-rnr1".to_string(), epoch(1), DecisionDomain::Security)
+            .regime(RegimeLabel::Attack)
+            .chosen(LaneAction::SuspendAdaptive, 0)
+            .rationale("attack".to_string())
+            .build()
+            .unwrap();
 
     idx.insert(attack_expl);
-    idx.insert(minimal_expl("d-rnr2", epoch(1), DecisionDomain::LaneRouting));
+    idx.insert(minimal_expl(
+        "d-rnr2",
+        epoch(1),
+        DecisionDomain::LaneRouting,
+    ));
 
     let report = generate_report(&idx, &epoch(1));
     assert_eq!(report.non_normal_regime_count, 1);
@@ -943,20 +997,25 @@ fn report_non_normal_regime_count() {
 fn report_binding_constraint_count() {
     let mut idx = ExplanationIndex::new();
 
-    let bound_expl = ExplanationBuilder::new("d-rbcc1".to_string(), epoch(1), DecisionDomain::Fallback)
-        .chosen(LaneAction::FallbackSafe, 0)
-        .constraint(ConstraintInteraction {
-            constraint_id: "c1".to_string(),
-            description: "bound".to_string(),
-            binding: true,
-            slack_millionths: 0,
-        })
-        .rationale("bound".to_string())
-        .build()
-        .unwrap();
+    let bound_expl =
+        ExplanationBuilder::new("d-rbcc1".to_string(), epoch(1), DecisionDomain::Fallback)
+            .chosen(LaneAction::FallbackSafe, 0)
+            .constraint(ConstraintInteraction {
+                constraint_id: "c1".to_string(),
+                description: "bound".to_string(),
+                binding: true,
+                slack_millionths: 0,
+            })
+            .rationale("bound".to_string())
+            .build()
+            .unwrap();
 
     idx.insert(bound_expl);
-    idx.insert(minimal_expl("d-rbcc2", epoch(1), DecisionDomain::LaneRouting));
+    idx.insert(minimal_expl(
+        "d-rbcc2",
+        epoch(1),
+        DecisionDomain::LaneRouting,
+    ));
 
     let report = generate_report(&idx, &epoch(1));
     assert_eq!(report.binding_constraint_count, 1);
@@ -965,7 +1024,11 @@ fn report_binding_constraint_count() {
 #[test]
 fn report_serde_roundtrip() {
     let mut idx = ExplanationIndex::new();
-    idx.insert(minimal_expl("d-rsr1", epoch(42), DecisionDomain::Optimization));
+    idx.insert(minimal_expl(
+        "d-rsr1",
+        epoch(42),
+        DecisionDomain::Optimization,
+    ));
 
     let report = generate_report(&idx, &epoch(42));
     let json = serde_json::to_string(&report).unwrap();
@@ -976,8 +1039,16 @@ fn report_serde_roundtrip() {
 #[test]
 fn report_filters_by_epoch() {
     let mut idx = ExplanationIndex::new();
-    idx.insert(minimal_expl("d-rfe1", epoch(1), DecisionDomain::LaneRouting));
-    idx.insert(minimal_expl("d-rfe2", epoch(2), DecisionDomain::LaneRouting));
+    idx.insert(minimal_expl(
+        "d-rfe1",
+        epoch(1),
+        DecisionDomain::LaneRouting,
+    ));
+    idx.insert(minimal_expl(
+        "d-rfe2",
+        epoch(2),
+        DecisionDomain::LaneRouting,
+    ));
 
     let report = generate_report(&idx, &epoch(1));
     assert_eq!(report.total_explained, 1);
@@ -987,12 +1058,13 @@ fn report_filters_by_epoch() {
 fn report_verbosity_counts() {
     let mut idx = ExplanationIndex::new();
 
-    let galaxy_expl = ExplanationBuilder::new("d-rvc1".to_string(), epoch(1), DecisionDomain::LaneRouting)
-        .verbosity(VerbosityLevel::GalaxyBrain)
-        .chosen(LaneAction::FallbackSafe, 0)
-        .rationale("galaxy".to_string())
-        .build()
-        .unwrap();
+    let galaxy_expl =
+        ExplanationBuilder::new("d-rvc1".to_string(), epoch(1), DecisionDomain::LaneRouting)
+            .verbosity(VerbosityLevel::GalaxyBrain)
+            .chosen(LaneAction::FallbackSafe, 0)
+            .rationale("galaxy".to_string())
+            .build()
+            .unwrap();
     idx.insert(galaxy_expl);
     idx.insert(minimal_expl("d-rvc2", epoch(1), DecisionDomain::Fallback));
 

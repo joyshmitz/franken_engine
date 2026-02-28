@@ -7,7 +7,7 @@
 use frankenengine_engine::adversarial_coevolution_harness::{
     COEVOLUTION_COMPONENT, COEVOLUTION_SCHEMA_VERSION, CoevolutionError, CoevolutionHarness,
     ConvergenceDiagnostic, ExploitClass, PayoffEntry, PayoffMatrix, PlayerRole, PolicyDelta,
-    RoundOutcome, StrategyId, TournamentConfig, TournamentResult, TrajectoryLedger,
+    RoundOutcome, StrategyId, TournamentConfig, TournamentResult,
 };
 use frankenengine_engine::security_epoch::SecurityEpoch;
 

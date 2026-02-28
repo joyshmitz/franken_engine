@@ -38,7 +38,10 @@ fn constants_component_matches_expected() {
 
 #[test]
 fn constants_schema_version_is_v1() {
-    assert_eq!(SECURITY_E2E_SCHEMA_VERSION, "franken-engine.security-e2e.v1");
+    assert_eq!(
+        SECURITY_E2E_SCHEMA_VERSION,
+        "franken-engine.security-e2e.v1"
+    );
 }
 
 #[test]
@@ -65,7 +68,10 @@ fn attack_category_all_unique_strings() {
 #[test]
 fn attack_category_round_trip_as_str() {
     let expected = [
-        (AttackCategory::CapabilityEscalation, "capability-escalation"),
+        (
+            AttackCategory::CapabilityEscalation,
+            "capability-escalation",
+        ),
         (AttackCategory::ResourceExhaustion, "resource-exhaustion"),
         (AttackCategory::QuarantineCascade, "quarantine-cascade"),
         (AttackCategory::SafeModeFallback, "safe-mode-fallback"),
@@ -91,7 +97,11 @@ fn attack_category_copy_semantics() {
 #[test]
 fn attack_category_all_as_str_contain_hyphens() {
     for cat in AttackCategory::all() {
-        assert!(cat.as_str().contains('-'), "{} missing hyphen", cat.as_str());
+        assert!(
+            cat.as_str().contains('-'),
+            "{} missing hyphen",
+            cat.as_str()
+        );
     }
 }
 
@@ -318,9 +328,17 @@ fn safe_mode_fallback_all_blocked_and_recovered() {
     let results = run_safe_mode_fallback(42);
     for r in &results {
         assert!(r.attack_blocked, "{} not blocked", r.scenario_name);
-        assert!(r.containment_action_taken, "{} no containment", r.scenario_name);
+        assert!(
+            r.containment_action_taken,
+            "{} no containment",
+            r.scenario_name
+        );
         assert!(r.evidence_produced, "{} no evidence", r.scenario_name);
-        assert_eq!(r.invariant_violations, 0, "{} has violations", r.scenario_name);
+        assert_eq!(
+            r.invariant_violations, 0,
+            "{} has violations",
+            r.scenario_name
+        );
     }
 }
 
@@ -367,7 +385,10 @@ fn bayesian_posterior_three_scenarios() {
 #[test]
 fn bayesian_posterior_benign_converges() {
     let results = run_bayesian_posterior_convergence(4, 30, 42);
-    assert!(results[0].attack_blocked, "benign should converge to Benign");
+    assert!(
+        results[0].attack_blocked,
+        "benign should converge to Benign"
+    );
     assert!(results[0].evidence_produced);
 }
 
@@ -438,7 +459,11 @@ fn epoch_regression_monotonicity_holds() {
 fn epoch_regression_zero_invariant_violations() {
     let results = run_epoch_regression(42);
     for r in &results {
-        assert_eq!(r.invariant_violations, 0, "{} has violations", r.scenario_name);
+        assert_eq!(
+            r.invariant_violations, 0,
+            "{} has violations",
+            r.scenario_name
+        );
     }
 }
 
@@ -477,7 +502,11 @@ fn containment_quarantine_forensic_snapshot() {
 fn containment_verification_scales_to_many() {
     let results = run_containment_verification(10, 42);
     for r in &results {
-        assert_eq!(r.invariant_violations, 0, "{} has violations", r.scenario_name);
+        assert_eq!(
+            r.invariant_violations, 0,
+            "{} has violations",
+            r.scenario_name
+        );
         assert!(r.evidence_produced);
     }
 }
@@ -771,7 +800,11 @@ fn suite_total_security_events_is_sum_of_scenario_events() {
 fn suite_total_invariant_violations_is_sum() {
     let config = default_config();
     let result = run_security_suite(&config);
-    let sum: u64 = result.scenarios.iter().map(|s| s.invariant_violations).sum();
+    let sum: u64 = result
+        .scenarios
+        .iter()
+        .map(|s| s.invariant_violations)
+        .sum();
     assert_eq!(result.total_invariant_violations, sum);
 }
 

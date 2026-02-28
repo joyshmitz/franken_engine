@@ -7,9 +7,11 @@
 
 use frankenengine_engine::ts_normalization::{
     CapabilityIntent, NormalizationDecision, NormalizationEvent, SourceMapEntry, TsCompilerOptions,
+    TsIngestionArtifacts, TsIngestionError, TsIngestionErrorCode, TsIngestionProvenance,
     TsNormalizationConfig, TsNormalizationError, TsNormalizationOutput, TsNormalizationWitness,
-    normalize_typescript_to_es2020,
+    ingest_typescript_to_pipeline_artifacts, normalize_typescript_to_es2020,
 };
+use frankenengine_engine::{ast::ParseGoal, parser::ParserOptions};
 
 // ===========================================================================
 // Helpers
@@ -21,6 +23,17 @@ fn default_config() -> TsNormalizationConfig {
 
 fn normalize(source: &str) -> Result<TsNormalizationOutput, TsNormalizationError> {
     normalize_typescript_to_es2020(source, &default_config(), "t-1", "d-1", "p-1")
+}
+
+fn ingest(source: &str) -> Result<TsIngestionArtifacts, TsIngestionError> {
+    ingest_typescript_to_pipeline_artifacts(
+        source,
+        &default_config(),
+        "fixture.ts",
+        ParseGoal::Script,
+        &ParserOptions::default(),
+        TsIngestionProvenance::new("t-1", "d-1", "p-1"),
+    )
 }
 
 // ===========================================================================
@@ -477,4 +490,143 @@ const x: number = 42;
     let json = serde_json::to_string(&output).unwrap();
     let back: TsNormalizationOutput = serde_json::from_str(&json).unwrap();
     assert_eq!(back.normalized_source, output.normalized_source);
+}
+
+// ===========================================================================
+// 17. TS ingestion lane (normalize -> parse -> lower artifacts)
+// ===========================================================================
+
+#[test]
+fn ts_ingestion_builds_pipeline_artifacts_for_supported_source() {
+    let source = r#"
+const value: number = 41;
+const next = value;
+"#;
+
+    let artifacts = ingest(source).unwrap();
+
+    assert!(artifacts.ir0_hash().starts_with("sha256:"));
+    assert!(artifacts.ir1_hash().starts_with("sha256:"));
+    assert!(artifacts.ir2_hash().starts_with("sha256:"));
+    assert!(artifacts.ir3_hash().starts_with("sha256:"));
+    assert!(artifacts.parse_event_ir_hash().starts_with("sha256:"));
+    assert!(
+        !artifacts
+            .normalization_output
+            .normalized_source
+            .contains(": number")
+    );
+    assert!(!artifacts.lowering_output.ir3.instructions.is_empty());
+}
+
+#[test]
+fn ts_ingestion_reports_deterministic_normalization_error() {
+    let source = "@sealed\nconst value = 1;";
+    let err = ingest(source).unwrap_err();
+
+    assert_eq!(err.code, TsIngestionErrorCode::NormalizationFailed);
+    assert_eq!(err.stable_code(), "FE-TSINGEST-0001");
+    assert_eq!(err.stage, "normalize_typescript");
+    assert!(
+        err.events
+            .iter()
+            .any(|event| event.error_code.as_deref() == Some("FE-TSINGEST-0001"))
+    );
+}
+
+#[test]
+fn ts_ingestion_reports_deterministic_parse_error() {
+    let source = "const value: number = ;";
+    let err = ingest(source).unwrap_err();
+
+    assert_eq!(err.code, TsIngestionErrorCode::ParseFailed);
+    assert_eq!(err.stable_code(), "FE-TSINGEST-0002");
+    assert_eq!(err.stage, "parse_normalized_source");
+    assert!(err.message.contains("parse_error_code="));
+}
+
+#[test]
+fn ts_ingestion_preserves_trace_and_source_map_linkage() {
+    let source = "const value: number = 1;\nconst next = value;";
+    let artifacts = ingest(source).unwrap();
+
+    assert_eq!(artifacts.trace_id, "t-1");
+    assert_eq!(artifacts.decision_id, "d-1");
+    assert_eq!(artifacts.policy_id, "p-1");
+    assert_eq!(artifacts.source_label, "fixture.ts");
+    assert_eq!(artifacts.parse_goal, ParseGoal::Script);
+    assert!(!artifacts.normalization_output.source_map.is_empty());
+    assert_eq!(artifacts.normalization_output.witness.trace_id, "t-1");
+    assert_eq!(artifacts.normalization_output.witness.decision_id, "d-1");
+    assert_eq!(artifacts.normalization_output.witness.policy_id, "p-1");
+    assert!(artifacts.ingestion_events.iter().all(|event| {
+        event.trace_id == "t-1" && event.decision_id == "d-1" && event.policy_id == "p-1"
+    }));
+}
+
+#[test]
+fn ts_ingestion_artifacts_serde_round_trip() {
+    let artifacts = ingest("const value: number = 1;").unwrap();
+    let json = serde_json::to_string(&artifacts).unwrap();
+    let back: TsIngestionArtifacts = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(back.trace_id, artifacts.trace_id);
+    assert_eq!(back.parse_goal, artifacts.parse_goal);
+    assert_eq!(back.ir3_hash(), artifacts.ir3_hash());
+    assert_eq!(back.parse_event_ir_hash(), artifacts.parse_event_ir_hash());
+}
+
+#[test]
+fn ts_ingestion_rejects_unannotated_hostcalls_fail_closed() {
+    let err = ingest(r#"const x = hostcall("path");"#).unwrap_err();
+
+    assert_eq!(err.code, TsIngestionErrorCode::CapabilityContractFailed);
+    assert_eq!(err.stable_code(), "FE-TSINGEST-0004");
+    assert_eq!(err.stage, "validate_capability_contracts");
+    assert!(
+        err.message
+            .contains("hostcall invocation missing capability annotation")
+    );
+    assert!(err.events.iter().any(|event| {
+        event.event == "validate_capability_contracts"
+            && event.error_code.as_deref() == Some("FE-TSINGEST-0004")
+    }));
+}
+
+#[test]
+fn ts_ingestion_rejects_invalid_capability_annotation_characters() {
+    let err = ingest(r#"const x = hostcall<"fs/read">("path");"#).unwrap_err();
+
+    assert_eq!(err.code, TsIngestionErrorCode::CapabilityContractFailed);
+    assert_eq!(err.stable_code(), "FE-TSINGEST-0004");
+    assert_eq!(err.stage, "validate_capability_contracts");
+    assert!(
+        err.message
+            .contains("capability annotation `fs/read` is invalid"),
+        "unexpected message: {}",
+        err.message
+    );
+}
+
+#[test]
+fn ts_ingestion_propagates_declared_capability_into_ir_contracts() {
+    let artifacts = ingest(r#"const x = hostcall<"fs.read">("path");"#).unwrap();
+
+    assert!(artifacts.ingestion_events.iter().any(|event| {
+        event.event == "validate_capability_contracts"
+            && event.outcome == "pass"
+            && event.error_code.is_none()
+    }));
+    assert!(
+        artifacts
+            .lowering_output
+            .ir2
+            .ops
+            .iter()
+            .filter_map(|op| op
+                .required_capability
+                .as_ref()
+                .map(|capability| capability.0.as_str()))
+            .any(|capability| capability == "fs.read")
+    );
 }

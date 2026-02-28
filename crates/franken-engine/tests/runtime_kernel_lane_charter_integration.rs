@@ -466,7 +466,10 @@ fn validate_outputs_partial_missing() {
 
 #[test]
 fn failure_action_display_all_variants() {
-    assert_eq!(FailureAction::LogAndContinue.to_string(), "log_and_continue");
+    assert_eq!(
+        FailureAction::LogAndContinue.to_string(),
+        "log_and_continue"
+    );
     assert_eq!(
         FailureAction::FallbackToLane(RuntimeLane::Js).to_string(),
         "fallback_to_js"
@@ -483,10 +486,7 @@ fn failure_action_display_all_variants() {
         FailureAction::ActivateSafeMode.to_string(),
         "activate_safe_mode"
     );
-    assert_eq!(
-        FailureAction::ForceTerminate.to_string(),
-        "force_terminate"
-    );
+    assert_eq!(FailureAction::ForceTerminate.to_string(), "force_terminate");
 }
 
 #[test]
@@ -674,7 +674,8 @@ fn builder_with_input_and_output_contracts() {
 
 #[test]
 fn builder_with_scheduler_invariants() {
-    let all_lanes: BTreeSet<RuntimeLane> = [RuntimeLane::Js, RuntimeLane::Wasm].into_iter().collect();
+    let all_lanes: BTreeSet<RuntimeLane> =
+        [RuntimeLane::Js, RuntimeLane::Wasm].into_iter().collect();
     let charter = CharterBuilder::new(epoch(7))
         .scheduler_invariant(SchedulerInvariant {
             invariant_id: "inv-001".into(),
@@ -745,12 +746,16 @@ fn builder_different_domains_different_hash() {
 fn canonical_charter_has_all_eight_domains() {
     let charter = canonical_charter(epoch(100));
     assert_eq!(charter.ownership_domains.len(), 8);
-    assert!(charter
-        .ownership_domains
-        .contains(&OwnershipDomain::ExecutionCorrectness));
-    assert!(charter
-        .ownership_domains
-        .contains(&OwnershipDomain::IncidentResponse));
+    assert!(
+        charter
+            .ownership_domains
+            .contains(&OwnershipDomain::ExecutionCorrectness)
+    );
+    assert!(
+        charter
+            .ownership_domains
+            .contains(&OwnershipDomain::IncidentResponse)
+    );
 }
 
 #[test]

@@ -935,8 +935,7 @@ fn export_unfiltered_includes_all_source_types() {
     let input = make_cli_input();
     let output = export_evidence_bundle(&input, EvidenceExportFilter::default());
 
-    let kinds: BTreeSet<EvidenceRecordKind> =
-        output.records.iter().map(|r| r.kind).collect();
+    let kinds: BTreeSet<EvidenceRecordKind> = output.records.iter().map(|r| r.kind).collect();
     assert!(kinds.contains(&EvidenceRecordKind::DecisionReceipt));
     assert!(kinds.contains(&EvidenceRecordKind::PolicyChange));
     assert!(kinds.contains(&EvidenceRecordKind::HostcallTelemetry));
@@ -1250,12 +1249,7 @@ fn export_over_ledger_emitted_entries_is_stable() {
 
     let output = export_evidence_bundle(&input, EvidenceExportFilter::default());
     assert!(output.summary.total_records >= 5);
-    assert!(
-        output
-            .logs
-            .iter()
-            .any(|e| e.event == "evidence_export")
-    );
+    assert!(output.logs.iter().any(|e| e.event == "evidence_export"));
 }
 
 // ===================================================================
@@ -1357,8 +1351,7 @@ fn hostcall_success_is_info_severity() {
         .records
         .iter()
         .filter(|r| {
-            r.kind == EvidenceRecordKind::HostcallTelemetry
-                && r.severity == EvidenceSeverity::Info
+            r.kind == EvidenceRecordKind::HostcallTelemetry && r.severity == EvidenceSeverity::Info
         })
         .collect();
     assert!(!success_records.is_empty());

@@ -10,10 +10,10 @@ use std::collections::BTreeSet;
 use frankenengine_engine::ast::{ParseGoal, SourceSpan, SyntaxTree};
 use frankenengine_engine::dual_backend_parser::{
     BackendCapability, BackendId, BackendParseResult, BackendRegistration, BackendRequirements,
-    BackendSelectionPolicy, DiagnosticCategory, DiagnosticSeverity, DiagnosticsEnvelope,
-    DifferentialComparisonResult, DivergenceClass, DualBackendParseEvent, DualBackendEventKind,
-    DualBackendParser, DualBackendParserError, FidelityReport, NormalizedDiagnostic,
-    NormalizedParseOutput, SpanMappingEntry, DUAL_BACKEND_SCHEMA_VERSION,
+    BackendSelectionPolicy, DUAL_BACKEND_SCHEMA_VERSION, DiagnosticCategory, DiagnosticSeverity,
+    DiagnosticsEnvelope, DifferentialComparisonResult, DivergenceClass, DualBackendEventKind,
+    DualBackendParseEvent, DualBackendParser, DualBackendParserError, FidelityReport,
+    NormalizedDiagnostic, NormalizedParseOutput, SpanMappingEntry,
 };
 use frankenengine_engine::security_epoch::SecurityEpoch;
 
@@ -113,7 +113,10 @@ fn backend_id_named_constructors() {
 fn backend_id_display() {
     assert_eq!(BackendId::swc().to_string(), "swc");
     assert_eq!(BackendId::oxc().to_string(), "oxc");
-    assert_eq!(BackendId::franken_canonical().to_string(), "franken_canonical");
+    assert_eq!(
+        BackendId::franken_canonical().to_string(),
+        "franken_canonical"
+    );
 }
 
 #[test]
@@ -124,11 +127,9 @@ fn backend_id_debug() {
 
 #[test]
 fn backend_id_ordering_deterministic() {
-    let mut ids = vec![
-        BackendId::oxc(),
+    let mut ids = [BackendId::oxc(),
         BackendId::swc(),
-        BackendId::franken_canonical(),
-    ];
+        BackendId::franken_canonical()];
     ids.sort();
     assert_eq!(ids[0], BackendId::franken_canonical());
     assert_eq!(ids[1], BackendId::oxc());
@@ -143,7 +144,11 @@ fn backend_id_custom_string() {
 
 #[test]
 fn backend_id_serde_roundtrip() {
-    for id in &[BackendId::swc(), BackendId::oxc(), BackendId::franken_canonical()] {
+    for id in &[
+        BackendId::swc(),
+        BackendId::oxc(),
+        BackendId::franken_canonical(),
+    ] {
         let json = serde_json::to_string(id).unwrap();
         let back: BackendId = serde_json::from_str(&json).unwrap();
         assert_eq!(*id, back);
@@ -411,7 +416,11 @@ fn normalized_diagnostic_with_span_and_context() {
 
 #[test]
 fn normalized_diagnostic_no_span() {
-    let diag = make_diag("FE-RES-0001", DiagnosticSeverity::Warning, DiagnosticCategory::Resource);
+    let diag = make_diag(
+        "FE-RES-0001",
+        DiagnosticSeverity::Warning,
+        DiagnosticCategory::Resource,
+    );
     assert!(diag.span.is_none());
     let json = serde_json::to_string(&diag).unwrap();
     let back: NormalizedDiagnostic = serde_json::from_str(&json).unwrap();
@@ -434,7 +443,11 @@ fn envelope_empty() {
 
 #[test]
 fn envelope_from_diagnostics_with_error() {
-    let diag = make_diag("FE-P-0001", DiagnosticSeverity::Error, DiagnosticCategory::Syntax);
+    let diag = make_diag(
+        "FE-P-0001",
+        DiagnosticSeverity::Error,
+        DiagnosticCategory::Syntax,
+    );
     let env = DiagnosticsEnvelope::from_diagnostics(vec![diag]);
     assert_eq!(env.len(), 1);
     assert!(!env.is_empty());
@@ -443,7 +456,11 @@ fn envelope_from_diagnostics_with_error() {
 
 #[test]
 fn envelope_from_diagnostics_warning_only() {
-    let diag = make_diag("FE-W-0001", DiagnosticSeverity::Warning, DiagnosticCategory::Syntax);
+    let diag = make_diag(
+        "FE-W-0001",
+        DiagnosticSeverity::Warning,
+        DiagnosticCategory::Syntax,
+    );
     let env = DiagnosticsEnvelope::from_diagnostics(vec![diag]);
     assert_eq!(env.len(), 1);
     assert!(!env.has_errors());
@@ -451,21 +468,33 @@ fn envelope_from_diagnostics_warning_only() {
 
 #[test]
 fn envelope_from_diagnostics_fatal_counts_as_error() {
-    let diag = make_diag("FE-F-0001", DiagnosticSeverity::Fatal, DiagnosticCategory::Encoding);
+    let diag = make_diag(
+        "FE-F-0001",
+        DiagnosticSeverity::Fatal,
+        DiagnosticCategory::Encoding,
+    );
     let env = DiagnosticsEnvelope::from_diagnostics(vec![diag]);
     assert!(env.has_errors());
 }
 
 #[test]
 fn envelope_from_diagnostics_hint_no_error() {
-    let diag = make_diag("FE-H-0001", DiagnosticSeverity::Hint, DiagnosticCategory::Semantic);
+    let diag = make_diag(
+        "FE-H-0001",
+        DiagnosticSeverity::Hint,
+        DiagnosticCategory::Semantic,
+    );
     let env = DiagnosticsEnvelope::from_diagnostics(vec![diag]);
     assert!(!env.has_errors());
 }
 
 #[test]
 fn envelope_hash_deterministic() {
-    let d1 = make_diag("FE-A", DiagnosticSeverity::Error, DiagnosticCategory::Syntax);
+    let d1 = make_diag(
+        "FE-A",
+        DiagnosticSeverity::Error,
+        DiagnosticCategory::Syntax,
+    );
     let d2 = d1.clone();
     let env1 = DiagnosticsEnvelope::from_diagnostics(vec![d1]);
     let env2 = DiagnosticsEnvelope::from_diagnostics(vec![d2]);
@@ -474,8 +503,16 @@ fn envelope_hash_deterministic() {
 
 #[test]
 fn envelope_hash_differs_for_different_diags() {
-    let d1 = make_diag("FE-A", DiagnosticSeverity::Error, DiagnosticCategory::Syntax);
-    let d2 = make_diag("FE-B", DiagnosticSeverity::Warning, DiagnosticCategory::Type);
+    let d1 = make_diag(
+        "FE-A",
+        DiagnosticSeverity::Error,
+        DiagnosticCategory::Syntax,
+    );
+    let d2 = make_diag(
+        "FE-B",
+        DiagnosticSeverity::Warning,
+        DiagnosticCategory::Type,
+    );
     let env1 = DiagnosticsEnvelope::from_diagnostics(vec![d1]);
     let env2 = DiagnosticsEnvelope::from_diagnostics(vec![d2]);
     assert_ne!(env1.envelope_hash, env2.envelope_hash);
@@ -483,7 +520,11 @@ fn envelope_hash_differs_for_different_diags() {
 
 #[test]
 fn envelope_serde_roundtrip() {
-    let d = make_diag("FE-S", DiagnosticSeverity::Error, DiagnosticCategory::Syntax);
+    let d = make_diag(
+        "FE-S",
+        DiagnosticSeverity::Error,
+        DiagnosticCategory::Syntax,
+    );
     let env = DiagnosticsEnvelope::from_diagnostics(vec![d]);
     let json = serde_json::to_string(&env).unwrap();
     let back: DiagnosticsEnvelope = serde_json::from_str(&json).unwrap();
@@ -691,8 +732,7 @@ fn policy_selects_fallback_when_default_unhealthy() {
 #[test]
 fn policy_goal_override_script() {
     let mut p = BackendSelectionPolicy::default_swc_primary();
-    p.goal_overrides
-        .insert("script".into(), BackendId::oxc());
+    p.goal_overrides.insert("script".into(), BackendId::oxc());
     let backends = vec![
         make_registration(BackendId::swc(), 1, true),
         make_registration(BackendId::oxc(), 2, true),
@@ -717,8 +757,7 @@ fn policy_goal_override_module() {
 #[test]
 fn policy_extension_override_tsx() {
     let mut p = BackendSelectionPolicy::default_swc_primary();
-    p.extension_overrides
-        .insert("tsx".into(), BackendId::oxc());
+    p.extension_overrides.insert("tsx".into(), BackendId::oxc());
     let backends = vec![
         make_registration(BackendId::swc(), 1, true),
         make_registration(BackendId::oxc(), 2, true),
@@ -730,8 +769,7 @@ fn policy_extension_override_tsx() {
 #[test]
 fn policy_extension_override_takes_priority_over_goal() {
     let mut p = BackendSelectionPolicy::default_swc_primary();
-    p.extension_overrides
-        .insert("tsx".into(), BackendId::oxc());
+    p.extension_overrides.insert("tsx".into(), BackendId::oxc());
     p.goal_overrides
         .insert("module".into(), BackendId::franken_canonical());
     let backends = vec![
@@ -747,8 +785,7 @@ fn policy_extension_override_takes_priority_over_goal() {
 #[test]
 fn policy_extension_override_ignored_if_backend_unhealthy() {
     let mut p = BackendSelectionPolicy::default_swc_primary();
-    p.extension_overrides
-        .insert("tsx".into(), BackendId::oxc());
+    p.extension_overrides.insert("tsx".into(), BackendId::oxc());
     let backends = vec![
         make_registration(BackendId::swc(), 1, true),
         make_registration(BackendId::oxc(), 2, false), // unhealthy
@@ -863,8 +900,7 @@ fn error_all_displays_unique() {
 
 #[test]
 fn error_implements_std_error() {
-    let e: Box<dyn std::error::Error> =
-        Box::new(DualBackendParserError::NoBackendsRegistered);
+    let e: Box<dyn std::error::Error> = Box::new(DualBackendParserError::NoBackendsRegistered);
     assert!(!e.to_string().is_empty());
 }
 
@@ -1289,7 +1325,12 @@ fn end_to_end_parse_verify_fidelity() {
     let report = parser.compute_fidelity(&output);
     assert!(report.meets_threshold);
     // Record parse
-    parser.record_parse(&backend, "main.ts", &output.canonical_hash, output.latency_us);
+    parser.record_parse(
+        &backend,
+        "main.ts",
+        &output.canonical_hash,
+        output.latency_us,
+    );
     assert_eq!(parser.parse_count, 1);
     // Check events were emitted
     assert!(parser.events.len() >= 4);

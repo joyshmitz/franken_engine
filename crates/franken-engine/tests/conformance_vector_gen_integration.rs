@@ -15,9 +15,9 @@ use frankenengine_engine::conformance_catalog::{
     SemanticVersion, SiblingRepo, SurfaceKind, VersionClass,
 };
 use frankenengine_engine::conformance_vector_gen::{
-    canonical_boundary_properties, generate_vectors, properties_for_surface,
-    validate_property_coverage, BoundaryProperty, DegradedScenario, FaultScenario,
-    GeneratedVector, GenerationResult, GeneratorConfig, PropertyCheckResult, VectorCategory,
+    BoundaryProperty, DegradedScenario, FaultScenario, GeneratedVector, GenerationResult,
+    GeneratorConfig, PropertyCheckResult, VectorCategory, canonical_boundary_properties,
+    generate_vectors, properties_for_surface, validate_property_coverage,
 };
 use frankenengine_engine::cross_repo_contract::RegressionClass;
 
@@ -43,10 +43,7 @@ fn minimal_catalog() -> ConformanceCatalog {
             surface_id: "integ/minimal/0".to_string(),
             surface_kind: SurfaceKind::TuiEventContract,
             description: "minimal integration test surface".to_string(),
-            covered_fields: ["alpha", "beta"]
-                .iter()
-                .map(|s| s.to_string())
-                .collect(),
+            covered_fields: ["alpha", "beta"].iter().map(|s| s.to_string()).collect(),
             version_class: VersionClass::Minor,
         },
         positive_vectors: vec![ConformanceVector {
@@ -219,7 +216,11 @@ fn degraded_scenario_display_uniqueness() {
         DegradedScenario::EmptyResponse,
     ];
     let set: BTreeSet<String> = scenarios.iter().map(|s| s.to_string()).collect();
-    assert_eq!(set.len(), 5, "all 5 degraded scenarios must have unique Display");
+    assert_eq!(
+        set.len(),
+        5,
+        "all 5 degraded scenarios must have unique Display"
+    );
 }
 
 // =========================================================================
@@ -335,7 +336,11 @@ fn fault_scenario_display_uniqueness() {
         },
     ];
     let set: BTreeSet<String> = scenarios.iter().map(|s| s.to_string()).collect();
-    assert_eq!(set.len(), 6, "all 6 fault scenarios must have unique Display");
+    assert_eq!(
+        set.len(),
+        6,
+        "all 6 fault scenarios must have unique Display"
+    );
 }
 
 // =========================================================================
@@ -471,7 +476,11 @@ fn generation_result_vector_ids_all_unique() {
     let catalog = canonical_catalog();
     let result = generate_vectors(&catalog, &default_config());
     let ids = result.vector_ids();
-    assert_eq!(ids.len(), result.vectors.len(), "duplicate vector IDs detected");
+    assert_eq!(
+        ids.len(),
+        result.vectors.len(),
+        "duplicate vector IDs detected"
+    );
 }
 
 #[test]
@@ -479,7 +488,11 @@ fn generation_result_category_counts_map_consistency() {
     let catalog = canonical_catalog();
     let result = generate_vectors(&catalog, &default_config());
     for (key, &count) in &result.category_counts {
-        let manual = result.vectors.iter().filter(|v| v.category.as_str() == key).count();
+        let manual = result
+            .vectors
+            .iter()
+            .filter(|v| v.category.as_str() == key)
+            .count();
         assert_eq!(manual, count, "mismatch for category {}", key);
     }
 }
@@ -489,7 +502,11 @@ fn generation_result_boundary_counts_map_consistency() {
     let catalog = canonical_catalog();
     let result = generate_vectors(&catalog, &default_config());
     for (key, &count) in &result.boundary_counts {
-        let manual = result.vectors.iter().filter(|v| v.boundary.as_str() == key).count();
+        let manual = result
+            .vectors
+            .iter()
+            .filter(|v| v.boundary.as_str() == key)
+            .count();
         assert_eq!(manual, count, "mismatch for boundary {}", key);
     }
 }
@@ -538,7 +555,10 @@ fn generate_vectors_different_seeds_produce_different_content() {
         .zip(r2.vectors.iter())
         .filter(|(a, b)| a.seed != b.seed)
         .count();
-    assert!(diff_count > 0, "different master seeds should produce different vector seeds");
+    assert!(
+        diff_count > 0,
+        "different master seeds should produce different vector seeds"
+    );
 }
 
 // =========================================================================
@@ -551,7 +571,11 @@ fn positive_vectors_always_expect_pass() {
     let result = generate_vectors(&catalog, &default_config());
     for v in &result.vectors {
         if v.category == VectorCategory::Positive {
-            assert!(v.expected_pass, "positive vector {} should expect pass", v.vector_id);
+            assert!(
+                v.expected_pass,
+                "positive vector {} should expect pass",
+                v.vector_id
+            );
             assert!(v.expected_regression_class.is_none());
             assert!(v.degraded_scenario.is_none());
             assert!(v.fault_scenario.is_none());
@@ -586,7 +610,11 @@ fn fault_vectors_have_fault_scenario_and_expect_failure() {
                 "fault vector {} must have fault scenario",
                 v.vector_id
             );
-            assert!(!v.expected_pass, "fault vector {} should expect failure", v.vector_id);
+            assert!(
+                !v.expected_pass,
+                "fault vector {} should expect failure",
+                v.vector_id
+            );
             assert!(v.degraded_scenario.is_none());
         }
     }
@@ -659,9 +687,7 @@ fn impossible_filter_produces_empty_result() {
     let mut config = default_config();
     // frankentui has no IdentifierSchema surfaces (that is asupersync's domain).
     config.sibling_filter.insert(SiblingRepo::Frankentui);
-    config
-        .surface_filter
-        .insert(SurfaceKind::IdentifierSchema);
+    config.surface_filter.insert(SurfaceKind::IdentifierSchema);
     let result = generate_vectors(&catalog, &config);
     assert!(
         result.vectors.is_empty(),
@@ -743,7 +769,10 @@ fn warns_on_entry_without_positive_vectors() {
     });
     let result = generate_vectors(&catalog, &default_config());
     assert!(
-        result.warnings.iter().any(|w| w.contains("no baseline positive vectors")),
+        result
+            .warnings
+            .iter()
+            .any(|w| w.contains("no baseline positive vectors")),
         "expected warning about missing positive vectors"
     );
 }
@@ -766,7 +795,11 @@ fn no_warnings_for_well_formed_catalog() {
 #[test]
 fn canonical_properties_at_least_five() {
     let props = canonical_boundary_properties();
-    assert!(props.len() >= 5, "expected >= 5 properties, got {}", props.len());
+    assert!(
+        props.len() >= 5,
+        "expected >= 5 properties, got {}",
+        props.len()
+    );
 }
 
 #[test]
@@ -832,7 +865,9 @@ fn canonical_properties_violation_classes_are_set() {
 fn properties_for_api_message_includes_error_envelope() {
     let api_props = properties_for_surface(SurfaceKind::ApiMessage);
     assert!(
-        api_props.iter().any(|p| p.property_id == "error-envelope-stability"),
+        api_props
+            .iter()
+            .any(|p| p.property_id == "error-envelope-stability"),
         "ApiMessage surface should include error-envelope-stability"
     );
 }
@@ -841,7 +876,9 @@ fn properties_for_api_message_includes_error_envelope() {
 fn properties_for_telemetry_includes_completeness() {
     let tel_props = properties_for_surface(SurfaceKind::TelemetrySchema);
     assert!(
-        tel_props.iter().any(|p| p.property_id == "telemetry-field-completeness"),
+        tel_props
+            .iter()
+            .any(|p| p.property_id == "telemetry-field-completeness"),
         "TelemetrySchema surface should include telemetry-field-completeness"
     );
 }
@@ -851,7 +888,8 @@ fn properties_for_surface_all_applicable() {
     let props = properties_for_surface(SurfaceKind::DecisionPayload);
     for p in &props {
         assert!(
-            p.applicable_surfaces.contains(&SurfaceKind::DecisionPayload),
+            p.applicable_surfaces
+                .contains(&SurfaceKind::DecisionPayload),
             "property {} should apply to DecisionPayload",
             p.property_id
         );
@@ -1082,7 +1120,9 @@ fn negative_vectors_version_mismatch_always_breaking() {
     let catalog = canonical_catalog();
     let result = generate_vectors(&catalog, &default_config());
     for v in &result.vectors {
-        if v.category == VectorCategory::Negative && v.description.contains("Major version mismatch") {
+        if v.category == VectorCategory::Negative
+            && v.description.contains("Major version mismatch")
+        {
             assert_eq!(
                 v.expected_regression_class,
                 Some(RegressionClass::Breaking),

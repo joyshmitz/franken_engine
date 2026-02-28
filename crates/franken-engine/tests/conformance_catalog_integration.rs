@@ -12,12 +12,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use frankenengine_engine::conformance_catalog::{
+    BoundarySurface, CatalogChangeRecord, CatalogEntry, CatalogValidationError, ChangeKind,
+    ConformanceCatalog, ConformanceVector, FailureSeverity, FailureTaxonomyEntry,
+    FieldVersionCoverage, ReplayArtifact, ReplayObligation, RequiredResponse, SemanticVersion,
+    SiblingRepo, SurfaceKind, VersionClass, VersionCompatibility, VersionNegotiationResult,
     build_canonical_catalog, canonical_boundary_surfaces, classify_failure, failure_taxonomy,
-    negotiate_version, validate_catalog, BoundarySurface, CatalogChangeRecord, CatalogEntry,
-    CatalogValidationError, ChangeKind, ConformanceCatalog, ConformanceVector,
-    FailureSeverity, FailureTaxonomyEntry, FieldVersionCoverage, ReplayArtifact,
-    ReplayObligation, RequiredResponse, SemanticVersion, SiblingRepo, SurfaceKind,
-    VersionClass, VersionCompatibility, VersionNegotiationResult,
+    negotiate_version, validate_catalog,
 };
 use frankenengine_engine::cross_repo_contract::RegressionClass;
 
@@ -25,13 +25,21 @@ use frankenengine_engine::cross_repo_contract::RegressionClass;
 // Helper builders
 // ---------------------------------------------------------------------------
 
-fn make_surface(sibling: SiblingRepo, id: &str, kind: SurfaceKind, vc: VersionClass) -> BoundarySurface {
+fn make_surface(
+    sibling: SiblingRepo,
+    id: &str,
+    kind: SurfaceKind,
+    vc: VersionClass,
+) -> BoundarySurface {
     BoundarySurface {
         sibling,
         surface_id: id.to_string(),
         surface_kind: kind,
         description: format!("test surface {id}"),
-        covered_fields: ["field_a", "field_b"].iter().map(|s| s.to_string()).collect(),
+        covered_fields: ["field_a", "field_b"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
         version_class: vc,
     }
 }
@@ -42,7 +50,11 @@ fn make_vector(id: &str, pass: bool) -> ConformanceVector {
         description: format!("vector {id}"),
         input_json: "{}".to_string(),
         expected_pass: pass,
-        expected_regression_class: if pass { None } else { Some(RegressionClass::Behavioral) },
+        expected_regression_class: if pass {
+            None
+        } else {
+            Some(RegressionClass::Behavioral)
+        },
     }
 }
 
@@ -92,8 +104,14 @@ fn sibling_repo_as_str_matches_display() {
 
 #[test]
 fn sibling_repo_primary_vs_optional() {
-    let primary: Vec<_> = SiblingRepo::all().iter().filter(|r| r.is_primary()).collect();
-    let optional: Vec<_> = SiblingRepo::all().iter().filter(|r| !r.is_primary()).collect();
+    let primary: Vec<_> = SiblingRepo::all()
+        .iter()
+        .filter(|r| r.is_primary())
+        .collect();
+    let optional: Vec<_> = SiblingRepo::all()
+        .iter()
+        .filter(|r| !r.is_primary())
+        .collect();
     assert_eq!(primary.len(), 4);
     assert_eq!(optional.len(), 2);
     assert!(!SiblingRepo::SqlmodelRust.is_primary());
@@ -203,14 +221,22 @@ fn version_class_permissions_major() {
 
 #[test]
 fn version_class_display_and_as_str() {
-    for vc in [VersionClass::Patch, VersionClass::Minor, VersionClass::Major] {
+    for vc in [
+        VersionClass::Patch,
+        VersionClass::Minor,
+        VersionClass::Major,
+    ] {
         assert_eq!(vc.as_str(), vc.to_string());
     }
 }
 
 #[test]
 fn version_class_serde_round_trip() {
-    for vc in [VersionClass::Patch, VersionClass::Minor, VersionClass::Major] {
+    for vc in [
+        VersionClass::Patch,
+        VersionClass::Minor,
+        VersionClass::Major,
+    ] {
         let json = serde_json::to_string(&vc).unwrap();
         let decoded: VersionClass = serde_json::from_str(&json).unwrap();
         assert_eq!(vc, decoded);
@@ -233,7 +259,10 @@ fn semantic_version_new_and_fields() {
 fn semantic_version_display() {
     assert_eq!(SemanticVersion::new(0, 0, 0).to_string(), "0.0.0");
     assert_eq!(SemanticVersion::new(1, 2, 3).to_string(), "1.2.3");
-    assert_eq!(SemanticVersion::new(100, 200, 300).to_string(), "100.200.300");
+    assert_eq!(
+        SemanticVersion::new(100, 200, 300).to_string(),
+        "100.200.300"
+    );
 }
 
 #[test]
@@ -276,21 +305,30 @@ fn negotiate_exact() {
 fn negotiate_patch_level() {
     let a = SemanticVersion::new(1, 2, 3);
     let b = SemanticVersion::new(1, 2, 7);
-    assert_eq!(negotiate_version(a, b), VersionCompatibility::PatchCompatible);
+    assert_eq!(
+        negotiate_version(a, b),
+        VersionCompatibility::PatchCompatible
+    );
 }
 
 #[test]
 fn negotiate_minor_level() {
     let a = SemanticVersion::new(1, 2, 3);
     let b = SemanticVersion::new(1, 5, 0);
-    assert_eq!(negotiate_version(a, b), VersionCompatibility::MinorCompatible);
+    assert_eq!(
+        negotiate_version(a, b),
+        VersionCompatibility::MinorCompatible
+    );
 }
 
 #[test]
 fn negotiate_major_level() {
     let a = SemanticVersion::new(1, 2, 3);
     let b = SemanticVersion::new(3, 0, 0);
-    assert_eq!(negotiate_version(a, b), VersionCompatibility::MajorIncompatible);
+    assert_eq!(
+        negotiate_version(a, b),
+        VersionCompatibility::MajorIncompatible
+    );
 }
 
 #[test]
@@ -426,14 +464,22 @@ fn failure_severity_display_and_as_str() {
 
 #[test]
 fn required_response_display_and_as_str() {
-    for rr in [RequiredResponse::Log, RequiredResponse::Warn, RequiredResponse::Block] {
+    for rr in [
+        RequiredResponse::Log,
+        RequiredResponse::Warn,
+        RequiredResponse::Block,
+    ] {
         assert_eq!(rr.as_str(), rr.to_string());
     }
 }
 
 #[test]
 fn required_response_serde_round_trip() {
-    for rr in [RequiredResponse::Log, RequiredResponse::Warn, RequiredResponse::Block] {
+    for rr in [
+        RequiredResponse::Log,
+        RequiredResponse::Warn,
+        RequiredResponse::Block,
+    ] {
         let json = serde_json::to_string(&rr).unwrap();
         let decoded: RequiredResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(rr, decoded);
@@ -463,7 +509,10 @@ fn failure_taxonomy_covers_all_regression_classes() {
 #[test]
 fn failure_taxonomy_breaking_is_critical_block() {
     let taxonomy = failure_taxonomy();
-    let breaking = taxonomy.iter().find(|t| t.regression_class == RegressionClass::Breaking).unwrap();
+    let breaking = taxonomy
+        .iter()
+        .find(|t| t.regression_class == RegressionClass::Breaking)
+        .unwrap();
     assert_eq!(breaking.severity, FailureSeverity::Critical);
     assert_eq!(breaking.required_response, RequiredResponse::Block);
 }
@@ -695,7 +744,11 @@ fn catalog_add_entry_records_change() {
     assert_eq!(catalog.entries.len(), 1);
     assert_eq!(catalog.change_log.len(), 1);
     assert_eq!(catalog.change_log[0].change_kind, ChangeKind::EntryAdded);
-    assert!(catalog.change_log[0].affected_entries.contains(&"e1".to_string()));
+    assert!(
+        catalog.change_log[0]
+            .affected_entries
+            .contains(&"e1".to_string())
+    );
 }
 
 #[test]
@@ -885,9 +938,15 @@ fn validate_catalog_detects_duplicate_entry_ids() {
     let mut catalog = ConformanceCatalog::new(SemanticVersion::new(1, 0, 0));
     catalog.add_entry(make_entry("e1", SiblingRepo::Asupersync));
     // Push a duplicate directly
-    catalog.entries.push(make_entry("e1", SiblingRepo::Frankentui));
+    catalog
+        .entries
+        .push(make_entry("e1", SiblingRepo::Frankentui));
     let errors = validate_catalog(&catalog);
-    assert!(errors.iter().any(|e| e.detail.contains("duplicate entry ID")));
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.detail.contains("duplicate entry ID"))
+    );
 }
 
 #[test]
@@ -909,7 +968,11 @@ fn validate_catalog_detects_duplicate_vector_ids() {
     entry.positive_vectors.push(dup);
     catalog.add_entry(entry);
     let errors = validate_catalog(&catalog);
-    assert!(errors.iter().any(|e| e.detail.contains("duplicate vector ID")));
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.detail.contains("duplicate vector ID"))
+    );
 }
 
 #[test]
@@ -917,9 +980,15 @@ fn validate_catalog_missing_taxonomy_class() {
     let mut catalog = ConformanceCatalog::new(SemanticVersion::new(1, 0, 0));
     catalog.add_entry(make_entry("e1", SiblingRepo::Asupersync));
     // Remove one taxonomy entry
-    catalog.taxonomy.retain(|t| t.regression_class != RegressionClass::Performance);
+    catalog
+        .taxonomy
+        .retain(|t| t.regression_class != RegressionClass::Performance);
     let errors = validate_catalog(&catalog);
-    assert!(errors.iter().any(|e| e.field == "taxonomy" && e.detail.contains("PERFORMANCE")));
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.field == "taxonomy" && e.detail.contains("PERFORMANCE"))
+    );
 }
 
 // ===========================================================================
@@ -940,14 +1009,22 @@ fn canonical_surfaces_unique_ids() {
     let surfaces = canonical_boundary_surfaces();
     let mut seen = BTreeSet::new();
     for surface in &surfaces {
-        assert!(seen.insert(&surface.surface_id), "duplicate: {}", surface.surface_id);
+        assert!(
+            seen.insert(&surface.surface_id),
+            "duplicate: {}",
+            surface.surface_id
+        );
     }
 }
 
 #[test]
 fn canonical_surfaces_non_empty_covered_fields() {
     for surface in &canonical_boundary_surfaces() {
-        assert!(!surface.covered_fields.is_empty(), "empty fields in {}", surface.surface_id);
+        assert!(
+            !surface.covered_fields.is_empty(),
+            "empty fields in {}",
+            surface.surface_id
+        );
     }
 }
 
@@ -1099,11 +1176,17 @@ fn version_negotiation_across_all_boundaries() {
     for repo in SiblingRepo::all() {
         let remote_compat = SemanticVersion::new(1, 0, 1);
         let result = negotiate_version(local, remote_compat);
-        assert!(result.is_compatible(), "patch for {repo} should be compatible");
+        assert!(
+            result.is_compatible(),
+            "patch for {repo} should be compatible"
+        );
 
         let remote_break = SemanticVersion::new(2, 0, 0);
         let result = negotiate_version(local, remote_break);
-        assert!(!result.is_compatible(), "major for {repo} should be incompatible");
+        assert!(
+            !result.is_compatible(),
+            "major for {repo} should be incompatible"
+        );
     }
 }
 

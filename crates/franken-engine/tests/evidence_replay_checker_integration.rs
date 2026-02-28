@@ -26,7 +26,7 @@ fn make_ledger_entry(seq: u64) -> EvidenceLedger {
     EvidenceLedgerBuilder::new()
         .ts_unix_ms(1_700_000_000_000 + seq * 1000)
         .component("test-component")
-        .action(&format!("action_{seq}"))
+        .action(format!("action_{seq}"))
         .posterior(vec![0.7, 0.3])
         .expected_loss("allow", 0.1)
         .expected_loss("deny", 0.9)

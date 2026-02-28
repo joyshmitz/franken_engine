@@ -20,7 +20,7 @@ use frankenengine_engine::compiler_policy::{
     OptimizationClassPolicy, ProofStore, SecurityProof, SpecializationDecision,
     SpecializationOutcome,
 };
-use frankenengine_engine::engine_object_id::{derive_id, EngineObjectId, ObjectDomain, SchemaId};
+use frankenengine_engine::engine_object_id::{EngineObjectId, ObjectDomain, SchemaId, derive_id};
 use frankenengine_engine::ifc_artifacts::Label;
 use frankenengine_engine::proof_specialization_receipt::{OptimizationClass, ProofType};
 use frankenengine_engine::security_epoch::SecurityEpoch;
@@ -69,11 +69,7 @@ fn motif_proof(tag: &str, epoch: SecurityEpoch, window: u64) -> SecurityProof {
     }
 }
 
-fn region(
-    id: &str,
-    class: OptimizationClass,
-    proof_ids: Vec<EngineObjectId>,
-) -> MarkedRegion {
+fn region(id: &str, class: OptimizationClass, proof_ids: Vec<EngineObjectId>) -> MarkedRegion {
     MarkedRegion {
         region_id: id.to_string(),
         optimization_class: class,
@@ -174,7 +170,11 @@ fn marked_region_fields_accessible() {
 
 #[test]
 fn marked_region_serde_roundtrip() {
-    let r = region("r-serde", OptimizationClass::IfcCheckElision, vec![make_id("x")]);
+    let r = region(
+        "r-serde",
+        OptimizationClass::IfcCheckElision,
+        vec![make_id("x")],
+    );
     let json = serde_json::to_string(&r).unwrap();
     let back: MarkedRegion = serde_json::from_str(&json).unwrap();
     assert_eq!(r, back);
@@ -247,11 +247,17 @@ fn config_with_multiple_class_policies() {
     let mut cfg = CompilerPolicyConfig::new("multi", e(1));
     cfg.class_policies.insert(
         OptimizationClass::PathElimination,
-        OptimizationClassPolicy { enabled: false, ..Default::default() },
+        OptimizationClassPolicy {
+            enabled: false,
+            ..Default::default()
+        },
     );
     cfg.class_policies.insert(
         OptimizationClass::SuperinstructionFusion,
-        OptimizationClassPolicy { min_proof_count: 5, ..Default::default() },
+        OptimizationClassPolicy {
+            min_proof_count: 5,
+            ..Default::default()
+        },
     );
     assert_eq!(cfg.class_policies.len(), 2);
 }
@@ -298,17 +304,38 @@ fn outcome_error_codes_are_unique() {
 #[test]
 fn outcome_specific_error_codes() {
     assert_eq!(SpecializationOutcome::Applied.error_code(), "APPLIED");
-    assert_eq!(SpecializationOutcome::RejectedGlobalDisable.error_code(), "GLOBAL_DISABLE");
-    assert_eq!(SpecializationOutcome::RejectedClassDisabled.error_code(), "CLASS_DISABLED");
-    assert_eq!(SpecializationOutcome::RejectedNoProofs.error_code(), "NO_PROOFS");
-    assert_eq!(SpecializationOutcome::RejectedInsufficientProofs.error_code(), "INSUFFICIENT_PROOFS");
+    assert_eq!(
+        SpecializationOutcome::RejectedGlobalDisable.error_code(),
+        "GLOBAL_DISABLE"
+    );
+    assert_eq!(
+        SpecializationOutcome::RejectedClassDisabled.error_code(),
+        "CLASS_DISABLED"
+    );
+    assert_eq!(
+        SpecializationOutcome::RejectedNoProofs.error_code(),
+        "NO_PROOFS"
+    );
+    assert_eq!(
+        SpecializationOutcome::RejectedInsufficientProofs.error_code(),
+        "INSUFFICIENT_PROOFS"
+    );
     assert_eq!(
         SpecializationOutcome::RejectedMissingRequiredProofTypes.error_code(),
         "MISSING_REQUIRED_PROOF_TYPES"
     );
-    assert_eq!(SpecializationOutcome::RejectedProofExpired.error_code(), "PROOF_EXPIRED");
-    assert_eq!(SpecializationOutcome::RejectedEpochMismatch.error_code(), "EPOCH_MISMATCH");
-    assert_eq!(SpecializationOutcome::RejectedProofNotFound.error_code(), "PROOF_NOT_FOUND");
+    assert_eq!(
+        SpecializationOutcome::RejectedProofExpired.error_code(),
+        "PROOF_EXPIRED"
+    );
+    assert_eq!(
+        SpecializationOutcome::RejectedEpochMismatch.error_code(),
+        "EPOCH_MISMATCH"
+    );
+    assert_eq!(
+        SpecializationOutcome::RejectedProofNotFound.error_code(),
+        "PROOF_NOT_FOUND"
+    );
     assert_eq!(
         SpecializationOutcome::InvalidatedByEpochChange.error_code(),
         "INVALIDATED_EPOCH_CHANGE"
@@ -511,7 +538,11 @@ fn evaluate_applied_with_capability_witness() {
     let p = cap_proof("apply-cw", e(1), 1000);
     let pid = p.proof_id().clone();
     eng.register_proof(p);
-    let r = region("r1", OptimizationClass::HostcallDispatchSpecialization, vec![pid.clone()]);
+    let r = region(
+        "r1",
+        OptimizationClass::HostcallDispatchSpecialization,
+        vec![pid.clone()],
+    );
     let d = eng.evaluate(&r, "t1", 100);
     assert_eq!(d.outcome, SpecializationOutcome::Applied);
     assert_eq!(d.proof_ids, vec![pid]);
@@ -547,11 +578,19 @@ fn evaluate_applied_multiple_mixed_proofs() {
     let cw = cap_proof("mix-cw", e(1), 100);
     let fp = flow_proof("mix-fp", e(1), 200);
     let rm = motif_proof("mix-rm", e(1), 300);
-    let ids: Vec<EngineObjectId> = vec![cw.proof_id().clone(), fp.proof_id().clone(), rm.proof_id().clone()];
+    let ids: Vec<EngineObjectId> = vec![
+        cw.proof_id().clone(),
+        fp.proof_id().clone(),
+        rm.proof_id().clone(),
+    ];
     eng.register_proof(cw);
     eng.register_proof(fp);
     eng.register_proof(rm);
-    let r = region("r-mix", OptimizationClass::SuperinstructionFusion, ids.clone());
+    let r = region(
+        "r-mix",
+        OptimizationClass::SuperinstructionFusion,
+        ids.clone(),
+    );
     let d = eng.evaluate(&r, "t1", 400);
     assert!(d.outcome.is_applied());
     assert_eq!(d.proof_ids.len(), 3);
@@ -577,7 +616,10 @@ fn reject_class_disabled() {
     let mut cfg = CompilerPolicyConfig::new("cls-off", e(1));
     cfg.class_policies.insert(
         OptimizationClass::IfcCheckElision,
-        OptimizationClassPolicy { enabled: false, ..Default::default() },
+        OptimizationClassPolicy {
+            enabled: false,
+            ..Default::default()
+        },
     );
     let mut eng = CompilerPolicyEngine::new(cfg);
     let p = flow_proof("cd", e(1), 100);
@@ -599,7 +641,11 @@ fn reject_no_proofs() {
 #[test]
 fn reject_proof_not_found() {
     let mut eng = engine_at(e(1));
-    let r = region("r-pnf", OptimizationClass::PathElimination, vec![make_id("ghost")]);
+    let r = region(
+        "r-pnf",
+        OptimizationClass::PathElimination,
+        vec![make_id("ghost")],
+    );
     let d = eng.evaluate(&r, "t1", 0);
     assert_eq!(d.outcome, SpecializationOutcome::RejectedProofNotFound);
 }
@@ -609,7 +655,10 @@ fn reject_insufficient_proofs() {
     let mut cfg = CompilerPolicyConfig::new("min3", e(1));
     cfg.class_policies.insert(
         OptimizationClass::PathElimination,
-        OptimizationClassPolicy { min_proof_count: 3, ..Default::default() },
+        OptimizationClassPolicy {
+            min_proof_count: 3,
+            ..Default::default()
+        },
     );
     let mut eng = CompilerPolicyEngine::new(cfg);
     let p = cap_proof("ip1", e(1), 100);
@@ -628,7 +677,10 @@ fn reject_missing_required_proof_types() {
         OptimizationClassPolicy {
             enabled: true,
             min_proof_count: 1,
-            required_proof_types: BTreeSet::from([ProofType::CapabilityWitness, ProofType::FlowProof]),
+            required_proof_types: BTreeSet::from([
+                ProofType::CapabilityWitness,
+                ProofType::FlowProof,
+            ]),
             governance_approved: false,
         },
     );
@@ -637,9 +689,16 @@ fn reject_missing_required_proof_types() {
     let p = cap_proof("mrpt", e(1), 100);
     let pid = p.proof_id().clone();
     eng.register_proof(p);
-    let r = region("r-mrpt", OptimizationClass::HostcallDispatchSpecialization, vec![pid]);
+    let r = region(
+        "r-mrpt",
+        OptimizationClass::HostcallDispatchSpecialization,
+        vec![pid],
+    );
     let d = eng.evaluate(&r, "t1", 0);
-    assert_eq!(d.outcome, SpecializationOutcome::RejectedMissingRequiredProofTypes);
+    assert_eq!(
+        d.outcome,
+        SpecializationOutcome::RejectedMissingRequiredProofTypes
+    );
 }
 
 #[test]
@@ -714,7 +773,11 @@ fn after_epoch_change_old_proofs_cannot_justify() {
     let p = cap_proof("aec", e(1), 100);
     let pid = p.proof_id().clone();
     eng.register_proof(p);
-    let r = region("r-aec", OptimizationClass::PathElimination, vec![pid.clone()]);
+    let r = region(
+        "r-aec",
+        OptimizationClass::PathElimination,
+        vec![pid.clone()],
+    );
 
     let d1 = eng.evaluate(&r, "t1", 100);
     assert!(d1.outcome.is_applied());
@@ -740,7 +803,11 @@ fn re_evaluate_with_new_proofs_after_epoch_change() {
     let fresh = cap_proof("new-p", e(2), 500);
     let fresh_id = fresh.proof_id().clone();
     eng.register_proof(fresh);
-    let r2 = region("r-renew", OptimizationClass::PathElimination, vec![fresh_id]);
+    let r2 = region(
+        "r-renew",
+        OptimizationClass::PathElimination,
+        vec![fresh_id],
+    );
     let d2 = eng.evaluate(&r2, "t2", 300);
     assert!(d2.outcome.is_applied());
 }
@@ -846,7 +913,11 @@ fn multiple_evaluations_accumulate_decisions_and_events() {
         let p = cap_proof(&tag, e(1), 100);
         let pid = p.proof_id().clone();
         eng.register_proof(p);
-        let r = region(&format!("r-{i}"), OptimizationClass::PathElimination, vec![pid]);
+        let r = region(
+            &format!("r-{i}"),
+            OptimizationClass::PathElimination,
+            vec![pid],
+        );
         eng.evaluate(&r, &format!("t-{i}"), i as u64 * 100);
     }
     assert_eq!(eng.applied_count(), 5);
@@ -862,7 +933,11 @@ fn decision_fields_populated_correctly() {
     let p = cap_proof("df", e(10), 1000);
     let pid = p.proof_id().clone();
     eng.register_proof(p);
-    let r = region("r-df", OptimizationClass::IfcCheckElision, vec![pid.clone()]);
+    let r = region(
+        "r-df",
+        OptimizationClass::IfcCheckElision,
+        vec![pid.clone()],
+    );
     let d = eng.evaluate(&r, "trace-99", 42_000);
 
     assert_eq!(d.trace_id, "trace-99");
@@ -949,7 +1024,10 @@ fn unconfigured_class_uses_default() {
     let mut cfg = CompilerPolicyConfig::new("fallback", e(1));
     cfg.class_policies.insert(
         OptimizationClass::PathElimination,
-        OptimizationClassPolicy { enabled: false, ..Default::default() },
+        OptimizationClassPolicy {
+            enabled: false,
+            ..Default::default()
+        },
     );
     let eng = CompilerPolicyEngine::new(cfg);
 
@@ -958,7 +1036,11 @@ fn unconfigured_class_uses_default() {
     let p = cap_proof("fb", e(1), 100);
     let pid = p.proof_id().clone();
     eng2.register_proof(p);
-    let r = region("r-fb", OptimizationClass::HostcallDispatchSpecialization, vec![pid]);
+    let r = region(
+        "r-fb",
+        OptimizationClass::HostcallDispatchSpecialization,
+        vec![pid],
+    );
     let d = eng2.evaluate(&r, "t1", 100);
     assert!(d.outcome.is_applied());
 }
@@ -973,7 +1055,10 @@ fn all_required_proof_types_present_applies() {
         OptimizationClassPolicy {
             enabled: true,
             min_proof_count: 2,
-            required_proof_types: BTreeSet::from([ProofType::CapabilityWitness, ProofType::FlowProof]),
+            required_proof_types: BTreeSet::from([
+                ProofType::CapabilityWitness,
+                ProofType::FlowProof,
+            ]),
             governance_approved: true,
         },
     );
@@ -985,7 +1070,11 @@ fn all_required_proof_types_present_applies() {
     eng.register_proof(cw);
     eng.register_proof(fp);
 
-    let r = region("r-rp", OptimizationClass::HostcallDispatchSpecialization, vec![cw_id, fp_id]);
+    let r = region(
+        "r-rp",
+        OptimizationClass::HostcallDispatchSpecialization,
+        vec![cw_id, fp_id],
+    );
     let d = eng.evaluate(&r, "t1", 100);
     assert!(d.outcome.is_applied());
     assert_eq!(d.proof_ids.len(), 2);
@@ -1013,7 +1102,11 @@ fn decision_ids_increment() {
 fn proof_not_found_detail_includes_missing_hex() {
     let mut eng = engine_at(e(1));
     let ghost = make_id("ghost-hex");
-    let r = region("r-gh", OptimizationClass::PathElimination, vec![ghost.clone()]);
+    let r = region(
+        "r-gh",
+        OptimizationClass::PathElimination,
+        vec![ghost.clone()],
+    );
     let d = eng.evaluate(&r, "t1", 0);
     assert_eq!(d.outcome, SpecializationOutcome::RejectedProofNotFound);
     assert!(d.detail.contains(&ghost.to_hex()));

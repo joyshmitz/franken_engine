@@ -10,11 +10,11 @@
 use std::collections::BTreeSet;
 
 use frankenengine_engine::hook_effect_contract::{
-    ComponentPhaseTracker, DepsChange, DepToken, EffectScheduler, EffectTiming,
+    ComponentPhaseTracker, DepToken, DepsChange, EffectScheduler, EffectTiming,
     FallbackExecutionRoute, HookEffectContract, HookKind, HookManifest, HookManifestError,
     HookRuleViolation, HookSlot, HookSlotIndex, LegalTransformation, PendingEffect,
-    PhaseTransition, PhaseTransitionError, RenderPhase, SchedulingBoundary,
-    TransformationReceipt, UnsupportedSemanticsDiagnostic, UnsupportedSemanticsTrigger,
+    PhaseTransition, PhaseTransitionError, RenderPhase, SchedulingBoundary, TransformationReceipt,
+    UnsupportedSemanticsDiagnostic, UnsupportedSemanticsTrigger,
     build_unsupported_semantics_diagnostic, classify_unsupported_semantics, compare_deps,
     fallback_route_for_trigger, validate_hook_consistency,
 };
@@ -141,10 +141,7 @@ fn manifest_empty_is_error() {
 fn manifest_non_consecutive_indices_detected() {
     let m = HookManifest::new(
         "BadComponent",
-        vec![
-            slot(0, HookKind::State, None),
-            slot(3, HookKind::Ref, None),
-        ],
+        vec![slot(0, HookKind::State, None), slot(3, HookKind::Ref, None)],
     );
     let errors = m.validate();
     assert!(errors.iter().any(|e| matches!(
@@ -166,9 +163,11 @@ fn manifest_duplicate_index_detected() {
         ],
     );
     let errors = m.validate();
-    assert!(errors
-        .iter()
-        .any(|e| matches!(e, HookManifestError::DuplicateIndex(HookSlotIndex(0)))));
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e, HookManifestError::DuplicateIndex(HookSlotIndex(0))))
+    );
 }
 
 #[test]
@@ -189,14 +188,13 @@ fn manifest_deps_on_state_hook_is_error() {
 
 #[test]
 fn manifest_deps_on_ref_hook_is_error() {
-    let m = HookManifest::new(
-        "BadRefDeps",
-        vec![slot(0, HookKind::Ref, Some(vec![]))],
-    );
+    let m = HookManifest::new("BadRefDeps", vec![slot(0, HookKind::Ref, Some(vec![]))]);
     let errors = m.validate();
-    assert!(errors
-        .iter()
-        .any(|e| matches!(e, HookManifestError::DepsOnNonDepHook { .. })));
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e, HookManifestError::DepsOnNonDepHook { .. }))
+    );
 }
 
 #[test]
@@ -276,7 +274,9 @@ fn render_phase_illegal_skip_transitions() {
 #[test]
 fn render_phase_no_backwards_transitions() {
     assert!(!RenderPhase::PaintPending.can_transition_to(RenderPhase::Rendering));
-    assert!(!RenderPhase::PassiveEffectsPending.can_transition_to(RenderPhase::LayoutEffectsPending));
+    assert!(
+        !RenderPhase::PassiveEffectsPending.can_transition_to(RenderPhase::LayoutEffectsPending)
+    );
 }
 
 #[test]
@@ -491,7 +491,10 @@ fn compare_deps_none_some_changed() {
 #[test]
 fn compare_deps_same_values_unchanged() {
     let deps = [DepToken(1), DepToken(2), DepToken(3)];
-    assert_eq!(compare_deps(Some(&deps), Some(&deps)), DepsChange::Unchanged);
+    assert_eq!(
+        compare_deps(Some(&deps), Some(&deps)),
+        DepsChange::Unchanged
+    );
 }
 
 #[test]
@@ -551,10 +554,7 @@ fn validate_consistency_count_mismatch() {
     let prev = HookManifest::new("App", vec![slot(0, HookKind::State, None)]);
     let curr = HookManifest::new(
         "App",
-        vec![
-            slot(0, HookKind::State, None),
-            slot(1, HookKind::Ref, None),
-        ],
+        vec![slot(0, HookKind::State, None), slot(1, HookKind::Ref, None)],
     );
     let violations = validate_hook_consistency(&prev, &curr);
     assert!(violations.iter().any(|v| matches!(
@@ -675,7 +675,10 @@ fn legal_transformation_all_has_8_variants() {
 #[test]
 fn legal_transformation_applicable_hooks_non_empty() {
     for t in LegalTransformation::ALL {
-        assert!(!t.applicable_hooks().is_empty(), "{t:?} has no applicable hooks");
+        assert!(
+            !t.applicable_hooks().is_empty(),
+            "{t:?} has no applicable hooks"
+        );
     }
 }
 
@@ -915,7 +918,10 @@ fn canonical_boundaries_has_three_entries() {
 #[test]
 fn insertion_boundary_synchronous_no_dom() {
     let bounds = SchedulingBoundary::canonical_boundaries();
-    let insertion = bounds.iter().find(|b| b.timing == EffectTiming::Insertion).unwrap();
+    let insertion = bounds
+        .iter()
+        .find(|b| b.timing == EffectTiming::Insertion)
+        .unwrap();
     assert!(insertion.synchronous);
     assert!(!insertion.dom_mutations_visible);
     assert!(insertion.state_updates_batched);
@@ -924,7 +930,10 @@ fn insertion_boundary_synchronous_no_dom() {
 #[test]
 fn layout_boundary_synchronous_with_dom() {
     let bounds = SchedulingBoundary::canonical_boundaries();
-    let layout = bounds.iter().find(|b| b.timing == EffectTiming::Layout).unwrap();
+    let layout = bounds
+        .iter()
+        .find(|b| b.timing == EffectTiming::Layout)
+        .unwrap();
     assert!(layout.synchronous);
     assert!(layout.dom_mutations_visible);
 }
@@ -932,7 +941,10 @@ fn layout_boundary_synchronous_with_dom() {
 #[test]
 fn passive_boundary_async_with_dom() {
     let bounds = SchedulingBoundary::canonical_boundaries();
-    let passive = bounds.iter().find(|b| b.timing == EffectTiming::Passive).unwrap();
+    let passive = bounds
+        .iter()
+        .find(|b| b.timing == EffectTiming::Passive)
+        .unwrap();
     assert!(!passive.synchronous);
     assert!(passive.dom_mutations_visible);
 }
@@ -1032,9 +1044,11 @@ fn contract_validate_all_catches_errors() {
     c.register_manifest(HookManifest::new("Bad", vec![]));
     let results = c.validate_all();
     assert!(results.contains_key("Bad"));
-    assert!(results["Bad"]
-        .iter()
-        .any(|e| matches!(e, HookManifestError::EmptyManifest)));
+    assert!(
+        results["Bad"]
+            .iter()
+            .any(|e| matches!(e, HookManifestError::EmptyManifest))
+    );
 }
 
 #[test]
@@ -1336,7 +1350,11 @@ fn end_to_end_render_with_effects_and_dep_check() {
         vec![
             slot(0, HookKind::State, None),
             slot(1, HookKind::Effect, Some(vec![DepToken(1)])),
-            slot(2, HookKind::LayoutEffect, Some(vec![DepToken(1), DepToken(2)])),
+            slot(
+                2,
+                HookKind::LayoutEffect,
+                Some(vec![DepToken(1), DepToken(2)]),
+            ),
             slot(3, HookKind::InsertionEffect, Some(vec![])),
             slot(4, HookKind::Memo, Some(vec![DepToken(1)])),
         ],
@@ -1406,10 +1424,7 @@ fn end_to_end_rerender_with_consistency_and_deps() {
 
     // Dep changed → effect should re-run
     assert_eq!(
-        compare_deps(
-            prev.slots[1].deps.as_deref(),
-            curr.slots[1].deps.as_deref()
-        ),
+        compare_deps(prev.slots[1].deps.as_deref(), curr.slots[1].deps.as_deref()),
         DepsChange::Changed
     );
 }
@@ -1468,9 +1483,11 @@ fn end_to_end_transformation_approval_and_receipt() {
 
     // Approve StateBatch
     contract.approve_transformation(LegalTransformation::StateBatch);
-    assert!(contract
-        .approved_transformations
-        .contains(&LegalTransformation::StateBatch));
+    assert!(
+        contract
+            .approved_transformations
+            .contains(&LegalTransformation::StateBatch)
+    );
 
     // Create receipt
     let receipt = TransformationReceipt {

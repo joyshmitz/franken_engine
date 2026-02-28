@@ -11,12 +11,12 @@ use frankenengine_engine::assumptions_ledger::{
     MonitorOp, ViolationSeverity,
 };
 use frankenengine_engine::semantic_twin::{
-    CausalAdjustmentStrategy, IdentifiabilityAssumption, SemanticTwinError, SemanticTwinLogEvent,
-    SemanticTwinObservationResult, SemanticTwinRuntime, SemanticTwinSpecification,
-    SignalNamespace, TelemetryContractRef, TransitionGuard, TwinStateTransition,
-    TwinStateVariable, SEMANTIC_TWIN_CAUSAL_ADJUSTMENT_SCHEMA_VERSION,
-    SEMANTIC_TWIN_COMPONENT, SEMANTIC_TWIN_LOG_SCHEMA_VERSION,
-    SEMANTIC_TWIN_STATE_SPACE_SCHEMA_VERSION,
+    CausalAdjustmentStrategy, IdentifiabilityAssumption,
+    SEMANTIC_TWIN_CAUSAL_ADJUSTMENT_SCHEMA_VERSION, SEMANTIC_TWIN_COMPONENT,
+    SEMANTIC_TWIN_LOG_SCHEMA_VERSION, SEMANTIC_TWIN_STATE_SPACE_SCHEMA_VERSION, SemanticTwinError,
+    SemanticTwinLogEvent, SemanticTwinObservationResult, SemanticTwinRuntime,
+    SemanticTwinSpecification, SignalNamespace, TelemetryContractRef, TransitionGuard,
+    TwinStateTransition, TwinStateVariable,
 };
 use frankenengine_engine::structural_causal_model::{ScmError, VariableDomain};
 
@@ -97,8 +97,14 @@ fn constant_component_name() {
 fn signal_namespace_as_str_all_five_variants() {
     let pairs: [(SignalNamespace, &str); 5] = [
         (SignalNamespace::Frir, "frir"),
-        (SignalNamespace::RuntimeDecisionCore, "runtime_decision_core"),
-        (SignalNamespace::RuntimeObservability, "runtime_observability"),
+        (
+            SignalNamespace::RuntimeDecisionCore,
+            "runtime_decision_core",
+        ),
+        (
+            SignalNamespace::RuntimeObservability,
+            "runtime_observability",
+        ),
         (SignalNamespace::PolicyController, "policy_controller"),
         (SignalNamespace::AssumptionsLedger, "assumptions_ledger"),
     ];
@@ -585,10 +591,7 @@ fn validate_rejects_adjustment_set_mismatch() {
     let mut spec = default_spec();
     spec.adjustment_strategies[0].adjustment_set.clear();
     let err = spec.validate().unwrap_err();
-    assert!(matches!(
-        err,
-        SemanticTwinError::AdjustmentMismatch { .. }
-    ));
+    assert!(matches!(err, SemanticTwinError::AdjustmentMismatch { .. }));
 }
 
 #[test]
@@ -662,7 +665,7 @@ fn build_ledger_custom_epoch_preserved() {
         .build_assumption_ledger("dec-epoch", 42, DemotionPolicy::default())
         .unwrap();
     // All assumptions should have epoch=42
-    for (_id, a) in ledger.assumptions() {
+    for a in ledger.assumptions().values() {
         assert_eq!(a.epoch, 42);
     }
 }
@@ -697,15 +700,8 @@ fn runtime_ledger_accessor() {
 fn runtime_rejects_invalid_spec() {
     let mut spec = default_spec();
     spec.assumptions[0].trigger_count = 0;
-    let err = SemanticTwinRuntime::new(
-        spec,
-        "tr",
-        "dec",
-        "pol",
-        1,
-        DemotionPolicy::default(),
-    )
-    .unwrap_err();
+    let err = SemanticTwinRuntime::new(spec, "tr", "dec", "pol", 1, DemotionPolicy::default())
+        .unwrap_err();
     assert!(matches!(
         err,
         SemanticTwinError::InvalidAssumptionTriggerCount { .. }
@@ -760,7 +756,10 @@ fn observe_ok_event_trace_decision_policy_ids() {
 fn observe_ok_event_variable_and_value() {
     let mut rt = make_runtime();
     let result = rt.observe("environment_load_drift_millionths", 100_000, 5);
-    assert_eq!(result.events[0].variable, "environment_load_drift_millionths");
+    assert_eq!(
+        result.events[0].variable,
+        "environment_load_drift_millionths"
+    );
     assert_eq!(result.events[0].observed_value_millionths, 100_000);
 }
 
@@ -874,10 +873,7 @@ fn runtime_custom_demotion_policy_warning_action() {
     let _ = rt.observe("environment_load_drift_millionths", 200_000, 1);
     let r2 = rt.observe("environment_load_drift_millionths", 300_000, 2);
     assert_eq!(r2.actions.len(), 1);
-    assert!(matches!(
-        r2.actions[0],
-        DemotionAction::DemoteLane { .. }
-    ));
+    assert!(matches!(r2.actions[0], DemotionAction::DemoteLane { .. }));
 }
 
 #[test]
@@ -1092,8 +1088,7 @@ fn default_spec_transition_ids_contain_source_and_target() {
     let spec = default_spec();
     for t in &spec.transitions {
         assert!(
-            t.transition_id.contains(&t.source_variable)
-                || t.transition_id.contains("transition"),
+            t.transition_id.contains(&t.source_variable) || t.transition_id.contains("transition"),
             "transition_id {} should reference source or be prefixed",
             t.transition_id
         );
@@ -1103,7 +1098,11 @@ fn default_spec_transition_ids_contain_source_and_target() {
 #[test]
 fn default_spec_has_guarded_transitions() {
     let spec = default_spec();
-    let guarded_count = spec.transitions.iter().filter(|t| t.guard.is_some()).count();
+    let guarded_count = spec
+        .transitions
+        .iter()
+        .filter(|t| t.guard.is_some())
+        .count();
     assert!(
         guarded_count >= 3,
         "expected at least 3 guarded transitions, found {guarded_count}"

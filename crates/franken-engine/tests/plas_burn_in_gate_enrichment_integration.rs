@@ -190,12 +190,7 @@ fn json_fields_rollback_proof_artifacts() {
 fn json_fields_shadow_observation() {
     let o = success_obs("obs-x", 999);
     let json = serde_json::to_string(&o).unwrap();
-    for key in [
-        "observation_id",
-        "timestamp_ns",
-        "success",
-        "false_deny",
-    ] {
+    for key in ["observation_id", "timestamp_ns", "success", "false_deny"] {
         assert!(json.contains(key), "missing field: {key}");
     }
 }
@@ -425,12 +420,8 @@ fn debug_distinct_failure_code() {
 #[test]
 fn debug_distinct_error_variants() {
     let variants: Vec<BurnInError> = vec![
-        BurnInError::InvalidConfig {
-            detail: "a".into(),
-        },
-        BurnInError::InvalidObservation {
-            detail: "a".into(),
-        },
+        BurnInError::InvalidConfig { detail: "a".into() },
+        BurnInError::InvalidObservation { detail: "a".into() },
         BurnInError::InvalidTransition {
             from: BurnInLifecycleState::ShadowStart,
             to: BurnInLifecycleState::Rejection,
@@ -843,7 +834,10 @@ fn decision_hash_sensitive_to_trace_id() {
                 .record_shadow_observation(success_obs(&format!("obs-{i}"), 1_000_100 + i * 100))
                 .unwrap();
         }
-        session.evaluate_promotion_gate(1_002_000).unwrap().decision_hash
+        session
+            .evaluate_promotion_gate(1_002_000)
+            .unwrap()
+            .decision_hash
     };
     assert_ne!(hash1, hash2);
 }
@@ -864,7 +858,10 @@ fn decision_hash_sensitive_to_policy_id() {
                 .record_shadow_observation(success_obs(&format!("obs-{i}"), 1_000_100 + i * 100))
                 .unwrap();
         }
-        session.evaluate_promotion_gate(1_002_000).unwrap().decision_hash
+        session
+            .evaluate_promotion_gate(1_002_000)
+            .unwrap()
+            .decision_hash
     };
     assert_ne!(hash1, hash2);
 }
@@ -885,7 +882,10 @@ fn decision_hash_sensitive_to_outcome() {
                 .record_shadow_observation(success_obs(&format!("obs-{i}"), 1_000_100 + i * 100))
                 .unwrap();
         }
-        session.evaluate_promotion_gate(1_002_000).unwrap().decision_hash
+        session
+            .evaluate_promotion_gate(1_002_000)
+            .unwrap()
+            .decision_hash
     };
     assert_ne!(pass_hash, fail_hash);
 }
@@ -1178,10 +1178,26 @@ fn four_gate_failure_codes_when_all_applicable_fail() {
     let artifact = session.evaluate_promotion_gate(1_000_200).unwrap();
 
     assert_eq!(artifact.failure_codes.len(), 4);
-    assert!(artifact.failure_codes.contains(&BurnInFailureCode::InsufficientShadowDuration));
-    assert!(artifact.failure_codes.contains(&BurnInFailureCode::InsufficientShadowObservations));
-    assert!(artifact.failure_codes.contains(&BurnInFailureCode::ShadowSuccessRateBelowThreshold));
-    assert!(artifact.failure_codes.contains(&BurnInFailureCode::RollbackProofArtifactsMissing));
+    assert!(
+        artifact
+            .failure_codes
+            .contains(&BurnInFailureCode::InsufficientShadowDuration)
+    );
+    assert!(
+        artifact
+            .failure_codes
+            .contains(&BurnInFailureCode::InsufficientShadowObservations)
+    );
+    assert!(
+        artifact
+            .failure_codes
+            .contains(&BurnInFailureCode::ShadowSuccessRateBelowThreshold)
+    );
+    assert!(
+        artifact
+            .failure_codes
+            .contains(&BurnInFailureCode::RollbackProofArtifactsMissing)
+    );
 }
 
 // ── 20. Full E2E with each risk class ────────────────────────────────────
@@ -1206,10 +1222,7 @@ fn run_full_lifecycle_with_risk_class(risk_class: ExtensionRiskClass) -> BurnInD
     let step = duration_ns / obs_count + 1;
     for i in 0..obs_count {
         session
-            .record_shadow_observation(success_obs(
-                &format!("obs-{i}"),
-                1_000 + (i + 1) * step,
-            ))
+            .record_shadow_observation(success_obs(&format!("obs-{i}"), 1_000 + (i + 1) * step))
             .unwrap();
     }
 
@@ -1251,8 +1264,7 @@ fn e2e_pass_then_tamper_rollback_fails() {
     assert_eq!(artifact1.outcome, "pass");
 
     // Same config but with incomplete rollback → fails
-    let mut session =
-        BurnInSession::new(base_config(), RollbackProofArtifacts::default()).unwrap();
+    let mut session = BurnInSession::new(base_config(), RollbackProofArtifacts::default()).unwrap();
     session.begin_shadow_evaluation().unwrap();
     for i in 0..10u64 {
         session

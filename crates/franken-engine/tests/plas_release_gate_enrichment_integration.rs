@@ -17,11 +17,10 @@ use frankenengine_engine::capability_witness::{
 use frankenengine_engine::engine_object_id::{self, EngineObjectId, ObjectDomain, SchemaId};
 use frankenengine_engine::hash_tiers::ContentHash;
 use frankenengine_engine::plas_release_gate::{
-    PlasActivationMode, PlasCohortExtension, PlasEscrowReplayEvidence,
-    PlasGrantCheckRecord, PlasReleaseGateDecisionArtifact, PlasReleaseGateError,
-    PlasReleaseGateFailureCode, PlasReleaseGateFinding, PlasReleaseGateInput,
-    PlasReleaseGateLogEvent, PlasReleaseGateTrustAnchors, PlasRevocationCheckRecord,
-    evaluate_plas_release_gate,
+    PlasActivationMode, PlasCohortExtension, PlasEscrowReplayEvidence, PlasGrantCheckRecord,
+    PlasReleaseGateDecisionArtifact, PlasReleaseGateError, PlasReleaseGateFailureCode,
+    PlasReleaseGateFinding, PlasReleaseGateInput, PlasReleaseGateLogEvent,
+    PlasReleaseGateTrustAnchors, PlasRevocationCheckRecord, evaluate_plas_release_gate,
 };
 use frankenengine_engine::policy_theorem_compiler::Capability;
 use frankenengine_engine::security_epoch::SecurityEpoch;
@@ -388,7 +387,10 @@ fn json_field_names_decision_artifact() {
         "\"logs\"",
         "\"decision_hash\"",
     ] {
-        assert!(json.contains(field), "missing field {field} in artifact JSON");
+        assert!(
+            json.contains(field),
+            "missing field {field} in artifact JSON"
+        );
     }
 }
 
@@ -401,8 +403,16 @@ fn json_field_names_finding_from_evaluate() {
     let artifact = evaluate_plas_release_gate(&input, &trust_anchors).unwrap();
     assert!(!artifact.findings.is_empty());
     let json = serde_json::to_string(&artifact.findings[0]).unwrap();
-    for field in ["\"code\"", "\"extension_id\"", "\"receipt_id\"", "\"detail\""] {
-        assert!(json.contains(field), "missing field {field} in finding JSON");
+    for field in [
+        "\"code\"",
+        "\"extension_id\"",
+        "\"receipt_id\"",
+        "\"detail\"",
+    ] {
+        assert!(
+            json.contains(field),
+            "missing field {field} in finding JSON"
+        );
     }
 }
 
@@ -545,13 +555,9 @@ fn grant_receipt_empty_receipt_id_produces_finding() {
     input.extensions[0].grants[0].receipt.receipt_id = "".to_string();
     let artifact = evaluate_plas_release_gate(&input, &trust_anchors).unwrap();
     assert!(!artifact.pass);
-    assert!(
-        artifact
-            .findings
-            .iter()
-            .any(|f| f.code == PlasReleaseGateFailureCode::MissingCapabilityWitness
-                && f.detail.contains("receipt_id"))
-    );
+    assert!(artifact.findings.iter().any(|f| f.code
+        == PlasReleaseGateFailureCode::MissingCapabilityWitness
+        && f.detail.contains("receipt_id")));
 }
 
 #[test]
@@ -560,13 +566,9 @@ fn grant_receipt_wrong_extension_id_produces_finding() {
     input.extensions[0].grants[0].receipt.extension_id = extension_id("wrong-ext");
     let artifact = evaluate_plas_release_gate(&input, &trust_anchors).unwrap();
     assert!(!artifact.pass);
-    assert!(
-        artifact
-            .findings
-            .iter()
-            .any(|f| f.code == PlasReleaseGateFailureCode::MissingCapabilityWitness
-                && f.detail.contains("extension_id"))
-    );
+    assert!(artifact.findings.iter().any(|f| f.code
+        == PlasReleaseGateFailureCode::MissingCapabilityWitness
+        && f.detail.contains("extension_id")));
 }
 
 #[test]
@@ -575,13 +577,9 @@ fn grant_receipt_zero_timestamp_produces_finding() {
     input.extensions[0].grants[0].receipt.timestamp_ns = 0;
     let artifact = evaluate_plas_release_gate(&input, &trust_anchors).unwrap();
     assert!(!artifact.pass);
-    assert!(
-        artifact
-            .findings
-            .iter()
-            .any(|f| f.code == PlasReleaseGateFailureCode::MissingCapabilityWitness
-                && f.detail.contains("timestamp_ns"))
-    );
+    assert!(artifact.findings.iter().any(|f| f.code
+        == PlasReleaseGateFailureCode::MissingCapabilityWitness
+        && f.detail.contains("timestamp_ns")));
 }
 
 #[test]
@@ -590,13 +588,9 @@ fn grant_receipt_wrong_decision_kind_produces_finding() {
     input.extensions[0].grants[0].receipt.decision_kind = "revoke".to_string();
     let artifact = evaluate_plas_release_gate(&input, &trust_anchors).unwrap();
     assert!(!artifact.pass);
-    assert!(
-        artifact
-            .findings
-            .iter()
-            .any(|f| f.code == PlasReleaseGateFailureCode::MissingCapabilityWitness
-                && f.detail.contains("decision_kind"))
-    );
+    assert!(artifact.findings.iter().any(|f| f.code
+        == PlasReleaseGateFailureCode::MissingCapabilityWitness
+        && f.detail.contains("decision_kind")));
 }
 
 #[test]
@@ -605,13 +599,9 @@ fn grant_receipt_empty_outcome_produces_finding() {
     input.extensions[0].grants[0].receipt.outcome = "".to_string();
     let artifact = evaluate_plas_release_gate(&input, &trust_anchors).unwrap();
     assert!(!artifact.pass);
-    assert!(
-        artifact
-            .findings
-            .iter()
-            .any(|f| f.code == PlasReleaseGateFailureCode::MissingCapabilityWitness
-                && f.detail.contains("outcome"))
-    );
+    assert!(artifact.findings.iter().any(|f| f.code
+        == PlasReleaseGateFailureCode::MissingCapabilityWitness
+        && f.detail.contains("outcome")));
 }
 
 #[test]
@@ -620,13 +610,9 @@ fn grant_receipt_wrong_policy_id_produces_finding() {
     input.extensions[0].grants[0].receipt.policy_id = "wrong-policy".to_string();
     let artifact = evaluate_plas_release_gate(&input, &trust_anchors).unwrap();
     assert!(!artifact.pass);
-    assert!(
-        artifact
-            .findings
-            .iter()
-            .any(|f| f.code == PlasReleaseGateFailureCode::MissingCapabilityWitness
-                && f.detail.contains("policy_id"))
-    );
+    assert!(artifact.findings.iter().any(|f| f.code
+        == PlasReleaseGateFailureCode::MissingCapabilityWitness
+        && f.detail.contains("policy_id")));
 }
 
 #[test]
@@ -635,13 +621,9 @@ fn grant_receipt_wrong_capability_produces_finding() {
     input.extensions[0].grants[0].receipt.capability = Some(Capability::new("wrong.cap"));
     let artifact = evaluate_plas_release_gate(&input, &trust_anchors).unwrap();
     assert!(!artifact.pass);
-    assert!(
-        artifact
-            .findings
-            .iter()
-            .any(|f| f.code == PlasReleaseGateFailureCode::MissingCapabilityWitness
-                && f.detail.contains("capability"))
-    );
+    assert!(artifact.findings.iter().any(|f| f.code
+        == PlasReleaseGateFailureCode::MissingCapabilityWitness
+        && f.detail.contains("capability")));
 }
 
 // ─── 7. Revocation receipt validation error paths ───────────────────────
@@ -652,13 +634,9 @@ fn revocation_receipt_empty_receipt_id_produces_finding() {
     input.extensions[0].revocations[0].receipt.receipt_id = "".to_string();
     let artifact = evaluate_plas_release_gate(&input, &trust_anchors).unwrap();
     assert!(!artifact.pass);
-    assert!(
-        artifact
-            .findings
-            .iter()
-            .any(|f| f.code == PlasReleaseGateFailureCode::RevocationEscrowEventMissing
-                && f.detail.contains("receipt_id"))
-    );
+    assert!(artifact.findings.iter().any(|f| f.code
+        == PlasReleaseGateFailureCode::RevocationEscrowEventMissing
+        && f.detail.contains("receipt_id")));
 }
 
 #[test]
@@ -667,13 +645,9 @@ fn revocation_receipt_wrong_extension_id_produces_finding() {
     input.extensions[0].revocations[0].receipt.extension_id = extension_id("bad-ext");
     let artifact = evaluate_plas_release_gate(&input, &trust_anchors).unwrap();
     assert!(!artifact.pass);
-    assert!(
-        artifact
-            .findings
-            .iter()
-            .any(|f| f.code == PlasReleaseGateFailureCode::RevocationEscrowEventMissing
-                && f.detail.contains("extension_id"))
-    );
+    assert!(artifact.findings.iter().any(|f| f.code
+        == PlasReleaseGateFailureCode::RevocationEscrowEventMissing
+        && f.detail.contains("extension_id")));
 }
 
 #[test]
@@ -682,13 +656,9 @@ fn revocation_receipt_zero_timestamp_produces_finding() {
     input.extensions[0].revocations[0].receipt.timestamp_ns = 0;
     let artifact = evaluate_plas_release_gate(&input, &trust_anchors).unwrap();
     assert!(!artifact.pass);
-    assert!(
-        artifact
-            .findings
-            .iter()
-            .any(|f| f.code == PlasReleaseGateFailureCode::RevocationEscrowEventMissing
-                && f.detail.contains("timestamp_ns"))
-    );
+    assert!(artifact.findings.iter().any(|f| f.code
+        == PlasReleaseGateFailureCode::RevocationEscrowEventMissing
+        && f.detail.contains("timestamp_ns")));
 }
 
 #[test]
@@ -697,13 +667,9 @@ fn revocation_receipt_wrong_decision_kind_produces_finding() {
     input.extensions[0].revocations[0].receipt.decision_kind = "grant".to_string();
     let artifact = evaluate_plas_release_gate(&input, &trust_anchors).unwrap();
     assert!(!artifact.pass);
-    assert!(
-        artifact
-            .findings
-            .iter()
-            .any(|f| f.code == PlasReleaseGateFailureCode::RevocationEscrowEventMissing
-                && f.detail.contains("decision_kind"))
-    );
+    assert!(artifact.findings.iter().any(|f| f.code
+        == PlasReleaseGateFailureCode::RevocationEscrowEventMissing
+        && f.detail.contains("decision_kind")));
 }
 
 #[test]
@@ -712,13 +678,9 @@ fn revocation_receipt_empty_outcome_produces_finding() {
     input.extensions[0].revocations[0].receipt.outcome = "".to_string();
     let artifact = evaluate_plas_release_gate(&input, &trust_anchors).unwrap();
     assert!(!artifact.pass);
-    assert!(
-        artifact
-            .findings
-            .iter()
-            .any(|f| f.code == PlasReleaseGateFailureCode::RevocationEscrowEventMissing
-                && f.detail.contains("outcome"))
-    );
+    assert!(artifact.findings.iter().any(|f| f.code
+        == PlasReleaseGateFailureCode::RevocationEscrowEventMissing
+        && f.detail.contains("outcome")));
 }
 
 #[test]
@@ -727,13 +689,9 @@ fn revocation_receipt_wrong_policy_id_produces_finding() {
     input.extensions[0].revocations[0].receipt.policy_id = "wrong-policy".to_string();
     let artifact = evaluate_plas_release_gate(&input, &trust_anchors).unwrap();
     assert!(!artifact.pass);
-    assert!(
-        artifact
-            .findings
-            .iter()
-            .any(|f| f.code == PlasReleaseGateFailureCode::RevocationEscrowEventMissing
-                && f.detail.contains("policy_id"))
-    );
+    assert!(artifact.findings.iter().any(|f| f.code
+        == PlasReleaseGateFailureCode::RevocationEscrowEventMissing
+        && f.detail.contains("policy_id")));
 }
 
 #[test]
@@ -742,13 +700,9 @@ fn revocation_receipt_wrong_capability_produces_finding() {
     input.extensions[0].revocations[0].receipt.capability = Some(Capability::new("wrong.cap"));
     let artifact = evaluate_plas_release_gate(&input, &trust_anchors).unwrap();
     assert!(!artifact.pass);
-    assert!(
-        artifact
-            .findings
-            .iter()
-            .any(|f| f.code == PlasReleaseGateFailureCode::RevocationEscrowEventMissing
-                && f.detail.contains("capability"))
-    );
+    assert!(artifact.findings.iter().any(|f| f.code
+        == PlasReleaseGateFailureCode::RevocationEscrowEventMissing
+        && f.detail.contains("capability")));
 }
 
 // ─── 8. Non-deterministic replay detection ──────────────────────────────
@@ -860,13 +814,9 @@ fn revocation_for_ungranted_capability_produces_finding() {
 
     let artifact = evaluate_plas_release_gate(&input, &trust_anchors).unwrap();
     assert!(!artifact.pass);
-    assert!(
-        artifact
-            .findings
-            .iter()
-            .any(|f| f.code == PlasReleaseGateFailureCode::RevocationEscrowEventMissing
-                && f.detail.contains("no corresponding grant"))
-    );
+    assert!(artifact.findings.iter().any(|f| f.code
+        == PlasReleaseGateFailureCode::RevocationEscrowEventMissing
+        && f.detail.contains("no corresponding grant")));
 }
 
 // ─── 11. All activation mode rejection variants ─────────────────────────
@@ -1156,9 +1106,12 @@ fn wrong_witness_verification_key_causes_signature_failure() {
     trust_anchors.witness_verification_key = signing_key(99).verification_key();
     let artifact = evaluate_plas_release_gate(&input, &trust_anchors).unwrap();
     assert!(!artifact.pass);
-    assert!(artifact.findings.iter().any(|f| {
-        f.code == PlasReleaseGateFailureCode::WitnessSignatureVerificationFailed
-    }));
+    assert!(
+        artifact
+            .findings
+            .iter()
+            .any(|f| { f.code == PlasReleaseGateFailureCode::WitnessSignatureVerificationFailed })
+    );
 }
 
 #[test]
@@ -1312,13 +1265,9 @@ fn witness_missing_synthesizer_signature_produces_finding() {
         .synthesizer_signature = Vec::new();
     let artifact = evaluate_plas_release_gate(&input, &trust_anchors).unwrap();
     assert!(!artifact.pass);
-    assert!(
-        artifact
-            .findings
-            .iter()
-            .any(|f| f.code == PlasReleaseGateFailureCode::MissingCapabilityWitness
-                && f.detail.contains("missing required grant fields"))
-    );
+    assert!(artifact.findings.iter().any(|f| f.code
+        == PlasReleaseGateFailureCode::MissingCapabilityWitness
+        && f.detail.contains("missing required grant fields")));
 }
 
 #[test]
@@ -1329,13 +1278,9 @@ fn witness_empty_signature_bundle_produces_finding() {
         .signature_bundle = Vec::new();
     let artifact = evaluate_plas_release_gate(&input, &trust_anchors).unwrap();
     assert!(!artifact.pass);
-    assert!(
-        artifact
-            .findings
-            .iter()
-            .any(|f| f.code == PlasReleaseGateFailureCode::MissingCapabilityWitness
-                && f.detail.contains("missing required grant fields"))
-    );
+    assert!(artifact.findings.iter().any(|f| f.code
+        == PlasReleaseGateFailureCode::MissingCapabilityWitness
+        && f.detail.contains("missing required grant fields")));
 }
 
 #[test]
@@ -1347,13 +1292,9 @@ fn witness_wrong_extension_id_produces_finding() {
         .extension_id = extension_id("different-ext");
     let artifact = evaluate_plas_release_gate(&input, &trust_anchors).unwrap();
     assert!(!artifact.pass);
-    assert!(
-        artifact
-            .findings
-            .iter()
-            .any(|f| f.code == PlasReleaseGateFailureCode::MissingCapabilityWitness
-                && f.detail.contains("missing required grant fields"))
-    );
+    assert!(artifact.findings.iter().any(|f| f.code
+        == PlasReleaseGateFailureCode::MissingCapabilityWitness
+        && f.detail.contains("missing required grant fields")));
 }
 
 #[test]
@@ -1365,13 +1306,9 @@ fn witness_zero_timestamp_produces_finding() {
         .timestamp_ns = 0;
     let artifact = evaluate_plas_release_gate(&input, &trust_anchors).unwrap();
     assert!(!artifact.pass);
-    assert!(
-        artifact
-            .findings
-            .iter()
-            .any(|f| f.code == PlasReleaseGateFailureCode::MissingCapabilityWitness
-                && f.detail.contains("missing required grant fields"))
-    );
+    assert!(artifact.findings.iter().any(|f| f.code
+        == PlasReleaseGateFailureCode::MissingCapabilityWitness
+        && f.detail.contains("missing required grant fields")));
 }
 
 #[test]
@@ -1384,13 +1321,9 @@ fn witness_empty_required_capabilities_produces_finding() {
         .clear();
     let artifact = evaluate_plas_release_gate(&input, &trust_anchors).unwrap();
     assert!(!artifact.pass);
-    assert!(
-        artifact
-            .findings
-            .iter()
-            .any(|f| f.code == PlasReleaseGateFailureCode::MissingCapabilityWitness
-                && f.detail.contains("missing required grant fields"))
-    );
+    assert!(artifact.findings.iter().any(|f| f.code
+        == PlasReleaseGateFailureCode::MissingCapabilityWitness
+        && f.detail.contains("missing required grant fields")));
 }
 
 // ─── 19. Revocation witness missing checks ──────────────────────────────
@@ -1462,15 +1395,42 @@ fn plas_activation_mode_serde_exact_values() {
 #[test]
 fn failure_code_serde_exact_values() {
     let expected = [
-        (PlasReleaseGateFailureCode::CohortPlasNotActive, "\"cohort_plas_not_active\""),
-        (PlasReleaseGateFailureCode::CohortCoverageMissingGrantExercise, "\"cohort_coverage_missing_grant_exercise\""),
-        (PlasReleaseGateFailureCode::MissingCapabilityWitness, "\"missing_capability_witness\""),
-        (PlasReleaseGateFailureCode::WitnessSignatureVerificationFailed, "\"witness_signature_verification_failed\""),
-        (PlasReleaseGateFailureCode::EscrowReplayEvidenceMissing, "\"escrow_replay_evidence_missing\""),
-        (PlasReleaseGateFailureCode::EscrowReplayMismatch, "\"escrow_replay_mismatch\""),
-        (PlasReleaseGateFailureCode::RevocationWitnessMissing, "\"revocation_witness_missing\""),
-        (PlasReleaseGateFailureCode::RevocationEscrowEventMissing, "\"revocation_escrow_event_missing\""),
-        (PlasReleaseGateFailureCode::AmbientAuthorityDetected, "\"ambient_authority_detected\""),
+        (
+            PlasReleaseGateFailureCode::CohortPlasNotActive,
+            "\"cohort_plas_not_active\"",
+        ),
+        (
+            PlasReleaseGateFailureCode::CohortCoverageMissingGrantExercise,
+            "\"cohort_coverage_missing_grant_exercise\"",
+        ),
+        (
+            PlasReleaseGateFailureCode::MissingCapabilityWitness,
+            "\"missing_capability_witness\"",
+        ),
+        (
+            PlasReleaseGateFailureCode::WitnessSignatureVerificationFailed,
+            "\"witness_signature_verification_failed\"",
+        ),
+        (
+            PlasReleaseGateFailureCode::EscrowReplayEvidenceMissing,
+            "\"escrow_replay_evidence_missing\"",
+        ),
+        (
+            PlasReleaseGateFailureCode::EscrowReplayMismatch,
+            "\"escrow_replay_mismatch\"",
+        ),
+        (
+            PlasReleaseGateFailureCode::RevocationWitnessMissing,
+            "\"revocation_witness_missing\"",
+        ),
+        (
+            PlasReleaseGateFailureCode::RevocationEscrowEventMissing,
+            "\"revocation_escrow_event_missing\"",
+        ),
+        (
+            PlasReleaseGateFailureCode::AmbientAuthorityDetected,
+            "\"ambient_authority_detected\"",
+        ),
     ];
     for (code, expected_json) in &expected {
         let json = serde_json::to_string(code).unwrap();
@@ -1485,7 +1445,10 @@ fn error_display_exact_messages() {
     let err1 = PlasReleaseGateError::InvalidInput {
         detail: "bad data".into(),
     };
-    assert_eq!(err1.to_string(), "invalid PLAS release gate input: bad data");
+    assert_eq!(
+        err1.to_string(),
+        "invalid PLAS release gate input: bad data"
+    );
 
     let err2 = PlasReleaseGateError::Serialization {
         detail: "json error".into(),
@@ -1513,12 +1476,8 @@ fn error_serde_roundtrip_all_variants() {
 #[test]
 fn error_is_std_error_trait() {
     let errs: Vec<Box<dyn std::error::Error>> = vec![
-        Box::new(PlasReleaseGateError::InvalidInput {
-            detail: "a".into(),
-        }),
-        Box::new(PlasReleaseGateError::Serialization {
-            detail: "b".into(),
-        }),
+        Box::new(PlasReleaseGateError::InvalidInput { detail: "a".into() }),
+        Box::new(PlasReleaseGateError::Serialization { detail: "b".into() }),
     ];
     for e in &errs {
         assert!(!e.to_string().is_empty());
@@ -1565,12 +1524,8 @@ fn failure_code_debug_all_distinct() {
 
 #[test]
 fn error_debug_variants_distinct() {
-    let v1 = PlasReleaseGateError::InvalidInput {
-        detail: "x".into(),
-    };
-    let v2 = PlasReleaseGateError::Serialization {
-        detail: "x".into(),
-    };
+    let v1 = PlasReleaseGateError::InvalidInput { detail: "x".into() };
+    let v2 = PlasReleaseGateError::Serialization { detail: "x".into() };
     assert_ne!(format!("{v1:?}"), format!("{v2:?}"));
 }
 
@@ -1628,11 +1583,7 @@ fn json_field_names_grant_check_record() {
 fn json_field_names_revocation_check_record() {
     let (input, _) = base_gate_fixture();
     let json = serde_json::to_string(&input.extensions[0].revocations[0]).unwrap();
-    for field in [
-        "\"capability\"",
-        "\"receipt\"",
-        "\"witness_artifact\"",
-    ] {
+    for field in ["\"capability\"", "\"receipt\"", "\"witness_artifact\""] {
         assert!(
             json.contains(field),
             "missing field {field} in revocation JSON"
@@ -1655,7 +1606,10 @@ fn json_field_names_trust_anchors() {
 #[test]
 fn json_field_names_escrow_replay_evidence() {
     let (input, _) = base_gate_fixture();
-    let evidence = input.extensions[0].grants[0].replay_evidence.as_ref().unwrap();
+    let evidence = input.extensions[0].grants[0]
+        .replay_evidence
+        .as_ref()
+        .unwrap();
     let json = serde_json::to_string(evidence).unwrap();
     for field in [
         "\"receipt_id\"",

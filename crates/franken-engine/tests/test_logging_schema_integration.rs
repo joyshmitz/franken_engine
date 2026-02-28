@@ -4,14 +4,20 @@
 //! Exercises the public API from outside the crate boundary.
 
 use std::collections::BTreeMap;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 use frankenengine_engine::test_logging_schema::{
-    DataSensitivity, FailureTaxonomy, RedactionAction, RedactionRule, RetentionPolicy,
+    DataSensitivity, FailureTaxonomy, RGC_STRUCTURED_LOGGING_BEAD_ID,
+    RGC_STRUCTURED_LOGGING_COMPONENT, RGC_STRUCTURED_LOGGING_CONTRACT_SCHEMA_VERSION,
+    RGC_STRUCTURED_LOGGING_FAILURE_CODE, RedactionAction, RedactionRule, RetentionPolicy,
     TEST_LOG_EVENT_SCHEMA_VERSION, TEST_LOGGING_COMPONENT, TEST_LOGGING_CONTRACT_SCHEMA_VERSION,
     TEST_LOGGING_FAILURE_CODE, TestLane, TestLogEvent, TestLoggingSchemaSpec, ValidationErrorCode,
-    ValidationFailure, ValidationReport, apply_redaction, validate_correlation, validate_event,
-    validate_events, validate_redaction,
+    ValidationFailure, ValidationReport, apply_redaction, rgc_structured_logging_spec,
+    validate_correlation, validate_event, validate_events, validate_logging_contract,
+    validate_redaction, validate_schema_evolution,
 };
+use serde::Deserialize;
 
 // ---------------------------------------------------------------------------
 // Helper
@@ -35,6 +41,50 @@ fn baseline_event() -> TestLogEvent {
         timestamp_unix_ms: 1_740_000_000_000,
         failure_taxonomy: None,
     }
+}
+
+fn repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+fn read_to_string(path: &Path) -> String {
+    fs::read_to_string(path)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()))
+}
+
+fn load_json<T: for<'de> Deserialize<'de>>(path: &Path) -> T {
+    let raw = read_to_string(path);
+    serde_json::from_str(&raw)
+        .unwrap_or_else(|err| panic!("failed to parse {} as json: {err}", path.display()))
+}
+
+#[derive(Debug, Deserialize)]
+struct RgcLoggingContract {
+    schema_version: String,
+    bead_id: String,
+    generated_by: String,
+    logging_schema: RgcLoggingSchema,
+    correlation_policy: RgcCorrelationPolicy,
+    failure_policy: RgcFailurePolicy,
+    operator_verification: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RgcLoggingSchema {
+    event_schema_version: String,
+    required_fields: Vec<String>,
+    required_correlation_ids: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RgcCorrelationPolicy {
+    correlation_key_fields: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RgcFailurePolicy {
+    mode: String,
+    error_code: String,
 }
 
 // ===================================================================
@@ -212,6 +262,7 @@ fn validation_error_code_serde_roundtrip_all_variants() {
         ValidationErrorCode::SchemaVersionMismatch,
         ValidationErrorCode::CorrelationMismatch,
         ValidationErrorCode::RedactionPolicyViolation,
+        ValidationErrorCode::ContractValidationViolation,
     ] {
         let json = serde_json::to_string(&code).unwrap();
         let back: ValidationErrorCode = serde_json::from_str(&json).unwrap();
@@ -960,4 +1011,170 @@ fn custom_spec_empty_redaction_rules_no_redaction() {
         Some("raw@example.com")
     );
     assert!(validate_redaction(&redacted, &spec).is_empty());
+}
+
+// ===================================================================
+// 18. RGC-054A contract + evolution checks
+// ===================================================================
+
+#[test]
+fn rgc_054a_doc_contains_required_sections() {
+    let path = repo_root().join("docs/RGC_STRUCTURED_LOGGING_CONTRACT.md");
+    let doc = read_to_string(&path);
+
+    for section in [
+        "# RGC Structured Logging Contract v1",
+        "## Scope",
+        "## Required Event Fields",
+        "## Correlation Keys",
+        "## Validation Hooks",
+        "## Backward-Compatible Evolution Rules",
+        "## Operator Verification",
+    ] {
+        assert!(
+            doc.contains(section),
+            "missing section in {}: {section}",
+            path.display()
+        );
+    }
+
+    for phrase in [
+        "trace_id",
+        "decision_id",
+        "policy_id",
+        "schema",
+        "compatibility",
+        "fail-closed",
+    ] {
+        assert!(
+            doc.to_ascii_lowercase().contains(phrase),
+            "expected phrase not found in {}: {phrase}",
+            path.display()
+        );
+    }
+}
+
+#[test]
+fn rgc_054a_contract_is_machine_readable_and_matches_spec() {
+    let path = repo_root().join("docs/rgc_structured_logging_contract_v1.json");
+    let contract: RgcLoggingContract = load_json(&path);
+    let spec = rgc_structured_logging_spec();
+
+    assert_eq!(
+        contract.schema_version,
+        RGC_STRUCTURED_LOGGING_CONTRACT_SCHEMA_VERSION
+    );
+    assert_eq!(contract.bead_id, RGC_STRUCTURED_LOGGING_BEAD_ID);
+    assert_eq!(contract.generated_by, RGC_STRUCTURED_LOGGING_BEAD_ID);
+    assert_eq!(
+        contract.logging_schema.event_schema_version,
+        spec.event_schema_version
+    );
+    assert_eq!(
+        contract.logging_schema.required_fields,
+        spec.required_fields
+    );
+    assert_eq!(
+        contract.logging_schema.required_correlation_ids,
+        spec.required_correlation_ids
+    );
+    assert_eq!(
+        contract.correlation_policy.correlation_key_fields,
+        spec.correlation_key_fields
+    );
+    assert_eq!(contract.failure_policy.mode, "fail_closed");
+    assert_eq!(
+        contract.failure_policy.error_code,
+        RGC_STRUCTURED_LOGGING_FAILURE_CODE
+    );
+    assert!(
+        contract
+            .operator_verification
+            .iter()
+            .any(|line| { line.contains("run_rgc_structured_logging_contract_gate.sh ci") }),
+        "operator verification must include the RGC gate command"
+    );
+}
+
+#[test]
+fn rgc_054a_contract_validator_accepts_default_rgc_spec() {
+    let spec = rgc_structured_logging_spec();
+    assert!(
+        validate_logging_contract(&spec).is_empty(),
+        "default RGC contract should be valid"
+    );
+}
+
+#[test]
+fn rgc_054a_contract_validator_rejects_duplicate_required_fields() {
+    let mut spec = rgc_structured_logging_spec();
+    spec.required_fields.push("trace_id".to_string());
+    let failures = validate_logging_contract(&spec);
+    assert!(
+        failures
+            .iter()
+            .any(|f| f.error_code == ValidationErrorCode::ContractValidationViolation)
+    );
+    assert!(
+        failures
+            .iter()
+            .any(|f| f.message.contains("duplicate required field"))
+    );
+}
+
+#[test]
+fn rgc_054a_schema_evolution_rejects_removed_correlation_id() {
+    let baseline = rgc_structured_logging_spec();
+    let mut candidate = rgc_structured_logging_spec();
+    candidate
+        .required_correlation_ids
+        .retain(|field| field != "trace_id");
+    candidate
+        .correlation_key_fields
+        .retain(|field| field != "trace_id");
+
+    let failures = validate_schema_evolution(&baseline, &candidate);
+    assert!(
+        failures
+            .iter()
+            .any(|f| f.message.contains("removed correlation field `trace_id`"))
+    );
+}
+
+#[test]
+fn rgc_054a_schema_evolution_accepts_additive_required_field() {
+    let baseline = rgc_structured_logging_spec();
+    let mut candidate = rgc_structured_logging_spec();
+    candidate.required_fields.push("run_id".to_string());
+
+    assert!(
+        validate_schema_evolution(&baseline, &candidate).is_empty(),
+        "additive required field should preserve backward compatibility"
+    );
+}
+
+#[test]
+fn rgc_054a_gate_scripts_exist_and_reference_rch() {
+    let gate_path = repo_root().join("scripts/run_rgc_structured_logging_contract_gate.sh");
+    let replay_path = repo_root().join("scripts/e2e/rgc_structured_logging_contract_replay.sh");
+
+    let gate = read_to_string(&gate_path);
+    let replay = read_to_string(&replay_path);
+
+    assert!(
+        gate.contains("rch exec"),
+        "gate must offload heavy cargo via rch"
+    );
+    assert!(
+        gate.contains("bd-1lsy.11.16"),
+        "gate manifest should track bead id"
+    );
+    assert!(
+        replay.contains("run_rgc_structured_logging_contract_gate.sh"),
+        "replay wrapper must route through gate script"
+    );
+    assert!(
+        gate.contains(RGC_STRUCTURED_LOGGING_COMPONENT),
+        "gate component should align with RGC contract component"
+    );
 }

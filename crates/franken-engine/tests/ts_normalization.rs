@@ -1,7 +1,4 @@
-#[path = "../src/ts_normalization.rs"]
-mod ts_normalization;
-
-use ts_normalization::{
+use frankenengine_engine::ts_normalization::{
     TsCompilerOptions, TsNormalizationConfig, TsNormalizationError, normalize_typescript_to_es2020,
 };
 

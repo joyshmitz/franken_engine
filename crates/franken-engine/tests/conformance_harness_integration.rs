@@ -18,16 +18,16 @@ use std::fs;
 use std::path::PathBuf;
 
 use frankenengine_engine::conformance_harness::{
+    ConformanceAssetManifest, ConformanceAssetRecord, ConformanceCiGateError,
+    ConformanceDeltaClassification, ConformanceDeltaKind, ConformanceEvidenceCollector,
+    ConformanceFailureClass, ConformanceFailureSeverity, ConformanceIssueLink, ConformanceLogEvent,
+    ConformanceMinimizationSummary, ConformanceMinimizedFailingVector,
+    ConformanceMinimizedReproArtifact, ConformanceReplayContract, ConformanceReproEnvironment,
+    ConformanceReproMetadata, ConformanceRunLinkage, ConformanceRunResult, ConformanceRunSummary,
+    ConformanceRunner, ConformanceRunnerConfig, ConformanceWaiver, ConformanceWaiverSet,
+    DeterministicRng, DonorFixture, DonorHarnessAdapter, DonorHarnessApi, WaiverReasonCode,
     canonicalize_conformance_output, classify_conformance_delta, classify_failure_class,
-    severity_for_failure_class, ConformanceAssetManifest, ConformanceAssetRecord,
-    ConformanceCiGateError, ConformanceDeltaClassification, ConformanceDeltaKind,
-    ConformanceEvidenceCollector, ConformanceFailureClass, ConformanceFailureSeverity,
-    ConformanceIssueLink, ConformanceLogEvent, ConformanceMinimizationSummary,
-    ConformanceMinimizedFailingVector, ConformanceMinimizedReproArtifact,
-    ConformanceReplayContract, ConformanceReproEnvironment, ConformanceReproMetadata,
-    ConformanceRunLinkage, ConformanceRunResult, ConformanceRunSummary, ConformanceRunner,
-    ConformanceRunnerConfig, ConformanceWaiver, ConformanceWaiverSet, DeterministicRng,
-    DonorFixture, DonorHarnessAdapter, DonorHarnessApi, WaiverReasonCode,
+    severity_for_failure_class,
 };
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
@@ -118,8 +118,16 @@ fn make_ifc_asset_record(input: &IfcAssetInput<'_>) -> ConformanceAssetRecord {
         expected_output_hash: input.expected_output_hash.to_string(),
         import_date: "2026-01-01".to_string(),
         category: Some(input.category.to_string()),
-        source_labels: input.source_labels.iter().map(ToString::to_string).collect(),
-        sink_clearances: input.sink_clearances.iter().map(ToString::to_string).collect(),
+        source_labels: input
+            .source_labels
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
+        sink_clearances: input
+            .sink_clearances
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
         flow_path_type: Some(input.flow_path_type.to_string()),
         expected_outcome: Some(input.expected_outcome.to_string()),
         expected_evidence_type: Some(input.expected_evidence_type.to_string()),
@@ -218,7 +226,10 @@ fn canonicalize_sorts_but_preserves_duplicate_props() {
 fn canonicalize_normalizes_error_format() {
     let raw = "TypeError: cannot read property";
     let canonical = canonicalize_conformance_output(raw);
-    assert!(canonical.contains("TypeError|"), "should normalize error separator: {canonical}");
+    assert!(
+        canonical.contains("TypeError|"),
+        "should normalize error separator: {canonical}"
+    );
 }
 
 #[test]
@@ -240,7 +251,10 @@ fn canonicalize_preserves_non_numeric_tokens() {
 #[test]
 fn delta_classification_identical_returns_empty() {
     let deltas = classify_conformance_delta("hello\nworld", "hello\nworld");
-    assert!(deltas.is_empty(), "identical outputs should produce no deltas");
+    assert!(
+        deltas.is_empty(),
+        "identical outputs should produce no deltas"
+    );
 }
 
 #[test]
@@ -250,7 +264,9 @@ fn delta_classification_schema_field_removed() {
     let deltas = classify_conformance_delta(expected, actual);
     assert!(!deltas.is_empty());
     assert!(
-        deltas.iter().any(|d| d.kind == ConformanceDeltaKind::SchemaFieldRemoved),
+        deltas
+            .iter()
+            .any(|d| d.kind == ConformanceDeltaKind::SchemaFieldRemoved),
         "should detect removed field: {deltas:?}"
     );
 }
@@ -262,7 +278,9 @@ fn delta_classification_schema_field_added() {
     let deltas = classify_conformance_delta(expected, actual);
     assert!(!deltas.is_empty());
     assert!(
-        deltas.iter().any(|d| d.kind == ConformanceDeltaKind::SchemaFieldAdded),
+        deltas
+            .iter()
+            .any(|d| d.kind == ConformanceDeltaKind::SchemaFieldAdded),
         "should detect added field: {deltas:?}"
     );
 }
@@ -275,12 +293,14 @@ fn delta_classification_schema_field_modified() {
     let deltas = classify_conformance_delta(expected, actual);
     assert!(!deltas.is_empty());
     // Could be add+remove or modified
-    let has_schema_delta = deltas.iter().any(|d| matches!(
-        d.kind,
-        ConformanceDeltaKind::SchemaFieldRemoved
-            | ConformanceDeltaKind::SchemaFieldAdded
-            | ConformanceDeltaKind::SchemaFieldModified
-    ));
+    let has_schema_delta = deltas.iter().any(|d| {
+        matches!(
+            d.kind,
+            ConformanceDeltaKind::SchemaFieldRemoved
+                | ConformanceDeltaKind::SchemaFieldAdded
+                | ConformanceDeltaKind::SchemaFieldModified
+        )
+    });
     assert!(has_schema_delta, "should detect schema changes: {deltas:?}");
 }
 
@@ -291,7 +311,9 @@ fn delta_classification_error_format_change() {
     let deltas = classify_conformance_delta(expected, actual);
     assert!(!deltas.is_empty());
     assert!(
-        deltas.iter().any(|d| d.kind == ConformanceDeltaKind::ErrorFormatChange),
+        deltas
+            .iter()
+            .any(|d| d.kind == ConformanceDeltaKind::ErrorFormatChange),
         "should detect error format change: {deltas:?}"
     );
 }
@@ -303,7 +325,9 @@ fn delta_classification_timing_change() {
     let deltas = classify_conformance_delta(expected, actual);
     assert!(!deltas.is_empty());
     assert!(
-        deltas.iter().any(|d| d.kind == ConformanceDeltaKind::TimingChange),
+        deltas
+            .iter()
+            .any(|d| d.kind == ConformanceDeltaKind::TimingChange),
         "should detect timing change: {deltas:?}"
     );
 }
@@ -315,7 +339,9 @@ fn delta_classification_behavioral_semantic_shift() {
     let deltas = classify_conformance_delta(expected, actual);
     assert!(!deltas.is_empty());
     assert!(
-        deltas.iter().any(|d| d.kind == ConformanceDeltaKind::BehavioralSemanticShift),
+        deltas
+            .iter()
+            .any(|d| d.kind == ConformanceDeltaKind::BehavioralSemanticShift),
         "should detect behavioral shift: {deltas:?}"
     );
 }
@@ -337,7 +363,10 @@ fn failure_class_schema_removed_is_breaking() {
         actual: Some("missing".to_string()),
         detail: "test".to_string(),
     }];
-    assert_eq!(classify_failure_class(&deltas), ConformanceFailureClass::Breaking);
+    assert_eq!(
+        classify_failure_class(&deltas),
+        ConformanceFailureClass::Breaking
+    );
 }
 
 #[test]
@@ -349,7 +378,10 @@ fn failure_class_timing_is_performance() {
         actual: Some("200".to_string()),
         detail: "test".to_string(),
     }];
-    assert_eq!(classify_failure_class(&deltas), ConformanceFailureClass::Performance);
+    assert_eq!(
+        classify_failure_class(&deltas),
+        ConformanceFailureClass::Performance
+    );
 }
 
 #[test]
@@ -361,7 +393,10 @@ fn failure_class_error_format_is_observability() {
         actual: None,
         detail: "test".to_string(),
     }];
-    assert_eq!(classify_failure_class(&deltas), ConformanceFailureClass::Observability);
+    assert_eq!(
+        classify_failure_class(&deltas),
+        ConformanceFailureClass::Observability
+    );
 }
 
 #[test]
@@ -508,7 +543,10 @@ expiry_date = "2026-06-30"
 
     let set = ConformanceWaiverSet::load_toml(&path).unwrap();
     assert_eq!(set.waivers.len(), 2);
-    assert_eq!(set.waivers[1].reason_code, WaiverReasonCode::NotYetImplemented);
+    assert_eq!(
+        set.waivers[1].reason_code,
+        WaiverReasonCode::NotYetImplemented
+    );
 }
 
 // ─── Section 9: ConformanceRunnerConfig validation ─────────────────────────
@@ -595,8 +633,14 @@ fn runner_full_fail_scenario_produces_repro() {
     let source = "let x = 1 + 2;";
     let observed = "result: 4";
     let expected = "result: 3";
-    let (fixture_hash, expected_hash) =
-        write_fixture_pair(&dir, "fixture.json", "expected.txt", source, observed, expected);
+    let (fixture_hash, expected_hash) = write_fixture_pair(
+        &dir,
+        "fixture.json",
+        "expected.txt",
+        source,
+        observed,
+        expected,
+    );
 
     let manifest = make_manifest(vec![make_asset_record(
         "fail-001",
@@ -631,8 +675,14 @@ fn runner_waived_asset_does_not_fail() {
     let source = "let x = 1 + 2;";
     let observed = "result: 4";
     let expected = "result: 3";
-    let (fixture_hash, expected_hash) =
-        write_fixture_pair(&dir, "fixture.json", "expected.txt", source, observed, expected);
+    let (fixture_hash, expected_hash) = write_fixture_pair(
+        &dir,
+        "fixture.json",
+        "expected.txt",
+        source,
+        observed,
+        expected,
+    );
 
     let manifest = make_manifest(vec![make_asset_record(
         "waive-001",
@@ -673,8 +723,14 @@ fn runner_expired_waiver_still_fails() {
     let source = "let x = 1;";
     let observed = "result: 2";
     let expected = "result: 1";
-    let (fixture_hash, expected_hash) =
-        write_fixture_pair(&dir, "fixture.json", "expected.txt", source, observed, expected);
+    let (fixture_hash, expected_hash) = write_fixture_pair(
+        &dir,
+        "fixture.json",
+        "expected.txt",
+        source,
+        observed,
+        expected,
+    );
 
     let manifest = make_manifest(vec![make_asset_record(
         "expired-001",
@@ -700,7 +756,10 @@ fn runner_expired_waiver_still_fails() {
     let runner = ConformanceRunner::default();
     let result = runner.run(&manifest_path, &waivers).unwrap();
 
-    assert_eq!(result.summary.failed, 1, "expired waiver should not prevent failure");
+    assert_eq!(
+        result.summary.failed, 1,
+        "expired waiver should not prevent failure"
+    );
     assert_eq!(result.summary.waived, 0);
 }
 
@@ -709,14 +768,32 @@ fn runner_multiple_assets_mixed_results() {
     let dir = temp_dir("runner_mixed");
 
     // Asset 1: passes
-    let (fh1, eh1) =
-        write_fixture_pair(&dir, "fix1.json", "exp1.txt", "x=1", "result: 1", "result: 1");
+    let (fh1, eh1) = write_fixture_pair(
+        &dir,
+        "fix1.json",
+        "exp1.txt",
+        "x=1",
+        "result: 1",
+        "result: 1",
+    );
     // Asset 2: fails
-    let (fh2, eh2) =
-        write_fixture_pair(&dir, "fix2.json", "exp2.txt", "x=2", "result: 99", "result: 2");
+    let (fh2, eh2) = write_fixture_pair(
+        &dir,
+        "fix2.json",
+        "exp2.txt",
+        "x=2",
+        "result: 99",
+        "result: 2",
+    );
     // Asset 3: passes
-    let (fh3, eh3) =
-        write_fixture_pair(&dir, "fix3.json", "exp3.txt", "x=3", "result: 3", "result: 3");
+    let (fh3, eh3) = write_fixture_pair(
+        &dir,
+        "fix3.json",
+        "exp3.txt",
+        "x=3",
+        "result: 3",
+        "result: 3",
+    );
 
     let manifest = make_manifest(vec![
         make_asset_record("mix-001", "fix1.json", &fh1, "exp1.txt", &eh1),
@@ -744,7 +821,9 @@ fn runner_multiple_assets_mixed_results() {
 fn runner_same_seed_produces_same_run_id() {
     let dir = temp_dir("runner_determinism");
     let (fh, eh) = write_fixture_pair(&dir, "fix.json", "exp.txt", "x=1", "r:1", "r:1");
-    let manifest = make_manifest(vec![make_asset_record("det-001", "fix.json", &fh, "exp.txt", &eh)]);
+    let manifest = make_manifest(vec![make_asset_record(
+        "det-001", "fix.json", &fh, "exp.txt", &eh,
+    )]);
     let manifest_path = dir.join("manifest.json");
     fs::write(&manifest_path, serde_json::to_string(&manifest).unwrap()).unwrap();
 
@@ -753,7 +832,10 @@ fn runner_same_seed_produces_same_run_id() {
     let r1 = runner.run(&manifest_path, &waivers).unwrap();
     let r2 = runner.run(&manifest_path, &waivers).unwrap();
 
-    assert_eq!(r1.run_id, r2.run_id, "same config+manifest should produce same run_id");
+    assert_eq!(
+        r1.run_id, r2.run_id,
+        "same config+manifest should produce same run_id"
+    );
     assert_eq!(
         r1.asset_manifest_hash, r2.asset_manifest_hash,
         "manifest hash should be deterministic"
@@ -767,7 +849,9 @@ fn evidence_collector_creates_run_manifest() {
     let dir = temp_dir("collector_pass");
     let fixture_dir = temp_dir("collector_pass_fixtures");
     let (fh, eh) = write_fixture_pair(&fixture_dir, "fix.json", "exp.txt", "x=1", "r:1", "r:1");
-    let manifest = make_manifest(vec![make_asset_record("coll-001", "fix.json", &fh, "exp.txt", &eh)]);
+    let manifest = make_manifest(vec![make_asset_record(
+        "coll-001", "fix.json", &fh, "exp.txt", &eh,
+    )]);
     let manifest_path = fixture_dir.join("manifest.json");
     fs::write(&manifest_path, serde_json::to_string(&manifest).unwrap()).unwrap();
 
@@ -778,7 +862,10 @@ fn evidence_collector_creates_run_manifest() {
     let collector = ConformanceEvidenceCollector::new(&dir).unwrap();
     let artifacts = collector.collect(&result).unwrap();
 
-    assert!(artifacts.run_manifest_path.exists(), "run manifest should be written");
+    assert!(
+        artifacts.run_manifest_path.exists(),
+        "run manifest should be written"
+    );
     assert!(
         artifacts.conformance_evidence_path.exists(),
         "conformance evidence JSONL should be written"
@@ -790,7 +877,13 @@ fn evidence_collector_creates_minimized_repros_for_failures() {
     let dir = temp_dir("collector_fail");
     let fixture_dir = temp_dir("collector_fail_fixtures");
     let (fh, eh) = write_fixture_pair(&fixture_dir, "fix.json", "exp.txt", "x=1", "r:2", "r:1");
-    let manifest = make_manifest(vec![make_asset_record("coll-fail-001", "fix.json", &fh, "exp.txt", &eh)]);
+    let manifest = make_manifest(vec![make_asset_record(
+        "coll-fail-001",
+        "fix.json",
+        &fh,
+        "exp.txt",
+        &eh,
+    )]);
     let manifest_path = fixture_dir.join("manifest.json");
     fs::write(&manifest_path, serde_json::to_string(&manifest).unwrap()).unwrap();
 
@@ -801,7 +894,10 @@ fn evidence_collector_creates_minimized_repros_for_failures() {
     let collector = ConformanceEvidenceCollector::new(&dir).unwrap();
     let artifacts = collector.collect(&result).unwrap();
 
-    assert!(!artifacts.minimized_repro_paths.is_empty(), "should have repro artifacts");
+    assert!(
+        !artifacts.minimized_repro_paths.is_empty(),
+        "should have repro artifacts"
+    );
     assert!(
         artifacts.minimized_repro_index_path.is_some(),
         "should have repro index"
@@ -1173,7 +1269,13 @@ fn donor_fixture_serde_round_trip() {
 fn repro_artifact_verify_replay_succeeds_for_valid_artifact() {
     let dir = temp_dir("replay_valid");
     let (fh, eh) = write_fixture_pair(&dir, "fix.json", "exp.txt", "x=1", "r:2", "r:1");
-    let manifest = make_manifest(vec![make_asset_record("replay-001", "fix.json", &fh, "exp.txt", &eh)]);
+    let manifest = make_manifest(vec![make_asset_record(
+        "replay-001",
+        "fix.json",
+        &fh,
+        "exp.txt",
+        &eh,
+    )]);
     let manifest_path = dir.join("manifest.json");
     fs::write(&manifest_path, serde_json::to_string(&manifest).unwrap()).unwrap();
 
@@ -1281,7 +1383,10 @@ fn canonicalize_only_whitespace_returns_empty() {
 #[test]
 fn delta_classification_empty_vs_nonempty() {
     let deltas = classify_conformance_delta("", "hello");
-    assert!(!deltas.is_empty(), "should detect difference between empty and non-empty");
+    assert!(
+        !deltas.is_empty(),
+        "should detect difference between empty and non-empty"
+    );
 }
 
 #[test]
@@ -1295,7 +1400,12 @@ fn delta_classification_handles_props_with_empty_fields() {
 #[test]
 fn ifc_all_source_labels_validate() {
     // Verify all valid source labels are accepted
-    for label in ["credential", "key_material", "privileged_env", "policy_protected"] {
+    for label in [
+        "credential",
+        "key_material",
+        "privileged_env",
+        "policy_protected",
+    ] {
         let record = ConformanceAssetRecord {
             asset_id: "validate-label".to_string(),
             source_donor: "ifc".to_string(),
@@ -1440,7 +1550,14 @@ fn evidence_collector_produces_ifc_evidence_for_ifc_assets() {
     let dir = temp_dir("collector_ifc");
     let fixture_dir = temp_dir("collector_ifc_fixtures");
     let output = "outcome:allow evidence:none";
-    let (fh, eh) = write_fixture_pair(&fixture_dir, "fix.json", "exp.txt", "safe code", output, output);
+    let (fh, eh) = write_fixture_pair(
+        &fixture_dir,
+        "fix.json",
+        "exp.txt",
+        "safe code",
+        output,
+        output,
+    );
 
     let manifest = make_manifest(vec![make_ifc_asset_record(&IfcAssetInput {
         id: "ifc-coll-001",

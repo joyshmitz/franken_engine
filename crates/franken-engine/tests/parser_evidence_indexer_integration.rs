@@ -16,9 +16,9 @@
 
 use frankenengine_engine::parser_evidence_indexer::{
     AppliedSchemaMigration, CorrelatedRegression, CorrelationKey, EvidenceIndexerError,
-    IndexedParserEvent, ParserEvidenceIndex, ParserEvidenceIndexBuilder, ParserRunArtifactRef,
-    SchemaMigrationBoundary, SchemaMigrationStep, SchemaVersionTag,
-    PARSER_EVIDENCE_INDEX_SCHEMA_V1,
+    IndexedParserEvent, PARSER_EVIDENCE_INDEX_SCHEMA_V1, ParserEvidenceIndex,
+    ParserEvidenceIndexBuilder, ParserRunArtifactRef, SchemaMigrationBoundary, SchemaMigrationStep,
+    SchemaVersionTag,
 };
 
 // ---------------------------------------------------------------------------
@@ -61,7 +61,6 @@ fn event_jsonl_with_error(
         r#"{{"schema_version":"{schema}","trace_id":"{trace}","decision_id":"d-{trace}","policy_id":"pol","component":"{component}","event":"{event}","outcome":"{outcome}","error_code":"{error_code}"}}"#,
     )
 }
-
 
 fn event_jsonl_full(
     schema: &str,
@@ -353,7 +352,10 @@ fn builder_duplicate_run_id_rejected() {
 fn builder_events_for_unknown_run_rejected() {
     let mut builder = ParserEvidenceIndexBuilder::new();
     let err = builder
-        .add_events_jsonl("ghost-run", &event_jsonl("ns.event.v1", "t", "c", "e", "pass"))
+        .add_events_jsonl(
+            "ghost-run",
+            &event_jsonl("ns.event.v1", "t", "c", "e", "pass"),
+        )
         .unwrap_err();
     assert!(matches!(err, EvidenceIndexerError::UnknownRunId(id) if id == "ghost-run"));
 }
@@ -388,7 +390,10 @@ fn builder_events_missing_required_field() {
     // Missing trace_id
     let jsonl = r#"{"schema_version":"ns.event.v1","decision_id":"d","policy_id":"p","component":"c","event":"e","outcome":"pass"}"#;
     let err = builder.add_events_jsonl("run-a", jsonl).unwrap_err();
-    assert!(matches!(err, EvidenceIndexerError::MissingField("trace_id")));
+    assert!(matches!(
+        err,
+        EvidenceIndexerError::MissingField("trace_id")
+    ));
 }
 
 #[test]
@@ -417,10 +422,16 @@ fn builder_events_sorted_by_run_id_then_sequence() {
     add_run(&mut builder, "run-b", "ns.run.v1");
     add_run(&mut builder, "run-a", "ns.run.v1");
     builder
-        .add_events_jsonl("run-b", &event_jsonl("ns.event.v1", "tb", "comp", "ev", "pass"))
+        .add_events_jsonl(
+            "run-b",
+            &event_jsonl("ns.event.v1", "tb", "comp", "ev", "pass"),
+        )
         .unwrap();
     builder
-        .add_events_jsonl("run-a", &event_jsonl("ns.event.v1", "ta", "comp", "ev", "pass"))
+        .add_events_jsonl(
+            "run-a",
+            &event_jsonl("ns.event.v1", "ta", "comp", "ev", "pass"),
+        )
         .unwrap();
     let index = builder.build();
     assert_eq!(index.events[0].run_id, "run-a");
@@ -432,10 +443,16 @@ fn builder_sequence_increments_across_multiple_add_events_calls() {
     let mut builder = ParserEvidenceIndexBuilder::new();
     add_run(&mut builder, "run-a", "ns.run.v1");
     builder
-        .add_events_jsonl("run-a", &event_jsonl("ns.event.v1", "t1", "c", "e1", "pass"))
+        .add_events_jsonl(
+            "run-a",
+            &event_jsonl("ns.event.v1", "t1", "c", "e1", "pass"),
+        )
         .unwrap();
     builder
-        .add_events_jsonl("run-a", &event_jsonl("ns.event.v1", "t2", "c", "e2", "pass"))
+        .add_events_jsonl(
+            "run-a",
+            &event_jsonl("ns.event.v1", "t2", "c", "e2", "pass"),
+        )
         .unwrap();
     let index = builder.build();
     assert_eq!(index.events.len(), 2);
@@ -631,8 +648,16 @@ fn correlate_regressions_collects_replay_commands() {
     let clusters = index.correlate_regressions();
     assert_eq!(clusters.len(), 1);
     assert_eq!(clusters[0].replay_commands.len(), 2);
-    assert!(clusters[0].replay_commands.contains(&"replay-run-a".to_string()));
-    assert!(clusters[0].replay_commands.contains(&"replay-run-b".to_string()));
+    assert!(
+        clusters[0]
+            .replay_commands
+            .contains(&"replay-run-a".to_string())
+    );
+    assert!(
+        clusters[0]
+            .replay_commands
+            .contains(&"replay-run-b".to_string())
+    );
 }
 
 #[test]
@@ -671,9 +696,27 @@ fn correlate_regressions_sorted_by_occurrence_count_desc() {
         // 2 occurrences of failure-A, 1 of failure-B per run
         let batch = format!(
             "{}\n{}\n{}",
-            event_jsonl("ns.event.v1", &format!("t1-{run_id}"), "comp-a", "fail-a", "fail"),
-            event_jsonl("ns.event.v1", &format!("t2-{run_id}"), "comp-a", "fail-a", "fail"),
-            event_jsonl("ns.event.v1", &format!("t3-{run_id}"), "comp-b", "fail-b", "fail"),
+            event_jsonl(
+                "ns.event.v1",
+                &format!("t1-{run_id}"),
+                "comp-a",
+                "fail-a",
+                "fail"
+            ),
+            event_jsonl(
+                "ns.event.v1",
+                &format!("t2-{run_id}"),
+                "comp-a",
+                "fail-a",
+                "fail"
+            ),
+            event_jsonl(
+                "ns.event.v1",
+                &format!("t3-{run_id}"),
+                "comp-b",
+                "fail-b",
+                "fail"
+            ),
         );
         builder.add_events_jsonl(run_id, &batch).unwrap();
     }
@@ -735,7 +778,9 @@ fn validate_schema_compatibility_accepts_same_version() {
         .add_events_jsonl("run-a", &event_jsonl("ns.event.v2", "t", "c", "e", "pass"))
         .unwrap();
     let index = builder.build();
-    index.validate_event_schema_compatibility("ns.event.v2").unwrap();
+    index
+        .validate_event_schema_compatibility("ns.event.v2")
+        .unwrap();
 }
 
 #[test]
@@ -747,7 +792,9 @@ fn validate_schema_compatibility_accepts_older_version() {
         .unwrap();
     let index = builder.build();
     // v1 is compatible with target v3 (older version, can migrate)
-    index.validate_event_schema_compatibility("ns.event.v3").unwrap();
+    index
+        .validate_event_schema_compatibility("ns.event.v3")
+        .unwrap();
 }
 
 #[test]
@@ -769,7 +816,10 @@ fn validate_schema_compatibility_rejects_different_family() {
     let mut builder = ParserEvidenceIndexBuilder::new();
     add_run(&mut builder, "run-a", "ns.run.v1");
     builder
-        .add_events_jsonl("run-a", &event_jsonl("family-a.event.v1", "t", "c", "e", "pass"))
+        .add_events_jsonl(
+            "run-a",
+            &event_jsonl("family-a.event.v1", "t", "c", "e", "pass"),
+        )
         .unwrap();
     let index = builder.build();
     let err = index
@@ -785,7 +835,9 @@ fn validate_schema_compatibility_rejects_different_family() {
 fn validate_schema_compatibility_empty_index_succeeds() {
     let builder = ParserEvidenceIndexBuilder::new();
     let index = builder.build();
-    index.validate_event_schema_compatibility("ns.event.v1").unwrap();
+    index
+        .validate_event_schema_compatibility("ns.event.v1")
+        .unwrap();
 }
 
 // ---------------------------------------------------------------------------
@@ -813,7 +865,12 @@ fn migrate_single_step() {
     assert_eq!(receipts.len(), 1);
     assert_eq!(receipts[0].migration_id, "mig-v1-v2");
     assert_eq!(receipts[0].affected_records, 1);
-    assert!(index.events.iter().all(|e| e.schema_version == "ns.event.v2"));
+    assert!(
+        index
+            .events
+            .iter()
+            .all(|e| e.schema_version == "ns.event.v2")
+    );
 }
 
 #[test]
@@ -840,7 +897,12 @@ fn migrate_multi_hop() {
     assert_eq!(receipts.len(), 2);
     assert_eq!(receipts[0].migration_id, "mig-1-2");
     assert_eq!(receipts[1].migration_id, "mig-2-3");
-    assert!(index.events.iter().all(|e| e.schema_version == "ns.event.v3"));
+    assert!(
+        index
+            .events
+            .iter()
+            .all(|e| e.schema_version == "ns.event.v3")
+    );
 }
 
 #[test]
@@ -939,7 +1001,12 @@ fn migrate_mixed_versions_partial_application() {
         .unwrap();
     assert_eq!(receipts.len(), 1);
     assert_eq!(receipts[0].affected_records, 1);
-    assert!(index.events.iter().all(|e| e.schema_version == "ns.event.v2"));
+    assert!(
+        index
+            .events
+            .iter()
+            .all(|e| e.schema_version == "ns.event.v2")
+    );
 }
 
 #[test]
@@ -1235,7 +1302,13 @@ fn e2e_multi_run_index_build_correlate_migrate() {
         add_run(&mut builder, run_id, "ns.run.v1");
         let batch = format!(
             "{}\n{}\n{}",
-            event_jsonl("ns.event.v1", &format!("pass-{run_id}"), "gate", "check", "pass"),
+            event_jsonl(
+                "ns.event.v1",
+                &format!("pass-{run_id}"),
+                "gate",
+                "check",
+                "pass"
+            ),
             event_jsonl_with_error(
                 "ns.event.v1",
                 &format!("fail-{run_id}"),
@@ -1244,7 +1317,13 @@ fn e2e_multi_run_index_build_correlate_migrate() {
                 "fail",
                 "E-DRIFT"
             ),
-            event_jsonl("ns.event.v1", &format!("warn-{run_id}"), "validator", "timeout", "warn"),
+            event_jsonl(
+                "ns.event.v1",
+                &format!("warn-{run_id}"),
+                "validator",
+                "timeout",
+                "warn"
+            ),
         );
         builder.add_events_jsonl(run_id, &batch).unwrap();
     }
@@ -1284,10 +1363,12 @@ fn e2e_multi_run_index_build_correlate_migrate() {
         .unwrap();
     assert_eq!(receipts.len(), 1);
     assert_eq!(receipts[0].affected_records, 9);
-    assert!(index
-        .events
-        .iter()
-        .all(|e| e.schema_version == "ns.event.v2"));
+    assert!(
+        index
+            .events
+            .iter()
+            .all(|e| e.schema_version == "ns.event.v2")
+    );
 }
 
 #[test]
@@ -1302,7 +1383,10 @@ fn e2e_index_serde_preserves_all_data() {
     );
     builder.add_events_jsonl("run-a", &batch_a).unwrap();
     builder
-        .add_events_jsonl("run-b", &event_jsonl("ns.event.v1", "t1b", "c1", "e1", "pass"))
+        .add_events_jsonl(
+            "run-b",
+            &event_jsonl("ns.event.v1", "t1b", "c1", "e1", "pass"),
+        )
         .unwrap();
 
     let index = builder.build();

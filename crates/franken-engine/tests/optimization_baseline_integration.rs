@@ -578,8 +578,7 @@ fn bench_result_metadata() {
     let mut r = BenchmarkResult::new("bench-meta", env);
     r.metadata
         .insert("commit".to_string(), "abc123".to_string());
-    r.metadata
-        .insert("branch".to_string(), "main".to_string());
+    r.metadata.insert("branch".to_string(), "main".to_string());
     assert_eq!(r.metadata.len(), 2);
     assert_eq!(r.metadata.get("commit").unwrap(), "abc123");
 }
@@ -607,7 +606,10 @@ fn bench_result_serde_roundtrip_full() {
             total_allocations: 100,
             total_deallocations: 100,
         });
-    r.add_profile(ProfileArtifact::new(ProfileKind::CpuFlamegraph, "bench-serde"));
+    r.add_profile(ProfileArtifact::new(
+        ProfileKind::CpuFlamegraph,
+        "bench-serde",
+    ));
     r.metadata.insert("key".to_string(), "val".to_string());
     let json = serde_json::to_string(&r).unwrap();
     let back: BenchmarkResult = serde_json::from_str(&json).unwrap();
@@ -754,7 +756,7 @@ fn baseline_comparison_overall_regression() {
 fn baseline_comparison_overall_neutral_tie() {
     let t = default_threshold();
     let mut bc = BaselineComparison::new("b", "c");
-    bc.add_comparison(compare_metric("m1", 1000, 800, &t));  // improvement
+    bc.add_comparison(compare_metric("m1", 1000, 800, &t)); // improvement
     bc.add_comparison(compare_metric("m2", 1000, 1300, &t)); // regression
     assert_eq!(bc.overall_direction, ComparisonDirection::Neutral);
     assert_eq!(bc.improvement_count(), 1);
@@ -874,17 +876,47 @@ fn matrix_new_empty() {
 #[test]
 fn matrix_add_and_count() {
     let mut m = OpportunityMatrix::new("m1");
-    m.add(make_opportunity("a", 100_000, 1, 1, OpportunityStatus::Identified));
-    m.add(make_opportunity("b", 200_000, 2, 1, OpportunityStatus::Approved));
+    m.add(make_opportunity(
+        "a",
+        100_000,
+        1,
+        1,
+        OpportunityStatus::Identified,
+    ));
+    m.add(make_opportunity(
+        "b",
+        200_000,
+        2,
+        1,
+        OpportunityStatus::Approved,
+    ));
     assert_eq!(m.opportunities.len(), 2);
 }
 
 #[test]
 fn matrix_ranked_descending_score() {
     let mut m = OpportunityMatrix::new("ranked");
-    m.add(make_opportunity("low", 100_000, 3, 3, OpportunityStatus::Identified));   // score = 11_111
-    m.add(make_opportunity("high", 900_000, 1, 1, OpportunityStatus::Identified));  // score = 900_000
-    m.add(make_opportunity("mid", 500_000, 2, 1, OpportunityStatus::Identified));   // score = 250_000
+    m.add(make_opportunity(
+        "low",
+        100_000,
+        3,
+        3,
+        OpportunityStatus::Identified,
+    )); // score = 11_111
+    m.add(make_opportunity(
+        "high",
+        900_000,
+        1,
+        1,
+        OpportunityStatus::Identified,
+    )); // score = 900_000
+    m.add(make_opportunity(
+        "mid",
+        500_000,
+        2,
+        1,
+        OpportunityStatus::Identified,
+    )); // score = 250_000
     let ranked = m.ranked();
     assert_eq!(ranked[0].id, "high");
     assert_eq!(ranked[1].id, "mid");
@@ -912,7 +944,13 @@ fn matrix_top_n_returns_correct_count() {
 #[test]
 fn matrix_top_n_exceeds_count() {
     let mut m = OpportunityMatrix::new("small");
-    m.add(make_opportunity("only", 100_000, 1, 1, OpportunityStatus::Identified));
+    m.add(make_opportunity(
+        "only",
+        100_000,
+        1,
+        1,
+        OpportunityStatus::Identified,
+    ));
     let top10 = m.top_n(10);
     assert_eq!(top10.len(), 1);
 }
@@ -920,10 +958,34 @@ fn matrix_top_n_exceeds_count() {
 #[test]
 fn matrix_by_status_filters() {
     let mut m = OpportunityMatrix::new("filter");
-    m.add(make_opportunity("a", 100_000, 1, 1, OpportunityStatus::Identified));
-    m.add(make_opportunity("b", 200_000, 1, 1, OpportunityStatus::Approved));
-    m.add(make_opportunity("c", 300_000, 1, 1, OpportunityStatus::Approved));
-    m.add(make_opportunity("d", 400_000, 1, 1, OpportunityStatus::Rejected));
+    m.add(make_opportunity(
+        "a",
+        100_000,
+        1,
+        1,
+        OpportunityStatus::Identified,
+    ));
+    m.add(make_opportunity(
+        "b",
+        200_000,
+        1,
+        1,
+        OpportunityStatus::Approved,
+    ));
+    m.add(make_opportunity(
+        "c",
+        300_000,
+        1,
+        1,
+        OpportunityStatus::Approved,
+    ));
+    m.add(make_opportunity(
+        "d",
+        400_000,
+        1,
+        1,
+        OpportunityStatus::Rejected,
+    ));
 
     assert_eq!(m.by_status(OpportunityStatus::Approved).len(), 2);
     assert_eq!(m.by_status(OpportunityStatus::Identified).len(), 1);
@@ -934,16 +996,40 @@ fn matrix_by_status_filters() {
 #[test]
 fn matrix_approved_impact_sum() {
     let mut m = OpportunityMatrix::new("impact");
-    m.add(make_opportunity("a", 300_000, 1, 1, OpportunityStatus::Approved));
-    m.add(make_opportunity("b", 200_000, 1, 1, OpportunityStatus::Approved));
-    m.add(make_opportunity("c", 500_000, 1, 1, OpportunityStatus::Identified)); // not approved
+    m.add(make_opportunity(
+        "a",
+        300_000,
+        1,
+        1,
+        OpportunityStatus::Approved,
+    ));
+    m.add(make_opportunity(
+        "b",
+        200_000,
+        1,
+        1,
+        OpportunityStatus::Approved,
+    ));
+    m.add(make_opportunity(
+        "c",
+        500_000,
+        1,
+        1,
+        OpportunityStatus::Identified,
+    )); // not approved
     assert_eq!(m.approved_impact_millionths(), 500_000);
 }
 
 #[test]
 fn matrix_approved_impact_none_approved() {
     let mut m = OpportunityMatrix::new("no-approved");
-    m.add(make_opportunity("a", 300_000, 1, 1, OpportunityStatus::Identified));
+    m.add(make_opportunity(
+        "a",
+        300_000,
+        1,
+        1,
+        OpportunityStatus::Identified,
+    ));
     assert_eq!(m.approved_impact_millionths(), 0);
 }
 
@@ -958,7 +1044,13 @@ fn matrix_derive_id_deterministic() {
 fn matrix_derive_id_changes_with_size() {
     let mut m = OpportunityMatrix::new("m-size");
     let id_empty = m.derive_id();
-    m.add(make_opportunity("x", 100_000, 1, 1, OpportunityStatus::Identified));
+    m.add(make_opportunity(
+        "x",
+        100_000,
+        1,
+        1,
+        OpportunityStatus::Identified,
+    ));
     let id_one = m.derive_id();
     assert_ne!(id_empty, id_one);
 }
@@ -966,8 +1058,20 @@ fn matrix_derive_id_changes_with_size() {
 #[test]
 fn matrix_serde_roundtrip() {
     let mut m = OpportunityMatrix::new("m-serde");
-    m.add(make_opportunity("a", 100_000, 1, 1, OpportunityStatus::Identified));
-    m.add(make_opportunity("b", 200_000, 2, 2, OpportunityStatus::Approved));
+    m.add(make_opportunity(
+        "a",
+        100_000,
+        1,
+        1,
+        OpportunityStatus::Identified,
+    ));
+    m.add(make_opportunity(
+        "b",
+        200_000,
+        2,
+        2,
+        OpportunityStatus::Approved,
+    ));
     let json = serde_json::to_string(&m).unwrap();
     let back: OpportunityMatrix = serde_json::from_str(&json).unwrap();
     assert_eq!(m, back);
@@ -1005,10 +1109,7 @@ fn registry_register_and_get() {
 fn registry_register_overwrites_same_id() {
     let mut reg = BaselineRegistry::new();
     let env = make_env("e1");
-    reg.register(
-        BenchmarkResult::new("b1", env.clone())
-            .with_memory(MemorySnapshot::empty()),
-    );
+    reg.register(BenchmarkResult::new("b1", env.clone()).with_memory(MemorySnapshot::empty()));
     reg.register(BenchmarkResult::new("b1", env));
     assert_eq!(reg.count(), 1);
     // Second registration should have overwritten: no memory
@@ -1098,8 +1199,7 @@ fn registry_compare_no_overlapping_metrics() {
         .with_latency(PercentileStats::from_samples(&samples).unwrap());
     reg.register(baseline);
     // Candidate with only memory (no latency overlap)
-    let candidate =
-        BenchmarkResult::new("b-mem", env).with_memory(MemorySnapshot::empty());
+    let candidate = BenchmarkResult::new("b-mem", env).with_memory(MemorySnapshot::empty());
     let cmp = reg.compare("b-lat", &candidate).unwrap();
     // No latency overlap (candidate has no latency), no throughput, no memory overlap
     assert_eq!(cmp.comparisons.len(), 0);
@@ -1186,14 +1286,12 @@ fn e2e_full_optimization_pipeline() {
             total_deallocations: 50_000,
         });
     baseline.add_profile(
-        ProfileArtifact::new(ProfileKind::CpuFlamegraph, "parser-flush-v1").with_hotspot(
-            Hotspot {
-                symbol: "Parser::flush_dirty".to_string(),
-                percentage_millionths: 420_000,
-                samples: 4200,
-                module_path: "parser_core".to_string(),
-            },
-        ),
+        ProfileArtifact::new(ProfileKind::CpuFlamegraph, "parser-flush-v1").with_hotspot(Hotspot {
+            symbol: "Parser::flush_dirty".to_string(),
+            percentage_millionths: 420_000,
+            samples: 4200,
+            module_path: "parser_core".to_string(),
+        }),
     );
 
     // Step 4: Register baseline
@@ -1243,7 +1341,10 @@ fn e2e_full_optimization_pipeline() {
 
     // Step 7: Compare
     let comparison = registry.compare("parser-flush-v1", &candidate).unwrap();
-    assert!(comparison.improvement_count() > 0, "expected at least one improvement");
+    assert!(
+        comparison.improvement_count() > 0,
+        "expected at least one improvement"
+    );
 
     // Validate serde of the whole comparison
     let json = serde_json::to_string(&comparison).unwrap();

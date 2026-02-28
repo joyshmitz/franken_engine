@@ -368,8 +368,7 @@ fn integrate_allows_with_complete_signed_inputs() {
 #[test]
 fn integrate_happy_path_signed_evidence_links_non_empty() {
     let input = baseline_input(10_000);
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
 
     assert!(!decision.signed_evidence_links.is_empty());
     // Each source with signed artifacts should produce links for each gate category
@@ -380,14 +379,10 @@ fn integrate_happy_path_signed_evidence_links_non_empty() {
 #[test]
 fn integrate_happy_path_quality_summary_aggregate_score() {
     let input = baseline_input(10_000);
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
 
     // All scores 980k => aggregate = (980k*30 + 980k*30 + 980k*20 + 980k*10 + 980k*10)/100 = 980k
-    assert_eq!(
-        decision.quality_summary.aggregate_score_millionths,
-        980_000
-    );
+    assert_eq!(decision.quality_summary.aggregate_score_millionths, 980_000);
     assert_eq!(
         decision.quality_summary.unit_depth_score_millionths,
         980_000
@@ -413,8 +408,7 @@ fn integrate_happy_path_quality_summary_aggregate_score() {
 #[test]
 fn integrate_happy_path_queue_risk_millionths() {
     let input = baseline_input(10_000);
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
 
     // queue_risk = clamp(1_000_000 - 980_000) = 20_000
     assert_eq!(decision.queue_risk_millionths, 20_000);
@@ -423,8 +417,7 @@ fn integrate_happy_path_queue_risk_millionths() {
 #[test]
 fn integrate_happy_path_no_blockers() {
     let input = baseline_input(10_000);
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
     assert!(decision.blockers.is_empty());
 }
 
@@ -436,8 +429,7 @@ fn integrate_fails_closed_when_one_source_missing() {
     input
         .signals
         .retain(|s| s.source != EvidenceSource::TestLoggingSchema);
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
 
     assert!(!decision.allows_promotion());
     assert_eq!(decision.outcome, "deny");
@@ -445,18 +437,19 @@ fn integrate_fails_closed_when_one_source_missing() {
         decision.error_code,
         Some(TEST_EVIDENCE_INTEGRATOR_FAILURE_CODE.to_string())
     );
-    assert!(decision
-        .blockers
-        .iter()
-        .any(|f| f.message.contains("missing required signal")));
+    assert!(
+        decision
+            .blockers
+            .iter()
+            .any(|f| f.message.contains("missing required signal"))
+    );
 }
 
 #[test]
 fn integrate_fails_closed_when_all_sources_missing() {
     let mut input = baseline_input(20_000);
     input.signals.clear();
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
 
     assert!(!decision.allows_promotion());
     // Should have at least 5 missing-required blockers + 1 aggregate-below threshold
@@ -467,17 +460,20 @@ fn integrate_fails_closed_when_all_sources_missing() {
 fn integrate_fails_on_duplicate_signal() {
     let mut input = baseline_input(20_000);
     // Add a duplicate UnitDepthGate signal
-    input
-        .signals
-        .push(baseline_signal(EvidenceSource::UnitDepthGate, 980_000, 20_000));
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    input.signals.push(baseline_signal(
+        EvidenceSource::UnitDepthGate,
+        980_000,
+        20_000,
+    ));
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
 
     assert!(!decision.allows_promotion());
-    assert!(decision
-        .blockers
-        .iter()
-        .any(|f| f.message.contains("duplicate evidence signal")));
+    assert!(
+        decision
+            .blockers
+            .iter()
+            .any(|f| f.message.contains("duplicate evidence signal"))
+    );
 }
 
 // ── Section 9: integrate — validation failures ───────────────────────────
@@ -486,56 +482,60 @@ fn integrate_fails_on_duplicate_signal() {
 fn integrate_rejects_negative_score() {
     let mut input = baseline_input(30_000);
     input.signals[0].score_millionths = -1;
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
 
     assert!(!decision.allows_promotion());
-    assert!(decision
-        .blockers
-        .iter()
-        .any(|f| f.message.contains("out of range")));
+    assert!(
+        decision
+            .blockers
+            .iter()
+            .any(|f| f.message.contains("out of range"))
+    );
 }
 
 #[test]
 fn integrate_rejects_score_over_million() {
     let mut input = baseline_input(30_000);
     input.signals[0].score_millionths = 1_000_001;
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
 
     assert!(!decision.allows_promotion());
-    assert!(decision
-        .blockers
-        .iter()
-        .any(|f| f.message.contains("out of range")));
+    assert!(
+        decision
+            .blockers
+            .iter()
+            .any(|f| f.message.contains("out of range"))
+    );
 }
 
 #[test]
 fn integrate_rejects_empty_evidence_refs() {
     let mut input = baseline_input(30_000);
     input.signals[0].evidence_refs.clear();
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
 
     assert!(!decision.allows_promotion());
-    assert!(decision
-        .blockers
-        .iter()
-        .any(|f| f.message.contains("missing evidence_refs")));
+    assert!(
+        decision
+            .blockers
+            .iter()
+            .any(|f| f.message.contains("missing evidence_refs"))
+    );
 }
 
 #[test]
 fn integrate_rejects_empty_artifact_links() {
     let mut input = baseline_input(30_000);
     input.signals[0].artifact_links.clear();
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
 
     assert!(!decision.allows_promotion());
-    assert!(decision
-        .blockers
-        .iter()
-        .any(|f| f.message.contains("missing artifact links")));
+    assert!(
+        decision
+            .blockers
+            .iter()
+            .any(|f| f.message.contains("missing artifact links"))
+    );
 }
 
 #[test]
@@ -549,10 +549,12 @@ fn integrate_rejects_old_schema_major() {
     let decision = integrate_milestone_release_test_evidence(&input, &policy);
 
     assert!(!decision.allows_promotion());
-    assert!(decision
-        .blockers
-        .iter()
-        .any(|f| f.message.contains("schema_major")));
+    assert!(
+        decision
+            .blockers
+            .iter()
+            .any(|f| f.message.contains("schema_major"))
+    );
 }
 
 #[test]
@@ -560,14 +562,15 @@ fn integrate_rejects_future_collected_at() {
     let now_ns = 30_000u64;
     let mut input = baseline_input(now_ns);
     input.signals[0].collected_at_ns = now_ns + 1000;
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
 
     assert!(!decision.allows_promotion());
-    assert!(decision
-        .blockers
-        .iter()
-        .any(|f| f.message.contains("in the future")));
+    assert!(
+        decision
+            .blockers
+            .iter()
+            .any(|f| f.message.contains("in the future"))
+    );
 }
 
 #[test]
@@ -577,14 +580,15 @@ fn integrate_rejects_stale_signal() {
     // Make the first signal very old
     input.signals[0].collected_at_ns = 1;
     input.signals[0].artifact_links[0].generated_at_ns = 1;
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
 
     assert!(!decision.allows_promotion());
-    assert!(decision
-        .blockers
-        .iter()
-        .any(|f| f.message.contains("signal stale")));
+    assert!(
+        decision
+            .blockers
+            .iter()
+            .any(|f| f.message.contains("signal stale"))
+    );
 }
 
 #[test]
@@ -592,14 +596,15 @@ fn integrate_rejects_unsigned_artifact_when_policy_requires_signed() {
     let now_ns = 30_000u64;
     let mut input = baseline_input(now_ns);
     input.signals[0].artifact_links = vec![unsigned_artifact("test", now_ns)];
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
 
     assert!(!decision.allows_promotion());
-    assert!(decision
-        .blockers
-        .iter()
-        .any(|f| f.message.contains("not signed")));
+    assert!(
+        decision
+            .blockers
+            .iter()
+            .any(|f| f.message.contains("not signed"))
+    );
 }
 
 #[test]
@@ -624,14 +629,15 @@ fn integrate_rejects_artifact_missing_signer() {
     let now_ns = 30_000u64;
     let mut input = baseline_input(now_ns);
     input.signals[0].artifact_links[0].signer = None;
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
 
     assert!(!decision.allows_promotion());
-    assert!(decision
-        .blockers
-        .iter()
-        .any(|f| f.message.contains("missing signer")));
+    assert!(
+        decision
+            .blockers
+            .iter()
+            .any(|f| f.message.contains("missing signer"))
+    );
 }
 
 #[test]
@@ -639,14 +645,15 @@ fn integrate_rejects_artifact_missing_signature_ref() {
     let now_ns = 30_000u64;
     let mut input = baseline_input(now_ns);
     input.signals[0].artifact_links[0].signature_ref = None;
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
 
     assert!(!decision.allows_promotion());
-    assert!(decision
-        .blockers
-        .iter()
-        .any(|f| f.message.contains("missing signature_ref")));
+    assert!(
+        decision
+            .blockers
+            .iter()
+            .any(|f| f.message.contains("missing signature_ref"))
+    );
 }
 
 #[test]
@@ -654,14 +661,15 @@ fn integrate_rejects_artifact_empty_artifact_id() {
     let now_ns = 30_000u64;
     let mut input = baseline_input(now_ns);
     input.signals[0].artifact_links[0].artifact_id = "  ".to_string();
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
 
     assert!(!decision.allows_promotion());
-    assert!(decision
-        .blockers
-        .iter()
-        .any(|f| f.message.contains("missing artifact_id")));
+    assert!(
+        decision
+            .blockers
+            .iter()
+            .any(|f| f.message.contains("missing artifact_id"))
+    );
 }
 
 #[test]
@@ -669,14 +677,15 @@ fn integrate_rejects_artifact_empty_path() {
     let now_ns = 30_000u64;
     let mut input = baseline_input(now_ns);
     input.signals[0].artifact_links[0].path = "".to_string();
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
 
     assert!(!decision.allows_promotion());
-    assert!(decision
-        .blockers
-        .iter()
-        .any(|f| f.message.contains("missing path")));
+    assert!(
+        decision
+            .blockers
+            .iter()
+            .any(|f| f.message.contains("missing path"))
+    );
 }
 
 #[test]
@@ -684,14 +693,15 @@ fn integrate_rejects_artifact_empty_sha256() {
     let now_ns = 30_000u64;
     let mut input = baseline_input(now_ns);
     input.signals[0].artifact_links[0].sha256 = "".to_string();
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
 
     assert!(!decision.allows_promotion());
-    assert!(decision
-        .blockers
-        .iter()
-        .any(|f| f.message.contains("missing sha256")));
+    assert!(
+        decision
+            .blockers
+            .iter()
+            .any(|f| f.message.contains("missing sha256"))
+    );
 }
 
 #[test]
@@ -699,14 +709,15 @@ fn integrate_rejects_artifact_future_generated_at() {
     let now_ns = 30_000u64;
     let mut input = baseline_input(now_ns);
     input.signals[0].artifact_links[0].generated_at_ns = now_ns + 5000;
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
 
     assert!(!decision.allows_promotion());
-    assert!(decision
-        .blockers
-        .iter()
-        .any(|f| f.message.contains("generated_at_ns is in the future")));
+    assert!(
+        decision
+            .blockers
+            .iter()
+            .any(|f| f.message.contains("generated_at_ns is in the future"))
+    );
 }
 
 #[test]
@@ -714,14 +725,15 @@ fn integrate_rejects_stale_artifact() {
     let now_ns = 100_000_000_000_000u64;
     let mut input = baseline_input(now_ns);
     input.signals[0].artifact_links[0].generated_at_ns = 1;
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
 
     assert!(!decision.allows_promotion());
-    assert!(decision
-        .blockers
-        .iter()
-        .any(|f| f.message.contains("artifact") && f.message.contains("stale")));
+    assert!(
+        decision
+            .blockers
+            .iter()
+            .any(|f| f.message.contains("artifact") && f.message.contains("stale"))
+    );
 }
 
 #[test]
@@ -735,10 +747,12 @@ fn integrate_rejects_artifact_old_schema_major() {
     let decision = integrate_milestone_release_test_evidence(&input, &policy);
     assert!(!decision.allows_promotion());
     // Both signal and artifact have schema_major=1 < min=2
-    assert!(decision
-        .blockers
-        .iter()
-        .any(|f| f.message.contains("schema_major")));
+    assert!(
+        decision
+            .blockers
+            .iter()
+            .any(|f| f.message.contains("schema_major"))
+    );
 }
 
 // ── Section 10: Flake burden validation ──────────────────────────────────
@@ -750,20 +764,19 @@ fn integrate_rejects_excessive_flake_burden() {
     // Find the flake signal and set a high burden
     for sig in &mut input.signals {
         if sig.source == EvidenceSource::FlakeQuarantineWorkflow {
-            sig.metadata.insert(
-                "flake_burden_millionths".to_string(),
-                "200000".to_string(),
-            );
+            sig.metadata
+                .insert("flake_burden_millionths".to_string(), "200000".to_string());
         }
     }
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
 
     assert!(!decision.allows_promotion());
-    assert!(decision
-        .blockers
-        .iter()
-        .any(|f| f.message.contains("flake burden")));
+    assert!(
+        decision
+            .blockers
+            .iter()
+            .any(|f| f.message.contains("flake burden"))
+    );
 }
 
 #[test]
@@ -778,14 +791,15 @@ fn integrate_rejects_invalid_flake_burden_value() {
             );
         }
     }
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
 
     assert!(!decision.allows_promotion());
-    assert!(decision
-        .blockers
-        .iter()
-        .any(|f| f.message.contains("invalid flake_burden_millionths")));
+    assert!(
+        decision
+            .blockers
+            .iter()
+            .any(|f| f.message.contains("invalid flake_burden_millionths"))
+    );
 }
 
 #[test]
@@ -794,14 +808,11 @@ fn integrate_accepts_flake_burden_at_max() {
     let mut input = baseline_input(now_ns);
     for sig in &mut input.signals {
         if sig.source == EvidenceSource::FlakeQuarantineWorkflow {
-            sig.metadata.insert(
-                "flake_burden_millionths".to_string(),
-                "120000".to_string(),
-            );
+            sig.metadata
+                .insert("flake_burden_millionths".to_string(), "120000".to_string());
         }
     }
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
     // At exactly the max, no flake burden finding
     assert!(
         !decision
@@ -822,15 +833,16 @@ fn integrate_denies_when_aggregate_below_cut_line_threshold() {
     for sig in &mut input.signals {
         sig.score_millionths = 900_000;
     }
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
 
     assert!(!decision.allows_promotion());
-    assert!(decision
-        .blockers
-        .iter()
-        .any(|f| f.message.contains("aggregate_score_millionths")
-            && f.message.contains("below cut-line")));
+    assert!(
+        decision
+            .blockers
+            .iter()
+            .any(|f| f.message.contains("aggregate_score_millionths")
+                && f.message.contains("below cut-line"))
+    );
 }
 
 #[test]
@@ -848,13 +860,9 @@ fn integrate_weighted_aggregate_calculation() {
     }
     // Use C0 threshold (900k) — 700k < 900k => deny
     input.cut_line = CutLine::C0;
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
 
-    assert_eq!(
-        decision.quality_summary.aggregate_score_millionths,
-        700_000
-    );
+    assert_eq!(decision.quality_summary.aggregate_score_millionths, 700_000);
     assert!(!decision.allows_promotion());
 }
 
@@ -875,8 +883,7 @@ fn integrate_computes_deltas_from_previous_summary() {
         delta_from_previous_millionths: BTreeMap::new(),
     });
 
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
     let deltas = &decision.quality_summary.delta_from_previous_millionths;
 
     assert!(deltas.contains_key("aggregate"));
@@ -895,8 +902,7 @@ fn integrate_computes_deltas_from_previous_summary() {
 #[test]
 fn integrate_no_deltas_when_no_previous_summary() {
     let input = baseline_input(10_000);
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
     assert!(
         decision
             .quality_summary
@@ -910,8 +916,7 @@ fn integrate_no_deltas_when_no_previous_summary() {
 #[test]
 fn decision_allows_promotion_true_for_allow() {
     let input = baseline_input(10_000);
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
     assert!(decision.allows_promotion());
 }
 
@@ -919,16 +924,14 @@ fn decision_allows_promotion_true_for_allow() {
 fn decision_allows_promotion_false_for_deny() {
     let mut input = baseline_input(10_000);
     input.signals.clear();
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
     assert!(!decision.allows_promotion());
 }
 
 #[test]
 fn decision_serde_roundtrip() {
     let input = baseline_input(10_000);
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
     let json = serde_json::to_string(&decision).unwrap();
     let back: TestEvidenceIntegrationDecision = serde_json::from_str(&json).unwrap();
     assert_eq!(back, decision);
@@ -939,8 +942,7 @@ fn decision_serde_roundtrip() {
 #[test]
 fn emit_events_produces_one_event() {
     let input = baseline_input(10_000);
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
     let events = emit_integration_events(&decision);
     assert_eq!(events.len(), 1);
 }
@@ -948,8 +950,7 @@ fn emit_events_produces_one_event() {
 #[test]
 fn emit_events_mirrors_decision_fields() {
     let input = baseline_input(10_000);
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
     let events = emit_integration_events(&decision);
     let ev = &events[0];
 
@@ -978,8 +979,7 @@ fn emit_events_mirrors_decision_fields() {
 fn emit_events_for_denied_decision() {
     let mut input = baseline_input(10_000);
     input.signals.clear();
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
     let events = emit_integration_events(&decision);
     let ev = &events[0];
 
@@ -994,8 +994,7 @@ fn emit_events_for_denied_decision() {
 #[test]
 fn event_serde_roundtrip() {
     let input = baseline_input(10_000);
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
     let events = emit_integration_events(&decision);
     let json = serde_json::to_string(&events[0]).unwrap();
     let back: TestEvidenceIntegratorEvent = serde_json::from_str(&json).unwrap();
@@ -1007,8 +1006,7 @@ fn event_serde_roundtrip() {
 #[test]
 fn cut_line_gate_inputs_include_all_expected_categories() {
     let input = baseline_input(30_000);
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
     let gates = to_cut_line_gate_inputs(&decision, &input.signals);
 
     let categories: BTreeSet<GateCategory> = gates.iter().map(|g| g.category).collect();
@@ -1024,8 +1022,7 @@ fn cut_line_gate_inputs_include_all_expected_categories() {
 #[test]
 fn cut_line_gate_inputs_count_matches_total_gate_categories() {
     let input = baseline_input(30_000);
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
     let gates = to_cut_line_gate_inputs(&decision, &input.signals);
 
     // UnitDepth=1, E2E=2, Logging=1, Flake=1, ProofCarrying=2 => 7
@@ -1037,22 +1034,23 @@ fn cut_line_gate_inputs_passed_false_when_blocked() {
     let mut input = baseline_input(30_000);
     // Make unit depth signal have a negative score to trigger a blocker
     input.signals[0].score_millionths = -1;
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
     let gates = to_cut_line_gate_inputs(&decision, &input.signals);
 
     let unit_gate = gates
         .iter()
         .find(|g| g.category == GateCategory::CompilerCorrectness)
         .unwrap();
-    assert!(!unit_gate.passed, "blocked signal should mark gate as not passed");
+    assert!(
+        !unit_gate.passed,
+        "blocked signal should mark gate as not passed"
+    );
 }
 
 #[test]
 fn cut_line_gate_inputs_metadata_includes_source() {
     let input = baseline_input(30_000);
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
     let gates = to_cut_line_gate_inputs(&decision, &input.signals);
 
     for gate in &gates {
@@ -1070,8 +1068,7 @@ fn cut_line_gate_inputs_evidence_refs_deduplicated() {
     // Add an evidence_ref that matches an artifact path
     let artifact_path = input.signals[0].artifact_links[0].path.clone();
     input.signals[0].evidence_refs.push(artifact_path);
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
     let gates = to_cut_line_gate_inputs(&decision, &input.signals);
 
     let unit_gate = gates
@@ -1092,8 +1089,7 @@ fn cut_line_gate_inputs_evidence_refs_deduplicated() {
 #[test]
 fn apply_checklist_marks_all_five_items_pass() {
     let input = baseline_input(40_000);
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
 
     let mut checklist = empty_checklist();
     apply_to_release_checklist(&mut checklist, &decision, &input.signals);
@@ -1110,8 +1106,7 @@ fn apply_checklist_marks_all_five_items_pass() {
 #[test]
 fn apply_checklist_items_sorted_by_id() {
     let input = baseline_input(40_000);
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
 
     let mut checklist = empty_checklist();
     apply_to_release_checklist(&mut checklist, &decision, &input.signals);
@@ -1129,8 +1124,7 @@ fn apply_checklist_marks_fail_when_source_blocked() {
     input
         .signals
         .retain(|s| s.source != EvidenceSource::UnitDepthGate);
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
 
     let mut checklist = empty_checklist();
     apply_to_release_checklist(&mut checklist, &decision, &input.signals);
@@ -1146,8 +1140,7 @@ fn apply_checklist_marks_fail_when_source_blocked() {
 #[test]
 fn apply_checklist_updates_existing_items() {
     let input = baseline_input(40_000);
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
 
     let mut checklist = empty_checklist();
     // Pre-populate with a stale item
@@ -1175,8 +1168,7 @@ fn apply_checklist_updates_existing_items() {
 #[test]
 fn apply_checklist_artifact_refs_include_signed_links() {
     let input = baseline_input(40_000);
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
 
     let mut checklist = empty_checklist();
     apply_to_release_checklist(&mut checklist, &decision, &input.signals);
@@ -1280,10 +1272,7 @@ fn integrate_all_scores_zero_still_produces_decision() {
     let decision = integrate_milestone_release_test_evidence(&input, &policy);
 
     // aggregate = 0, threshold = 0, so 0 >= 0 does not trigger blocker
-    assert_eq!(
-        decision.quality_summary.aggregate_score_millionths,
-        0
-    );
+    assert_eq!(decision.quality_summary.aggregate_score_millionths, 0);
     // queue_risk = clamp(1_000_000 - 0) = 1_000_000
     assert_eq!(decision.queue_risk_millionths, 1_000_000);
     assert!(decision.allows_promotion());
@@ -1296,8 +1285,7 @@ fn integrate_all_scores_million_max() {
     for sig in &mut input.signals {
         sig.score_millionths = 1_000_000;
     }
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
 
     assert_eq!(
         decision.quality_summary.aggregate_score_millionths,
@@ -1315,8 +1303,7 @@ fn integrate_c0_lower_threshold_allows_lower_scores() {
         sig.score_millionths = 910_000;
     }
     input.cut_line = CutLine::C0;
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
 
     // 910_000 >= 900_000 (C0 threshold) => no threshold blocker
     assert!(decision.allows_promotion());
@@ -1331,8 +1318,7 @@ fn integrate_multiple_artifact_links_per_signal() {
     second.artifact_id = "extra-artifact-2".to_string();
     input.signals[0].artifact_links.push(second);
 
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
     assert!(decision.allows_promotion());
 }
 
@@ -1346,8 +1332,7 @@ fn apply_checklist_with_signal_not_passed_marks_fail() {
             sig.passed = false;
         }
     }
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
 
     let mut checklist = empty_checklist();
     apply_to_release_checklist(&mut checklist, &decision, &input.signals);
@@ -1364,8 +1349,7 @@ fn apply_checklist_with_signal_not_passed_marks_fail() {
 fn cut_line_gate_inputs_with_no_signals_empty() {
     let mut input = baseline_input(30_000);
     input.signals.clear();
-    let decision =
-        integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
     let gates = to_cut_line_gate_inputs(&decision, &input.signals);
     assert!(gates.is_empty());
 }

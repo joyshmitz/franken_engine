@@ -524,7 +524,7 @@ fn decision_context_attack_regime_forces_safe() {
                 ctx.policy_bundle()
                     .lanes
                     .first()
-                    .map_or(false, |l| *l == *lane)
+                    .is_some_and(|l| *l == *lane)
             );
         }
         _ => {} // FallbackSafe is also acceptable
@@ -545,7 +545,7 @@ fn decision_context_safe_mode_forces_safe_lane() {
                 ctx.policy_bundle()
                     .lanes
                     .first()
-                    .map_or(false, |l| *l == *lane)
+                    .is_some_and(|l| *l == *lane)
             );
         }
         _ => {} // FallbackSafe also acceptable

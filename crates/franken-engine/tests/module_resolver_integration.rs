@@ -53,7 +53,10 @@ fn import_style_as_str_values() {
 fn module_source_kind_as_str_values() {
     assert_eq!(ModuleSourceKind::BuiltIn.as_str(), "builtin");
     assert_eq!(ModuleSourceKind::Workspace.as_str(), "workspace");
-    assert_eq!(ModuleSourceKind::ExternalRegistry.as_str(), "external_registry");
+    assert_eq!(
+        ModuleSourceKind::ExternalRegistry.as_str(),
+        "external_registry"
+    );
 }
 
 // -----------------------------------------------------------------------
@@ -98,8 +101,14 @@ fn module_definition_builder_chain() {
     assert_eq!(def.syntax, ModuleSyntax::EsModule);
     assert_eq!(def.dependencies.len(), 1);
     assert_eq!(def.dependencies[0].specifier, "x");
-    assert!(def.required_capabilities.contains(&RuntimeCapability::FsRead));
-    assert!(def.required_capabilities.contains(&RuntimeCapability::NetworkEgress));
+    assert!(
+        def.required_capabilities
+            .contains(&RuntimeCapability::FsRead)
+    );
+    assert!(
+        def.required_capabilities
+            .contains(&RuntimeCapability::NetworkEgress)
+    );
     assert_eq!(def.provenance_origin, "test:origin");
 }
 
@@ -220,8 +229,10 @@ fn builtin_resolves_with_deterministic_hash() {
 fn builtin_has_priority_over_workspace_and_external() {
     let mut r = DeterministicModuleResolver::new("/app");
     r.register_builtin("shared", esm("builtin")).unwrap();
-    r.register_workspace_module("/app/shared", esm("workspace")).unwrap();
-    r.register_external_module("shared", cjs("external")).unwrap();
+    r.register_workspace_module("/app/shared", esm("workspace"))
+        .unwrap();
+    r.register_external_module("shared", cjs("external"))
+        .unwrap();
 
     let req = ModuleRequest::new("shared", ImportStyle::Import);
     let outcome = r.resolve(&req, &ctx(), &AllowAllPolicy).unwrap();
@@ -231,8 +242,10 @@ fn builtin_has_priority_over_workspace_and_external() {
 #[test]
 fn duplicate_builtin_registration_overwrites() {
     let mut r = DeterministicModuleResolver::new("/app");
-    r.register_builtin("franken:util", esm("export const v = 1;")).unwrap();
-    r.register_builtin("franken:util", esm("export const v = 2;")).unwrap();
+    r.register_builtin("franken:util", esm("export const v = 1;"))
+        .unwrap();
+    r.register_builtin("franken:util", esm("export const v = 2;"))
+        .unwrap();
 
     let req = ModuleRequest::new("franken:util", ImportStyle::Import);
     let outcome = r.resolve(&req, &ctx(), &AllowAllPolicy).unwrap();
@@ -257,8 +270,10 @@ fn absolute_specifier_resolves_workspace_module() {
 #[test]
 fn relative_specifier_resolves_with_referrer() {
     let mut r = DeterministicModuleResolver::new("/app");
-    r.register_workspace_module("/app/main.mjs", esm("import './lib';")).unwrap();
-    r.register_workspace_module("/app/lib.mjs", esm("export default 1;")).unwrap();
+    r.register_workspace_module("/app/main.mjs", esm("import './lib';"))
+        .unwrap();
+    r.register_workspace_module("/app/lib.mjs", esm("export default 1;"))
+        .unwrap();
 
     let req = ModuleRequest::new("./lib", ImportStyle::Import).with_referrer("/app/main.mjs");
     let outcome = r.resolve(&req, &ctx(), &AllowAllPolicy).unwrap();
@@ -268,7 +283,8 @@ fn relative_specifier_resolves_with_referrer() {
 #[test]
 fn bare_specifier_resolves_from_workspace_with_extension_probing() {
     let mut r = DeterministicModuleResolver::new("/app");
-    r.register_workspace_module("/app/utils.js", esm("export default 42;")).unwrap();
+    r.register_workspace_module("/app/utils.js", esm("export default 42;"))
+        .unwrap();
 
     let req = ModuleRequest::new("utils", ImportStyle::Import);
     let outcome = r.resolve(&req, &ctx(), &AllowAllPolicy).unwrap();
@@ -278,7 +294,8 @@ fn bare_specifier_resolves_from_workspace_with_extension_probing() {
 #[test]
 fn register_workspace_relative_path_normalizes_to_absolute() {
     let mut r = DeterministicModuleResolver::new("/workspace");
-    r.register_workspace_module("src/lib.js", esm("export default 1;")).unwrap();
+    r.register_workspace_module("src/lib.js", esm("export default 1;"))
+        .unwrap();
 
     let req = ModuleRequest::new("/workspace/src/lib.js", ImportStyle::Import);
     let outcome = r.resolve(&req, &ctx(), &AllowAllPolicy).unwrap();
@@ -292,8 +309,10 @@ fn register_workspace_relative_path_normalizes_to_absolute() {
 #[test]
 fn import_probes_mjs_then_js() {
     let mut r = DeterministicModuleResolver::new("/app");
-    r.register_workspace_module("/app/lib.mjs", esm("esm")).unwrap();
-    r.register_workspace_module("/app/lib.cjs", cjs("cjs")).unwrap();
+    r.register_workspace_module("/app/lib.mjs", esm("esm"))
+        .unwrap();
+    r.register_workspace_module("/app/lib.cjs", cjs("cjs"))
+        .unwrap();
 
     let req = ModuleRequest::new("./lib", ImportStyle::Import).with_referrer("/app/main.js");
     let outcome = r.resolve(&req, &ctx(), &AllowAllPolicy).unwrap();
@@ -303,8 +322,10 @@ fn import_probes_mjs_then_js() {
 #[test]
 fn require_probes_cjs_then_js() {
     let mut r = DeterministicModuleResolver::new("/app");
-    r.register_workspace_module("/app/lib.mjs", esm("esm")).unwrap();
-    r.register_workspace_module("/app/lib.cjs", cjs("cjs")).unwrap();
+    r.register_workspace_module("/app/lib.mjs", esm("esm"))
+        .unwrap();
+    r.register_workspace_module("/app/lib.cjs", cjs("cjs"))
+        .unwrap();
 
     let req = ModuleRequest::new("./lib", ImportStyle::Require).with_referrer("/app/main.js");
     let outcome = r.resolve(&req, &ctx(), &AllowAllPolicy).unwrap();
@@ -314,7 +335,8 @@ fn require_probes_cjs_then_js() {
 #[test]
 fn import_probes_index_mjs_for_directory() {
     let mut r = DeterministicModuleResolver::new("/app");
-    r.register_workspace_module("/app/lib/index.mjs", esm("export default 1;")).unwrap();
+    r.register_workspace_module("/app/lib/index.mjs", esm("export default 1;"))
+        .unwrap();
 
     let req = ModuleRequest::new("./lib", ImportStyle::Import).with_referrer("/app/main.js");
     let outcome = r.resolve(&req, &ctx(), &AllowAllPolicy).unwrap();
@@ -324,7 +346,8 @@ fn import_probes_index_mjs_for_directory() {
 #[test]
 fn require_probes_index_cjs_for_directory() {
     let mut r = DeterministicModuleResolver::new("/app");
-    r.register_workspace_module("/app/lib/index.cjs", cjs("module.exports = 1;")).unwrap();
+    r.register_workspace_module("/app/lib/index.cjs", cjs("module.exports = 1;"))
+        .unwrap();
 
     let req = ModuleRequest::new("./lib", ImportStyle::Require).with_referrer("/app/main.js");
     let outcome = r.resolve(&req, &ctx(), &AllowAllPolicy).unwrap();
@@ -335,7 +358,8 @@ fn require_probes_index_cjs_for_directory() {
 fn import_falls_through_to_js_extension() {
     let mut r = DeterministicModuleResolver::new("/app");
     // Only .js registered, no .mjs — should still resolve via fallback
-    r.register_workspace_module("/app/utils.js", esm("export default 1;")).unwrap();
+    r.register_workspace_module("/app/utils.js", esm("export default 1;"))
+        .unwrap();
 
     let req = ModuleRequest::new("./utils", ImportStyle::Import).with_referrer("/app/entry.js");
     let outcome = r.resolve(&req, &ctx(), &AllowAllPolicy).unwrap();
@@ -345,7 +369,8 @@ fn import_falls_through_to_js_extension() {
 #[test]
 fn require_falls_through_to_js_extension() {
     let mut r = DeterministicModuleResolver::new("/app");
-    r.register_workspace_module("/app/utils.js", cjs("module.exports = 1;")).unwrap();
+    r.register_workspace_module("/app/utils.js", cjs("module.exports = 1;"))
+        .unwrap();
 
     let req = ModuleRequest::new("./utils", ImportStyle::Require).with_referrer("/app/entry.js");
     let outcome = r.resolve(&req, &ctx(), &AllowAllPolicy).unwrap();
@@ -367,16 +392,24 @@ fn external_resolution_preserves_provenance() {
 
     let req = ModuleRequest::new("left-pad", ImportStyle::Require);
     let outcome = r.resolve(&req, &ctx(), &AllowAllPolicy).unwrap();
-    assert_eq!(outcome.module.record.provenance.kind, ModuleSourceKind::ExternalRegistry);
-    assert_eq!(outcome.module.record.provenance.origin, "registry:npm:left-pad@1.3.0");
+    assert_eq!(
+        outcome.module.record.provenance.kind,
+        ModuleSourceKind::ExternalRegistry
+    );
+    assert_eq!(
+        outcome.module.record.provenance.origin,
+        "registry:npm:left-pad@1.3.0"
+    );
     assert_eq!(outcome.module.record.id, "external:left-pad");
 }
 
 #[test]
 fn external_has_priority_over_workspace_for_bare_specifier() {
     let mut r = DeterministicModuleResolver::new("/app");
-    r.register_external_module("lodash", cjs("external")).unwrap();
-    r.register_workspace_module("/app/lodash.js", esm("workspace")).unwrap();
+    r.register_external_module("lodash", cjs("external"))
+        .unwrap();
+    r.register_workspace_module("/app/lodash.js", esm("workspace"))
+        .unwrap();
 
     let req = ModuleRequest::new("lodash", ImportStyle::Import);
     let outcome = r.resolve(&req, &ctx(), &AllowAllPolicy).unwrap();
@@ -424,7 +457,8 @@ fn dotdot_relative_without_referrer_returns_invalid_referrer() {
 #[test]
 fn relative_from_builtin_referrer_returns_unsupported() {
     let mut r = DeterministicModuleResolver::new("/app");
-    r.register_builtin("franken:fs", esm("export const read = true;")).unwrap();
+    r.register_builtin("franken:fs", esm("export const read = true;"))
+        .unwrap();
 
     let req = ModuleRequest::new("./sub", ImportStyle::Import).with_referrer("builtin:franken:fs");
     let err = r.resolve(&req, &ctx(), &AllowAllPolicy).unwrap_err();
@@ -435,10 +469,10 @@ fn relative_from_builtin_referrer_returns_unsupported() {
 #[test]
 fn relative_from_external_referrer_returns_unsupported() {
     let mut r = DeterministicModuleResolver::new("/app");
-    r.register_external_module("ext-mod", esm("export default 1;")).unwrap();
+    r.register_external_module("ext-mod", esm("export default 1;"))
+        .unwrap();
 
-    let req =
-        ModuleRequest::new("./sub", ImportStyle::Import).with_referrer("external:ext-mod");
+    let req = ModuleRequest::new("./sub", ImportStyle::Import).with_referrer("external:ext-mod");
     let err = r.resolve(&req, &ctx(), &AllowAllPolicy).unwrap_err();
     assert_eq!(err.code, ResolutionErrorCode::UnsupportedSpecifier);
 }
@@ -455,7 +489,8 @@ fn unresolvable_bare_specifier_returns_module_not_found() {
 #[test]
 fn unresolvable_relative_specifier_returns_module_not_found() {
     let mut r = DeterministicModuleResolver::new("/app");
-    r.register_workspace_module("/app/main.js", esm("")).unwrap();
+    r.register_workspace_module("/app/main.js", esm(""))
+        .unwrap();
 
     let req = ModuleRequest::new("./missing", ImportStyle::Import).with_referrer("/app/main.js");
     let err = r.resolve(&req, &ctx(), &AllowAllPolicy).unwrap_err();
@@ -531,10 +566,10 @@ fn capability_policy_grants_multiple_caps() {
 #[test]
 fn capability_policy_deny_list_blocks_specifier() {
     let mut r = DeterministicModuleResolver::new("/app");
-    r.register_workspace_module("/app/blocked.js", esm("export default 1;")).unwrap();
+    r.register_workspace_module("/app/blocked.js", esm("export default 1;"))
+        .unwrap();
 
-    let policy =
-        CapabilityPolicyHook::new(BTreeSet::new()).deny_specifier("/app/blocked.js");
+    let policy = CapabilityPolicyHook::new(BTreeSet::new()).deny_specifier("/app/blocked.js");
     let req = ModuleRequest::new("/app/blocked.js", ImportStyle::Import);
     let err = r.resolve(&req, &ctx(), &policy).unwrap_err();
     assert_eq!(err.code, ResolutionErrorCode::PolicyDenied);
@@ -543,11 +578,11 @@ fn capability_policy_deny_list_blocks_specifier() {
 #[test]
 fn capability_policy_deny_list_blocks_by_module_id() {
     let mut r = DeterministicModuleResolver::new("/app");
-    r.register_builtin("franken:net", esm("export const net = true;")).unwrap();
+    r.register_builtin("franken:net", esm("export const net = true;"))
+        .unwrap();
 
     // Deny by module id (builtin:franken:net), not specifier
-    let policy =
-        CapabilityPolicyHook::new(BTreeSet::new()).deny_specifier("builtin:franken:net");
+    let policy = CapabilityPolicyHook::new(BTreeSet::new()).deny_specifier("builtin:franken:net");
     let req = ModuleRequest::new("franken:net", ImportStyle::Import);
     let err = r.resolve(&req, &ctx(), &policy).unwrap_err();
     assert_eq!(err.code, ResolutionErrorCode::PolicyDenied);
@@ -675,7 +710,8 @@ fn resolve_chain_traverses_dependencies() {
         esm("import './dep';").with_dependency(ModuleDependency::new("./dep", ImportStyle::Import)),
     )
     .unwrap();
-    r.register_workspace_module("/app/dep.js", esm("export default 1;")).unwrap();
+    r.register_workspace_module("/app/dep.js", esm("export default 1;"))
+        .unwrap();
 
     let req = ModuleRequest::new("/app/entry.js", ImportStyle::Import);
     let chain = r.resolve_chain(&req, &ctx(), &AllowAllPolicy).unwrap();
@@ -706,7 +742,8 @@ fn resolve_chain_handles_circular_dependencies() {
 #[test]
 fn resolve_chain_single_module_no_deps() {
     let mut r = DeterministicModuleResolver::new("/app");
-    r.register_workspace_module("/app/leaf.js", esm("export const x = 1;")).unwrap();
+    r.register_workspace_module("/app/leaf.js", esm("export const x = 1;"))
+        .unwrap();
 
     let req = ModuleRequest::new("/app/leaf.js", ImportStyle::Import);
     let chain = r.resolve_chain(&req, &ctx(), &AllowAllPolicy).unwrap();
@@ -749,7 +786,8 @@ fn resolve_chain_diamond_dependency() {
         esm("").with_dependency(ModuleDependency::new("./shared", ImportStyle::Import)),
     )
     .unwrap();
-    r.register_workspace_module("/app/shared.js", esm("")).unwrap();
+    r.register_workspace_module("/app/shared.js", esm(""))
+        .unwrap();
 
     let req = ModuleRequest::new("/app/entry.js", ImportStyle::Import);
     let chain = r.resolve_chain(&req, &ctx(), &AllowAllPolicy).unwrap();
@@ -779,7 +817,8 @@ fn resolve_chain_deep_linear() {
         esm("").with_dependency(ModuleDependency::new("./c", ImportStyle::Import)),
     )
     .unwrap();
-    r.register_workspace_module("/app/c.js", esm("leaf")).unwrap();
+    r.register_workspace_module("/app/c.js", esm("leaf"))
+        .unwrap();
 
     let req = ModuleRequest::new("/app/entry.js", ImportStyle::Import);
     let chain = r.resolve_chain(&req, &ctx(), &AllowAllPolicy).unwrap();
@@ -804,19 +843,32 @@ fn canonical_hash_determinism() {
     let o1 = r.resolve(&req, &ctx(), &AllowAllPolicy).unwrap();
     let o2 = r.resolve(&req, &ctx(), &AllowAllPolicy).unwrap();
     assert_eq!(o1.module.content_hash, o2.module.content_hash);
-    assert_eq!(o1.module.record.canonical_bytes(), o2.module.record.canonical_bytes());
+    assert_eq!(
+        o1.module.record.canonical_bytes(),
+        o2.module.record.canonical_bytes()
+    );
 }
 
 #[test]
 fn different_sources_yield_different_hashes() {
     let mut r = DeterministicModuleResolver::new("/app");
-    r.register_workspace_module("/app/a.js", esm("source A")).unwrap();
-    r.register_workspace_module("/app/b.js", esm("source B")).unwrap();
+    r.register_workspace_module("/app/a.js", esm("source A"))
+        .unwrap();
+    r.register_workspace_module("/app/b.js", esm("source B"))
+        .unwrap();
 
     let req_a = ModuleRequest::new("/app/a.js", ImportStyle::Import);
     let req_b = ModuleRequest::new("/app/b.js", ImportStyle::Import);
-    let h_a = r.resolve(&req_a, &ctx(), &AllowAllPolicy).unwrap().module.content_hash;
-    let h_b = r.resolve(&req_b, &ctx(), &AllowAllPolicy).unwrap().module.content_hash;
+    let h_a = r
+        .resolve(&req_a, &ctx(), &AllowAllPolicy)
+        .unwrap()
+        .module
+        .content_hash;
+    let h_b = r
+        .resolve(&req_b, &ctx(), &AllowAllPolicy)
+        .unwrap()
+        .module
+        .content_hash;
     assert_ne!(h_a, h_b);
 }
 
@@ -935,9 +987,12 @@ fn capability_policy_hook_serde_round_trip() {
 #[test]
 fn deterministic_module_resolver_serde_round_trip() {
     let mut r = DeterministicModuleResolver::new("/app");
-    r.register_builtin("franken:fs", esm("export const read = true;")).unwrap();
-    r.register_workspace_module("/app/lib.js", esm("export default 1;")).unwrap();
-    r.register_external_module("lodash", cjs("module.exports = {};")).unwrap();
+    r.register_builtin("franken:fs", esm("export const read = true;"))
+        .unwrap();
+    r.register_workspace_module("/app/lib.js", esm("export default 1;"))
+        .unwrap();
+    r.register_external_module("lodash", cjs("module.exports = {};"))
+        .unwrap();
 
     let json = serde_json::to_string(&r).unwrap();
     let restored: DeterministicModuleResolver = serde_json::from_str(&json).unwrap();
@@ -1013,8 +1068,10 @@ fn end_to_end_mixed_module_chain() {
 
     assert_eq!(chain.len(), 3);
     // Verify all three provenance kinds present
-    let kinds: BTreeSet<ModuleSourceKind> =
-        chain.iter().map(|o| o.module.record.provenance.kind).collect();
+    let kinds: BTreeSet<ModuleSourceKind> = chain
+        .iter()
+        .map(|o| o.module.record.provenance.kind)
+        .collect();
     assert!(kinds.contains(&ModuleSourceKind::Workspace));
     assert!(kinds.contains(&ModuleSourceKind::BuiltIn));
     assert!(kinds.contains(&ModuleSourceKind::ExternalRegistry));

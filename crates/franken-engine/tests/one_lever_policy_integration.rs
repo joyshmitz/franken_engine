@@ -9,11 +9,11 @@
 use std::collections::BTreeSet;
 
 use frankenengine_engine::one_lever_policy::{
-    evaluate_one_lever_policy, LeverCategory, OneLeverEvidenceRefs, OneLeverPolicyDecision,
-    OneLeverPolicyEvent, OneLeverPolicyRequest, PathLeverClassification,
     ERROR_INVALID_REQUEST, ERROR_MISSING_EVIDENCE, ERROR_MULTI_LEVER_VIOLATION,
-    ERROR_SCORE_BELOW_THRESHOLD, ONE_LEVER_POLICY_COMPONENT,
-    ONE_LEVER_POLICY_SCHEMA_VERSION, ONE_LEVER_SCORE_THRESHOLD_MILLIONTHS,
+    ERROR_SCORE_BELOW_THRESHOLD, LeverCategory, ONE_LEVER_POLICY_COMPONENT,
+    ONE_LEVER_POLICY_SCHEMA_VERSION, ONE_LEVER_SCORE_THRESHOLD_MILLIONTHS, OneLeverEvidenceRefs,
+    OneLeverPolicyDecision, OneLeverPolicyEvent, OneLeverPolicyRequest, PathLeverClassification,
+    evaluate_one_lever_policy,
 };
 
 // ---------------------------------------------------------------------------
@@ -53,9 +53,7 @@ fn single_lever_request(score: i64) -> OneLeverPolicyRequest {
         policy_id: "p-integ".to_string(),
         commit_sha: "abc123".to_string(),
         commit_message: "perf: optimize interpreter".to_string(),
-        changed_paths: vec![
-            "crates/franken-engine/src/baseline_interpreter.rs".to_string(),
-        ],
+        changed_paths: vec!["crates/franken-engine/src/baseline_interpreter.rs".to_string()],
         evidence: full_evidence(score),
     }
 }
@@ -482,9 +480,7 @@ fn non_optimization_docs_change_allowed() {
 #[test]
 fn non_optimization_test_file_allowed() {
     let mut req = non_opt_request();
-    req.changed_paths = vec![
-        "crates/franken-engine/tests/some_test.rs".to_string(),
-    ];
+    req.changed_paths = vec!["crates/franken-engine/tests/some_test.rs".to_string()];
     let d = evaluate_one_lever_policy(&req);
     assert!(d.allows_change());
     assert!(!d.optimization_change);
@@ -580,7 +576,10 @@ fn single_lever_missing_baseline_denied() {
     let d = evaluate_one_lever_policy(&req);
     assert!(!d.allows_change());
     assert_eq!(d.error_code.as_deref(), Some(ERROR_MISSING_EVIDENCE));
-    assert!(d.missing_requirements.contains(&"baseline_benchmark_run_id".to_string()));
+    assert!(
+        d.missing_requirements
+            .contains(&"baseline_benchmark_run_id".to_string())
+    );
 }
 
 #[test]
@@ -592,9 +591,18 @@ fn single_lever_missing_multiple_evidence_fields() {
     let d = evaluate_one_lever_policy(&req);
     assert!(!d.allows_change());
     assert_eq!(d.missing_requirements.len(), 3);
-    assert!(d.missing_requirements.contains(&"baseline_benchmark_run_id".to_string()));
-    assert!(d.missing_requirements.contains(&"delta_report_ref".to_string()));
-    assert!(d.missing_requirements.contains(&"semantic_equivalence_ref".to_string()));
+    assert!(
+        d.missing_requirements
+            .contains(&"baseline_benchmark_run_id".to_string())
+    );
+    assert!(
+        d.missing_requirements
+            .contains(&"delta_report_ref".to_string())
+    );
+    assert!(
+        d.missing_requirements
+            .contains(&"semantic_equivalence_ref".to_string())
+    );
 }
 
 #[test]
@@ -609,9 +617,7 @@ fn single_lever_missing_score_denied() {
 #[test]
 fn single_lever_all_evidence_missing_lists_all_requirements() {
     let mut req = non_opt_request();
-    req.changed_paths = vec![
-        "crates/franken-engine/src/baseline_interpreter.rs".to_string(),
-    ];
+    req.changed_paths = vec!["crates/franken-engine/src/baseline_interpreter.rs".to_string()];
     // No evidence at all for an optimization change
     let d = evaluate_one_lever_policy(&req);
     assert!(!d.allows_change());
@@ -661,10 +667,7 @@ fn multi_lever_override_case_insensitive() {
 
 #[test]
 fn multi_lever_empty_override_still_denied() {
-    let d = evaluate_one_lever_policy(&multi_lever_request(
-        5_000_000,
-        "perf: fix [multi-lever: ]",
-    ));
+    let d = evaluate_one_lever_policy(&multi_lever_request(5_000_000, "perf: fix [multi-lever: ]"));
     assert!(!d.allows_change());
     assert!(d.is_multi_lever);
     assert_eq!(d.error_code.as_deref(), Some(ERROR_MULTI_LEVER_VIOLATION));
@@ -689,9 +692,7 @@ fn multi_lever_categories_sorted() {
 #[test]
 fn classify_execution_paths() {
     let mut req = non_opt_request();
-    req.changed_paths = vec![
-        "crates/franken-engine/src/some_module.rs".to_string(),
-    ];
+    req.changed_paths = vec!["crates/franken-engine/src/some_module.rs".to_string()];
     req.evidence = full_evidence(3_000_000);
     let d = evaluate_one_lever_policy(&req);
     assert!(d.optimization_change);
@@ -812,7 +813,10 @@ fn normalization_whitespace_only_evidence_becomes_none() {
     let d = evaluate_one_lever_policy(&req);
     // The whitespace-only evidence is normalized to None, so it becomes missing
     assert!(!d.allows_change());
-    assert!(d.missing_requirements.contains(&"baseline_benchmark_run_id".to_string()));
+    assert!(
+        d.missing_requirements
+            .contains(&"baseline_benchmark_run_id".to_string())
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -872,7 +876,10 @@ fn decision_events_include_classification_for_opt_change() {
 #[test]
 fn decision_score_threshold_always_present() {
     let d = evaluate_one_lever_policy(&non_opt_request());
-    assert_eq!(d.score_threshold_millionths, ONE_LEVER_SCORE_THRESHOLD_MILLIONTHS);
+    assert_eq!(
+        d.score_threshold_millionths,
+        ONE_LEVER_SCORE_THRESHOLD_MILLIONTHS
+    );
 }
 
 #[test]
@@ -884,7 +891,11 @@ fn decision_lever_classification_sorted_by_path() {
         "docs/m.md".to_string(),
     ];
     let d = evaluate_one_lever_policy(&req);
-    let paths: Vec<&str> = d.lever_classification.iter().map(|c| c.path.as_str()).collect();
+    let paths: Vec<&str> = d
+        .lever_classification
+        .iter()
+        .map(|c| c.path.as_str())
+        .collect();
     let mut sorted_paths = paths.clone();
     sorted_paths.sort();
     assert_eq!(paths, sorted_paths);
@@ -910,7 +921,7 @@ fn full_determinism_for_identical_requests() {
 fn mixed_opt_and_non_opt_paths_is_optimization_change() {
     let mut req = non_opt_request();
     req.changed_paths = vec![
-        "docs/design.md".to_string(),                                    // exempt
+        "docs/design.md".to_string(), // exempt
         "crates/franken-engine/src/baseline_interpreter.rs".to_string(), // Execution
     ];
     req.evidence = full_evidence(3_000_000);
@@ -942,9 +953,7 @@ fn workflow_path_is_exempt() {
 #[test]
 fn extension_host_src_classified_as_execution() {
     let mut req = non_opt_request();
-    req.changed_paths = vec![
-        "crates/franken-extension-host/src/runtime.rs".to_string(),
-    ];
+    req.changed_paths = vec!["crates/franken-extension-host/src/runtime.rs".to_string()];
     req.evidence = full_evidence(3_000_000);
     let d = evaluate_one_lever_policy(&req);
     assert_eq!(d.lever_categories, vec![LeverCategory::Execution]);

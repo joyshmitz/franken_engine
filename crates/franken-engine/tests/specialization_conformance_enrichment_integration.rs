@@ -45,11 +45,7 @@ fn proof_input(tag: &str, ep: SecurityEpoch) -> ProofInput {
     }
 }
 
-fn inv_entry(
-    tag: &str,
-    ep: SecurityEpoch,
-    tt: TransformationType,
-) -> SpecializationInventoryEntry {
+fn inv_entry(tag: &str, ep: SecurityEpoch, tt: TransformationType) -> SpecializationInventoryEntry {
     SpecializationInventoryEntry {
         specialization_id: eid(&format!("spec-{tag}")),
         slot_id: format!("slot-{tag}"),
@@ -665,7 +661,8 @@ fn receipt_validation_result_valid_serde() {
         equivalence_hash_matches: true,
         rollback_validated: true,
         proof_inputs_consistent: true,
-        schema_version: frankenengine_engine::proof_specialization_receipt::ReceiptSchemaVersion::CURRENT,
+        schema_version:
+            frankenengine_engine::proof_specialization_receipt::ReceiptSchemaVersion::CURRENT,
         valid: true,
         failure_reasons: vec![],
     };
@@ -684,9 +681,13 @@ fn receipt_validation_result_invalid_serde() {
         equivalence_hash_matches: false,
         rollback_validated: false,
         proof_inputs_consistent: false,
-        schema_version: frankenengine_engine::proof_specialization_receipt::ReceiptSchemaVersion::CURRENT,
+        schema_version:
+            frankenengine_engine::proof_specialization_receipt::ReceiptSchemaVersion::CURRENT,
         valid: false,
-        failure_reasons: vec!["empty proof inputs".to_string(), "hash mismatch".to_string()],
+        failure_reasons: vec![
+            "empty proof inputs".to_string(),
+            "hash mismatch".to_string(),
+        ],
     };
     assert!(!rvr.is_valid());
     let json = serde_json::to_string(&rvr).unwrap();
@@ -714,7 +715,8 @@ fn per_specialization_verdict_passed_serde() {
             equivalence_hash_matches: true,
             rollback_validated: true,
             proof_inputs_consistent: true,
-            schema_version: frankenengine_engine::proof_specialization_receipt::ReceiptSchemaVersion::CURRENT,
+            schema_version:
+                frankenengine_engine::proof_specialization_receipt::ReceiptSchemaVersion::CURRENT,
             valid: true,
             failure_reasons: vec![],
         },
@@ -742,7 +744,8 @@ fn per_specialization_verdict_insufficient_coverage() {
             equivalence_hash_matches: true,
             rollback_validated: true,
             proof_inputs_consistent: true,
-            schema_version: frankenengine_engine::proof_specialization_receipt::ReceiptSchemaVersion::CURRENT,
+            schema_version:
+                frankenengine_engine::proof_specialization_receipt::ReceiptSchemaVersion::CURRENT,
             valid: true,
             failure_reasons: vec![],
         },
@@ -766,7 +769,8 @@ fn per_specialization_verdict_edge_case_insufficient() {
             equivalence_hash_matches: true,
             rollback_validated: true,
             proof_inputs_consistent: true,
-            schema_version: frankenengine_engine::proof_specialization_receipt::ReceiptSchemaVersion::CURRENT,
+            schema_version:
+                frankenengine_engine::proof_specialization_receipt::ReceiptSchemaVersion::CURRENT,
             valid: true,
             failure_reasons: vec![],
         },
@@ -790,7 +794,8 @@ fn per_specialization_verdict_epoch_insufficient() {
             equivalence_hash_matches: true,
             rollback_validated: true,
             proof_inputs_consistent: true,
-            schema_version: frankenengine_engine::proof_specialization_receipt::ReceiptSchemaVersion::CURRENT,
+            schema_version:
+                frankenengine_engine::proof_specialization_receipt::ReceiptSchemaVersion::CURRENT,
             valid: true,
             failure_reasons: vec![],
         },
@@ -837,12 +842,7 @@ fn conformance_evidence_artifact_to_jsonl_matches_serde() {
 fn conformance_evidence_artifact_is_passed() {
     let ep = epoch(5);
     let engine = SpecializationConformanceEngine::new("policy-pass", ep);
-    let artifact = engine.produce_evidence(
-        "pass-run",
-        ContentHash::compute(b"r"),
-        "env",
-        0,
-    );
+    let artifact = engine.produce_evidence("pass-run", ContentHash::compute(b"r"), "env", 0);
     assert!(artifact.is_passed());
     assert_eq!(artifact.failed_specialization_count(), 0);
 }
@@ -858,7 +858,13 @@ fn conformance_evidence_artifact_failed_count() {
     // Create a divergence
     let o1 = ok_outcome("a");
     let o2 = ok_outcome("b");
-    engine.compare_outcomes(&compare_input(&spec_id, "w1", CorpusCategory::SemanticParity, &o1, &o2));
+    engine.compare_outcomes(&compare_input(
+        &spec_id,
+        "w1",
+        CorpusCategory::SemanticParity,
+        &o1,
+        &o2,
+    ));
 
     let artifact = engine.produce_evidence("fc-run", ContentHash::compute(b"r"), "env", 0);
     assert!(!artifact.is_passed());
@@ -1001,10 +1007,8 @@ fn performance_delta_50_percent_speedup() {
 #[test]
 fn performance_delta_large_values() {
     // No overflow with large u64 values thanks to i128 intermediate
-    let pd = SpecializationConformanceEngine::compute_performance_delta(
-        1_000_000_000,
-        2_000_000_000,
-    );
+    let pd =
+        SpecializationConformanceEngine::compute_performance_delta(1_000_000_000, 2_000_000_000);
     // 50% speedup
     assert_eq!(pd.speedup_millionths, 500_000);
 }
@@ -1279,17 +1283,28 @@ fn engine_validate_corpus_partial_categories() {
 fn engine_registry_sync_multiple_missing() {
     let ep = epoch(5);
     let mut engine = SpecializationConformanceEngine::new("p", ep);
-    engine.register_specialization(inv_entry("a", ep, TransformationType::HostcallDispatchElision));
+    engine.register_specialization(inv_entry(
+        "a",
+        ep,
+        TransformationType::HostcallDispatchElision,
+    ));
     engine.register_specialization(inv_entry("b", ep, TransformationType::LabelCheckElision));
     engine.register_specialization(inv_entry("c", ep, TransformationType::PathRemoval));
 
     // Only register corpus for "a"
-    let key_a = format!("{}", inv_entry("a", ep, TransformationType::HostcallDispatchElision).specialization_id);
+    let key_a = format!(
+        "{}",
+        inv_entry("a", ep, TransformationType::HostcallDispatchElision).specialization_id
+    );
     engine.register_corpus(&key_a, full_corpus("a"));
 
     let errors = engine.check_registry_sync();
     assert_eq!(errors.len(), 2);
-    assert!(errors.iter().all(|e| matches!(e, ConformanceError::MissingCorpus { .. })));
+    assert!(
+        errors
+            .iter()
+            .all(|e| matches!(e, ConformanceError::MissingCorpus { .. }))
+    );
 }
 
 // ===========================================================================
@@ -1345,10 +1360,22 @@ fn engine_produce_evidence_mixed_specs() {
     let o_diff = ok_outcome("99");
 
     // OK spec — matching
-    engine.compare_outcomes(&compare_input(&spec_ok, "w1", CorpusCategory::SemanticParity, &o, &o));
+    engine.compare_outcomes(&compare_input(
+        &spec_ok,
+        "w1",
+        CorpusCategory::SemanticParity,
+        &o,
+        &o,
+    ));
 
     // BAD spec — diverging
-    engine.compare_outcomes(&compare_input(&spec_bad, "w2", CorpusCategory::SemanticParity, &o, &o_diff));
+    engine.compare_outcomes(&compare_input(
+        &spec_bad,
+        "w2",
+        CorpusCategory::SemanticParity,
+        &o,
+        &o_diff,
+    ));
 
     let artifact = engine.produce_evidence("mixed-run", ContentHash::compute(b"r"), "env", 0);
     assert!(!artifact.ci_gate_passed);
@@ -1380,10 +1407,22 @@ fn engine_produce_evidence_category_counts() {
 
     // 3 parity, 2 edge, 1 epoch
     for i in 0..3 {
-        engine.compare_outcomes(&compare_input(&spec_id, &format!("p{i}"), CorpusCategory::SemanticParity, &o, &o));
+        engine.compare_outcomes(&compare_input(
+            &spec_id,
+            &format!("p{i}"),
+            CorpusCategory::SemanticParity,
+            &o,
+            &o,
+        ));
     }
     for i in 0..2 {
-        engine.compare_outcomes(&compare_input(&spec_id, &format!("e{i}"), CorpusCategory::EdgeCase, &o, &o));
+        engine.compare_outcomes(&compare_input(
+            &spec_id,
+            &format!("e{i}"),
+            CorpusCategory::EdgeCase,
+            &o,
+            &o,
+        ));
     }
     engine.compare_outcomes(&CompareOutcomesInput {
         specialization_id: &spec_id,
@@ -1591,7 +1630,13 @@ fn e2e_three_epoch_progression() {
     let entry1 = inv_entry("e1", epoch(1), TransformationType::PathRemoval);
     let spec1 = entry1.specialization_id.clone();
     engine.register_specialization(entry1);
-    engine.compare_outcomes(&compare_input(&spec1, "w1", CorpusCategory::SemanticParity, &o, &o));
+    engine.compare_outcomes(&compare_input(
+        &spec1,
+        "w1",
+        CorpusCategory::SemanticParity,
+        &o,
+        &o,
+    ));
 
     // Transition 1→2
     let ev1 = engine.simulate_epoch_transition(&EpochTransitionSimulation {
@@ -1649,14 +1694,25 @@ fn engine_register_specialization_overwrites() {
     let entry_a = inv_entry("ow", ep, TransformationType::PathRemoval);
     let key = format!("{}", entry_a.specialization_id);
     engine.register_specialization(entry_a);
-    assert_eq!(engine.inventory().get(&key).unwrap().transformation_type, TransformationType::PathRemoval);
+    assert_eq!(
+        engine.inventory().get(&key).unwrap().transformation_type,
+        TransformationType::PathRemoval
+    );
 
     // Re-register with different transformation type
     let mut entry_b = inv_entry("ow", ep, TransformationType::SuperinstructionFusion);
     // Force same specialization_id
-    entry_b.specialization_id = engine.inventory().get(&key).unwrap().specialization_id.clone();
+    entry_b.specialization_id = engine
+        .inventory()
+        .get(&key)
+        .unwrap()
+        .specialization_id
+        .clone();
     engine.register_specialization(entry_b);
-    assert_eq!(engine.inventory().get(&key).unwrap().transformation_type, TransformationType::SuperinstructionFusion);
+    assert_eq!(
+        engine.inventory().get(&key).unwrap().transformation_type,
+        TransformationType::SuperinstructionFusion
+    );
     assert_eq!(engine.specialization_count(), 1);
 }
 

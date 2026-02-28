@@ -9,8 +9,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use frankenengine_engine::demo_claim_linkage_gate::{
     ClaimCategory, ClaimLinkageResult, DemoClaimLinkageGate, DemoSpecification, EvidenceKind,
-    EvidenceLink, ExpectedOutput, LinkageGateConfig, LinkageGateDecision, LinkageGateError,
-    LinkageVerdict, MilestoneClaim, VerificationCommand, LINKAGE_GATE_SCHEMA_VERSION,
+    EvidenceLink, ExpectedOutput, LINKAGE_GATE_SCHEMA_VERSION, LinkageGateConfig,
+    LinkageGateDecision, LinkageGateError, LinkageVerdict, MilestoneClaim, VerificationCommand,
 };
 use frankenengine_engine::hash_tiers::ContentHash;
 use frankenengine_engine::security_epoch::SecurityEpoch;
@@ -349,7 +349,12 @@ fn evidence_link_display() {
 
 #[test]
 fn milestone_claim_display_shows_counts() {
-    let claim = make_claim("c-perf", ClaimCategory::Performance, vec!["d1", "d2"], vec!["e1"]);
+    let claim = make_claim(
+        "c-perf",
+        ClaimCategory::Performance,
+        vec!["d1", "d2"],
+        vec!["e1"],
+    );
     let s = format!("{}", claim);
     assert!(s.contains("c-perf"));
     assert!(s.contains("performance"));
@@ -401,7 +406,10 @@ fn gate_new_rejects_negative_completeness() {
         ..Default::default()
     };
     let result = DemoClaimLinkageGate::new(config);
-    assert!(matches!(result, Err(LinkageGateError::InvalidConfig { .. })));
+    assert!(matches!(
+        result,
+        Err(LinkageGateError::InvalidConfig { .. })
+    ));
 }
 
 #[test]
@@ -411,7 +419,10 @@ fn gate_new_rejects_over_million_completeness() {
         ..Default::default()
     };
     let result = DemoClaimLinkageGate::new(config);
-    assert!(matches!(result, Err(LinkageGateError::InvalidConfig { .. })));
+    assert!(matches!(
+        result,
+        Err(LinkageGateError::InvalidConfig { .. })
+    ));
 }
 
 #[test]
@@ -448,12 +459,22 @@ fn evaluate_rejects_too_many_claims() {
     let mut gate = default_gate();
     let demo = make_demo("d1", true);
     let claims: Vec<_> = (0..257)
-        .map(|i| make_claim(&format!("c{}", i), ClaimCategory::Performance, vec!["d1"], vec!["e1"]))
+        .map(|i| {
+            make_claim(
+                &format!("c{}", i),
+                ClaimCategory::Performance,
+                vec!["d1"],
+                vec!["e1"],
+            )
+        })
         .collect();
     let err = gate.evaluate("m1", &claims, &[demo]).unwrap_err();
     assert!(matches!(
         err,
-        LinkageGateError::TooManyClaims { count: 257, max: 256 }
+        LinkageGateError::TooManyClaims {
+            count: 257,
+            max: 256
+        }
     ));
 }
 
@@ -476,7 +497,12 @@ fn evaluate_rejects_duplicate_claim_ids() {
 fn evaluate_rejects_duplicate_demo_ids() {
     let mut gate = default_gate();
     let demos = vec![make_demo("dup-d", true), make_demo("dup-d", false)];
-    let claims = vec![make_claim("c1", ClaimCategory::Correctness, vec!["dup-d"], vec!["e1"])];
+    let claims = vec![make_claim(
+        "c1",
+        ClaimCategory::Correctness,
+        vec!["dup-d"],
+        vec!["e1"],
+    )];
     let err = gate.evaluate("m1", &claims, &demos).unwrap_err();
     match err {
         LinkageGateError::DuplicateDemo { demo_id } => assert_eq!(demo_id, "dup-d"),
@@ -487,7 +513,12 @@ fn evaluate_rejects_duplicate_demo_ids() {
 #[test]
 fn evaluate_rejects_unknown_demo_reference() {
     let mut gate = default_gate();
-    let claims = vec![make_claim("c1", ClaimCategory::Security, vec!["ghost"], vec!["e1"])];
+    let claims = vec![make_claim(
+        "c1",
+        ClaimCategory::Security,
+        vec!["ghost"],
+        vec!["e1"],
+    )];
     let err = gate.evaluate("m1", &claims, &[]).unwrap_err();
     match err {
         LinkageGateError::UnknownDemo { claim_id, demo_id } => {
@@ -515,7 +546,11 @@ fn evaluate_rejects_too_many_evidence_links() {
     };
     let err = gate.evaluate("m1", &[claim], &[demo]).unwrap_err();
     match err {
-        LinkageGateError::TooManyEvidenceLinks { claim_id, count, max } => {
+        LinkageGateError::TooManyEvidenceLinks {
+            claim_id,
+            count,
+            max,
+        } => {
             assert_eq!(claim_id, "overloaded");
             assert_eq!(count, 65);
             assert_eq!(max, 64);
@@ -530,13 +565,23 @@ fn evaluate_rejects_too_many_verification_commands() {
     let mut demo = make_demo("big-demo", true);
     // Push until we exceed MAX_COMMANDS_PER_DEMO (32)
     for i in 0..33 {
-        demo.verification_commands.push(make_command(&format!("extra-{}", i)));
+        demo.verification_commands
+            .push(make_command(&format!("extra-{}", i)));
     }
     // demo already has 1 from make_demo + 33 extra = 34
-    let claims = vec![make_claim("c1", ClaimCategory::Correctness, vec!["big-demo"], vec!["e1"])];
+    let claims = vec![make_claim(
+        "c1",
+        ClaimCategory::Correctness,
+        vec!["big-demo"],
+        vec!["e1"],
+    )];
     let err = gate.evaluate("m1", &claims, &[demo]).unwrap_err();
     match err {
-        LinkageGateError::TooManyCommands { demo_id, count, max } => {
+        LinkageGateError::TooManyCommands {
+            demo_id,
+            count,
+            max,
+        } => {
             assert_eq!(demo_id, "big-demo");
             assert_eq!(count, 34); // 1 original + 33 extras
             assert_eq!(max, 32);
@@ -553,7 +598,12 @@ fn evaluate_rejects_too_many_verification_commands() {
 fn evaluate_single_fully_linked_claim_passes() {
     let mut gate = default_gate();
     let demos = vec![make_demo("d1", true)];
-    let claims = vec![make_claim("c1", ClaimCategory::Performance, vec!["d1"], vec!["e1"])];
+    let claims = vec![make_claim(
+        "c1",
+        ClaimCategory::Performance,
+        vec!["d1"],
+        vec!["e1"],
+    )];
     let decision = gate.evaluate("m1", &claims, &demos).unwrap();
     assert!(decision.is_pass());
     assert_eq!(decision.verdict, LinkageVerdict::Pass);
@@ -571,7 +621,12 @@ fn evaluate_multiple_fully_linked_claims_passes() {
     let claims = vec![
         make_claim("c1", ClaimCategory::Performance, vec!["d1"], vec!["e1"]),
         make_claim("c2", ClaimCategory::Security, vec!["d2"], vec!["e2"]),
-        make_claim("c3", ClaimCategory::Correctness, vec!["d1", "d2"], vec!["e3"]),
+        make_claim(
+            "c3",
+            ClaimCategory::Correctness,
+            vec!["d1", "d2"],
+            vec!["e3"],
+        ),
     ];
     let decision = gate.evaluate("milestone-alpha", &claims, &demos).unwrap();
     assert!(decision.is_pass());
@@ -587,7 +642,12 @@ fn evaluate_multiple_fully_linked_claims_passes() {
 fn evaluate_fails_when_missing_evidence() {
     let mut gate = default_gate();
     let demos = vec![make_demo("d1", true)];
-    let claims = vec![make_claim("c1", ClaimCategory::Performance, vec!["d1"], vec![])];
+    let claims = vec![make_claim(
+        "c1",
+        ClaimCategory::Performance,
+        vec!["d1"],
+        vec![],
+    )];
     let decision = gate.evaluate("m1", &claims, &demos).unwrap();
     assert!(!decision.is_pass());
     assert_eq!(decision.verdict, LinkageVerdict::Fail);
@@ -597,7 +657,12 @@ fn evaluate_fails_when_missing_evidence() {
 fn evaluate_fails_when_no_demo_references() {
     let mut gate = default_gate();
     let demos = vec![make_demo("d1", true)];
-    let claims = vec![make_claim("c1", ClaimCategory::Reliability, vec![], vec!["e1"])];
+    let claims = vec![make_claim(
+        "c1",
+        ClaimCategory::Reliability,
+        vec![],
+        vec!["e1"],
+    )];
     let decision = gate.evaluate("m1", &claims, &demos).unwrap();
     assert_eq!(decision.verdict, LinkageVerdict::Fail);
 }
@@ -606,7 +671,12 @@ fn evaluate_fails_when_no_demo_references() {
 fn evaluate_fails_when_demo_not_runnable() {
     let mut gate = default_gate();
     let demos = vec![make_demo("d-nr", false)];
-    let claims = vec![make_claim("c1", ClaimCategory::Performance, vec!["d-nr"], vec!["e1"])];
+    let claims = vec![make_claim(
+        "c1",
+        ClaimCategory::Performance,
+        vec!["d-nr"],
+        vec!["e1"],
+    )];
     let decision = gate.evaluate("m1", &claims, &demos).unwrap();
     assert_eq!(decision.verdict, LinkageVerdict::Fail);
 }
@@ -635,7 +705,12 @@ fn evaluate_mixed_claims_some_linked_some_not() {
 fn fully_linked_claim_has_million_completeness() {
     let mut gate = default_gate();
     let demos = vec![make_demo("d1", true)];
-    let claims = vec![make_claim("c1", ClaimCategory::Performance, vec!["d1"], vec!["e1"])];
+    let claims = vec![make_claim(
+        "c1",
+        ClaimCategory::Performance,
+        vec!["d1"],
+        vec!["e1"],
+    )];
     let decision = gate.evaluate("m1", &claims, &demos).unwrap();
     assert_eq!(decision.aggregate_completeness_millionths, MILLION);
     assert_eq!(decision.claim_results[0].completeness_millionths, MILLION);
@@ -646,7 +721,12 @@ fn missing_one_of_four_requirements_gives_750k_completeness() {
     let mut gate = default_gate();
     let demos = vec![make_demo("d1", true)];
     // Missing evidence => 3/4 = 750_000
-    let claims = vec![make_claim("c1", ClaimCategory::Performance, vec!["d1"], vec![])];
+    let claims = vec![make_claim(
+        "c1",
+        ClaimCategory::Performance,
+        vec!["d1"],
+        vec![],
+    )];
     let decision = gate.evaluate("m1", &claims, &demos).unwrap();
     assert_eq!(decision.claim_results[0].completeness_millionths, 750_000);
 }
@@ -689,7 +769,12 @@ fn linkage_rate_millionths_zero_total_claims() {
 fn evaluation_count_increments() {
     let mut gate = default_gate();
     let demos = vec![make_demo("d1", true)];
-    let claims = vec![make_claim("c1", ClaimCategory::Performance, vec!["d1"], vec!["e1"])];
+    let claims = vec![make_claim(
+        "c1",
+        ClaimCategory::Performance,
+        vec!["d1"],
+        vec!["e1"],
+    )];
     assert_eq!(gate.evaluation_count(), 0);
     let _ = gate.evaluate("m1", &claims, &demos);
     assert_eq!(gate.evaluation_count(), 1);
@@ -713,7 +798,12 @@ fn evaluation_count_does_not_increment_on_error() {
 fn decision_id_contains_milestone_and_epoch_and_count() {
     let mut gate = gate_with_epoch(42);
     let demos = vec![make_demo("d1", true)];
-    let claims = vec![make_claim("c1", ClaimCategory::Performance, vec!["d1"], vec!["e1"])];
+    let claims = vec![make_claim(
+        "c1",
+        ClaimCategory::Performance,
+        vec!["d1"],
+        vec!["e1"],
+    )];
     let decision = gate.evaluate("ms-99", &claims, &demos).unwrap();
     assert!(decision.decision_id.contains("ms-99"));
     assert!(decision.decision_id.contains("42"));
@@ -742,7 +832,12 @@ fn gate_passes_without_evidence_when_not_required() {
     };
     let mut gate = DemoClaimLinkageGate::new(config).unwrap();
     let demos = vec![make_demo("d1", true)];
-    let claims = vec![make_claim("c1", ClaimCategory::Performance, vec!["d1"], vec![])];
+    let claims = vec![make_claim(
+        "c1",
+        ClaimCategory::Performance,
+        vec!["d1"],
+        vec![],
+    )];
     let decision = gate.evaluate("m1", &claims, &demos).unwrap();
     assert!(decision.is_pass());
 }
@@ -756,7 +851,12 @@ fn gate_passes_without_runnable_demo_when_not_required() {
         ..Default::default()
     };
     let mut gate = DemoClaimLinkageGate::new(config).unwrap();
-    let claims = vec![make_claim("c1", ClaimCategory::Performance, vec![], vec!["e1"])];
+    let claims = vec![make_claim(
+        "c1",
+        ClaimCategory::Performance,
+        vec![],
+        vec!["e1"],
+    )];
     let decision = gate.evaluate("m1", &claims, &[]).unwrap();
     assert!(decision.is_pass());
 }
@@ -768,7 +868,12 @@ fn gate_passes_without_runnable_demo_when_not_required() {
 #[test]
 fn artifact_hash_is_deterministic() {
     let demos = vec![make_demo("d1", true)];
-    let claims = vec![make_claim("c1", ClaimCategory::Performance, vec!["d1"], vec!["e1"])];
+    let claims = vec![make_claim(
+        "c1",
+        ClaimCategory::Performance,
+        vec!["d1"],
+        vec!["e1"],
+    )];
 
     let mut g1 = default_gate();
     let d1 = g1.evaluate("m1", &claims, &demos).unwrap();
@@ -782,7 +887,12 @@ fn artifact_hash_is_deterministic() {
 #[test]
 fn artifact_hash_changes_with_different_milestone() {
     let demos = vec![make_demo("d1", true)];
-    let claims = vec![make_claim("c1", ClaimCategory::Performance, vec!["d1"], vec!["e1"])];
+    let claims = vec![make_claim(
+        "c1",
+        ClaimCategory::Performance,
+        vec!["d1"],
+        vec!["e1"],
+    )];
 
     let mut g1 = default_gate();
     let d1 = g1.evaluate("milestone-A", &claims, &demos).unwrap();
@@ -796,7 +906,12 @@ fn artifact_hash_changes_with_different_milestone() {
 #[test]
 fn artifact_hash_changes_with_different_epoch() {
     let demos = vec![make_demo("d1", true)];
-    let claims = vec![make_claim("c1", ClaimCategory::Performance, vec!["d1"], vec!["e1"])];
+    let claims = vec![make_claim(
+        "c1",
+        ClaimCategory::Performance,
+        vec!["d1"],
+        vec!["e1"],
+    )];
 
     let mut g1 = gate_with_epoch(1);
     let d1 = g1.evaluate("m1", &claims, &demos).unwrap();
@@ -815,7 +930,12 @@ fn artifact_hash_changes_with_different_epoch() {
 fn pass_rationale_mentions_all_claims() {
     let mut gate = default_gate();
     let demos = vec![make_demo("d1", true)];
-    let claims = vec![make_claim("c1", ClaimCategory::Performance, vec!["d1"], vec!["e1"])];
+    let claims = vec![make_claim(
+        "c1",
+        ClaimCategory::Performance,
+        vec!["d1"],
+        vec!["e1"],
+    )];
     let decision = gate.evaluate("m1", &claims, &demos).unwrap();
     assert!(decision.rationale.contains("All"));
     assert!(decision.rationale.contains("1")); // total_claims
@@ -843,7 +963,12 @@ fn fail_rationale_lists_unlinked_claim_ids() {
 fn claim_linkage_result_fields_for_fully_linked() {
     let mut gate = default_gate();
     let demos = vec![make_demo("d1", true)];
-    let claims = vec![make_claim("c1", ClaimCategory::Performance, vec!["d1"], vec!["e1"])];
+    let claims = vec![make_claim(
+        "c1",
+        ClaimCategory::Performance,
+        vec!["d1"],
+        vec!["e1"],
+    )];
     let decision = gate.evaluate("m1", &claims, &demos).unwrap();
     let r = &decision.claim_results[0];
     assert_eq!(r.claim_id, "c1");
@@ -876,7 +1001,12 @@ fn claim_linkage_result_missing_items_for_empty_claim() {
 fn decision_display_contains_key_info() {
     let mut gate = default_gate();
     let demos = vec![make_demo("d1", true)];
-    let claims = vec![make_claim("c1", ClaimCategory::Performance, vec!["d1"], vec!["e1"])];
+    let claims = vec![make_claim(
+        "c1",
+        ClaimCategory::Performance,
+        vec!["d1"],
+        vec!["e1"],
+    )];
     let decision = gate.evaluate("m1", &claims, &demos).unwrap();
     let s = format!("{}", decision);
     assert!(s.contains("m1"));
@@ -901,14 +1031,20 @@ fn decision_display_shows_fail() {
 
 #[test]
 fn error_display_no_claims() {
-    assert_eq!(format!("{}", LinkageGateError::NoClaims), "no claims provided");
+    assert_eq!(
+        format!("{}", LinkageGateError::NoClaims),
+        "no claims provided"
+    );
 }
 
 #[test]
 fn error_display_too_many_claims() {
     let s = format!(
         "{}",
-        LinkageGateError::TooManyClaims { count: 300, max: 256 }
+        LinkageGateError::TooManyClaims {
+            count: 300,
+            max: 256
+        }
     );
     assert!(s.contains("300"));
     assert!(s.contains("256"));
@@ -1049,7 +1185,12 @@ fn serde_roundtrip_linkage_gate_config() {
 fn serde_roundtrip_linkage_gate_decision() {
     let mut gate = default_gate();
     let demos = vec![make_demo("d1", true)];
-    let claims = vec![make_claim("c1", ClaimCategory::Performance, vec!["d1"], vec!["e1"])];
+    let claims = vec![make_claim(
+        "c1",
+        ClaimCategory::Performance,
+        vec!["d1"],
+        vec!["e1"],
+    )];
     let decision = gate.evaluate("m1", &claims, &demos).unwrap();
     let json = serde_json::to_string(&decision).unwrap();
     let back: LinkageGateDecision = serde_json::from_str(&json).unwrap();
@@ -1128,7 +1269,11 @@ fn serde_roundtrip_all_evidence_kinds() {
 
 #[test]
 fn serde_roundtrip_all_verdicts() {
-    for v in [LinkageVerdict::Pass, LinkageVerdict::Fail, LinkageVerdict::Empty] {
+    for v in [
+        LinkageVerdict::Pass,
+        LinkageVerdict::Fail,
+        LinkageVerdict::Empty,
+    ] {
         let json = serde_json::to_string(&v).unwrap();
         let back: LinkageVerdict = serde_json::from_str(&json).unwrap();
         assert_eq!(v, back);
@@ -1155,8 +1300,16 @@ fn serde_roundtrip_gate_itself() {
 fn json_fields_demo_specification() {
     let demo = make_demo("d1", true);
     let json = serde_json::to_string(&demo).unwrap();
-    for field in ["demo_id", "title", "description", "milestone_id", "runnable",
-                  "verification_commands", "expected_outputs", "tags"] {
+    for field in [
+        "demo_id",
+        "title",
+        "description",
+        "milestone_id",
+        "runnable",
+        "verification_commands",
+        "expected_outputs",
+        "tags",
+    ] {
         assert!(json.contains(field), "missing field: {}", field);
     }
 }
@@ -1165,12 +1318,27 @@ fn json_fields_demo_specification() {
 fn json_fields_linkage_gate_decision() {
     let mut gate = default_gate();
     let demos = vec![make_demo("d1", true)];
-    let claims = vec![make_claim("c1", ClaimCategory::Performance, vec!["d1"], vec!["e1"])];
+    let claims = vec![make_claim(
+        "c1",
+        ClaimCategory::Performance,
+        vec!["d1"],
+        vec!["e1"],
+    )];
     let decision = gate.evaluate("m1", &claims, &demos).unwrap();
     let json = serde_json::to_string(&decision).unwrap();
-    for field in ["decision_id", "milestone_id", "epoch", "verdict", "claim_results",
-                  "total_claims", "linked_claims", "unlinked_claims",
-                  "aggregate_completeness_millionths", "rationale", "artifact_hash"] {
+    for field in [
+        "decision_id",
+        "milestone_id",
+        "epoch",
+        "verdict",
+        "claim_results",
+        "total_claims",
+        "linked_claims",
+        "unlinked_claims",
+        "aggregate_completeness_millionths",
+        "rationale",
+        "artifact_hash",
+    ] {
         assert!(json.contains(field), "missing field: {}", field);
     }
 }
@@ -1187,7 +1355,12 @@ fn clone_eq_demo_specification() {
 
 #[test]
 fn clone_eq_milestone_claim() {
-    let claim = make_claim("c-clone", ClaimCategory::Correctness, vec!["d1"], vec!["e1"]);
+    let claim = make_claim(
+        "c-clone",
+        ClaimCategory::Correctness,
+        vec!["d1"],
+        vec!["e1"],
+    );
     assert_eq!(claim, claim.clone());
 }
 
@@ -1231,7 +1404,12 @@ fn debug_impl_error() {
 fn claim_with_multiple_demos_all_complete() {
     let mut gate = default_gate();
     let demos = vec![make_demo("d1", true), make_demo("d2", true)];
-    let claims = vec![make_claim("c1", ClaimCategory::Performance, vec!["d1", "d2"], vec!["e1"])];
+    let claims = vec![make_claim(
+        "c1",
+        ClaimCategory::Performance,
+        vec!["d1", "d2"],
+        vec!["e1"],
+    )];
     let decision = gate.evaluate("m1", &claims, &demos).unwrap();
     assert!(decision.is_pass());
 }
@@ -1266,7 +1444,12 @@ fn claim_with_one_non_runnable_demo_still_has_runnable() {
 fn decision_epoch_matches_config() {
     let mut gate = gate_with_epoch(77);
     let demos = vec![make_demo("d1", true)];
-    let claims = vec![make_claim("c1", ClaimCategory::Performance, vec!["d1"], vec!["e1"])];
+    let claims = vec![make_claim(
+        "c1",
+        ClaimCategory::Performance,
+        vec!["d1"],
+        vec!["e1"],
+    )];
     let decision = gate.evaluate("m1", &claims, &demos).unwrap();
     assert_eq!(decision.epoch, SecurityEpoch::from_raw(77));
 }
@@ -1280,7 +1463,12 @@ fn multiple_evaluations_independent_results() {
     let mut gate = default_gate();
     let demos = vec![make_demo("d1", true)];
 
-    let claims_ok = vec![make_claim("c1", ClaimCategory::Performance, vec!["d1"], vec!["e1"])];
+    let claims_ok = vec![make_claim(
+        "c1",
+        ClaimCategory::Performance,
+        vec!["d1"],
+        vec!["e1"],
+    )];
     let d1 = gate.evaluate("m1", &claims_ok, &demos).unwrap();
     assert!(d1.is_pass());
 
@@ -1320,7 +1508,14 @@ fn exactly_256_claims_is_accepted() {
     let mut gate = default_gate();
     let demo = make_demo("d1", true);
     let claims: Vec<_> = (0..256)
-        .map(|i| make_claim(&format!("c{}", i), ClaimCategory::Performance, vec!["d1"], vec!["e1"]))
+        .map(|i| {
+            make_claim(
+                &format!("c{}", i),
+                ClaimCategory::Performance,
+                vec!["d1"],
+                vec!["e1"],
+            )
+        })
         .collect();
     let result = gate.evaluate("m1", &claims, &[demo]);
     assert!(result.is_ok());
@@ -1354,7 +1549,9 @@ fn exactly_32_verification_commands_is_accepted() {
         description: "Has 32 commands".to_string(),
         milestone_id: "m1".to_string(),
         runnable: true,
-        verification_commands: (0..32).map(|i| make_command(&format!("cmd{}", i))).collect(),
+        verification_commands: (0..32)
+            .map(|i| make_command(&format!("cmd{}", i)))
+            .collect(),
         expected_outputs: {
             let mut m = BTreeMap::new();
             m.insert("out".to_string(), make_output("out"));
@@ -1363,7 +1560,12 @@ fn exactly_32_verification_commands_is_accepted() {
         tags: BTreeSet::new(),
     };
     let _ = &mut demo; // silence unused_mut
-    let claims = vec![make_claim("c1", ClaimCategory::Correctness, vec!["d-max-cmd"], vec!["e1"])];
+    let claims = vec![make_claim(
+        "c1",
+        ClaimCategory::Correctness,
+        vec!["d-max-cmd"],
+        vec!["e1"],
+    )];
     let result = gate.evaluate("m1", &claims, &[demo]);
     assert!(result.is_ok());
 }
@@ -1399,7 +1601,9 @@ fn evidence_link_with_each_kind() {
 #[test]
 fn evaluate_with_all_claim_categories() {
     let mut gate = default_gate();
-    let demos: Vec<_> = (0..6).map(|i| make_demo(&format!("d{}", i), true)).collect();
+    let demos: Vec<_> = (0..6)
+        .map(|i| make_demo(&format!("d{}", i), true))
+        .collect();
     let categories = [
         ClaimCategory::Performance,
         ClaimCategory::Correctness,

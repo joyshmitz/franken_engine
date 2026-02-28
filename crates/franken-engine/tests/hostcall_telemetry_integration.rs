@@ -359,7 +359,7 @@ fn snapshot_captures_current_state() {
         .unwrap();
     let snap = rec.snapshot();
     assert_eq!(snap.record_count, 1);
-    assert_eq!(snap.record_id_at_snapshot, 0);
+    assert_eq!(snap.record_id_at_snapshot, Some(0));
     assert_eq!(snap.epoch, SecurityEpoch::GENESIS);
 }
 

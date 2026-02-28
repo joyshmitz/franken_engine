@@ -1286,19 +1286,13 @@ fn debug_trait_ledger() {
 #[test]
 fn debug_trait_demotion_action_all_variants() {
     let actions = [
-        DemotionAction::EnterSafeMode {
-            reason: "r".into(),
-        },
+        DemotionAction::EnterSafeMode { reason: "r".into() },
         DemotionAction::DemoteLane {
             lane_id: "l".into(),
             reason: "r".into(),
         },
-        DemotionAction::SuspendAdaptive {
-            reason: "r".into(),
-        },
-        DemotionAction::EscalateToOperator {
-            reason: "r".into(),
-        },
+        DemotionAction::SuspendAdaptive { reason: "r".into() },
+        DemotionAction::EscalateToOperator { reason: "r".into() },
         DemotionAction::NoAction,
     ];
     for a in &actions {

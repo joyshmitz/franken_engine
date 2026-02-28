@@ -622,7 +622,12 @@ fn performance_degradation_takes_priority_over_platform_divergence() {
         eval.failure_class,
         Some(LockstepFailureClass::CorrectnessRegression) // perf is classified as correctness
     );
-    assert!(eval.failure_detail.as_ref().unwrap().contains("performance"));
+    assert!(
+        eval.failure_detail
+            .as_ref()
+            .unwrap()
+            .contains("performance")
+    );
 }
 
 // ── 11. Performance boundary conditions ──────────────────────────────────
@@ -720,10 +725,7 @@ fn log_platform_divergence_error_code() {
     });
     let eval = evaluate_plas_lockstep_case(c).unwrap();
     assert_eq!(eval.log.outcome, "fail");
-    assert_eq!(
-        eval.log.error_code.as_deref(),
-        Some("platform_divergence")
-    );
+    assert_eq!(eval.log.error_code.as_deref(), Some("platform_divergence"));
 }
 
 #[test]
@@ -844,10 +846,8 @@ fn both_references_diverge_platform_divergence() {
 fn capability_gap_detail_lists_denials() {
     let mut c = base_case();
     c.minimal_policy.output_digest = "output:gap".to_string();
-    c.minimal_policy.capability_denials = vec![
-        "filesystem.read".to_string(),
-        "network.egress".to_string(),
-    ];
+    c.minimal_policy.capability_denials =
+        vec!["filesystem.read".to_string(), "network.egress".to_string()];
     let eval = evaluate_plas_lockstep_case(c).unwrap();
     let detail = eval.failure_detail.unwrap();
     assert!(detail.contains("filesystem.read"));

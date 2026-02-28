@@ -13,13 +13,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use frankenengine_engine::runtime_observability::{
-    AuthFailureType, CapabilityDenialReason, CheckpointViolationType, CrossZoneReferenceType,
-    ReplayDropReason, RevocationCheckOutcome, RuntimeSecurityMetrics,
-    RuntimeSecurityObservability, SecurityEventContext, SecurityEventType, SecurityOutcome,
-    StructuredSecurityLogEvent, parse_security_logs_jsonl, redact_sensitive_value,
-    render_security_logs_jsonl, AUTH_FAILURE_TOTAL, CAPABILITY_DENIAL_TOTAL,
-    CHECKPOINT_VIOLATION_TOTAL, CROSS_ZONE_REFERENCE_TOTAL, REPLAY_DROP_TOTAL,
-    REVOCATION_CHECK_TOTAL, REVOCATION_FRESHNESS_DEGRADED_SECONDS,
+    AUTH_FAILURE_TOTAL, AuthFailureType, CAPABILITY_DENIAL_TOTAL, CHECKPOINT_VIOLATION_TOTAL,
+    CROSS_ZONE_REFERENCE_TOTAL, CapabilityDenialReason, CheckpointViolationType,
+    CrossZoneReferenceType, REPLAY_DROP_TOTAL, REVOCATION_CHECK_TOTAL,
+    REVOCATION_FRESHNESS_DEGRADED_SECONDS, ReplayDropReason, RevocationCheckOutcome,
+    RuntimeSecurityMetrics, RuntimeSecurityObservability, SecurityEventContext, SecurityEventType,
+    SecurityOutcome, StructuredSecurityLogEvent, parse_security_logs_jsonl, redact_sensitive_value,
+    render_security_logs_jsonl,
 };
 
 // ---------------------------------------------------------------------------
@@ -451,12 +451,7 @@ fn record_auth_failure_without_optional_material() {
 #[test]
 fn record_auth_failure_with_empty_context_fields_sanitized() {
     let mut obs = RuntimeSecurityObservability::new();
-    let event = obs.record_auth_failure(
-        empty_ctx(),
-        AuthFailureType::KeyRevoked,
-        None,
-        None,
-    );
+    let event = obs.record_auth_failure(empty_ctx(), AuthFailureType::KeyRevoked, None, None);
     // Sanitized fallbacks
     assert_eq!(event.trace_id, "trace-missing");
     assert_eq!(event.principal_id, "principal-missing");
@@ -483,15 +478,15 @@ fn record_capability_denial_all_reasons() {
             event.metadata.get("denial_reason").unwrap(),
             &reason.to_string()
         );
-        assert_eq!(event.metadata.get("requested_capability").unwrap(), "some_cap");
+        assert_eq!(
+            event.metadata.get("requested_capability").unwrap(),
+            "some_cap"
+        );
     }
     // All 6 reasons incremented once each
     for reason in CapabilityDenialReason::ALL {
         assert_eq!(
-            *obs.metrics()
-                .capability_denial_total
-                .get(&reason)
-                .unwrap(),
+            *obs.metrics().capability_denial_total.get(&reason).unwrap(),
             1
         );
     }
@@ -500,11 +495,7 @@ fn record_capability_denial_all_reasons() {
 #[test]
 fn record_capability_denial_empty_capability_name_sanitized() {
     let mut obs = RuntimeSecurityObservability::new();
-    let event = obs.record_capability_denial(
-        ctx(301),
-        CapabilityDenialReason::Expired,
-        "",
-    );
+    let event = obs.record_capability_denial(ctx(301), CapabilityDenialReason::Expired, "");
     assert_eq!(
         event.metadata.get("requested_capability").unwrap(),
         "unspecified"
@@ -529,10 +520,7 @@ fn record_replay_drop_all_reasons() {
         assert!(sid.starts_with("sha256:"));
     }
     for reason in ReplayDropReason::ALL {
-        assert_eq!(
-            *obs.metrics().replay_drop_total.get(&reason).unwrap(),
-            1
-        );
+        assert_eq!(*obs.metrics().replay_drop_total.get(&reason).unwrap(), 1);
     }
 }
 
@@ -569,14 +557,8 @@ fn record_checkpoint_violation_all_types() {
 #[test]
 fn record_revocation_check_pass_no_error_code() {
     let mut obs = RuntimeSecurityObservability::new();
-    let event = obs.record_revocation_check(
-        ctx(600),
-        RevocationCheckOutcome::Pass,
-        100,
-        100,
-        50,
-        None,
-    );
+    let event =
+        obs.record_revocation_check(ctx(600), RevocationCheckOutcome::Pass, 100, 100, 50, None);
     assert_eq!(event.event_type, "revocation_check");
     assert_eq!(event.outcome, "pass");
     assert!(event.error_code.is_none());
@@ -586,14 +568,8 @@ fn record_revocation_check_pass_no_error_code() {
 #[test]
 fn record_revocation_check_revoked_has_error_code() {
     let mut obs = RuntimeSecurityObservability::new();
-    let event = obs.record_revocation_check(
-        ctx(601),
-        RevocationCheckOutcome::Revoked,
-        80,
-        100,
-        50,
-        None,
-    );
+    let event =
+        obs.record_revocation_check(ctx(601), RevocationCheckOutcome::Revoked, 80, 100, 50, None);
     assert_eq!(event.outcome, "denied");
     assert!(event.error_code.is_some());
     assert_eq!(event.metadata.get("staleness_gap").unwrap(), "20");
@@ -619,14 +595,7 @@ fn record_revocation_check_stale_updates_degraded_seconds() {
 #[test]
 fn record_revocation_check_stale_without_degraded_seconds_uses_zero() {
     let mut obs = RuntimeSecurityObservability::new();
-    obs.record_revocation_check(
-        ctx(603),
-        RevocationCheckOutcome::Stale,
-        50,
-        100,
-        60,
-        None,
-    );
+    obs.record_revocation_check(ctx(603), RevocationCheckOutcome::Stale, 50, 100, 60, None);
     // When degraded_seconds is None, the gauge is set to 0.
     assert_eq!(obs.metrics().revocation_freshness_degraded_seconds, 0);
 }
@@ -894,9 +863,23 @@ fn rapid_accumulation_does_not_overflow_counters() {
 #[test]
 fn revocation_degraded_seconds_overwritten_by_latest_stale_event() {
     let mut obs = RuntimeSecurityObservability::new();
-    obs.record_revocation_check(ctx(1), RevocationCheckOutcome::Stale, 50, 100, 60, Some(100));
+    obs.record_revocation_check(
+        ctx(1),
+        RevocationCheckOutcome::Stale,
+        50,
+        100,
+        60,
+        Some(100),
+    );
     assert_eq!(obs.metrics().revocation_freshness_degraded_seconds, 100);
-    obs.record_revocation_check(ctx(2), RevocationCheckOutcome::Stale, 50, 100, 60, Some(200));
+    obs.record_revocation_check(
+        ctx(2),
+        RevocationCheckOutcome::Stale,
+        50,
+        100,
+        60,
+        Some(200),
+    );
     assert_eq!(obs.metrics().revocation_freshness_degraded_seconds, 200);
     // A Pass event does NOT reset the gauge.
     obs.record_revocation_check(ctx(3), RevocationCheckOutcome::Pass, 100, 100, 60, None);
@@ -946,10 +929,7 @@ fn prometheus_output_all_auth_failure_labels_present() {
     let prom = RuntimeSecurityMetrics::default().to_prometheus();
     for variant in AuthFailureType::ALL {
         let expected = format!("auth_failure_total{{type=\"{}\"}} 0", variant.as_label());
-        assert!(
-            prom.contains(&expected),
-            "missing: {expected}"
-        );
+        assert!(prom.contains(&expected), "missing: {expected}");
     }
 }
 
@@ -961,10 +941,7 @@ fn prometheus_output_all_capability_denial_labels_present() {
             "capability_denial_total{{reason=\"{}\"}} 0",
             variant.as_label()
         );
-        assert!(
-            prom.contains(&expected),
-            "missing: {expected}"
-        );
+        assert!(prom.contains(&expected), "missing: {expected}");
     }
 }
 
@@ -973,10 +950,7 @@ fn prometheus_output_all_replay_drop_labels_present() {
     let prom = RuntimeSecurityMetrics::default().to_prometheus();
     for variant in ReplayDropReason::ALL {
         let expected = format!("replay_drop_total{{reason=\"{}\"}} 0", variant.as_label());
-        assert!(
-            prom.contains(&expected),
-            "missing: {expected}"
-        );
+        assert!(prom.contains(&expected), "missing: {expected}");
     }
 }
 
@@ -988,10 +962,7 @@ fn prometheus_output_all_checkpoint_violation_labels_present() {
             "checkpoint_violation_total{{type=\"{}\"}} 0",
             variant.as_label()
         );
-        assert!(
-            prom.contains(&expected),
-            "missing: {expected}"
-        );
+        assert!(prom.contains(&expected), "missing: {expected}");
     }
 }
 
@@ -1003,10 +974,7 @@ fn prometheus_output_all_revocation_check_labels_present() {
             "revocation_check_total{{outcome=\"{}\"}} 0",
             variant.as_label()
         );
-        assert!(
-            prom.contains(&expected),
-            "missing: {expected}"
-        );
+        assert!(prom.contains(&expected), "missing: {expected}");
     }
 }
 
@@ -1018,10 +986,7 @@ fn prometheus_output_all_cross_zone_labels_present() {
             "cross_zone_reference_total{{type=\"{}\"}} 0",
             variant.as_label()
         );
-        assert!(
-            prom.contains(&expected),
-            "missing: {expected}"
-        );
+        assert!(prom.contains(&expected), "missing: {expected}");
     }
 }
 

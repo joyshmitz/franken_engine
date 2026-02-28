@@ -168,10 +168,7 @@ fn json_field_names_alternate_policy() {
         obj.contains_key("counterfactual_config"),
         "missing counterfactual_config"
     );
-    assert!(
-        obj.contains_key("default_action"),
-        "missing default_action"
-    );
+    assert!(obj.contains_key("default_action"), "missing default_action");
 }
 
 // ===========================================================================
@@ -408,11 +405,7 @@ fn json_field_names_counterfactual_config_nested() {
     let ap = make_alternate_policy("x", "y");
     let json = serde_json::to_string(&ap).unwrap();
     let v: serde_json::Value = serde_json::from_str(&json).unwrap();
-    let cfg = v
-        .get("counterfactual_config")
-        .unwrap()
-        .as_object()
-        .unwrap();
+    let cfg = v.get("counterfactual_config").unwrap().as_object().unwrap();
     for key in [
         "branch_id",
         "threshold_override_millionths",
@@ -550,10 +543,7 @@ fn error_display_exact_insufficient_decisions() {
         found: 5,
         required: 100,
     };
-    assert_eq!(
-        e.to_string(),
-        "insufficient decisions: found 5, need 100"
-    );
+    assert_eq!(e.to_string(), "insufficient decisions: found 5, need 100");
 }
 
 #[test]
@@ -763,7 +753,14 @@ fn is_confident_improvement_positive_but_unsafe() {
 
 #[test]
 fn is_confident_improvement_positive_but_inconclusive() {
-    let report = make_report(100, 50, 100_000, -5_000, 10_000, EnvelopeStatus::Inconclusive);
+    let report = make_report(
+        100,
+        50,
+        100_000,
+        -5_000,
+        10_000,
+        EnvelopeStatus::Inconclusive,
+    );
     assert!(
         !report.is_confident_improvement(),
         "Inconclusive status should not be confident improvement"
@@ -1018,12 +1015,7 @@ fn scope_tick_filter_narrows() {
         ..Default::default()
     };
     let result = engine
-        .compare(
-            &[trace],
-            &[make_alternate_policy("alt", "d")],
-            &scope,
-            None,
-        )
+        .compare(&[trace], &[make_alternate_policy("alt", "d")], &scope, None)
         .unwrap();
     assert_eq!(result.total_decisions, 3);
 }
@@ -1045,12 +1037,7 @@ fn scope_single_tick() {
         ..Default::default()
     };
     let result = engine
-        .compare(
-            &[trace],
-            &[make_alternate_policy("alt", "d")],
-            &scope,
-            None,
-        )
+        .compare(&[trace], &[make_alternate_policy("alt", "d")], &scope, None)
         .unwrap();
     assert_eq!(result.total_decisions, 1);
 }
@@ -1085,12 +1072,7 @@ fn scope_incident_filter_includes_matching() {
     };
 
     let result = engine
-        .compare(
-            &[trace],
-            &[make_alternate_policy("alt", "d")],
-            &scope,
-            None,
-        )
+        .compare(&[trace], &[make_alternate_policy("alt", "d")], &scope, None)
         .unwrap();
     assert_eq!(result.trace_count, 1);
     assert_eq!(result.total_decisions, 2);
@@ -1112,12 +1094,7 @@ fn scope_incident_filter_excludes_non_matching() {
         },
         ..Default::default()
     };
-    let result = engine.compare(
-        &[trace],
-        &[make_alternate_policy("alt", "d")],
-        &scope,
-        None,
-    );
+    let result = engine.compare(&[trace], &[make_alternate_policy("alt", "d")], &scope, None);
     assert!(matches!(result, Err(ReplayEngineError::EmptyScope)));
 }
 
@@ -1507,8 +1484,12 @@ fn determinism_same_inputs_same_hash() {
     let mut e1 = default_engine();
     let mut e2 = default_engine();
 
-    let r1 = e1.compare(std::slice::from_ref(&trace), &policies, &scope, None).unwrap();
-    let r2 = e2.compare(std::slice::from_ref(&trace), &policies, &scope, None).unwrap();
+    let r1 = e1
+        .compare(std::slice::from_ref(&trace), &policies, &scope, None)
+        .unwrap();
+    let r2 = e2
+        .compare(std::slice::from_ref(&trace), &policies, &scope, None)
+        .unwrap();
 
     assert_eq!(r1.artifact_hash, r2.artifact_hash);
     assert_eq!(
@@ -1631,7 +1612,10 @@ fn scope_min_decisions_exact_boundary() {
     );
     assert!(matches!(
         result2,
-        Err(ReplayEngineError::InsufficientDecisions { found: 5, required: 6 })
+        Err(ReplayEngineError::InsufficientDecisions {
+            found: 5,
+            required: 6
+        })
     ));
 }
 
@@ -1648,14 +1632,24 @@ fn too_many_policies_boundary() {
     let alts_64: Vec<_> = (0..64)
         .map(|i| make_alternate_policy(&format!("pol-{i}"), "d"))
         .collect();
-    let result = engine.compare(std::slice::from_ref(&trace), &alts_64, &default_scope(), None);
+    let result = engine.compare(
+        std::slice::from_ref(&trace),
+        &alts_64,
+        &default_scope(),
+        None,
+    );
     assert!(result.is_ok());
 
     // 65 policies should fail (over limit)
     let alts_65: Vec<_> = (0..65)
         .map(|i| make_alternate_policy(&format!("pol-{i}"), "d"))
         .collect();
-    let result = engine.compare(std::slice::from_ref(&trace), &alts_65, &default_scope(), None);
+    let result = engine.compare(
+        std::slice::from_ref(&trace),
+        &alts_65,
+        &default_scope(),
+        None,
+    );
     assert!(matches!(
         result,
         Err(ReplayEngineError::TooManyPolicies { count: 65, max: 64 })
@@ -1898,12 +1892,22 @@ fn full_lifecycle_compare_twice() {
     let policies = vec![make_alternate_policy("alt", "d")];
 
     let r1 = engine
-        .compare(std::slice::from_ref(&trace), &policies, &default_scope(), None)
+        .compare(
+            std::slice::from_ref(&trace),
+            &policies,
+            &default_scope(),
+            None,
+        )
         .unwrap();
     assert_eq!(engine.replay_count(), 1);
 
     let r2 = engine
-        .compare(std::slice::from_ref(&trace), &policies, &default_scope(), None)
+        .compare(
+            std::slice::from_ref(&trace),
+            &policies,
+            &default_scope(),
+            None,
+        )
         .unwrap();
     assert_eq!(engine.replay_count(), 2);
 
@@ -2017,12 +2021,7 @@ fn scope_epoch_boundary_inclusive() {
         ..Default::default()
     };
 
-    let result = engine.compare(
-        &[trace],
-        &[make_alternate_policy("alt", "d")],
-        &scope,
-        None,
-    );
+    let result = engine.compare(&[trace], &[make_alternate_policy("alt", "d")], &scope, None);
     assert!(result.is_ok());
     assert_eq!(result.unwrap().total_decisions, 3);
 }
@@ -2042,12 +2041,7 @@ fn scope_epoch_just_out_of_range() {
         ..Default::default()
     };
 
-    let result = engine.compare(
-        &[trace],
-        &[make_alternate_policy("alt", "d")],
-        &scope,
-        None,
-    );
+    let result = engine.compare(&[trace], &[make_alternate_policy("alt", "d")], &scope, None);
     assert!(matches!(result, Err(ReplayEngineError::EmptyScope)));
 }
 
@@ -2087,12 +2081,7 @@ fn result_preserves_scope() {
         ..Default::default()
     };
     let result = engine
-        .compare(
-            &[trace],
-            &[make_alternate_policy("alt", "d")],
-            &scope,
-            None,
-        )
+        .compare(&[trace], &[make_alternate_policy("alt", "d")], &scope, None)
         .unwrap();
     assert_eq!(result.scope.start_tick, 100);
     assert_eq!(result.scope.end_tick, 102);
@@ -2249,7 +2238,12 @@ fn replay_count_increments_across_runs() {
 
     for expected in 1..=5 {
         engine
-            .compare(std::slice::from_ref(&trace), &policies, &default_scope(), None)
+            .compare(
+                std::slice::from_ref(&trace),
+                &policies,
+                &default_scope(),
+                None,
+            )
             .unwrap();
         assert_eq!(engine.replay_count(), expected);
     }
@@ -2268,7 +2262,10 @@ fn config_accessor() {
         ..Default::default()
     };
     let engine = CounterfactualReplayEngine::new(config.clone());
-    assert_eq!(engine.config().baseline_policy_id, config.baseline_policy_id);
+    assert_eq!(
+        engine.config().baseline_policy_id,
+        config.baseline_policy_id
+    );
     assert_eq!(
         engine.config().confidence_millionths,
         config.confidence_millionths
@@ -2291,12 +2288,7 @@ fn empty_incident_filter_includes_all() {
         incident_filter: BTreeSet::new(), // empty = all
         ..Default::default()
     };
-    let result = engine.compare(
-        &[trace],
-        &[make_alternate_policy("alt", "d")],
-        &scope,
-        None,
-    );
+    let result = engine.compare(&[trace], &[make_alternate_policy("alt", "d")], &scope, None);
     assert!(result.is_ok());
     assert_eq!(result.unwrap().total_decisions, 3);
 }
@@ -2403,12 +2395,7 @@ fn insufficient_decisions_error_exact_values() {
         min_decisions: 50,
         ..Default::default()
     };
-    let result = engine.compare(
-        &[trace],
-        &[make_alternate_policy("alt", "d")],
-        &scope,
-        None,
-    );
+    let result = engine.compare(&[trace], &[make_alternate_policy("alt", "d")], &scope, None);
     match result {
         Err(ReplayEngineError::InsufficientDecisions { found, required }) => {
             assert_eq!(found, 3);
@@ -2481,7 +2468,17 @@ fn recommendation_rationale_preserved() {
 fn e2e_large_trace() {
     let mut engine = default_engine();
     let decisions: Vec<_> = (0..100)
-        .map(|i| make_decision(i, if i.is_multiple_of(3) { "wasm" } else { "native" }, 500_000 + i as i64 * 1_000))
+        .map(|i| {
+            make_decision(
+                i,
+                if i.is_multiple_of(3) {
+                    "wasm"
+                } else {
+                    "native"
+                },
+                500_000 + i as i64 * 1_000,
+            )
+        })
         .collect();
     let trace = make_trace(decisions);
 

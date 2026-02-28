@@ -8,18 +8,17 @@
 
 use frankenengine_engine::policy_controller::operator_safety_copilot::{
     ActionExecutionReceipt, ActionImpactSummary, ActionRecommendationCandidate,
-    ActiveIncidentSummary, BoundaryTriggerDirection, CalibrationPoint,
-    CategoryDetectionCount, CategoryDetectionRate, ConfidenceBand, ConfirmedActionExecution,
-    ContainmentActionOutcome, CopilotError, CopilotStructuredLogEvent, DecisionBoundaryHint,
-    EvidenceStrength, ExtensionTrustCard, ExtensionTrustLevel, FleetHealthOverview,
-    IncidentSeverity, IncidentTimelineEvent, OperatorAuditEvent, OperatorIdentity, OperatorRole,
+    ActiveIncidentSummary, BoundaryTriggerDirection, CalibrationPoint, CategoryDetectionCount,
+    CategoryDetectionRate, ConfidenceBand, ConfirmedActionExecution, ContainmentActionOutcome,
+    CopilotError, CopilotStructuredLogEvent, DecisionBoundaryHint, EvidenceStrength,
+    ExtensionTrustCard, ExtensionTrustLevel, FleetHealthOverview, IncidentSeverity,
+    IncidentTimelineEvent, OperatorAuditEvent, OperatorIdentity, OperatorRole,
     OperatorSafetyCopilotInput, OperatorSafetyCopilotSurface, PolicyEffectivenessInput,
-    PolicyEffectivenessView, RecommendationReversibility,
-    RollbackCommand, RollbackExecutionReceipt, RollbackReceiptInput, TimeSensitivity,
-    TimelineDrilldownPointers, TrustLevelDistributionEntry,
-    build_fleet_health_overview, build_operator_safety_copilot_surface,
-    build_policy_effectiveness_view, build_rollback_execution_receipt,
-    confirm_selected_recommendation, render_copilot_summary,
+    PolicyEffectivenessView, RecommendationReversibility, RollbackCommand,
+    RollbackExecutionReceipt, RollbackReceiptInput, TimeSensitivity, TimelineDrilldownPointers,
+    TrustLevelDistributionEntry, build_fleet_health_overview,
+    build_operator_safety_copilot_surface, build_policy_effectiveness_view,
+    build_rollback_execution_receipt, confirm_selected_recommendation, render_copilot_summary,
     select_recommendation_for_review,
 };
 
@@ -776,7 +775,10 @@ fn administrator_can_select_and_confirm() {
     let admin = op("admin-1", OperatorRole::Administrator);
     let review = select_recommendation_for_review(&surface, &admin, 1, 100).unwrap();
     let confirmed = confirm_selected_recommendation(&review, &admin, "token-1", 200).unwrap();
-    assert_eq!(confirmed.audit_event.operator_role, OperatorRole::Administrator);
+    assert_eq!(
+        confirmed.audit_event.operator_role,
+        OperatorRole::Administrator
+    );
 }
 
 // ===========================================================================
@@ -1028,7 +1030,10 @@ fn e2e_select_confirm_rollback_pipeline() {
     let review = select_recommendation_for_review(&surface, &operator, 2, 1000).unwrap();
     assert_eq!(review.selected_recommendation.action_type, "sandbox");
     assert!(review.impact_summary.reversible);
-    assert_eq!(review.impact_summary.rollback_window_ms_remaining, Some(600_000));
+    assert_eq!(
+        review.impact_summary.rollback_window_ms_remaining,
+        Some(600_000)
+    );
 
     // Confirm
     let confirmed = confirm_selected_recommendation(&review, &operator, "my-token", 2000).unwrap();

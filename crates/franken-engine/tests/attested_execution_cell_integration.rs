@@ -46,7 +46,13 @@ fn input(label: &str, func: CellFunction, zone: &str) -> CreateCellInput {
 }
 
 fn meas(tr: &SoftwareTrustRoot) -> MeasurementDigest {
-    tr.measure(b"code-v1", b"config-v1", b"policy-v1", b"schema-v1", "1.0.0")
+    tr.measure(
+        b"code-v1",
+        b"config-v1",
+        b"policy-v1",
+        b"schema-v1",
+        "1.0.0",
+    )
 }
 
 fn fresh_quote(tr: &SoftwareTrustRoot, m: &MeasurementDigest, nonce: [u8; 32]) -> AttestationQuote {
@@ -63,9 +69,7 @@ fn drive_to_active(
     func: CellFunction,
     zone: &str,
 ) -> String {
-    let cid = reg
-        .create_cell(input(label, func, zone), 100)
-        .unwrap();
+    let cid = reg.create_cell(input(label, func, zone), 100).unwrap();
     let cid_s = format!("{cid}");
     let m = meas(tr);
     reg.measure_cell(&cid_s, m.clone(), 200, ep(1)).unwrap();
@@ -616,7 +620,10 @@ fn registry_default_is_empty() {
 fn create_cell_happy_path() {
     let mut reg = CellRegistry::new();
     let cid = reg
-        .create_cell(input("signer-1", CellFunction::DecisionReceiptSigner, "prod"), 100)
+        .create_cell(
+            input("signer-1", CellFunction::DecisionReceiptSigner, "prod"),
+            100,
+        )
         .unwrap();
     let cid_s = format!("{cid}");
     assert_eq!(reg.cell_count(), 1);
@@ -634,14 +641,20 @@ fn create_cell_rejects_empty_label() {
     let mut reg = CellRegistry::new();
     let mut inp = input("", CellFunction::PolicyEvaluator, "zone");
     inp.label = "   ".to_string();
-    assert!(matches!(reg.create_cell(inp, 100), Err(CellError::EmptyLabel)));
+    assert!(matches!(
+        reg.create_cell(inp, 100),
+        Err(CellError::EmptyLabel)
+    ));
 }
 
 #[test]
 fn create_cell_rejects_empty_zone() {
     let mut reg = CellRegistry::new();
     let inp = input("label", CellFunction::PolicyEvaluator, "");
-    assert!(matches!(reg.create_cell(inp, 100), Err(CellError::EmptyZone)));
+    assert!(matches!(
+        reg.create_cell(inp, 100),
+        Err(CellError::EmptyZone)
+    ));
 }
 
 #[test]
@@ -686,7 +699,10 @@ fn full_lifecycle_provisioning_to_decommissioned() {
     let mut reg = CellRegistry::new();
     let tr = root("k1", 10);
     let cid = reg
-        .create_cell(input("cell-a", CellFunction::EvidenceAccumulator, "prod"), 100)
+        .create_cell(
+            input("cell-a", CellFunction::EvidenceAccumulator, "prod"),
+            100,
+        )
         .unwrap();
     let cid_s = format!("{cid}");
 
@@ -721,7 +737,13 @@ fn full_lifecycle_provisioning_to_decommissioned() {
 fn suspend_and_reattest_then_reactivate() {
     let mut reg = CellRegistry::new();
     let tr = root("k1", 10);
-    let cid_s = drive_to_active(&mut reg, &tr, "cell-s", CellFunction::ProofValidator, "prod");
+    let cid_s = drive_to_active(
+        &mut reg,
+        &tr,
+        "cell-s",
+        CellFunction::ProofValidator,
+        "prod",
+    );
 
     // Active -> Suspended
     reg.suspend_cell(&cid_s, "revocation", 500, ep(2)).unwrap();
@@ -743,7 +765,13 @@ fn suspend_and_reattest_then_reactivate() {
 fn decommission_from_suspended() {
     let mut reg = CellRegistry::new();
     let tr = root("k1", 10);
-    let cid_s = drive_to_active(&mut reg, &tr, "cell-d", CellFunction::ExtensionRuntime, "prod");
+    let cid_s = drive_to_active(
+        &mut reg,
+        &tr,
+        "cell-d",
+        CellFunction::ExtensionRuntime,
+        "prod",
+    );
     reg.suspend_cell(&cid_s, "maint", 500, ep(1)).unwrap();
     reg.decommission_cell(&cid_s, "permanent", 600, ep(1))
         .unwrap();
@@ -901,7 +929,13 @@ fn not_found_errors_for_missing_cell() {
 fn revoke_trust_root_suspends_active_cells() {
     let mut reg = CellRegistry::new();
     let tr = root("k1", 10);
-    let cid_s = drive_to_active(&mut reg, &tr, "cell-r", CellFunction::PolicyEvaluator, "prod");
+    let cid_s = drive_to_active(
+        &mut reg,
+        &tr,
+        "cell-r",
+        CellFunction::PolicyEvaluator,
+        "prod",
+    );
 
     let suspended = reg.revoke_trust_root("k1", 500, ep(2));
     assert_eq!(suspended.len(), 1);
@@ -913,7 +947,13 @@ fn revoke_trust_root_suspends_active_cells() {
 fn revoke_trust_root_ignores_non_matching_key() {
     let mut reg = CellRegistry::new();
     let tr = root("k1", 10);
-    let cid_s = drive_to_active(&mut reg, &tr, "cell-r2", CellFunction::PolicyEvaluator, "prod");
+    let cid_s = drive_to_active(
+        &mut reg,
+        &tr,
+        "cell-r2",
+        CellFunction::PolicyEvaluator,
+        "prod",
+    );
 
     let suspended = reg.revoke_trust_root("other-key", 500, ep(2));
     assert!(suspended.is_empty());
@@ -937,9 +977,27 @@ fn revoke_trust_root_ignores_non_active_cells() {
 fn revoke_trust_root_suspends_multiple_matching_cells() {
     let mut reg = CellRegistry::new();
     let tr = root("k1", 10);
-    drive_to_active(&mut reg, &tr, "cell-1", CellFunction::PolicyEvaluator, "prod");
-    drive_to_active(&mut reg, &tr, "cell-2", CellFunction::ProofValidator, "prod");
-    drive_to_active(&mut reg, &tr, "cell-3", CellFunction::EvidenceAccumulator, "prod");
+    drive_to_active(
+        &mut reg,
+        &tr,
+        "cell-1",
+        CellFunction::PolicyEvaluator,
+        "prod",
+    );
+    drive_to_active(
+        &mut reg,
+        &tr,
+        "cell-2",
+        CellFunction::ProofValidator,
+        "prod",
+    );
+    drive_to_active(
+        &mut reg,
+        &tr,
+        "cell-3",
+        CellFunction::EvidenceAccumulator,
+        "prod",
+    );
 
     let suspended = reg.revoke_trust_root("k1", 500, ep(2));
     assert_eq!(suspended.len(), 3);
@@ -979,17 +1037,18 @@ fn cells_by_function_returns_correct_subset() {
             .len(),
         1
     );
-    assert_eq!(
-        reg.cells_by_function(CellFunction::ProofValidator).len(),
-        0
-    );
+    assert_eq!(reg.cells_by_function(CellFunction::ProofValidator).len(), 0);
 }
 
 #[test]
 fn cells_in_zone_returns_correct_subset() {
     let mut reg = CellRegistry::new();
     reg.create_cell(
-        input("prod-cell", CellFunction::DecisionReceiptSigner, "production"),
+        input(
+            "prod-cell",
+            CellFunction::DecisionReceiptSigner,
+            "production",
+        ),
         100,
     )
     .unwrap();
@@ -1008,7 +1067,13 @@ fn cells_in_zone_returns_correct_subset() {
 fn active_cells_only_returns_active() {
     let mut reg = CellRegistry::new();
     let tr = root("k1", 10);
-    drive_to_active(&mut reg, &tr, "active-1", CellFunction::PolicyEvaluator, "z");
+    drive_to_active(
+        &mut reg,
+        &tr,
+        "active-1",
+        CellFunction::PolicyEvaluator,
+        "z",
+    );
     // Leave another in Provisioning
     reg.create_cell(input("prov-1", CellFunction::ProofValidator, "z"), 500)
         .unwrap();
@@ -1110,7 +1175,13 @@ fn registry_serde_roundtrip_preserves_cells() {
 fn execution_cell_serde_roundtrip() {
     let mut reg = CellRegistry::new();
     let tr = root("k1", 10);
-    let cid_s = drive_to_active(&mut reg, &tr, "cell-serde", CellFunction::PolicyEvaluator, "z");
+    let cid_s = drive_to_active(
+        &mut reg,
+        &tr,
+        "cell-serde",
+        CellFunction::PolicyEvaluator,
+        "z",
+    );
     let cell = reg.get(&cid_s).unwrap();
 
     let json = serde_json::to_string(cell).unwrap();
@@ -1231,9 +1302,27 @@ fn registry_manages_many_cells_across_zones_and_functions() {
     let mut reg = CellRegistry::new();
     let tr = root("k1", 10);
 
-    drive_to_active(&mut reg, &tr, "prod-signer", CellFunction::DecisionReceiptSigner, "prod");
-    drive_to_active(&mut reg, &tr, "prod-evidence", CellFunction::EvidenceAccumulator, "prod");
-    drive_to_active(&mut reg, &tr, "staging-eval", CellFunction::PolicyEvaluator, "staging");
+    drive_to_active(
+        &mut reg,
+        &tr,
+        "prod-signer",
+        CellFunction::DecisionReceiptSigner,
+        "prod",
+    );
+    drive_to_active(
+        &mut reg,
+        &tr,
+        "prod-evidence",
+        CellFunction::EvidenceAccumulator,
+        "prod",
+    );
+    drive_to_active(
+        &mut reg,
+        &tr,
+        "staging-eval",
+        CellFunction::PolicyEvaluator,
+        "staging",
+    );
     reg.create_cell(input("dev-ext", CellFunction::ExtensionRuntime, "dev"), 900)
         .unwrap();
 

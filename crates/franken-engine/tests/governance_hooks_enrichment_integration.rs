@@ -9,8 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use frankenengine_engine::engine_object_id::{self, ObjectDomain, SchemaId};
 use frankenengine_engine::governance_hooks::{
-    AuditExportFormat, AuditExportRequest, AuditExportResult, ComplianceControl,
-    ComplianceEvidence, ComplianceEvidenceContract, ComplianceFramework, DiagnosticSeverity,
+    AuditExportFormat, AuditExportRequest, ComplianceFramework, DiagnosticSeverity,
     EvidenceEntry, GovernanceError, GovernanceEvent, GovernanceHookResult, GovernanceHookType,
     GovernancePipeline, GovernancePipelineConfig, PolicyArtifact, PolicyCompilationResult,
     PolicyDiagnostic, PolicySource, compile_policy, export_audit_evidence,
@@ -733,7 +732,10 @@ fn hook_result_display_pass_and_fail() {
 fn pipeline_config_default_fields() {
     let cfg = GovernancePipelineConfig::default();
     assert_eq!(cfg.hooks.len(), 5, "default should have all 5 hooks");
-    assert!(cfg.halt_on_failure, "default halt_on_failure should be true");
+    assert!(
+        cfg.halt_on_failure,
+        "default halt_on_failure should be true"
+    );
     assert_eq!(cfg.max_export_entries, 100_000);
     assert_eq!(
         cfg.frameworks.len(),
@@ -962,10 +964,7 @@ fn export_preserves_correlation_id() {
         correlation_id: Some("corr-123".to_string()),
     };
     let result = export_audit_evidence(req, entries, ts(200)).unwrap();
-    assert_eq!(
-        result.request.correlation_id,
-        Some("corr-123".to_string())
-    );
+    assert_eq!(result.request.correlation_id, Some("corr-123".to_string()));
 }
 
 // ---------------------------------------------------------------------------
@@ -978,7 +977,11 @@ fn soc2_controls_are_cc61_cc62_cc72_cc92() {
     let (_, contract) =
         generate_compliance_bundle(ComplianceFramework::Soc2, ts(0), ts(100), entries, ts(200))
             .unwrap();
-    let ids: Vec<&str> = contract.controls.iter().map(|c| c.control_id.as_str()).collect();
+    let ids: Vec<&str> = contract
+        .controls
+        .iter()
+        .map(|c| c.control_id.as_str())
+        .collect();
     assert_eq!(ids, vec!["CC6.1", "CC6.2", "CC7.2", "CC9.2"]);
 }
 
@@ -993,7 +996,11 @@ fn iso27001_controls_are_a91_a124_a161() {
         ts(200),
     )
     .unwrap();
-    let ids: Vec<&str> = contract.controls.iter().map(|c| c.control_id.as_str()).collect();
+    let ids: Vec<&str> = contract
+        .controls
+        .iter()
+        .map(|c| c.control_id.as_str())
+        .collect();
     assert_eq!(ids, vec!["A.9.1", "A.12.4", "A.16.1"]);
 }
 
@@ -1003,17 +1010,33 @@ fn hipaa_controls() {
     let (_, contract) =
         generate_compliance_bundle(ComplianceFramework::Hipaa, ts(0), ts(100), entries, ts(200))
             .unwrap();
-    let ids: Vec<&str> = contract.controls.iter().map(|c| c.control_id.as_str()).collect();
-    assert_eq!(ids, vec!["164.312(a)(1)", "164.312(b)", "164.312(e)(2)(ii)"]);
+    let ids: Vec<&str> = contract
+        .controls
+        .iter()
+        .map(|c| c.control_id.as_str())
+        .collect();
+    assert_eq!(
+        ids,
+        vec!["164.312(a)(1)", "164.312(b)", "164.312(e)(2)(ii)"]
+    );
 }
 
 #[test]
 fn pci_dss_controls() {
     let entries = full_evidence_set();
-    let (_, contract) =
-        generate_compliance_bundle(ComplianceFramework::PciDss, ts(0), ts(100), entries, ts(200))
-            .unwrap();
-    let ids: Vec<&str> = contract.controls.iter().map(|c| c.control_id.as_str()).collect();
+    let (_, contract) = generate_compliance_bundle(
+        ComplianceFramework::PciDss,
+        ts(0),
+        ts(100),
+        entries,
+        ts(200),
+    )
+    .unwrap();
+    let ids: Vec<&str> = contract
+        .controls
+        .iter()
+        .map(|c| c.control_id.as_str())
+        .collect();
     assert_eq!(ids, vec!["10.1", "10.2", "10.6", "12.10"]);
 }
 
@@ -1023,7 +1046,11 @@ fn gdpr_controls() {
     let (_, contract) =
         generate_compliance_bundle(ComplianceFramework::Gdpr, ts(0), ts(100), entries, ts(200))
             .unwrap();
-    let ids: Vec<&str> = contract.controls.iter().map(|c| c.control_id.as_str()).collect();
+    let ids: Vec<&str> = contract
+        .controls
+        .iter()
+        .map(|c| c.control_id.as_str())
+        .collect();
     assert_eq!(ids, vec!["Art.30", "Art.32", "Art.33"]);
 }
 
@@ -1038,7 +1065,11 @@ fn custom_framework_controls() {
         ts(200),
     )
     .unwrap();
-    let ids: Vec<&str> = contract.controls.iter().map(|c| c.control_id.as_str()).collect();
+    let ids: Vec<&str> = contract
+        .controls
+        .iter()
+        .map(|c| c.control_id.as_str())
+        .collect();
     assert_eq!(ids, vec!["CUSTOM-1", "CUSTOM-2"]);
 }
 
@@ -1149,8 +1180,7 @@ fn pipeline_compliance_check_details_per_framework() {
 #[test]
 fn serde_roundtrip_governance_hook_result() {
     let mut hr = GovernanceHookResult::pass(GovernanceHookType::PostDeploy, "ok", ts(42));
-    hr.details
-        .insert("key".to_string(), "value".to_string());
+    hr.details.insert("key".to_string(), "value".to_string());
     let json = serde_json::to_string(&hr).unwrap();
     let back: GovernanceHookResult = serde_json::from_str(&json).unwrap();
     assert_eq!(hr, back);
@@ -1316,8 +1346,7 @@ fn export_csv_header_and_data_rows() {
     let payload = String::from_utf8_lossy(&result.payload_bytes);
     let lines: Vec<&str> = payload.lines().collect();
     assert_eq!(
-        lines[0],
-        "entry_id,kind,timestamp,summary,evidence_hash",
+        lines[0], "entry_id,kind,timestamp,summary,evidence_hash",
         "CSV header mismatch"
     );
     assert!(lines.len() >= 2, "should have header + at least 1 data row");
@@ -1405,10 +1434,7 @@ fn pipeline_compliance_check_no_frameworks_passes() {
     let mut pipeline = GovernancePipeline::new(config);
     let results =
         run_governance_pipeline(&mut pipeline, &[], full_evidence_set(), ts(200)).unwrap();
-    assert!(
-        results[0].passed,
-        "no frameworks means nothing can fail"
-    );
+    assert!(results[0].passed, "no frameworks means nothing can fail");
 }
 
 // ---------------------------------------------------------------------------

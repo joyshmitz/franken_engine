@@ -52,7 +52,8 @@ fn make_drift_classification(
                 "replay fixture and compare normalized AST hashes across engines".to_string()
             }
             DriftCategory::Diagnostics => {
-                "inspect normalized diagnostic codes and alias mappings for peer engines".to_string()
+                "inspect normalized diagnostic codes and alias mappings for peer engines"
+                    .to_string()
             }
             DriftCategory::Harness => {
                 "rerun with fixed seed/env and audit harness/external-command nondeterminism"
@@ -237,10 +238,7 @@ fn config_with_defaults_fields() {
     assert!(config.decision_id.contains("parser-multi-engine"));
     assert_eq!(config.policy_id, "policy-parser-multi-engine-v1");
     assert_eq!(config.engines.len(), 2);
-    assert_eq!(
-        config.engines[0].kind,
-        HarnessEngineKind::FrankenCanonical
-    );
+    assert_eq!(config.engines[0].kind, HarnessEngineKind::FrankenCanonical);
     assert_eq!(
         config.engines[1].kind,
         HarnessEngineKind::FixtureExpectedHash

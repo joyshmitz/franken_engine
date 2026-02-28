@@ -6,11 +6,11 @@ use std::collections::BTreeMap;
 
 use frankenengine_engine::dp_budget_accountant::{AccountantConfig, BudgetAccountant};
 use frankenengine_engine::governance_scorecard::{
-    AttestedReceiptObservation, CrossRepoConformanceInput, GovernanceScorecardError,
-    GovernanceScorecardOutcome, GovernanceScorecardRequest, GovernanceScorecardThresholds,
-    GovernanceScorecardTrendPoint, MoonshotGovernorHealthInput, PrivacyBudgetHealthInput,
-    publish_governance_scorecard, verify_governance_scorecard_signature,
-    GOVERNANCE_SCORECARD_COMPONENT, GOVERNANCE_SCORECARD_SCHEMA_VERSION,
+    AttestedReceiptObservation, CrossRepoConformanceInput, GOVERNANCE_SCORECARD_COMPONENT,
+    GOVERNANCE_SCORECARD_SCHEMA_VERSION, GovernanceScorecardError, GovernanceScorecardOutcome,
+    GovernanceScorecardRequest, GovernanceScorecardThresholds, GovernanceScorecardTrendPoint,
+    MoonshotGovernorHealthInput, PrivacyBudgetHealthInput, publish_governance_scorecard,
+    verify_governance_scorecard_signature,
 };
 use frankenengine_engine::portfolio_governor::governance_audit_ledger::{
     GovernanceActor, GovernanceAuditLedger, GovernanceDecisionType, GovernanceLedgerConfig,
@@ -27,10 +27,7 @@ fn signing_key() -> SigningKey {
     SigningKey::from_bytes([0x42; 32])
 }
 
-fn mk_accountant(
-    eps_spent: i64,
-    delta_spent: i64,
-) -> BudgetAccountant {
+fn mk_accountant(eps_spent: i64, delta_spent: i64) -> BudgetAccountant {
     let mut a = BudgetAccountant::new(AccountantConfig {
         zone: "integ-zone".to_string(),
         epsilon_per_epoch_millionths: 1_000_000,
@@ -209,7 +206,10 @@ fn healthy_publication_ledger_decision_is_promote() {
     let req = baseline_request();
     let mut l = ledger();
     let _p = publish_governance_scorecard(&req, &signing_key(), &mut l, actor()).unwrap();
-    assert_eq!(l.entries()[0].decision_type, GovernanceDecisionType::Promote);
+    assert_eq!(
+        l.entries()[0].decision_type,
+        GovernanceDecisionType::Promote
+    );
 }
 
 #[test]
@@ -359,7 +359,11 @@ fn privacy_near_exhaustion_warning() {
     });
     let p = publish(&req);
     assert!(p.privacy_budget_health.near_term_exhaustion_warning);
-    assert!(p.warnings.iter().any(|w| w.contains("projected to exhaust")));
+    assert!(
+        p.warnings
+            .iter()
+            .any(|w| w.contains("projected to exhaust"))
+    );
 }
 
 #[test]
@@ -382,7 +386,9 @@ fn privacy_zero_overruns_zero_consumption_passes() {
 #[test]
 fn moonshot_override_high_causes_critical() {
     let mut req = baseline_request();
-    req.moonshot_governor.governance_report.override_frequency_millionths = 500_000;
+    req.moonshot_governor
+        .governance_report
+        .override_frequency_millionths = 500_000;
     let p = publish(&req);
     assert!(!p.moonshot_governor.threshold_pass);
     assert_eq!(p.outcome, GovernanceScorecardOutcome::Critical);
@@ -493,10 +499,7 @@ fn conformance_failure_class_distribution_propagated() {
     let p = publish(&baseline_request());
     assert_eq!(
         p.cross_repo_conformance.failure_class_distribution,
-        BTreeMap::from([
-            ("assertion".to_string(), 2),
-            ("timeout".to_string(), 2),
-        ])
+        BTreeMap::from([("assertion".to_string(), 2), ("timeout".to_string(), 2),])
     );
 }
 
@@ -749,18 +752,24 @@ fn ledger_entry_has_artifact_references() {
     let mut l = ledger();
     let p = publish_governance_scorecard(&req, &signing_key(), &mut l, actor()).unwrap();
     let entry = &l.entries()[0];
-    assert!(entry
-        .artifact_references
-        .iter()
-        .any(|r| r.starts_with("artifact://governance-scorecard/")));
-    assert!(entry
-        .artifact_references
-        .iter()
-        .any(|r| r.starts_with("hash://")));
-    assert!(entry
-        .artifact_references
-        .iter()
-        .any(|r| r.contains(&p.artifact_hash_hex)));
+    assert!(
+        entry
+            .artifact_references
+            .iter()
+            .any(|r| r.starts_with("artifact://governance-scorecard/"))
+    );
+    assert!(
+        entry
+            .artifact_references
+            .iter()
+            .any(|r| r.starts_with("hash://"))
+    );
+    assert!(
+        entry
+            .artifact_references
+            .iter()
+            .any(|r| r.contains(&p.artifact_hash_hex))
+    );
 }
 
 #[test]
@@ -769,7 +778,10 @@ fn ledger_decision_type_maps_correctly() {
     let req = baseline_request();
     let mut l = ledger();
     let _p = publish_governance_scorecard(&req, &signing_key(), &mut l, actor()).unwrap();
-    assert_eq!(l.entries()[0].decision_type, GovernanceDecisionType::Promote);
+    assert_eq!(
+        l.entries()[0].decision_type,
+        GovernanceDecisionType::Promote
+    );
 
     // Critical -> Kill
     let mut crit_req = baseline_request();
@@ -905,7 +917,8 @@ fn validation_no_high_impact_receipts() {
 #[test]
 fn validation_duplicate_receipt_id() {
     let mut req = baseline_request();
-    req.attested_receipts.push(high_impact_receipt("hi-1", true)); // duplicate
+    req.attested_receipts
+        .push(high_impact_receipt("hi-1", true)); // duplicate
     let mut l = ledger();
     let err = publish_governance_scorecard(&req, &signing_key(), &mut l, actor()).unwrap_err();
     let msg = format!("{err}");
@@ -915,8 +928,7 @@ fn validation_duplicate_receipt_id() {
 #[test]
 fn validation_empty_receipt_id() {
     let mut req = baseline_request();
-    req.attested_receipts
-        .push(high_impact_receipt("", true));
+    req.attested_receipts.push(high_impact_receipt("", true));
     let mut l = ledger();
     let err = publish_governance_scorecard(&req, &signing_key(), &mut l, actor()).unwrap_err();
     assert!(matches!(err, GovernanceScorecardError::InvalidInput { .. }));

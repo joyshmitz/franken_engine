@@ -76,9 +76,8 @@ fn passing_result(name: &str) -> LockstepTestResult {
 }
 
 fn div_id_for(label: &[u8]) -> frankenengine_engine::engine_object_id::EngineObjectId {
-    let schema_id = frankenengine_engine::engine_object_id::SchemaId::from_definition(
-        b"BehaviorDivergence.v1",
-    );
+    let schema_id =
+        frankenengine_engine::engine_object_id::SchemaId::from_definition(b"BehaviorDivergence.v1");
     frankenengine_engine::engine_object_id::derive_id(
         frankenengine_engine::engine_object_id::ObjectDomain::EvidenceRecord,
         "migration-kit",
@@ -182,7 +181,10 @@ fn error_code_exact_values_all_13() {
     let mut seen = BTreeSet::new();
     for (err, expected_code) in &cases {
         assert_eq!(err.code(), *expected_code, "error code mismatch");
-        assert!(seen.insert(*expected_code), "duplicate code {expected_code}");
+        assert!(
+            seen.insert(*expected_code),
+            "duplicate code {expected_code}"
+        );
     }
     assert_eq!(seen.len(), 13);
 }
@@ -267,7 +269,11 @@ fn all_error_variants_implement_std_error() {
         assert!(!msg.is_empty());
         displays.insert(msg);
     }
-    assert_eq!(displays.len(), 13, "all 13 variants produce distinct messages");
+    assert_eq!(
+        displays.len(),
+        13,
+        "all 13 variants produce distinct messages"
+    );
 }
 
 // =========================================================================
@@ -654,11 +660,7 @@ fn known_compatible_dependencies() {
     }}"#;
     let report = analyze_package(pkg, &node_config()).unwrap();
     for dep in &report.dependency_entries {
-        assert!(
-            dep.compatible,
-            "expected {} to be compatible",
-            dep.name
-        );
+        assert!(dep.compatible, "expected {} to be compatible", dep.name);
     }
 }
 
@@ -671,11 +673,7 @@ fn known_incompatible_dependencies() {
     }}"#;
     let report = analyze_package(pkg, &node_config()).unwrap();
     for dep in &report.dependency_entries {
-        assert!(
-            !dep.compatible,
-            "expected {} to be incompatible",
-            dep.name
-        );
+        assert!(!dep.compatible, "expected {} to be incompatible", dep.name);
     }
 }
 
@@ -786,11 +784,26 @@ fn api_support_level_is_migration_blocker() {
 
 #[test]
 fn api_support_level_weight_exact_values() {
-    assert_eq!(ApiSupportLevel::FullySupported.compatibility_weight_millionths(), 1_000_000);
-    assert_eq!(ApiSupportLevel::PartiallySupported.compatibility_weight_millionths(), 700_000);
-    assert_eq!(ApiSupportLevel::Deprecated.compatibility_weight_millionths(), 500_000);
-    assert_eq!(ApiSupportLevel::RequiresPolyfill.compatibility_weight_millionths(), 400_000);
-    assert_eq!(ApiSupportLevel::Unsupported.compatibility_weight_millionths(), 0);
+    assert_eq!(
+        ApiSupportLevel::FullySupported.compatibility_weight_millionths(),
+        1_000_000
+    );
+    assert_eq!(
+        ApiSupportLevel::PartiallySupported.compatibility_weight_millionths(),
+        700_000
+    );
+    assert_eq!(
+        ApiSupportLevel::Deprecated.compatibility_weight_millionths(),
+        500_000
+    );
+    assert_eq!(
+        ApiSupportLevel::RequiresPolyfill.compatibility_weight_millionths(),
+        400_000
+    );
+    assert_eq!(
+        ApiSupportLevel::Unsupported.compatibility_weight_millionths(),
+        0
+    );
 }
 
 // =========================================================================
@@ -816,7 +829,10 @@ fn remediation_effort_weight_exact_values() {
     assert_eq!(RemediationEffort::Low.weight_millionths(), 300_000);
     assert_eq!(RemediationEffort::Medium.weight_millionths(), 500_000);
     assert_eq!(RemediationEffort::High.weight_millionths(), 800_000);
-    assert_eq!(RemediationEffort::Significant.weight_millionths(), 1_000_000);
+    assert_eq!(
+        RemediationEffort::Significant.weight_millionths(),
+        1_000_000
+    );
 }
 
 // =========================================================================
@@ -986,9 +1002,8 @@ fn serde_roundtrip_source_file() {
 
 #[test]
 fn serde_roundtrip_remediation_step() {
-    let schema_id = frankenengine_engine::engine_object_id::SchemaId::from_definition(
-        b"RemediationPlan.v1",
-    );
+    let schema_id =
+        frankenengine_engine::engine_object_id::SchemaId::from_definition(b"RemediationPlan.v1");
     let step_id = frankenengine_engine::engine_object_id::derive_id(
         frankenengine_engine::engine_object_id::ObjectDomain::EvidenceRecord,
         "migration-kit",
@@ -1156,7 +1171,10 @@ fn validate_behavior_divergence_id_deterministic() {
     }];
     let r1 = validate_behavior(&results, &node_config()).unwrap();
     let r2 = validate_behavior(&results, &node_config()).unwrap();
-    assert_eq!(r1.divergences[0].divergence_id, r2.divergences[0].divergence_id);
+    assert_eq!(
+        r1.divergences[0].divergence_id,
+        r2.divergences[0].divergence_id
+    );
 }
 
 #[test]
@@ -1181,8 +1199,7 @@ fn validate_behavior_different_seed_different_ids() {
     let r1 = validate_behavior(&results, &config1).unwrap();
     let r2 = validate_behavior(&results, &config2).unwrap();
     assert_ne!(
-        r1.divergences[0].divergence_id,
-        r2.divergences[0].divergence_id,
+        r1.divergences[0].divergence_id, r2.divergences[0].divergence_id,
         "different seed should produce different divergence IDs"
     );
 }
@@ -1349,7 +1366,10 @@ fn combined_remediation_all_categories() {
         assert!(window[0].priority_score_millionths >= window[1].priority_score_millionths);
     }
 
-    assert!(steps.len() >= 4, "at least 4 steps: 1 unsupported + 1 deprecated + 1 dep + 1 behavior");
+    assert!(
+        steps.len() >= 4,
+        "at least 4 steps: 1 unsupported + 1 deprecated + 1 dep + 1 behavior"
+    );
 }
 
 // =========================================================================
@@ -1379,7 +1399,8 @@ fn analyze_package_esm_entry_from_ts() {
 
 #[test]
 fn analyze_package_both_cjs_and_esm_entries() {
-    let pkg = r#"{"name":"dual","version":"1.0.0","main":"dist/index.js","module":"dist/index.mjs"}"#;
+    let pkg =
+        r#"{"name":"dual","version":"1.0.0","main":"dist/index.js","module":"dist/index.mjs"}"#;
     let report = analyze_package(pkg, &node_config()).unwrap();
     assert!(report.api_entries.iter().any(|e| e.api_name == "entry:cjs"));
     assert!(report.api_entries.iter().any(|e| e.api_name == "entry:esm"));
@@ -1498,10 +1519,8 @@ fn manifest_unscoped_name_unchanged() {
 #[test]
 fn manifest_carries_capabilities() {
     let mut caps = empty_caps();
-    caps.minimum_capability_set
-        .insert("cap:fs".into());
-    caps.minimum_capability_set
-        .insert("cap:net".into());
+    caps.minimum_capability_set.insert("cap:fs".into());
+    caps.minimum_capability_set.insert("cap:net".into());
 
     let manifest = generate_manifest(ManifestGenerationInput {
         source_runtime: SourceRuntime::Node,
@@ -1589,7 +1608,8 @@ fn e2e_bun_with_capabilities() {
         source_runtime: SourceRuntime::Bun,
         ..MigrationConfig::default()
     };
-    let pkg = r#"{"name":"bun-ext","version":"0.5.0","main":"index.ts","dependencies":{"zod":"^3"}}"#;
+    let pkg =
+        r#"{"name":"bun-ext","version":"0.5.0","main":"index.ts","dependencies":{"zod":"^3"}}"#;
     let compat = analyze_package(pkg, &config).unwrap();
     assert_eq!(compat.source_runtime, SourceRuntime::Bun);
 
@@ -1781,7 +1801,10 @@ fn analyze_package_content_hash_deterministic() {
     let r1 = analyze_package(pkg, &node_config()).unwrap();
     let r2 = analyze_package(pkg, &node_config()).unwrap();
     assert_eq!(r1.report_content_hash, r2.report_content_hash);
-    assert_eq!(r1.compatibility_score_millionths, r2.compatibility_score_millionths);
+    assert_eq!(
+        r1.compatibility_score_millionths,
+        r2.compatibility_score_millionths
+    );
 }
 
 // =========================================================================

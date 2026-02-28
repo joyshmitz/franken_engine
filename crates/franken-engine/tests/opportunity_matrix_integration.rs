@@ -590,8 +590,7 @@ fn tied_scores_break_by_opportunity_id_ascending() {
         && d.ranked_opportunities[0].score_millionths == d.ranked_opportunities[1].score_millionths
     {
         assert!(
-            d.ranked_opportunities[0].opportunity_id
-                < d.ranked_opportunities[1].opportunity_id
+            d.ranked_opportunities[0].opportunity_id < d.ranked_opportunities[1].opportunity_id
         );
     }
 }
@@ -796,10 +795,7 @@ fn hotspot_profile_empty_artifacts_returns_empty() {
 
 #[test]
 fn hotspot_profile_diff_allocation_kind_included() {
-    let fg = make_flamegraph(
-        FlamegraphKind::DiffAllocation,
-        vec![("alloc;malloc", 100)],
-    );
+    let fg = make_flamegraph(FlamegraphKind::DiffAllocation, vec![("alloc;malloc", 100)]);
     let profile = hotspot_profile_from_flamegraphs(&[fg]);
     assert_eq!(profile.len(), 1);
     assert_eq!(profile[0].function, "malloc");
@@ -874,9 +870,8 @@ fn derive_candidates_sole_hotspot_gets_full_weight() {
         function: "f".into(),
         sample_count: 100,
     }];
-    let derived = derive_candidates_from_hotspots(
-        &hotspots, 1_000_000, 1, 100_000, 1_000_000, 1_000_000, 10,
-    );
+    let derived =
+        derive_candidates_from_hotspots(&hotspots, 1_000_000, 1, 100_000, 1_000_000, 1_000_000, 10);
     assert_eq!(derived.len(), 1);
     assert_eq!(
         derived[0].hotpath_weight_override_millionths,
@@ -891,9 +886,8 @@ fn derive_candidates_sanitizes_opportunity_id() {
         function: "dispatch.loop".into(),
         sample_count: 100,
     }];
-    let derived = derive_candidates_from_hotspots(
-        &hotspots, 1_300_000, 2, 200_000, 1_000_000, 2_000_000, 5,
-    );
+    let derived =
+        derive_candidates_from_hotspots(&hotspots, 1_300_000, 2, 200_000, 1_000_000, 2_000_000, 5);
     assert_eq!(derived[0].opportunity_id, "opp:vm-core:dispatch_loop");
 }
 
@@ -970,7 +964,10 @@ fn request_serde_roundtrip() {
     let back: OpportunityMatrixRequest = serde_json::from_str(&json).unwrap();
     assert_eq!(back.trace_id, req.trace_id);
     assert_eq!(back.candidates.len(), req.candidates.len());
-    assert_eq!(back.historical_outcomes.len(), req.historical_outcomes.len());
+    assert_eq!(
+        back.historical_outcomes.len(),
+        req.historical_outcomes.len()
+    );
 }
 
 #[test]
@@ -1037,15 +1034,8 @@ fn end_to_end_derive_then_score() {
     ];
 
     let pressure = 1_300_000;
-    let derived = derive_candidates_from_hotspots(
-        &hotspots,
-        pressure,
-        2,
-        200_000,
-        1_000_000,
-        1_000_000,
-        10,
-    );
+    let derived =
+        derive_candidates_from_hotspots(&hotspots, pressure, 2, 200_000, 1_000_000, 1_000_000, 10);
 
     let req = OpportunityMatrixRequest {
         trace_id: "trace-e2e".into(),
@@ -1064,7 +1054,6 @@ fn end_to_end_derive_then_score() {
     assert_eq!(d.ranked_opportunities.len(), 2);
     // Ranked by score descending
     assert!(
-        d.ranked_opportunities[0].score_millionths
-            >= d.ranked_opportunities[1].score_millionths
+        d.ranked_opportunities[0].score_millionths >= d.ranked_opportunities[1].score_millionths
     );
 }

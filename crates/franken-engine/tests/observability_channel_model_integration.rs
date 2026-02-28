@@ -108,7 +108,10 @@ fn payload_family_display_matches_snake_case() {
     assert_eq!(PayloadFamily::Replay.to_string(), "replay");
     assert_eq!(PayloadFamily::Optimization.to_string(), "optimization");
     assert_eq!(PayloadFamily::Security.to_string(), "security");
-    assert_eq!(PayloadFamily::LegalProvenance.to_string(), "legal_provenance");
+    assert_eq!(
+        PayloadFamily::LegalProvenance.to_string(),
+        "legal_provenance"
+    );
 }
 
 #[test]
@@ -153,7 +156,10 @@ fn distortion_metric_display_all_variants() {
     assert_eq!(DistortionMetric::SquaredError.to_string(), "squared_error");
     assert_eq!(DistortionMetric::LogLoss.to_string(), "log_loss");
     assert_eq!(DistortionMetric::EditDistance.to_string(), "edit_distance");
-    assert_eq!(DistortionMetric::BinaryFidelity.to_string(), "binary_fidelity");
+    assert_eq!(
+        DistortionMetric::BinaryFidelity.to_string(),
+        "binary_fidelity"
+    );
 }
 
 #[test]
@@ -195,11 +201,26 @@ fn channel_path_all_contains_five_variants() {
 
 #[test]
 fn channel_path_display_all_variants() {
-    assert_eq!(ChannelPath::CompilerToLedger.to_string(), "compiler_to_ledger");
-    assert_eq!(ChannelPath::RuntimeToLedger.to_string(), "runtime_to_ledger");
-    assert_eq!(ChannelPath::ControlPlaneToAudit.to_string(), "control_plane_to_audit");
-    assert_eq!(ChannelPath::ReplayToVerifier.to_string(), "replay_to_verifier");
-    assert_eq!(ChannelPath::ToComplianceArchive.to_string(), "to_compliance_archive");
+    assert_eq!(
+        ChannelPath::CompilerToLedger.to_string(),
+        "compiler_to_ledger"
+    );
+    assert_eq!(
+        ChannelPath::RuntimeToLedger.to_string(),
+        "runtime_to_ledger"
+    );
+    assert_eq!(
+        ChannelPath::ControlPlaneToAudit.to_string(),
+        "control_plane_to_audit"
+    );
+    assert_eq!(
+        ChannelPath::ReplayToVerifier.to_string(),
+        "replay_to_verifier"
+    );
+    assert_eq!(
+        ChannelPath::ToComplianceArchive.to_string(),
+        "to_compliance_archive"
+    );
 }
 
 #[test]
@@ -223,11 +244,26 @@ fn channel_path_serde_roundtrip_all() {
 
 #[test]
 fn violation_kind_display_all_variants() {
-    assert_eq!(ViolationKind::UncappedTelemetry.to_string(), "uncapped_telemetry");
-    assert_eq!(ViolationKind::UnverifiableLoss.to_string(), "unverifiable_loss");
-    assert_eq!(ViolationKind::DropBudgetExceeded.to_string(), "drop_budget_exceeded");
-    assert_eq!(ViolationKind::DegradationBudgetExceeded.to_string(), "degradation_budget_exceeded");
-    assert_eq!(ViolationKind::BackpressureOverflow.to_string(), "backpressure_overflow");
+    assert_eq!(
+        ViolationKind::UncappedTelemetry.to_string(),
+        "uncapped_telemetry"
+    );
+    assert_eq!(
+        ViolationKind::UnverifiableLoss.to_string(),
+        "unverifiable_loss"
+    );
+    assert_eq!(
+        ViolationKind::DropBudgetExceeded.to_string(),
+        "drop_budget_exceeded"
+    );
+    assert_eq!(
+        ViolationKind::DegradationBudgetExceeded.to_string(),
+        "degradation_budget_exceeded"
+    );
+    assert_eq!(
+        ViolationKind::BackpressureOverflow.to_string(),
+        "backpressure_overflow"
+    );
 }
 
 #[test]
@@ -303,8 +339,14 @@ fn envelope_rate_at_zero_distortion() {
         family: PayloadFamily::Decision,
         metric: DistortionMetric::LogLoss,
         frontier: vec![
-            RateDistortionPoint { distortion_millionths: 0, rate_millibits: 2_000_000 },
-            RateDistortionPoint { distortion_millionths: 100_000, rate_millibits: 1_000_000 },
+            RateDistortionPoint {
+                distortion_millionths: 0,
+                rate_millibits: 2_000_000,
+            },
+            RateDistortionPoint {
+                distortion_millionths: 100_000,
+                rate_millibits: 1_000_000,
+            },
         ],
         max_distortion_millionths: 100_000,
         min_rate_millibits: 500_000,
@@ -318,8 +360,14 @@ fn envelope_rate_linear_interpolation_midpoint() {
         family: PayloadFamily::Decision,
         metric: DistortionMetric::LogLoss,
         frontier: vec![
-            RateDistortionPoint { distortion_millionths: 0, rate_millibits: 2_000_000 },
-            RateDistortionPoint { distortion_millionths: 100_000, rate_millibits: 1_000_000 },
+            RateDistortionPoint {
+                distortion_millionths: 0,
+                rate_millibits: 2_000_000,
+            },
+            RateDistortionPoint {
+                distortion_millionths: 100_000,
+                rate_millibits: 1_000_000,
+            },
         ],
         max_distortion_millionths: 100_000,
         min_rate_millibits: 500_000,
@@ -333,8 +381,14 @@ fn envelope_rate_interpolation_quarter_point() {
         family: PayloadFamily::Decision,
         metric: DistortionMetric::LogLoss,
         frontier: vec![
-            RateDistortionPoint { distortion_millionths: 0, rate_millibits: 2_000_000 },
-            RateDistortionPoint { distortion_millionths: 100_000, rate_millibits: 1_000_000 },
+            RateDistortionPoint {
+                distortion_millionths: 0,
+                rate_millibits: 2_000_000,
+            },
+            RateDistortionPoint {
+                distortion_millionths: 100_000,
+                rate_millibits: 1_000_000,
+            },
         ],
         max_distortion_millionths: 100_000,
         min_rate_millibits: 500_000,
@@ -349,8 +403,14 @@ fn envelope_rate_at_max_distortion_returns_last_frontier() {
         family: PayloadFamily::Decision,
         metric: DistortionMetric::LogLoss,
         frontier: vec![
-            RateDistortionPoint { distortion_millionths: 0, rate_millibits: 2_000_000 },
-            RateDistortionPoint { distortion_millionths: 100_000, rate_millibits: 1_000_000 },
+            RateDistortionPoint {
+                distortion_millionths: 0,
+                rate_millibits: 2_000_000,
+            },
+            RateDistortionPoint {
+                distortion_millionths: 100_000,
+                rate_millibits: 1_000_000,
+            },
         ],
         max_distortion_millionths: 100_000,
         min_rate_millibits: 500_000,
@@ -363,9 +423,10 @@ fn envelope_rate_exceeds_max_distortion_returns_none() {
     let env = RateDistortionEnvelope {
         family: PayloadFamily::Decision,
         metric: DistortionMetric::LogLoss,
-        frontier: vec![
-            RateDistortionPoint { distortion_millionths: 0, rate_millibits: 2_000_000 },
-        ],
+        frontier: vec![RateDistortionPoint {
+            distortion_millionths: 0,
+            rate_millibits: 2_000_000,
+        }],
         max_distortion_millionths: 50_000,
         min_rate_millibits: 500_000,
     };
@@ -389,9 +450,10 @@ fn envelope_single_point_frontier() {
     let env = RateDistortionEnvelope {
         family: PayloadFamily::Replay,
         metric: DistortionMetric::Hamming,
-        frontier: vec![
-            RateDistortionPoint { distortion_millionths: 0, rate_millibits: 8_000_000 },
-        ],
+        frontier: vec![RateDistortionPoint {
+            distortion_millionths: 0,
+            rate_millibits: 8_000_000,
+        }],
         max_distortion_millionths: 0,
         min_rate_millibits: 8_000_000,
     };
@@ -405,8 +467,14 @@ fn envelope_rate_past_last_frontier_point_uses_last() {
         family: PayloadFamily::Optimization,
         metric: DistortionMetric::SquaredError,
         frontier: vec![
-            RateDistortionPoint { distortion_millionths: 0, rate_millibits: 4_000_000 },
-            RateDistortionPoint { distortion_millionths: 50_000, rate_millibits: 2_000_000 },
+            RateDistortionPoint {
+                distortion_millionths: 0,
+                rate_millibits: 4_000_000,
+            },
+            RateDistortionPoint {
+                distortion_millionths: 50_000,
+                rate_millibits: 2_000_000,
+            },
         ],
         max_distortion_millionths: 200_000,
         min_rate_millibits: 500_000,
@@ -421,9 +489,18 @@ fn envelope_three_point_interpolation() {
         family: PayloadFamily::Decision,
         metric: DistortionMetric::LogLoss,
         frontier: vec![
-            RateDistortionPoint { distortion_millionths: 0, rate_millibits: 3_000_000 },
-            RateDistortionPoint { distortion_millionths: 100_000, rate_millibits: 2_000_000 },
-            RateDistortionPoint { distortion_millionths: 200_000, rate_millibits: 500_000 },
+            RateDistortionPoint {
+                distortion_millionths: 0,
+                rate_millibits: 3_000_000,
+            },
+            RateDistortionPoint {
+                distortion_millionths: 100_000,
+                rate_millibits: 2_000_000,
+            },
+            RateDistortionPoint {
+                distortion_millionths: 200_000,
+                rate_millibits: 500_000,
+            },
         ],
         max_distortion_millionths: 200_000,
         min_rate_millibits: 200_000,
@@ -440,8 +517,14 @@ fn envelope_is_achievable_above_rd_curve() {
         family: PayloadFamily::Decision,
         metric: DistortionMetric::LogLoss,
         frontier: vec![
-            RateDistortionPoint { distortion_millionths: 0, rate_millibits: 2_000_000 },
-            RateDistortionPoint { distortion_millionths: 100_000, rate_millibits: 1_000_000 },
+            RateDistortionPoint {
+                distortion_millionths: 0,
+                rate_millibits: 2_000_000,
+            },
+            RateDistortionPoint {
+                distortion_millionths: 100_000,
+                rate_millibits: 1_000_000,
+            },
         ],
         max_distortion_millionths: 100_000,
         min_rate_millibits: 500_000,
@@ -459,8 +542,14 @@ fn envelope_is_achievable_below_rd_curve_fails() {
         family: PayloadFamily::Decision,
         metric: DistortionMetric::LogLoss,
         frontier: vec![
-            RateDistortionPoint { distortion_millionths: 0, rate_millibits: 2_000_000 },
-            RateDistortionPoint { distortion_millionths: 100_000, rate_millibits: 1_000_000 },
+            RateDistortionPoint {
+                distortion_millionths: 0,
+                rate_millibits: 2_000_000,
+            },
+            RateDistortionPoint {
+                distortion_millionths: 100_000,
+                rate_millibits: 1_000_000,
+            },
         ],
         max_distortion_millionths: 100_000,
         min_rate_millibits: 500_000,
@@ -474,9 +563,10 @@ fn envelope_is_achievable_beyond_max_distortion_fails() {
     let env = RateDistortionEnvelope {
         family: PayloadFamily::Decision,
         metric: DistortionMetric::LogLoss,
-        frontier: vec![
-            RateDistortionPoint { distortion_millionths: 0, rate_millibits: 2_000_000 },
-        ],
+        frontier: vec![RateDistortionPoint {
+            distortion_millionths: 0,
+            rate_millibits: 2_000_000,
+        }],
         max_distortion_millionths: 50_000,
         min_rate_millibits: 500_000,
     };
@@ -519,8 +609,14 @@ fn envelope_duplicate_distortion_points() {
         family: PayloadFamily::Decision,
         metric: DistortionMetric::LogLoss,
         frontier: vec![
-            RateDistortionPoint { distortion_millionths: 50_000, rate_millibits: 3_000_000 },
-            RateDistortionPoint { distortion_millionths: 50_000, rate_millibits: 1_500_000 },
+            RateDistortionPoint {
+                distortion_millionths: 50_000,
+                rate_millibits: 3_000_000,
+            },
+            RateDistortionPoint {
+                distortion_millionths: 50_000,
+                rate_millibits: 1_500_000,
+            },
         ],
         max_distortion_millionths: 100_000,
         min_rate_millibits: 500_000,
@@ -567,7 +663,10 @@ fn risk_ledger_empty_returns_zero() {
 #[test]
 fn risk_ledger_security_binary_jump() {
     let ledgers = canonical_risk_ledgers();
-    let sec = ledgers.iter().find(|l| l.family == PayloadFamily::Security).unwrap();
+    let sec = ledgers
+        .iter()
+        .find(|l| l.family == PayloadFamily::Security)
+        .unwrap();
     assert_eq!(sec.risk_at_distortion(0), 0);
     assert_eq!(sec.risk_at_distortion(1), MILLION);
 }
@@ -596,13 +695,11 @@ fn risk_ledger_past_last_entry_uses_last() {
 fn risk_ledger_serde_roundtrip() {
     let ledger = DistortionRiskLedger {
         family: PayloadFamily::Decision,
-        entries: vec![
-            DistortionRiskEntry {
-                distortion_millionths: 0,
-                risk_millionths: 0,
-                consequence: "ok".to_string(),
-            },
-        ],
+        entries: vec![DistortionRiskEntry {
+            distortion_millionths: 0,
+            risk_millionths: 0,
+            consequence: "ok".to_string(),
+        }],
     };
     let json = serde_json::to_string(&ledger).unwrap();
     let back: DistortionRiskLedger = serde_json::from_str(&json).unwrap();
@@ -860,10 +957,15 @@ fn canonical_specs_security_and_legal_are_lossless() {
     let specs = canonical_channel_specs();
     for spec in &specs {
         if spec.family == PayloadFamily::Security || spec.family == PayloadFamily::LegalProvenance {
-            assert!(!spec.lossy_permitted, "{} should be lossless", spec.channel_id);
+            assert!(
+                !spec.lossy_permitted,
+                "{} should be lossless",
+                spec.channel_id
+            );
             assert_eq!(
                 spec.envelope.max_distortion_millionths, 0,
-                "{} max distortion should be zero", spec.channel_id,
+                "{} max distortion should be zero",
+                spec.channel_id,
             );
         }
     }
@@ -872,7 +974,10 @@ fn canonical_specs_security_and_legal_are_lossless() {
 #[test]
 fn canonical_specs_replay_is_lossless() {
     let specs = canonical_channel_specs();
-    let replay = specs.iter().find(|s| s.family == PayloadFamily::Replay).unwrap();
+    let replay = specs
+        .iter()
+        .find(|s| s.family == PayloadFamily::Replay)
+        .unwrap();
     assert!(!replay.lossy_permitted);
     assert_eq!(replay.envelope.max_distortion_millionths, 0);
 }
@@ -880,7 +985,11 @@ fn canonical_specs_replay_is_lossless() {
 #[test]
 fn canonical_specs_each_has_positive_buffer_capacity() {
     for spec in canonical_channel_specs() {
-        assert!(spec.buffer_capacity > 0, "{} needs buffer_capacity > 0", spec.channel_id);
+        assert!(
+            spec.buffer_capacity > 0,
+            "{} needs buffer_capacity > 0",
+            spec.channel_id
+        );
     }
 }
 
@@ -965,7 +1074,11 @@ fn report_utilization_computed_correctly() {
     states.insert(spec.channel_id.clone(), state);
 
     let report = generate_report(&specs, &states, epoch(1));
-    let entry = report.channels.iter().find(|e| e.channel_id == spec.channel_id).unwrap();
+    let entry = report
+        .channels
+        .iter()
+        .find(|e| e.channel_id == spec.channel_id)
+        .unwrap();
     assert_eq!(entry.items_emitted, 1000);
     // 1000/100_000 = 10_000 millionths (1%)
     assert_eq!(entry.utilization_millionths, 10_000);

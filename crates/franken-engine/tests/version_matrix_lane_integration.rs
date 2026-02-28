@@ -19,11 +19,7 @@ fn simple_version_source(tags: &[&str]) -> VersionSource {
     }
 }
 
-fn simple_spec(
-    surface: &str,
-    local_tags: &[&str],
-    remote_tags: &[&str],
-) -> BoundaryMatrixSpec {
+fn simple_spec(surface: &str, local_tags: &[&str], remote_tags: &[&str]) -> BoundaryMatrixSpec {
     BoundaryMatrixSpec {
         boundary_surface: surface.to_string(),
         local_repo: format!("{surface}-local"),
@@ -356,12 +352,7 @@ fn derive_slots_branch_main_derives_next_when_no_prerelease() {
     source.branch_names = vec!["main".to_string()];
     let slots = derive_version_slots(&source, "engine").unwrap();
     assert_eq!(slots.next, Some("1.0.1-next".to_string()));
-    assert!(
-        slots
-            .derivation_notes
-            .iter()
-            .any(|n| n.contains("branch"))
-    );
+    assert!(slots.derivation_notes.iter().any(|n| n.contains("branch")));
 }
 
 #[test]
@@ -410,9 +401,7 @@ fn derive_slots_v_prefix_stripped_in_current() {
 
 #[test]
 fn derive_slots_many_versions_picks_correct_previous() {
-    let source = simple_version_source(&[
-        "v1.0.0", "v1.1.0", "v1.2.0", "v2.0.0", "v2.1.0",
-    ]);
+    let source = simple_version_source(&["v1.0.0", "v1.1.0", "v1.2.0", "v2.0.0", "v2.1.0"]);
     let slots = derive_version_slots(&source, "engine").unwrap();
     assert_eq!(slots.current, "2.1.0");
     assert_eq!(slots.previous, Some("2.0.0".to_string()));
@@ -564,10 +553,7 @@ fn derive_matrix_conformance_command_contains_cell_id() {
     let plan = derive_version_matrix(&[spec]).unwrap();
     for cell in &plan.cells {
         assert!(cell.expected_conformance_command.contains(&cell.cell_id));
-        assert!(
-            cell.expected_conformance_command
-                .contains("--matrix-cell")
-        );
+        assert!(cell.expected_conformance_command.contains("--matrix-cell"));
     }
 }
 
@@ -696,7 +682,10 @@ fn classify_no_failures_returns_empty() {
 fn classify_universal_when_all_cells_fail_same_fingerprint() {
     let spec = simple_spec("ifc", &["v1.0.0", "v0.9.0"], &["v2.0.0", "v1.9.0"]);
     let plan = derive_version_matrix(&[spec]).unwrap();
-    assert!(plan.cells.len() >= 2, "need at least 2 cells for universal test");
+    assert!(
+        plan.cells.len() >= 2,
+        "need at least 2 cells for universal test"
+    );
     let results: Vec<_> = plan
         .cells
         .iter()
@@ -743,7 +732,10 @@ fn classify_multiple_fingerprints_same_boundary() {
     results[1] = make_fail_result(&plan.cells[1], "fp-B", "E2");
     let scopes = classify_failure_scopes(&plan, &results);
     // Two different fingerprints => two scope entries.
-    let fingerprints: BTreeSet<_> = scopes.iter().map(|s| s.failure_fingerprint.clone()).collect();
+    let fingerprints: BTreeSet<_> = scopes
+        .iter()
+        .map(|s| s.failure_fingerprint.clone())
+        .collect();
     assert!(fingerprints.contains("fp-A"));
     assert!(fingerprints.contains("fp-B"));
 }
@@ -964,7 +956,11 @@ fn pinned_version_combination_serde_roundtrip() {
 #[test]
 fn e2e_multi_boundary_full_pipeline() {
     // Build two boundary surfaces with different version landscapes.
-    let mut spec_ifc = simple_spec("ifc", &["v1.0.0", "v0.9.0"], &["v2.0.0", "v1.9.0", "v2.1.0-rc.1"]);
+    let mut spec_ifc = simple_spec(
+        "ifc",
+        &["v1.0.0", "v0.9.0"],
+        &["v2.0.0", "v1.9.0", "v2.1.0-rc.1"],
+    );
     spec_ifc.pinned_combinations.push(PinnedVersionCombination {
         local_version: "0.8.0".to_string(),
         remote_version: "1.5.0".to_string(),
@@ -1218,12 +1214,8 @@ fn derive_slots_tags_with_equals_separator() {
 
 #[test]
 fn derive_slots_multiple_prereleases_picks_highest() {
-    let source = simple_version_source(&[
-        "v1.0.0",
-        "v1.1.0-alpha.1",
-        "v1.1.0-beta.1",
-        "v1.1.0-rc.1",
-    ]);
+    let source =
+        simple_version_source(&["v1.0.0", "v1.1.0-alpha.1", "v1.1.0-beta.1", "v1.1.0-rc.1"]);
     let slots = derive_version_slots(&source, "engine").unwrap();
     assert_eq!(slots.current, "1.0.0");
     // rc.1 > beta.1 > alpha.1 lexicographically.

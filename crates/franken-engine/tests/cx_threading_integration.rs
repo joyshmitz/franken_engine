@@ -12,10 +12,11 @@ use frankenengine_engine::control_plane::ContextAdapter;
 use frankenengine_engine::control_plane::mocks::{MockBudget, MockCx, trace_id_from_seed};
 use frankenengine_engine::cx_threading::{
     CxThreadedEvent, CxThreadedGateway, CxThreadingError, EffectAuditLog, EffectCategory,
-    HostcallDescriptor, HostcallReceipt, HostcallRegistration, LifecyclePhase, LifecycleReceipt,
-    PolicyCheckDescriptor, PolicyCheckResult, PolicyVerdict, TelemetryDescriptor, TelemetryLevel,
-    TelemetryReceipt, run_full_lifecycle, HOSTCALL_BUDGET_COST_MS, LIFECYCLE_TRANSITION_BUDGET_COST_MS,
-    POLICY_CHECK_BUDGET_COST_MS, TELEMETRY_EMIT_BUDGET_COST_MS,
+    HOSTCALL_BUDGET_COST_MS, HostcallDescriptor, HostcallReceipt, HostcallRegistration,
+    LIFECYCLE_TRANSITION_BUDGET_COST_MS, LifecyclePhase, LifecycleReceipt,
+    POLICY_CHECK_BUDGET_COST_MS, PolicyCheckDescriptor, PolicyCheckResult, PolicyVerdict,
+    TELEMETRY_EMIT_BUDGET_COST_MS, TelemetryDescriptor, TelemetryLevel, TelemetryReceipt,
+    run_full_lifecycle,
 };
 
 // ---------------------------------------------------------------------------
@@ -70,10 +71,22 @@ fn constants_are_positive_and_ordered() {
 
 #[test]
 fn effect_category_budget_cost_ms_matches_constants() {
-    assert_eq!(EffectCategory::Hostcall.budget_cost_ms(), HOSTCALL_BUDGET_COST_MS);
-    assert_eq!(EffectCategory::PolicyCheck.budget_cost_ms(), POLICY_CHECK_BUDGET_COST_MS);
-    assert_eq!(EffectCategory::LifecycleTransition.budget_cost_ms(), LIFECYCLE_TRANSITION_BUDGET_COST_MS);
-    assert_eq!(EffectCategory::TelemetryEmit.budget_cost_ms(), TELEMETRY_EMIT_BUDGET_COST_MS);
+    assert_eq!(
+        EffectCategory::Hostcall.budget_cost_ms(),
+        HOSTCALL_BUDGET_COST_MS
+    );
+    assert_eq!(
+        EffectCategory::PolicyCheck.budget_cost_ms(),
+        POLICY_CHECK_BUDGET_COST_MS
+    );
+    assert_eq!(
+        EffectCategory::LifecycleTransition.budget_cost_ms(),
+        LIFECYCLE_TRANSITION_BUDGET_COST_MS
+    );
+    assert_eq!(
+        EffectCategory::TelemetryEmit.budget_cost_ms(),
+        TELEMETRY_EMIT_BUDGET_COST_MS
+    );
 }
 
 #[test]
@@ -230,10 +243,14 @@ fn telemetry_level_serde_roundtrip() {
 #[test]
 fn policy_verdict_display() {
     assert_eq!(PolicyVerdict::Allow.to_string(), "allow");
-    let deny = PolicyVerdict::Deny { reason: "rate limit".into() };
+    let deny = PolicyVerdict::Deny {
+        reason: "rate limit".into(),
+    };
     assert!(deny.to_string().contains("deny"));
     assert!(deny.to_string().contains("rate limit"));
-    let esc = PolicyVerdict::Escalate { reason: "human review".into() };
+    let esc = PolicyVerdict::Escalate {
+        reason: "human review".into(),
+    };
     assert!(esc.to_string().contains("escalate"));
     assert!(esc.to_string().contains("human review"));
 }
@@ -242,8 +259,12 @@ fn policy_verdict_display() {
 fn policy_verdict_serde_roundtrip() {
     let variants = [
         PolicyVerdict::Allow,
-        PolicyVerdict::Deny { reason: "blocked".into() },
-        PolicyVerdict::Escalate { reason: "needs review".into() },
+        PolicyVerdict::Deny {
+            reason: "blocked".into(),
+        },
+        PolicyVerdict::Escalate {
+            reason: "needs review".into(),
+        },
     ];
     for v in &variants {
         let json = serde_json::to_string(v).unwrap();
@@ -490,7 +511,9 @@ fn hostcall_dispatch_success_returns_receipt() {
 #[test]
 fn hostcall_dispatch_unregistered_fails() {
     let mut gw = make_gateway(11, 100);
-    let err = gw.dispatch_hostcall(&hostcall("not_registered")).unwrap_err();
+    let err = gw
+        .dispatch_hostcall(&hostcall("not_registered"))
+        .unwrap_err();
     assert!(matches!(err, CxThreadingError::HostcallRejected { .. }));
     assert_eq!(err.error_code(), "cx_hostcall_rejected");
     // Event should still be emitted
@@ -568,7 +591,10 @@ fn hostcall_multiple_dispatches_increment_sequence() {
         assert_eq!(receipt.sequence_number, (i + 1) as u64);
     }
     assert_eq!(gw.hostcall_count(), 5);
-    assert_eq!(gw.cx().budget().remaining_ms(), 100 - 5 * HOSTCALL_BUDGET_COST_MS);
+    assert_eq!(
+        gw.cx().budget().remaining_ms(),
+        100 - 5 * HOSTCALL_BUDGET_COST_MS
+    );
 }
 
 #[test]
@@ -592,7 +618,9 @@ fn hostcall_event_fields_are_correct() {
 fn policy_check_allow_returns_result() {
     let mut gw = make_gateway(20, 100);
     let desc = policy_check("pre_call");
-    let result = gw.evaluate_policy_check(&desc, |_| PolicyVerdict::Allow).unwrap();
+    let result = gw
+        .evaluate_policy_check(&desc, |_| PolicyVerdict::Allow)
+        .unwrap();
     assert_eq!(result.check_name, "pre_call");
     assert_eq!(result.policy_id, "integ-policy-001");
     assert_eq!(result.verdict, PolicyVerdict::Allow);
@@ -612,7 +640,10 @@ fn policy_check_deny_returns_error_but_consumes_budget() {
     assert!(matches!(err, CxThreadingError::PolicyDenied { .. }));
     assert_eq!(err.error_code(), "cx_policy_denied");
     // Budget consumed even on deny
-    assert_eq!(gw.cx().budget().remaining_ms(), 100 - POLICY_CHECK_BUDGET_COST_MS);
+    assert_eq!(
+        gw.cx().budget().remaining_ms(),
+        100 - POLICY_CHECK_BUDGET_COST_MS
+    );
     // Policy check count still incremented
     assert_eq!(gw.policy_check_count(), 1);
 }
@@ -646,7 +677,9 @@ fn policy_check_closure_receives_descriptor() {
             if d.check_name == "special" {
                 PolicyVerdict::Allow
             } else {
-                PolicyVerdict::Deny { reason: "unexpected".into() }
+                PolicyVerdict::Deny {
+                    reason: "unexpected".into(),
+                }
             }
         })
         .unwrap();
@@ -656,7 +689,8 @@ fn policy_check_closure_receives_descriptor() {
 #[test]
 fn policy_check_event_outcome_matches_verdict() {
     let mut gw = make_gateway(25, 100);
-    gw.evaluate_policy_check(&policy_check("a"), |_| PolicyVerdict::Allow).unwrap();
+    gw.evaluate_policy_check(&policy_check("a"), |_| PolicyVerdict::Allow)
+        .unwrap();
     assert_eq!(gw.events()[0].outcome, "allow");
 
     // deny also emits event (before returning error)
@@ -682,7 +716,10 @@ fn lifecycle_unloaded_to_loaded() {
     let receipt = gw.transition_lifecycle(LifecyclePhase::Loaded).unwrap();
     assert_eq!(receipt.from, LifecyclePhase::Unloaded);
     assert_eq!(receipt.to, LifecyclePhase::Loaded);
-    assert_eq!(receipt.budget_consumed_ms, LIFECYCLE_TRANSITION_BUDGET_COST_MS);
+    assert_eq!(
+        receipt.budget_consumed_ms,
+        LIFECYCLE_TRANSITION_BUDGET_COST_MS
+    );
     assert_eq!(receipt.sequence_number, 1);
     assert_eq!(gw.lifecycle_phase(), LifecyclePhase::Loaded);
 }
@@ -717,7 +754,8 @@ fn lifecycle_suspend_resume_cycle() {
 fn lifecycle_quarantine_then_unload() {
     let mut gw = make_gateway(33, 200);
     advance_to_running(&mut gw);
-    gw.transition_lifecycle(LifecyclePhase::Quarantined).unwrap();
+    gw.transition_lifecycle(LifecyclePhase::Quarantined)
+        .unwrap();
     gw.transition_lifecycle(LifecyclePhase::Unloading).unwrap();
     gw.transition_lifecycle(LifecyclePhase::Terminated).unwrap();
     assert_eq!(gw.lifecycle_phase(), LifecyclePhase::Terminated);
@@ -727,7 +765,8 @@ fn lifecycle_quarantine_then_unload() {
 fn lifecycle_quarantine_then_terminate_directly() {
     let mut gw = make_gateway(34, 200);
     advance_to_running(&mut gw);
-    gw.transition_lifecycle(LifecyclePhase::Quarantined).unwrap();
+    gw.transition_lifecycle(LifecyclePhase::Quarantined)
+        .unwrap();
     gw.transition_lifecycle(LifecyclePhase::Terminated).unwrap();
     assert_eq!(gw.lifecycle_phase(), LifecyclePhase::Terminated);
 }
@@ -736,7 +775,9 @@ fn lifecycle_quarantine_then_terminate_directly() {
 fn lifecycle_invalid_transition_rejected() {
     let mut gw = make_gateway(35, 200);
     // Cannot go directly from Unloaded to Running
-    let err = gw.transition_lifecycle(LifecyclePhase::Running).unwrap_err();
+    let err = gw
+        .transition_lifecycle(LifecyclePhase::Running)
+        .unwrap_err();
     assert!(matches!(err, CxThreadingError::LifecycleViolation { .. }));
     assert_eq!(gw.lifecycle_phase(), LifecyclePhase::Unloaded);
 }
@@ -834,7 +875,9 @@ fn telemetry_emit_empty_payload() {
 #[test]
 fn telemetry_emit_budget_exhaustion() {
     let mut gw = make_gateway(52, 0);
-    let err = gw.emit_telemetry(&telemetry("should_fail"), "data").unwrap_err();
+    let err = gw
+        .emit_telemetry(&telemetry("should_fail"), "data")
+        .unwrap_err();
     assert!(matches!(err, CxThreadingError::BudgetExhausted { .. }));
     assert_eq!(gw.telemetry_count(), 0);
 }
@@ -842,7 +885,8 @@ fn telemetry_emit_budget_exhaustion() {
 #[test]
 fn telemetry_emit_event_fields() {
     let mut gw = make_gateway(53, 100);
-    gw.emit_telemetry(&telemetry("evidence_log"), "data").unwrap();
+    gw.emit_telemetry(&telemetry("evidence_log"), "data")
+        .unwrap();
     let evt = &gw.events()[0];
     assert_eq!(evt.category, EffectCategory::TelemetryEmit);
     assert_eq!(evt.operation, "evidence_log");
@@ -862,7 +906,8 @@ fn audit_log_reflects_all_operations() {
     gw.register_hostcall("kv_get", None);
     gw.dispatch_hostcall(&hostcall("fs_read")).unwrap();
     gw.dispatch_hostcall(&hostcall("kv_get")).unwrap();
-    gw.evaluate_policy_check(&policy_check("limit"), |_| PolicyVerdict::Allow).unwrap();
+    gw.evaluate_policy_check(&policy_check("limit"), |_| PolicyVerdict::Allow)
+        .unwrap();
     gw.emit_telemetry(&telemetry("metric"), "data").unwrap();
     gw.transition_lifecycle(LifecyclePhase::Unloading).unwrap();
     gw.transition_lifecycle(LifecyclePhase::Terminated).unwrap();
@@ -1108,7 +1153,8 @@ fn interleaved_operations_produce_correct_event_sequence() {
     gw.register_hostcall("op", None);
 
     gw.dispatch_hostcall(&hostcall("op")).unwrap();
-    gw.evaluate_policy_check(&policy_check("chk"), |_| PolicyVerdict::Allow).unwrap();
+    gw.evaluate_policy_check(&policy_check("chk"), |_| PolicyVerdict::Allow)
+        .unwrap();
     gw.emit_telemetry(&telemetry("metric"), "data").unwrap();
 
     let events = gw.events();
@@ -1211,7 +1257,8 @@ fn event_budget_remaining_decreases_monotonically() {
     advance_to_running(&mut gw);
     gw.register_hostcall("op", None);
     gw.dispatch_hostcall(&hostcall("op")).unwrap();
-    gw.evaluate_policy_check(&policy_check("chk"), |_| PolicyVerdict::Allow).unwrap();
+    gw.evaluate_policy_check(&policy_check("chk"), |_| PolicyVerdict::Allow)
+        .unwrap();
     gw.emit_telemetry(&telemetry("metric"), "data").unwrap();
 
     let events = gw.events();
@@ -1242,11 +1289,15 @@ fn hostcall_reregistration_overwrites_previous() {
 fn lifecycle_self_transition_rejected() {
     let mut gw = make_gateway(86, 200);
     // Unloaded -> Unloaded is not valid
-    let err = gw.transition_lifecycle(LifecyclePhase::Unloaded).unwrap_err();
+    let err = gw
+        .transition_lifecycle(LifecyclePhase::Unloaded)
+        .unwrap_err();
     assert!(matches!(err, CxThreadingError::LifecycleViolation { .. }));
 
     advance_to_running(&mut gw);
-    let err = gw.transition_lifecycle(LifecyclePhase::Running).unwrap_err();
+    let err = gw
+        .transition_lifecycle(LifecyclePhase::Running)
+        .unwrap_err();
     assert!(matches!(err, CxThreadingError::LifecycleViolation { .. }));
 }
 

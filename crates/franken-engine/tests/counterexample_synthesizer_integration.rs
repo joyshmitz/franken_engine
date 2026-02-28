@@ -247,12 +247,10 @@ fn synthesis_strategy_serde_roundtrip() {
 
 #[test]
 fn synthesis_strategy_ordering() {
-    let mut strategies = vec![
-        SynthesisStrategy::TimeBounded,
+    let mut strategies = [SynthesisStrategy::TimeBounded,
         SynthesisStrategy::CompilerExtraction,
         SynthesisStrategy::Mutation,
-        SynthesisStrategy::Enumeration,
-    ];
+        SynthesisStrategy::Enumeration];
     strategies.sort();
     assert_eq!(strategies[0], SynthesisStrategy::CompilerExtraction);
     assert_eq!(strategies[1], SynthesisStrategy::Enumeration);
@@ -429,11 +427,9 @@ fn interference_kind_serde_roundtrip() {
 
 #[test]
 fn interference_kind_ordering() {
-    let mut kinds = vec![
-        InterferenceKind::TimescaleConflict,
+    let mut kinds = [InterferenceKind::TimescaleConflict,
         InterferenceKind::InvariantInvalidation,
-        InterferenceKind::Oscillation,
-    ];
+        InterferenceKind::Oscillation];
     kinds.sort();
     assert_eq!(kinds[0], InterferenceKind::InvariantInvalidation);
     assert_eq!(kinds[1], InterferenceKind::Oscillation);
@@ -478,14 +474,12 @@ fn mutation_kind_serde_roundtrip_all() {
 
 #[test]
 fn mutation_kind_ordering() {
-    let mut kinds = vec![
-        MutationKind::DuplicateNode,
+    let mut kinds = [MutationKind::DuplicateNode,
         MutationKind::ChangeMergeOp,
         MutationKind::RemoveConstraint,
         MutationKind::AddGrant,
         MutationKind::RemovePropertyClaim,
-        MutationKind::ChangePriority,
-    ];
+        MutationKind::ChangePriority];
     kinds.sort();
     assert_eq!(kinds[0], MutationKind::ChangeMergeOp);
     assert_eq!(kinds[1], MutationKind::AddGrant);

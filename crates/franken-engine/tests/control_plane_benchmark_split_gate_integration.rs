@@ -11,10 +11,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use frankenengine_engine::control_plane_benchmark_split_gate::{
-    evaluate_control_plane_benchmark_split, BenchmarkSplit, BenchmarkSplitFailureCode,
-    BenchmarkSplitFinding, BenchmarkSplitGateDecision, BenchmarkSplitGateInput,
-    BenchmarkSplitLogEvent, BenchmarkSplitSnapshot, BenchmarkSplitThresholds, LatencyStatsNs,
-    SplitBenchmarkEvaluation, SplitBenchmarkMetrics,
+    BenchmarkSplit, BenchmarkSplitFailureCode, BenchmarkSplitFinding, BenchmarkSplitGateDecision,
+    BenchmarkSplitGateInput, BenchmarkSplitLogEvent, BenchmarkSplitSnapshot,
+    BenchmarkSplitThresholds, LatencyStatsNs, SplitBenchmarkEvaluation, SplitBenchmarkMetrics,
+    evaluate_control_plane_benchmark_split,
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -64,8 +64,8 @@ fn all_splits_metrics() -> BTreeMap<BenchmarkSplit, SplitBenchmarkMetrics> {
 
 fn stable_baseline_runs() -> Vec<u64> {
     vec![
-        1_000_000, 1_000_010, 999_990, 1_000_005, 999_995, 1_000_008, 999_992, 1_000_003,
-        999_997, 1_000_001,
+        1_000_000, 1_000_010, 999_990, 1_000_005, 999_995, 1_000_008, 999_992, 1_000_003, 999_997,
+        1_000_001,
     ]
 }
 
@@ -101,10 +101,7 @@ fn split_as_str_returns_expected_strings() {
         BenchmarkSplit::EvidenceEmission.as_str(),
         "evidence_emission"
     );
-    assert_eq!(
-        BenchmarkSplit::FullIntegration.as_str(),
-        "full_integration"
-    );
+    assert_eq!(BenchmarkSplit::FullIntegration.as_str(), "full_integration");
 }
 
 #[test]
@@ -391,10 +388,7 @@ fn thresholds_serde_roundtrip() {
         back.max_cx_throughput_regression_millionths,
         t.max_cx_throughput_regression_millionths
     );
-    assert_eq!(
-        back.max_peak_rss_delta_bytes,
-        t.max_peak_rss_delta_bytes
-    );
+    assert_eq!(back.max_peak_rss_delta_bytes, t.max_peak_rss_delta_bytes);
 }
 
 #[test]
@@ -500,14 +494,18 @@ fn log_event_serde_roundtrip_with_error() {
 
 #[test]
 fn decision_serde_roundtrip() {
-    let decision = evaluate_control_plane_benchmark_split(&make_input(), &BenchmarkSplitThresholds::default());
+    let decision =
+        evaluate_control_plane_benchmark_split(&make_input(), &BenchmarkSplitThresholds::default());
     let json = serde_json::to_string(&decision).unwrap();
     let back: BenchmarkSplitGateDecision = serde_json::from_str(&json).unwrap();
     assert_eq!(back.decision_id, decision.decision_id);
     assert_eq!(back.pass, decision.pass);
     assert_eq!(back.rollback_required, decision.rollback_required);
     assert_eq!(back.previous_snapshot_hash, decision.previous_snapshot_hash);
-    assert_eq!(back.candidate_snapshot_hash, decision.candidate_snapshot_hash);
+    assert_eq!(
+        back.candidate_snapshot_hash,
+        decision.candidate_snapshot_hash
+    );
     assert_eq!(back.baseline_cv_millionths, decision.baseline_cv_millionths);
     assert_eq!(back.evaluations, decision.evaluations);
     assert_eq!(back.findings, decision.findings);
@@ -696,8 +694,7 @@ fn gate_fails_when_both_missing_same_split() {
 #[test]
 fn gate_fails_with_insufficient_baseline_runs() {
     let mut inp = make_input();
-    inp.candidate_snapshot
-        .baseline_throughput_runs_ops_per_sec = vec![1_000_000; 3];
+    inp.candidate_snapshot.baseline_throughput_runs_ops_per_sec = vec![1_000_000; 3];
     let decision =
         evaluate_control_plane_benchmark_split(&inp, &BenchmarkSplitThresholds::default());
     assert!(!decision.pass);
@@ -714,8 +711,7 @@ fn gate_fails_with_insufficient_baseline_runs() {
 #[test]
 fn gate_fails_with_high_baseline_variance() {
     let mut inp = make_input();
-    inp.candidate_snapshot
-        .baseline_throughput_runs_ops_per_sec = vec![
+    inp.candidate_snapshot.baseline_throughput_runs_ops_per_sec = vec![
         500_000, 1_500_000, 500_000, 1_500_000, 500_000, 1_500_000, 500_000, 1_500_000, 500_000,
         1_500_000,
     ];
@@ -770,8 +766,7 @@ fn gate_finds_zero_throughput_in_previous() {
 #[test]
 fn gate_finds_invalid_baseline_cv_for_all_zeros() {
     let mut inp = make_input();
-    inp.candidate_snapshot
-        .baseline_throughput_runs_ops_per_sec = vec![0; 10];
+    inp.candidate_snapshot.baseline_throughput_runs_ops_per_sec = vec![0; 10];
     let decision =
         evaluate_control_plane_benchmark_split(&inp, &BenchmarkSplitThresholds::default());
     assert!(decision.findings.iter().any(|f| {
@@ -1045,8 +1040,7 @@ fn gate_accumulates_multiple_findings() {
         .unwrap()
         .peak_rss_delta_bytes = 1;
     // Also make baseline runs insufficient
-    inp.candidate_snapshot
-        .baseline_throughput_runs_ops_per_sec = vec![1_000_000; 3];
+    inp.candidate_snapshot.baseline_throughput_runs_ops_per_sec = vec![1_000_000; 3];
 
     let decision =
         evaluate_control_plane_benchmark_split(&inp, &BenchmarkSplitThresholds::default());
@@ -1153,8 +1147,7 @@ fn gate_fails_when_all_splits_missing() {
 #[test]
 fn baseline_stability_log_shows_fail_when_variance_too_high() {
     let mut inp = make_input();
-    inp.candidate_snapshot
-        .baseline_throughput_runs_ops_per_sec = vec![
+    inp.candidate_snapshot.baseline_throughput_runs_ops_per_sec = vec![
         100_000, 900_000, 100_000, 900_000, 100_000, 900_000, 100_000, 900_000, 100_000, 900_000,
     ];
     let decision =
@@ -1171,8 +1164,7 @@ fn baseline_stability_log_shows_fail_when_variance_too_high() {
 #[test]
 fn baseline_stability_log_shows_fail_when_insufficient_runs() {
     let mut inp = make_input();
-    inp.candidate_snapshot
-        .baseline_throughput_runs_ops_per_sec = vec![1_000_000; 5];
+    inp.candidate_snapshot.baseline_throughput_runs_ops_per_sec = vec![1_000_000; 5];
     let decision =
         evaluate_control_plane_benchmark_split(&inp, &BenchmarkSplitThresholds::default());
     let stability_log = decision

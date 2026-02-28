@@ -10,10 +10,9 @@
 use std::collections::BTreeSet;
 
 use frankenengine_engine::benchmark_denominator::{
-    BaselineEngine, BenchmarkCase, BenchmarkDenominatorError, BenchmarkPublicationEvent,
-    NativeCoveragePoint, PublicationContext, PublicationGateDecision, PublicationGateInput,
-    evaluate_publication_gate, weighted_geometric_mean, BENCHMARK_PUBLICATION_COMPONENT,
-    SCORE_THRESHOLD,
+    BENCHMARK_PUBLICATION_COMPONENT, BaselineEngine, BenchmarkCase, BenchmarkDenominatorError,
+    BenchmarkPublicationEvent, NativeCoveragePoint, PublicationContext, PublicationGateDecision,
+    PublicationGateInput, SCORE_THRESHOLD, evaluate_publication_gate, weighted_geometric_mean,
 };
 
 // ── Helpers ─────────────────────────────────────────────────────────────
@@ -138,7 +137,8 @@ fn benchmark_case_serde_round_trip() {
 
 #[test]
 fn benchmark_case_defaults_from_json() {
-    let json = r#"{"workload_id":"w","throughput_franken_tps":100.0,"throughput_baseline_tps":50.0}"#;
+    let json =
+        r#"{"workload_id":"w","throughput_franken_tps":100.0,"throughput_baseline_tps":50.0}"#;
     let c: BenchmarkCase = serde_json::from_str(json).unwrap();
     assert!(c.behavior_equivalent);
     assert!(c.latency_envelope_ok);
@@ -461,7 +461,10 @@ fn wgm_deterministic_across_calls() {
 #[test]
 fn wgm_err_empty_cases() {
     let err = weighted_geometric_mean(&[], BaselineEngine::Node).unwrap_err();
-    assert!(matches!(err, BenchmarkDenominatorError::EmptyCaseSet { .. }));
+    assert!(matches!(
+        err,
+        BenchmarkDenominatorError::EmptyCaseSet { .. }
+    ));
 }
 
 #[test]
@@ -543,8 +546,8 @@ fn wgm_err_zero_weight() {
 #[test]
 fn wgm_err_mixed_weights() {
     let cases = vec![
-        case("w1", 3000.0, 1000.0),          // None
-        case_w("w2", 4000.0, 1000.0, 1.0),   // Some
+        case("w1", 3000.0, 1000.0),        // None
+        case_w("w2", 4000.0, 1000.0, 1.0), // Some
     ];
     let err = weighted_geometric_mean(&cases, BaselineEngine::Node).unwrap_err();
     assert!(matches!(
@@ -664,7 +667,12 @@ fn gate_below_threshold_node_blocks() {
     input.node_cases = vec![case("slow-node", 2000.0, 1000.0)]; // 2x < 3x
     let decision = evaluate_publication_gate(&input, &ctx()).unwrap();
     assert!(!decision.publish_allowed);
-    assert!(decision.blockers.iter().any(|b| b.contains("score_vs_node")));
+    assert!(
+        decision
+            .blockers
+            .iter()
+            .any(|b| b.contains("score_vs_node"))
+    );
 }
 
 #[test]
@@ -679,14 +687,19 @@ fn gate_below_threshold_bun_blocks() {
 #[test]
 fn gate_both_below_threshold_reports_both() {
     let input = PublicationGateInput {
-        node_cases: vec![case("n", 1000.0, 1000.0)],  // 1x
-        bun_cases: vec![case("b", 2000.0, 1000.0)],   // 2x
+        node_cases: vec![case("n", 1000.0, 1000.0)], // 1x
+        bun_cases: vec![case("b", 2000.0, 1000.0)],  // 2x
         native_coverage_progression: vec![coverage_point("2026-01-01T00:00:00Z", 1, 1)],
         replacement_lineage_ids: vec!["lin-x".into()],
     };
     let decision = evaluate_publication_gate(&input, &ctx()).unwrap();
     assert!(!decision.publish_allowed);
-    assert!(decision.blockers.iter().any(|b| b.contains("score_vs_node")));
+    assert!(
+        decision
+            .blockers
+            .iter()
+            .any(|b| b.contains("score_vs_node"))
+    );
     assert!(decision.blockers.iter().any(|b| b.contains("score_vs_bun")));
 }
 
@@ -696,7 +709,12 @@ fn gate_behavior_equivalent_false_blocks() {
     input.node_cases[0].behavior_equivalent = false;
     let decision = evaluate_publication_gate(&input, &ctx()).unwrap();
     assert!(!decision.publish_allowed);
-    assert!(decision.blockers.iter().any(|b| b.contains("behavior-equivalence")));
+    assert!(
+        decision
+            .blockers
+            .iter()
+            .any(|b| b.contains("behavior-equivalence"))
+    );
 }
 
 #[test]
@@ -705,7 +723,12 @@ fn gate_latency_envelope_false_blocks() {
     input.bun_cases[0].latency_envelope_ok = false;
     let decision = evaluate_publication_gate(&input, &ctx()).unwrap();
     assert!(!decision.publish_allowed);
-    assert!(decision.blockers.iter().any(|b| b.contains("latency envelope")));
+    assert!(
+        decision
+            .blockers
+            .iter()
+            .any(|b| b.contains("latency envelope"))
+    );
 }
 
 #[test]
@@ -714,7 +737,12 @@ fn gate_error_envelope_false_blocks() {
     input.node_cases[0].error_envelope_ok = false;
     let decision = evaluate_publication_gate(&input, &ctx()).unwrap();
     assert!(!decision.publish_allowed);
-    assert!(decision.blockers.iter().any(|b| b.contains("error envelope")));
+    assert!(
+        decision
+            .blockers
+            .iter()
+            .any(|b| b.contains("error envelope"))
+    );
 }
 
 #[test]
@@ -757,7 +785,10 @@ fn gate_err_missing_coverage_progression() {
     let mut input = passing_input();
     input.native_coverage_progression.clear();
     let err = evaluate_publication_gate(&input, &ctx()).unwrap_err();
-    assert!(matches!(err, BenchmarkDenominatorError::MissingCoverageProgression));
+    assert!(matches!(
+        err,
+        BenchmarkDenominatorError::MissingCoverageProgression
+    ));
 }
 
 #[test]
@@ -765,7 +796,10 @@ fn gate_err_missing_lineage() {
     let mut input = passing_input();
     input.replacement_lineage_ids.clear();
     let err = evaluate_publication_gate(&input, &ctx()).unwrap_err();
-    assert!(matches!(err, BenchmarkDenominatorError::MissingReplacementLineage));
+    assert!(matches!(
+        err,
+        BenchmarkDenominatorError::MissingReplacementLineage
+    ));
 }
 
 #[test]
@@ -773,17 +807,16 @@ fn gate_err_empty_lineage_strings_filtered() {
     let mut input = passing_input();
     input.replacement_lineage_ids = vec!["  ".into(), "".into()];
     let err = evaluate_publication_gate(&input, &ctx()).unwrap_err();
-    assert!(matches!(err, BenchmarkDenominatorError::MissingReplacementLineage));
+    assert!(matches!(
+        err,
+        BenchmarkDenominatorError::MissingReplacementLineage
+    ));
 }
 
 #[test]
 fn gate_lineage_dedup_and_trim() {
     let mut input = passing_input();
-    input.replacement_lineage_ids = vec![
-        " lin-001 ".into(),
-        "lin-001".into(),
-        "lin-002".into(),
-    ];
+    input.replacement_lineage_ids = vec![" lin-001 ".into(), "lin-001".into(), "lin-002".into()];
     let decision = evaluate_publication_gate(&input, &ctx()).unwrap();
     assert_eq!(decision.replacement_lineage_ids.len(), 2);
     assert_eq!(decision.replacement_lineage_ids[0], "lin-001");
@@ -835,10 +868,7 @@ fn publication_gate_input_serde_round_trip() {
         input.native_coverage_progression.len(),
         back.native_coverage_progression.len()
     );
-    assert_eq!(
-        input.replacement_lineage_ids,
-        back.replacement_lineage_ids
-    );
+    assert_eq!(input.replacement_lineage_ids, back.replacement_lineage_ids);
 }
 
 // ── Section 13: Constants ──────────────────────────────────────────────

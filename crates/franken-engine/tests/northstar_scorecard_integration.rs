@@ -8,8 +8,8 @@
 use std::collections::BTreeSet;
 
 use frankenengine_engine::northstar_scorecard::{
-    default_thresholds, MetricKind, MetricSample, MetricSummary, Milestone, Scorecard,
-    ScorecardEvaluation, Threshold, ThresholdResult,
+    MetricKind, MetricSample, MetricSummary, Milestone, Scorecard, ScorecardEvaluation, Threshold,
+    ThresholdResult, default_thresholds,
 };
 use frankenengine_engine::security_epoch::SecurityEpoch;
 
@@ -163,10 +163,7 @@ fn metric_kind_display_render_latencies() {
 
 #[test]
 fn metric_kind_display_size_metrics() {
-    assert_eq!(
-        MetricKind::BundleSizeBytes.to_string(),
-        "bundle_size_bytes"
-    );
+    assert_eq!(MetricKind::BundleSizeBytes.to_string(), "bundle_size_bytes");
     assert_eq!(
         MetricKind::RuntimeMemoryBytes.to_string(),
         "runtime_memory_bytes"
@@ -254,7 +251,10 @@ fn default_thresholds_stricter_alpha_to_ga_hib() {
         .iter()
         .filter(|t| t.metric == MetricKind::CompatibilityPassRate)
         .collect();
-    let alpha = cpr.iter().find(|t| t.milestone == Milestone::Alpha).unwrap();
+    let alpha = cpr
+        .iter()
+        .find(|t| t.milestone == Milestone::Alpha)
+        .unwrap();
     let beta = cpr.iter().find(|t| t.milestone == Milestone::Beta).unwrap();
     let ga = cpr.iter().find(|t| t.milestone == Milestone::Ga).unwrap();
     assert!(alpha.boundary < beta.boundary);
@@ -269,8 +269,14 @@ fn default_thresholds_stricter_alpha_to_ga_lib() {
         .iter()
         .filter(|t| t.metric == MetricKind::ResponsivenessP99Us)
         .collect();
-    let alpha = resp.iter().find(|t| t.milestone == Milestone::Alpha).unwrap();
-    let beta = resp.iter().find(|t| t.milestone == Milestone::Beta).unwrap();
+    let alpha = resp
+        .iter()
+        .find(|t| t.milestone == Milestone::Alpha)
+        .unwrap();
+    let beta = resp
+        .iter()
+        .find(|t| t.milestone == Milestone::Beta)
+        .unwrap();
     let ga = resp.iter().find(|t| t.milestone == Milestone::Ga).unwrap();
     assert!(alpha.boundary > beta.boundary);
     assert!(beta.boundary > ga.boundary);
@@ -650,10 +656,7 @@ fn current_value_render_p95_uses_p95() {
     for i in 0..100 {
         sc.record(sample(MetricKind::RenderLatencyP95Us, i * 10, 1));
     }
-    assert_eq!(
-        sc.current_value(MetricKind::RenderLatencyP95Us),
-        Some(950)
-    );
+    assert_eq!(sc.current_value(MetricKind::RenderLatencyP95Us), Some(950));
 }
 
 #[test]
@@ -683,10 +686,7 @@ fn current_value_bundle_size_uses_max() {
     sc.record(sample(MetricKind::BundleSizeBytes, 1_000, 1));
     sc.record(sample(MetricKind::BundleSizeBytes, 5_000, 1));
     sc.record(sample(MetricKind::BundleSizeBytes, 3_000, 1));
-    assert_eq!(
-        sc.current_value(MetricKind::BundleSizeBytes),
-        Some(5_000)
-    );
+    assert_eq!(sc.current_value(MetricKind::BundleSizeBytes), Some(5_000));
 }
 
 #[test]
