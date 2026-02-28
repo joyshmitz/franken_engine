@@ -625,6 +625,40 @@ Artifacts are written under:
 - `artifacts/parser_cross_arch_repro_matrix/<timestamp>/matrix_lane_deltas.jsonl`
 - `artifacts/parser_cross_arch_repro_matrix/<timestamp>/matrix_summary.json`
 
+## Parser Third-Party Rerun Kit Gate
+
+`bd-2mds.1.7.3` packages cross-architecture matrix evidence into a deterministic
+third-party rerun bundle and fails closed unless
+`matrix_input_status == ready_for_external_rerun`.
+
+```bash
+# third-party rerun kit contract/test gate (rch-backed check + test + clippy)
+./scripts/run_parser_third_party_rerun_kit.sh ci
+
+# package-mode run with explicit PSRP-07.2 matrix inputs
+PARSER_RERUN_KIT_MATRIX_SUMMARY=artifacts/.../matrix_summary.json \
+PARSER_RERUN_KIT_MATRIX_DELTAS=artifacts/.../matrix_lane_deltas.jsonl \
+PARSER_RERUN_KIT_MATRIX_MANIFEST=artifacts/.../run_manifest.json \
+./scripts/run_parser_third_party_rerun_kit.sh package
+
+# one-command replay wrapper
+./scripts/e2e/parser_third_party_rerun_kit_replay.sh
+```
+
+Contract and vectors:
+
+- [`docs/PARSER_THIRD_PARTY_RERUN_KIT.md`](./docs/PARSER_THIRD_PARTY_RERUN_KIT.md)
+- `crates/franken-engine/tests/fixtures/parser_third_party_rerun_kit_v1.json`
+- `crates/franken-engine/tests/parser_third_party_rerun_kit.rs`
+
+Artifacts are written under:
+
+- `artifacts/parser_third_party_rerun_kit/<timestamp>/run_manifest.json`
+- `artifacts/parser_third_party_rerun_kit/<timestamp>/events.jsonl`
+- `artifacts/parser_third_party_rerun_kit/<timestamp>/commands.txt`
+- `artifacts/parser_third_party_rerun_kit/<timestamp>/rerun_kit_index.json`
+- `artifacts/parser_third_party_rerun_kit/<timestamp>/verifier_notes.md`
+
 ## Parser Correctness Promotion Gate
 
 `bd-2mds.1.8.2` enforces fail-closed promotion policy for unresolved
@@ -1170,6 +1204,35 @@ Artifacts are written under:
 - `artifacts/frx_online_regret_change_point_demotion_controller/<timestamp>/events.jsonl`
 - `artifacts/frx_online_regret_change_point_demotion_controller/<timestamp>/commands.txt`
 
+## RGC Verification Coverage Matrix Gate
+
+`bd-1lsy.11.1` ships a deterministic gate for the RGC verification coverage
+matrix contract (`unit`/`integration`/`e2e` row mapping, required log fields,
+artifact triad, and live `bd-1lsy*` snapshot parity checks).
+
+```bash
+# RGC verification coverage matrix gate (rch-backed check + test + clippy)
+./scripts/run_rgc_verification_coverage_matrix.sh ci
+```
+
+Deterministic replay wrapper:
+
+```bash
+./scripts/e2e/rgc_verification_coverage_matrix_replay.sh ci
+```
+
+Contract and vectors:
+
+- [`docs/RGC_VERIFICATION_COVERAGE_MATRIX_V1.md`](./docs/RGC_VERIFICATION_COVERAGE_MATRIX_V1.md)
+- `docs/rgc_verification_coverage_matrix_v1.json`
+- `crates/franken-engine/tests/rgc_verification_coverage_matrix.rs`
+
+Artifacts are written under:
+
+- `artifacts/rgc_verification_coverage_matrix/<timestamp>/run_manifest.json`
+- `artifacts/rgc_verification_coverage_matrix/<timestamp>/events.jsonl`
+- `artifacts/rgc_verification_coverage_matrix/<timestamp>/commands.txt`
+
 ## Phase-A Exit Gate
 
 `bd-1csl.1` adds a deterministic Phase-A gate runner that checks critical
@@ -1192,6 +1255,26 @@ PHASE_A_GATE_SKIP_SUBGATES=1 ./scripts/run_phase_a_exit_gate.sh check
 
 Phase-A gate artifacts are written under
 `artifacts/phase_a_exit_gate/<timestamp>/`.
+
+## RGC Deterministic Test Harness Utilities Gate
+
+`bd-1lsy.11.2` adds reusable deterministic test-harness utilities for fixture
+loading, stable seed/context wiring, and artifact-triad emission across runtime,
+parser, and security verification lanes.
+
+```bash
+# RGC test-harness utility gate (rch-backed check + test + clippy)
+./scripts/run_rgc_test_harness_suite.sh ci
+
+# deterministic replay wrapper
+./scripts/e2e/rgc_test_harness_replay.sh ci
+```
+
+Artifacts are written under:
+
+- `artifacts/rgc_test_harness/<timestamp>/run_manifest.json`
+- `artifacts/rgc_test_harness/<timestamp>/events.jsonl`
+- `artifacts/rgc_test_harness/<timestamp>/commands.txt`
 
 ## Troubleshooting
 

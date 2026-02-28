@@ -25,6 +25,7 @@ Use the suite wrapper (heavy cargo paths routed through `rch`):
 ./scripts/run_metamorphic_suite.sh check
 ./scripts/run_metamorphic_suite.sh test
 ./scripts/run_metamorphic_suite.sh ci
+./scripts/e2e/metamorphic_suite_replay.sh ci
 ```
 
 `rch` is required for this runner. If `rch` is unavailable, the script fails
@@ -69,6 +70,9 @@ Each run writes deterministic metadata under:
 - `artifacts/metamorphic/<timestamp>/seed_transcript.jsonl`
 - `artifacts/metamorphic/<timestamp>/failures/`
 - `artifacts/metamorphic/<timestamp>/commands.txt`
+
+`run_manifest.json` pins `bead_id=bd-mjh3.5.2` and includes a deterministic
+`replay_command` field for operator reruns.
 
 Evidence rows include stable governance fields:
 - `trace_id`
@@ -132,4 +136,5 @@ cat artifacts/metamorphic/<timestamp>/relation_events.jsonl
 cat artifacts/metamorphic/<timestamp>/metamorphic_evidence.jsonl
 cat artifacts/metamorphic/<timestamp>/seed_transcript.jsonl
 ls artifacts/metamorphic/<timestamp>/failures
+./scripts/e2e/metamorphic_suite_replay.sh ci
 ```

@@ -101,8 +101,8 @@ This avoids cross-run cargo lock contention when prior remote jobs are still
 draining. Set `CARGO_TARGET_DIR` explicitly if you need a fixed path.
 
 If `rch` reports remote-preflight/local-fallback conditions (including
-`RCH-E326`), the gate must fail closed rather than continuing on local
-execution.
+`RCH-E326` or `running locally`), the gate must fail closed rather than
+continuing on local execution.
 
 ## Required Artifacts
 
