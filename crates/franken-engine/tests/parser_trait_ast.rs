@@ -4,6 +4,7 @@ use std::io::Cursor;
 use frankenengine_engine::ast::{
     CANONICAL_AST_CONTRACT_VERSION, CANONICAL_AST_HASH_ALGORITHM, CANONICAL_AST_HASH_PREFIX,
     CANONICAL_AST_SCHEMA_VERSION, Expression, ParseGoal, Statement, SyntaxTree,
+    VariableDeclarationKind,
 };
 use frankenengine_engine::parser::{
     CanonicalEs2020Parser, Es2020Parser, MaterializedSyntaxTree,
@@ -40,6 +41,54 @@ fn parser_goal_and_statement_hierarchy_are_emitted_deterministically() {
     assert!(matches!(
         &tree.body[3],
         Statement::Expression(expr) if matches!(&expr.expression, Expression::Await(_))
+    ));
+}
+
+#[test]
+fn parser_supports_let_and_const_variable_declarations() {
+    let parser = CanonicalEs2020Parser;
+    let tree = parser
+        .parse("let left = 1;\nconst right = 2;", ParseGoal::Script)
+        .expect("script parse should succeed");
+
+    assert_eq!(tree.body.len(), 2);
+    assert!(matches!(
+        &tree.body[0],
+        Statement::VariableDeclaration(decl)
+            if decl.kind == VariableDeclarationKind::Let
+    ));
+    assert!(matches!(
+        &tree.body[1],
+        Statement::VariableDeclaration(decl)
+            if decl.kind == VariableDeclarationKind::Const
+    ));
+}
+
+#[test]
+fn parser_supports_named_and_namespace_import_forms() {
+    let parser = CanonicalEs2020Parser;
+    let tree = parser
+        .parse(
+            "import { run, stop as halt } from \"pkg\";\nimport * as ns from \"pkg\";\nimport dep, { start } from \"pkg\";",
+            ParseGoal::Module,
+        )
+        .expect("module parse should succeed");
+
+    assert_eq!(tree.body.len(), 3);
+    assert!(matches!(
+        &tree.body[0],
+        Statement::Import(import)
+            if import.binding.is_none() && import.source == "pkg"
+    ));
+    assert!(matches!(
+        &tree.body[1],
+        Statement::Import(import)
+            if import.binding.as_deref() == Some("ns") && import.source == "pkg"
+    ));
+    assert!(matches!(
+        &tree.body[2],
+        Statement::Import(import)
+            if import.binding.as_deref() == Some("dep") && import.source == "pkg"
     ));
 }
 

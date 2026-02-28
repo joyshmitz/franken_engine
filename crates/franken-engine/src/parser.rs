@@ -1705,6 +1705,15 @@ impl GrammarCompletenessMatrix {
                     notes: "Supports `import \"m\"`.".to_string(),
                 },
                 GrammarFamilyCoverage {
+                    family_id: "module.import_named_namespace".to_string(),
+                    es2020_clause: "ECMA-262 §15.2.2".to_string(),
+                    script_goal: GrammarCoverageStatus::NotApplicable,
+                    module_goal: GrammarCoverageStatus::Partial,
+                    notes:
+                        "Supports named (`{ a, b as c }`), namespace (`* as ns`), and mixed default+named/namespace import clauses with deterministic scaffold binding projection."
+                            .to_string(),
+                },
+                GrammarFamilyCoverage {
                     family_id: "module.export_default".to_string(),
                     es2020_clause: "ECMA-262 §15.2.3".to_string(),
                     script_goal: GrammarCoverageStatus::NotApplicable,
@@ -1726,7 +1735,7 @@ impl GrammarCompletenessMatrix {
                     script_goal: GrammarCoverageStatus::Partial,
                     module_goal: GrammarCoverageStatus::Partial,
                     notes:
-                        "Supports `var` declarations with identifier bindings and optional initializers; let/const/destructuring remain pending."
+                        "Supports `var`/`let`/`const` declarations with identifier bindings; destructuring and advanced declarator forms remain pending."
                             .to_string(),
                 },
                 GrammarFamilyCoverage {
@@ -2305,8 +2314,9 @@ fn parse_statement(
         return parse_export(statement, span, context).map(Statement::Export);
     }
 
-    if is_var_declaration_statement(statement) {
-        return parse_var_declaration(statement, span, context).map(Statement::VariableDeclaration);
+    if let Some(kind) = parse_variable_declaration_kind(statement) {
+        return parse_variable_declaration(statement, kind, span, context)
+            .map(Statement::VariableDeclaration);
     }
 
     let expression = parse_expression(statement, &span, context, 1)?;
@@ -2345,21 +2355,13 @@ fn parse_import(
     let (binding_raw, source_raw) = body.split_once(" from ").ok_or_else(|| {
         ParseError::new(
             ParseErrorCode::UnsupportedSyntax,
-            "import declaration must be `import <binding> from <quoted-source>` or `import <quoted-source>`",
+            "import declaration must be `import <binding-clause> from <quoted-source>` or `import <quoted-source>`",
             source_label.to_string(),
             Some(span.clone()),
         )
     })?;
 
-    let binding = binding_raw.trim();
-    if !is_identifier(binding) {
-        return Err(ParseError::new(
-            ParseErrorCode::UnsupportedSyntax,
-            "only default identifier imports are supported in this parser scaffold",
-            source_label.to_string(),
-            Some(span),
-        ));
-    }
+    let binding = parse_import_binding_clause(binding_raw.trim(), source_label, &span)?;
     let source = parse_quoted_string(source_raw.trim()).ok_or_else(|| {
         ParseError::new(
             ParseErrorCode::UnsupportedSyntax,
@@ -2370,10 +2372,116 @@ fn parse_import(
     })?;
 
     Ok(ImportDeclaration {
-        binding: Some(binding.to_string()),
+        binding,
         source,
         span,
     })
+}
+
+fn parse_import_binding_clause(
+    binding_clause: &str,
+    source_label: &str,
+    span: &SourceSpan,
+) -> ParseResult<Option<String>> {
+    if binding_clause.is_empty() {
+        return Err(ParseError::new(
+            ParseErrorCode::UnsupportedSyntax,
+            "import declaration is missing binding clause",
+            source_label.to_string(),
+            Some(span.clone()),
+        ));
+    }
+
+    if is_identifier(binding_clause) {
+        return Ok(Some(binding_clause.to_string()));
+    }
+
+    if let Some(namespace_binding) = parse_namespace_import_binding(binding_clause) {
+        return Ok(Some(namespace_binding));
+    }
+
+    if is_named_import_clause(binding_clause) {
+        // Canonical AST tracks one optional binding name. For named-only clauses we
+        // preserve module source and leave binding unset.
+        return Ok(None);
+    }
+
+    if let Some((default_binding_raw, trailing_clause_raw)) = binding_clause.split_once(',') {
+        let default_binding = default_binding_raw.trim();
+        let trailing_clause = trailing_clause_raw.trim();
+
+        if !is_identifier(default_binding) {
+            return Err(ParseError::new(
+                ParseErrorCode::UnsupportedSyntax,
+                "default import binding must be an identifier",
+                source_label.to_string(),
+                Some(span.clone()),
+            ));
+        }
+
+        if parse_namespace_import_binding(trailing_clause).is_some()
+            || is_named_import_clause(trailing_clause)
+        {
+            return Ok(Some(default_binding.to_string()));
+        }
+    }
+
+    Err(ParseError::new(
+        ParseErrorCode::UnsupportedSyntax,
+        "unsupported import binding clause; supported forms: default, namespace (`* as ns`), named (`{ a, b as c }`), and default+namespace/named",
+        source_label.to_string(),
+        Some(span.clone()),
+    ))
+}
+
+fn parse_namespace_import_binding(clause: &str) -> Option<String> {
+    let rest = clause.strip_prefix('*')?.trim_start();
+    let rest = rest.strip_prefix("as")?.trim_start();
+    if is_identifier(rest) {
+        Some(rest.to_string())
+    } else {
+        None
+    }
+}
+
+fn is_named_import_clause(clause: &str) -> bool {
+    let clause = clause.trim();
+    let Some(inner) = clause
+        .strip_prefix('{')
+        .and_then(|rest| rest.strip_suffix('}'))
+    else {
+        return false;
+    };
+
+    let inner = inner.trim();
+    if inner.is_empty() {
+        return true;
+    }
+
+    for specifier in inner.split(',') {
+        let specifier = specifier.trim();
+        if specifier.is_empty() {
+            return false;
+        }
+
+        let mut parts = specifier.split_whitespace();
+        let first = parts.next().unwrap_or_default();
+        let second = parts.next();
+        let third = parts.next();
+        let fourth = parts.next();
+
+        let is_valid = match (second, third, fourth) {
+            (None, None, None) => is_identifier(first),
+            (Some("as"), Some(local), None) => is_identifier(first) && is_identifier(local),
+            _ => false,
+        };
+
+        if !is_valid {
+            return false;
+        }
+    }
+
+    true
 }
 
 fn parse_export(
@@ -2402,26 +2510,37 @@ fn parse_export(
     Ok(ExportDeclaration { kind, span })
 }
 
-fn is_var_declaration_statement(statement: &str) -> bool {
-    let Some(rest) = statement.strip_prefix("var") else {
-        return false;
-    };
-    rest.is_empty() || rest.chars().next().is_some_and(char::is_whitespace)
+fn parse_variable_declaration_kind(statement: &str) -> Option<VariableDeclarationKind> {
+    for kind in [
+        VariableDeclarationKind::Var,
+        VariableDeclarationKind::Let,
+        VariableDeclarationKind::Const,
+    ] {
+        let Some(rest) = statement.strip_prefix(kind.as_str()) else {
+            continue;
+        };
+        if rest.is_empty() || rest.chars().next().is_some_and(char::is_whitespace) {
+            return Some(kind);
+        }
+    }
+    None
 }
 
-fn parse_var_declaration(
+fn parse_variable_declaration(
     statement: &str,
+    kind: VariableDeclarationKind,
     span: SourceSpan,
     context: &mut ParseExecutionContext<'_>,
 ) -> ParseResult<VariableDeclaration> {
+    let keyword = kind.as_str();
     let body = statement
-        .strip_prefix("var")
+        .strip_prefix(keyword)
         .map(str::trim_start)
         .unwrap_or_default();
     if body.is_empty() {
         return Err(ParseError::new(
             ParseErrorCode::UnsupportedSyntax,
-            "var declaration must include at least one binding",
+            format!("{keyword} declaration must include at least one binding"),
             context.source_label.to_string(),
             Some(span),
         ));
@@ -2431,7 +2550,7 @@ fn parse_var_declaration(
     if declarator_segments.is_empty() {
         return Err(ParseError::new(
             ParseErrorCode::UnsupportedSyntax,
-            "var declaration must include at least one binding",
+            format!("{keyword} declaration must include at least one binding"),
             context.source_label.to_string(),
             Some(span),
         ));
@@ -2444,7 +2563,7 @@ fn parse_var_declaration(
         if !is_identifier(name) {
             return Err(ParseError::new(
                 ParseErrorCode::UnsupportedSyntax,
-                "var declaration bindings must be identifiers in parser scaffold",
+                format!("{keyword} declaration bindings must be identifiers in parser scaffold"),
                 context.source_label.to_string(),
                 Some(span.clone()),
             ));
@@ -2456,12 +2575,20 @@ fn parse_var_declaration(
                 if initializer_source.is_empty() {
                     return Err(ParseError::new(
                         ParseErrorCode::UnsupportedSyntax,
-                        "var initializer expression is empty",
+                        format!("{keyword} initializer expression is empty"),
                         context.source_label.to_string(),
                         Some(span.clone()),
                     ));
                 }
                 Some(parse_expression(initializer_source, &span, context, 1)?)
+            }
+            None if kind == VariableDeclarationKind::Const => {
+                return Err(ParseError::new(
+                    ParseErrorCode::UnsupportedSyntax,
+                    "const declarations must include an initializer in parser scaffold",
+                    context.source_label.to_string(),
+                    Some(span.clone()),
+                ));
             }
             None => None,
         };
@@ -2474,7 +2601,7 @@ fn parse_var_declaration(
     }
 
     Ok(VariableDeclaration {
-        kind: VariableDeclarationKind::Var,
+        kind,
         declarations,
         span,
     })
@@ -3053,6 +3180,333 @@ fn to_u64(value: usize, source_label: &str, span: Option<SourceSpan>) -> ParseRe
     })
 }
 
+// ---------------------------------------------------------------------------
+// Static Semantics Error Taxonomy (ES2020 early errors)
+// ---------------------------------------------------------------------------
+
+/// Versioned static-semantics error taxonomy identifier.
+pub const SEMANTIC_ERROR_TAXONOMY_VERSION: &str = "franken-engine.static-semantics.taxonomy.v1";
+
+/// Stable error codes for ES2020 static-semantics early errors.
+///
+/// These are checked during the IR0→IR1 lowering pass to reject programs
+/// that parse successfully but violate binding, scope, or module rules
+/// specified by the ES2020 specification.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SemanticErrorCode {
+    /// `let` or `const` name already declared in the same scope.
+    DuplicateLetConstDeclaration,
+    /// `var` declaration conflicts with existing `let`/`const` in the same scope.
+    VarConflictsWithLexical,
+    /// `let`/`const` declaration conflicts with existing `var` in the same scope.
+    LexicalConflictsWithVar,
+    /// `const` declaration without an initializer.
+    ConstWithoutInitializer,
+    /// Attempted reassignment to a `const` binding.
+    ConstReassignment,
+    /// Reference to a `let`/`const` binding before its declaration (TDZ).
+    TemporalDeadZone,
+    /// `import` binding redeclared in the same module scope.
+    DuplicateImportBinding,
+    /// `export default` appears more than once in a module.
+    DuplicateDefaultExport,
+    /// Named export references an undeclared binding.
+    UndeclaredExportBinding,
+    /// `return` statement at module top-level (invalid).
+    ModuleTopLevelReturn,
+    /// `import`/`export` in script goal (caught by parser, included for completeness).
+    ModuleDeclarationInScript,
+    /// Duplicate parameter name in strict mode or arrow/method.
+    DuplicateParameter,
+    /// `eval` or `arguments` used as binding name in strict mode.
+    StrictModeRestrictedBinding,
+    /// `delete` of a plain identifier in strict mode.
+    StrictModeDeleteIdentifier,
+    /// Octal literal in strict mode.
+    StrictModeOctalLiteral,
+    /// `with` statement in strict mode.
+    StrictModeWith,
+    /// Duplicate label in the same label set.
+    DuplicateLabel,
+    /// `break`/`continue` references a non-existent label.
+    UndefinedLabel,
+    /// `break` outside of a loop or switch.
+    IllegalBreak,
+    /// `continue` outside of a loop.
+    IllegalContinue,
+    /// `await` used outside of an async context.
+    AwaitOutsideAsync,
+    /// `yield` used outside of a generator.
+    YieldOutsideGenerator,
+}
+
+impl SemanticErrorCode {
+    pub const ALL: [Self; 22] = [
+        Self::DuplicateLetConstDeclaration,
+        Self::VarConflictsWithLexical,
+        Self::LexicalConflictsWithVar,
+        Self::ConstWithoutInitializer,
+        Self::ConstReassignment,
+        Self::TemporalDeadZone,
+        Self::DuplicateImportBinding,
+        Self::DuplicateDefaultExport,
+        Self::UndeclaredExportBinding,
+        Self::ModuleTopLevelReturn,
+        Self::ModuleDeclarationInScript,
+        Self::DuplicateParameter,
+        Self::StrictModeRestrictedBinding,
+        Self::StrictModeDeleteIdentifier,
+        Self::StrictModeOctalLiteral,
+        Self::StrictModeWith,
+        Self::DuplicateLabel,
+        Self::UndefinedLabel,
+        Self::IllegalBreak,
+        Self::IllegalContinue,
+        Self::AwaitOutsideAsync,
+        Self::YieldOutsideGenerator,
+    ];
+
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::DuplicateLetConstDeclaration => "duplicate_let_const_declaration",
+            Self::VarConflictsWithLexical => "var_conflicts_with_lexical",
+            Self::LexicalConflictsWithVar => "lexical_conflicts_with_var",
+            Self::ConstWithoutInitializer => "const_without_initializer",
+            Self::ConstReassignment => "const_reassignment",
+            Self::TemporalDeadZone => "temporal_dead_zone",
+            Self::DuplicateImportBinding => "duplicate_import_binding",
+            Self::DuplicateDefaultExport => "duplicate_default_export",
+            Self::UndeclaredExportBinding => "undeclared_export_binding",
+            Self::ModuleTopLevelReturn => "module_top_level_return",
+            Self::ModuleDeclarationInScript => "module_declaration_in_script",
+            Self::DuplicateParameter => "duplicate_parameter",
+            Self::StrictModeRestrictedBinding => "strict_mode_restricted_binding",
+            Self::StrictModeDeleteIdentifier => "strict_mode_delete_identifier",
+            Self::StrictModeOctalLiteral => "strict_mode_octal_literal",
+            Self::StrictModeWith => "strict_mode_with",
+            Self::DuplicateLabel => "duplicate_label",
+            Self::UndefinedLabel => "undefined_label",
+            Self::IllegalBreak => "illegal_break",
+            Self::IllegalContinue => "illegal_continue",
+            Self::AwaitOutsideAsync => "await_outside_async",
+            Self::YieldOutsideGenerator => "yield_outside_generator",
+        }
+    }
+
+    pub const fn stable_diagnostic_code(&self) -> &'static str {
+        match self {
+            Self::DuplicateLetConstDeclaration => "FE-SEM-DUPLICATE-LEXICAL-0001",
+            Self::VarConflictsWithLexical => "FE-SEM-VAR-LEXICAL-CONFLICT-0001",
+            Self::LexicalConflictsWithVar => "FE-SEM-LEXICAL-VAR-CONFLICT-0001",
+            Self::ConstWithoutInitializer => "FE-SEM-CONST-NO-INIT-0001",
+            Self::ConstReassignment => "FE-SEM-CONST-REASSIGN-0001",
+            Self::TemporalDeadZone => "FE-SEM-TDZ-0001",
+            Self::DuplicateImportBinding => "FE-SEM-DUPLICATE-IMPORT-0001",
+            Self::DuplicateDefaultExport => "FE-SEM-DUPLICATE-DEFAULT-EXPORT-0001",
+            Self::UndeclaredExportBinding => "FE-SEM-UNDECLARED-EXPORT-0001",
+            Self::ModuleTopLevelReturn => "FE-SEM-MODULE-RETURN-0001",
+            Self::ModuleDeclarationInScript => "FE-SEM-MODULE-IN-SCRIPT-0001",
+            Self::DuplicateParameter => "FE-SEM-DUPLICATE-PARAM-0001",
+            Self::StrictModeRestrictedBinding => "FE-SEM-STRICT-RESTRICTED-0001",
+            Self::StrictModeDeleteIdentifier => "FE-SEM-STRICT-DELETE-0001",
+            Self::StrictModeOctalLiteral => "FE-SEM-STRICT-OCTAL-0001",
+            Self::StrictModeWith => "FE-SEM-STRICT-WITH-0001",
+            Self::DuplicateLabel => "FE-SEM-DUPLICATE-LABEL-0001",
+            Self::UndefinedLabel => "FE-SEM-UNDEFINED-LABEL-0001",
+            Self::IllegalBreak => "FE-SEM-ILLEGAL-BREAK-0001",
+            Self::IllegalContinue => "FE-SEM-ILLEGAL-CONTINUE-0001",
+            Self::AwaitOutsideAsync => "FE-SEM-AWAIT-OUTSIDE-ASYNC-0001",
+            Self::YieldOutsideGenerator => "FE-SEM-YIELD-OUTSIDE-GENERATOR-0001",
+        }
+    }
+
+    pub const fn diagnostic_category(&self) -> SemanticDiagnosticCategory {
+        match self {
+            Self::DuplicateLetConstDeclaration
+            | Self::VarConflictsWithLexical
+            | Self::LexicalConflictsWithVar
+            | Self::DuplicateImportBinding => SemanticDiagnosticCategory::Binding,
+            Self::ConstWithoutInitializer | Self::ConstReassignment | Self::TemporalDeadZone => {
+                SemanticDiagnosticCategory::Binding
+            }
+            Self::DuplicateDefaultExport
+            | Self::UndeclaredExportBinding
+            | Self::ModuleTopLevelReturn
+            | Self::ModuleDeclarationInScript => SemanticDiagnosticCategory::Module,
+            Self::DuplicateParameter
+            | Self::StrictModeRestrictedBinding
+            | Self::StrictModeDeleteIdentifier
+            | Self::StrictModeOctalLiteral
+            | Self::StrictModeWith => SemanticDiagnosticCategory::StrictMode,
+            Self::DuplicateLabel | Self::UndefinedLabel => SemanticDiagnosticCategory::Label,
+            Self::IllegalBreak | Self::IllegalContinue => SemanticDiagnosticCategory::ControlFlow,
+            Self::AwaitOutsideAsync | Self::YieldOutsideGenerator => {
+                SemanticDiagnosticCategory::ContextRestriction
+            }
+        }
+    }
+
+    pub const fn diagnostic_message_template(&self) -> &'static str {
+        match self {
+            Self::DuplicateLetConstDeclaration => {
+                "identifier has already been declared with let/const in this scope"
+            }
+            Self::VarConflictsWithLexical => {
+                "var declaration conflicts with existing let/const binding in same scope"
+            }
+            Self::LexicalConflictsWithVar => {
+                "let/const declaration conflicts with existing var binding in same scope"
+            }
+            Self::ConstWithoutInitializer => "const declaration requires an initializer",
+            Self::ConstReassignment => "assignment to constant variable",
+            Self::TemporalDeadZone => "cannot access lexical binding before initialization",
+            Self::DuplicateImportBinding => "import binding has already been declared",
+            Self::DuplicateDefaultExport => "module may not have more than one default export",
+            Self::UndeclaredExportBinding => "exported name is not declared in module scope",
+            Self::ModuleTopLevelReturn => "return statement is not allowed at module top-level",
+            Self::ModuleDeclarationInScript => {
+                "import/export declarations may only appear in module goal"
+            }
+            Self::DuplicateParameter => "duplicate parameter name is not allowed",
+            Self::StrictModeRestrictedBinding => {
+                "eval and arguments cannot be used as binding names in strict mode"
+            }
+            Self::StrictModeDeleteIdentifier => {
+                "delete of an unqualified identifier is not allowed in strict mode"
+            }
+            Self::StrictModeOctalLiteral => "octal literals are not allowed in strict mode",
+            Self::StrictModeWith => "with statements are not allowed in strict mode",
+            Self::DuplicateLabel => "label has already been declared in this label set",
+            Self::UndefinedLabel => "label is not defined in the current label set",
+            Self::IllegalBreak => "break statement is not inside a loop or switch",
+            Self::IllegalContinue => "continue statement is not inside a loop",
+            Self::AwaitOutsideAsync => "await expression is only valid inside an async function",
+            Self::YieldOutsideGenerator => {
+                "yield expression is only valid inside a generator function"
+            }
+        }
+    }
+}
+
+impl fmt::Display for SemanticErrorCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+/// Diagnostic category for static-semantics errors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SemanticDiagnosticCategory {
+    /// Binding-level errors (declarations, redeclarations, TDZ).
+    Binding,
+    /// Module-specific errors (export/import rules).
+    Module,
+    /// Strict-mode violations.
+    StrictMode,
+    /// Label errors (duplicate/undefined).
+    Label,
+    /// Control-flow errors (break/continue outside valid context).
+    ControlFlow,
+    /// Context-restriction errors (await/yield outside valid context).
+    ContextRestriction,
+}
+
+impl SemanticDiagnosticCategory {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Binding => "binding",
+            Self::Module => "module",
+            Self::StrictMode => "strict_mode",
+            Self::Label => "label",
+            Self::ControlFlow => "control_flow",
+            Self::ContextRestriction => "context_restriction",
+        }
+    }
+}
+
+/// A single static-semantics early error with source span.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SemanticError {
+    pub code: SemanticErrorCode,
+    pub message: String,
+    pub binding_name: Option<String>,
+    pub span: Option<crate::ast::SourceSpan>,
+}
+
+impl SemanticError {
+    pub fn new(
+        code: SemanticErrorCode,
+        binding_name: Option<String>,
+        span: Option<crate::ast::SourceSpan>,
+    ) -> Self {
+        let message = code.diagnostic_message_template().to_string();
+        Self {
+            code,
+            message,
+            binding_name,
+            span,
+        }
+    }
+
+    pub fn stable_diagnostic_code(&self) -> &'static str {
+        self.code.stable_diagnostic_code()
+    }
+
+    pub fn diagnostic_category(&self) -> SemanticDiagnosticCategory {
+        self.code.diagnostic_category()
+    }
+}
+
+impl fmt::Display for SemanticError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "[{}] {}",
+            self.code.stable_diagnostic_code(),
+            self.message
+        )?;
+        if let Some(name) = &self.binding_name {
+            write!(f, " (binding: '{name}')")?;
+        }
+        Ok(())
+    }
+}
+
+/// Result of static-semantics validation pass.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SemanticValidationResult {
+    pub errors: Vec<SemanticError>,
+    pub taxonomy_version: String,
+}
+
+impl SemanticValidationResult {
+    pub fn new() -> Self {
+        Self {
+            errors: Vec::new(),
+            taxonomy_version: SEMANTIC_ERROR_TAXONOMY_VERSION.to_string(),
+        }
+    }
+
+    pub fn is_valid(&self) -> bool {
+        self.errors.is_empty()
+    }
+
+    pub fn add_error(&mut self, error: SemanticError) {
+        self.errors.push(error);
+    }
+
+    pub fn error_count(&self) -> usize {
+        self.errors.len()
+    }
+}
+
+impl Default for SemanticValidationResult {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
@@ -3400,6 +3854,55 @@ mod tests {
     }
 
     #[test]
+    fn let_declaration_with_initializer_is_parsed() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser
+            .parse("let counter = 1", ParseGoal::Script)
+            .expect("parse");
+        match &tree.body[0] {
+            Statement::VariableDeclaration(variable_declaration) => {
+                assert_eq!(variable_declaration.kind, VariableDeclarationKind::Let);
+                assert_eq!(variable_declaration.declarations.len(), 1);
+                let declarator = &variable_declaration.declarations[0];
+                assert_eq!(declarator.name, "counter");
+                assert_eq!(declarator.initializer, Some(Expression::NumericLiteral(1)));
+            }
+            _ => panic!("expected variable declaration statement"),
+        }
+    }
+
+    #[test]
+    fn const_declaration_with_initializer_is_parsed() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser
+            .parse("const answer = 42", ParseGoal::Script)
+            .expect("parse");
+        match &tree.body[0] {
+            Statement::VariableDeclaration(variable_declaration) => {
+                assert_eq!(variable_declaration.kind, VariableDeclarationKind::Const);
+                assert_eq!(variable_declaration.declarations.len(), 1);
+                let declarator = &variable_declaration.declarations[0];
+                assert_eq!(declarator.name, "answer");
+                assert_eq!(declarator.initializer, Some(Expression::NumericLiteral(42)));
+            }
+            _ => panic!("expected variable declaration statement"),
+        }
+    }
+
+    #[test]
+    fn const_declaration_without_initializer_is_rejected() {
+        let parser = CanonicalEs2020Parser;
+        let err = parser
+            .parse("const answer", ParseGoal::Script)
+            .expect_err("const without initializer must fail");
+        assert_eq!(err.code, ParseErrorCode::UnsupportedSyntax);
+        assert!(
+            err.message
+                .contains("const declarations must include an initializer")
+        );
+    }
+
+    #[test]
     fn var_declaration_missing_binding_is_rejected() {
         let parser = CanonicalEs2020Parser;
         let err = parser
@@ -3426,6 +3929,36 @@ mod tests {
                 assert_eq!(
                     expr.expression,
                     Expression::Identifier("variant".to_string())
+                );
+            }
+            _ => panic!("expected expression statement"),
+        }
+    }
+
+    #[test]
+    fn identifier_starting_with_let_is_expression_not_declaration() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser.parse("letter", ParseGoal::Script).expect("parse");
+        match &tree.body[0] {
+            Statement::Expression(expr) => {
+                assert_eq!(
+                    expr.expression,
+                    Expression::Identifier("letter".to_string())
+                );
+            }
+            _ => panic!("expected expression statement"),
+        }
+    }
+
+    #[test]
+    fn identifier_starting_with_const_is_expression_not_declaration() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser.parse("constant", ParseGoal::Script).expect("parse");
+        match &tree.body[0] {
+            Statement::Expression(expr) => {
+                assert_eq!(
+                    expr.expression,
+                    Expression::Identifier("constant".to_string())
                 );
             }
             _ => panic!("expected expression statement"),
@@ -3503,11 +4036,89 @@ mod tests {
     }
 
     #[test]
+    fn import_named_clause_parsed_without_binding() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser
+            .parse("import { run, stop as halt } from 'pkg'", ParseGoal::Module)
+            .expect("parse");
+        match &tree.body[0] {
+            Statement::Import(import) => {
+                assert_eq!(import.binding, None);
+                assert_eq!(import.source, "pkg");
+            }
+            _ => panic!("expected import statement"),
+        }
+    }
+
+    #[test]
+    fn import_namespace_clause_parsed_with_binding() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser
+            .parse("import * as ns from 'pkg'", ParseGoal::Module)
+            .expect("parse");
+        match &tree.body[0] {
+            Statement::Import(import) => {
+                assert_eq!(import.binding, Some("ns".to_string()));
+                assert_eq!(import.source, "pkg");
+            }
+            _ => panic!("expected import statement"),
+        }
+    }
+
+    #[test]
+    fn import_default_plus_named_clause_keeps_default_binding() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser
+            .parse("import dep, { run } from 'pkg'", ParseGoal::Module)
+            .expect("parse");
+        match &tree.body[0] {
+            Statement::Import(import) => {
+                assert_eq!(import.binding, Some("dep".to_string()));
+                assert_eq!(import.source, "pkg");
+            }
+            _ => panic!("expected import statement"),
+        }
+    }
+
+    #[test]
+    fn import_default_plus_namespace_clause_keeps_default_binding() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser
+            .parse("import dep, * as ns from 'pkg'", ParseGoal::Module)
+            .expect("parse");
+        match &tree.body[0] {
+            Statement::Import(import) => {
+                assert_eq!(import.binding, Some("dep".to_string()));
+                assert_eq!(import.source, "pkg");
+            }
+            _ => panic!("expected import statement"),
+        }
+    }
+
+    #[test]
     fn import_empty_clause_rejected() {
         let parser = CanonicalEs2020Parser;
         let err = parser
             .parse("import ", ParseGoal::Module)
             .expect_err("empty import clause must fail");
+        assert_eq!(err.code, ParseErrorCode::UnsupportedSyntax);
+    }
+
+    #[test]
+    fn import_namespace_clause_without_alias_is_rejected() {
+        let parser = CanonicalEs2020Parser;
+        let err = parser
+            .parse("import * from 'pkg'", ParseGoal::Module)
+            .expect_err("namespace import without alias must fail");
+        assert_eq!(err.code, ParseErrorCode::UnsupportedSyntax);
+    }
+
+    #[test]
+    fn import_named_clause_with_invalid_alias_is_rejected() {
+        let parser = CanonicalEs2020Parser;
+        let err = parser
+            .parse("import { run as } from 'pkg'", ParseGoal::Module)
+            .expect_err("invalid named import alias must fail");
         assert_eq!(err.code, ParseErrorCode::UnsupportedSyntax);
     }
 

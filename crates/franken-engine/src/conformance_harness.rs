@@ -1935,9 +1935,9 @@ fn join_output_lines(lines: &[String]) -> String {
 
 fn minimize_source_segments(
     original: &[String],
-    failure_class: ConformanceFailureClass,
-    expected: &str,
-    actual: &str,
+    _failure_class: ConformanceFailureClass,
+    _expected: &str,
+    _actual: &str,
 ) -> Vec<String> {
     let best = if original.is_empty() {
         vec!["void 0".to_string()]

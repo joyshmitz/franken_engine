@@ -98,7 +98,7 @@
       "family_id": "statement.variable_declaration",
       "goal": "script",
       "source": "let value = 1",
-      "expected_hash": "sha256:c474f03f670194af790e512601d4c7d109cbec2656be1b6d8cbd6424b7981cce"
+      "expected_hash": "sha256:c778612b0cac0dc168a3620b1b91893bca770c2a7c51c088ef61031a5c5442ac"
     },
     {
       "id": "script_function_declaration_raw",

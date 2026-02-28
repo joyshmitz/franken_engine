@@ -3540,7 +3540,14 @@ fn normalize_non_empty(value: String) -> String {
 }
 
 fn normalize_optional_non_empty(value: Option<String>) -> Option<String> {
-    value.map(normalize_non_empty)
+    value.and_then(|v| {
+        let trimmed = v.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
 }
 
 fn canonicalize_coverage_millionths(value: u64) -> u64 {
@@ -5652,11 +5659,8 @@ mod tests {
     }
 
     #[test]
-    fn normalize_optional_non_empty_blank_becomes_unknown() {
-        assert_eq!(
-            normalize_optional_non_empty(Some("  ".to_string())),
-            Some("unknown".to_string())
-        );
+    fn normalize_optional_non_empty_blank_becomes_none() {
+        assert!(normalize_optional_non_empty(Some("  ".to_string())).is_none());
     }
 
     #[test]
@@ -7872,7 +7876,10 @@ mod tests {
             zone: "us-east".to_string(),
             security_epoch: 7,
             generated_at_unix_ms: 1_000,
-            label_map: LabelMapView { nodes: vec![], edges: vec![] },
+            label_map: LabelMapView {
+                nodes: vec![],
+                edges: vec![],
+            },
             blocked_flows: vec![],
             declassification_history: vec![],
             confinement_proofs: vec![],
@@ -7996,7 +8003,10 @@ mod tests {
 
     #[test]
     fn label_map_view_serde_roundtrip() {
-        let v = LabelMapView { nodes: vec![], edges: vec![] };
+        let v = LabelMapView {
+            nodes: vec![],
+            edges: vec![],
+        };
         let json = serde_json::to_string(&v).unwrap();
         let back: LabelMapView = serde_json::from_str(&json).unwrap();
         assert_eq!(v, back);

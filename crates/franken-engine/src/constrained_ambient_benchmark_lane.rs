@@ -540,8 +540,10 @@ fn evaluate_attribution(
             sample.without_proof_latency_p95_ns,
             sample.constrained_latency_p95_ns,
         )?;
-        let supports_uplift =
-            !contract_blocked && (throughput_gain > 0 || latency_p95_improvement > 0);
+        let supports_uplift = !contract_blocked
+            && throughput_gain >= 0
+            && latency_p95_improvement >= 0
+            && (throughput_gain > 0 || latency_p95_improvement > 0);
         if !supports_uplift && !contract_blocked {
             blockers.push(format!(
                 "proof `{}` did not demonstrate measurable uplift for specialization `{}`",
@@ -700,7 +702,7 @@ fn delta_millionths(candidate: u64, baseline: u64) -> Result<i64, ConstrainedAmb
 }
 
 fn improvement_millionths(baseline: u64, optimized: u64) -> Result<i64, ConstrainedAmbientError> {
-    delta_millionths(baseline, optimized)
+    delta_millionths(optimized, baseline).map(|delta| -delta)
 }
 
 fn build_summary(
@@ -973,7 +975,7 @@ mod tests {
         // improvement_millionths(baseline=1000, optimized=500) means
         // 500 is better than 1000 for latency → positive improvement
         let i = improvement_millionths(1000, 500).unwrap();
-        assert_eq!(i, 1_000_000); // 100%
+        assert_eq!(i, 500_000); // 50%
     }
 
     // ── mean_i64 ──────────────────────────────────────────────────

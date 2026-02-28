@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-use crate::ast::{ExportKind, Expression, ParseGoal, Statement};
+use crate::ast::{ExportKind, Expression, ParseGoal, Statement, VariableDeclarationKind};
 use crate::flow_lattice::{
     Clearance, DeclassificationObligation, FlowCheckResult as LatticeFlowCheckResult,
     Ir2FlowLattice, LabelClass,
@@ -17,6 +17,7 @@ use crate::ir_contract::{
     IrLevel, Reg, RegRange, ResolvedBinding, ScopeId, ScopeKind, ScopeNode, verify_ir1_source,
     verify_ir3_specialization,
 };
+use crate::parser::{SemanticError, SemanticErrorCode, SemanticValidationResult};
 
 const COMPONENT: &str = "lowering_pipeline";
 const IFC_RUNTIME_GUARD_CAPABILITY: &str = "ifc.check_flow";
@@ -199,6 +200,8 @@ pub enum LoweringPipelineError {
         sink_clearance: Label,
         detail: String,
     },
+    #[error("static semantics violation: {0}")]
+    SemanticViolation(SemanticError),
 }
 
 pub fn lower_ir0_to_ir3(
@@ -282,6 +285,88 @@ pub fn lower_ir0_to_ir3(
     })
 }
 
+/// Validate static semantics of an IR0 module without performing full lowering.
+///
+/// This catches early errors specified by ES2020:
+/// - Duplicate `let`/`const` declarations in the same scope
+/// - `var`/lexical binding conflicts
+/// - `const` declarations without initializers
+/// - Duplicate `import` bindings in module scope
+///
+/// Returns a `SemanticValidationResult` containing all detected errors.
+pub fn validate_ir0_static_semantics(ir0: &Ir0Module) -> SemanticValidationResult {
+    let mut result = SemanticValidationResult::new();
+
+    let mut seen_bindings = BTreeMap::<String, BindingKind>::new();
+    let mut default_export_count = 0u32;
+
+    for statement in &ir0.tree.body {
+        match statement {
+            Statement::Import(import) => {
+                if let Some(binding_name) = &import.binding {
+                    if let Some(existing_kind) = seen_bindings.get(binding_name) {
+                        let conflict = check_binding_conflict(*existing_kind, BindingKind::Import);
+                        if let BindingConflict::Error(code) = conflict {
+                            result.add_error(SemanticError::new(
+                                code,
+                                Some(binding_name.clone()),
+                                Some(import.span.clone()),
+                            ));
+                        }
+                    }
+                    seen_bindings.insert(binding_name.clone(), BindingKind::Import);
+                }
+            }
+            Statement::Export(export) => {
+                if matches!(export.kind, ExportKind::Default(_)) {
+                    default_export_count += 1;
+                    if default_export_count > 1 {
+                        result.add_error(SemanticError::new(
+                            SemanticErrorCode::DuplicateDefaultExport,
+                            None,
+                            Some(export.span.clone()),
+                        ));
+                    }
+                }
+            }
+            Statement::VariableDeclaration(variable_declaration) => {
+                let binding_kind = binding_kind_for_variable_declaration(variable_declaration.kind);
+
+                for declarator in &variable_declaration.declarations {
+                    // Check const without initializer.
+                    if variable_declaration.kind == VariableDeclarationKind::Const
+                        && declarator.initializer.is_none()
+                    {
+                        result.add_error(SemanticError::new(
+                            SemanticErrorCode::ConstWithoutInitializer,
+                            Some(declarator.name.clone()),
+                            Some(declarator.span.clone()),
+                        ));
+                    }
+
+                    // Check binding conflicts.
+                    if let Some(existing_kind) = seen_bindings.get(&declarator.name) {
+                        let conflict = check_binding_conflict(*existing_kind, binding_kind);
+                        if let BindingConflict::Error(code) = conflict {
+                            result.add_error(SemanticError::new(
+                                code,
+                                Some(declarator.name.clone()),
+                                Some(declarator.span.clone()),
+                            ));
+                        }
+                    }
+                    seen_bindings.insert(declarator.name.clone(), binding_kind);
+                }
+            }
+            Statement::Expression(_) => {
+                // Expression statements have no early errors at this level.
+            }
+        }
+    }
+
+    result
+}
+
 pub fn lower_ir0_to_ir1(
     ir0: &Ir0Module,
 ) -> Result<LoweringPassResult<Ir1Module>, LoweringPipelineError> {
@@ -315,7 +400,8 @@ pub fn lower_ir0_to_ir1(
                         root_scope_id,
                         binding_name,
                         BindingKind::Import,
-                    );
+                    )
+                    .map_err(LoweringPipelineError::SemanticViolation)?;
                     ir1.ops.push(Ir1Op::StoreBinding { binding_id });
                 }
             }
@@ -328,7 +414,7 @@ pub fn lower_ir0_to_ir1(
                         &mut binding_lookup,
                         &mut binding_index,
                         root_scope_id,
-                    );
+                    )?;
                     let binding_name = format!("__default_export_{synthetic_export_index}");
                     synthetic_export_index = synthetic_export_index.saturating_add(1);
                     let binding_id = alloc_binding(
@@ -338,7 +424,8 @@ pub fn lower_ir0_to_ir1(
                         root_scope_id,
                         &binding_name,
                         BindingKind::Const,
-                    );
+                    )
+                    .map_err(LoweringPipelineError::SemanticViolation)?;
                     ir1.ops.push(Ir1Op::StoreBinding { binding_id });
                     ir1.ops.push(Ir1Op::ExportBinding {
                         name: "default".to_string(),
@@ -360,6 +447,7 @@ pub fn lower_ir0_to_ir1(
                                 &binding_name,
                                 BindingKind::Const,
                             )
+                            .map_err(LoweringPipelineError::SemanticViolation)?
                         }
                     };
                     ir1.ops.push(Ir1Op::ExportBinding {
@@ -369,6 +457,23 @@ pub fn lower_ir0_to_ir1(
                 }
             },
             Statement::VariableDeclaration(variable_declaration) => {
+                let binding_kind = binding_kind_for_variable_declaration(variable_declaration.kind);
+
+                // ES2020 early error: const declarations must have initializers.
+                if variable_declaration.kind == VariableDeclarationKind::Const {
+                    for declarator in &variable_declaration.declarations {
+                        if declarator.initializer.is_none() {
+                            return Err(LoweringPipelineError::SemanticViolation(
+                                SemanticError::new(
+                                    SemanticErrorCode::ConstWithoutInitializer,
+                                    Some(declarator.name.clone()),
+                                    Some(declarator.span.clone()),
+                                ),
+                            ));
+                        }
+                    }
+                }
+
                 let mut binding_ids = Vec::with_capacity(variable_declaration.declarations.len());
                 for declarator in &variable_declaration.declarations {
                     let binding_id = alloc_binding(
@@ -377,8 +482,9 @@ pub fn lower_ir0_to_ir1(
                         &mut binding_index,
                         root_scope_id,
                         &declarator.name,
-                        BindingKind::Var,
-                    );
+                        binding_kind,
+                    )
+                    .map_err(LoweringPipelineError::SemanticViolation)?;
                     binding_ids.push(binding_id);
                 }
 
@@ -395,7 +501,7 @@ pub fn lower_ir0_to_ir1(
                             &mut binding_lookup,
                             &mut binding_index,
                             root_scope_id,
-                        );
+                        )?;
                     } else {
                         ir1.ops.push(Ir1Op::LoadLiteral {
                             value: Ir1Literal::Undefined,
@@ -412,7 +518,7 @@ pub fn lower_ir0_to_ir1(
                     &mut binding_lookup,
                     &mut binding_index,
                     root_scope_id,
-                );
+                )?;
             }
         }
     }
@@ -460,6 +566,14 @@ pub fn lower_ir0_to_ir1(
         },
         module: ir1,
     })
+}
+
+fn binding_kind_for_variable_declaration(kind: VariableDeclarationKind) -> BindingKind {
+    match kind {
+        VariableDeclarationKind::Var => BindingKind::Var,
+        VariableDeclarationKind::Let => BindingKind::Let,
+        VariableDeclarationKind::Const => BindingKind::Const,
+    }
 }
 
 pub fn lower_ir1_to_ir2(
@@ -902,6 +1016,75 @@ fn runtime_checkpoint_reason(flow: &FlowAnnotation, capability: &CapabilityTag) 
     "runtime_checkpoint_required".to_string()
 }
 
+/// Binding conflict result from `check_binding_conflict`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum BindingConflict {
+    /// No conflict — proceed with allocation.
+    None,
+    /// Semantic error — the redeclaration is invalid.
+    Error(SemanticErrorCode),
+}
+
+/// Check whether declaring `name` with `new_kind` conflicts with an existing
+/// binding of `existing_kind` in the same scope.
+///
+/// ES2020 rules (simplified):
+/// - `let`/`const` + `let`/`const` in same scope → error
+/// - `let`/`const` + `var` in same scope → error (either direction)
+/// - `let`/`const` + `import` in same scope → error
+/// - `var` + `var` in same scope → legal (reuse)
+/// - `import` + `import` in same scope → error
+/// - Any duplicate in module-scope `import` → error
+fn check_binding_conflict(existing_kind: BindingKind, new_kind: BindingKind) -> BindingConflict {
+    match (existing_kind, new_kind) {
+        // var + var is legal (redeclaration merges).
+        (BindingKind::Var, BindingKind::Var) => BindingConflict::None,
+        // FunctionDecl + FunctionDecl in same scope is legal in non-strict mode.
+        (BindingKind::FunctionDecl, BindingKind::FunctionDecl) => BindingConflict::None,
+        // var + FunctionDecl and reverse are legal (hoisting merges).
+        (BindingKind::Var, BindingKind::FunctionDecl)
+        | (BindingKind::FunctionDecl, BindingKind::Var) => BindingConflict::None,
+        // let/const redeclared as let/const.
+        (BindingKind::Let | BindingKind::Const, BindingKind::Let | BindingKind::Const) => {
+            BindingConflict::Error(SemanticErrorCode::DuplicateLetConstDeclaration)
+        }
+        // var conflicts with let/const.
+        (BindingKind::Let | BindingKind::Const, BindingKind::Var) => {
+            BindingConflict::Error(SemanticErrorCode::LexicalConflictsWithVar)
+        }
+        (BindingKind::Var, BindingKind::Let | BindingKind::Const) => {
+            BindingConflict::Error(SemanticErrorCode::VarConflictsWithLexical)
+        }
+        // import + anything else in same scope.
+        (BindingKind::Import, _) | (_, BindingKind::Import) => {
+            BindingConflict::Error(SemanticErrorCode::DuplicateImportBinding)
+        }
+        // let/const + FunctionDecl or reverse.
+        (BindingKind::Let | BindingKind::Const, BindingKind::FunctionDecl)
+        | (BindingKind::FunctionDecl, BindingKind::Let | BindingKind::Const) => {
+            BindingConflict::Error(SemanticErrorCode::DuplicateLetConstDeclaration)
+        }
+        // Parameter + let/const in the same scope.
+        (BindingKind::Parameter, BindingKind::Let | BindingKind::Const)
+        | (BindingKind::Let | BindingKind::Const, BindingKind::Parameter) => {
+            BindingConflict::Error(SemanticErrorCode::DuplicateLetConstDeclaration)
+        }
+        // Parameter + var is legal (function-scoped merge).
+        (BindingKind::Parameter, BindingKind::Var) | (BindingKind::Var, BindingKind::Parameter) => {
+            BindingConflict::None
+        }
+        // Parameter + Parameter (duplicate params — only error in strict mode,
+        // currently always allowed since we don't track strict mode yet).
+        (BindingKind::Parameter, BindingKind::Parameter) => BindingConflict::None,
+        // Parameter + FunctionDecl is legal.
+        (BindingKind::Parameter, BindingKind::FunctionDecl)
+        | (BindingKind::FunctionDecl, BindingKind::Parameter) => BindingConflict::None,
+        // FunctionDecl + let/const is already handled above.
+        // Import + Import is already handled above.
+        // FunctionDecl + Import / Import + FunctionDecl is already handled above.
+    }
+}
+
 fn alloc_binding(
     bindings: &mut Vec<ResolvedBinding>,
     binding_lookup: &mut BTreeMap<String, BindingId>,
@@ -909,9 +1092,27 @@ fn alloc_binding(
     scope: ScopeId,
     name: &str,
     kind: BindingKind,
-) -> BindingId {
-    if let Some(existing) = binding_lookup.get(name) {
-        return *existing;
+) -> Result<BindingId, SemanticError> {
+    if let Some(existing_id) = binding_lookup.get(name) {
+        // Find existing binding to check its kind.
+        let existing_kind = bindings
+            .iter()
+            .find(|b| b.binding_id == *existing_id)
+            .map(|b| b.kind);
+
+        if let Some(existing_kind) = existing_kind {
+            match check_binding_conflict(existing_kind, kind) {
+                BindingConflict::None => {
+                    // Legal re-declaration; reuse existing binding.
+                    return Ok(*existing_id);
+                }
+                BindingConflict::Error(code) => {
+                    return Err(SemanticError::new(code, Some(name.to_string()), None));
+                }
+            }
+        }
+        // If we can't find the binding kind (shouldn't happen), reuse defensively.
+        return Ok(*existing_id);
     }
 
     let binding_id = *binding_index;
@@ -923,7 +1124,7 @@ fn alloc_binding(
         kind,
     });
     binding_lookup.insert(name.to_string(), binding_id);
-    binding_id
+    Ok(binding_id)
 }
 
 fn lower_expression_to_ir1(
@@ -933,17 +1134,27 @@ fn lower_expression_to_ir1(
     binding_lookup: &mut BTreeMap<String, BindingId>,
     binding_index: &mut BindingId,
     root_scope_id: ScopeId,
-) {
+) -> Result<(), LoweringPipelineError> {
     match expression {
         Expression::Identifier(name) => {
-            let binding_id = alloc_binding(
-                bindings,
-                binding_lookup,
-                binding_index,
-                root_scope_id,
-                name,
-                BindingKind::Let,
-            );
+            // Identifier references look up an existing binding or create
+            // a forward-reference placeholder.  This must NOT trigger the
+            // duplicate-declaration conflict check that applies only to
+            // actual VariableDeclaration / Import sites.
+            let binding_id = if let Some(existing) = binding_lookup.get(name.as_str()) {
+                *existing
+            } else {
+                let id = *binding_index;
+                *binding_index = binding_index.saturating_add(1);
+                bindings.push(ResolvedBinding {
+                    name: name.clone(),
+                    binding_id: id,
+                    scope: root_scope_id,
+                    kind: BindingKind::Let,
+                });
+                binding_lookup.insert(name.clone(), id);
+                id
+            };
             ops.push(Ir1Op::LoadBinding { binding_id });
         }
         Expression::StringLiteral(value) => {
@@ -979,7 +1190,7 @@ fn lower_expression_to_ir1(
                 binding_lookup,
                 binding_index,
                 root_scope_id,
-            );
+            )?;
             ops.push(Ir1Op::Await);
         }
         Expression::Raw(raw) => {
@@ -991,6 +1202,7 @@ fn lower_expression_to_ir1(
             }
         }
     }
+    Ok(())
 }
 
 fn classify_ir1_op(
@@ -2493,6 +2705,58 @@ mod tests {
                 && *store_y_binding_id == y_binding.binding_id
                 && *store_x_binding_id == x_binding.binding_id
         ));
+    }
+
+    #[test]
+    fn lower_let_declaration_uses_let_binding_kind() {
+        let tree = SyntaxTree {
+            goal: ParseGoal::Script,
+            body: vec![Statement::VariableDeclaration(VariableDeclaration {
+                kind: VariableDeclarationKind::Let,
+                declarations: vec![VariableDeclarator {
+                    name: "value".to_string(),
+                    initializer: Some(Expression::NumericLiteral(7)),
+                    span: span(),
+                }],
+                span: span(),
+            })],
+            span: span(),
+        };
+        let ir0 = Ir0Module::from_syntax_tree(tree, "let_binding.js");
+        let result = lower_ir0_to_ir1(&ir0).expect("should succeed");
+
+        let binding = result.module.scopes[0]
+            .bindings
+            .iter()
+            .find(|binding| binding.name == "value")
+            .expect("value binding must exist");
+        assert_eq!(binding.kind, BindingKind::Let);
+    }
+
+    #[test]
+    fn lower_const_declaration_uses_const_binding_kind() {
+        let tree = SyntaxTree {
+            goal: ParseGoal::Script,
+            body: vec![Statement::VariableDeclaration(VariableDeclaration {
+                kind: VariableDeclarationKind::Const,
+                declarations: vec![VariableDeclarator {
+                    name: "answer".to_string(),
+                    initializer: Some(Expression::NumericLiteral(42)),
+                    span: span(),
+                }],
+                span: span(),
+            })],
+            span: span(),
+        };
+        let ir0 = Ir0Module::from_syntax_tree(tree, "const_binding.js");
+        let result = lower_ir0_to_ir1(&ir0).expect("should succeed");
+
+        let binding = result.module.scopes[0]
+            .bindings
+            .iter()
+            .find(|binding| binding.name == "answer")
+            .expect("answer binding must exist");
+        assert_eq!(binding.kind, BindingKind::Const);
     }
 
     // -- Raw expression with call --

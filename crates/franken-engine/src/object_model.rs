@@ -1589,19 +1589,13 @@ impl ProxyInvariantChecker {
         key: &PropertyKey,
         trap_result: bool,
     ) -> Result<(), ObjectError> {
-        if trap_result {
-            if let Some(td) = target.get_own_property(key)
-                && !td.is_configurable()
-            {
-                return Err(ObjectError::TypeError(format!(
-                    "proxy deleteProperty: cannot delete non-configurable property '{key}'"
-                )));
-            }
-            if !target.extensible && target.has_own_property(key) {
-                return Err(ObjectError::TypeError(format!(
-                    "proxy deleteProperty: cannot delete property '{key}' on non-extensible target"
-                )));
-            }
+        if trap_result
+            && let Some(td) = target.get_own_property(key)
+            && !td.is_configurable()
+        {
+            return Err(ObjectError::TypeError(format!(
+                "proxy deleteProperty: cannot delete non-configurable property '{key}'"
+            )));
         }
         Ok(())
     }

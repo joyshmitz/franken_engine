@@ -662,9 +662,9 @@ pub fn evaluate_control_plane_benchmark_split(
         }
     }
 
-    if let (Some(decision), Some(evidence)) = (candidate_decision, candidate_evidence) {
+    if let (Some(baseline), Some(evidence)) = (candidate_baseline, candidate_evidence) {
         let regression = throughput_regression_millionths(
-            decision.throughput_ops_per_sec,
+            baseline.throughput_ops_per_sec,
             evidence.throughput_ops_per_sec,
         );
         if regression > thresholds.max_evidence_throughput_regression_millionths {

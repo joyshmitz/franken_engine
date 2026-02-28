@@ -273,12 +273,16 @@ impl ExportDeclaration {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum VariableDeclarationKind {
     Var,
+    Let,
+    Const,
 }
 
 impl VariableDeclarationKind {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Var => "var",
+            Self::Let => "let",
+            Self::Const => "const",
         }
     }
 }
@@ -727,6 +731,13 @@ mod tests {
             }
             _ => panic!("expected map"),
         }
+    }
+
+    #[test]
+    fn variable_declaration_kind_as_str_is_stable() {
+        assert_eq!(VariableDeclarationKind::Var.as_str(), "var");
+        assert_eq!(VariableDeclarationKind::Let.as_str(), "let");
+        assert_eq!(VariableDeclarationKind::Const.as_str(), "const");
     }
 
     #[test]
