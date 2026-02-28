@@ -345,8 +345,8 @@ fn happy_path_workload_delta_values_correct() {
     assert_eq!(wr.canonical_output_digest, "digest-w1");
     // constrained throughput=2000, ambient throughput=1000 -> delta=+100%=1_000_000
     assert_eq!(wr.throughput_delta_millionths, 1_000_000);
-    // latency improvement: ambient_p50=1000, constrained_p50=500 -> improvement=+100%=1_000_000
-    assert_eq!(wr.latency_p50_improvement_millionths, 1_000_000);
+    // latency improvement: ambient_p50=1000, constrained_p50=500 -> improvement=(1000-500)/1000=50%=500_000
+    assert_eq!(wr.latency_p50_improvement_millionths, 500_000);
 }
 
 #[test]

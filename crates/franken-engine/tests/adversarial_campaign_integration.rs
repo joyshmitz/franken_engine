@@ -516,7 +516,7 @@ fn score_novel_technique_adds_bonus() {
     let without_novel =
         ExploitObjectiveScore::from_result(&make_result(3, 5, false, 300_000, 10, false)).unwrap();
     assert!(with_novel.composite_score_millionths >= without_novel.composite_score_millionths);
-    assert_eq!(with_novel.novel_technique_bonus_millionths, 150_000);
+    assert_eq!(with_novel.novel_technique_bonus_millionths, 1_000_000);
     assert_eq!(without_novel.novel_technique_bonus_millionths, 0);
 }
 

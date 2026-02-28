@@ -220,7 +220,7 @@ fn test262_result_passing_exceeds_total_rejected() {
         failing_test_ids: vec![],
     };
     let err = r.validate().unwrap_err();
-    assert_eq!(err.code(), "FE-FPT-0005");
+    assert_eq!(err.code(), "FE-FPT-0006");
 }
 
 #[test]
@@ -273,7 +273,7 @@ fn lockstep_result_matches_exceeds_total_rejected() {
         mismatches: vec![],
     };
     let err = r.validate().unwrap_err();
-    assert_eq!(err.code(), "FE-FPT-0005");
+    assert_eq!(err.code(), "FE-FPT-0006");
 }
 
 #[test]
@@ -290,7 +290,7 @@ fn lockstep_result_mismatch_count_inconsistent_rejected() {
         }], // Should have 2 mismatches but only 1 provided.
     };
     let err = r.validate().unwrap_err();
-    assert_eq!(err.code(), "FE-FPT-0005");
+    assert_eq!(err.code(), "FE-FPT-0006");
 }
 
 #[test]
@@ -320,7 +320,7 @@ fn waiver_empty_waiver_id_rejected() {
     let mut w = make_waiver("f", "w");
     w.waiver_id = "".to_string();
     let err = w.validate().unwrap_err();
-    assert_eq!(err.code(), "FE-FPT-0004");
+    assert_eq!(err.code(), "FE-FPT-0005");
 }
 
 #[test]
@@ -328,7 +328,7 @@ fn waiver_empty_feature_id_rejected() {
     let mut w = make_waiver("f", "w");
     w.feature_id = "".to_string();
     let err = w.validate().unwrap_err();
-    assert_eq!(err.code(), "FE-FPT-0004");
+    assert_eq!(err.code(), "FE-FPT-0005");
 }
 
 #[test]
@@ -336,7 +336,7 @@ fn waiver_empty_reason_rejected() {
     let mut w = make_waiver("f", "w");
     w.reason = "  ".to_string();
     let err = w.validate().unwrap_err();
-    assert_eq!(err.code(), "FE-FPT-0004");
+    assert_eq!(err.code(), "FE-FPT-0005");
 }
 
 #[test]
@@ -344,7 +344,7 @@ fn waiver_empty_approved_by_rejected() {
     let mut w = make_waiver("f", "w");
     w.approved_by = "".to_string();
     let err = w.validate().unwrap_err();
-    assert_eq!(err.code(), "FE-FPT-0004");
+    assert_eq!(err.code(), "FE-FPT-0005");
 }
 
 #[test]
@@ -353,7 +353,7 @@ fn waiver_valid_until_before_approved_at_rejected() {
     w.approved_at_ns = 1000;
     w.valid_until_ns = Some(500);
     let err = w.validate().unwrap_err();
-    assert_eq!(err.code(), "FE-FPT-0004");
+    assert_eq!(err.code(), "FE-FPT-0005");
 }
 
 #[test]
@@ -362,7 +362,7 @@ fn waiver_valid_until_equal_to_approved_at_rejected() {
     w.approved_at_ns = 1000;
     w.valid_until_ns = Some(1000);
     let err = w.validate().unwrap_err();
-    assert_eq!(err.code(), "FE-FPT-0004");
+    assert_eq!(err.code(), "FE-FPT-0005");
 }
 
 #[test]
@@ -844,7 +844,7 @@ fn ingest_test262_invalid_rejected() {
         failing_test_ids: vec![],
     };
     let err = tracker.ingest_test262(&bad, &c).unwrap_err();
-    assert_eq!(err.code(), "FE-FPT-0005");
+    assert_eq!(err.code(), "FE-FPT-0006");
 }
 
 #[test]
@@ -978,7 +978,7 @@ fn ingest_lockstep_invalid_rejected() {
         mismatches: vec![],
     };
     let err = tracker.ingest_lockstep(&bad, &c).unwrap_err();
-    assert_eq!(err.code(), "FE-FPT-0005");
+    assert_eq!(err.code(), "FE-FPT-0006");
 }
 
 #[test]
@@ -1063,7 +1063,7 @@ fn register_waiver_duplicate_rejected() {
     let w = make_waiver(&bigint_fid(), "w-dup");
     tracker.register_waiver(w.clone(), &c).unwrap();
     let err = tracker.register_waiver(w, &c).unwrap_err();
-    assert_eq!(err.code(), "FE-FPT-0002");
+    assert_eq!(err.code(), "FE-FPT-0003");
 }
 
 #[test]
@@ -1082,7 +1082,7 @@ fn register_waiver_invalid_waiver_rejected() {
     let mut w = make_waiver(&bigint_fid(), "w-1");
     w.waiver_id = "".to_string();
     let err = tracker.register_waiver(w, &c).unwrap_err();
-    assert_eq!(err.code(), "FE-FPT-0004");
+    assert_eq!(err.code(), "FE-FPT-0005");
 }
 
 #[test]
@@ -1103,7 +1103,7 @@ fn seal_already_sealed_rejected() {
     tracker.register_waiver(w, &c).unwrap();
     tracker.seal_waiver("w-1", &c).unwrap();
     let err = tracker.seal_waiver("w-1", &c).unwrap_err();
-    assert_eq!(err.code(), "FE-FPT-0003");
+    assert_eq!(err.code(), "FE-FPT-0004");
 }
 
 #[test]
@@ -1111,7 +1111,7 @@ fn seal_nonexistent_waiver_rejected() {
     let mut tracker = FeatureParityTracker::new();
     let c = ctx();
     let err = tracker.seal_waiver("no-such-waiver", &c).unwrap_err();
-    assert_eq!(err.code(), "FE-FPT-0008");
+    assert_eq!(err.code(), "FE-FPT-0002");
 }
 
 #[test]

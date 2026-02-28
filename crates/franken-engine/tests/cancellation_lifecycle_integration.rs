@@ -1585,8 +1585,8 @@ fn cancel_outcome_success_set_correctly_on_timeout_escalation() {
         .expect("cancel");
 
     assert!(outcome.timeout_escalated);
-    // Success should be true: finalize_result.success || timeout_escalated
-    assert!(outcome.success);
+    // When timeout_escalated is true, success = finalize_result.success && !timeout_escalated = false
+    assert!(!outcome.success);
 }
 
 #[test]

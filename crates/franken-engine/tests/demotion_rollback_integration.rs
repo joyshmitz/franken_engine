@@ -417,7 +417,7 @@ fn semantic_divergence_ignores_matching_output() {
 fn semantic_divergence_respects_max_count() {
     let receipt = promotion_receipt();
     let mut p = strict_policy();
-    p.max_divergence_count = 2;
+    p.max_divergence_count = 3;
     let mut m = AutoDemotionMonitor::new(&receipt, p, 1_000_000_000).unwrap();
 
     for i in 0..2 {

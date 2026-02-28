@@ -59,7 +59,8 @@ fn activate(ctrl: &mut ActivationLifecycleController, id: &str, version: &str) {
 fn full_rollout(ctrl: &mut ActivationLifecycleController, id: &str) {
     ctrl.advance_rollout(id, "trace-integ").unwrap(); // canary
     ctrl.advance_rollout(id, "trace-integ").unwrap(); // ramp
-    ctrl.advance_rollout(id, "trace-integ").unwrap(); // default -> active
+    ctrl.advance_rollout(id, "trace-integ").unwrap(); // default
+    ctrl.advance_rollout(id, "trace-integ").unwrap(); // past default -> active
 }
 
 // ---------------------------------------------------------------------------
@@ -95,6 +96,12 @@ fn full_lifecycle_activate_update_rollout_complete() {
     assert_eq!(
         ctrl.state("ext-a"),
         Some(LifecycleState::Updating(RolloutPhase::Ramp))
+    );
+
+    ctrl.advance_rollout("ext-a", "trace-integ").unwrap();
+    assert_eq!(
+        ctrl.state("ext-a"),
+        Some(LifecycleState::Updating(RolloutPhase::Default))
     );
 
     ctrl.advance_rollout("ext-a", "trace-integ").unwrap();

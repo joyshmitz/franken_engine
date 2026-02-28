@@ -1158,10 +1158,12 @@ fn cooperative_shutdown_within_grace_quarantine() {
     register(&mut mgr, "ext");
     advance_to_running(&mut mgr, "ext");
 
+    // Within grace period (1s < 5s default), so shutdown succeeds -> Terminated
+    // (quarantine_on_timeout only applies when grace period expires)
     let s = mgr
         .cooperative_shutdown("ext", "t", 1_000_000_000, true)
         .unwrap();
-    assert_eq!(s, ExtensionState::Quarantined);
+    assert_eq!(s, ExtensionState::Terminated);
 }
 
 #[test]

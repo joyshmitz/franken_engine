@@ -637,8 +637,9 @@ fn advance_rollout_ramp_to_default_finalizes_active() {
         .unwrap();
     ctrl.advance_rollout("comp-a", "t").unwrap(); // canary
     ctrl.advance_rollout("comp-a", "t").unwrap(); // ramp
-    let phase = ctrl.advance_rollout("comp-a", "t").unwrap(); // default -> active
+    let phase = ctrl.advance_rollout("comp-a", "t").unwrap(); // default
     assert_eq!(phase, RolloutPhase::Default);
+    ctrl.advance_rollout("comp-a", "t").unwrap(); // past default -> active
     assert_eq!(ctrl.state("comp-a"), Some(LifecycleState::Active));
     assert_eq!(ctrl.known_good("comp-a").unwrap().version, "2.0.0");
 }
@@ -933,6 +934,11 @@ fn valid_transition_active_to_updating_through_phases() {
     assert_eq!(
         ctrl.state("c"),
         Some(LifecycleState::Updating(RolloutPhase::Ramp))
+    );
+    ctrl.advance_rollout("c", "t").unwrap();
+    assert_eq!(
+        ctrl.state("c"),
+        Some(LifecycleState::Updating(RolloutPhase::Default))
     );
     ctrl.advance_rollout("c", "t").unwrap();
     assert_eq!(ctrl.state("c"), Some(LifecycleState::Active));
@@ -1664,7 +1670,8 @@ fn full_lifecycle_activate_update_rollback_holdoff_reupdate() {
     // Complete full rollout
     ctrl.advance_rollout("comp-a", "t").unwrap(); // canary
     ctrl.advance_rollout("comp-a", "t").unwrap(); // ramp
-    ctrl.advance_rollout("comp-a", "t").unwrap(); // default -> active
+    ctrl.advance_rollout("comp-a", "t").unwrap(); // default
+    ctrl.advance_rollout("comp-a", "t").unwrap(); // past default -> active
     assert_eq!(ctrl.state("comp-a"), Some(LifecycleState::Active));
     assert_eq!(ctrl.known_good("comp-a").unwrap().version, "3.0.0");
     assert_eq!(ctrl.component_version("comp-a"), "3.0.0");
@@ -1904,9 +1911,11 @@ fn advance_from_default_phase_finalizes() {
     // Advance through all phases
     ctrl.advance_rollout("comp-a", "t").unwrap(); // canary
     ctrl.advance_rollout("comp-a", "t").unwrap(); // ramp
-    // This one reaches Default -> finalizes to Active
+    // This one reaches Default
     let phase = ctrl.advance_rollout("comp-a", "t").unwrap();
     assert_eq!(phase, RolloutPhase::Default);
+    // Advance past Default -> finalizes to Active
+    ctrl.advance_rollout("comp-a", "t").unwrap();
     assert_eq!(ctrl.state("comp-a"), Some(LifecycleState::Active));
 
     // Now we're Active, trying to advance again should fail
@@ -2058,11 +2067,12 @@ fn high_transition_count_stress() {
         // Complete full rollout
         ctrl.advance_rollout("comp-a", "t").unwrap(); // canary
         ctrl.advance_rollout("comp-a", "t").unwrap(); // ramp
-        ctrl.advance_rollout("comp-a", "t").unwrap(); // default -> active
+        ctrl.advance_rollout("comp-a", "t").unwrap(); // default
+        ctrl.advance_rollout("comp-a", "t").unwrap(); // past default -> active
         assert_eq!(ctrl.state("comp-a"), Some(LifecycleState::Active));
     }
-    // 2 (activation) + 20 * 4 (begin_update + 3 advances) = 82 transitions
-    assert_eq!(ctrl.transition_count(), 82);
+    // 2 (activation) + 20 * 5 (begin_update + 4 advances) = 102 transitions
+    assert_eq!(ctrl.transition_count(), 102);
     assert_eq!(ctrl.known_good("comp-a").unwrap().version, "21.0.0");
 }
 
@@ -2081,7 +2091,8 @@ fn known_good_pin_updated_after_full_rollout() {
         .unwrap();
     ctrl.advance_rollout("comp-a", "t").unwrap(); // canary
     ctrl.advance_rollout("comp-a", "t").unwrap(); // ramp
-    ctrl.advance_rollout("comp-a", "t").unwrap(); // default -> active
+    ctrl.advance_rollout("comp-a", "t").unwrap(); // default
+    ctrl.advance_rollout("comp-a", "t").unwrap(); // past default -> active
 
     let pin2 = ctrl.known_good("comp-a").unwrap();
     assert_eq!(pin2.version, "2.0.0");
